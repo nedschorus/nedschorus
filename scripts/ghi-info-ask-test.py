@@ -319,7 +319,7 @@ with tempfile.TemporaryDirectory() as temporary:
     ghi_ask.save_state(seat10 / ghi_ask.STATE_FILE_NAME,
                        {"session_id": "sess-BIG", "closes_since_birth": 0, "recent_matches": []})
     projects_root = root / "projects"
-    project_directory = ghi_ask.watcher.project_directory_for_seat(seat10, projects_root)
+    project_directory = ghi_ask.project_directory_module.project_directory_for_seat(seat10, projects_root)
     project_directory.mkdir(parents=True)
     (project_directory / "sess-BIG.jsonl").write_bytes(
         b"x" * (ghi_ask.TRANSCRIPT_SIZE_THRESHOLD_BYTES + 1))
@@ -338,7 +338,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # hook's notice came back in place of the answer. That hook is silent in
     # these sessions now, so this trigger is what bounds them.
     def transcript_at_context_tokens(seat, session_id, tokens):
-        project_directory = ghi_ask.watcher.project_directory_for_seat(seat, projects_root)
+        project_directory = ghi_ask.project_directory_module.project_directory_for_seat(seat, projects_root)
         project_directory.mkdir(parents=True, exist_ok=True)
         record = {"type": "assistant", "message": {
             "model": "claude-sonnet-5",
@@ -622,6 +622,24 @@ try:
                   and prefix not in err, err)
             check(f"a {prefix} reply prints nothing on stdout", out == "", out)
 
+        # ghi-info opens every ruling question with the issue holding the
+        # ruling. The number reaches the caller first in the sentence, and,
+        # the reply being a ruling question, it is not checked against the
+        # mirror: the issue it names is not open there, and no drift turn is asked
+        # (the fake answers two turns only).
+        seat_numbered = root / "seat-ruling-question-numbered"
+        seat_numbered.mkdir()
+        numbered = ("#783 the ruling that a closed issue is frozen may not "
+                    "cover a reopened issue")
+        exit_code, out, err = main_with_reply(
+            seat_numbered, "ask-user-about-ruling: " + numbered)
+        check("a ruling question opening with its issue number reaches the "
+              "caller with the number first, and asks ghi-info nothing more",
+              exit_code == 3 and out == ""
+              and ("ghi-info found a ruling of the user's that it cannot tell "
+                   "still applies: " + numbered + "\n") in err,
+              (exit_code, out, err))
+
         seat_list = root / "seat-reading-list"
         seat_list.mkdir()
         exit_code, out, err = main_with_reply(seat_list, "read #1")
@@ -639,10 +657,23 @@ try:
           and ghi_ask.caller_message_for_passthrough_reply("Escalate: x")[1] == 3)
     check("the cold-start prompt teaches ghi-info the new reply words, not the old ones",
           "reply exactly: not-about-issues." in ghi_ask.COLD_START_PROMPT_TEMPLATE
-          and "Reply: ask-user-about-ruling: <" in ghi_ask.COLD_START_PROMPT_TEMPLATE
+          and "Reply: ask-user-about-ruling: #<issue> <" in ghi_ask.COLD_START_PROMPT_TEMPLATE
           and "out-of-scope" not in ghi_ask.COLD_START_PROMPT_TEMPLATE
           and "escalate:" not in ghi_ask.COLD_START_PROMPT_TEMPLATE,
           ghi_ask.COLD_START_PROMPT_TEMPLATE[-600:])
+    check("the cold-start prompt has every ruling question start with the "
+          "issue holding the ruling",
+          "Every ruling question starts with that issue number."
+          in ghi_ask.COLD_START_PROMPT_TEMPLATE,
+          ghi_ask.COLD_START_PROMPT_TEMPLATE[-900:])
+    check("and gives a draft that conflicts with a ruling the ruling question, "
+          "not a verdict line",
+          "a draft that conflicts with a ruling the user made gets the ruling "
+          "question" in ghi_ask.COLD_START_PROMPT_TEMPLATE
+          and "When the draft conflicts with a ruling the user made, reply "
+          "instead with the ruling question" in ghi_ask.COLD_START_PROMPT_TEMPLATE
+          and "always gets a verdict line" not in ghi_ask.COLD_START_PROMPT_TEMPLATE,
+          ghi_ask.COLD_START_PROMPT_TEMPLATE[-1500:])
 finally:
     patch_module_function(ghi_ask.mirror_refresh, "refresh", mirror_orig)
     patch("run_claude", run_claude_orig)
@@ -799,6 +830,15 @@ with tempfile.TemporaryDirectory() as temporary:
     check("and that work is untouched",
           (seat / "shared.txt").read_text(encoding="utf-8") == "edit in progress\n")
 
+    origin, seat = _make_origin_and_seat(root, "ff-renamed")
+    _commit(seat, "café notes.md", "notes\n", "a file git would quote")
+    _commit(origin, "design.md", "new design\n", "a design lands on main")
+    _git(["mv", "café notes.md", "renamed notes.md"], seat)
+    line = ghi_ask.fast_forward_seat_checkout(seat)
+    check("a staged rename of a file git would quote is one uncommitted tracked change",
+          "has 1 uncommitted tracked change(s)" in line
+          and not (seat / "design.md").exists(), line)
+
     # ghi-info commits its own document-side link repairs, so a checkout
     # carrying a commit main does not have is a real state, not debris.
     origin, seat = _make_origin_and_seat(root, "ff-diverged")
@@ -882,6 +922,39 @@ with tempfile.TemporaryDirectory() as temporary:
           not ghi_ask.reply_answers_the_question(
               "No action needed on my part — this session hasn't touched any "
               "scripts or tests; I only read the GHI mirror to answer requests."))
+
+    # A draft-body request's "nothing covers this" names no issue; its verdict
+    # line is what makes it an answer. Both replies below are ghi-info's own.
+    unrelated_with_reasons = (
+        "No open or closed issue in the mirror mentions "
+        "`scripts/pull-request-review-plan.py`, a `--repository`/subdirectory-"
+        "vs-top-level defect in its `git diff`/`git ls-tree` pathspecs, or "
+        "resolving a program's repository argument via `git rev-parse "
+        "--show-toplevel`. Grepped both issues-open.md and issues-closed.md "
+        "for all of those terms — no matches anywhere.\n\nverdict: unrelated")
+    check("a verdict: unrelated line is an answer, with reasons above it or alone",
+          ghi_ask.reply_answers_the_question(unrelated_with_reasons)
+          and ghi_ask.reply_answers_the_question("verdict: unrelated")
+          and ghi_ask.reply_answers_the_question("Verdict: Unrelated  "))
+    check("a reply that only mentions the verdict is not an answer",
+          not ghi_ask.reply_answers_the_question(
+              "I would reply verdict: unrelated, but I have not read the draft.")
+          and not ghi_ask.reply_answers_the_question(
+              "I have not read the draft.\nOtherwise I would reply verdict: unrelated")
+          and not ghi_ask.reply_answers_the_question("verdict: unrelated to memory")
+          and not ghi_ask.reply_answers_the_question("verdict:"))
+
+    seat_unrelated = root / "seat-unrelated-reply"
+    seat_unrelated.mkdir()
+    ghi_ask.save_state(seat_unrelated / ghi_ask.STATE_FILE_NAME,
+                       {"session_id": "sess-U", "closes_since_birth": 0, "recent_matches": []})
+    fake_refresh_queue([([], {}, None)])
+    fake_claude_queue([({"session_id": "sess-U", "result": unrelated_with_reasons}, None)])
+    answer, error = ghi_ask.ask("Does an open issue already cover this ground?",
+                                False, seat_unrelated, "x/y")
+    check("a verdict: unrelated reply is returned, not failed",
+          error is None and answer is not None
+          and answer.splitlines()[-1] == "verdict: unrelated", (answer, error))
 
     seat_hook = root / "seat-hook-reply"
     seat_hook.mkdir()

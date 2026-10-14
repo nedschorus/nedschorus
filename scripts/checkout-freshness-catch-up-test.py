@@ -165,7 +165,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           and "scripts your tests run against (1): scripts/advance-one.py" in agent_text(result),
           agent_text(result))
     check("and told to rerun the suites for what it touched",
-          "Rerun the test suites" in agent_text(result), agent_text(result))
+          "--only-suites-whose-recorded-inputs-changed-since origin/main`: your work now "
+          "sits on newer code." in agent_text(result), agent_text(result))
     check("the rebased note ends by saying it is not for the user, byte for byte",
           agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
     check("the USER hears nothing about routine drift",
@@ -241,7 +242,16 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           and not (seat_git_dir / "MERGE_HEAD").exists())
     check("the agent is told the conflicting file and how to proceed",
           "conflicts on shared.txt" in agent_text(result)
-          and "`git rebase --abort` puts everything back" in agent_text(result),
+          and "run `git rebase --abort`, which puts everything back" in agent_text(result),
+          agent_text(result))
+    check("the conflict note says when to resolve now and when to finish first",
+          "resolve the conflict and run `git rebase --continue`" in agent_text(result)
+          and "finish what you are doing first" in agent_text(result), agent_text(result))
+    check("the conflict note no longer says staying behind costs nothing",
+          "costs nothing" not in agent_text(result), agent_text(result))
+    check("the conflict note names the pre-push check and the selective test run",
+          "refused by the pre-push check" in agent_text(result)
+          and "--only-suites-whose-recorded-inputs-changed-since origin/main" in agent_text(result),
           agent_text(result))
     check("the conflict note ends by saying it is not for the user, byte for byte",
           agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
@@ -430,15 +440,278 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("pushing a never-pushed branch re-tells once, with the advice flipped",
           "Do not rebase or amend it" in agent_text(pushed_now), agent_text(pushed_now))
 
-    # Detached HEAD: its own advice, never moved.
-    detached = tmp / "detached-worktree"
-    git(["worktree", "add", "-q", "--detach", str(detached), "main~1"], reference)
-    detached_head = git(["rev-parse", "HEAD"], detached).stdout.strip()
+    # PUSHED HISTORY UNDER A NEW NAME (GHI "The checkout-freshness hook treats a
+    # new branch cut at a pull request's pushed head as never pushed, and
+    # rebases it"). A fix-round agent cannot check out a pull request's own
+    # branch in a second worktree, so it cuts a NEW branch at the pushed head.
+    # No origin/<that name> exists, yet its commits are the pull request's,
+    # under review: the hook must not rebase it. Before the fix, every case
+    # below failed: the hook called the branch "unpushed" and rebased it.
+    fix_round = tmp / "fix-round-worktree"
+    pushed_head = git(["rev-parse", "origin/flip"], reference).stdout.strip()
+    git(["worktree", "add", "-q", "-b", "flip-fix-round", str(fix_round), "origin/flip"],
+        reference)
+    configure_identity(fix_round)
+    commit_file(origin, "scripts/advance-five-a.py", "5a\n", "advance five a")
+    result = run_catch_up(["--cwd", str(fix_round)])
+    check("a new branch cut at a pushed head, behind main, is NOT rebased",
+          git(["rev-parse", "HEAD"], fix_round).stdout.strip() == pushed_head
+          and not (fix_round / "scripts/advance-five-a.py").exists(), result.stdout)
+    check("its head state is pushed-history, not unpushed",
+          stamp_of(fix_round).get("head_state") == "pushed-history", str(stamp_of(fix_round)))
+    check("the agent is told where the commits already are",
+          "no branch of this name on origin, but its commits are already on origin/flip"
+          in agent_text(result), agent_text(result))
+    check("and told why it is not rebased and what to do, byte for byte",
+          "This branch's commits are already on GitHub under another branch name, so the "
+          "branch is treated as pushed and is not rebased: a pushed head may be under "
+          "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
+          "fix is a new commit on top. If it conflicts with main, clear the conflict with "
+          "the hand-merge that scripts/branch-conflict-check.py describes."
+          in agent_text(result), agent_text(result))
+    check("the pushed-history note never tells the agent to rebase",
+          "git rebase origin/main" not in agent_text(result), agent_text(result))
+    check("the pushed-history note ends by saying it is not for the user, byte for byte",
+          agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
+    check("the user hears nothing about a pushed-history branch", display_text(result) == "",
+          display_text(result))
+
+    # The agent's fix commit on top is on no remote branch; the commits beneath
+    # it are. The check has to look past HEAD, and the branch stays unrebased.
+    commit_file(fix_round, "fix.txt", "the fix\n", "the fix-round's commit on top")
+    fix_head = git(["rev-parse", "HEAD"], fix_round).stdout.strip()
+    commit_file(origin, "scripts/advance-five-b.py", "5b\n", "advance five b")
+    result = run_catch_up(["--cwd", str(fix_round)])
+    check("with an unpushed fix commit on top, the branch is still NOT rebased",
+          git(["rev-parse", "HEAD"], fix_round).stdout.strip() == fix_head
+          and git(["rev-parse", "HEAD~1"], fix_round).stdout.strip() == pushed_head
+          and not (fix_round / "scripts/advance-five-b.py").exists(), result.stdout)
+    check("and its head state is still pushed-history",
+          stamp_of(fix_round).get("head_state") == "pushed-history", str(stamp_of(fix_round)))
+
+    # The other side of the line: a genuinely new branch, whose own commit is on
+    # no remote branch, is still rebased exactly as before.
+    fresh = tmp / "fresh-topic-worktree"
+    git(["worktree", "add", "-q", "-b", "fresh-topic", str(fresh), "origin/main~1"], reference)
+    configure_identity(fresh)
+    commit_file(fresh, "fresh.txt", "new work\n", "a new topic's own commit, never pushed")
+    result = run_catch_up(["--cwd", str(fresh)])
+    check("a new branch whose own commit is on no remote branch is still rebased",
+          (fresh / "scripts/advance-five-b.py").exists() and (fresh / "fresh.txt").exists()
+          and "was rebased" in agent_text(result), agent_text(result) + result.stderr)
+
+    # Detached HEAD: an agent-seat's own checkout, moved forward when it holds
+    # nothing of its own, and otherwise told why not and what to do. The texts
+    # are spelled out here, not imported, so a typo in the script fails a case.
+    detached_moved_text = (
+        "This checkout's detached HEAD was moved forward to origin/main: it held no commits "
+        "of its own and no uncommitted tracked changes, so nothing was lost.\n"
+        "CLAUDE.md and the skills load from this checkout, so what you read from them earlier "
+        "in this session may be out of date; the hooks already run from the new files.\n"
+        "If CLAUDE.md is listed above, read it again before your next action.\n"
+        "If a skill you are following is listed above, read that skill's SKILL.md under "
+        ".claude/skills/ again before its next step.")
+    detached_not_moved_second_line = (
+        "CLAUDE.md, the skills and the hooks load from this checkout, so until it moves, the "
+        "files listed above stay older here than on main.")
+    detached_work_line = (
+        "It holds work of its own: run `git switch -c <branch name>` to put that work on a "
+        "branch, and commit any uncommitted changes there; from then on the hook's rules for a "
+        "branch apply.")
+    detached_bisect_line = (
+        "A bisect is in progress: finish it or abort it; the next turn's end moves the "
+        "checkout forward.")
+    detached_refused_condition_lines = (
+        "If git names an untracked file that main would overwrite, move that file out of the "
+        "way; the next turn's end moves the checkout forward.\n"
+        "If git names anything else, leave the checkout as it is: the refusal has been "
+        "reported to the user.")
+
+    def detached_worktree_behind_main(name):
+        git(["fetch", "-q"], reference)
+        path = tmp / name
+        git(["worktree", "add", "-q", "--detach", str(path), "origin/main~1"], reference)
+        configure_identity(path)
+        return path
+
+    def head_of(checkout):
+        return git(["rev-parse", "HEAD"], checkout).stdout.strip()
+
+    def main_tip():
+        return git(["rev-parse", "main"], origin).stdout.strip()
+
+    commit_file(origin, "scripts/detached-advance.py", "advance\n", "advance for the detached cases")
+    detached = detached_worktree_behind_main("detached-worktree")
+    (detached / "seat-scratch-note.md").write_text("untracked\n", encoding="utf-8")
     result = run_catch_up(["--cwd", str(detached)])
-    check("a detached HEAD is told to check out its branch, and not moved",
-          "detached HEAD" in agent_text(result) and "check out your branch" in agent_text(result)
-          and git(["rev-parse", "HEAD"], detached).stdout.strip() == detached_head,
+    check("a detached HEAD with nothing of its own and an untracked file is moved forward",
+          head_of(detached) == main_tip() and (detached / "seat-scratch-note.md").exists()
+          and (detached / "scripts/detached-advance.py").exists(), agent_text(result))
+    check("and the agent is told message A, after the files that moved",
+          f"{detached_moved_text}\n{NOT_FOR_THE_USER_LINE}" in agent_text(result)
+          and agent_text(result).index("scripts/detached-advance.py")
+          < agent_text(result).index("was moved forward"), agent_text(result))
+    check("and the user is told nothing", display_text(result) == "", display_text(result))
+    result = run_catch_up(["--cwd", str(detached)])
+    check("a detached HEAD already at origin/main prints nothing",
+          result.stdout.strip() == "", result.stdout)
+
+    tracked = detached_worktree_behind_main("detached-tracked-change-worktree")
+    tracked_head = head_of(tracked)
+    (tracked / "shared.txt").write_text("edited here\n", encoding="utf-8")
+    result = run_catch_up(["--cwd", str(tracked)])
+    check("a detached HEAD with an uncommitted tracked change is not moved",
+          head_of(tracked) == tracked_head, agent_text(result))
+    check("and message B names the change and gives the work-of-its-own line alone",
+          "This checkout's detached HEAD was not moved forward: 1 uncommitted tracked "
+          f"change(s).\n{detached_not_moved_second_line}\n{detached_work_line}\n"
+          f"{NOT_FOR_THE_USER_LINE}" in agent_text(result), agent_text(result))
+    result = run_catch_up(["--cwd", str(tracked)])
+    check("message B is not repeated while main has not moved",
+          agent_text(result) == "", agent_text(result))
+    git(["checkout", "--", "shared.txt"], tracked)
+    result = run_catch_up(["--cwd", str(tracked)])
+    check("once the change is gone, the next turn's end moves it forward and says so",
+          head_of(tracked) == main_tip() and detached_moved_text in agent_text(result),
           agent_text(result))
+
+    own = detached_worktree_behind_main("detached-own-commit-worktree")
+    commit_file(own, "own-work.txt", "own\n", "a commit on a detached HEAD")
+    own_head = head_of(own)
+    result = run_catch_up(["--cwd", str(own)])
+    check("a detached HEAD with a commit of its own is not moved, and is told so",
+          head_of(own) == own_head
+          and "not moved forward: 1 commit(s) of its own.\n" in agent_text(result)
+          and f"{detached_not_moved_second_line}\n{detached_work_line}\n"
+          f"{NOT_FOR_THE_USER_LINE}" in agent_text(result), agent_text(result))
+
+    both = detached_worktree_behind_main("detached-own-commit-and-change-worktree")
+    commit_file(both, "own-work.txt", "own\n", "a commit on a detached HEAD")
+    (both / "shared.txt").write_text("edited here\n", encoding="utf-8")
+    result = run_catch_up(["--cwd", str(both)])
+    check("with a commit and a change, message B names both and gives the work line once",
+          "not moved forward: 1 commit(s) of its own; 1 uncommitted tracked change(s).\n"
+          in agent_text(result) and agent_text(result).count(detached_work_line) == 1,
+          agent_text(result))
+
+    bisecting = detached_worktree_behind_main("detached-bisect-worktree")
+    bisecting_head = head_of(bisecting)
+    bisect_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], bisecting).stdout.strip())
+    (bisect_git_dir / "BISECT_LOG").write_text("git bisect start\n", encoding="utf-8")
+    result = run_catch_up(["--cwd", str(bisecting)])
+    check("a detached HEAD mid-bisect is not moved, and gets the in-progress line alone",
+          head_of(bisecting) == bisecting_head
+          and "not moved forward: a bisect in progress.\n" in agent_text(result)
+          and f"{detached_not_moved_second_line}\n{detached_bisect_line}\n"
+          f"{NOT_FOR_THE_USER_LINE}" in agent_text(result)
+          and detached_work_line not in agent_text(result), agent_text(result))
+
+    rebasing = detached_worktree_behind_main("detached-rebase-with-own-commit-worktree")
+    commit_file(rebasing, "own-work.txt", "own\n", "a commit on a detached HEAD")
+    rebasing_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], rebasing).stdout.strip())
+    (rebasing_git_dir / "rebase-merge").mkdir()
+    result = run_catch_up(["--cwd", str(rebasing)])
+    check("mid-rebase with a commit of its own, message B names both but gives only the "
+          "in-progress line",
+          "not moved forward: a rebase in progress; 1 commit(s) of its own.\n"
+          in agent_text(result)
+          and f"{detached_not_moved_second_line}\n" + detached_bisect_line.replace(
+              "A bisect", "A rebase") + f"\n{NOT_FOR_THE_USER_LINE}" in agent_text(result)
+          and detached_work_line not in agent_text(result), agent_text(result))
+    (rebasing_git_dir / "rebase-merge").rmdir()
+
+    commit_file(origin, "scripts/detached-collision.py", "main's copy\n",
+                "main adds a file a detached checkout holds untracked")
+    colliding = detached_worktree_behind_main("detached-untracked-collision-worktree")
+    (colliding / "scripts").mkdir(exist_ok=True)
+    (colliding / "scripts/detached-collision.py").write_text("my copy\n", encoding="utf-8")
+    colliding_head = head_of(colliding)
+    result = run_catch_up(["--cwd", str(colliding)])
+    check("a fast-forward git refuses over an untracked file leaves the checkout and the file",
+          head_of(colliding) == colliding_head
+          and (colliding / "scripts/detached-collision.py").read_text(encoding="utf-8")
+          == "my copy\n", agent_text(result))
+    check("and message B gives git's error, naming the file, and the refused lines",
+          "not moved forward: git refused the fast-forward.\n" in agent_text(result)
+          and any(line.startswith("Git refused the fast-forward: ")
+                  and "scripts/detached-collision.py" in line
+                  for line in agent_text(result).splitlines())
+          and f"\n{detached_refused_condition_lines}\n{NOT_FOR_THE_USER_LINE}"
+          in agent_text(result), agent_text(result))
+    check("and a refusal over an untracked file is not sent to the user",
+          display_text(result) == "", display_text(result))
+
+    locked = detached_worktree_behind_main("detached-index-locked-worktree")
+    locked_head = head_of(locked)
+    locked_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], locked).stdout.strip())
+    (locked_git_dir / "index.lock").write_text("", encoding="utf-8")
+    result = run_catch_up(["--cwd", str(locked)])
+    check("a refusal for any other reason leaves the checkout where it was",
+          head_of(locked) == locked_head, agent_text(result))
+    check("and the user is sent one line naming the checkout and git's error",
+          f"catch-up: {locked.resolve()} is 1 behind origin/main and could not fast-forward: "
+          in display_text(result) and "index.lock" in display_text(result),
+          display_text(result))
+    check("and the agent is told the refusal was reported",
+          "Git refused the fast-forward: " in agent_text(result)
+          and detached_refused_condition_lines in agent_text(result), agent_text(result))
+    result = run_catch_up(["--cwd", str(locked)])
+    check("the same refusal is not sent to the user twice",
+          display_text(result) == "", display_text(result))
+    (locked_git_dir / "index.lock").unlink()
+    result = run_catch_up(["--cwd", str(locked)])
+    check("once the lock is gone, the next turn's end moves it forward",
+          head_of(locked) == main_tip() and detached_moved_text in agent_text(result),
+          agent_text(result))
+    commit_file(origin, "scripts/detached-relock-advance.py", "advance\n",
+                "advance after a detached checkout was moved")
+    (locked_git_dir / "index.lock").write_text("", encoding="utf-8")
+    result = run_catch_up(["--cwd", str(locked)])
+    check("after a move, the same refusal again is sent to the user again",
+          "could not fast-forward: " in display_text(result)
+          and "index.lock" in display_text(result), display_text(result))
+    (locked_git_dir / "index.lock").unlink()
+
+    unreadable = detached_worktree_behind_main("detached-unreadable-status-worktree")
+    unreadable_head = head_of(unreadable)
+    unreadable_index = Path(git(["rev-parse", "--absolute-git-dir"],
+                                unreadable).stdout.strip()) / "index"
+    saved_index = unreadable_index.read_bytes()
+    unreadable_index.write_bytes(b"not an index")
+    result = run_catch_up(["--cwd", str(unreadable)])
+    check("a detached HEAD whose git status cannot be read is not moved, and git is not asked",
+          head_of(unreadable) == unreadable_head
+          and "not moved forward: git status unreadable.\n" in agent_text(result)
+          and "Git refused the fast-forward" not in agent_text(result), agent_text(result))
+    unreadable_index.write_bytes(saved_index)
+
+    sequencing = detached_worktree_behind_main("detached-paused-sequence-worktree")
+    sequencing_head = head_of(sequencing)
+    sequence_base = head_of(sequencing)
+    commit_file(sequencing, "shared.txt", "sequence one\n", "sequence commit one")
+    commit_file(sequencing, "sequence-two.txt", "two\n", "sequence commit two")
+    picked = git(["rev-list", "--reverse", f"{sequence_base}..HEAD"], sequencing).stdout.split()
+    git(["checkout", "-q", "--detach", sequence_base], sequencing)
+    (sequencing / "shared.txt").write_text("a different line\n", encoding="utf-8")
+    git(["commit", "-qam", "a conflicting base"], sequencing)
+    sequencing_head = head_of(sequencing)
+    git(["cherry-pick", "--no-commit", *picked], sequencing)
+    git(["checkout", "--ours", "shared.txt"], sequencing)
+    git(["add", "shared.txt"], sequencing)
+    sequencing_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], sequencing).stdout.strip())
+    check("the fixture is a paused sequence with a clean index and no CHERRY_PICK_HEAD",
+          (sequencing_git_dir / "sequencer").is_dir()
+          and not (sequencing_git_dir / "CHERRY_PICK_HEAD").exists()
+          and git(["status", "--porcelain", "--untracked-files=no"],
+                  sequencing).stdout.strip() == "",
+          git(["status"], sequencing).stdout)
+    result = run_catch_up(["--cwd", str(sequencing)])
+    check("a detached HEAD with a paused cherry-pick sequence is not moved, and is told so",
+          head_of(sequencing) == sequencing_head
+          and "not moved forward: a cherry-pick in progress" in agent_text(result)
+          and detached_bisect_line.replace("A bisect", "A cherry-pick") in agent_text(result),
+          agent_text(result))
+    git(["cherry-pick", "--abort"], sequencing)
 
     # The ghi-info shape (nedschorus#334): no commits of its own, far behind,
     # never pushed — so it is simply brought level, the same fast-forward the
@@ -674,6 +947,50 @@ with tempfile.TemporaryDirectory() as no_git_scratch:
     check("head_state with git unlaunchable is 'unknown', never 'unpushed'",
           unknown_state == "unknown" and "git did not run" in unknown_text,
           (unknown_state, unknown_text))
+
+# ---------------------------------------------------------------------------
+# The pushed-history check failing is "unknown", never "unpushed"
+# ---------------------------------------------------------------------------
+# git answers that no origin/<branch> exists, and then the check of whether
+# the branch's commits are on a remote branch fails. That failure must not
+# fall through to "unpushed", the one answer that authorises a rebase. A shim
+# fails every rev-list and hands every other call to the real git.
+with tempfile.TemporaryDirectory() as shim_scratch:
+    shim_scratch = Path(shim_scratch)
+    shim_origin = shim_scratch / "origin"
+    shim_origin.mkdir()
+    git(["init", "-q", "-b", "main"], shim_origin)
+    configure_identity(shim_origin)
+    commit_file(shim_origin, "a.txt", "a\n", "first")
+    shim_clone = shim_scratch / "clone"
+    git(["clone", "-q", str(shim_origin), str(shim_clone)], shim_scratch)
+    configure_identity(shim_clone)
+    git(["checkout", "-q", "-b", "a-branch-never-pushed"], shim_clone)
+    commit_file(shim_clone, "b.txt", "b\n", "own work")
+    rev_list_failing = shim_scratch / "rev-list-failing-git"
+    rev_list_failing.mkdir()
+    (rev_list_failing / "git").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "rev-list" ]; then\n'
+        '  printf "shimmed: rev-list fails\\n" >&2\n'
+        "  exit 3\n"
+        "fi\n"
+        f'exec "{shutil.which("git")}" "$@"\n', encoding="utf-8")
+    (rev_list_failing / "git").chmod(0o755)
+    saved_path = os.environ["PATH"]
+    try:
+        os.environ["PATH"] = f"{rev_list_failing}{os.pathsep}{saved_path}"
+        failed_check_state, failed_check_text = catch_up_module.head_state(
+            shim_clone, "a-branch-never-pushed")
+    finally:
+        os.environ["PATH"] = saved_path
+    check("a pushed-history check that fails is 'unknown', never 'unpushed'",
+          failed_check_state == "unknown"
+          and "could not check whether this branch's commits are on a remote branch"
+          in failed_check_text, (failed_check_state, failed_check_text))
+    check("(control) with git answering, the same branch is 'unpushed'",
+          catch_up_module.head_state(shim_clone, "a-branch-never-pushed")[0] == "unpushed",
+          str(catch_up_module.head_state(shim_clone, "a-branch-never-pushed")))
 
 # ---------------------------------------------------------------------------
 # --reference-pull must still speak. Its only other case exercises the
@@ -1439,6 +1756,48 @@ with tempfile.TemporaryDirectory() as exception_scratch:
               combination_result.returncode == 0 and never_blocks(combination_result),
               str(combination_result.returncode))
 
+
+# ---------------------------------------------------------------------------
+# git output read in its -z form: real paths, never C-quoted or split
+# ---------------------------------------------------------------------------
+with tempfile.TemporaryDirectory() as z_scratch:
+    # git reports a worktree's resolved path; macOS's temporary directory sits
+    # under the /var -> /private/var link, so compare against the resolved one.
+    z_scratch = Path(z_scratch).resolve()
+    z_origin = z_scratch / "origin-repo"
+    z_origin.mkdir()
+    git(["init", "-q", "-b", "main"], z_origin)
+    configure_identity(z_origin)
+    commit_file(z_origin, "my notes.md", "first\n", "first commit")
+    # A main worktree whose path holds a newline: one porcelain record, not two lines.
+    z_reference = z_scratch / "reference\nclone"
+    git(["clone", "-q", str(z_origin), str(z_reference)], z_scratch)
+    configure_identity(z_reference)
+    z_seat = z_scratch / "z-seat"
+    git(["worktree", "add", "-q", "-b", "z-seat", str(z_seat), "main"], z_reference)
+    check("the reference checkout of a worktree is the main worktree, a newline in its path kept",
+          catch_up_module.reference_checkout_of(z_seat) == z_reference,
+          repr(catch_up_module.reference_checkout_of(z_seat)))
+
+    commit_file(z_origin, "docs/café.md", "main's\n", "main adds a non-ASCII path")
+    commit_file(z_origin, "my notes.md", "main's line\n", "main changes a path with a space")
+    git(["fetch", "--quiet", "origin"], z_seat)
+    z_listing = catch_up_module.obsolete_files_by_category(z_seat)
+    check("files main moved are listed by their real names, not C-quoted",
+          z_listing == [("documents you may cite", ["docs/café.md"]),
+                        ("other files", ["my notes.md"])], str(z_listing))
+
+    commit_file(z_seat, "my notes.md", "the branch's line\n", "the branch changes it too")
+    z_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], z_seat).stdout.strip())
+    z_outcome = catch_up_module.rebase_never_pushed_branch(z_seat, z_git_dir)
+    check("a rebase conflict on a path with a space names the path whole",
+          z_outcome == ("conflict", "my notes.md"), str(z_outcome))
+
+    git(["mv", "my notes.md", "renamed notes.md"], z_seat)
+    check("a staged rename is one uncommitted tracked change",
+          catch_up_module.uncommitted_tracked_change_count(z_seat) == 1,
+          str(catch_up_module.uncommitted_tracked_change_count(z_seat)))
+    git(["reset", "-q", "--hard"], z_seat)
 
 print()
 if failures:

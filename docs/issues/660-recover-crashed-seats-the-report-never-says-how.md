@@ -33,6 +33,10 @@ The launchers already hold the answer and print it in their own refusal: `(attac
 
 Add one reach clause to every report line in which a seat is left running, and cover it in `scripts/recover-crashed-seats-test.py`. On the Mac the clause names `launch-claude-mac <seat>`, the launcher's attach-or-create form. Elsewhere it names `launch-claude-ubuntu <seat>`, run on the Mac, or `tmux -L <seat> attach -t <seat>` on the box. The user decides which of the two ned-box forms the line names, or both. The recovery log records the report line, so the clause lands there as well.
 
+## Outcome
+
+Built by PR [recover-crashed-seats: every line that leaves a seat running says how to reach it](https://github.com/nedschorus/nedschorus/pull/969), merged on 2026-10-03 as commit 2e6ddc48. Every report line in `scripts/recover-crashed-seats.py` that leaves a seat running now ends with a reach clause. That includes the resume, fresh, ignite and plain-relaunch lines, the line for a seat restarted after its supervisor recorded the exit, and the line for a seat that asked to be consulted. On the Mac the clause names `launch-claude-mac <seat>`. For a ned-box seat it names both forms, the Mac form first: `launch-claude-ubuntu <seat>` from the Mac, or `tmux -L <seat> attach -t <seat>` on ned-box. The user chose both forms ("969 - both", 2026-10-03). `scripts/recover-crashed-seats-test.py` covers the clause on each path.
+
 ## Relations
 
 - GHI [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedschorus/nedschorus/issues/242): this program's owning issue. Its change 6, `--open-iterm-window-per-seat`, makes a recovered Mac seat visible when asked for, but does not change the report of a default recovery.

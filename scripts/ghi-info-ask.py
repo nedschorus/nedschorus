@@ -42,6 +42,14 @@ whatever the other response is makes no sense"): `out-of-scope` became
 `not-about-issues`, and `escalate:` became `ask-user-about-ruling:`. The old
 words are still read for a while; see RETIRED_BOUNDARY_REPLY_WORDS.
 
+A draft that conflicts with a ruling the user made gets the ruling question,
+not a verdict line. too-similar is a soft block an agent may pass on its own
+judgment, and a ruling is the user's to settle; the GHI write tool writes the
+issue and records the question on it for the user. Every ruling question opens
+with the number of the issue holding the ruling, so that record can cite the
+ruling. The prompt reaches ghi-info at a cold start, so a session started
+earlier keeps its old prompt until it is next reincarnated.
+
 Seat and machine: ghi-info lives ONLY on the Ubuntu box, at ~/agents/ghi-info
 there — its mirror, session id, and reincarnation counters all live in that
 one checkout, per the design's "wrapper state ... lives there." This script is the SAME file on
@@ -100,9 +108,9 @@ the question at 20:16:59Z and then answered the checkout-freshness Stop hook
 13 seconds later; the caller got "No action needed on my part ..." with exit
 0, so its fallback ladder never fired. So the run no longer loads this
 project's settings (--setting-sources user, the flag PR #417 gave the
-cold-read cells for the same leak), and a reply that names no issue and is
-neither of the two boundary replies fails the ask instead of being passed
-back.
+cold-read cells for the same leak), and a reply that names no issue, has no
+`verdict: unrelated` line, and is neither of the two boundary replies fails
+the ask instead of being passed back.
 
 Post-check (design step 4): every pointer ghi-info returns is checked
 against the just-refreshed mirror by this script, never taken on the
@@ -137,15 +145,23 @@ _mirror_spec = importlib.util.spec_from_file_location(
 mirror_refresh = importlib.util.module_from_spec(_mirror_spec)
 _mirror_spec.loader.exec_module(mirror_refresh)
 
-_watcher_spec = importlib.util.spec_from_file_location(
-    "watch_agent_dialogs", SCRIPT_DIRECTORY / "watch-agent-dialogs.py")
-watcher = importlib.util.module_from_spec(_watcher_spec)
-_watcher_spec.loader.exec_module(watcher)
+_project_directory_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_project_directory_for_agent_seat_common",
+    SCRIPT_DIRECTORY / "claude-code-session-transcript-project-directory-for-agent-seat-common.py")
+project_directory_module = importlib.util.module_from_spec(_project_directory_spec)
+_project_directory_spec.loader.exec_module(project_directory_module)
 
 _threshold_hook_spec = importlib.util.spec_from_file_location(
     "handoff_context_threshold_hook", SCRIPT_DIRECTORY / "handoff-context-threshold-hook.py")
 threshold_hook = importlib.util.module_from_spec(_threshold_hook_spec)
 _threshold_hook_spec.loader.exec_module(threshold_hook)
+
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    SCRIPT_DIRECTORY.parent / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
 
 AGENT_BOX = os.environ.get("NEDSCHORUS_AGENT_BOX", "ned")
 DEFAULT_AGENTS_ROOT = Path(os.environ.get("NEDSCHORUS_AGENTS_ROOT", "~/agents")).expanduser()
@@ -205,6 +221,10 @@ TRANSCRIPT_SIZE_THRESHOLD_BYTES = 5_000_000
 CONTEXT_USED_PERCENTAGE_THRESHOLD = 40.0
 
 POINTER_PATTERN = re.compile(r"#(\d+)")
+# The one verdict that names no issue. A line of its own, as the draft-body
+# request asks, so prose that only mentions the verdict does not pass.
+VERDICT_UNRELATED_LINE_PATTERN = re.compile(
+    r"^[ \t]*verdict:[ \t]*unrelated[ \t]*$", re.IGNORECASE | re.MULTILINE)
 
 COLD_START_PROMPT_TEMPLATE = """You are ghi-info: this project's knowledge agent over its GitHub-issue corpus. Other agents send you one request at a time; you answer it from the corpus you hold in context and stop. You are the judgment layer — every mechanical fact (fetching, counting, verifying) is script work done for you before a request reaches you.
 
@@ -218,15 +238,15 @@ GitHub is the source of truth; the mirror is your working copy of it. Answer fro
 Requests arrive in four forms:
 
 1. **You are asked for a reading list**: what should an agent read before it files or edits an issue on some topic. Reply with a bare list — "read #13, #24, #31" — plus, only when needed, note lines in plain sentences. Closed issues belong in a reply only when the request says closed history is wanted; tag each truthfully: "#31 (closed 2026-08-08)".
-2. **You are shown a draft issue** — title and body — and asked whether the corpus already covers it. When the draft is an edit of an existing issue, the request names that issue: leave it out of the comparison. Reply with exactly one line, nothing else: `verdict: too-similar #n` (an existing issue already covers this ground; #n is that issue), or `verdict: related #n,#m` (no collision, but the author should know these), or `verdict: unrelated`. In these shapes #n,#m stands for one or more issue numbers. A reply in any other shape is thrown away.
+2. **You are shown a draft issue** — title and body — and asked whether the corpus already covers it. When the draft is an edit of an existing issue, the request names that issue: leave it out of the comparison. Reply with exactly one line, nothing else: `verdict: too-similar #n` (an existing issue already covers this ground; #n is that issue), or `verdict: related #n,#m` (no collision, but the author should know these), or `verdict: unrelated`. In these shapes #n,#m stands for one or more issue numbers. When the draft conflicts with a ruling the user made, reply instead with the ruling question under Boundaries. A reply in any other shape is thrown away.
 3. **You are told a fact that corrects your last reply** — an issue you cited has closed — and asked to redo that one judgment. The fact is already established by script from the refreshed mirror: do not question or verify it; re-read the named entry in issues-closed.md, including any Superseded-by: link, and reply with a corrected reading list.
 4. **You are asked to repair a link** — a cross-reference the maintenance sweep found broken. The request states the defect; repair exactly that link and nothing else. Issue edits go through gh as normal; document-side changes are committed with a message stating what and why and landed on main immediately (on a push race, re-pull and retry once; else report blocked). Reply done: <the repair>, done: no change needed — <why>, or blocked: <what stopped you>.
 
 Boundaries:
 
 - Asked a question about anything beyond the issue corpus — the wiki, the code, anything else — reply exactly: not-about-issues.
-- Whether an old ruling still binds is never yours to judge. Reply: ask-user-about-ruling: <one sentence naming the ruling and the doubt>.
-- These boundary replies apply to questions. A draft-body request always gets a verdict line — conflict with a ruled issue is exactly what too-similar covers. A question beyond the corpus gets not-about-issues even when it touches a ruling."""
+- Whether an old ruling still binds is never yours to judge. Reply: ask-user-about-ruling: #<issue> <one sentence naming the ruling and the doubt>, where #<issue> is the issue that holds the ruling. Every ruling question starts with that issue number.
+- A draft-body request gets a verdict line, except that a draft that conflicts with a ruling the user made gets the ruling question: whether the ruling still binds, or still binds this draft, is the user's to settle. A question beyond the corpus gets not-about-issues even when it touches a ruling."""
 
 
 def compose_resume_ask_prompt(question: str, include_closed: bool, changed_numbers,
@@ -331,19 +351,22 @@ def reply_answers_the_question(text: str) -> bool:
     """Whether a reply is an answer at all, rather than something else the
     session said.
 
-    A reading list names issues, and the two passthrough replies are fixed
-    strings; anything with neither is not an answer this caller can use. The
+    A reading list names issues, the two passthrough replies are fixed
+    strings, and a draft-body request's "nothing covers this" is a
+    `verdict: unrelated` line; anything with none of these is not an answer
+    this caller can use. The
     case that earned this check (2026-09-17): the run's last message was
     "No action needed on my part -- this session hasn't touched any scripts
     or tests", a reply to a Stop hook, and the ask returned it with exit 0,
     so the caller's fallback ladder never fired.
 
-    A true answer that names no issue -- "nothing covers this" in those words
-    -- is refused by this check too, and that costs one trip down the
+    A true answer to a question that names no issue -- "nothing covers this"
+    in those words -- is refused by this check too, and that costs one trip down the
     fallback ladder, which never blocks a write. Silently passing a
     non-answer costs a write made against no knowledge at all.
     """
-    return bool(POINTER_PATTERN.search(text)) or is_passthrough_reply(text)
+    return (bool(POINTER_PATTERN.search(text)) or is_passthrough_reply(text)
+            or bool(VERDICT_UNRELATED_LINE_PATTERN.search(text)))
 
 
 def find_unexpected_closed_pointers(reply_text: str, cache: dict, include_closed: bool):
@@ -452,7 +475,7 @@ def state_lock(lock_path: Path):
 def transcript_path_for(seat_dir: Path, session_id: str, projects_root: Path):
     if not session_id:
         return None
-    project_directory = watcher.project_directory_for_seat(seat_dir, projects_root)
+    project_directory = project_directory_module.project_directory_for_seat(seat_dir, projects_root)
     return project_directory / f"{session_id}.jsonl"
 
 
@@ -658,13 +681,13 @@ def fast_forward_seat_checkout(seat_dir: Path) -> str:
     if inside.returncode != 0 or inside.stdout.strip() != "true":
         return f"ghi-info-ask: {seat_dir} is not a git checkout; leaving it as it stands"
 
-    status = git(["status", "--porcelain"], timeout=30)
+    status = git(["status", "--porcelain", "-z"], timeout=30)
     if status.returncode != 0:
         # An unreadable tree reads as unsafe, never as clean — the same
         # silent-safety rule the freshness hook applies to the same question.
         return "ghi-info-ask: could not read the seat checkout's status; not refreshing it"
-    tracked_changes = [line for line in status.stdout.splitlines()
-                       if not line.startswith("??")]
+    tracked_changes = [entry for entry in git_output.status_entries(status.stdout)
+                       if entry.code != "??"]
     if tracked_changes:
         # ghi-info commits its own document-side link repairs and lands them
         # on main; work in progress here is real work, not debris.
@@ -801,9 +824,11 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
         save_state(state_path, state)
 
     if not reply_answers_the_question(reply_text):
-        return None, ("ghi-info's reply names no issue and is not a "
-                      "not-about-issues or ask-user-about-ruling: reply, so "
-                      f"it is not an answer to this question: {reply_text[:200]!r}")
+        return None, ("ghi-info's reply names no issue, has no `verdict: "
+                      "unrelated` line, and is not a not-about-issues or "
+                      "ask-user-about-ruling: reply, so "
+                      "it is not an answer to this question. The reply began: "
+                      f"{reply_text[:200]!r}")
 
     return reply_text, None
 

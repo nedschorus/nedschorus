@@ -19,6 +19,8 @@ import io
 import json
 import os
 import plistlib
+import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -73,11 +75,19 @@ MAC_DAILY_PLIST = {
     "StandardOutPath": "/Users/el/.claude/daily-full-test-run-of-main.log",
     "StandardErrorPath": "/Users/el/.claude/daily-full-test-run-of-main.log",
 }
+NED_BOX_SESSION_DIALOGS_LINE = (
+    "*/10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "log-store-session-dialogs-refresh-nbd.py --failures-only >> "
+    "/home/nedlern/.claude/log-store-session-dialogs-refresh.log 2>&1")
 # The daily worktree cleanup, added to the table after the two jobs above; no
 # machine had it installed by hand.
 NED_BOX_CLEAN_LINE = (
     "30 6 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
     "clean-worktrees.py --remove >> /home/nedlern/.claude/daily-clean-worktrees.log 2>&1")
+NED_BOX_CRASH_RESTART_WATCHER_LINE = (
+    "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
+    "handoff-agent-seat-died-without-session-handoff-restart-watcher.py >> "
+    "/home/nedlern/.claude/handoff-agent-seat-died-without-session-handoff-restart-watcher.log 2>&1")
 MAC_CLEAN_PLIST = {
     "Label": "com.nedschorus.daily-clean-worktrees",
     "ProgramArguments": ["/opt/homebrew/bin/python3",
@@ -88,6 +98,26 @@ MAC_CLEAN_PLIST = {
     "StartCalendarInterval": {"Hour": 6, "Minute": 30},
     "StandardOutPath": "/Users/el/.claude/daily-clean-worktrees.log",
     "StandardErrorPath": "/Users/el/.claude/daily-clean-worktrees.log",
+}
+# The weekly owner check of the work-snapshot hook in a real claude session, added after the daily jobs.
+NED_BOX_WEEKLY_LIVE_CHECK_LINE = (
+    "30 4 * * 0 /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
+    "uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py >> "
+    "/home/nedlern/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log "
+    "2>&1")
+MAC_WEEKLY_LIVE_CHECK_PLIST = {
+    "Label": "com.nedschorus.weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check",
+    "ProgramArguments": ["/opt/homebrew/bin/python3",
+                         "/Users/el/Projects/nedschorus/nc-systems/handoff/"
+                         "uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py"],
+    "EnvironmentVariables": {
+        "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
+                "/usr/sbin:/sbin"},
+    "StartCalendarInterval": {"Weekday": 0, "Hour": 4, "Minute": 30},
+    "StandardOutPath":
+        "/Users/el/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log",
+    "StandardErrorPath":
+        "/Users/el/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log",
 }
 DOMAIN = f"gui/{os.getuid()}"
 
@@ -102,10 +132,12 @@ class MachineStub:
         self.loaded = set(loaded)
         self.commands, self.crontab_writes = [], []
         self.crontab_list_failure = None      # (exit code, stderr bytes)
-        self.exit_codes = {}                  # "crontab-write" | "lint" | "bootstrap" | "kickstart"
+        self.exit_codes = {}                  # "crontab-write" | "lint" | "bootstrap" | "kickstart" | "bootout" | "print"
         self.bootstrap_loads_the_job = True
+        # The macOS failure: `crontab` exits 0 and leaves an empty crontab.
+        self.crontab_write_installs_empty_crontab = False
 
-    def __call__(self, command, stdout=None, stderr=None):
+    def __call__(self, command, stdout=None, stderr=None, input=None):
         command = list(command)
         self.commands.append(command)
         code, out, err = 0, b"", b""
@@ -116,19 +148,21 @@ class MachineStub:
                 code, err = 1, b"crontab: no crontab for someone\n"
             else:
                 out = self.crontab
-        elif command[0] == "crontab":
+        elif command == ["crontab", "-"]:
             code = self.exit_codes.get("crontab-write", 0)
-            written = Path(command[1]).read_bytes()
-            self.crontab_writes.append(written)
+            self.crontab_writes.append(input)
             if code == 0:
-                self.crontab = written
+                self.crontab = b"" if self.crontab_write_installs_empty_crontab else input
         elif command[:2] == ["plutil", "-lint"]:
             code = self.exit_codes.get("lint", 0)
         elif command[:2] == ["launchctl", "print"]:
-            code = 0 if command[2] in self.loaded else 113
+            code = self.exit_codes.get("print", 0 if command[2] in self.loaded else 113)
         elif command[:2] == ["launchctl", "bootout"]:
-            code = 0 if command[2] in self.loaded else 3
-            self.loaded.discard(command[2])
+            if "bootout" in self.exit_codes and command[2] in self.loaded:
+                code, err = self.exit_codes["bootout"], b"Boot-out failed: 5: Input/output error\n"
+            else:
+                code = 0 if command[2] in self.loaded else 3
+                self.loaded.discard(command[2])
         elif command[:2] == ["launchctl", "bootstrap"]:
             code = self.exit_codes.get("bootstrap", 0)
             if code == 0 and self.bootstrap_loads_the_job:
@@ -189,36 +223,63 @@ check("the Mac's daily worktree cleanup is a launchd job at 06:30, so a run miss
       "sleeps starts at the next wake",
       clean["on"]["mac"]["scheduler"] == "launchd" and mac_clean_plist == MAC_CLEAN_PLIST
       and list(mac_clean_plist) == list(MAC_CLEAN_PLIST), mac_clean_plist)
-check("the table's jobs are the two typed by hand before this program and the daily worktree "
-      "cleanup, and no other",
+check("the table's jobs are the two typed by hand before this program, the daily worktree "
+      "cleanup, ned-box's crash restart watcher, the weekly owner check of the work-snapshot "
+      "hook and the session dialogs refresh, and no other",
       sorted(real_jobs) == ["daily-clean-worktrees", "daily-full-test-run-of-main",
-                            "transcript-mirror-to-log-store"],
+                            "handoff-agent-seat-died-without-session-handoff-restart-watcher",
+                            "log-store-session-dialogs-refresh", "transcript-mirror-to-log-store",
+                            "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"],
       sorted(real_jobs))
+watcher = real_jobs["handoff-agent-seat-died-without-session-handoff-restart-watcher"]
+check("the crash restart watcher runs on ned-box only, every minute",
+      watcher["on"] == {"ned-box": {"scheduler": "cron", "schedule": "* * * * *"}}, watcher["on"])
+session_dialogs = real_jobs["log-store-session-dialogs-refresh"]
+check("the session dialogs refresh runs on ned-box alone, every 10 minutes, and its program "
+      "documents the table's line",
+      list(session_dialogs["on"]) == ["ned-box"]
+      and installer.cron_line(ned_box, session_dialogs, session_dialogs["on"]["ned-box"])
+      == NED_BOX_SESSION_DIALOGS_LINE
+      and f"  ned-box: {NED_BOX_SESSION_DIALOGS_LINE}\n"
+      in (REPOSITORY_ROOT / session_dialogs["program"]).read_text(encoding="utf-8"),
+      installer.cron_line(ned_box, session_dialogs, session_dialogs["on"]["ned-box"]))
 check("every job's program is a file of this repository",
       all((REPOSITORY_ROOT / job["program"]).is_file() for job in real_table["jobs"]),
       [job["program"] for job in real_table["jobs"]])
 mirror_documentation = (REPOSITORY_ROOT / mirror["program"]).read_text(encoding="utf-8")
 daily_documentation = (REPOSITORY_ROOT / daily["program"]).read_text(encoding="utf-8")
 clean_documentation = (REPOSITORY_ROOT / clean["program"]).read_text(encoding="utf-8")
+watcher_documentation = (REPOSITORY_ROOT / watcher["program"]).read_text(encoding="utf-8")
+weekly_live_check_documentation = (
+    REPOSITORY_ROOT / real_jobs["weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"]
+    ["program"]).read_text(encoding="utf-8")
 check("the lines each program documents are the table's lines, and each names this installer",
       f"  Mac:     {MAC_MIRROR_LINE}\n" in mirror_documentation
       and f"  ned-box: {NED_BOX_MIRROR_LINE}\n" in mirror_documentation
       and f"    {NED_BOX_DAILY_LINE}\n" in daily_documentation
       and f"    {NED_BOX_CLEAN_LINE}\n" in clean_documentation
+      and f"    {NED_BOX_CRASH_RESTART_WATCHER_LINE}\n" in watcher_documentation
+      and f"    {NED_BOX_WEEKLY_LIVE_CHECK_LINE}\n" in weekly_live_check_documentation
       and all("nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py" in text
-              for text in (mirror_documentation, daily_documentation, clean_documentation)))
+              for text in (mirror_documentation, daily_documentation, clean_documentation,
+                           watcher_documentation, weekly_live_check_documentation)))
 
 printed, errors = io.StringIO(), io.StringIO()
 stub = MachineStub()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="linux", home=Path("/home/nedlern"), run=stub)
-check("--print as ned-box prints ned-box's three cron lines from the real table and runs nothing",
+check("--print as ned-box prints ned-box's six cron lines from the real table and runs nothing",
       exit_code == 0 and stub.commands == []
       and printed.getvalue().splitlines() == [
           "machine: ned-box (linux, /home/nedlern)",
           "transcript-mirror-to-log-store — cron line:", NED_BOX_MIRROR_LINE,
+          "log-store-session-dialogs-refresh — cron line:", NED_BOX_SESSION_DIALOGS_LINE,
           "daily-full-test-run-of-main — cron line:", NED_BOX_DAILY_LINE,
-          "daily-clean-worktrees — cron line:", NED_BOX_CLEAN_LINE],
+          "daily-clean-worktrees — cron line:", NED_BOX_CLEAN_LINE,
+          "handoff-agent-seat-died-without-session-handoff-restart-watcher — cron line:",
+          NED_BOX_CRASH_RESTART_WATCHER_LINE,
+          "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — cron line:",
+          NED_BOX_WEEKLY_LIVE_CHECK_LINE],
       (exit_code, printed.getvalue(), errors.getvalue()))
 printed, errors = io.StringIO(), io.StringIO()
 with redirect_stdout(printed), redirect_stderr(errors):
@@ -226,9 +287,13 @@ with redirect_stdout(printed), redirect_stderr(errors):
 mac_printed = printed.getvalue()
 clean_heading = ("daily-clean-worktrees — launchd job, /Users/el/Library/LaunchAgents/"
                  "com.nedschorus.daily-clean-worktrees.plist:\n")
-daily_part, _, clean_part = mac_printed.partition(clean_heading)
-check("--print as the Mac prints the mirror's cron line and the two daily jobs' plists, and runs "
-      "nothing",
+weekly_heading = ("weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — launchd job, "
+                  "/Users/el/Library/LaunchAgents/com.nedschorus.weekly-uncommitted-work-snapshot-"
+                  "hook-real-claude-session-owner-check.plist:\n")
+daily_part, _, clean_and_weekly_part = mac_printed.partition(clean_heading)
+clean_part, _, weekly_part = clean_and_weekly_part.partition(weekly_heading)
+check("--print as the Mac prints the mirror's cron line, the two daily jobs' plists and the weekly "
+      "owner check's plist, and runs nothing",
       exit_code == 0 and stub.commands == [] and clean_part.startswith("<?xml")
       and daily_part.startswith(
           "machine: mac (darwin, /Users/el)\ntranscript-mirror-to-log-store — cron line:\n"
@@ -236,7 +301,9 @@ check("--print as the Mac prints the mirror's cron line and the two daily jobs' 
           "LaunchAgents/com.nedschorus.daily-full-test-run-of-main.plist:\n<?xml")
       and plistlib.loads(daily_part[daily_part.index("<?xml"):].encode("utf-8"))
       == MAC_DAILY_PLIST
-      and plistlib.loads(clean_part.encode("utf-8")) == MAC_CLEAN_PLIST,
+      and plistlib.loads(clean_part.encode("utf-8")) == MAC_CLEAN_PLIST
+      and weekly_part.startswith("<?xml")
+      and plistlib.loads(weekly_part.encode("utf-8")) == MAC_WEEKLY_LIVE_CHECK_PLIST,
       (exit_code, mac_printed, errors.getvalue()))
 
 
@@ -253,11 +320,16 @@ check("--help ends with the docstring's exit-codes paragraph and prints nothing 
       help_exit == 0
       and " ".join(help_text.split()).endswith(
           "Exit codes: 0 done, or for --check every job matches; 1 a step failed after this "
-          "program began changing the machine, or for --check a job differs; 2 not run — a bad "
+          "program began changing the machine, or for --check a job differs or is not in the "
+          "table; 2 not run — a bad "
           "invocation, a table this program cannot use, a machine the table does not name, a "
-          "job's program missing, or a crontab that could not be read.")
-      and "WHY THIS EXISTS" not in help_text and "THE TABLE" not in help_text
+          "job's program missing, a crontab that could not be read, or a shell parser that "
+          "could not be installed.")
+      and "WHY THIS EXISTS" not in help_text and "THE TABLE is " not in help_text
       and "user-ruled" not in help_text, help_text)
+check("--check's help names both reasons for exit 1",
+      "exit 1 on a difference or a job not in the table" in " ".join(help_text.split()),
+      help_text)
 
 
 with tempfile.TemporaryDirectory() as temporary:
@@ -325,7 +397,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("--install for a user with no crontab writes the table's lines in one crontab call",
           exit_code == 0 and stub.crontab_writes == [f"{BOX_MIRROR}\n{BOX_DAILY}\n".encode()]
           and printed.count("installed: ") == 2
-          and [command[0] for command in stub.commands] == ["crontab", "crontab"],
+          and stub.commands == [["crontab", "-l"], ["crontab", "-"], ["crontab", "-l"]],
           (exit_code, printed, errors, stub.crontab_writes))
     exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
     check("and a second --install changes nothing",
@@ -410,9 +482,186 @@ with tempfile.TemporaryDirectory() as temporary:
     exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
     check("a `crontab` write that fails is FAILED with its exit code, exit 1, and no job is "
           "reported installed",
-          exit_code == 1 and "FAILED: `crontab` exited 1; no cron line was changed." in errors
+          exit_code == 1 and "FAILED: `crontab -` exited 1; no cron line was changed." in errors
           and "installed:" not in printed and stub.crontab is None,
           (exit_code, printed, errors))
+    stub = MachineStub(crontab=f"{NED_BOX_FOREIGN_COMMENT}\n".encode())
+    stub.crontab_write_installs_empty_crontab = True
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    check("a `crontab -` write that exits 0 but reads back empty is FAILED, exit 1, naming the "
+          "line counts, and no job is reported installed",
+          exit_code == 1
+          and "FAILED: `crontab -` exited 0, but `crontab -l` reads back 0 line(s) where 3 were "
+              "written" in errors
+          and "Put the backup back, check it with `crontab -l`, and run this again." in errors
+          and "installed:" not in printed and "replaced:" not in printed,
+          (exit_code, printed, errors))
+    stub = MachineStub(crontab=as_installed_today)
+    stub.crontab_write_installs_empty_crontab = True
+    exit_code, printed, errors = run_main(["--remove", "--job", "daily-full-test-run-of-main"],
+                                          NED_BOX, stub)
+    check("--remove: a write that exits 0 but reads back different is FAILED, exit 1, and no "
+          "line is reported removed",
+          exit_code == 1 and "FAILED: `crontab -` exited 0, but `crontab -l` reads back" in errors
+          and "removed:" not in printed, (exit_code, printed, errors))
+    stub = MachineStub(crontab=None)
+    real_stub_call = MachineStub.__call__
+    def unreadable_after_write(command, stdout=None, stderr=None, input=None):
+        if command == ["crontab", "-l"] and stub.crontab_writes:
+            stub.crontab_list_failure = (1, b"crontab: tmp/tmp.123: Permission denied\n")
+        return real_stub_call(stub, command, stdout=stdout, stderr=stderr, input=input)
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX,
+                                          unreadable_after_write)
+    check("a write that exits 0 but cannot be read back is FAILED, exit 1, quoting why, and no "
+          "job is reported installed",
+          exit_code == 1
+          and "FAILED: `crontab -` exited 0, but the crontab could not be read back to confirm "
+              "the write: " in errors and "Permission denied" in errors
+          and "installed:" not in printed, (exit_code, printed, errors))
+
+    # --- cron: the backup taken before each write -------------------------
+    box_backups = NED_BOX[1] / ".local" / "state" / "claude" / "scheduled-jobs-crontab-backups"
+
+    def backups_in(directory):
+        return sorted(directory.glob("crontab-before-write-*.txt")) if directory.is_dir() else []
+
+    def fresh_backup_directory():
+        for backup in backups_in(box_backups):
+            backup.unlink()
+
+    fresh_backup_directory()
+    original = f"{NED_BOX_FOREIGN_COMMENT}\n".encode()
+    stub = MachineStub(crontab=original)
+    stub.crontab_write_installs_empty_crontab = True
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    saved = backups_in(box_backups)
+    check("before a write the crontab as read is saved, byte for byte, to one backup file "
+          "under the home directory's .local/state/claude/scheduled-jobs-crontab-backups",
+          len(saved) == 1 and saved[0].read_bytes() == original, (saved, printed, errors))
+    check("a write that reads back empty names the backup and the command that restores it",
+          exit_code == 1 and saved
+          and f"saved at {saved[0]}; to put it back, run `crontab - < {saved[0]}`." in errors,
+          (exit_code, errors))
+
+    fresh_backup_directory()
+    stub = MachineStub(crontab=original)
+    stub.exit_codes["crontab-write"] = 1
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    saved = backups_in(box_backups)
+    check("a write that exits nonzero names the backup and the command that restores it",
+          exit_code == 1 and len(saved) == 1
+          and f"to put it back, run `crontab - < {saved[0]}`." in errors, (exit_code, errors))
+
+    fresh_backup_directory()
+    stub = MachineStub(crontab=original)
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    saved = backups_in(box_backups)
+    check("a write that holds prints the backup's path and its restore command on one line",
+          exit_code == 0 and len(saved) == 1 and saved[0].read_bytes() == original
+          and f"crontab backup: {saved[0]} holds the crontab as it was before this write; "
+              f"`crontab - < {saved[0]}` puts it back.\n" in printed, (exit_code, printed))
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    check("a crontab that needs no change is not written and takes no backup",
+          exit_code == 0 and len(backups_in(box_backups)) == 1
+          and "crontab backup:" not in printed, (exit_code, printed, backups_in(box_backups)))
+
+    fresh_backup_directory()
+    stub = MachineStub(crontab=original)
+    def unreadable_after_backed_up_write(command, stdout=None, stderr=None, input=None):
+        if command == ["crontab", "-l"] and stub.crontab_writes:
+            stub.crontab_list_failure = (1, b"crontab: tmp/tmp.456: Permission denied\n")
+        return real_stub_call(stub, command, stdout=stdout, stderr=stderr, input=input)
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX,
+                                          unreadable_after_backed_up_write)
+    saved = backups_in(box_backups)
+    check("a write that cannot be read back names the backup and the command that restores it",
+          exit_code == 1 and len(saved) == 1
+          and f"to put it back, run `crontab - < {saved[0]}`." in errors, (exit_code, errors))
+
+    fresh_backup_directory()
+    stub = MachineStub(crontab=original)
+    run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    run_main(["--remove", "--job", "daily-full-test-run-of-main"], NED_BOX, stub)
+    saved = backups_in(box_backups)
+    check("two writes within one second each keep their own backup",
+          len(saved) == 2 and saved[0].read_bytes() == original
+          and saved[1].read_bytes() != original, [backup.name for backup in saved])
+
+    fresh_backup_directory()
+    stub = MachineStub(crontab=as_installed_today)
+    exit_code, printed, errors = run_main(["--remove", "--job", "daily-full-test-run-of-main"],
+                                          NED_BOX, stub)
+    saved = backups_in(box_backups)
+    check("--remove backs up the crontab before its write",
+          exit_code == 0 and len(saved) == 1 and saved[0].read_bytes() == as_installed_today
+          and "crontab backup:" in printed, (exit_code, printed, saved))
+
+    fresh_backup_directory()
+    stub = MachineStub(crontab=f"{BOX_MIRROR}\n{BOX_DAILY}\n{NED_BOX_FOREIGN_COMMENT}\n".encode())
+    stub.exit_codes["crontab-write"] = 1
+    stray_line = BOX_DAILY.replace("daily-full-test-run-of-main.py", "retired-backup-case.py")
+    stub.crontab = f"{stray_line}\n".encode()
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+    saved = backups_in(box_backups)
+    check("--remove-not-in-table backs up the crontab before its write, and a failed write "
+          "names that backup",
+          exit_code == 1 and len(saved) == 1 and saved[0].read_bytes() == stub.crontab
+          and f"`crontab - < {saved[0]}`" in errors, (exit_code, errors, saved))
+
+    fresh_backup_directory()
+    box_backups.mkdir(parents=True, exist_ok=True)
+    for index in range(12):
+        (box_backups / f"crontab-before-write-20200101T0000{index:02d}.000000Z.txt").write_bytes(b"old\n")
+    stub = MachineStub(crontab=original)
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    saved = backups_in(box_backups)
+    check("only the newest ten backups are kept, the new one among them",
+          exit_code == 0 and len(saved) == 10
+          and saved[-1].read_bytes() == original
+          and saved[0].name == "crontab-before-write-20200101T000003.000000Z.txt",
+          [backup.name for backup in saved])
+    fresh_backup_directory()
+
+    # A directory under a backup's name makes unlink() raise on Linux and macOS alike.
+    for index in range(10):
+        (box_backups / f"crontab-before-write-20200101T0000{index:02d}.000000Z.txt").write_bytes(b"old\n")
+    undeletable = box_backups / "crontab-before-write-20190101T000000.000000Z.txt"
+    undeletable.mkdir()
+    stub = MachineStub(crontab=original)
+    exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    saved = backups_in(box_backups)
+    check("an old backup that cannot be deleted is warned about by name, and the write goes ahead",
+          exit_code == 0 and len(stub.crontab_writes) == 1
+          and saved[-1].read_bytes() == original
+          and f"WARNING: the old crontab backup {undeletable} could not be deleted: " in errors
+          and "Nothing needs doing now. Each later crontab write tries the delete again" in errors
+          and "FAILED" not in errors and "installed:" in printed
+          and f"crontab backup: {saved[-1]} holds the crontab" in printed,
+          (exit_code, printed, errors))
+    check("the other old backups past the newest ten are still deleted when one cannot be",
+          len([backup for backup in saved if backup != undeletable]) == 10
+          and "crontab-before-write-20200101T000000.000000Z.txt"
+              not in [backup.name for backup in saved],
+          [backup.name for backup in saved])
+    undeletable.rmdir()
+    fresh_backup_directory()
+
+    if box_backups.is_dir():
+        shutil.rmtree(box_backups)
+    box_backups.parent.mkdir(parents=True, exist_ok=True)
+    box_backups.write_text("a file where the backup directory goes\n")
+    stub = MachineStub(crontab=original)
+    try:
+        exit_code, printed, errors = run_main(["--install"] + TWO_JOBS, NED_BOX, stub)
+    except Exception as escaped:
+        exit_code, printed, errors = None, "", f"escaped: {escaped!r}"
+    check("a backup that cannot be saved is FAILED, exit 1, and the crontab is not written",
+          exit_code == 1 and stub.crontab_writes == [] and stub.crontab == original
+          and "FAILED: the crontab could not be backed up before the write: " in errors
+          and "the crontab was not written" in errors
+          and f"Make {box_backups} writable, and run this again." in errors
+          and "installed:" not in printed, (exit_code, printed, errors))
+    box_backups.unlink()
 
     # --- cron: check ------------------------------------------------------
     stub = MachineStub(crontab=f"{NED_BOX_FOREIGN_COMMENT}\n{differing_daily}\n".encode())
@@ -636,9 +885,10 @@ with tempfile.TemporaryDirectory() as temporary:
     plist_path.write_bytes(plistlib.dumps(dict(expected_plist, StartCalendarInterval={
         "Hour": 4, "Minute": 0}), sort_keys=False))
     exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
-    check("--check names a plist that does not say what the table says",
-          exit_code == 1 and f"{plist_path} does not say what the table says" in printed,
-          (exit_code, printed))
+    check("--check names a plist that does not say what the table says, and not as a missing "
+          "marker line",
+          exit_code == 1 and f"{plist_path} does not say what the table says" in printed
+          and "lacks the line" not in printed, (exit_code, printed))
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
     check("and --install writes the table's plist over it and loads it again",
           exit_code == 0 and plistlib.loads(plist_path.read_bytes()) == expected_plist
@@ -712,7 +962,7 @@ with tempfile.TemporaryDirectory() as temporary:
     exit_code, printed, errors = run_main(["--install"], MAC, stub)
     check("a failed crontab write does not stop the launchd job from being installed, and "
           "the run still exits 1",
-          exit_code == 1 and "FAILED: `crontab` exited 1; no cron line was changed." in errors
+          exit_code == 1 and "FAILED: `crontab -` exited 1; no cron line was changed." in errors
           and "installed: daily-full-test-run-of-main" in printed, (exit_code, printed, errors))
 
     # --- launchd: remove ----------------------------------------------------
@@ -727,6 +977,503 @@ with tempfile.TemporaryDirectory() as temporary:
           exit_code == 0
           and f"absent: daily-full-test-run-of-main — there was no {plist_path}.\n" in printed,
           (exit_code, printed))
+    plist_path.write_bytes(b"a plist")
+    stub = MachineStub(loaded=[TARGET])
+    stub.exit_codes["bootout"] = 5
+    exit_code, printed, errors = run_main(["--remove"] + DAILY, MAC, stub)
+    check("a bootout that fails with the job still loaded is FAILED, exit 1, and the plist is "
+          "kept",
+          exit_code == 1 and plist_path.is_file() and "removed:" not in printed
+          and errors.endswith(
+              "Boot-out failed: 5: Input/output error\n"
+              f"FAILED: {LABEL} — launchctl bootout exited 5, so the job may still be loaded; "
+              f"{plist_path} was kept.\n"
+              "Read what launchctl printed above, and run this again after that cause is "
+              "removed.\n"), (exit_code, printed, errors))
+    stub = MachineStub()
+    stub.exit_codes["bootout"], stub.exit_codes["print"] = 5, 1
+    stub.loaded.add(TARGET)
+    exit_code, printed, errors = run_main(["--remove"] + DAILY, MAC, stub)
+    check("a bootout that fails while launchctl print fails with other than service-not-found "
+          "is FAILED, exit 1, and the plist is kept",
+          exit_code == 1 and plist_path.is_file() and "removed:" not in printed
+          and f"FAILED: {LABEL} — launchctl bootout exited 5" in errors, (exit_code, errors))
+    plist_path.unlink()
+
+    # --- jobs the table does not name ----------------------------------------
+    box_clone = table["machines"]["ned-box"]["clone"]
+    retired_line = f"0 5 * * * /usr/bin/python3 {box_clone}/scripts/a-retired-job.py >> /tmp/x 2>&1"
+    commented_retired = f"# {retired_line}"
+    stub = MachineStub(crontab=(f"{NED_BOX_FOREIGN_COMMENT}\n{commented_retired}\n{BOX_MIRROR}\n"
+                                f"{BOX_DAILY}\n{BOX_ALONE}\n{retired_line}\n{foreign_line}\n").encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("--check reports a cron line that runs a program from the clone and is no job's "
+          "line of the table, exit 1, and writes nothing",
+          exit_code == 1 and stub.crontab_writes == [] and printed.count("matches: ") == 3
+          and f"NOT IN THE TABLE: the crontab line {retired_line} — no job of the table names "
+              f"it for this machine.\n" in printed
+          and printed.count("NOT IN THE TABLE: ") == 1 and "DIFFERS" not in printed,
+          (exit_code, printed, errors))
+    check("and not a commented-out line, a line running a program outside the clone, or "
+          "another user's comment",
+          commented_retired not in printed and foreign_line not in printed
+          and "nedsmessenger" not in printed, printed)
+    check("and says what to do with a job NOT IN THE TABLE, one instruction a line",
+          printed.splitlines()[-4] == (
+              f"When every job NOT IN THE TABLE is retired, run `{SCRIPT_PATH.resolve()} "
+              "--remove-not-in-table` on this machine; it removes all of them.")
+          and printed.splitlines()[-3] == (
+              "When only some are retired, first add the others' entries to "
+              f"{FIXTURE_TABLE_PATH} through a pull request.")
+          and printed.splitlines()[-2] == (
+              "When a job NOT IN THE TABLE should still run, add its entry to "
+              f"{FIXTURE_TABLE_PATH} through a pull request.")
+          and printed.splitlines()[-1] == (
+              "To learn whether a job was retired on purpose, run "
+              f"`git log -p -- {FIXTURE_TABLE_PATH}` in the clone."), printed)
+    exit_code, printed, errors = run_main(["--check"] + TWO_JOBS, NED_BOX, stub)
+    check("--check limited by --job does not look for jobs the table does not name",
+          exit_code == 0 and "NOT IN THE TABLE" not in printed, (exit_code, printed))
+
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+    check("--remove-not-in-table takes out exactly that line, in one crontab write, and "
+          "leaves every other line",
+          exit_code == 0 and stub.crontab_writes == [(
+              f"{NED_BOX_FOREIGN_COMMENT}\n{commented_retired}\n{BOX_MIRROR}\n{BOX_DAILY}\n"
+              f"{BOX_ALONE}\n{foreign_line}\n").encode()]
+          and f"removed: not in the table — the line removed from the crontab: "
+              f"{retired_line}\n" in printed, (exit_code, printed, stub.crontab_writes))
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+    check("and a second run finds nothing, says so and writes nothing",
+          exit_code == 0 and len(stub.crontab_writes) == 1
+          and printed == ("absent: no crontab line runs a program from the clone, and no "
+                          "plist this installer wrote, outside the table.\n"),
+          (exit_code, printed))
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("and --check then finds every job matching and nothing outside the table, exit 0",
+          exit_code == 0 and "NOT IN THE TABLE" not in printed, (exit_code, printed))
+    exit_code, printed, errors = run_main(
+        ["--remove-not-in-table", "--job", "daily-full-test-run-of-main"], NED_BOX, stub)
+    check("--remove-not-in-table with --job is refused before anything is read",
+          exit_code == 2 and "--remove-not-in-table takes no --job: it removes every job "
+                             "--check reports NOT IN THE TABLE" in errors,
+          (exit_code, errors))
+    stub = MachineStub(crontab=None)
+    stub.exit_codes["crontab-write"] = 1
+    stub.crontab = f"{retired_line}\n".encode()
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+    check("a failed crontab write in --remove-not-in-table is FAILED, exit 1, nothing reported "
+          "removed", exit_code == 1 and "FAILED: `crontab -` exited 1" in errors
+          and "removed:" not in printed, (exit_code, printed, errors))
+
+    # Which crontab lines run a program from the clone: the program is the
+    # command's first word, or an interpreter's first argument; a line that
+    # sets a variable, or only reads or writes a file in the clone, runs no
+    # program from it, and a line that gives an interpreter or env an option
+    # is not read at all, since the option may take the next word.
+    path_setting = f"PATH={box_clone}/scripts:/usr/bin:/bin"
+    reads_the_clone = f"0 4 * * * /usr/bin/tar czf /tmp/backup.tgz {box_clone}/data"
+    writes_into_the_clone = f"0 6 * * * /usr/local/bin/other-tool >> {box_clone}/other.log 2>&1"
+    runs_directly = f"0 8 * * * {box_clone}/scripts/a-retired-shell-job.sh --quiet"
+    runs_through_env = (f"0 7 * * * /usr/bin/env HOME=/tmp /usr/bin/python3 "
+                        f"{box_clone}/scripts/a-retired-env-job.py")
+    env_option_takes_a_clone_directory = f"0 9 * * * /usr/bin/env -C {box_clone}/data /usr/bin/true"
+    interpreter_option = f"0 10 * * * /usr/bin/python3 -u {box_clone}/scripts/a-retired-job.py"
+    runs_at_reboot = f"@reboot /usr/bin/python3 {box_clone}/scripts/a-retired-reboot-job.py"
+    check("the program a crontab line runs is its first word, or an interpreter's first "
+          "argument, and nothing for a line that sets a variable or gives an interpreter or "
+          "env an option",
+          [[program for program, _ in installer.programs_a_cron_line_runs(line)] for line in (
+              path_setting, reads_the_clone, writes_into_the_clone, runs_directly,
+              runs_through_env, runs_at_reboot, BOX_MIRROR, "", "# 0 4 * * * x",
+              env_option_takes_a_clone_directory, interpreter_option)]
+          == [[], ["/usr/bin/tar"], ["/usr/local/bin/other-tool"],
+              [f"{box_clone}/scripts/a-retired-shell-job.sh"],
+              [f"{box_clone}/scripts/a-retired-env-job.py"],
+              [f"{box_clone}/scripts/a-retired-reboot-job.py"],
+              [f"{box_clone}/scripts/transcript-mirror-to-log-store.py"], [], [], [None], [None]])
+    not_runs = [path_setting, reads_the_clone, writes_into_the_clone,
+                env_option_takes_a_clone_directory, interpreter_option]
+    runs = [runs_directly, runs_through_env, runs_at_reboot]
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [path_setting, BOX_MIRROR, BOX_DAILY, BOX_ALONE]
+        + not_runs + runs).encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("--check reports a line that runs a program from the clone, directly, through env "
+          "or at reboot, and not a line that sets PATH to the clone, only reads or writes "
+          "a file there, or gives env or an interpreter an option such as `env -C <clone>/data`",
+          exit_code == 1 and printed.count("NOT IN THE TABLE: ") == 3
+          and all(f"NOT IN THE TABLE: the crontab line {line} — " in printed for line in runs)
+          and not any(line in printed for line in not_runs), (exit_code, printed))
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+    check("--remove-not-in-table takes out only those three, and keeps the PATH line, the "
+          "lines that only touch a file in the clone and the lines with an option",
+          exit_code == 0 and stub.crontab_writes == ["".join(
+              line + "\n" for line in [path_setting, BOX_MIRROR, BOX_DAILY, BOX_ALONE]
+              + not_runs).encode()], (exit_code, printed, stub.crontab_writes))
+
+    # A retired line that runs a program file of the same name as a cron job
+    # of the table is found as that job's line, the way an install finds it:
+    # --check reports it as that job's DIFFERS, and --install replaces it.
+    same_file_other_arguments = BOX_DAILY.replace("30 3 * * *", "0 2 * * *").replace(
+        "daily-full-test-run-of-main.py", "daily-full-test-run-of-main.py --a-retired-argument")
+    stub = MachineStub(crontab=(f"{BOX_MIRROR}\n{BOX_DAILY}\n{BOX_ALONE}\n"
+                                f"{same_file_other_arguments}\n").encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("a retired line running a table job's program file is that job's DIFFERS, not NOT "
+          "IN THE TABLE",
+          exit_code == 1 and "NOT IN THE TABLE" not in printed
+          and f"DIFFERS: daily-full-test-run-of-main — the crontab holds {BOX_DAILY}; "
+              f"{same_file_other_arguments}, not the table's line" in printed,
+          (exit_code, printed))
+    exit_code, printed, errors = run_main(["--install"], NED_BOX, stub)
+    check("and --install replaces both with the table's one line",
+          exit_code == 0 and stub.crontab == f"{BOX_MIRROR}\n{BOX_DAILY}\n{BOX_ALONE}\n".encode(),
+          (exit_code, printed, stub.crontab))
+
+    mac_clone = table["machines"]["mac"]["clone"]
+    stray_daily = installer.cron_line(mac_machine, daily_job, {"schedule": "30 3 * * *"})
+    stub = MachineStub(crontab=f"{mac_mirror_line}\n{stray_daily}\n".encode())
+    exit_code, printed, errors = run_main(["--check"], MAC, stub)
+    check("a cron line for a job the table gives this machine as a launchd job is NOT IN THE "
+          "TABLE: the table names no cron line for it here",
+          exit_code == 1 and f"NOT IN THE TABLE: the crontab line {stray_daily}" in printed,
+          (exit_code, printed))
+
+    LAUNCH_AGENTS.mkdir(parents=True, exist_ok=True)
+    retired_plist = dict(expected_plist, Label="com.nedschorus.a-retired-job")
+    retired_plist_path = LAUNCH_AGENTS / "com.nedschorus.a-retired-job.plist"
+    retired_plist_path.write_bytes(plistlib.dumps(retired_plist, sort_keys=False).replace(
+        b"<plist ", installer.PLIST_WRITTEN_BY_THIS_PROGRAM + b"\n<plist ", 1))
+    other_installer_path = LAUNCH_AGENTS / "com.nedschorus.restart-live-seats-at-login.plist"
+    other_installer_path.write_bytes(plistlib.dumps(dict(
+        expected_plist, Label="com.nedschorus.restart-live-seats-at-login", RunAtLoad=True)))
+    unrelated_path = LAUNCH_AGENTS / "com.example.updater.plist"
+    unrelated_path.write_bytes(plistlib.dumps({"Label": "com.example.updater"}))
+    stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode(),
+                       loaded=[f"{DOMAIN}/com.nedschorus.a-retired-job"])
+    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    exit_code, printed, errors = run_main(["--check"], MAC, stub)
+    check("--check reports a plist this program wrote whose label the table does not name, "
+          "exit 1",
+          exit_code == 1 and f"NOT IN THE TABLE: {retired_plist_path}, label "
+                             f"com.nedschorus.a-retired-job — no job of the table names it for "
+                             f"this machine.\n" in printed
+          and printed.count("NOT IN THE TABLE: ") == 1 and printed.count("matches: ") == 2,
+          (exit_code, printed))
+    check("and not a plist of the same shape and label prefix that another program wrote, "
+          "or anyone else's",
+          str(other_installer_path) not in printed and str(unrelated_path) not in printed, printed)
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], MAC, stub)
+    check("--remove-not-in-table boots that label out and deletes its plist, and leaves the "
+          "table's job, the other program's plist and the crontab alone",
+          exit_code == 0 and not retired_plist_path.exists() and plist_path.is_file()
+          and other_installer_path.is_file() and unrelated_path.is_file()
+          and stub.crontab_writes == []
+          and ["launchctl", "bootout", f"{DOMAIN}/com.nedschorus.a-retired-job"] in stub.commands
+          and f"{DOMAIN}/com.nedschorus.a-retired-job" not in stub.loaded
+          and f"removed: not in the table — deleted {retired_plist_path}.\n" in printed,
+          (exit_code, printed, stub.commands))
+
+    retired_plist_path.write_bytes(plistlib.dumps(retired_plist, sort_keys=False).replace(
+        b"<plist ", installer.PLIST_WRITTEN_BY_THIS_PROGRAM + b"\n<plist ", 1))
+    stub.loaded.add(f"{DOMAIN}/com.nedschorus.a-retired-job")
+    stub.exit_codes["bootout"] = 5
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], MAC, stub)
+    check("in --remove-not-in-table, a bootout that fails with the job still loaded is "
+          "FAILED, exit 1, and the plist is kept",
+          exit_code == 1 and retired_plist_path.is_file() and "removed:" not in printed
+          and (f"FAILED: com.nedschorus.a-retired-job — launchctl bootout exited 5, so the job "
+               f"may still be loaded; {retired_plist_path} was kept.\n"
+               "Read what launchctl printed above, and run this again after that cause is "
+               "removed.\n") in errors, (exit_code, printed, errors))
+    stub.exit_codes["print"] = 1
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], MAC, stub)
+    check("in --remove-not-in-table, a bootout that fails while launchctl print fails with "
+          "other than service-not-found is FAILED, exit 1, and the plist is kept",
+          exit_code == 1 and retired_plist_path.is_file() and "removed:" not in printed
+          and "FAILED: com.nedschorus.a-retired-job — launchctl bootout exited 5" in errors,
+          (exit_code, printed, errors))
+    retired_plist_path.unlink()
+    del stub.exit_codes["bootout"], stub.exit_codes["print"]
+
+    # A table whose last launchd job was retired names none, and the plist the
+    # retired job left is still found; on a machine that is not macOS, nothing
+    # is looked for.
+    marked_dir = root / "LaunchAgents-of-a-table-with-no-launchd-job"
+    marked_dir.mkdir()
+    last_retired_path = marked_dir / "com.nedschorus.the-last-launchd-job.plist"
+    last_retired_path.write_bytes(plistlib.dumps(
+        dict(expected_plist, Label="com.nedschorus.the-last-launchd-job"), sort_keys=False)
+        .replace(b"<plist ", installer.PLIST_WRITTEN_BY_THIS_PROGRAM + b"\n<plist ", 1))
+    unmarked_path = marked_dir / "com.nedschorus.written-before-the-marker.plist"
+    unmarked_path.write_bytes(plistlib.dumps(
+        dict(expected_plist, Label="com.nedschorus.written-before-the-marker"), sort_keys=False))
+    mac_without_launchd_path = {key: value for key, value in table["machines"]["mac"].items()
+                                if key != "launchd_path"}
+    check("a plist this program wrote is found when the table names no launchd job and no "
+          "launchd_path; a plist written before the marker line is not",
+          installer.plists_not_in_table(mac_without_launchd_path, [], marked_dir)
+          == [(last_retired_path, "com.nedschorus.the-last-launchd-job")])
+    no_launchd_table = json.loads(FIXTURE_TABLE_PATH.read_text(encoding="utf-8"))
+    for job in no_launchd_table["jobs"]:
+        job["on"] = {machine_name: placement for machine_name, placement
+                     in job["on"].items() if placement["scheduler"] != "launchd"}
+    no_launchd_table["jobs"] = [job for job in no_launchd_table["jobs"] if job["on"]]
+    no_launchd_table["machines"]["mac"].pop("launchd_path", None)
+    no_launchd_table_path = root / "table-with-no-launchd-job.json"
+    no_launchd_table_path.write_text(json.dumps(no_launchd_table), encoding="utf-8")
+    saved_launch_agents, LAUNCH_AGENTS = LAUNCH_AGENTS, marked_dir
+    stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode(),
+                       loaded=[f"{DOMAIN}/com.nedschorus.the-last-launchd-job"])
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], MAC, stub,
+                                          no_launchd_table_path)
+    LAUNCH_AGENTS = saved_launch_agents
+    check("--remove-not-in-table under a table that names no launchd job removes the plist "
+          "the last launchd job left, and not one written before the marker line",
+          exit_code == 0 and not last_retired_path.exists() and unmarked_path.is_file()
+          and f"removed: not in the table — deleted {last_retired_path}.\n" in printed,
+          (exit_code, printed, errors))
+    check("and nothing is looked for on a machine that is not macOS",
+          installer.plists_not_in_table(table["machines"]["ned-box"], [], marked_dir) == [])
+
+    plist_path.write_bytes(plistlib.dumps(expected_plist, sort_keys=False))
+    stub.loaded.add(TARGET)
+    exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
+    check("a plist that says what the table says but lacks this program's line is a "
+          "difference of its own, so --install rewrites it with the line",
+          exit_code == 1 and (
+              f"DIFFERS: daily-full-test-run-of-main — {plist_path} says what the table says "
+              "but lacks the line marking it as written by this installer; --install adds "
+              "that line.\n") in printed
+          and "does not say what the table says" not in printed
+          and "--install` on this machine." in printed
+          and "When this machine is right and the table is wrong" not in printed,
+          (exit_code, printed))
+    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    check("and --install writes the line into it",
+          exit_code == 0 and installer.PLIST_WRITTEN_BY_THIS_PROGRAM in plist_path.read_bytes()
+          and plistlib.loads(plist_path.read_bytes()) == expected_plist, (exit_code, printed))
+    check("--print shows the plist with this program's line",
+          installer.PLIST_WRITTEN_BY_THIS_PROGRAM.decode() in mac_printed, mac_printed)
+
+    # The cron command is read by the shell module, as bash reads it: a
+    # redirection written before the program does not hide the program.
+    redirect_first = (f"0 5 * * * >> /tmp/retired.log 2>&1 "
+                      f"{box_clone}/scripts/a-retired-redirect-first-job.py")
+    check("a crontab line whose redirection comes before its program runs that program, and "
+          "one whose command is only a comment runs nothing",
+          [installer.programs_a_cron_line_runs(line)
+           for line in (redirect_first, "0 5 * * * # paused")]
+          == [[(f"{box_clone}/scripts/a-retired-redirect-first-job.py", False)], []],
+          [installer.programs_a_cron_line_runs(line)
+           for line in (redirect_first, "0 5 * * * # paused")])
+
+    # A command substitution's command runs before the line's own command
+    # but is not it, and a function the line defines may never be called;
+    # reading either as the line's program would keep a retired job or remove
+    # a job that is not the project's. A pipeline's later stage only reads the
+    # job's output, also when written alone in ( ) or { }; a ( ) subshell's command is a job
+    # of the line.
+    substitution_cases = {
+        f"0 5 * * * {box_clone}/scripts/a-retired-dated-log-job.py >> /tmp/x-$(date +\\%F).log 2>&1":
+            [(f"{box_clone}/scripts/a-retired-dated-log-job.py", False)],
+        f"0 5 * * * /usr/bin/foo $({box_clone}/scripts/a-helper.py)": [("/usr/bin/foo", False)],
+        f"0 5 * * * /usr/bin/foo `{box_clone}/scripts/a-helper.py`": [("/usr/bin/foo", False)],
+        f"0 5 * * * /usr/bin/foo <({box_clone}/scripts/a-helper.py)": [("/usr/bin/foo", False)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py; /usr/bin/logger done":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("/usr/bin/logger", False)],
+        f"0 5 * * * f() {{ {box_clone}/scripts/a-helper.py; }}; /usr/bin/other": [(None, False)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-logged-job.py 2>&1 | /usr/bin/logger -t x":
+            [(f"{box_clone}/scripts/a-retired-logged-job.py", False), ("/usr/bin/logger", True)],
+        f"0 5 * * * ({box_clone}/scripts/a-retired-job.py) | (cat; /usr/bin/other-job)":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("cat", False),
+             ("/usr/bin/other-job", False)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py | {{ cat; /usr/bin/other-job; }}":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("cat", False),
+             ("/usr/bin/other-job", False)],
+        f"0 5 * * * (/usr/bin/other-job); {box_clone}/scripts/a-retired-job.py":
+            [("/usr/bin/other-job", False), (f"{box_clone}/scripts/a-retired-job.py", False)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py | (/usr/bin/logger -t x)":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("/usr/bin/logger", True)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py | ( (/usr/bin/logger) )":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("/usr/bin/logger", True)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py | {{ /usr/bin/logger; }}":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("/usr/bin/logger", True)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py | (/usr/bin/logger) | /usr/bin/tee x":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("/usr/bin/logger", True),
+             ("/usr/bin/tee", True)],
+    }
+    read_programs = {line: installer.programs_a_cron_line_runs(line) for line in substitution_cases}
+    check("a crontab line runs each command outside a substitution, a later pipeline stage only "
+          "reads a job's output, a ( ) subshell's command is a job, and a line that defines a "
+          "function is not read",
+          read_programs == substitution_cases, read_programs)
+
+    # --remove-not-in-table takes off a retired job piped to logger, and reports
+    # and keeps a line that also runs a job that is not the clone's.
+    piped_to_logger = (f"0 5 * * * {box_clone}/scripts/a-retired-logged-job.py 2>&1 | "
+                       f"/usr/bin/logger -t x")
+    mixed = f"0 6 * * * (/usr/bin/other-job); {box_clone}/scripts/a-retired-mixed-job.py"
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [BOX_MIRROR, BOX_DAILY, BOX_ALONE, piped_to_logger, mixed]).encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("--check reports a retired job piped to logger, and a line that also runs another job, "
+          "saying --remove-not-in-table leaves that line in place",
+          exit_code == 1 and printed.count("NOT IN THE TABLE: ") == 2
+          and f"NOT IN THE TABLE: the crontab line {mixed} — " in printed
+          and "leaves the line in place" in printed and "take the retired job off that line by hand"
+          in printed, (exit_code, printed))
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+    check("--remove-not-in-table removes the job piped to logger, keeps the line that also runs "
+          "another job, reports it as KEPT, and exits 1",
+          exit_code == 1 and stub.crontab_writes == ["".join(
+              line + "\n" for line in [BOX_MIRROR, BOX_DAILY, BOX_ALONE, mixed]).encode()]
+          and f"KEPT: not in the table — the crontab line {mixed}" in printed,
+          (exit_code, printed, stub.crontab_writes))
+
+    # tree-sitter-bash missing: the module installs it, as on a Mac whose
+    # Python has not run a guard yet; a failed install stops this program,
+    # which changes nothing and says to tell the user.
+    shell_reader = installer.shell_reader
+    real_load_parser, real_importer = shell_reader.load_parser, shell_reader.import_tree_sitter_bash
+    saved_state_directory, saved_parser = shell_reader.STATE_DIRECTORY, shell_reader._parser
+    shell_reader.STATE_DIRECTORY = root / "shell-reader-state"
+    install_calls = []
+
+    def missing_until_installed():
+        if not install_calls:
+            raise ImportError("No module named 'tree_sitter_bash'")
+        return real_importer()
+
+    def recording_install():
+        install_calls.append(True)
+        return ""
+
+    def failing_install():
+        install_calls.append(True)
+        raise shell_reader.ShellParserUnavailable("pip exited 1: no network on this machine")
+
+    try:
+        for install, wanted_exit in ((recording_install, 1), (failing_install, 2)):
+            install_calls.clear()
+            shell_reader._parser = None
+            shutil.rmtree(shell_reader.STATE_DIRECTORY, ignore_errors=True)
+            shell_reader.load_parser = (lambda install=install: real_load_parser(
+                importer=missing_until_installed, installer=install))
+            stub = MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode())
+            with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, None):
+                exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub) \
+                    if wanted_exit == 2 else run_main(["--check"], NED_BOX, stub)
+            if install is recording_install:
+                check("with tree-sitter-bash missing, the installer has the shell module install "
+                      "it, then reads the crontab and reports the retired line",
+                      install_calls == [True] and exit_code == 1
+                      and f"NOT IN THE TABLE: the crontab line {runs_directly} — " in printed,
+                      (install_calls, exit_code, printed, errors))
+            else:
+                check("when that install fails, --remove-not-in-table writes no crontab, exits 2 "
+                      "and says what the install printed and to tell the user",
+                      install_calls == [True] and exit_code == 2 and stub.crontab_writes == []
+                      and "pip exited 1: no network on this machine" in errors
+                      and "Tell the user, or, if you are a subagent, the agent that dispatched "
+                      "you, in these words: \"tree-sitter-bash is missing on " in errors
+                      and shell_reader.REQUIREMENTS_FILE.name in errors,
+                      (install_calls, exit_code, printed, errors, stub.crontab_writes))
+    finally:
+        shell_reader.load_parser, shell_reader.STATE_DIRECTORY = real_load_parser, saved_state_directory
+        shell_reader._parser = saved_parser
+
+    with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, "1"):
+        unattended_lines = installer.shell_parser_refusal(
+            shell_reader.ShellParserUnavailable("pip exited 1: no network"), runs_directly).lines
+    unattended_errors = "\n".join(unattended_lines)
+    check("in an agent-session no user attends, the install-failed refusal tells a subagent to "
+          "report, does not ask to tell the user, and still says how to install by hand",
+          "do not tell the user" in unattended_errors
+          and "If you are a subagent, tell the agent that dispatched you" in unattended_errors
+          and "Tell the user" not in unattended_errors and "pip install" in unattended_errors
+          and "pip exited 1: no network" in unattended_errors
+          and "Leave this run of install-scheduled-jobs-on-this-machine undone; run it again, with "
+          "the same options, only after tree-sitter-bash is installed." in unattended_lines,
+          unattended_errors)
+    # The refusal names the machine it runs on, so the expected command is built for that machine.
+    this_host = socket.gethostname().split(".")[0]
+    words = shell_reader.tree_sitter_bash_install_failure_report_words_build(
+        this_host, "pip exited 1: no network", "install-scheduled-jobs-on-this-machine did not run there")
+    install = words.splitlines()[1]
+    check("the install command stands on a line of its own, with nothing after it to copy by mistake",
+          install in unattended_lines and "python3 -m pip install" in install
+          and install.rstrip("'").endswith("requirements.txt"), unattended_lines)
+    check("the install-failed refusal reports the words the Bash guards report, what the install "
+          "printed included",
+          unattended_errors.endswith(words), unattended_errors)
+
+    # "Skip the rest of this message" skips only the report, so each refusal must end with it.
+    real_build = shell_reader.report_to_user_or_dispatching_agent_instruction_build
+    built = []
+
+    def recording_build(words, environment=os.environ):
+        built.append(real_build(words, environment))
+        return built[-1]
+    shell_reader.report_to_user_or_dispatching_agent_instruction_build = recording_build
+    try:
+        for label, failure in (
+                ("the parser is missing", shell_reader.ShellParserUnavailable("pip exited 1")),
+                ("the reader failed", shell_reader.ShellCommandUnreadable("ValueError: injected"))):
+            for session in ((None, None), (None, "1")):
+                built.clear()
+                with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(
+                        *session):
+                    refusal_text = "\n".join(installer.shell_parser_refusal(failure, runs_directly).lines)
+                check(f"when {label}, with the session variables {session}, the refusal ends with "
+                      f"the report", len(built) == 1 and refusal_text.endswith(built[0]),
+                      (built, refusal_text))
+    finally:
+        shell_reader.report_to_user_or_dispatching_agent_instruction_build = real_build
+
+    # A failure inside the shell reader stops this program the same way, naming the failure.
+    real_collect = shell_reader._collect
+
+    def failing_collect(*arguments, **keywords):
+        raise ValueError("injected")
+    shell_reader._collect = failing_collect
+    backticked = runs_directly + " `date`"
+    try:
+        stub = MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode())
+        with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, None):
+            exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+            _, _, backticked_errors = run_main(
+                ["--remove-not-in-table"], NED_BOX,
+                MachineStub(crontab=(BOX_MIRROR + "\n" + backticked + "\n").encode()))
+        with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test("0", None):
+            unattended_exit, unattended_printed, unattended_errors = run_main(
+                ["--remove-not-in-table"], NED_BOX,
+                MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode()))
+    finally:
+        shell_reader._collect = real_collect
+    check("when the shell reader fails on a crontab line, --remove-not-in-table writes no crontab, "
+          "exits 2, and says what to tell the user, quoting the line and the failure",
+          exit_code == 2 and stub.crontab_writes == [] and "ValueError: injected" in errors
+          and f"failed on the crontab line `{runs_directly}` on " in errors.splitlines()[0]
+          and f"failed on the crontab line `{runs_directly}` on " in errors.splitlines()[-1]
+          and "Tell the user" in errors and "in these words" in errors,
+          (exit_code, printed, errors, stub.crontab_writes))
+    for index in (0, -1):
+        check(f"a crontab line holding a backtick is quoted with a longer run of backticks around it, "
+              f"in {'the first' if index == 0 else 'the last'} line of the refusal",
+              f"failed on the crontab line `` {backticked} `` on "
+              in backticked_errors.splitlines()[index], backticked_errors)
+    check("the refusal tells the agent to leave this run undone until the reader is fixed",
+          "Leave this run of install-scheduled-jobs-on-this-machine undone; run it again, with the "
+          "same options, only after the shell command reader is fixed." in errors.splitlines(), errors)
+    check("in an agent-session no user attends, that refusal tells a subagent to report, does not "
+          "ask to tell the user, and gives a top-level agent its next step",
+          unattended_exit == 2 and "do not tell the user" in unattended_errors
+          and "If you are a subagent, tell the agent that dispatched you" in unattended_errors
+          and "go on with your task" in unattended_errors
+          and "Leave this run of install-scheduled-jobs-on-this-machine undone" in unattended_errors
+          and "Tell the user" not in unattended_errors, unattended_errors)
 
 print()
 if failures:

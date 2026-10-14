@@ -103,30 +103,20 @@ class StateDiagramCannotBeDrawn(Exception):
 
 
 class DesignDiagramBlockNotFound(Exception):
-    """Section 3.3 lacks a view's subheading or its ```mermaid block, or holds
-    a block that is no view's."""
+    """Section 3.3 has a missing or unrecognized view block."""
 
 
-# The destinations of section 3.2 that are not a state, drawn as the states
-# the machine goes to (design-to-main-state-machine.py, apply_transition_row).
 DRAWN_STATES_OF_DESTINATION_MARKER = {
-    # A work-stream's advance that holds at ready-for-test-suite waits for
-    # the other work-stream at the join, test-suite-executing (section 3.1,
-    # Work-streams): drawn as the edge to the join, with the rows that reach it.
+    # Holding at ready-for-test-suite waits for the other work-stream at the test-suite-executing join.
     T.TO_HOLD_READY_FOR_TEST_SUITE: (T.TEST_SUITE_EXECUTING,),
-    # Row 9: the implementation-work-stream re-enters implementation-writing
-    # and, when tests have begun, the test-work-stream test-design-writing.
     T.TO_BOTH_WORK_STREAMS_RE_ENTER: (T.IMPLEMENTATION_WRITING, T.TEST_DESIGN_WRITING),
-    # Row 64: both writers.
     T.TO_BOTH_WRITERS_FRESH: (T.IMPLEMENTATION_WRITING, T.TEST_WRITING),
 }
-# The retry and row 60's destination: section 3.3 does not draw them.
+# Section 3.3 omits retries and delegated advance destinations.
 DESTINATION_MARKERS_NOT_DRAWN = (
     T.TO_RETRY_SAME_STATE,
     T.TO_WHEREVER_THAT_REVIEWING_STATES_ADVANCE_GOES,
 )
-# Drawn by rules of their own below: row 16 inside each composite, row 63 by
-# WRITER_STATE_FOR_VERDICT, row 72 by RESUME_DESTINATION_BY_EDITED_DOCUMENT.
 DESTINATION_MARKERS_DRAWN_BY_RULE = (
     T.TO_THE_NEXT_ACCEPTANCE_CHECK,
     T.TO_THE_WRITER_THE_VERDICT_NAMES,
@@ -134,8 +124,6 @@ DESTINATION_MARKERS_DRAWN_BY_RULE = (
 )
 
 SUB_STATE_NAMES = tuple(T.COMPOSITE_STATE_OF_SUB_STATE)
-# The sub-state a "from ..." guard names: the guard's words are "from "
-# and the sub-state's name, except the program check's.
 SUB_STATE_OF_FROM_GUARD = dict(
     [("from " + sub_state, sub_state) for sub_state in SUB_STATE_NAMES]
     + [(T.G_FROM_PROGRAM_CHECK, T.CONTRACT_ACCEPTANCE_BY_PROGRAM)])
@@ -154,19 +142,13 @@ def mermaid_label_text(text):
 
 
 def guard_is_left_off_the_label(guard):
-    """Section 3.3's counter guards, which read a counter of section 7
-    against its ceiling ("the contract-revisions counter below its ceiling",
-    "resume to design-writing, the redesigns counter at its ceiling"), and
-    the "from ..." guards, which name the sub-state a row starts at and
-    no more (user-ruled 2026-09-16, the walk
-    design-tables-checker-findings-from-pr-409, item 3)."""
+    """Return whether a guard only describes a counter ceiling or source sub-state."""
     reads_a_counter_against_its_ceiling = "counter" in guard and "ceiling" in guard
     return reads_a_counter_against_its_ceiling or guard.startswith("from ")
 
 
 def transition_label(verdicts, guards):
-    """`verdict, verdict [guard, guard]`, the guards left off the label
-    removed; a row with no verdict is its bracket alone."""
+    """Return verdicts and retained guards, or just brackets for a verdict-free row."""
     drawn_guards = [guard for guard in guards if not guard_is_left_off_the_label(guard)]
     parts = []
     if verdicts:
@@ -199,9 +181,7 @@ def check_every_row_has_a_known_view(transition_table):
 
 
 class StateDiagramViewDrawing:
-    """One view's edges, in the order first drawn, one per (from, to), each
-    with its labels in the order first drawn and the rows it carries; and
-    its group-transition boxes, each with the states it holds."""
+    """Ordered edges with labels and source rows, plus group-transition boxes."""
 
     def __init__(self, view):
         self.view = view
@@ -276,8 +256,7 @@ def draw_transition_row(drawing, row, state_names):
             drawing.add_edge(from_name, writer, transition_label(verdicts, row.guards), row)
         return
     if row.to_state == T.TO_RESUME_DESTINATION:
-        # The earliest state downstream of what the user edited (section
-        # 6.6), the edited document read as the edge's guard.
+        # Resume at the earliest state downstream of the edited document.
         for document, state in T.RESUME_DESTINATION_BY_EDITED_DOCUMENT:
             drawing.add_edge(from_name, state, transition_label(
                 row.verdicts, row.guards + ("%s edited" % document,)), row)
@@ -313,7 +292,7 @@ def edge_line(from_name, to_name, labels, indent):
 
 
 def state_diagram_view_mermaid_lines(view, transition_table=None):
-    """One view's lines between the fences, without their line ends."""
+    """Return one view’s unfenced Mermaid lines without line endings."""
     drawing = state_diagram_view_drawing(view, transition_table)
     names_drawn = drawing.names_drawn()
     opened_composites = {state.name: state for state in T.STATE_TABLE if state.sub_states
@@ -347,9 +326,7 @@ def state_diagram_view_mermaid_lines(view, transition_table=None):
     lines = ["stateDiagram-v2"]
     if T.INITIATE_DESIGN_TO_MAIN in names_drawn:
         lines.append("%s[*] --> %s" % (INDENT, mermaid_identifier(T.INITIATE_DESIGN_TO_MAIN)))
-    # Declared before any edge names their states, so that Mermaid places
-    # each state in its box or composite: boxes where their first state
-    # stands in STATE_TABLE, then the composites in no box.
+    # Declare boxes and composites before edges so Mermaid keeps each state in its container.
     boxes_placed = set()
     for state in T.STATE_TABLE:
         box = drawing.box_of_state.get(state.name)
@@ -370,9 +347,7 @@ def state_diagram_view_mermaid_lines(view, transition_table=None):
 
 
 def section_3_3_view_block_spans(design_text):
-    """{view: (start, end)} of each view's block text, in DIAGRAM_VIEWS_DRAWN's
-    order: from the line after the opening fence under the view's subheading
-    to the start of the closing fence's line."""
+    """Return {view: (start, end)} spans inside the Mermaid fences, in drawing order."""
     lines = design_text.splitlines(keepends=True)
     offsets, offset = [], 0
     for line in lines:

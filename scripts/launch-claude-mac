@@ -51,6 +51,21 @@
 
 set -eu
 
+# Answered before anything else runs, so asking for help never launches, lists or contacts an agent-seat.
+if [ $# -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
+    echo "usage: launch-claude-mac <name> [--no-attach] [--first-prompt-file <path>]"
+    echo
+    echo "Reaches the agent-seat named <name> on this Mac: attaches to its tmux session"
+    echo "when one runs, and otherwise creates the session, whose handoff supervisor starts"
+    echo "claude in \$NEDSCHORUS_AGENTS_ROOT/<name> (default ~/agents/<name>)."
+    echo
+    echo "  --no-attach                create the session without attaching this terminal"
+    echo "  --first-prompt-file <path> the file whose text is the new agent-session's first prompt"
+    echo
+    echo "Work that need not run on the Mac goes to ned-box instead: launch-claude-ubuntu."
+    exit 0
+fi
+
 AGENTS_ROOT="${NEDSCHORUS_AGENTS_ROOT:-$HOME/agents}"
 # A literal-tilde value (a quoted export sends one) is resolved or refused,
 # never half-worked (PR #137 review P3 on the twin, user-ruled 2026-08-22:
@@ -76,11 +91,15 @@ SCRIPT_DIRECTORY=$(cd "$(dirname "$0")" && pwd)
 REPOSITORY_ROOT=$(cd "$SCRIPT_DIRECTORY/.." && pwd)
 SUPERVISOR="$REPOSITORY_ROOT/nc-systems/handoff/handoff-supervisor.py"
 
+usage_line() {
+    echo "usage: launch-claude-mac <name> [--no-attach] [--first-prompt-file <path>]" >&2
+}
+
 # The no-name case is the common mistake, so it teaches rather than scolds:
 # what a name is for, and which agents are running right now to pick from or
 # avoid colliding with.
 usage() {
-    echo "usage: launch-claude-mac <name> [--no-attach] [--first-prompt-file <path>]" >&2
+    usage_line
     echo >&2
     echo "Every agent is named, and the name is the whole configuration: it names the" >&2
     echo "tmux session, the home directory ($AGENTS_ROOT/<name>), and the agent's handoff" >&2
@@ -114,6 +133,16 @@ usage() {
 }
 
 [ $# -ge 1 ] || usage
+# The first argument is always the seat name, so an option typed first
+# would otherwise launch a seat named after the option.
+case "$1" in
+    (-*)
+        printf '%s\n' "launch-claude-mac: refused to launch a seat named \"$1\": the first argument is always the seat name, and a seat name cannot start with -." >&2
+        echo "If you wanted help: run launch-claude-mac --help, with no other argument." >&2
+        echo "If you meant an option: put the seat name first and the options after it." >&2
+        usage_line
+        exit 2 ;;
+esac
 AGENT_NAME="$1"
 shift
 ATTACH=yes
@@ -126,7 +155,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 case "$AGENT_NAME" in
-    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-mac: agent names are letters, digits, - and _" >&2; exit 2 ;;
+    (*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*|"") echo "launch-claude-mac: agent names are letters, digits, - and _" >&2; exit 2 ;;
 esac
 
 # Which GitHub account this seat acts as. The default is the HOST's account,
@@ -159,7 +188,7 @@ esac
 # exported-but-empty override is the default rather than a refusal.
 SEAT_GITHUB_ACCOUNT="${NEDSCHORUS_SEAT_GITHUB_ACCOUNT:-mac-claude}"
 case "$SEAT_GITHUB_ACCOUNT" in
-    (*[!a-zA-Z0-9_-]*|"") echo "launch-claude-mac: NEDSCHORUS_SEAT_GITHUB_ACCOUNT is a GitHub account name — letters, digits, - and _" >&2; exit 2 ;;
+    (*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*|"") echo "launch-claude-mac: NEDSCHORUS_SEAT_GITHUB_ACCOUNT is a GitHub account name — letters, digits, - and _" >&2; exit 2 ;;
 esac
 
 # The override is CONSUMED here and unset before the tmux server starts, so
@@ -215,14 +244,9 @@ command -v claude >/dev/null 2>&1 || {
 # block starting an agent: `|| true` is what holds that under `set -eu`,
 # not decoration.
 #
-# The update runs under the machine-wide lock in
-# scripts/agent-binary-update-under-lock.py, which the supervisor takes too,
-# so no two updates on this Mac overlap (user-approved 2026-09-22): a login
-# restart otherwise starts one supervisor's update about 6 s after the last.
-# That file owns the timeout as well, and says why the perl alarm that was
-# here had to go: kept outside it, the alarm would kill the Python holding
-# the lock and orphan a still-running update. The one budget covers waiting
-# for the lock and running the update together.
+# macOS has no flock binary; launchers and supervisors share Python's lock.
+# The helper must own the timeout so killing an update cannot release its
+# lock before the update stops.
 #
 # The launcher writes no warning of its own. The one removed here claimed
 # to report a failed update but could not see the failure that actually
@@ -234,9 +258,6 @@ command -v claude >/dev/null 2>&1 || {
 # The install was repaired instead, to the native build at ~/.local/bin that
 # both launchers already assume (user-ruled 2026-08-31).
 #
-# The helper reports only what it causes, prefixed with this launcher's name:
-# an update it killed at the limit, a wait for the lock, and an update it
-# skipped because the lock stayed held past the limit.
 # 120 seconds, raised from 45 (user-ruled 2026-08-31): a slow but WORKING
 # update killed at the limit leaves the machine silently on its old version,
 # which is the same outcome as the refused update above and just as quiet.
@@ -323,7 +344,7 @@ if ! git -C "$AGENT_DIRECTORY" rev-parse --show-toplevel >/dev/null 2>&1; then
 fi
 
 # Boot-time worktree report: finished session worktrees pile up invisibly,
-# so each launch names any that are done (clean, landed, vacant) and the
+# so each launch names any that are done (landed and vacant) and the
 # command that removes them. Report only — removal stays a deliberate,
 # separate call — and a report problem never blocks a launch.
 python3 "$SCRIPT_DIRECTORY/clean-worktrees.py" --only-done || true
@@ -408,14 +429,8 @@ QUOTED_AGENT_DIRECTORY=$(escape_single_quotes "$AGENT_DIRECTORY")
 # them. Measured on this Mac 2026-08-22 (Claude Code 2.1.238, model
 # claude-sonnet-5): with the enable variable unset, the pin alone does
 # nothing — TaskCreate is not among the visible tools and no store directory
-# is ever created. The two are not symmetric, and it is worth being exact,
-# because reading them as interchangeable is what hid the supervisor's stale
-# accounting for a review round: the PIN alone does nothing, while ENABLE
-# alone gives a seat working task tools on a session-keyed store, whose
-# records the supervisor's pre-seed then carries across reincarnations
-# (handoff-supervisor.py, preseed_tasks). The pin is what makes the list the
-# SEAT's — one store every generation opens, rather than a fresh directory
-# each reincarnation has to copy into.
+# is ever created. Enable exposes the task tools; the pin makes every
+# generation open the same agent-seat's list.
 # One-time migration (user-ruled 2026-08-29): a store filled under the old
 # unprefixed '<name>-tasks' id is renamed to the prefixed id at launch, so a
 # relaunched seat keeps its list and the stale name dies loudly (no
@@ -524,8 +539,12 @@ export CLAUDE_CODE_ENABLE_TODO_TOOLS=1; \
 export GIT_AUTHOR_NAME='$AGENT_NAME' GIT_AUTHOR_EMAIL='$AGENT_NAME@nedschorus.invalid' GIT_COMMITTER_NAME='$AGENT_NAME' GIT_COMMITTER_EMAIL='$AGENT_NAME@nedschorus.invalid'; \
 python3 '$SUPERVISOR' --agent '$AGENT_NAME' --cd '$QUOTED_AGENT_DIRECTORY'"
 
-# A first-prompt file seeds only the FIRST session. The supervisor reads the
-# file itself, so its content never rides through shell quoting.
+# A first-prompt file is for the founding boot. The supervisor ignores it when a
+# handoff is waiting, or when a seat with no recorded exit has a transcript worth
+# resuming, unless the caller also passes
+# --first-prompt-file-wins-over-crashed-transcript in
+# LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS. The supervisor reads the file
+# itself, so its content never rides through shell quoting.
 if [ -n "$FIRST_PROMPT_FILE" ]; then
     SUPERVISOR_COMMAND="$SUPERVISOR_COMMAND --first-prompt-file '$(escape_single_quotes "$FIRST_PROMPT_FILE")'"
 fi
@@ -570,17 +589,45 @@ echo \"  resume this dialog:     claude --continue — starts NO supervisor, so 
 echo \"                          seat can never reincarnate until it is recovered\"; \
 cd '$QUOTED_AGENT_DIRECTORY'; exec \${SHELL:-/bin/sh}"
 
-# The chained set-option calls tell the terminal the session name, so the
-# tab reads the seat's name rather than the command that happened to start
-# it. They ride the same tmux invocation (\; separates tmux commands, not
+# The chained set-option calls tell the terminal the machine and the session
+# name, so the tab reads "[mac] <seat>" rather than the command that happened
+# to start it; the [mac] prefix tells this window apart from a box seat's
+# "[box] ..." window with a similar name. tmux draws the title from its own
+# format, so the OSC title Claude Code sets inside the pane becomes only the
+# pane's title and never replaces it. They ride the same tmux invocation (\; separates tmux commands, not
 # shell ones) because the seat's server does not exist before its first
 # session does — a standalone set-option beforehand would find no server —
-# and repeating them on an attach is harmless.
+# and repeating them on an attach is harmless. Mouse mode makes the scroll
+# wheel scroll the seat's tmux history: without it the wheel scrolls iTerm2's
+# own buffer, which holds stale text from before tmux last redrew, and a reply
+# taller than the window loses its top. With mouse mode on, a mouse selection
+# is tmux's, so copy-command pipes it to pbcopy to reach the Mac clipboard.
+# One format for both paths below, so the attach and --no-attach titles cannot drift apart.
+SEAT_WINDOW_TITLE_FORMAT='[mac] #S'
+
+# The background colour of the iTerm2 session a Mac seat is attached in, so a
+# Mac seat's window is told apart from a box seat's at a glance. Six hex digits
+# with no '#', the form iTerm2's SetColors takes. One value for every Mac seat
+# today; a seat that should look different gets its own value chosen here.
+SEAT_ITERM2_BACKGROUND_COLOUR=FFE6EE
+
 if [ "$ATTACH" = yes ]; then
+    # iTerm2's proprietary SetColors sequence, written before tmux starts
+    # because tmux does not pass it through to the terminal. Only on a
+    # terminal that is iTerm2 itself: inside tmux TERM_PROGRAM is tmux, and a
+    # pipe or another terminal would receive the bytes as garbage. iTerm2
+    # documents no sequence that restores the profile's own background, and
+    # the exec below leaves no point to send one from, so the session stays
+    # pink after the seat's tmux session ends.
+    if [ "${TERM_PROGRAM:-}" = iTerm.app ] && [ -t 1 ]; then
+        printf '\033]1337;SetColors=bg=%s\007' "$SEAT_ITERM2_BACKGROUND_COLOUR"
+    fi
     exec tmux -L "$SEAT_TMUX_SOCKET" new-session -A -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" \
         "trap ':' INT QUIT; $SUPERVISOR_COMMAND; $AFTER_EXIT_COMMAND" \; \
-        set-option -g set-titles on \; set-option -g set-titles-string '#S'
+        set-option -g set-titles on \; set-option -g set-titles-string "$SEAT_WINDOW_TITLE_FORMAT" \; \
+        set-option -g mouse on \; set-option -s copy-command pbcopy
 fi
 tmux -L "$SEAT_TMUX_SOCKET" new-session -d -s "$AGENT_NAME" -c "$AGENT_DIRECTORY" "$SUPERVISOR_COMMAND" \; \
-        set-option -g set-titles on \; set-option -g set-titles-string '#S' 2>/dev/null \
+        set-option -g set-titles on \; set-option -g set-titles-string "$SEAT_WINDOW_TITLE_FORMAT" \; \
+        set-option -g mouse on \; set-option -s copy-command pbcopy 2>/dev/null \
     || echo "launch-claude-mac: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-mac $AGENT_NAME)"

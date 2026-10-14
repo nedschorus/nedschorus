@@ -48,13 +48,9 @@ from pathlib import Path
 DEFAULT_LABEL = "com.nedschorus.restart-live-seats-at-login"
 PROGRAM_FILE_NAME = "restart-live-seats-at-login.py"
 LAUNCHD_OUTPUT_FILE_NAME = "restart-live-seats-at-login-launchd-output.txt"
-# The interpreter launchd runs: Homebrew's python3 link, not a numbered version,
-# so the login restart follows whatever interpreter this Mac is standardized on.
-# Apple's /usr/bin/python3 is not needed: without Homebrew the restart cannot
-# launch a seat anyway, since tmux, gh and git all come from it (user-ruled 2026-09-22).
+# Use Homebrew’s unversioned link so login restart follows interpreter upgrades.
 PYTHON_PATH = "/opt/homebrew/bin/python3"
-# Where the fleet's binaries live on this Mac, measured 2026-09-14: claude in
-# ~/.local/bin, tmux and gh in /opt/homebrew/bin; the rest is launchd's own.
+# launchd’s bare PATH omits the fleet’s Homebrew and user binaries.
 LAUNCHD_PATH = "{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 
@@ -64,14 +60,8 @@ def default_launch_agents_directory() -> Path:
 
 def launch_agent_plist(label: str, checkout: Path, handoff_directory,
                        home: Path = Path.home()) -> dict:
-    """The plist as a dict — what plistlib writes. handoff_directory None
-    means the program's default (~/.claude/handoffs); a directory is passed
-    to the program and holds the output file, so a test install touches
-    nothing of the real one."""
-    # Absolute, whatever was typed: launchd starts the job in /, so a relative
-    # --checkout or --handoff-dir written as typed names nothing at login and
-    # the job fails silently — the very failure the is_file guard below exists
-    # to catch (PR #354 review, finding 1).
+    """Return the plist dictionary, using the default handoff directory when None."""
+    # launchd starts in /, so checkout and handoff paths must be absolute.
     checkout = Path(os.path.abspath(checkout))
     program = checkout / "scripts" / PROGRAM_FILE_NAME
     arguments = [PYTHON_PATH, str(program)]
@@ -111,9 +101,7 @@ def install(label: str, checkout: Path, handoff_directory, launch_agents_directo
     if not bootstrap_now:
         print("  it loads at the next login, and runs then; nothing runs now")
         return 0
-    # bootstrap refuses a label already loaded, so an earlier load of this
-    # label — a previous test — is booted out first; a bootout of a label
-    # that is not loaded fails and is ignored.
+    # bootstrap refuses an already-loaded label; bootout may fail if the label is not loaded.
     run(["launchctl", "bootout", f"{launchd_domain()}/{label}"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     finished = run(["launchctl", "bootstrap", launchd_domain(), str(plist_path)])

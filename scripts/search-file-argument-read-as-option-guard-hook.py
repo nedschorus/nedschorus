@@ -1,115 +1,9 @@
 #!/usr/bin/env python3
-"""PreToolUse guard on Bash: refuse a grep, rg or ugrep whose file list, once
-the shell has expanded its globs, would hold a name beginning with `-`, which
-the program reads as options instead of as a file; say to put `--` before the
-file names, and give the command it would accept.
+"""Refuse search globs that expand to option-like filenames before --.
 
-THE BEHAVIOUR IT DEFENDS AGAINST, named per CLAUDE.md's reviewer rule. On
-2026-09-22 agents searched the Claude Code transcript folders with commands of
-the shape `cd ~/.claude/projects && grep -l phrase */*.jsonl`. Every folder
-there is named after a path, `-Users-el-agents-merge-lane`, so the shell hands
-grep `-Users-el-agents-merge-lane/x.jsonl`, and grep reads that word as the
-options -U, -s, -e and so on. The search prints nothing, and the agent reads
-"no hits". PR "The empty-search check's measurement is redone over today's
-transcripts, and every firing is sorted"
-(https://github.com/nedschorus/nedschorus/pull/763) sorted every firing of
-the empty-search check over 62,005 commands from both machines: this shape
-caused two of the four real misses and 8 of the 15 broken searches.
-
-Measured again while writing this guard (2026-10-01, a scratch folder holding
-`-Users-el-agents-x/a.jsonl` and `plain/b.jsonl`, both containing the searched
-word, searched with `-l word */*.jsonl`): macOS /usr/bin/grep and the agent's
-own `grep` (Claude Code's shell function, which runs ugrep) printed nothing
-and exited 2; the agent's `rg` printed "word: No such file or directory" and
-exited 2. With `--` before the file names, all three listed both files. The
-test reproduces this against the real programs before it tests the guard.
-
-DECISIONS, in order:
-- Deny, never warn. A warning added after the command runs arrives with the
-  empty result already read as "no hits".
-- Programs: grep, egrep, fgrep, rg, ugrep, by name or by path, behind leading
-  environment assignments, behind env, command, nohup, nice and timeout, and
-  behind the shell keywords that can stand in front of a command (`do`,
-  `then`, `if`, `while`, `until` and the rest of LEADING_SHELL_KEYWORDS).
-  The agent's `grep` and `rg` are shell functions with those names, so they
-  are covered by name.
-- Only a word whose glob characters stood outside quotes is expanded, the way
-  the shell expands it. The shared tokenizer resolves quotes, and swaps each
-  unquoted `*`, `?`, `[` and `]` it reads for a private-use character
-  (GLOB_CHARACTER_MARKERS, passed as its glob_markers), so the quotes this
-  guard sees are the ones the reader sees; a quoted `"*.jsonl"` reaches the
-  program as itself, and passes.
-- A word is expanded in the directory the command runs in: the payload's cwd,
-  or a literal `cd` earlier in the same command, as the force-push guard
-  resolves it. A `cd` inside a double-quoted `$( ... )`, or inside a
-  substitution in a heredoc body, moves the shell that runs that
-  substitution and no other, so the directory is carried per substitution.
-- Words after `--` are file names to every one of these programs, so they
-  pass. Every other word holding an unquoted glob character is expanded, one
-  that begins with `-` included: an option such as `--include=*.py` names no
-  file, so it expands to nothing and passes, while `-[U]*/*.jsonl` expands to
-  the folder and is refused.
-- Only the first character of an expanded name matters. A pattern whose first
-  path component holds no glob character expands only to names beginning with
-  that component, so it is not expanded unless that component itself begins
-  with `-`, as in `-Users-el-agents-x/*.jsonl`; this keeps `~/x/*` and
-  `/abs/*`, which can never begin with `-`, free of any file-system work.
-- Expansion follows the shell's defaults: hidden names are not matched, and
-  `**` recurses (zsh's default, bash's with globstar). It stops at the first
-  name beginning with `-`, and all expansion in one command shares
-  EXPANSION_BUDGET_SECONDS.
-- The refusal gives the agent's own command, whole, with `--` put in front of
-  the first glob that expands to such a name: the `cd` that put the search in
-  that folder, the pipe, the redirections and the agent's quoting come through
-  as written. The place is found by asking the shared reader, not by
-  re-spelling words: `-- ` is tried at each place a word can start until the
-  result reads as the same commands with `--` in front of that word
-  (command_with_double_dash_before_word). Re-spelling the search's own words
-  dropped the `cd` and quoted `"$k"` as `'$k'`, and a command that then
-  prints nothing is the misreading this guard exists to stop. A command can
-  hold more than one such search, so `--` is put in front of each, and the
-  command given passes this guard when the agent runs it. When the budget
-  runs out before the place is found, the refusal falls back to the search's
-  own words, re-spelled, without the rest of the command.
-- When an option follows that point, inserting `--` there would turn the
-  option into a file name, so the refusal says where `--` goes instead of
-  giving a command.
-
-IT FAILS OPEN, saying nothing, on: an unreadable payload; a `cd` whose target
-it cannot resolve; an expansion that raises or runs out of the budget. A
-guard that blocks ordinary searches when it cannot tell would cost more than
-the mistake it prevents.
-
-WHAT IT CANNOT SEE, so a later reader does not mistake a limit for a check:
-- A file name reaching the program through a variable, as in `for f in
-  */*.jsonl; do grep -l word "$f"; done`, which fails the same way: variables
-  are not expanded.
-- A search inside an ssh remote command: it is one quoted word here, and its
-  glob expands on the other machine, which this guard cannot list.
-- xargs, find -exec, sh -c, eval, and a heredoc fed to a shell.
-- `git grep`, whose file arguments are pathspecs.
-- Brace expansion, `{a,b}`, which is left as literal text.
-- Where a bare subshell ends. The shared tokenizer cuts at parentheses and
-  keeps no record of them, so a `cd` inside `( ... )` or an unquoted
-  `$( ... )` still sets the directory for the commands after it, and a
-  search there can be refused for a folder it does not run in. The command
-  the refusal gives still works.
-- Whether the agent's shell recurses on `**`. Bash without globstar matches
-  one level where this guard matches every level, so a search can be refused
-  for a name only the deeper levels hold; the command the refusal gives works.
-- The budget inside a walk that yields few names. The budget is read before
-  each word and after every 256th name, so `**/*.nosuch` over a large tree is
-  ended by the hook's registered timeout, not by the budget, and the command
-  then runs unguarded.
-- A glob given as an option's separate value (`-f *.txt`) is judged like any
-  file word: if it expands to more than one name beginning with `-`, the rest
-  are read as options anyway, so the refusal still holds.
-
-The tokenizer, the heredoc split and `is_program` are imported from
-scripts/synthetic-keystroke-guard-hook.py rather than copied, as the
-force-push guard imports them: one shell reader, reviewed once. The test
-asserts the import.
-"""
+Variables, remote commands, shell launchers, braces, and git pathspecs are not expanded.
+Bare subshell cwd boundaries and bash without globstar may produce false positives.
+Expansion fails open on errors or budget exhaustion; sparse walks rely on the hook timeout."""
 
 import glob
 import importlib.util
@@ -121,57 +15,36 @@ import sys
 import time
 from pathlib import Path
 
-_keystroke_guard_path = Path(__file__).with_name("synthetic-keystroke-guard-hook.py")
-_keystroke_guard_spec = importlib.util.spec_from_file_location(
-    "synthetic_keystroke_guard_hook", _keystroke_guard_path)
-keystroke_guard = importlib.util.module_from_spec(_keystroke_guard_spec)
-_keystroke_guard_spec.loader.exec_module(keystroke_guard)
-
-split_out_heredocs = keystroke_guard.split_out_heredocs
-tokenize_simple_commands = keystroke_guard.tokenize_simple_commands
-is_program = keystroke_guard.is_program
+_shell_reader_spec = importlib.util.spec_from_file_location(
+    "shell_command_tree_sitter_bash_reader_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "shell-command-tree-sitter-bash-reader-common.py")
+shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
+_shell_reader_spec.loader.exec_module(shell_reader)
+is_program = shell_reader.is_program
 
 SEARCH_PROGRAMS = ("grep", "egrep", "fgrep", "rg", "ugrep")
 
-# Shell keywords that can stand in front of a command on the same line.
-LEADING_SHELL_KEYWORDS = {"do", "then", "else", "elif", "if", "while", "until",
-                          "{", "!", "time"}
-
-# Programs that run the rest of their words as a command. `timeout` takes
-# options and a duration first; `nice` may take `-n <value>`.
-COMMAND_RUNNING_PREFIXES = ("env", "command", "nohup", "nice", "timeout")
-PREFIX_VALUE_OPTIONS = {"-u", "--unset", "-n", "-s", "--signal", "-k",
-                        "--kill-after"}
+# tree-sitter-bash keeps the time keyword as the first word of the command it times.
+LEADING_SHELL_KEYWORDS = {"time"}
 
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
-# A redirection as the shared tokenizer leaves it, as in the force-push guard.
-REDIRECTION_WORD_PATTERN = re.compile(r"^[0-9]*(?:>>|>|<<<|<>|<)")
-
-# A `cd` target this guard cannot resolve without running the shell.
 UNRESOLVABLE_DIRECTORY_PATTERN = re.compile(r"[$`]")
 
-# Unquoted glob characters, swapped for private-use characters by the shared
-# tokenizer as it reads each word, so a word still says which of its glob
-# characters the shell would expand.
+# Markers preserve which glob characters were unquoted and therefore subject to shell expansion.
 GLOB_CHARACTER_MARKERS = {"*": "", "?": "", "[": "",
                           "]": ""}
 MARKER_GLOB_CHARACTERS = {marker: character
                           for character, marker in GLOB_CHARACTER_MARKERS.items()}
-# `]` alone opens nothing; a word needs one of these to be a glob.
+# ] alone cannot open a glob character class.
 GLOB_OPENING_MARKERS = {GLOB_CHARACTER_MARKERS[c] for c in "*?["}
 
-# Kept well under the hook's registered timeout: a PreToolUse hook that
-# overruns its timeout fails open silently.
+# Stay below the hook timeout, which otherwise fails open silently.
 EXPANSION_BUDGET_SECONDS = 5.0
 
-# Characters a word can show unquoted in the command the refusal suggests.
 SAFE_UNQUOTED_CHARACTERS = re.compile(r"^[A-Za-z0-9_./~@%+=:,-]+$")
 
-# What an agent reads: what was refused and why -- the glob, a name it expands
-# to, and the program that reads that name as an option -- then the one
-# instruction that fixes the command. No ruling, date or citation: none of them
-# would help the agent fix the command.
 REFUSAL_WITH_COMMAND_TEMPLATE = (
     "Refused: {glob_word} expands to names beginning with -, such as {name}, "
     "which {program} reads as options, not as files. Put -- before the file "
@@ -185,7 +58,7 @@ REFUSAL_WITHOUT_COMMAND_TEMPLATE = (
 
 
 class ExpansionBudgetSpent(Exception):
-    """All glob expansion in one command shares one wall-clock budget."""
+    """The command's shared glob-expansion time budget was exhausted."""
 
 
 def word_holds_unquoted_glob(word):
@@ -193,15 +66,13 @@ def word_holds_unquoted_glob(word):
 
 
 def plain_word(word):
-    """The word as the program would receive it unexpanded: markers back to
-    their glob characters."""
+    """Return the unexpanded word with glob markers restored."""
     return "".join(MARKER_GLOB_CHARACTERS.get(character, character)
                    for character in word)
 
 
 def glob_pattern_for_word(word):
-    """A glob.glob pattern for a marked word: its unquoted glob characters
-    active, every other character matching only itself."""
+    """Return a glob pattern that expands only the word's unquoted glob characters."""
     return "".join(MARKER_GLOB_CHARACTERS[character]
                    if character in MARKER_GLOB_CHARACTERS
                    else glob.escape(character)
@@ -209,9 +80,7 @@ def glob_pattern_for_word(word):
 
 
 def shell_spelling_of_word(word):
-    """How the suggested command writes a word: unquoted glob characters bare,
-    so the shell still expands them, and literal runs quoted only when they
-    need it."""
+    """Return shell spelling that preserves unquoted globs and quotes literal characters."""
     pieces, literal_run = [], []
 
     def flush_literal_run():
@@ -232,12 +101,8 @@ def shell_spelling_of_word(word):
 
 
 def first_expansion_beginning_with_dash(word, directory, deadline, clock):
-    """The first name the word expands to in `directory` that begins with
-    `-`, or None. Raises ExpansionBudgetSpent when the shared budget runs out.
-
-    Only the first path component decides the first character, so a word
-    whose first component holds no unquoted glob character is expanded only
-    when that component itself begins with `-`."""
+    """Return the first expansion beginning with -, or None; raise when the budget expires."""
+    # Only the first path component can make the expanded filename begin with -.
     first_component = word.split("/", 1)[0]
     if (not word_holds_unquoted_glob(first_component)
             and not first_component.startswith("-")):
@@ -257,65 +122,22 @@ def first_expansion_beginning_with_dash(word, directory, deadline, clock):
 
 
 def search_program_index(words):
-    """Index of the search program in a simple command's words, or None.
-
-    Reads through leading shell keywords, environment assignments, and
-    programs that run the rest of their words (env, command, nohup, nice,
-    timeout) with their options and values."""
-    index = 0
-    while index < len(words):
-        word = words[index]
-        if word in LEADING_SHELL_KEYWORDS:
-            index += 1
-            continue
-        if ENVIRONMENT_ASSIGNMENT_PATTERN.match(word):
-            index += 1
-            continue
-        if any(is_program(word, prefix) for prefix in COMMAND_RUNNING_PREFIXES):
-            running_timeout = is_program(word, "timeout")
-            index += 1
-            while index < len(words):
-                option = words[index]
-                if ENVIRONMENT_ASSIGNMENT_PATTERN.match(option):
-                    index += 1
-                    continue
-                if option in PREFIX_VALUE_OPTIONS:
-                    index += 2
-                    continue
-                if option.startswith("-"):
-                    index += 1
-                    continue
-                break
-            if running_timeout:
-                index += 1  # the duration
-            continue
-        break
-    if index < len(words) and any(is_program(words[index], name)
-                                  for name in SEARCH_PROGRAMS):
+    """Return the search-program index after shell keywords and wrappers, or None."""
+    index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
+    if index is not None and any(is_program(words[index], name) for name in SEARCH_PROGRAMS):
         return index
     return None
 
 
 def read_simple_commands(command):
-    """The command's simple commands as this guard reads them: heredoc bodies
-    dropped (a body is data here, see the module docstring's limits), and
-    every unquoted glob character marked."""
-    shell_view, _heredoc_bodies = split_out_heredocs(command)
-    return tokenize_simple_commands(shell_view, glob_markers=GLOB_CHARACTER_MARKERS)
+    """Return simple commands with heredoc data removed and unquoted glob characters marked."""
+    return shell_reader.simple_commands(command, glob_markers=GLOB_CHARACTER_MARKERS)
 
 
 def command_with_double_dash_before_word(command, commands, command_index,
                                          word_index, deadline, clock):
-    """The agent's own command text with `-- ` put in front of one word, or
-    None when the budget runs out first.
-
-    `-- ` is tried at each place a word can start, and the place is accepted
-    when the shared reader reads the result as the same simple commands with
-    `--` in front of that word. So the reader that found the word also says
-    where the word is, and nothing here re-spells the command: a place inside
-    quotes, a comment or a heredoc body reads differently and is passed over.
-    The places where the word's own text stands unquoted are tried first,
-    which is the first try for nearly every command."""
+    """Insert -- before the selected word without re-spelling the command, or return None."""
+    # Reparse candidates to reject insertion inside quotes, comments, or heredocs.
     expected = [list(words) for words in commands]
     expected[command_index].insert(word_index, "--")
     spelling = plain_word(commands[command_index][word_index])
@@ -334,13 +156,7 @@ def command_with_double_dash_before_word(command, commands, command_index,
 
 def refused_search(command, commands, command_index, program_index,
                    directory, deadline, clock):
-    """What one search command is refused for, or None when it passes:
-    (details, whole_command, respelled_search). The details fill a refusal
-    template. whole_command is the agent's own command with `--` put in, or
-    None when the budget ran out before the place was found.
-    respelled_search is the search's own words with `--` put in, re-spelled,
-    for that case. Both are None when no command can be given because an
-    option follows the glob."""
+    """Return refusal details and whole-command and re-spelled suggestions, or None if allowed."""
     words = commands[command_index]
     program = os.path.basename(words[program_index])
     arguments = words[program_index + 1:]
@@ -349,11 +165,6 @@ def refused_search(command, commands, command_index, program_index,
         word = arguments[index]
         if word == "--":
             return None
-        redirection = REDIRECTION_WORD_PATTERN.match(word)
-        if redirection:
-            target_is_next_word = redirection.end() == len(word)
-            index += 2 if target_is_next_word else 1
-            continue
         if not word_holds_unquoted_glob(word):
             index += 1
             continue
@@ -364,7 +175,6 @@ def refused_search(command, commands, command_index, program_index,
         later_words = arguments[index + 1:]
         option_follows = any(
             plain_word(later).startswith("-") and later != "-"
-            and not REDIRECTION_WORD_PATTERN.match(later)
             for later in later_words)
         details = {"glob_word": plain_word(word), "name": name, "program": program}
         if option_follows:
@@ -372,40 +182,32 @@ def refused_search(command, commands, command_index, program_index,
         whole_command = command_with_double_dash_before_word(
             command, commands, command_index, program_index + 1 + index,
             deadline, clock)
-        # The search's own words from its program on. A shell keyword in
-        # front of the program is left out, because `do grep ...` alone is a
-        # syntax error.
+        # Omit leading shell keywords: a suggestion starting with do grep would be invalid shell syntax.
         first_word = 0
         while words[first_word] in LEADING_SHELL_KEYWORDS:
             first_word += 1
         respelled = (words[first_word:program_index + 1] + arguments[:index]
                      + ["--"] + arguments[index:])
         respelled_search = " ".join(
-            item if REDIRECTION_WORD_PATTERN.match(item) or item == "--"
-            else shell_spelling_of_word(item)
-            for item in respelled)
+            [item if item == "--" else shell_spelling_of_word(item) for item in respelled]
+            + [operator + shell_spelling_of_word(target)
+               for operator, target in words.redirects if operator != "<<"])
         return details, whole_command, respelled_search
     return None
 
 
 def resolve_directory(base, target):
-    expanded = os.path.expanduser(target)
-    if os.path.isabs(expanded):
-        return os.path.normpath(expanded)
-    return os.path.normpath(os.path.join(base, expanded))
+    if os.path.isabs(target):
+        return os.path.normpath(target)
+    return os.path.normpath(os.path.join(base, target))
 
 
 def first_refused_search(command, payload_cwd, deadline, clock):
-    """Walk the command's simple commands in order, carrying the directory a
-    literal `cd` puts them in, and return what the first refused search is
-    refused for (see refused_search), or None.
-
-    A substitution starts in the directory of the one around it, and what a
-    `cd` inside it does ends with it."""
+    """Return the first refused search while tracking literal cd commands."""
     commands = read_simple_commands(command)
-    directories = {(): payload_cwd}  # per substitution
+    directories = {(): payload_cwd}  # A child shell's cd must not change the parent directory.
     for command_index, words in enumerate(commands):
-        substitution = getattr(words, "substitution", ())
+        substitution = words.child_shell
         enclosing = substitution
         while enclosing not in directories:
             enclosing = enclosing[:-1]
@@ -416,14 +218,15 @@ def first_refused_search(command, payload_cwd, deadline, clock):
             program_index += 1
         if program_index < len(words) and is_program(words[program_index], "cd"):
             target = (words[program_index + 1]
-                      if program_index + 1 < len(words) else "~")
-            target_is_absolute = os.path.isabs(os.path.expanduser(plain_word(target)))
+                      if program_index + 1 < len(words) else os.path.expanduser("~"))
+            target_path = plain_word(shell_reader.shell_word_tilde_prefix_expand_as_bash_would(target))
+            target_is_absolute = os.path.isabs(target_path)
             if (UNRESOLVABLE_DIRECTORY_PATTERN.search(target)
                     or word_holds_unquoted_glob(target)
                     or (directory is None and not target_is_absolute)):
                 directory = None
             else:
-                directory = resolve_directory(directory or "/", plain_word(target))
+                directory = resolve_directory(directory or "/", target_path)
             directories[substitution] = directory
             continue
         if directory is None:
@@ -439,13 +242,8 @@ def first_refused_search(command, payload_cwd, deadline, clock):
 
 
 def analyze_command_text(command, payload_cwd, clock=time.monotonic):
-    """The refusal text for the first search in the command that would hand
-    its program a name beginning with `-`, or None when every search passes.
-
-    The command given is the whole command, so a second such search in it
-    would have the agent refused again on running what the refusal gave.
-    `--` is therefore put in front of each further search too, for as long as
-    a command can be given and the budget lasts."""
+    """Return refusal text, or None when all searches pass."""
+    # Fix every unsafe search in the suggestion so running the suggestion does not trigger another refusal.
     deadline = clock() + EXPANSION_BUDGET_SECONDS
     refused = first_refused_search(command, payload_cwd, deadline, clock)
     if refused is None:
@@ -461,12 +259,31 @@ def analyze_command_text(command, payload_cwd, clock=time.monotonic):
             further = first_refused_search(whole_command, payload_cwd,
                                            deadline, clock)
         except (ExpansionBudgetSpent, OSError, ValueError, re.error):
-            break  # the refusal already found stands; give what there is
+            break  # Keep the existing refusal when the remaining budget cannot fix further searches.
         if further is None or further[1] is None:
             break
         whole_command = further[1]
     return REFUSAL_WITH_COMMAND_TEMPLATE.format(
         accepted_command=whole_command, **details)
+
+
+def unchecked_hook_output(why, report=None):
+    """Return the PreToolUse JSON that lets a command through and says why it was not checked.
+
+    report, when given, is the words to tell the user or the dispatching agent.
+    """
+    message = (
+        f"The search-file-argument guard let this command through without checking it, and "
+        f"the command has run: {why}\n"
+        f"Look at the files the command's file patterns match. If one of them names a file "
+        f"whose name starts with -, the search read that name as an option, so run the search "
+        f"again with -- before the file names; if none does, the search ran as written.")
+    if report is not None:
+        message += "\n" + shell_reader.report_to_user_or_dispatching_agent_instruction_build(report)
+    return json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "additionalContext": message,
+    }})
 
 
 def deny(reason):
@@ -490,7 +307,22 @@ def main(stdin=sys.stdin, clock=time.monotonic):
     payload_cwd = payload.get("cwd") or os.getcwd()
     try:
         refusal = analyze_command_text(command, payload_cwd, clock)
-    except (ExpansionBudgetSpent, OSError, ValueError, re.error):
+    except shell_reader.ShellParserUnavailable as error:
+        print(shell_reader.parser_unavailable_hook_output(
+            "The search-file-argument guard", error))
+        return 0
+    except ExpansionBudgetSpent:
+        print(unchecked_hook_output(
+            f"expanding its file patterns took longer than the guard's "
+            f"{EXPANSION_BUDGET_SECONDS:.0f}-second limit, which keeps the guard inside its hook "
+            f"timeout. The limit is deliberate; nothing failed."))
+        return 0
+    except (OSError, ValueError, re.error) as error:
+        print(unchecked_hook_output(
+            f"the guard failed on it ({type(error).__name__}: {error}).",
+            f"\"The search-file-argument guard failed on a command and let it through unchecked "
+            f"({type(error).__name__}: {error}).\" After those words, "
+            f"{shell_reader.COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}."))
         return 0
     if refusal:
         deny(refusal)

@@ -20,6 +20,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -28,7 +29,6 @@ import tempfile
 from pathlib import Path
 
 HOOK_SCRIPT = Path(__file__).with_name("search-file-argument-read-as-option-guard-hook.py")
-KEYSTROKE_GUARD_SCRIPT = Path(__file__).with_name("synthetic-keystroke-guard-hook.py")
 
 _spec = importlib.util.spec_from_file_location("search_guard", HOOK_SCRIPT)
 guard = importlib.util.module_from_spec(_spec)
@@ -58,8 +58,14 @@ def make_scratch_projects_folder():
     return scratch
 
 
+LET_THROUGH_MESSAGES = []
+
+
 def run_main(command, cwd, clock=None):
-    """Drive main() as the harness does; return the refusal text or None."""
+    """Drive main() as the harness does; return the refusal text or None.
+
+    A message that lets the command through is kept in LET_THROUGH_MESSAGES.
+    """
     payload = {"tool_name": "Bash", "cwd": str(cwd),
                "tool_input": {"command": command}}
     stdout = io.StringIO()
@@ -74,6 +80,9 @@ def run_main(command, cwd, clock=None):
     if not text:
         return None
     output = json.loads(text)["hookSpecificOutput"]
+    if "permissionDecision" not in output:
+        LET_THROUGH_MESSAGES.append(output["additionalContext"])
+        return None
     assert output["permissionDecision"] == "deny", output
     return output["permissionDecisionReason"]
 
@@ -87,19 +96,11 @@ def run_in_shell(command, cwd):
 scratch = make_scratch_projects_folder()
 try:
     # -----------------------------------------------------------------------
-    # The shared shell reader is really imported, not copied.
+    # The shared shell module is really imported, not copied.
     # -----------------------------------------------------------------------
-    _keystroke_spec = importlib.util.spec_from_file_location(
-        "keystroke_guard_for_test", KEYSTROKE_GUARD_SCRIPT)
-    keystroke_guard = importlib.util.module_from_spec(_keystroke_spec)
-    _keystroke_spec.loader.exec_module(keystroke_guard)
-    check("the guard uses the keystroke guard's tokenizer and heredoc split",
-          guard.tokenize_simple_commands.__code__.co_code
-          == keystroke_guard.tokenize_simple_commands.__code__.co_code
-          and guard.split_out_heredocs.__code__.co_code
-          == keystroke_guard.split_out_heredocs.__code__.co_code
-          and guard.tokenize_simple_commands.__module__
-          == "synthetic_keystroke_guard_hook")
+    check("the guard reads commands with the shared shell module",
+          guard.shell_reader.__name__ == "shell_command_tree_sitter_bash_reader_common"
+          and guard.read_simple_commands("grep x *")[0][:2] == ["grep", "x"])
 
     # -----------------------------------------------------------------------
     # The misreading, on the real programs, before the guard is tested.
@@ -152,7 +153,14 @@ try:
         "egrep -l needle */*.jsonl",
         "/usr/bin/grep -l needle */*.jsonl",
         "timeout 10 grep -l needle */*.jsonl",
+        "time grep -l needle */*.jsonl",
         "env LC_ALL=C grep -l needle */*.jsonl",
+        "timeout --signal=KILL 10 grep -l needle */*.jsonl",
+        "timeout --kill-after 5 10 grep -l needle */*.jsonl",
+        "sudo -u nedlern grep -l needle */*.jsonl",
+        "flock /tmp/search.lock grep -l needle */*.jsonl",
+        "caffeinate -i grep -l needle */*.jsonl",
+        "echo x | xargs -n 1 grep -l needle */*.jsonl",
         "LC_ALL=C grep -l needle */*.jsonl",
         "echo $(grep -l needle */*.jsonl)",
         "for x in a; do grep -l needle */*.jsonl; done",
@@ -165,11 +173,50 @@ try:
     ]:
         check(f"refused: {command}", run_main(command, scratch) is not None)
 
+    # When the -- cannot be put into the whole command, the suggestion is the search alone,
+    # with its redirections, so that running it does what the agent meant.
+    real_whole_command = guard.command_with_double_dash_before_word
+    guard.command_with_double_dash_before_word = lambda *arguments: None
+    try:
+        refusal = run_main("grep -l needle */*.jsonl 2>/dev/null", scratch)
+    finally:
+        guard.command_with_double_dash_before_word = real_whole_command
+    check("the search-alone suggestion keeps the search's redirections",
+          (refusal or "").endswith("run: grep -l needle -- */*.jsonl 2>/dev/null"), refusal)
+
     elsewhere = scratch / "plain"
     check("refused after a literal cd into the folder from elsewhere",
           run_main(f"cd {scratch} && grep -l needle */*.jsonl", elsewhere) is not None)
     check("refused after cd with a relative path",
           run_main("cd .. && grep -l needle */*.jsonl", elsewhere) is not None)
+    # bash expands only an unquoted leading ~; a quoted one starts a folder named ~.
+    saved_home = os.environ.get("HOME")
+    try:
+        os.environ["HOME"] = str(scratch.parent)
+        check("refused after cd ~/ into the folder",
+              run_main(f"cd ~/{scratch.name} && grep -l needle */*.jsonl", elsewhere) is not None)
+        for quoted in [f"'~/{scratch.name}'", f"\\~/{scratch.name}", f'~"/{scratch.name}"']:
+            check(f"passes: cd {quoted} names a folder called ~ under the current one",
+                  run_main(f"cd {quoted} && grep -l needle */*.jsonl", elsewhere) is None)
+        os.environ["HOME"] = str(scratch)
+        check("refused after a bare cd, which goes to HOME",
+              run_main("cd && grep -l needle */*.jsonl", elsewhere) is not None)
+    finally:
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+
+    # tree-sitter-bash folds a command bash runs in the parent shell into a pipeline
+    # stage in two shapes; the cd before or on the line after the pipeline still counts.
+    check("refused after a cd before a pipeline in which two stages have a redirection",
+          run_main(f"cd {scratch} && ls 2>/dev/null | head 2>/dev/null | cat; "
+                   f"grep -l needle */*.jsonl", elsewhere) is not None)
+    check("refused after a redirected cd on the line after a pipeline of three stages",
+          run_main(f"ls 2>&1 | tail -1 | sed s/a/b/\ncd {scratch} >/dev/null\n"
+                   f"grep -l needle */*.jsonl", elsewhere) is not None)
+    check("passes: a cd that is itself a pipeline stage runs in a child shell",
+          run_main(f"cd {scratch} | cat; grep -l needle */*.jsonl", elsewhere) is None)
 
     # A command substitution runs in a shell of its own: a `cd` inside a
     # double-quoted one, or inside one in a heredoc body, moves that shell
@@ -312,7 +359,7 @@ try:
         check(f"passes: {command!r}", run_main(command, scratch) is None)
 
     # -----------------------------------------------------------------------
-    # Fails open, silently.
+    # Lets the command through, and says why it was not checked.
     # -----------------------------------------------------------------------
     check("passes when a cd target cannot be resolved",
           run_main('cd "$SOMEWHERE" && grep -l needle */*.jsonl', scratch) is None)
@@ -320,9 +367,52 @@ try:
           run_main("grep -l needle */*.jsonl", scratch / "no-such-folder") is None)
 
     ticks = iter(range(0, 10_000, 100))
-    check("passes when the expansion budget is spent",
-          run_main("grep -l needle */*.jsonl", scratch,
-                   clock=lambda: float(next(ticks))) is None)
+    LET_THROUGH_MESSAGES.clear()
+    with guard.shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, None):
+        budget_refusal = run_main("grep -l needle */*.jsonl", scratch,
+                                  clock=lambda: float(next(ticks)))
+    check("passes when the expansion budget is spent, and says the limit stopped the check",
+          budget_refusal is None
+          and len(LET_THROUGH_MESSAGES) == 1
+          and "limit is deliberate; nothing failed" in LET_THROUGH_MESSAGES[0]
+          and "Tell the user" not in LET_THROUGH_MESSAGES[0], LET_THROUGH_MESSAGES)
+    real_analyze = guard.analyze_command_text
+    for failure, session, attended in [
+            (OSError("disk unreadable"), (None, None), True),
+            (ValueError("bad value"), (None, None), True),
+            (re.error("bad pattern"), (None, None), True),
+            (OSError("disk unreadable"), ("0", None), False),
+            (OSError("disk unreadable"), (None, "1"), False)]:
+        def failing(*arguments, failure=failure, **keywords):
+            raise failure
+        guard.analyze_command_text = failing
+        LET_THROUGH_MESSAGES.clear()
+        try:
+            with guard.shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(*session):
+                refusal = run_main("grep -l needle */*.jsonl", scratch)
+        finally:
+            guard.analyze_command_text = real_analyze
+        whom = ("Tell the user" in LET_THROUGH_MESSAGES[0] if attended
+                else "do not tell the user" in LET_THROUGH_MESSAGES[0]
+                and "If you are a subagent, tell the agent that dispatched you" in LET_THROUGH_MESSAGES[0]
+                and "Tell the user" not in LET_THROUGH_MESSAGES[0]) if LET_THROUGH_MESSAGES else False
+        check(f"when the guard fails with {type(failure).__name__}, with the session variables "
+              f"{session}, it lets the command through, says it was not checked, quotes the error "
+              f"and says whom to tell",
+              refusal is None and len(LET_THROUGH_MESSAGES) == 1
+              and f"{type(failure).__name__}: {failure}" in LET_THROUGH_MESSAGES[0]
+              and "without checking it" in LET_THROUGH_MESSAGES[0] and whom
+              and guard.shell_reader.COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION in LET_THROUGH_MESSAGES[0],
+              LET_THROUGH_MESSAGES)
+        report = guard.shell_reader.report_to_user_or_dispatching_agent_instruction_build(
+            f"\"The search-file-argument guard failed on a command and let it through unchecked "
+            f"({type(failure).__name__}: {failure}).\" After those words, "
+            f"{guard.shell_reader.COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}.",
+            {"CLAUDE_CODE_SESSION_ATTENDED": "1" if attended else "0"})
+        check(f"when the guard fails with {type(failure).__name__}, with the session variables "
+              f"{session}, the message ends with the report, so skipping the rest skips only it",
+              bool(LET_THROUGH_MESSAGES) and LET_THROUGH_MESSAGES[0].endswith(report),
+              LET_THROUGH_MESSAGES)
 
     many = scratch / "many"
     many.mkdir()
@@ -334,6 +424,7 @@ try:
         readings_taken.append(None)
         return 0.0 if len(readings_taken) < 3 else 1000.0
 
+    LET_THROUGH_MESSAGES.clear()
     check("passes when the budget is spent during a walk over 300 names",
           run_main("grep -l needle *", many,
                    clock=clock_past_the_budget_on_its_third_reading) is None)

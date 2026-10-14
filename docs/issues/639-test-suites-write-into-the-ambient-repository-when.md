@@ -4,6 +4,18 @@ issue: "[Test suites write into the ambient repository when GIT_DIR is set: git 
 
 # Test suites write into the ambient repository when GIT_DIR is set: git init's result is unchecked and the suite runner passes no environment
 
+## Outcome
+
+All three parts of this issue are built, and an ambient `GIT_DIR`, or any of the five other variables that point git at another repository, no longer reaches a scratch repository a suite builds:
+
+1. **Suites the runner launches**: PR [The suite runner strips the git-redirecting environment variables](https://github.com/nedschorus/nedschorus/pull/644), merged 2026-09-22 as `2796d953`. `scripts/run-all-test-suites.py` launches each suite with the six variables removed.
+2. **The runner's own git calls**: PR [The test runner's own git calls ignore an ambient GIT_DIR](https://github.com/nedschorus/nedschorus/pull/758), merged 2026-09-28 as `ba443081`. The runner's `rev-parse`, `ls-files` and `status` run with the same environment, so the suite list comes from the checkout and `status` no longer rewrites another repository's index.
+3. **A suite run directly**, how the 2026-09-22 damage happened: PR [A test suite run directly takes the git-redirecting variables out of its own process before it builds a scratch repository](https://github.com/nedschorus/nedschorus/pull/921), merged 2026-10-02 as `4de59096`. Every suite or fixture that runs `git init` first calls `remove_git_redirecting_environment_variables_from_this_process()` in `scripts/git-redirecting-environment-removal-test-fixture.py`, which reads the runner's list, so both paths remove the same six variables. Measured 2026-10-01, 20 suites wrote into the repository `GIT_DIR` named, and all 20 are covered, `.claude/hooks/session-location-write-guard-test.py` among them on the user's approval. The other suites that build a scratch repository already kept git out of the named one; the check suite lists each, with how it does so. `scripts/test-suites-run-directly-ignore-git-redirecting-environment-test.py` fails when a suite runs `git init` without the call, and runs real suites with each variable naming a throwaway repository to show that repository is left unchanged.
+
+The "Next action" section's item 2 proposed a scratch repository that checks, after `git init`, that it exists, and the 2026-09-22 notes below call that check the durable answer. Part 3 above removes the variables instead, and replaces that check: by the time such a check fails, `git init` has already run against the named repository, and `git init` alone can write the config every worktree of a clone shares.
+
+Not done, as the next action says: the authorship of commits already on main is not repaired.
+
 ## Reproduction
 
 Run against `origin/main` at `b9d8b4e9e4ce8af26269dc03d1df325fe16051bb`, on ned-box, git 2.53.0, Python 3.14.4. The suite used is one already on main; no pull request under review is involved.
@@ -47,7 +59,7 @@ A suite that needs a git repository builds one with `git init` in a scratch dire
 
 `scripts/run-all-test-suites.py:234` launches every suite with `subprocess.run([interpreter, "-u", suite], cwd=str(top), ...)` and no `env=`, so an ambient `GIT_DIR` reaches all of them.
 
-21 suites on main run `git init`. Three are confirmed to leak under this condition: `scripts/checkout-freshness-catch-up-test.py` (reproduced above), `.claude/hooks/session-location-write-guard-test.py`, and `scripts/clean-worktrees-test.py` — the last the worst measured, leaving 10 stray branches and the identity overwritten to `clean-worktrees test`. Those two were measured by the independent reviewer of PR 633 against its own throwaway victims, not by this seat.
+21 suites on main run `git init`. Three are confirmed to leak under this condition: `scripts/checkout-freshness-catch-up-test.py` (reproduced above), `.claude/hooks/session-location-write-guard-test.py`, and `scripts/clean-worktrees-test.py` — the last the worst measured, leaving 10 stray branches and the identity overwritten to `clean-worktrees test`. Those two were measured by the independent reviewer of PR [The skills glossary, and the project glossary's list of system glossaries](https://github.com/nedschorus/nedschorus/pull/633) against its own throwaway victims, not by this seat.
 
 `scripts/find-deleted-path-across-backups-test.py:793` already does `env.pop("GIT_DIR", None)`. The project has met this once, in one place, and did not generalise it.
 
@@ -70,7 +82,7 @@ Not proposed: repairing the authorship of commits already on main. That needs a 
 
 ## Search receipt
 
-`scripts/ghi-info-ask.py` asked 2026-09-22 with `--include-closed`, for existing coverage of suites writing into the real repository, `git init` success unchecked, `GIT_DIR`, `run-all-test-suites.py` environment, and tests overwriting `user.name`/`user.email`. Answer: no issue, open or closed, covers any of it; the only `user.name`/`user.email` hit anywhere is [#3](https://github.com/nedschorus/nedschorus/issues/3)'s own gatekeeper build facts, which is a different matter.
+`scripts/ghi-info-ask.py` asked 2026-09-22 with `--include-closed`, for existing coverage of suites writing into the real repository, `git init` success unchecked, `GIT_DIR`, `run-all-test-suites.py` environment, and tests overwriting `user.name`/`user.email`. Answer: no issue, open or closed, covers any of it; the only `user.name`/`user.email` hit anywhere is GHI [main-gatekeeper — the single check-in gate](https://github.com/nedschorus/nedschorus/issues/3)'s own gatekeeper build facts, which is a different matter.
 
 
 ## Added 2026-09-22T~20:2xZ, found while building the part-1 fix

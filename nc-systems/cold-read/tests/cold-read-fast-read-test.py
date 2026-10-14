@@ -86,6 +86,16 @@ from pathlib import Path
 SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
 REPO_ROOT = SYSTEM_DIRECTORY.parent.parent
 
+# A variable that redirects git, left in this process, would send the scratch
+# repositories' git writes into the repository it names. Removed before any
+# git runs, so the programs this suite starts inherit the removal too.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    REPO_ROOT / "scripts" / "git-redirecting-environment-removal-test-fixture.py")
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
 # The scratch repository every cold-read suite builds, defined once.
 _scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
     "cold_read_scratch_repository_test_fixture",
@@ -174,6 +184,33 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
+def git_redirecting_variables_reaching_git():
+    """Each variable the test runner strips that this process still holds, and
+    each place git resolves, in a scratch repository, outside that repository."""
+    leaked = [name for name in _git_environment_fixture.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
+              if name in os.environ]
+    with tempfile.TemporaryDirectory() as scratch:
+        repository = Path(scratch).resolve()
+        subprocess.run(["git", "-C", str(repository), "init", "-q"], env=dict(os.environ),
+                       capture_output=True, check=False)
+        resolved = subprocess.run(
+            ["git", "-C", str(repository), "rev-parse", "--path-format=absolute",
+             "--show-toplevel", "--git-dir", "--git-common-dir",
+             "--git-path", "index", "--git-path", "objects"],
+            env=dict(os.environ), capture_output=True, text=True, check=False)
+        outside = [line for line in resolved.stdout.splitlines()
+                   if not Path(line).resolve().is_relative_to(repository)]
+        if resolved.returncode != 0:
+            outside.append(f"git rev-parse exit {resolved.returncode}: {resolved.stderr.strip()}")
+    return leaked, outside
+
+
+_leaked, _outside = git_redirecting_variables_reaching_git()
+check("no variable that redirects git reaches this suite's git: a scratch repository's "
+      "work tree, git directory, index and objects all resolve inside it",
+      not _leaked and not _outside, f"still set: {_leaked}; resolved outside: {_outside}")
+
+
 def build_scratch_repository(scratch):
     """This suite's own seeding only; the scripts copy and the seed commit
     are the fixture's."""
@@ -204,7 +241,12 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     stub.write_text(STUB_AGY, encoding="utf-8")
     stub.chmod(0o755)
     counter_path.unlink(missing_ok=True)
+    # The agy cell scans HOME for credential files at launch, and the real
+    # home takes seconds to walk.
+    scratch_home = repository.parent / "scratch-home"
+    scratch_home.mkdir(exist_ok=True)
     environment = dict(os.environ)
+    environment["HOME"] = str(scratch_home)
     environment["PATH"] = f"{stub_directory}{os.pathsep}{environment.get('PATH', '')}"
     environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(expected_report)
@@ -800,7 +842,7 @@ check("a skill's prompt is in the class",
       class_of(root / ".claude/skills/cold-read/prompts/terminology.md")
       == "a skill or a skill's prompt")
 check("a file under docs/agents/ is in the class",
-      class_of(root / "docs/agents/ghi-instructions.md") == "a file under docs/agents/")
+      class_of(root / "docs/agents/pr-reviewer-instructions.md") == "a file under docs/agents/")
 check("so is one in its queue, which becomes such a file",
       class_of(root / "docs/agents/queue/some-agent-instructions.md")
       == "a file under docs/agents/")
@@ -834,7 +876,7 @@ check("a file outside the checkout is not classified",
 # A seat's scratch worktree is a checkout of the repository too: a brief
 # edited there is the same document on a branch, and the warning must fire
 # for it (measured 2026-09-22: it did not, on a scratch worktree's copy of
-# docs/agents/doctrine-instructions.md). A real second worktree of a scratch
+# a seat brief under docs/agents/). A real second worktree of a scratch
 # repository, with the module's own checkout pointed at the first, stands in
 # for the seat's. A directory in no repository keeps the old answer.
 with tempfile.TemporaryDirectory() as worktree_scratch:

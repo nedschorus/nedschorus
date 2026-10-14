@@ -1,46 +1,8 @@
 #!/usr/bin/env python3
-"""Score reviewers against a defect list: per reviewer, and by union of a set.
+"""Score reviewers against a defect list, individually and in sets.
 
-WHAT THIS MEASURES. Point several reviewers at a document's first draft and
-each writes findings. A separate placement agent maps each finding onto a row
-of that document's defect list, or marks it FALSE. This program turns those
-placement tables into the numbers: what fraction of the defects each reviewer
-found, how much that is worth once severity is counted, and which SET of
-reviewers covers the most between them, which is what picks a roster.
-
-TWO RECALLS, PRINTED SIDE BY SIDE.
-
-  FLAT     distinct rows hit, over the number of rows.
-  WEIGHTED the weight of the rows hit, over the total weight.
-
-Weighted is the one to read. Flat scoring treats a row whose defect erases an
-issue body the same as one whose defect costs a reader one grep, and the two
-are not the same miss. The weights live in the defect list itself, in its
-"Severity weights" section, and this program reads them from there rather
-than holding a copy: the list is the ruler, so the ruler has one home. A row
-weighted 0 is one the user has ruled is not a defect at all; a finding placed
-on it is neither a hit nor a false hit, the treatment the list's declined
-rows already get.
-
-PRECISION IS COUNT-BASED and unweighted, because a false finding lands on no
-row and so has no weight.
-
-WHERE THIS CAME FROM. It was two programs living inside a shipped
-cold-read-record, which is add-only: the first could not be edited once
-shipped, so the second was written beside it rather than changing it. Code
-cannot be maintained in a log-store. Consolidated here 2026-09-10, on the
-user's ruling, with a test that pins its numbers to the ones already published.
-
-INPUTS. `--placements` is a directory of placement tables, one markdown file
-per reviewer, named `<reviewer>--*.md`, each holding one five-column table
-whose Placement cell is `ROW n`, `ROW a+b`, `UNFIXED Un` or `FALSE` and whose
-Confidence cell is `sure` or `unsure`. Those files are run output and live in
-the log-store, not in this repository. `--defect-list` is the ruler, which
-does live here, under cold-read-reviewer-test-cases/.
-
-OUTPUT is markdown on stdout, for pasting into a record. Nothing is written
-to disk. Exit 0 when it scored, 64 for a bad invocation.
-"""
+Severity weights belong to the defect list. Precision is unweighted because
+false findings have no defect row and therefore no severity weight."""
 
 import argparse
 import itertools
@@ -64,13 +26,8 @@ class PlacementParseError(Exception):
 
 
 def read_severity_weights(path: pathlib.Path) -> dict:
-    """{row: weight} from the defect list's Severity weights table.
-
-    Bounded to that one section: the list holds other numeric tables, and an
-    unbounded scan reads a row number out of the old-to-new crosswalk and
-    reports a row weighted twice. That happened, which is why the bound is
-    here and this sentence is with it.
-    """
+    """Return {row: weight} from the Severity weights table."""
+    # Other sections contain numeric tables too; an unbounded scan would count unrelated rows.
     text = path.read_text(encoding="utf-8")
     start = text.find(WEIGHTS_SECTION_HEADING)
     if start < 0:
@@ -123,13 +80,8 @@ def classify_placement(placement: str, source: str, finding_id: str, row_total: 
 
 
 def parse_one_placement_file(path: pathlib.Path, row_total: int):
-    """(reviewer, findings, anomalies) for one placement table.
-
-    NOTHING IS DROPPED SILENTLY. A pipe-line after the header that does not
-    split into five cells is reported as an anomaly rather than skipped: the
-    one way this parse loses a finding is a stray pipe inside a quoted phrase,
-    and a lost finding moves every total.
-    """
+    """Return (reviewer, findings, anomalies) for one placement table."""
+    # A stray pipe can split a finding into extra cells; dropping that row would change the totals.
     reviewer = path.name.split("--")[0]
     findings, anomalies = [], []
     seen_header = False
@@ -149,8 +101,7 @@ def parse_one_placement_file(path: pathlib.Path, row_total: int):
             anomalies.append(f"{len(cells)} cells, not 5 — not parsed: {line[:120]}")
             continue
         finding_id, quote, placement_as_written, confidence, reason = cells
-        # Markdown emphasis around the value is formatting, not a judgement:
-        # one placer wrapped every cell in backticks.
+        # Markdown emphasis is formatting, not a judgment.
         placement = placement_as_written.strip("`* ")
         rows, category = classify_placement(
             placement, path.name, finding_id, row_total)
@@ -175,7 +126,7 @@ def parse_one_placement_file(path: pathlib.Path, row_total: int):
 
 
 def summarize(findings, weights, total_weight, row_total):
-    """One reviewer's figures. A hit on a weight-0 row counts as neither."""
+    """Return reviewer figures; weight-zero rows count as neither hits nor false hits."""
     hits, false_count, unfixed_count, not_a_defect = [], 0, 0, 0
     for finding in findings:
         if finding["category"] == "HIT":
@@ -270,13 +221,7 @@ def print_unfound(summaries, weights, total_weight):
 
 
 def print_hand_check(all_findings, summaries, weights, depth):
-    """The placements worth a person's time, ranked by the weight they move.
-
-    Ranking every placement equally sends the check at rows worth one point.
-    A placement matters in proportion to the weight of the row it bears on,
-    and only where flipping it would actually move a total: a FALSE whose
-    reason names a row the reviewer already holds moves nothing.
-    """
+    """Print placements ranked by how much changing each would affect the totals."""
     row_hits, reviewer_row_hits = {}, {}
     for finding in all_findings:
         if finding["category"] == "HIT":
@@ -371,10 +316,7 @@ def main() -> int:
 
     summaries, all_findings, anomalies_by_reviewer = {}, [], {}
     for path in placement_files:
-        # A malformed placement table is the caller's file to fix, so it gets
-        # the one line naming the file and what is wrong with it. Letting the
-        # exception escape prints a traceback, which buries that line and
-        # reads as a crash in this program rather than a fault in the input.
+        # Report malformed input without a traceback that would obscure the actionable error.
         try:
             reviewer, findings, anomalies = parse_one_placement_file(path, row_total)
         except PlacementParseError as problem:

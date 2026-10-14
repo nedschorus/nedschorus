@@ -13,12 +13,9 @@ fresh context:
   design. The agent is instructed not to read the existing design,
   its implementation, or its records, but may research the best approach
   independently — this repository, the internet, reputable repositories on
-  GitHub. Isolation is instructed, not enforced, and checked, best-effort, two ways:
-  the agent's report lists everything it consulted and discloses anything
-  off-limits it strayed into (self-reported), and the runner scans what the
-  requester sends — the problem statement, and the instruction files the
-  CLIs inject on their own (conventional paths, not a proven enumeration) —
-  for the design's coined names, printing a LEAK-WARNING per hit. The
+  GitHub. Isolation is instructed, not enforced, and checked by the agent's
+  own report, which lists everything it consulted and discloses anything
+  off-limits it strayed into. The
   agent returns a five-section report — sketch, hard parts, late
   discoveries, assumptions, what it consulted — and triage compares the
   original and the fresh design on their merits: a substantive difference
@@ -165,11 +162,6 @@ Running a sanity-check, and reading its output:
   none prints `WARNING: <audit>-<runtime> quote found in no tracked file: ...` — triage
   information, never a gate; a quote may legitimately come from git history
   or the web.
-- Fresh-eyes runs print `LEAK-WARNING` lines — the requester-input scan
-  described above, one per line a coined name appears on, naming the line's
-  number and text. Expect hits on every run: the off-limits list must name
-  the design's paths to forbid them, and those paths are coined names; the
-  line shows whether a hit is that list.
 - Every review agent may reach the internet to check facts, and every one may
   write: claude agents carry web tools plus Write, codex agents run under a
   permission profile that writes where workspace-write did, with network on,
@@ -252,20 +244,19 @@ Running a sanity-check, and reading its output:
   does when it ends, printing the `record:` line, and ends by the same
   signal; a run killed outright while it ships has already stopped its agents
   and removed its copy, and its record stays on disk. No agent-binary starts
-  once the stop is under way: a cell's thread reads the stop and starts its
-  agent-binary under one lock, the lock the handler takes to mark the run
-  stopped, so every agent-binary is in the process table the handler then
-  reads. A signal that arrives after every cell has ended stopped no agent:
-  the runner finishes the run's closing steps, prints what a finished run
-  prints, with no `STOPPED:` line, and ends by the signal. SIGKILL, and a
-  machine that stops, cannot be answered, so each run, before it makes its
-  own copy, removes the copies no live run owns and prints `removed: a review
-  copy an earlier run left behind, <path>` for each. A copy is a live run's
-  while that run holds the lock on the owner file beside the copy's
-  directory, `<directory>.owner`, which the operating system releases when
-  the process ends however it ends; so two runs at once never remove each
-  other's copy. An agent whose runner was killed outright still runs to its
-  own end, in a copy the next run removes from under it.
+  a review once the stop is under way: a cell's thread reads the stop and
+  starts its agent-binary under one lock, the lock the handler takes to mark
+  the run stopped, so every agent-binary is in the process table the handler
+  then reads. The one later start is the `--version` probe of a cell saving
+  its report, for the report's provenance line; it reads the version and
+  exits. A signal that arrives after every cell has finished, each having
+  saved its report or said why it could not, stopped nothing: the runner
+  finishes the run's closing steps, prints what a finished run prints, with
+  no `STOPPED:` line, and ends by the signal. A cell still running when the
+  signal arrives makes the run a stopped run, whatever its calls return
+  afterwards. SIGKILL and a machine that stops cannot be answered; delete
+  their leftover review-copy directories by hand. If a run cannot remove its
+  own copy, it fails and names the directory to delete by hand.
 - Each saved report opens with a provenance line: runtime, model, effort,
   the reviewing CLI's version (measured by this runner, not self-reported),
   audit, target, and the commit the review copy holds and its state, so
@@ -278,7 +269,6 @@ import argparse
 import concurrent.futures
 import contextlib
 import datetime
-import fcntl
 import hashlib
 import os
 import pathlib
@@ -298,12 +288,18 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RECORDS_DIRECTORY_NAME = "sanity-check-records"
 RECORDS_ROOT = REPO_ROOT / RECORDS_DIRECTORY_NAME
 # The record reaches the log-store by program, not by an agent remembering to
-# run one (nedschorus#392), the way nc-systems/cold-read/cold-read-grid.py ships its own.
+# run one, the way nc-systems/cold-read/cold-read-grid.py ships its own.
 RECORD_SHIPPER = REPO_ROOT / "scripts" / "sanity-check-record-ship.py"
 _common_spec = importlib.util.spec_from_file_location(
     "cold_read_cell_common", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-cell-common.py")
 common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(common)
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
 # The Codex cells' permission profile, as it appears in their sessions.
 CODEX_CREDENTIAL_DENYING_PERMISSION_PROFILE = "sanity-check-no-credentials"
 
@@ -335,8 +331,7 @@ RECOGNISED_FAILURE_TEXTS_FOR_MODEL = {
 
 # The signals that end a run early and that this runner answers by stopping
 # its agents and removing its review copy: see WHEN A RUN IS STOPPED in the
-# module docstring. SIGKILL cannot be answered; the next run removes the copy
-# a killed run left (remove_review_copies_no_live_run_owns).
+# module docstring.
 RUN_STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 # How long the stopped agents' processes are given to end on SIGTERM before
 # they are sent SIGKILL.
@@ -345,15 +340,26 @@ STOPPED_PROCESS_GRACE_SECONDS = 10.0
 # agent-binary: a cell stopped with its run is not relaunched, and the claude
 # chain does not go on to its next model.
 RUN_STOPPED = threading.Event()
+# The cells whose run_cell has returned: each saved its report or printed why
+# it could not. stop_run_on_signal copies it into CELLS_FINISHED_AT_THE_STOP
+# when the stop comes.
+CELLS_FINISHED = set()
+# The cells that had finished when the stop signal came, or None while the run
+# is not stopped. A stopped run ends as a finished run only when every cell is
+# in it. Decided at the signal, so no child's exit code is read: an
+# agent-binary or a version probe a signal ended may exit 0 (the npm codex
+# wrapper does), and a cell that had not finished when the signal came is
+# counted as ended by the stop whatever its calls returned.
+CELLS_FINISHED_AT_THE_STOP = None
 # Held while a cell's thread reads RUN_STOPPED and starts an agent-binary, and
 # by the stop handler while it sets RUN_STOPPED: see
 # run_agent_binary_unless_run_stopped. Re-entrant, so a handler that runs on a
 # thread already holding it cannot wait on itself; in a run the main thread,
 # which runs the handler, launches no agent-binary and never holds it.
 AGENT_BINARY_LAUNCH_LOCK = threading.RLock()
-# The name of the file beside a review copy's directory whose lock says a
-# live run owns that copy: see claim_review_copy_directory.
-REVIEW_COPY_OWNER_FILE_SUFFIX = ".owner"
+# The review copy this run could not remove, which makes the run fail once its
+# record is shipped; None while there is none.
+REVIEW_COPY_NOT_REMOVED = None
 
 # The line a cell prints when its first launch produced no report and the
 # runner launches it once more: `RETRYING: <cell> — <cause class> — <detail>`.
@@ -385,8 +391,8 @@ CELL_SCRATCH_DIRECTORY_NAME = "scratch"
 REVIEW_COPIES_ROOT = pathlib.Path.home() / ".cache" / "nedschorus-sanity-check-review-copies"
 
 # What the run saves in its record beside the reports: everything it printed,
-# and the request the fresh-eyes cells were given. Both used to be copied in by
-# hand, when an agent remembered (nedschorus#412, item 3).
+# and the request the fresh-eyes cells were given, so neither depends on an
+# agent remembering to copy it in.
 SANITY_CHECK_RUN_LOG_FILE_NAME = "sanity-check-run.log"
 SANITY_CHECK_REQUEST_COPY_FILE_NAME = "sanity-check-request.md"
 
@@ -395,9 +401,8 @@ SANITY_CHECK_REQUEST_COPY_FILE_NAME = "sanity-check-request.md"
 # the porcelain was parsed; the record directory is the ignored path that
 # matters, because the runner writes every cell's report there and triage then
 # reads those reports against each other — a cell overwriting a finished report
-# corrupts the comparison and the run still looked clean (raised as an inline
-# P2 on PR #98, fixed 2026-08-23). Watching the whole ignore list instead —
-# `git status --ignored` — was ruled out (user, 2026-08-23): it enumerates and
+# corrupts the comparison while the run still looks clean. Watching the whole
+# ignore list instead — `git status --ignored` — costs too much: it enumerates and
 # fingerprints every ignored file in the repository, one subprocess each, to
 # catch a rare write. Writes to other ignored paths (ghi-mirror/,
 # cold-read-records/, __pycache__/) are therefore still undetected; the test
@@ -415,10 +420,8 @@ IGNORED_PATHS_WATCHED_FOR_WRITES = (RECORDS_DIRECTORY_NAME,)
 IGNORED_PATH_STATUS_CODE = "!!"
 
 # The claude runtime's chain, tried in order until one produces a review.
-# "claude-fable-5" is obsolete (user, 2026-09-04: "fable 5 is now obsolete.
-# 5.1 is current"), and Fable is sometimes unavailable (user, 2026-09-11:
-# "sometimes fable is not available, so it should fall back to opus in that
-# case"), so Opus 5 stands behind it and ends the chain.
+# "claude-fable-5" is obsolete, and Fable is sometimes unavailable, so Opus 5
+# stands behind it and ends the chain.
 #
 # WHAT COUNTS AS A FAILURE WORTH FALLING BACK FROM follows the house chain,
 # run_model_chain in nc-systems/cold-read/cold-read-cell-common.py: a model that exits
@@ -427,12 +430,11 @@ IGNORED_PATH_STATUS_CODE = "!!"
 # That module is not imported here: it is built around the cold-read cell's
 # command line and report file, and this runner has neither.
 CLAUDE_MODEL_CHAIN = ("claude-fable-5-1", "claude-opus-5")
-# gpt-6-sol from 2026-09-22 and gpt-6.1-sol since 2026-10-01, matching
-# cold-read-codex-cell.py's `deep` tier; the id needs codex-cli 0.159.1 or
-# later.
+# Matches cold-read-codex-cell.py's `deep` tier; the id needs codex-cli 0.159.1
+# or later.
 CODEX_MODEL = "gpt-6.1-sol"
-# xhigh for both runtimes: user calibration 2026-08-03 for codex, confirmed
-# for both by the 2026-08-17 tier probe (max earned neither slot).
+# xhigh for both runtimes, by the user's calibration and a tier probe of both:
+# max earned neither slot.
 REASONING_EFFORT = "xhigh"
 CELL_TIMEOUT_SECONDS = 3600
 
@@ -464,10 +466,8 @@ ATTACK_PROMPT_FILES = {
 # prompts-to-code table and its coverage list, fresh-eyes's five sections — and
 # a test pins every phrase to its prompt's body. The smallest phrase each
 # section's reports carry, not heading syntax, which the models reshape.
-# This check was rejected on 2026-08-19 with the condition "reopen on the
-# first observed miss". The miss came on 2026-09-15: two claude cells saved a
-# reply to a Stop hook's note in place of their reviews, and the runner
-# printed `saved:` for both (nedschorus#397).
+# Without this check, a cell that replies to a Stop hook's note in place of its
+# review has that reply saved, and the runner prints `saved:` for it.
 ATTACK_REPORT_REQUIRED_PHRASES = {
     "cut": ("questions", "leanness"),
     "mechanization": ("prompts-to-code", "coverage"),
@@ -476,32 +476,16 @@ ATTACK_REPORT_REQUIRED_PHRASES = {
 }
 
 
-# Hyphenations that are ordinary English or repo-wide convention, not names a
-# design coined — the coined-name scan skips them. Anything else that hits is
-# printed; triage judges false positives (the scan reports, never gates).
-GENERIC_HYPHENATED_WORDS = {
-    "read-only", "zero-context", "one-line", "built-in", "fine-grained",
-    "high-level", "low-level", "long-running", "machine-readable",
-    "human-readable", "re-run", "so-called", "non-empty", "well-designed",
-    "open-ended", "side-effect", "side-effects", "trade-off", "trade-offs",
-    "one-off", "end-to-end", "up-to-date", "auto-filled", "auto-posted",
-    "hand-made", "judgment-written", "long-lived", "near-perfect",
-    "per-commit", "what-and-why", "work-in-progress",
-}
-
-
 def prompt_body(attack: str) -> str:
     """The prompt below the file's body marker, its scratch placeholder intact.
 
-    The marker is a line no ordinary edit produces. The boundary was the first
-    `---` line until 2026-08-19, and `---` is ordinary markdown punctuation: a
-    horizontal rule added to the header, or one written inside a code fence,
-    silently moved the split and shipped header text to the cells in place of
-    their instructions. It also forced a YAML-frontmatter special case, since
-    frontmatter is delimited by `---` too. A marker that collides with nothing
-    needs neither the special case nor an editor's memory (user-ruled
-    2026-08-19, on the first live check of the cut prompt, where five of six
-    cells raised the old boundary independently).
+    The marker is a line no ordinary edit produces. A boundary of `---` would be
+    ordinary markdown punctuation: a horizontal rule added to the header, or
+    one written inside a code fence, would silently move the split and ship
+    header text to the cells in place of their instructions. It would also
+    force a YAML-frontmatter special case, since frontmatter is delimited by
+    `---` too. A marker that collides with nothing needs neither the special
+    case nor an editor's memory.
 
     The scratch placeholder is checked here for the same reason and in the same
     place: every cell is given a scratch directory, and a body that no longer
@@ -513,12 +497,10 @@ def prompt_body(attack: str) -> str:
     path = ATTACK_PROMPT_FILES[attack]
     lines = path.read_text(encoding="utf-8").splitlines()
     # A line that IS the marker, not a line that spells it inside a sentence.
-    # No shipped header spells it any more: commit "prompt headers: the
-    # marker-split sentence cut from all three (user-ruled 2026-08-22)",
-    # 70a813b, left them saying "everything below the marker", which names
-    # the marker without carrying it. The strict equality is what makes
-    # either wording harmless, and the test keeps the mistakable case alive
-    # from a synthetic header.
+    # The shipped headers say "everything below the marker", which names the
+    # marker without carrying it, but a header that spelled it would be
+    # harmless too: the strict equality is what makes either wording safe, and
+    # the test keeps the mistakable case alive from a synthetic header.
     marker_lines = [i for i, line in enumerate(lines)
                     if line.strip() == PROMPT_BODY_MARKER]
     if len(marker_lines) != 1:
@@ -540,75 +522,11 @@ def prompt_body(attack: str) -> str:
     return body
 
 
-def coined_names(target_path: pathlib.Path) -> set:
-    """The design's coined names: backticked spans plus multi-part invented
-    names (hyphenated tokens), minus ordinary-English hyphenations."""
-    text = target_path.read_text(encoding="utf-8")
-    names = set()
-    for span in re.findall(r"`([^`\n]+)`", text):
-        span = span.strip()
-        # A plain lowercase word is vocabulary, not coinage: the project's
-        # naming rule makes invented names multi-part, so single words
-        # (`main`, `none`, `status`) only produce scan noise.
-        # Bare punctuation (`---`) is markdown, not a coinage.
-        if (len(span) >= 3 and " " not in span and not span.isdigit()
-                and any(ch.isalnum() for ch in span)
-                and not (span.isalpha() and span.islower())):
-            names.add(span)
-    for token in re.findall(r"[A-Za-z]\w*(?:-\w+)+", text):
-        if token.lower() not in GENERIC_HYPHENATED_WORDS:
-            names.add(token)
-    return names
-
-
-LEAK_WARNING_LINE_CHARACTERS = 160
-
-
-def leak_scan(design_names: set, text: str, where: str) -> None:
-    """Print a LEAK-WARNING per line of text a design name appears on. Report,
-    never gate: a leaked name means the sketch can no longer independently
-    confirm that part of the design — the requester weighs it at triage.
-
-    Each warning names the line it matched, number and text, because the
-    request's off-limits list must name the design's own paths, so every run
-    has expected hits: one run printed 22 warnings naming only the file, and
-    telling those from a real leak meant searching the file by hand
-    (nedschorus#412, item 6)."""
-    lines = text.splitlines()
-    for name in sorted(design_names):
-        pattern = re.compile(rf"(?<![\w-]){re.escape(name)}(?![\w-])", re.IGNORECASE)
-        for number, line in enumerate(lines, start=1):
-            if pattern.search(line):
-                print(f"LEAK-WARNING: design name `{name}` appears in {where}, "
-                      f"line {number}: {line.strip()[:LEAK_WARNING_LINE_CHARACTERS]}",
-                      flush=True)
-
-
-def injected_instruction_files(checkout: pathlib.Path = None) -> list:
-    """Instruction files the cell CLIs load on their own — the leak channel a
-    2026-08-17 canary exposed (a cell disclosed that the injected project
-    CLAUDE.md carried the design's thesis). Conventional paths, not a verified
-    enumeration; the report scan is the catch-all behind this. The project's
-    files are the ones in `checkout`, the review copy the cells run in."""
-    home = pathlib.Path.home()
-    checkout = checkout or REPO_ROOT
-    candidates = [
-        checkout / "CLAUDE.md",
-        checkout / "CLAUDE.local.md",
-        checkout / "AGENTS.md",
-        home / ".claude" / "CLAUDE.md",
-        home / ".claude" / "CLAUDE.local.md",
-        home / ".codex" / "AGENTS.md",
-    ]
-    return [path for path in candidates if path.is_file()]
-
-
 def assemble_prompt(attack: str, target: str, context: list,
                     problem_statement: pathlib.Path,
                     scratch_directory: str) -> str:
     # Data only below the rule: every instruction lives in the prompt MDs,
-    # which get a cold read; nothing reviewable hides here (user-ruled
-    # 2026-08-17). The scratch path is substituted into the body for the same
+    # which get a cold read; nothing reviewable hides here. The scratch path is substituted into the body for the same
     # reason: the sentence granting the working space is in the MD where it
     # can be reviewed, and only the path — data, and different for every cell
     # — comes from here. Absolute, not repo-relative: a cell resolves it the
@@ -636,15 +554,13 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
     # is a fallback, not the cell's failure.
     # Runs in `checkout`, the review copy, so every path the cell resolves is
     # the reviewed commit's (see review_copy_of_commit).
-    # Every cell may check facts on the internet (user-ruled 2026-08-18);
-    # isolation and write discipline are instructed in the prompts and
-    # checked (leak scan; worktree check), never enforced here. Write joined
-    # the tool set on 2026-08-29, when the cells gained a sanctioned scratch
-    # directory: the prompt now names a place to put notes and drafts, so the
-    # tool that place needs is here. Withholding it never was the protection
-    # it looked like — a claude cell wrote to the worktree on 2026-08-21 with
-    # no write tool at all (nedschorus#161), which is why run_cell's worktree
-    # check runs for claude cells too, not only codex's.
+    # Every cell may check facts on the internet; isolation and write
+    # discipline are instructed in the prompts and checked (the agent's own
+    # report; worktree check), never enforced here. Write is in the tool set because
+    # the prompt names a sanctioned scratch directory for notes and drafts.
+    # Withholding it would not be the protection it looks like — a claude cell
+    # can write to the worktree with no write tool at all, which is why
+    # run_cell's worktree check runs for claude cells too, not only codex's.
     failed_attempts = []
     last_cause = None
     for model in CLAUDE_MODEL_CHAIN:
@@ -660,12 +576,12 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
             "--output-format", "text",
             "--allowedTools", "Read,Grep,Glob,WebSearch,WebFetch,Write",
             # User settings only: this repository's .claude/settings.json wires
-            # Stop hooks, and on 2026-09-15 checkout-freshness-catch-up.py spoke
-            # inside two cells as origin/main moved; each cell answered the
-            # note, and the answer, captured as the final message, was saved in
-            # place of the review (nedschorus#397). The flag also keeps out the
-            # project's CLAUDE.md, skills and write guards (measured
-            # 2026-09-16); the write detector in run_cell covers the guards.
+            # Stop hooks such as checkout-freshness-catch-up.py, which speak
+            # inside a cell as origin/main moves; a cell that answers the note
+            # has the answer, captured as the final message, saved in place of
+            # the review. The flag also keeps out the project's CLAUDE.md,
+            # skills and write guards; the write detector in run_cell covers
+            # the guards.
             "--setting-sources", "user",
         ]
         try:
@@ -691,8 +607,7 @@ def run_claude(prompt: str, checkout: pathlib.Path = None) -> tuple:
         # nc-systems/cold-read/cold-read-cell-common.py). A CLI that is logged out or out of
         # credits explains itself on one of these streams and nowhere else, so
         # discarding them leaves "WARNING: <model> failed (exit 1)" as the whole
-        # account of why -- the 54-byte cold-read log of 2026-08-23, which is
-        # what taught the house chain to capture both. It is worse here than it
+        # account of why. It is worse here than it
         # was there: the chain continues past a failed attempt, so a run whose
         # first model is logged out still saves a report, and that one line is
         # the only trace of the degradation in the output. Re-emitted before any
@@ -745,8 +660,7 @@ def run_agent_binary_unless_run_stopped(command: list, input: str = None,
     RUN_STOPPED unset could launch after the handler's last look at the
     table: the agent-binary was killed alone, the child it then started held
     its pipes, and the run waited for that child with every stop signal
-    ignored, its review copy left behind (found in review of the pull request
-    that introduced the review copy). The wait after the start is outside the
+    ignored, its review copy left behind. The wait after the start is outside the
     lock and is subprocess.run's own: on a timeout the agent-binary is killed
     and TimeoutExpired raised with the streams it had written."""
     with AGENT_BINARY_LAUNCH_LOCK:
@@ -782,15 +696,14 @@ def run_codex(prompt: str, checkout: pathlib.Path = None) -> tuple:
     # `-C checkout`, the review copy: the directory the cell reads, and the
     # root its profile lets it write under, where its scratch directory is.
     # workspace-write plus network: the cells may reach the internet and
-    # GitHub to check facts (user-ruled 2026-08-18; the read-only sandbox
-    # blocks even DNS, measured that day). Disk writes are possible here and
+    # GitHub to check facts, and the read-only sandbox blocks even DNS. Disk
+    # writes are possible here and
     # confined by the prompt to the cell's own scratch directory; run_cell's
     # worktree check detects strays outside it — containment over prevention,
     # the house doctrine. Both come from a permission profile extending
-    # `:workspace` with network on, which also denies every credential file
-    # (user-ruled 2026-09-29, item 8 of the walk
-    # what-a-cold-read-reviewer-may-read-2026-09-28, "y"): the builder the
-    # cold-read Codex cell uses, in nc-systems/cold-read/cold-read-cell-common.py.
+    # `:workspace` with network on, which also denies every credential file:
+    # the builder the cold-read Codex cell uses, in
+    # nc-systems/cold-read/cold-read-cell-common.py.
     last_message_path = pathlib.Path(tempfile.mkstemp(suffix=".md", prefix="attack-cell-")[1])
     command = [
         "codex", "exec",
@@ -835,9 +748,12 @@ def run_codex(prompt: str, checkout: pathlib.Path = None) -> tuple:
         if completed is None:
             # The run was stopped before codex could start: see run_claude.
             return 1, "", CODEX_MODEL, "", None
-        if completed.returncode != 0 and RUN_STOPPED.is_set():
-            # Ended because the run was stopped: see run_claude.
-            return completed.returncode, "", CODEX_MODEL, "", None
+        if RUN_STOPPED.is_set():
+            # Ended because the run was stopped, whatever its exit code: see
+            # run_claude. An agent-binary that answers SIGTERM by exiting 0
+            # would otherwise have what it had written so far saved as its
+            # report.
+            return 1, "", CODEX_MODEL, "", None
         if completed.returncode != 0:
             for stream in (completed.stderr, completed.stdout):
                 print(last_lines_of_stream(
@@ -859,7 +775,7 @@ def captured_stream_as_text(captured) -> str:
 
     subprocess.TimeoutExpired carries what the child had written before it was
     cut off, and CPython raises it before the decoding step, so a call that
-    asked for text still gets bytes (measured on 3.13, 2026-09-17); a stream
+    asked for text still gets bytes (measured on Python 3.13); a stream
     that was never piped, and a piped one the child wrote nothing to, arrive
     as None. Undecodable bytes are replaced, never raised on: a runtime cut off
     partway through a character must not turn a timeout into a crash.
@@ -869,23 +785,6 @@ def captured_stream_as_text(captured) -> str:
     if isinstance(captured, bytes):
         return captured.decode("utf-8", errors="replace")
     return captured
-
-
-def blob_fingerprint(data: bytes) -> str:
-    """git's blob hash for a byte string: sha1 over git's header for a blob of
-    that size, its NUL terminator, and the bytes.
-
-    The same value `git hash-object` prints for a file holding those bytes,
-    which is how the ledger's record of what it wrote stays comparable with a
-    snapshot's record of what is on disk (verified 2026-08-23; the repository
-    sets no .gitattributes and no core.autocrlf, so no clean filter stands
-    between the two). Raw bytes are also the right input for a write detector:
-    a rewrite that a filter would normalize away is still a write.
-    """
-    digest = hashlib.sha1()
-    digest.update(b"blob %d\0" % len(data))
-    digest.update(data)
-    return digest.hexdigest()
 
 
 def file_fingerprint(file_path: pathlib.Path) -> str:
@@ -904,46 +803,17 @@ def file_fingerprint(file_path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
-def git_status_code_for_path(file_path: pathlib.Path,
-                             repo_root: pathlib.Path) -> str:
-    """The two-character status git gives one path, or the ignored code when
-    git says nothing about it — the entry worktree_snapshot would record.
-
-    Asked once per report the runner writes, so the ledger records what git
-    actually says rather than assuming the record directory is still ignored.
-    Where that ignore rule is absent — an older revision, or a worktree whose
-    .gitignore has been edited — git calls each report `??`, and a ledger
-    entry claiming `!!` made every later cell's check name the runner's own
-    report as a worktree modification (chatgpt-codex-connector, P2 on PR #147).
-    """
-    completed = subprocess.run(
-        ["git", "status", "--porcelain", "-z", "-uall", "--", str(file_path)],
-        cwd=repo_root, stdout=subprocess.PIPE, text=True, check=False,
-    )
-    entry = completed.stdout.split("\0")[0]
-    return entry[:2] if entry else IGNORED_PATH_STATUS_CODE
-
-
-def path_watched_as_ignored(path: str) -> bool:
-    """Whether a repo-relative path lies under a watched ignored path."""
-    return any(path == watched or path.startswith(watched + "/")
-               for watched in IGNORED_PATHS_WATCHED_FOR_WRITES)
-
-
 def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
     """Path -> (index/worktree status, content fingerprint) for every file git
     sees as dirty or untracked, plus every file under
     IGNORED_PATHS_WATCHED_FOR_WRITES. Both halves are needed, because each
     catches what the other misses. A file already modified before the run keeps its
-    ` M` line when a cell rewrites it, so a label alone misses that write
-    (Codex finding on PR #98); staging a file changes its status without
-    changing its bytes, so a fingerprint alone misses `git add` (found by
-    `codex exec review` on PR #102, where the fingerprint-only version was a
-    regression against the label comparison it replaced).
+    ` M` line when a cell rewrites it, so a label alone misses that write;
+    staging a file changes its status without changing its bytes, so a
+    fingerprint alone misses `git add`.
 
     The paths come from `--porcelain -z -uall`, because plain porcelain hides
-    writes two ways (both found reviewing PR #102, both silent by
-    construction). Without `-z`, git C-quotes a non-ASCII pathname, and the
+    writes two ways, both silent by construction. Without `-z`, git C-quotes a non-ASCII pathname, and the
     unquoted result names no file on disk, so it fingerprints as "absent"
     before and after a cell rewrites it. Without `-uall`, git collapses a
     wholly-untracked directory into one `dir/` entry, so every file a cell
@@ -961,20 +831,8 @@ def worktree_snapshot(repo_root: pathlib.Path = REPO_ROOT) -> dict:
         stdout=subprocess.PIPE, text=True, check=False,
     )
     snapshot = {}
-    fields = completed.stdout.split("\0")
-    index = 0
-    while index < len(fields):
-        entry = fields[index]
-        index += 1
-        if not entry:
-            continue
-        status, path = entry[:2], entry[3:]
-        # Under -z a rename or copy carries its origin path as the following
-        # field instead of as ` -> origin` inside this one; skipping it keeps
-        # the walk aligned with the entries that follow.
-        if status[0] in ("R", "C"):
-            index += 1
-        snapshot[path] = (status, file_fingerprint(repo_root / path))
+    for entry in git_output.status_entries(completed.stdout):
+        snapshot[entry.path] = (entry.code, file_fingerprint(repo_root / entry.path))
     for watched in IGNORED_PATHS_WATCHED_FOR_WRITES:
         watched_root = repo_root / watched
         candidates = (sorted(watched_root.rglob("*")) if watched_root.is_dir()
@@ -994,9 +852,8 @@ QUOTE_MINIMUM_WORDS = 4
 
 # Typographic quotation marks and apostrophes, folded to their straight forms
 # before a quote is compared with its source: a model writing ’ for the
-# document's ' is quoting it faithfully. One run's replay found 16 of 24
-# "quote found in no tracked file" warnings were exactly that
-# (nedschorus#412, item 4).
+# document's ' is quoting it faithfully, and without the fold most "quote found
+# in no tracked file" warnings are exactly that.
 TYPOGRAPHIC_QUOTES_FOLDED = str.maketrans({
     "\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'",
     "\u201c": '"', "\u201d": '"', "\u201e": '"', "\u201f": '"',
@@ -1017,11 +874,11 @@ def tracked_files_corpus(checkout: pathlib.Path = None) -> tuple:
     the cells read. Built once per run, before the cells launch."""
     checkout = checkout or REPO_ROOT
     listed = subprocess.run(
-        ["git", "ls-files"], cwd=checkout,
+        ["git", "ls-files", "-z"], cwd=checkout,
         stdout=subprocess.PIPE, text=True, check=False,
     )
     pieces = []
-    for name in listed.stdout.splitlines():
+    for name in git_output.nul_separated_fields(listed.stdout):
         path = checkout / name
         try:
             pieces.append(normalized_for_quote_match(path.read_text(encoding="utf-8")))
@@ -1036,7 +893,7 @@ def quote_scan(corpus: tuple, report: str, cell: str) -> None:
     """Print a WARNING per quoted span in a report that appears in no tracked
     file. A quote is a search string: found anywhere, it is verbatim; found
     nowhere, it is the one failure that matters — words that exist in no file.
-    No attribution convention is asked of the cells (user-ruled 2026-08-19).
+    No attribution convention is asked of the cells.
     Information for triage, never a gate: a quote may legitimately come from
     git history or the web, and the warning says where it was not found."""
     for match in re.finditer(r'"([^"\n]+)"|\u201c([^\u201d\n]+)\u201d', report):
@@ -1067,9 +924,9 @@ CLI_VERSION_CACHE = {}
 def runtime_cli_version(runtime: str) -> str:
     """The reviewing CLI's version, measured by this runner, once per runtime.
 
-    In each report's provenance line because nedschorus#161's second instance
-    leaned on the cells' self-reported CLI versions for a cross-version fact;
-    the runner measures it instead. Spaces become hyphens so the value stays
+    In each report's provenance line because a cell's self-reported CLI version
+    is not one to lean on for a cross-version fact; the runner measures it
+    instead. Spaces become hyphens so the value stays
     one token in the space-separated provenance line. "unknown" on any probe
     failure: a version probe must never fail a review cell, and "unknown" is
     a visible answer, not a silent one.
@@ -1082,13 +939,17 @@ def runtime_cli_version(runtime: str) -> str:
                 stderr=subprocess.DEVNULL, text=True, check=False, timeout=60,
             )
             lines = (completed.stdout or "").strip().splitlines()
-            CLI_VERSION_CACHE[runtime] = (
+            measured = (
                 lines[0].strip().replace(" ", "-")
                 if completed.returncode == 0 and lines and lines[0].strip()
                 else "unknown"
             )
         except (OSError, subprocess.TimeoutExpired):
-            CLI_VERSION_CACHE[runtime] = "unknown"
+            measured = "unknown"
+        # A probe the stop may have ended is not cached as the runtime's version.
+        if RUN_STOPPED.is_set():
+            return measured
+        CLI_VERSION_CACHE[runtime] = measured
     return CLI_VERSION_CACHE[runtime]
 
 
@@ -1138,9 +999,9 @@ def reviewed_revision(baseline: dict, checkout: pathlib.Path = None) -> str:
     the run starts; `worktree=dirty(N)` would say N paths differed from the
     commit, and the commit would not reproduce what the cell saw.
     Recorded by the runner rather than asked of the reviewer: the machine holds
-    this fact exactly, and a document moves under a walk — every quote in the
-    first live check's reports pointed at a version that no longer existed
-    before the walk on them finished (user-ruled 2026-08-19).
+    this fact exactly, and a document moves under a walk, so the reports'
+    quotes can point at a version that no longer exists before the walk on them
+    finishes.
     """
     completed = subprocess.run(
         ["git", "rev-parse", "--short", "HEAD"], cwd=checkout or REPO_ROOT,
@@ -1160,156 +1021,35 @@ def stray_paths(baseline: dict, now: dict) -> list:
     """Paths whose status or fingerprint changed while the cells ran — a cell
     writing to the worktree, which its prompt forbids on either runtime.
     Compared over the union of both snapshots, so a file that appears,
-    changes, or disappears all count (Codex finding on PR #98)."""
+    changes, or disappears all count."""
     return sorted(path for path in set(now) | set(baseline)
                   if now.get(path) != baseline.get(path))
 
 
-class RunnerReportWriteLedger:
-    """The reports this run wrote itself: path -> snapshot entry, in the shape
-    worktree_snapshot records.
+def write_report(out_path: pathlib.Path, text: str) -> bool:
+    """Write the report and answer whether the path was already occupied."""
+    occupied = out_path.exists()
+    out_path.write_bytes(text.encode("utf-8"))
+    return occupied
 
-    The runner writes every cell's report into RECORDS_ROOT, which the write
-    detector watches, so without this the first report written would be named
-    as a stray by every cell that finished after it — a warning on every
-    ordinary run, which teaches its readers to ignore the warning that matters.
-    The ledger holds each report's fingerprint rather than exempting its path:
-    a cell overwriting a finished report is precisely the write the watch
-    exists to catch, and a path exemption would excuse it.
 
-    In a run the ledger watches the review copy while the reports land in the
-    requester's checkout, outside it, so write_report records nothing and only
-    answers whether the report path was occupied. The bookkeeping below is
-    for a ledger whose checkout is the one the reports land in.
-
-    main() runs the cells concurrently, so one cell's report write and another
-    cell's stray snapshot can interleave. The lock keeps a snapshot from
-    reading a report mid-write, and makes each report's fingerprint recorded
-    before any snapshot that could see the file.
-
-    The ledger also holds the record directory this run owns, because two runs
-    can overlap in one worktree — a case fresh_record_dir is built for — and
-    the watch is repo-wide while a ledger is per-invocation. Without that,
-    each run named the other run's reports as its own cells' stray writes
-    (PR #147 finding 1).
-    """
-
-    # git's shapes for a path it has never had in the index. Another live run
-    # only ever creates files under the record root; it never modifies or
-    # stages an existing one. So these are the statuses an entry may carry and
-    # still be excused as somebody else's legitimate work — a ` M` or `A `
-    # there is nobody's routine business and stays reported.
-    NEW_TO_GIT_STATUS_CODES = (IGNORED_PATH_STATUS_CODE, "??")
-
-    def __init__(self, own_record_dir: pathlib.Path = None,
-                 repo_root: pathlib.Path = None) -> None:
-        # The checkout the detector watches: in a run, the review copy the
-        # cells read, which is where a cell's write lands (see
-        # review_copy_of_commit). The requester's own checkout is not watched;
-        # the requester may keep working in it while the cells run.
-        self._repo_root = repo_root or REPO_ROOT
-        self._own_record_dir = own_record_dir
-        self._writes = {}
-        self._lock = threading.Lock()
-
-    def write_report(self, out_path: pathlib.Path, text: str,
-                     repo_root: pathlib.Path = None) -> bool:
-        """Write one cell's report, record it as this runner's own work, and
-        answer whether the path was already occupied.
-
-        Occupied means a stray write that this report has just erased: the
-        record directory is claimed by mkdir when the run starts and only this
-        ledger writes reports into it, so anything already at the path arrived
-        during this run from somewhere else. Until PR #147 the runner's write
-        simply repaired such a file and recorded the repair as its own work,
-        and the cell's write was reported nowhere.
-
-        The bytes are written, not the string, so the fingerprint recorded is
-        of exactly what landed on disk on any platform.
-        """
-        repo_root = repo_root or self._repo_root
-        data = text.encode("utf-8")
-        with self._lock:
-            occupied = out_path.exists()
-            out_path.write_bytes(data)
-            try:
-                path = out_path.relative_to(repo_root).as_posix()
-            except ValueError:
-                # A record root outside the watched checkout is a path the
-                # detector never looks at, so there is nothing to account for:
-                # in a run, every report, since the reports land in the
-                # requester's checkout and the detector watches the copy.
-                return occupied
-            # git's own word on the path, and the fingerprint of the text
-            # handed in rather than of the file just written: a cell writing
-            # between the write and the hash would otherwise have its content
-            # recorded as the runner's own (PR #147 finding 3).
-            self._writes[path] = (git_status_code_for_path(out_path, repo_root),
-                                  blob_fingerprint(data))
-            return occupied
-
-    def stray_paths_since(self, baseline: dict,
-                          repo_root: pathlib.Path = None) -> list:
-        """Paths changed since baseline that this run can account for — its own
-        reports excepted, another live run's reports left out of it.
-
-        Under a watched ignored path this run accounts for what was on disk
-        when it started, what its own ledger wrote, and everything inside the
-        record directory it owns except its scratch subtree, where the cells
-        are told to work. A file that merely appears elsewhere under
-        the record root is what a second invocation of this runner
-        legitimately creates, and from here the two are indistinguishable.
-        Everything git reports outside those paths is compared in full, as
-        before.
-        """
-        repo_root = repo_root or self._repo_root
-        with self._lock:
-            expected = {**baseline, **self._writes}
-            own_dir = self._own_record_directory(repo_root)
-            # The subtree holding every cell's sanctioned working space; None
-            # when this run has no record directory inside the repository.
-            scratch_root = (None if own_dir is None
-                            else f"{own_dir}/{CELL_SCRATCH_DIRECTORY_NAME}")
-            now = {path: entry
-                   for path, entry in worktree_snapshot(repo_root).items()
-                   if self._reportable_by_this_run(path, entry, expected,
-                                                   own_dir, scratch_root)}
-            return stray_paths(expected, now)
-
-    def _own_record_directory(self, repo_root: pathlib.Path):
-        """This run's record directory, repo-relative, or None when it has
-        none or it lies outside the repository."""
-        if self._own_record_dir is None:
-            return None
-        try:
-            return self._own_record_dir.relative_to(repo_root).as_posix()
-        except ValueError:
-            return None
-
-    @staticmethod
-    def _reportable_by_this_run(path: str, entry: tuple, expected: dict,
-                                own_dir: str, scratch_root: str) -> bool:
-        # This run's scratch subtree, exempt whatever git says about the path:
-        # every cell is given a directory under it and told to keep its notes
-        # and drafts there, so a write there is the behaviour the prompt asked
-        # for, not a stray (user-ruled 2026-08-29). Only this run's scratch —
-        # an earlier run's leftover scratch was on disk at the start, sits in
-        # the baseline, and is compared like any other file.
-        if scratch_root is not None and path.startswith(scratch_root + "/"):
-            return False
-        if path in expected or not path_watched_as_ignored(path):
-            return True
-        if own_dir is not None and (path == own_dir
-                                    or path.startswith(own_dir + "/")):
-            return True
-        return entry[0] not in RunnerReportWriteLedger.NEW_TO_GIT_STATUS_CODES
+def stray_paths_since(baseline: dict, repo_root: pathlib.Path,
+                      scratch_record_dir: pathlib.Path) -> list:
+    """Compare the review copy with its baseline, exempting permitted scratch."""
+    try:
+        scratch_root = (scratch_record_dir / CELL_SCRATCH_DIRECTORY_NAME
+                        ).relative_to(repo_root).as_posix() + "/"
+    except ValueError:
+        scratch_root = None
+    return [path for path in stray_paths(baseline, worktree_snapshot(repo_root))
+            if scratch_root is None or not path.startswith(scratch_root)]
 
 
 def record_directory_target_stem(target: pathlib.Path) -> str:
     """The target's part of its record directory's name: the file's stem, and
     for a skill its directory's name before it. Every skill's file is
-    `SKILL.md`, so two skills checked on one day were told apart only by a
-    `-2` suffix (nedschorus#412, item 7)."""
+    `SKILL.md`, so without the directory's name two skills checked on one day
+    would be told apart only by a `-2` suffix."""
     if target.stem == "SKILL":
         return f"{target.parent.name}-{target.stem}"
     return target.stem
@@ -1322,8 +1062,8 @@ def repository_relative_review_path(path: str, repo_root: pathlib.Path):
     The cells run in a copy of the last commit and resolve a relative name
     inside that copy. A name passed on as written would send them elsewhere:
     an absolute path inside the checkout names the requester's live file,
-    which the copy exists to keep the cells away from, and it passed every
-    check until a cold read of the skill found it (2026-10-01). So the name
+    which the copy exists to keep the cells away from, and nothing else would
+    catch it. So the name
     is the resolved file's place under the resolved root: `.` and `..`
     segments are folded, a checkout reached through a symbolic link (macOS's
     /tmp) still counts as this checkout, and a symbolic link inside the
@@ -1354,22 +1094,11 @@ def uncommitted_review_paths(paths: list, repo_root: pathlib.Path) -> list:
         listed = subprocess.run(
             ["git", "ls-files", "-z", "--", *inside], cwd=repo_root,
             stdout=subprocess.PIPE, text=True, check=False)
-        tracked = set(filter(None, listed.stdout.split("\0")))
+        tracked = set(git_output.nul_separated_fields(listed.stdout))
         status = subprocess.run(
             ["git", "status", "--porcelain", "-z", "-uall", "--", *inside],
             cwd=repo_root, stdout=subprocess.PIPE, text=True, check=False)
-        fields = status.stdout.split("\0")
-        index = 0
-        while index < len(fields):
-            entry = fields[index]
-            index += 1
-            if not entry:
-                continue
-            # A rename's origin path follows as its own field, as in
-            # worktree_snapshot.
-            if entry[0] in ("R", "C"):
-                index += 1
-            changed.add(entry[3:])
+        changed = {entry.path for entry in git_output.status_entries(status.stdout)}
     return [path for path, name in git_names.items()
             if name is None or name not in tracked or name in changed]
 
@@ -1381,32 +1110,32 @@ def review_copy_of_commit(commit: str, record_name: str,
     removed when the run ends, a run that fails included: the checkout every
     cell reads and works in.
 
-    The cells used to read the requester's live checkout for the tens of
-    minutes a run takes. So the requester could change nothing while they ran
-    (the write detector could not tell the requester's edit from a cell's), a
-    text edited mid-run was not the text the provenance line named, and a
-    cell's stray write landed in the checkout itself (nedschorus#161). In a
-    copy of the commit the reviewed text is exactly that commit, the
-    requester's checkout is free for its own work again, and a cell's write
-    lands in the copy, where the detector reports it and the removal throws
-    it away (user-ruled 2026-09-30, walk
-    open-questions-concerns-and-recommendations-2026-09-30, item 2, "Y").
+    Cells reading the requester's live checkout for the tens of minutes a run
+    takes would leave the requester unable to change anything while they ran
+    (the write detector cannot tell the requester's edit from a cell's), a
+    text edited mid-run would not be the text the provenance line named, and a
+    cell's stray write would land in the checkout itself. In a copy of the
+    commit the reviewed text is exactly that commit, the requester's checkout
+    is free for its own work, and a cell's write lands in the copy, where the
+    detector reports it and the removal throws it away.
 
     A clone, not a `git worktree`: a worktree shares the repository's refs,
     config and stash, which every session's checkout shares too, so a cell
     running `git stash` or `git checkout -b` in it would change the live
     repository. `--local` hardlinks the object store where it can, so the
     copy has the whole history in about a third of a second (measured on
-    this repository, 2026-09-30), a commit on no branch included. The clone
+    this repository), a commit on no branch included. The clone
     names the live checkout as its `origin` remote, the one way left from the
     copy back into it, so the remote is removed; the live repository's own
     `origin/*` refs are fetched in by path instead, so `origin/main` in the
     copy means what it means in the checkout. Made under REVIEW_COPIES_ROOT,
     in a directory of its own named for the record.
     """
+    global REVIEW_COPY_NOT_REMOVED
+    REVIEW_COPY_NOT_REMOVED = None
     REVIEW_COPIES_ROOT.mkdir(parents=True, exist_ok=True)
-    remove_review_copies_no_live_run_owns()
-    holder, owner_file = claim_review_copy_directory(record_name)
+    holder = pathlib.Path(tempfile.mkdtemp(
+        prefix=f"{record_name}-", dir=REVIEW_COPIES_ROOT))
     checkout = holder / "checkout"
     steps = (
         (["git", "clone", "--quiet", "--local", "--no-checkout",
@@ -1416,8 +1145,8 @@ def review_copy_of_commit(commit: str, record_name: str,
           "+refs/remotes/origin/*:refs/remotes/origin/*"], checkout),
         (["git", "checkout", "--quiet", "--detach", commit], checkout),
     )
-    # One try from the claim on, so the copy is removed however the run ends:
-    # a git step that fails, a run that raises, and a run a stop signal ends
+    # One try from directory creation on, so the copy is removed after a git
+    # step that fails, a run that raises, and a run a stop signal ends
     # while the copy is still being made.
     try:
         for command, cwd in steps:
@@ -1427,22 +1156,26 @@ def review_copy_of_commit(commit: str, record_name: str,
                 raise RuntimeError(f"{' '.join(command[:2])} failed: {step.stderr.strip()}")
         yield checkout
     finally:
-        remove_directory_whatever_signal_arrives(holder)
-        if holder.exists():
-            # The owner file stays, unlocked once this run ends, so the next
-            # run tries the removal again.
-            print(f"WARNING: the review copy could not be removed: {holder}",
-                  flush=True)
-        else:
-            holder.with_name(holder.name + REVIEW_COPY_OWNER_FILE_SUFFIX).unlink(
-                missing_ok=True)
-        owner_file.close()
+        # The leftover check is in a finally of its own because the removal
+        # re-raises a stop signal that arrived during it, and that copy too
+        # must be reported.
+        try:
+            remove_directory_whatever_signal_arrives(holder)
+        finally:
+            # Printed, not raised: an exception here would replace a stop
+            # signal already on its way out, and would end the run before its
+            # record is shipped. REVIEW_COPY_NOT_REMOVED makes the run fail
+            # after shipping.
+            if holder.exists():
+                REVIEW_COPY_NOT_REMOVED = holder
+                print(f"WARNING: the review copy could not be removed: {holder.resolve()}\n"
+                      "Delete that directory by hand.", flush=True)
 
 
 def remove_directory_whatever_signal_arrives(directory: pathlib.Path) -> None:
     """Remove `directory`, to the end: a stop signal that arrives partway is
     raised again only after the removal has run through. The first stop signal
-    makes every later one ignored, so the second pass is not interrupted."""
+    makes every later one do nothing, so the second pass is not interrupted."""
     try:
         shutil.rmtree(directory, ignore_errors=True)
     except RunStoppedBySignal:
@@ -1450,133 +1183,15 @@ def remove_directory_whatever_signal_arrives(directory: pathlib.Path) -> None:
         raise
 
 
-def claim_review_copy_directory(record_name: str) -> tuple:
-    """A new, empty directory under REVIEW_COPIES_ROOT for one run's review
-    copy, and the open owner file beside it, locked for as long as this run
-    lives: (directory, owner file).
-
-    The lock is what tells a live run's copy from one a dead run left behind
-    (remove_review_copies_no_live_run_owns). The operating system drops it
-    when the process ends, however it ends, SIGKILL included, so no run has to
-    reach a line of its own for its copy to become removable; and two runs at
-    once each hold their own, so neither removes the other's. The owner file
-    is made and locked before the directory exists, so a directory with no
-    owner file is never a live run's. Another run may lock and remove an owner
-    file in the moment between its creation and this run's lock; the lock
-    would then be on a file no path names, so the file's identity is checked
-    under the lock and the claim starts again with a new name. The file's text
-    names the process, for a person reading the directory."""
-    while True:
-        descriptor, owner_name = tempfile.mkstemp(
-            prefix=f"{record_name}-", suffix=REVIEW_COPY_OWNER_FILE_SUFFIX,
-            dir=REVIEW_COPIES_ROOT)
-        owner_file = os.fdopen(descriptor, "w", encoding="utf-8")
-        fcntl.flock(owner_file.fileno(), fcntl.LOCK_EX)
-        holder = pathlib.Path(owner_name[:-len(REVIEW_COPY_OWNER_FILE_SUFFIX)])
-        try:
-            still_named = (os.stat(owner_name).st_ino
-                           == os.fstat(owner_file.fileno()).st_ino)
-            if still_named:
-                holder.mkdir()
-        except FileNotFoundError:
-            still_named = False
-        except FileExistsError:
-            # A directory of that name with no owner file until now: a copy
-            # left by a runner older than owner files. Leave it to the next
-            # run's removal and take another name.
-            pathlib.Path(owner_name).unlink(missing_ok=True)
-            still_named = False
-        if still_named:
-            owner_file.write(f"process {os.getpid()}, started "
-                             f"{datetime.datetime.now().isoformat(timespec='seconds')}\n")
-            owner_file.flush()
-            return holder, owner_file
-        owner_file.close()
-
-
-def remove_review_copies_no_live_run_owns() -> list:
-    """Remove every review copy under REVIEW_COPIES_ROOT that no live run
-    owns, and return the directories removed.
-
-    A run removes its own copy when it ends, and a run ended by SIGTERM,
-    SIGINT or SIGHUP does too (see WHEN A RUN IS STOPPED in the module
-    docstring). A run ended by SIGKILL, or by the machine stopping, cannot:
-    its copy, a whole checkout, would stay for good, one more for each such
-    run, which review of the pull request that introduced the copy measured.
-    So each run, before it makes its own copy, removes the ones left behind.
-    A copy is a live run's while that run holds the lock on its owner file
-    (claim_review_copy_directory); a lock this function can take means the
-    owner is gone. A directory with no owner file was made before copies had
-    owners, by a runner that never reached main, and is removed too. An owner
-    file with no directory is what a run killed between the two leaves, and is
-    removed when its lock can be taken. Two runs starting together may both
-    try one dead copy: one takes the lock and removes it, the other finds the
-    lock held and leaves it alone.
-    """
-    removed = []
-    for holder in sorted(path for path in REVIEW_COPIES_ROOT.iterdir() if path.is_dir()):
-        owner_path = holder.with_name(holder.name + REVIEW_COPY_OWNER_FILE_SUFFIX)
-        owner_file = lock_owner_file_no_live_run_holds(owner_path)
-        if owner_file is None and owner_path.exists():
-            continue
-        if not holder.is_dir():
-            # Its own run removed it, and its owner file, since this function
-            # listed the directory: nothing was left behind.
-            if owner_file is not None:
-                owner_file.close()
-            continue
-        remove_directory_whatever_signal_arrives(holder)
-        if holder.exists():
-            print(f"WARNING: the review copy could not be removed: {holder}",
-                  flush=True)
-        else:
-            removed.append(holder)
-            print(f"removed: a review copy an earlier run left behind, {holder}",
-                  flush=True)
-            owner_path.unlink(missing_ok=True)
-        if owner_file is not None:
-            owner_file.close()
-    for owner_path in sorted(REVIEW_COPIES_ROOT.glob("*" + REVIEW_COPY_OWNER_FILE_SUFFIX)):
-        if owner_path.with_name(owner_path.name[:-len(REVIEW_COPY_OWNER_FILE_SUFFIX)]).exists():
-            continue
-        owner_file = lock_owner_file_no_live_run_holds(owner_path)
-        if owner_file is not None:
-            owner_path.unlink(missing_ok=True)
-            owner_file.close()
-    return removed
-
-
-def lock_owner_file_no_live_run_holds(owner_path: pathlib.Path):
-    """The owner file at `owner_path`, open and locked by this process, when
-    no live run holds its lock; None when a live run does, when the file is
-    not there, or when the path came to name another file while this function
-    waited for nothing: the lock is asked for without waiting."""
-    try:
-        owner_file = open(owner_path, "r+", encoding="utf-8")
-    except OSError:
-        return None
-    try:
-        fcntl.flock(owner_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if os.stat(owner_path).st_ino == os.fstat(owner_file.fileno()).st_ino:
-            return owner_file
-    except OSError:
-        pass
-    owner_file.close()
-    return None
-
-
 def processes_under_this_one() -> dict:
     """{pid: parent pid} for every process on the machine but the `ps` that
     listed them, from one `ps` call (the same flags on macOS and Linux); {}
     when ps cannot be run.
 
-    The cold-read-grid's process_parents
-    (nc-systems/cold-read/cold-read-grid.py) with one difference, which is why
-    it is not taken from there: that `ps` is a child of the process that asks,
-    and stop_processes_this_run_started walks the asking process's own
-    children, so each reading would hand it one more child, the reader of that
-    reading, and the walk would never end. The grid walks a launcher's tree,
-    which its own `ps` is not in."""
+    The `ps` that lists the processes is left out because it is a child of the
+    process that asks, and stop_processes_this_run_started walks the asking
+    process's own children: each reading would hand it one more child, the
+    reader of that reading, and the walk would never end."""
     try:
         with subprocess.Popen(["ps", "-A", "-o", "pid=", "-o", "ppid="],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -1612,11 +1227,9 @@ def stop_processes_this_run_started() -> None:
     own. Prints nothing: it runs inside a signal handler, where the main
     thread may hold the run log's lock.
 
-    The cold-read-grid's way of stopping a cell's process tree
-    (stop_process_tree in nc-systems/cold-read/cold-read-grid.py), applied to
-    this process's whole tree: frozen top-down with SIGSTOP, re-reading the
-    process table after each level, so a process cannot start another while
-    the tree is collected; then SIGTERM and SIGCONT to all, so each can end on
+    This process's whole tree is stopped this way: frozen top-down with
+    SIGSTOP, re-reading the process table after each level, so a process
+    cannot start another while the tree is collected; then SIGTERM and SIGCONT to all, so each can end on
     its own terms; then SIGKILL to whatever is left after the grace. The
     cells' threads reap the agent-binaries they launched; what those started
     is reaped by init.
@@ -1662,7 +1275,10 @@ def stop_processes_this_run_started() -> None:
     # SIGKILL to what is left, and to whatever is under this process now that
     # was not frozen: a process a frozen one started after SIGCONT, or a git
     # call a cell's thread made after the first reading. No agent-binary
-    # starts after RUN_STOPPED is set (run_agent_binary_unless_run_stopped).
+    # starts a review after RUN_STOPPED is set
+    # (run_agent_binary_unless_run_stopped); a cell saving its report may
+    # still run the `--version` probe (runtime_cli_version), which exits on
+    # its own.
     table = processes_under_this_one()
     under_this_process, grew = {this_process}, True
     while grew:
@@ -1676,15 +1292,36 @@ def stop_processes_this_run_started() -> None:
             pass
 
 
+def stop_signal_after_the_first_does_nothing(_signal_number: int, _frame) -> None:
+    """The handler a stop signal meets once the run is already stopping: it
+    does nothing, so the stopping and the removal of the review copy are not
+    cut short.
+
+    A handler set from Python and not SIG_IGN, because an ignored disposition
+    survives exec and a handled one does not. The stop handler waits for
+    AGENT_BINARY_LAUNCH_LOCK, and a cell's thread may be starting an
+    agent-binary under that lock in the same moment; with SIG_IGN that
+    agent-binary started with SIGTERM, SIGINT and SIGHUP ignored, so the
+    SIGTERM that stops it did nothing, and it and whatever it started ran on
+    until the SIGKILL after STOPPED_PROCESS_GRACE_SECONDS. A handled
+    disposition is reset to the default by exec, so the agent-binary can end
+    on the SIGTERM."""
+
+
 def stop_run_on_signal(signal_number: int, _frame) -> None:
     """The handler main() installs for RUN_STOP_SIGNALS while a run is under
     way: see WHEN A RUN IS STOPPED in the module docstring. Every later stop
-    signal is ignored from here on, so the stopping and the removal of the
-    review copy are not themselves cut short."""
+    signal does nothing from here on (stop_signal_after_the_first_does_nothing),
+    so the stopping and the removal of the review copy are not themselves cut
+    short."""
     for number in RUN_STOP_SIGNALS:
-        signal.signal(number, signal.SIG_IGN)
+        signal.signal(number, stop_signal_after_the_first_does_nothing)
     # Under the lock a cell's thread holds from reading RUN_STOPPED to
     # starting its agent-binary: see run_agent_binary_unless_run_stopped.
+    global CELLS_FINISHED_AT_THE_STOP
+    # Copied before the wait for the lock: a cell that finishes during that
+    # wait was still running when the signal came.
+    CELLS_FINISHED_AT_THE_STOP = frozenset(CELLS_FINISHED)
     with AGENT_BINARY_LAUNCH_LOCK:
         RUN_STOPPED.set()
     stop_processes_this_run_started()
@@ -1693,11 +1330,11 @@ def stop_run_on_signal(signal_number: int, _frame) -> None:
 
 class RunOutputCopiedToRecordLog:
     """This run's standard output, also written to SANITY_CHECK_RUN_LOG_FILE_NAME in its
-    record, so a later reader can see every warning the run printed; an agent
-    used to copy it there by hand, when it remembered (nedschorus#412, item 3).
+    record, so a later reader can see every warning the run printed without an
+    agent having to remember to copy it there.
 
     It stands in for sys.stdout from the start of a run. What is printed
-    before the record directory exists — the SKIPPED and LEAK-WARNING lines —
+    before the record directory exists — the SKIPPED lines —
     is held and written when `attach` names the file. `detach` closes the file
     before the record is shipped, so the copy in the log-store is the whole
     log and the add-only shipper finds it unchanged when the dispositions file
@@ -1711,8 +1348,8 @@ class RunOutputCopiedToRecordLog:
         # run stopped by a signal names in its STOPPED line, and ships.
         self.record_directory = None
         # None until every cell has ended, then how many reports the run
-        # saved: a stop signal that arrives after that has stopped no agent,
-        # and main() ends the run as a finished run ends.
+        # saved; also set when a stop signal ended no cell. Such a stop has
+        # stopped no agent, and main() ends the run as a finished run ends.
         self.reports_saved_once_cells_ended = None
         self._held = []
         self._file = None
@@ -1751,12 +1388,12 @@ class RunOutputCopiedToRecordLog:
 def fresh_record_dir(target_stem: str) -> pathlib.Path:
     """A record directory this run owns alone: the date-stem name, suffixed
     -2, -3, ... when that name is taken — a same-day second pass or re-run
-    never overwrites earlier reports (Codex finding on PR #98).
+    never overwrites earlier reports.
 
     The directory is claimed by creating it, not by testing first and creating
     after: two runs starting together on the same target and date both pass a
     look-then-create test and return the same path, and the second overwrites
-    the first (found by `codex exec review` on PR #102)."""
+    the first."""
     base = RECORDS_ROOT / f"{datetime.date.today().isoformat()}-{target_stem}"
     counter = 1
     while True:
@@ -1773,11 +1410,10 @@ def cell_scratch_dir(out_dir: pathlib.Path, cell: str) -> pathlib.Path:
     `<record dir>/scratch/<audit>-<runtime>/`.
 
     A review agent's deliverable is its reply, but an agent working a document
-    still needs somewhere to put notes and drafts. The prompts used to answer
-    that with a prohibition — "write no files" — which the agents did not
-    reliably keep (nedschorus#161) and the write detector then reported. A
-    sanctioned directory replaces the prohibition (user-ruled 2026-08-29): the
-    path is substituted into that cell's prompt, the detector exempts the
+    still needs somewhere to put notes and drafts. A prohibition — "write no
+    files" — is one agents do not reliably keep, and the write detector would
+    then report every such write. A sanctioned directory replaces the
+    prohibition: the path is substituted into that cell's prompt, the detector exempts the
     subtree, and nothing here is ever read as findings.
 
     Inside the run's record directory rather than a temporary one, so it is
@@ -1803,8 +1439,8 @@ class FailedLaunch(typing.NamedTuple):
 
 def launch_cell_once(cell: str, attack: str, runtime: str, prompt: str,
                      target: str, out_dir: pathlib.Path, baseline_status: dict,
-                     corpus: tuple, report_ledger: RunnerReportWriteLedger,
-                     checkout: pathlib.Path, relaunched_after: str = ""):
+                     corpus: tuple, checkout: pathlib.Path,
+                     scratch_record_dir: pathlib.Path, relaunched_after: str = ""):
     """Launch one cell once, and save its report when it wrote one. Returns
     None when the report was saved, and the FailedLaunch otherwise; prints the
     agent-binary's own words and the launch's warnings, and neither the
@@ -1848,7 +1484,7 @@ def launch_cell_once(cell: str, attack: str, runtime: str, prompt: str,
         cause_class, detail = (cause[0] if cause and cause[0]
                                else (f"exit-{code}", "no output"))
         return FailedLaunch(cause_class, detail, fallback_from)
-    stray = report_ledger.stray_paths_since(baseline_status)
+    stray = stray_paths_since(baseline_status, checkout, scratch_record_dir)
     if stray:
         print(f"WARNING: the review copy was modified outside the cells' scratch "
               f"directories, seen when {cell} finished: {', '.join(stray)}",
@@ -1856,7 +1492,7 @@ def launch_cell_once(cell: str, attack: str, runtime: str, prompt: str,
     # After the worktree check, so a cell that ran to the end has its writes
     # compared whatever it returned; before the quote scan and the write, so a
     # text that is not a report raises no warnings to triage, never lands as a
-    # report, and is printed so the runtime's words survive (nedschorus#397).
+    # report, and is printed so the runtime's words survive.
     missing = missing_report_phrases(attack, output)
     if missing:
         print(output, flush=True)
@@ -1866,10 +1502,7 @@ def launch_cell_once(cell: str, attack: str, runtime: str, prompt: str,
         quote_scan(corpus, output, cell)
     revision = reviewed_revision(baseline_status, checkout)
     out_path = out_dir / f"{cell}.md"
-    # Through the ledger, not straight to disk: the report lands in a directory
-    # the write detector watches, and the ledger is what tells this write from
-    # a cell's.
-    overwrote_stray_write = report_ledger.write_report(
+    overwrote_stray_write = write_report(
         out_path,
         provenance_line(runtime, model, attack, target, fresh_eyes, revision,
                         fallback_from, relaunched_after)
@@ -1943,7 +1576,6 @@ def failed_cell_lines(attack: str, runtime: str, failure: FailedLaunch,
 def run_cell(attack: str, runtime: str, target: str, context: list,
              problem_statement: pathlib.Path, out_dir: pathlib.Path,
              baseline_status: dict, corpus: tuple,
-             report_ledger: RunnerReportWriteLedger,
              checkout: pathlib.Path = None,
              scratch_record_dir: pathlib.Path = None) -> tuple:
     """Run one cell in `checkout`, the review copy, with its scratch directory
@@ -1963,13 +1595,14 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
 
     def launch(relaunched_after: str = ""):
         return launch_cell_once(cell, attack, runtime, prompt, target, out_dir,
-                                baseline_status, corpus, report_ledger, checkout,
-                                relaunched_after)
+                                baseline_status, corpus, checkout,
+                                scratch_record_dir or out_dir, relaunched_after)
 
     if RUN_STOPPED.is_set():
         return cell, False
     failure = launch()
     if failure is None:
+        CELLS_FINISHED.add(cell)
         return cell, True
     if RUN_STOPPED.is_set():
         # The launch ended because the run was stopped. No second launch, and
@@ -1984,6 +1617,7 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
               f"{separator}{failure.detail}", flush=True)
         failure = launch(relaunched_after=failure.cause_class)
         if failure is None:
+            CELLS_FINISHED.add(cell)
             return cell, True
         if RUN_STOPPED.is_set():
             return cell, False
@@ -1995,6 +1629,7 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
         rerun_command_for_cell(attack, runtime, target, context, problem_statement))
     sys.stdout.write("".join(line + "\n" for line in lines))
     sys.stdout.flush()
+    CELLS_FINISHED.add(cell)
     return cell, False
 
 
@@ -2003,7 +1638,7 @@ def ship_record(record_dir: pathlib.Path) -> str:
     FAILED line of this program's own when the shipper could not run.
 
     Never raises, and never changes the run's exit code: the shipper's outcome
-    is reported, not enforced (nedschorus#392; the same shape as
+    is reported, not enforced (the same shape as
     nc-systems/cold-read/cold-read-grid.py's ship_record). A sanity check that found
     something and could not reach ned-box has still found it, and the record
     stays on disk for a later run.
@@ -2130,15 +1765,10 @@ def main() -> int:
         stopped_by = stopped.signal_number
         saved = run_log.reports_saved_once_cells_ended
         if saved is not None:
-            # Every cell had ended when the signal arrived, so it cut short
-            # only the run's closing steps, and the `finally` blocks on the
-            # way here have finished them. The run ends with what a finished
-            # run prints, never a STOPPED line, whose instruction to run the
-            # whole command again would launch every agent of a run whose
-            # reports are all saved (found in review of the pull request that
-            # introduced the review copy). The record is shipped again if the
-            # signal cut its shipping short; the shipper adds only what the
-            # store lacks.
+            # Every cell had finished before the signal came, so the run ends
+            # as a finished run: a STOPPED line would have the agent rerun
+            # cells whose reports are all saved. The record is shipped again
+            # in case the signal cut its shipping short.
             run_log.detach()
             if saved:
                 print_run_completion(run_log.record_directory)
@@ -2147,7 +1777,7 @@ def main() -> int:
         else:
             print(run_stopped_line(stopped_by, run_log.record_directory), flush=True)
             # Closed before the record is shipped, as at the end of any run;
-            # and shipped while the stop signals are still ignored, after the
+            # and shipped while later stop signals still do nothing, after the
             # agents are stopped and the review copy is removed, so a run that
             # is killed outright while it ships has already done what must not
             # be left.
@@ -2200,8 +1830,8 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
             cells.append((attack, runtime))
 
     # Validate every prompt this run will use before any cell launches, so a
-    # broken boundary fails before model cost — as documented; until 2026-08-21
-    # validation ran lazily inside each cell (cold-read finding, verified).
+    # broken boundary fails before model cost, as documented, rather than
+    # lazily inside each cell.
     for attack in dict.fromkeys(cell_attack for cell_attack, _ in cells):
         prompt_body(attack)
 
@@ -2238,14 +1868,6 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
                   file=sys.stderr)
             return 2
 
-        if args.problem_statement and any(a == "fresh-eyes" for a, _ in cells):
-            design_names = coined_names(checkout / args.target)
-            leak_scan(design_names, args.problem_statement.read_text(encoding="utf-8"),
-                      f"the problem statement ({args.problem_statement})")
-            for path in injected_instruction_files(checkout):
-                leak_scan(design_names, path.read_text(encoding="utf-8"),
-                          f"an injected instruction file ({path})")
-
         # Claimed only after validation and only when an agent will launch: a
         # refused startup or an all-skipped run must not burn a -N suffix.
         out_dir = fresh_record_dir(stem)
@@ -2259,13 +1881,16 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
 
         baseline_status = worktree_snapshot(checkout)
         corpus = tracked_files_corpus(checkout)
-        report_ledger = RunnerReportWriteLedger(copy_record_dir, checkout)
+        CELLS_FINISHED.clear()
+        global CELLS_FINISHED_AT_THE_STOP
+        CELLS_FINISHED_AT_THE_STOP = None
+        futures = []
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells)) as pool:
                 futures = [
                     pool.submit(run_cell, attack, runtime, args.target, args.context,
                                 args.problem_statement, out_dir, baseline_status, corpus,
-                                report_ledger, checkout, copy_record_dir)
+                                checkout, copy_record_dir)
                     for attack, runtime in cells
                 ]
                 for future in concurrent.futures.as_completed(futures):
@@ -2273,6 +1898,23 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
                     ok = ok and cell_ok
                     saved_count += 1 if cell_ok else 0
                 run_log.reports_saved_once_cells_ended = saved_count
+        except RunStoppedBySignal:
+            # A stop that came after every cell had finished, saving its
+            # report or saying why it could not, cut nothing short: that run
+            # ends as a finished run ends, never with a STOPPED line telling
+            # the agent to run the whole command again. Any cell still
+            # running when the signal came makes it a stopped run, whatever
+            # the cell's calls returned afterwards.
+            if (run_log.reports_saved_once_cells_ended is None
+                    and len(futures) == len(cells)
+                    and CELLS_FINISHED_AT_THE_STOP is not None
+                    and {f"{attack}-{runtime}" for attack, runtime in cells}
+                        <= CELLS_FINISHED_AT_THE_STOP
+                    and all(future.done() and future.exception() is None
+                            for future in futures)):
+                run_log.reports_saved_once_cells_ended = sum(
+                    1 for future in futures if future.result()[1])
+            raise
         finally:
             # However the cells' part ended, a run a stop signal ended
             # included: what the cells left in their scratch directories is
@@ -2287,7 +1929,7 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
         print_run_completion(out_dir)
     else:
         print_completion_of_run_that_saved_no_report(out_dir)
-    return 0 if ok else 1
+    return 0 if ok and REVIEW_COPY_NOT_REMOVED is None else 1
 
 
 def print_completion_of_run_that_saved_no_report(out_dir: pathlib.Path, ship=None) -> None:
@@ -2312,7 +1954,7 @@ def print_completion_of_run_that_saved_no_report(out_dir: pathlib.Path, ship=Non
 def print_run_completion(out_dir: pathlib.Path, ship=None) -> None:
     """Ship this run's record and say what the requesting agent does next.
 
-    The shipping is the program's, not the agent's (nedschorus#392): the record
+    The shipping is the program's, not the agent's: the record
     is a log, and a log that reaches the store only when someone remembers to
     push it is a log that is sometimes lost. `ship` is the shipper to call, for
     the test; the default is this module's ship_record.

@@ -4,12 +4,39 @@ issue: "[Build the explain skill: re-say a message for a reader who does not car
 
 # The explain skill — GHI-MD for issue [Build the explain skill: re-say a message for a reader who does not carry the session's context — the draft exists, and the hold's reason expired](https://github.com/nedschorus/nedschorus/issues/603)
 
-This document carries the substance the issue summarises: the current draft, the identifier
-table the user ruled into it, what its review already fixed, and what remains before it can
-be installed.
+The /explain skill is installed on main; the Outcome section says what was built and where it lives. Every section after the Outcome is the design record as written on 2026-09-21, kept so the reasons for the skill's design stay findable. Where the record says "today", "current" or "not yet", it means 2026-09-21. The cold read of this outcome edit corrected a few of its statements of fact in place. Where the record and the installed skill or its supporting file differ, the installed files are in force.
 
-It also carries why the skill exists and why its 2026-08-22 hold expired, in the two sections
-that follow.
+## Outcome
+
+Times and dates in this section are UTC.
+
+**Installed.** PR [The explain skill is installed, with the script that gives a draft reply its fresh read](https://github.com/nedschorus/nedschorus/pull/894) merged on 2026-10-02T04:12:37Z, after three review rounds:
+
+- Round 1: the independent reviewer and merge-lane-2 both requested changes.
+- Round 2: the independent reviewer approved the fix-round, and asked, without blocking the merge, for one more test case.
+- Round 3: both approved one commit carrying that test case and two lines that the fresh-read script prints for the agent. The two lines had their own cold-read-fast-read, and the user approved their new wording.
+
+What is on main:
+
+- `.claude/skills/explain/SKILL.md`, the skill. Its check 13 has one fresh-reader read the agent's draft reply, a cold-read-fast-read, before the reply is sent; this document calls that read the fresh read. `/explain fast` skips the fresh read.
+- `nc-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md`, the skill's supporting file: the identifier table ruled on 2026-09-16, as the skill's reviews revised the table. Check 7 of the skill names the file.
+- `nc-systems/skills/explain/explain-reply-cold-read-fast-read.py`, the script that runs the fresh read, with its test under `nc-systems/skills/explain/tests/`.
+- The project glossary's line for /explain.
+
+The sequence the 2026-09-16 walk ruled (see "The cold read is ruled, not open", below) was followed:
+
+1. The identifier table was folded in.
+2. The skill had two cold-read-full-runs. Their cold-read-records are `explain-skill-draft-2026-09-29-2` and, after the text was restructured on 2026-09-30 from 261 lines to 203, `SKILL-explain-skill-draft-2026-09-30-2`, both under `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/`.
+3. The user read and approved the text, and ruled on both runs' findings, in the approval-walk explain-skill-draft-2026-09-29-2, which ran from 2026-09-29 to 2026-10-01; walk-minutes `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/explain-skill-draft-2026-09-29-2-minutes.md`.
+4. The skill was installed.
+
+The walk-minutes of the 2026-09-16 walk, which the design record calls at risk, are in the log-store at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/2026-09-16-merge-lane-sixteen-open-items-small-first-minutes.md`.
+
+**Agents may use the skill.** An advisor's report of 2026-09-30 proposed installing the skill so that only the user could start it, and opening it to agents once eight of its first ten uses succeeded. Both proposals rested on the agent-seat merge-lane-backlog's misreading of a remark of the user's as a user-ruling. He corrected the misreading on 2026-09-30: "I did not rule that agents cant use explain. They can't use it because it's not built yet". So the skill is installed as a normal skill that agents can start, and the ten-use trial was dropped.
+
+**One later change.** Check 7 of the skill said "that" used as a noun; the part of speech meant is pronoun, so the phrase became "that" used as a pronoun, in check 7 and in the pronoun bullet of the project's `CLAUDE.md`. The user approved both on 2026-10-01 in the approval-walk claude-md-sentences-the-pronoun-rule-catches-2026-10-01 (walk-minutes `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/claude-md-sentences-the-pronoun-rule-catches-2026-10-01-minutes.md`), and PR [CLAUDE.md: name the noun in four sentences the pronoun rule catches, and call "that" a pronoun](https://github.com/nedschorus/nedschorus/pull/932) merged both on 2026-10-02.
+
+**Two cases not pursued.** Two cases the 2026-09-16 walk left undecided, a process ID shown as evidence and a link to one section or line, are not in the supporting file and were not pursued; either is ruled when an agent is seen getting it wrong.
 
 ## Problem
 
@@ -19,11 +46,7 @@ that knows what every term and number refers to routinely fails for the one read
 written for. He has typed some form of "I don't understand", "too much", or "explain assuming
 zero context" thousands of times.
 
-Nothing on main does this job today. `/walk-me-through` covers multi-part material presented
-item by item; it does not cover re-saying a single message that did not land. The drafting
-register for durable MDs is GHI [Build draft-md: the drafting-stage skill run before md-review
-(user-ruled 2026-08-22)](https://github.com/nedschorus/nedschorus/issues/142), which is about
-documents, not about live explanation to the user.
+Nothing on main does this job today. `/walk-me-through` covers multi-part material presented item by item; it does not cover re-saying a single message that did not land. The drafting register for durable MDs (a register here is one kind of explanatory writing, with its own reader and rules, in the sense of the title of GHI [Clarity registers](https://github.com/nedschorus/nedschorus/issues/138)) is GHI [Build draft-md: the drafting-stage skill run before md-review (user-ruled 2026-08-22)](https://github.com/nedschorus/nedschorus/issues/142), which is about documents, not about live explanation to the user.
 
 ## Why it was held, and why that reason no longer exists
 
@@ -42,23 +65,13 @@ style](https://github.com/nedschorus/nedschorus/pull/232) merged 2026-09-01T23:4
 skill was held on 2026-08-22 in favour of a mechanism that had not yet landed and that then
 survived a little over a day.
 
-**The removal was right, and its reasoning argues for a skill.** A custom output style's text
-sits in the system prompt, is never repositioned, and so competes with everything newer as a
-session grows; the built-in styles compensate with a per-turn reminder that a custom style
-cannot declare, because the frontmatter schema is strict. PR [Remove the Zero-Context
-Explanation output style](https://github.com/nedschorus/nedschorus/pull/232) concludes that a
-rule which must survive to turn 200 belongs in a hook or a test, not a style file. A skill is
-nearer to that than a style: it is invoked, so its text arrives at the point of use instead of
-decaying in the system prompt. The 2026-08-22 ruling dismissed the skill as adding "only an
-invocation name" — but an invocation name is precisely the delivery the removal found missing.
+**The removal was right, and its reasoning argues for a skill.** A custom output style's text sits in the system prompt, is never repositioned, and so competes with everything newer as a session grows; the built-in Proactive and Concise styles compensate with a per-turn reminder that a custom style cannot declare, because the frontmatter schema is strict. PR [Remove the Zero-Context Explanation output style](https://github.com/nedschorus/nedschorus/pull/232) concludes that "A rule that must survive to turn 200 belongs in a hook that fires late or blocks, or in a test", not in a style file. A skill is nearer to that than a style: it is invoked, so its text arrives at the point of use instead of decaying in the system prompt. The 2026-08-22 ruling dismissed the skill as adding "only an invocation name" — but an invocation name delivers the skill's text at the point of use, which a style file cannot.
 
-**The reopen condition can never fire, and the issue was closed for that reason.** The
-condition names failures observed "in sessions running under the Zero-Context Explanation
-style". No such session can exist. GHI [Clarity
-registers](https://github.com/nedschorus/nedschorus/issues/138) was closed not planned on
-2026-09-21 on exactly this reasoning. So the hold has no live exit, and the job has no owner.
+**The reopen condition can no longer fire, and the ancestor issue was closed for that reason.** The condition names failures observed "in sessions running under the Zero-Context Explanation style". No session can start under the style now that the style is off main. GHI [Clarity registers](https://github.com/nedschorus/nedschorus/issues/138) was closed not planned on 2026-09-21 on exactly this reasoning. So the hold has no live exit, and the job has no owner.
 
-## Where the material lives, and why that is a problem
+## Where the material lived, and why that was a problem
+
+Resolved: this document put the draft and the table into the repository, and the 2026-09-16 walk-minutes are in the log-store (see Outcome).
 
 Three documents matter here and **none of them is in git**. All three are untracked files in
 one agent-seat's checkout on one machine:
@@ -69,13 +82,9 @@ one agent-seat's checkout on one machine:
 | The ruled identifier table | `/Users/el/agents/merge-lane/docs/drafts/identifier-presentation-rules-draft.md` | 9,124 bytes, 2026-09-16 17:15 |
 | The walk that ruled it | `/Users/el/agents/merge-lane/docs/walk/2026-09-16-merge-lane-sixteen-open-items-small-first-minutes.md` | 28,442 bytes, 2026-09-16 17:24 |
 
-`docs/drafts/` holds them untracked; `docs/walk/` is gitignored at `.gitignore:32`. The walk
-record was never shipped to the log-store, so it exists nowhere else — and it is the only
-written record of the user's rulings at items 12 through 15. One `git clean -x` in that
-checkout destroys all three.
+`docs/drafts/` holds the first two untracked; `docs/walk/` is gitignored at `.gitignore:32`. The walk record was never shipped to the log-store, and it is the only written record of the user's rulings at items 12, 14 and 15; the table draft also records item 13's. One `git clean -fdx` in that checkout destroys all three.
 
-**That is why this document reproduces the draft and the table in full rather than citing
-them.** Landing this GHI-MD puts their content into git for the first time.
+**That is why this document reproduces the draft in full, and the table in substance, rather than citing them.** Landing this GHI-MD puts their content into git for the first time.
 
 An earlier pre-revision copy of the draft does survive elsewhere, frozen into a
 cold-read-record by the fast read of 2026-09-15:
@@ -83,9 +92,9 @@ cold-read-record by the fast read of 2026-09-15:
 That copy is **superseded** — the revision that answered the fast read came after it. Do not
 build from it.
 
-## The current draft, 2026-09-15 post-revision
+## The draft, 2026-09-15 post-revision
 
-Reproduced verbatim. This is the text to work from.
+Reproduced verbatim. The installed skill, `.claude/skills/explain/SKILL.md`, supersedes it; the draft is kept as the design record and is not the text to work from.
 
 ```markdown
 ---
@@ -175,11 +184,9 @@ One change the revising agent made on its own judgement and flagged for the user
 overrule: step 2's retreat from "a story about a file, run or branch" to "the smallest real
 case". It has not been overruled.
 
-## The identifier table — ruled 2026-09-16, and NOT yet folded in
+## The identifier table — ruled 2026-09-16, now folded in
 
-This is the one piece of the skill's content that is genuinely missing. The user ruled it
-row by row at walk items 13.1 through 13.3 on 2026-09-16; the draft above predates it by a
-day and does not contain it. Reproduced in full because its only copy is untracked.
+The table is now the skill's supporting file, `nc-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md`. The user ruled on its five rows that needed a judgement at walk items 13.1 through 13.3 on 2026-09-16, dropping the first and approving the other four; the remaining rows were not ruled one by one. The draft above predates the table by a day and does not contain it. Reproduced in substance, condensed, because on 2026-09-21 its only copy was untracked. Where this table and the installed file differ, the installed file is in force: the reviews of the skill changed several rows, for example a GitHub issue is written `GHI` with its title and link, not `issue #386`.
 
 His requirement, in his own words:
 
@@ -188,6 +195,8 @@ His requirement, in his own words:
 > useful title or name. If they are actual files or things that can be opened they should be
 > clickable links. Bare identifiers are useless to humans, but any identifier that is not
 > clear is also painful."
+
+The measurements below come from two transcript surveys of agent-to-user prose, made for the table on 2026-09-16: 8,168 messages across merge-lane, fleet-restart-at-login, reboot-test and reboot-test-2, and 6,556 across MD-skills, cold-read-research, mac-ubuntu-bridge, git-infra and the reference checkout.
 
 **Two failure modes, not one.** *Bare* is an identifier with no title. *Ambiguous* is an
 identifier whose type the reader cannot determine — and that is the worse one, measured: of
@@ -275,21 +284,16 @@ zero times in either corpus. The leaks are the project's own.
 Not ruled by that walk: `§174`, a section or line number whose link points at the whole
 document.
 
-## Where the rule lives — settled, with one part outstanding
+## Where the rule lives — settled
 
 The table's own closing question was whether a rule this proactive belongs somewhere that
 binds always, since `/explain` is reactive and fires only after the user is already
 confused. Walk items 14 and 15 answered it, and both landed:
 
 - `/Users/el/.claude/CLAUDE.md` gained the one-bullet form as its third bullet (item 14).
-- The project's `CLAUDE.md` gained the same bullet without its ruling-date tail (item 15),
-  through a pull request authored by the merge account and approved by an independent
-  reviewer. It is line 8 on main today, with "type word" since renamed to "link-type" and then,
-  on 2026-09-22, to "ID-type".
+- The project's `CLAUDE.md` gained the same bullet without its ruling-date tail (item 15), through a pull request authored by the merge account and approved by an independent reviewer. It is in `CLAUDE.md` on main, with "type word" since renamed to "link-type" and then, on 2026-09-22, to "ID-type".
 
-**The full table still goes into this skill either way** — that was stated in the walk item
-itself. The one-bullet form in the two instruction files is the always-on summary; the table
-is the reference.
+**The full table still goes into this skill either way** — that was stated in the walk item itself, and it is done: the table is the skill's supporting file (see Outcome). The one-bullet form in the two instruction files is the always-on summary; the table is the reference.
 
 ## The cold read is ruled, not open
 
@@ -304,28 +308,14 @@ six-cell cold read, then the user reads it, then it is installed.
 
 ## Design evidence, observed 2026-09-21
 
-The 2026-08-22 hold asked for failed one-shot explanations as the skill's design evidence.
-Two were produced at the merge-lane-backlog seat during its triage walk, with no output style
-active anywhere in the fleet:
+The 2026-08-22 hold asked for failed one-shot explanations as the skill's design evidence. Two were produced at the merge-lane-backlog seat during its approval-walk merge-lane-backlog-triage-result, with the project's output style removed from main:
 
-1. Given a one-shot explanation of a closed task, the user replied "confused. explain 2". The
-   retelling succeeded, and it succeeded by doing step 2 — one concrete case, told from the
-   failure it guards against — while skipping step 1 entirely: it never defined the terms and
-   identifiers first. The draft predicts that omission and forbids it.
-2. Earlier in the same walk, after a recommendation had been stated plainly, the user asked
-   "what do you want to do and why?" — the same class, a message that did not land as
-   written.
+1. Given a one-shot explanation of a closed task, the user replied "confused. explain 2". The retelling succeeded, and it succeeded by doing the draft's step 2 — one concrete case, told from the failure it guards against — while skipping its step 1 entirely: it never defined the terms and identifiers first. The draft predicts that omission and forbids it.
+2. Earlier in the same walk, after a recommendation had been stated plainly, the user asked "what do you want to do and why?" — the same class, a message that did not land as written.
 
 ## Next action
 
-1. Land this document, which puts the draft and the ruled table into git for the first time.
-2. Ship the 2026-09-16 walk record to the log-store with `scripts/walk-files-ship.py`, or
-   confirm it is expendable. It holds the only written record of items 12 to 15 and is
-   currently one `git clean -x` from gone.
-3. Fold the identifier table into the draft — task #244's step 3, never done.
-4. Run the cold-read-full-run, as ruled.
-5. The user reads it, then it is installed at `.claude/skills/explain/SKILL.md`. The skill is
-   operative prose, so it reaches main through his walk rather than a reviewer's judgement.
+None for the skill, which is installed (see Outcome). When this outcome edit is on main, the agent-seat merge-lane-backlog reruns edit-GHI on this file and closes the issue as completed.
 
 ## Search receipts
 

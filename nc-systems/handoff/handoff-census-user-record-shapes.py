@@ -1,32 +1,11 @@
 #!/usr/bin/env python3
-"""Census of user-record shapes across every Claude Code session transcript.
-
-The receipt behind handoff-extract-conversation.py's INJECTED_TEXT_PREFIXES
-list (2026-08-17: 341 transcripts, both machines — 59% of kept user-record
-words were harness-injected). Rerun it when extracts look noisy again: a new
-unclassified shape in its output is a new prefix for that list.
-
-The known shapes are IMPORTED from the extractor, never copied (review
-finding, 2026-08-17: an out-of-sync copy either false-alarms on shapes the
-extractor already drops or silently blesses shapes it keeps). Anything the
-extractor drops reports as dropped:<prefix>; the deliberate keeps are the
-short KEPT_AS_DIALOG_PREFIXES list here. A shape in neither group is the
-signal this census exists to raise. Run it from a checkout — it needs the
-extractor beside it.
-
-Walks ~/.claude/projects/*/*.jsonl (or the root given as argv[1]),
-classifies every type=="user" record the extractor's pre-prefix filter would
-keep (not isMeta, not sidechain, non-empty text), and prints a histogram of
-opening shapes plus samples of anything unclassified.
-"""
+"""Count transcript user-record shapes to identify injected content."""
 import importlib.util
 import json, sys, re
 from pathlib import Path
 from collections import Counter, defaultdict
 
-# The extractor stays in scripts/ until every live supervisor runs from
-# nc-systems/handoff/; see EXTRACTOR_PATH in handoff-supervisor.py. This file
-# sits at nc-systems/handoff/, so the repository root is two directories up.
+# The extractor stays in scripts/ until all live supervisors run from nc-systems/handoff/.
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 _spec = importlib.util.spec_from_file_location(
@@ -35,7 +14,6 @@ _spec = importlib.util.spec_from_file_location(
 _extractor = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_extractor)
 
-# Injected shapes the extractor deliberately KEEPS as dialog.
 KEPT_AS_DIALOG_PREFIXES = ("<bash-input>",)
 
 KNOWN_PREFIXES = {
@@ -84,9 +62,7 @@ for jsonl in sorted(root.glob("*/*.jsonl")):
                 matched = next((p for p in KNOWN_PREFIXES if text.startswith(p)), None)
                 shape = f"{KNOWN_PREFIXES[matched]}:{matched}" if matched else None
                 if shape is None:
-                    # Bracketed openings are sampled too: an injected shape
-                    # need not use angle brackets, and one absorbed into
-                    # typed-dialog is invisible (review finding, 2026-08-17).
+                    # Bracketed injected records can otherwise disappear into typed-dialog.
                     if text.startswith("<"):
                         shape = "OTHER-ANGLE:" + re.split(r"[ >\n]", text, maxsplit=1)[0][:40]
                     elif text.startswith("["):
@@ -107,7 +83,6 @@ for shape, count in shape_counts.most_common():
     print(f"{shape:<42}{count:>9}{shape_words[shape]:>11}")
 print("\nprojects with most non-dialog user records:")
 def injected_count(counts):
-    # kept: shapes are deliberate dialog, not noise (review finding).
     return sum(v for k, v in counts.items()
                if k != "typed-dialog" and not k.startswith("kept:"))
 

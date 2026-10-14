@@ -100,6 +100,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 TOOL = __import__("importlib").import_module("importlib.util")
+_git_environment_fixture_spec = TOOL.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().with_name("git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = TOOL.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 spec = TOOL.spec_from_file_location(
     "ghi_issue_write", Path(__file__).resolve().with_name("ghi-issue-write.py"))
 tool = TOOL.module_from_spec(spec)
@@ -122,7 +128,7 @@ def check(case_name, condition, detail=""):
 # commit, and a case that wants a failed resolution overrides the key.
 MAIN_COMMIT = "5f0fd4c5ebc6a44d8d9acbf9cccf83a6b78de43d"
 MAIN_COMMIT_CALL = "git rev-parse --verify origin/main"
-GHI_MD_LISTING_CALL = f"git ls-tree -r --name-only {MAIN_COMMIT} docs/issues/"
+GHI_MD_LISTING_CALL = f"git ls-tree -r --name-only -z {MAIN_COMMIT} docs/issues/"
 
 
 class Completed:
@@ -300,10 +306,10 @@ def run_cases(scratch: Path):
     # these cases by name instead of killing the suite.
 
     date_or_path = getattr(tool, "date_or_file_path_in_heading", None)
-    # What `git ls-tree -r --name-only HEAD` lists for the cases below: the
+    # What `git ls-tree -r --name-only -z HEAD` lists for the cases below: the
     # detector judges a relative path and a file extension against the
     # tracked tree, never against what a checkout's directory holds.
-    TRACKED = ["docs/agents/doctrine-instructions.md",
+    TRACKED = ["docs/agents/pr-reviewer-instructions.md",
                "docs/issues/412-build-sanity-checker.md",
                "config/cold-read-tier-roster.json",
                "nc-systems/cold-read/cold-read-grid.py",
@@ -355,7 +361,7 @@ def run_cases(scratch: Path):
     (scratch / "walk-ledgers").mkdir(exist_ok=True)
     untracked_root = Recorder({
         "gh issue list": Completed("[]"),
-        "git ls-tree -r --name-only HEAD": Completed("\n".join(TRACKED)),
+        "git ls-tree -r --name-only -z HEAD": Completed("\0".join(TRACKED)),
     })
     untracked_heading = written(scratch, "untracked-root.md",
                                 "# Tidy the walk-ledgers/notes pile\n\nBody.\n")
@@ -378,8 +384,8 @@ def run_cases(scratch: Path):
     try:
         tool.refuse_heading_with_date_or_file_path(
             "Tidy the walk-ledgers/ pile", scratch, Recorder({
-                "git ls-tree -r --name-only HEAD":
-                    Completed("\n".join(TRACKED))}))
+                "git ls-tree -r --name-only -z HEAD":
+                    Completed("\0".join(TRACKED))}))
         alone_refused = ""
     except tool.Refused as refusal:
         alone_refused = str(refusal)
@@ -396,11 +402,11 @@ def run_cases(scratch: Path):
              Completed("", 128, "fatal: Not a valid object name HEAD")),
             ("and so does one that times out",
              subprocess.TimeoutExpired(
-                 ["git", "ls-tree", "-r", "--name-only", "HEAD"], 30))]:
+                 ["git", "ls-tree", "-r", "--name-only", "-z", "HEAD"], 30))]:
         try:
             tool.refuse_heading_with_date_or_file_path(
                 "Group the components under nc-systems/", scratch,
-                Recorder({"git ls-tree -r --name-only HEAD": answer}))
+                Recorder({"git ls-tree -r --name-only -z HEAD": answer}))
             outcome = ""
         except Exception as failure:
             outcome = f"{type(failure).__name__}: {failure}"
@@ -421,7 +427,7 @@ def run_cases(scratch: Path):
                          f"# {heading}\n\nBody.\n")
         refusing = Recorder({
             "gh issue list": Completed("[]"),
-            "git ls-tree -r --name-only HEAD": Completed("\n".join(TRACKED)),
+            "git ls-tree -r --name-only -z HEAD": Completed("\0".join(TRACKED)),
         })
         try:
             tool.create(titled, REPO, scratch, refusing, quiet)
@@ -466,7 +472,7 @@ def run_cases(scratch: Path):
     dated_landed_path = f"docs/issues/570-{tool.slug(DATED)}.md"
     dated_landed = Recorder({
         "gh issue list": Completed("[]"),
-        "git ls-tree": Completed(dated_landed_path + "\n"),
+        "git ls-tree": Completed(dated_landed_path + "\0"),
         "git show": Completed(
             tool.with_issue_frontmatter(dated_file_text, REPO, 570, DATED)),
     })
@@ -562,7 +568,7 @@ def run_cases(scratch: Path):
     second = Recorder({
         "gh issue list": Completed(PLACEHOLDER),
         "git show": Completed(STAGED),
-        "git ls-tree": Completed(LANDED + "\n"),
+        "git ls-tree": Completed(LANDED + "\0"),
     })
     number, finished = tool.create(source, REPO, scratch, second, quiet)
     check("the rerun after the merge writes the body the first run could not",
@@ -586,7 +592,7 @@ def run_cases(scratch: Path):
         "git show": Completed("---\nissue: [x](https://example.invalid/1)\n"
                               "---\n\n# Someone else's file\n"),
         "git ls-remote": Completed(""),
-        "git ls-tree": Completed(LANDED + "\n"),
+        "git ls-tree": Completed(LANDED + "\0"),
         "gh pr create": Completed("pr\n"),
     })
     tool.create(source, REPO, scratch, stale, quiet)
@@ -689,7 +695,7 @@ def run_cases(scratch: Path):
         "git show": Completed("---\nissue: [x](https://example.invalid/1)\n"
                               "---\n\n# Someone else's file\n"),
         "git ls-remote": Completed(""),
-        GHI_MD_LISTING_CALL: Completed("docs/issues/570-a.md\n"),
+        GHI_MD_LISTING_CALL: Completed("docs/issues/570-a.md\0"),
         "gh pr create": Completed("pr\n"),
     }, None)
     tool.create(source, REPO, scratch, reader, quiet)
@@ -712,7 +718,7 @@ def run_cases(scratch: Path):
         "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
         GHI_MD_LISTING_CALL: Completed(""),
-        "git ls-tree": Completed("for-frontmatter.md\n"),
+        "git ls-tree": Completed("for-frontmatter.md\0"),
         "gh pr create": Completed("pr\n"),
     })
     tool.create(source, REPO, scratch, tracked, quiet)
@@ -765,7 +771,7 @@ def run_cases(scratch: Path):
         "gh issue list": Completed(PLACEHOLDER),
         "git show": Completed("", returncode=1),
         "git ls-remote": Completed(""),
-        "git ls-tree": Completed("docs/issues/570-a.md\n"),
+        "git ls-tree": Completed("docs/issues/570-a.md\0"),
         "gh pr create": Completed("pr\n"),
     })
     tool.create(source, REPO, scratch, resumed, quiet)
@@ -829,9 +835,9 @@ def run_cases(scratch: Path):
     # issue. Main is asked instead, forward: what would this source become
     # if it were filed under the number each filed GHI-MD carries.
 
-    LISTING = (LANDED + "\n"
-               + "docs/issues/571-a-statusline-that-drops-its-branch-name.md\n"
-               + "docs/issues/queue/statusline-drops-branch.md\n")
+    LISTING = (LANDED + "\0"
+               + "docs/issues/571-a-statusline-that-drops-its-branch-name.md\0"
+               + "docs/issues/queue/statusline-drops-branch.md\0")
 
     already_landed = Recorder({
         "gh issue list": Completed("[]"),
@@ -896,7 +902,7 @@ def run_cases(scratch: Path):
         "gh issue list": Completed("[]"),
         "gh issue create": Completed(
             "https://github.com/nedschorus/nedschorus/issues/572\n"),
-        "git ls-tree": Completed("docs/issues/queue/statusline.md\n"),
+        "git ls-tree": Completed("docs/issues/queue/statusline.md\0"),
         "git show": Completed(STAGED),
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
@@ -918,8 +924,8 @@ def run_cases(scratch: Path):
         "gh issue create": Completed(
             "https://github.com/nedschorus/nedschorus/issues/572\n"),
         "git ls-tree": Completed(
-            "docs/issues/queue/570-a-statusline-drops-its-branch.md\n"
-            "docs/issues/archived/570-an-older-copy.md\n"),
+            "docs/issues/queue/570-a-statusline-drops-its-branch.md\0"
+            "docs/issues/archived/570-an-older-copy.md\0"),
         "git show": Completed(STAGED),
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
@@ -1086,7 +1092,7 @@ def run_cases(scratch: Path):
                      STAGED)
     moved = Recorder({
         "gh issue view": Completed('{"body": "in progress ' + KEY + '"}'),
-        "git ls-tree": Completed(LANDED + "\n"),
+        "git ls-tree": Completed(LANDED + "\0"),
     })
     number, finished = tool.create(landed, REPO, scratch, moved, quiet)
     check("the landed file finishes the run its moved source cannot",
@@ -1163,17 +1169,14 @@ def run_cases(scratch: Path):
         except tool.Refused as refusal:
             check(case_name, False, f"refused: {refusal}")
 
-    # ghi-info-ask.py exits 2 or 3, message on stderr, when ghi-info replies
-    # out-of-scope or escalate: instead of a list (user-ruled 2026-09-29).
-    # The write fails open as for any missing verdict, and the report says
-    # what ghi-info said instead of "did not answer".
+    # ghi-info-ask.py exits 2, message on stderr, when ghi-info replies
+    # not-about-issues instead of a list. The write fails open as for any
+    # missing verdict, and the report says what ghi-info said instead of
+    # "did not answer". Exit 3, the ruling question, has its own cases below.
     for case_name, exit_code, first_line in [
             ("an out-of-scope reply lets the write proceed and says so", 2,
              "Not a question about GitHub issues: ghi-info reports which "
-             "issues relate to a subject."),
-            ("an escalate: reply lets the write proceed and says so", 3,
-             "ghi-info found a ruling of the user's that it cannot tell "
-             "still applies: the 2026-09-19 ruling on #46 may not hold")]:
+             "issues relate to a subject.")]:
         lines = []
         replied = Recorder({ASK: Completed(
             "", returncode=exit_code,
@@ -1196,10 +1199,7 @@ def run_cases(scratch: Path):
             "ghi-info-ask: reincarnating the session — 40 closes since birth"]:
         for exit_code, first_line in [
                 (2, "Not a question about GitHub issues: ghi-info reports "
-                    "which issues relate to a subject."),
-                (3, "ghi-info found a ruling of the user's that it cannot "
-                    "tell still applies: the 2026-09-19 ruling on #46 may "
-                    "not hold")]:
+                    "which issues relate to a subject.")]:
             case_name = (f"exit {exit_code} after the line "
                          f"{leading_line[:40]!r} reports the message")
             lines = []
@@ -1236,6 +1236,251 @@ def run_cases(scratch: Path):
                   "{sentence}")[0].rstrip()),
           tool.GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS)
 
+    check("the tool's copy of the ruling question's exit code and of the "
+          "line after its sentence match ghi-info-ask.py's",
+          tool.GHI_INFO_ASK_RULING_QUESTION_EXIT_CODE
+          == ask_module.EXIT_RULING_QUESTION
+          and ask_module.RULING_QUESTION_MESSAGE_TEMPLATE.split(
+              "{sentence}\n")[1].startswith(
+                  tool.GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END),
+          tool.GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END)
+
+    # --- A ruling question: the write goes ahead and records it ----------
+
+    def ruling_stderr(sentence, leading=""):
+        return leading + ask_module.RULING_QUESTION_MESSAGE_TEMPLATE.format(
+            sentence=sentence) + "\n"
+
+    check("the request offers ghi-info the numbered ruling question",
+          "ask-user-about-ruling: #<issue>" in " ".join(
+              " ".join(call) for call in (lambda r: (tool.adjudicate(
+                  REPO, "t", FILE_TEXT, scratch, r, quiet), r.calls)[1])(
+                      Recorder({ASK: Completed("verdict: unrelated\n")}))))
+
+    for case_name, stderr, expected_issue, expected_sentence in [
+            ("a numbered ruling question is returned, number and sentence "
+             "apart",
+             ruling_stderr("#46 the 2026-09-19 ruling may not hold"),
+             46, "the 2026-09-19 ruling may not hold"),
+            ("after a refresh line, the question is still found",
+             ruling_stderr("#46 the ruling may not hold",
+                           "ghi-info-ask: refreshed the seat checkout 1 "
+                           "commit(s) to origin/main\n"),
+             46, "the ruling may not hold"),
+            ("a question naming no issue is returned with no number",
+             ruling_stderr("the ruling on frozen issues may not hold"),
+             None, "the ruling on frozen issues may not hold"),
+            ("a sentence over two lines arrives whole",
+             ruling_stderr("#783 closed issues are frozen,\nbut this one "
+                           "was reopened"),
+             783, "closed issues are frozen, but this one was reopened")]:
+        lines = []
+        try:
+            got = tool.adjudicate(REPO, "t", FILE_TEXT, scratch, Recorder(
+                {ASK: Completed("", returncode=3, stderr=stderr)}),
+                lines.append)
+            check(case_name,
+                  got is not None and got.ruling_issue == expected_issue
+                  and got.sentence == expected_sentence,
+                  (got and (got.ruling_issue, got.sentence), lines))
+        except tool.Refused as refusal:
+            check(case_name, False, f"refused: {refusal}")
+
+    lost = Recorder({ASK: Completed("", returncode=3, stderr="")})
+    lost_lines = []
+    check("an exit 3 whose message is lost fails open and says so",
+          tool.adjudicate(REPO, "t", FILE_TEXT, scratch, lost,
+                          lost_lines.append) is None
+          and lost_lines == ["adjudication skipped: ghi-info gave no "
+                             "verdict: no detail"], lost_lines)
+
+    conflict_46 = tool.RulingConflict(46, "the ruling may not hold")
+    recorded_lines = []
+    recording = Recorder({"gh issue view 46": Completed(
+        "Closed issues are frozen\n")})
+    tool.record_ruling_conflict(REPO, 900, conflict_46, recording,
+                                recorded_lines.append,
+                                edit_not_yet_landed=False)
+    comment_calls = [call for call in recording.calls
+                     if call[:3] == ["gh", "issue", "comment"]]
+    check("recording labels the issue and comments ghi-info's question, "
+          "citing the ruling's issue by title and link",
+          recording.ran("gh label create conflicts-with-a-ruling")
+          and recording.ran("gh issue edit 900 --repo nedschorus/nedschorus "
+                            "--add-label conflicts-with-a-ruling")
+          and len(comment_calls) == 1 and "900" in comment_calls[0]
+          and ("GHI [Closed issues are frozen](https://github.com/"
+               "nedschorus/nedschorus/issues/46)") in comment_calls[0][-1]
+          and "the ruling may not hold" in comment_calls[0][-1],
+          recording.calls)
+    check("and tells the agent what happened and to follow the ruling",
+          recorded_lines and recorded_lines[-1].startswith(
+              "Filed issue 900; ghi-info thinks it conflicts with the ruling "
+              "in GHI [Closed issues are frozen](")
+          and "the ruling stands until he changes it." in recorded_lines[-1]
+          and recorded_lines[-1].endswith(
+              "\nFollow that ruling until the user changes it."),
+          recorded_lines)
+
+    unnamed = Recorder()
+    unnamed_lines = []
+    tool.record_ruling_conflict(REPO, 900, tool.RulingConflict(
+        None, "the ruling may not hold"), unnamed, unnamed_lines.append,
+        edit_not_yet_landed=True)
+    unnamed_comment = [call for call in unnamed.calls
+                       if call[:3] == ["gh", "issue", "comment"]]
+    check("a question naming no issue is recorded as naming none, and no "
+          "issue is looked up",
+          not unnamed.ran("--json title")
+          and len(unnamed_comment) == 1
+          and "ghi-info named no issue holding the ruling"
+          in unnamed_comment[0][-1]
+          and unnamed_lines[-1].startswith(
+              "Issue 900: ghi-info thinks this edit conflicts with a ruling "
+              "of the user's")
+          and unnamed_lines[-1].endswith(
+              "\nghi-info's question: the ruling may not hold")
+          and "Follow that ruling" not in unnamed_lines[-1],
+          (unnamed.calls, unnamed_lines))
+
+    failing = Recorder({"gh issue comment": Completed(
+        "", returncode=1, stderr="HTTP 502")})
+    try:
+        tool.record_ruling_conflict(REPO, 900, conflict_46, failing, quiet,
+                                    edit_not_yet_landed=False)
+        check("a failed comment exits nonzero, saying the issue is written "
+              "and what failed", False, "it reported success")
+    except tool.Refused as refusal:
+        check("a failed comment exits nonzero, saying the issue is written "
+              "and what failed",
+              refusal.code == 1
+              and str(refusal).startswith("Issue 900 was filed, but "
+                                          "recording ghi-info's ruling "
+                                          "question on it failed:")
+              and "HTTP 502" in str(refusal)
+              and "Tell the user that issue 900" in str(refusal),
+              str(refusal))
+        check("and says the filing is unfinished and a rerun finishes it, "
+              "without recording the question",
+              "the GHI-MD is not landed on main and the issue's body is not "
+              "yet the links to it" in str(refusal)
+              and "Rerun this command to land the GHI-MD and link the body"
+              in str(refusal)
+              and "files no second issue" in str(refusal)
+              and "The rerun does not ask ghi-info again, so it will not "
+              "record the question" in str(refusal)
+              and "Do not rerun" not in str(refusal),
+              str(refusal))
+
+    timing_out = Recorder({"gh issue comment": subprocess.TimeoutExpired(
+        ["gh", "issue", "comment"], 120)})
+    try:
+        tool.record_ruling_conflict(REPO, 900, conflict_46, timing_out, quiet,
+                                    edit_not_yet_landed=False)
+        check("a timed-out gh call while recording exits nonzero, saying the "
+              "issue is written and what the user must be told", False,
+              "it reported success")
+    except tool.Refused as refusal:
+        check("a timed-out gh call while recording exits nonzero, saying the "
+              "issue is written and what the user must be told",
+              refusal.code == 1
+              and str(refusal).startswith("Issue 900 was filed, but "
+                                          "recording ghi-info's ruling "
+                                          "question on it failed:")
+              and "Tell the user that issue 900 may conflict with a ruling "
+              "of his: the ruling may not hold" in str(refusal),
+              str(refusal))
+    except subprocess.TimeoutExpired:
+        check("a timed-out gh call while recording exits nonzero, saying the "
+              "issue is written and what the user must be told", False,
+              "the timeout escaped without the message")
+
+    already_there = Recorder({
+        "gh issue view 46": Completed("Closed issues are frozen\n"),
+        "gh issue view 900": Completed(tool.ruling_conflict_comment_body(
+            REPO, conflict_46, "Closed issues are frozen") + "\n"),
+    })
+    tool.record_ruling_conflict(REPO, 900, conflict_46, already_there, quiet,
+                                edit_not_yet_landed=True)
+    check("a question already commented on the issue is not commented twice",
+          not already_there.ran("gh issue comment")
+          and already_there.ran("--add-label conflicts-with-a-ruling"),
+          already_there.commands())
+
+    conflicting_source = written(
+        scratch, name="frozen-issue-reopened.md",
+        text="# Reopen a closed issue to add its last finding\n\nBody.\n")
+    conflicting_create = Recorder({
+        ASK: Completed("", returncode=3, stderr=ruling_stderr(
+            "#46 closed issues are frozen")),
+        "gh issue view 46": Completed("Closed issues are frozen\n"),
+        "gh issue list": Completed("[]"),
+        "gh issue create": Completed(
+            "https://github.com/nedschorus/nedschorus/issues/571\n"),
+        "git show": Completed("", returncode=1),
+        "git ls-remote": Completed(""),
+        "git ls-tree": Completed(""),
+        "gh pr create": Completed("https://github.com/x/y/pull/10\n"),
+    })
+    create_lines = []
+    try:
+        created_number, _ = tool.create(conflicting_source, REPO, scratch,
+                                         conflicting_create,
+                                         create_lines.append)
+        create_order = conflicting_create.commands()
+        check("create with a ruling question records it as soon as the "
+              "issue is filed, then lands the issue",
+              created_number == 571
+              and conflicting_create.count("gh issue create") == 1
+              and "gh pr create" in create_order
+              and "gh issue comment" in create_order
+              and create_order.index("gh issue comment")
+              < create_order.index("gh pr create")
+              and conflicting_create.ran("--add-label conflicts-with-a-ruling")
+              and any(line.startswith("Filed issue 571;")
+                      for line in create_lines),
+              (create_order, create_lines))
+    except tool.Refused as refusal:
+        check("create with a ruling question records it as soon as the "
+              "issue is filed, then lands the issue", False,
+              f"refused: {refusal}")
+
+    # Step 4 failing after the question was drawn must not lose it: the
+    # rerun resumes without asking ghi-info, so only this run can record it.
+    failing_landing_create = Recorder({
+        **conflicting_create.answers,
+        "gh pr create": Completed("", returncode=1, stderr="HTTP 502"),
+    })
+    try:
+        tool.create(conflicting_source, REPO, scratch, failing_landing_create,
+                    quiet)
+        check("a create whose landing fails after a ruling question has "
+              "already recorded the question", False, "the landing passed")
+    except tool.Refused:
+        check("a create whose landing fails after a ruling question has "
+              "already recorded the question",
+              failing_landing_create.ran("gh issue comment 571")
+              and failing_landing_create.ran(
+                  "--add-label conflicts-with-a-ruling"),
+              failing_landing_create.commands())
+
+    resumed_create = Recorder({
+        "gh issue list": Completed(json.dumps([{
+            "number": 571, "title": "t",
+            "body": "in progress " + tool.pairing_key(
+                conflicting_source.read_text())}])),
+        "git show": Completed("", returncode=1),
+        "git ls-remote": Completed(""),
+        "git ls-tree": Completed(""),
+        "gh pr create": Completed("https://github.com/x/y/pull/10\n"),
+    })
+    tool.create(conflicting_source, REPO, scratch, resumed_create, quiet)
+    check("a create that resumes its own issue asks nothing and records "
+          "nothing",
+          not resumed_create.ran(ASK)
+          and not resumed_create.ran("gh issue comment"),
+          resumed_create.commands())
+
     marker = scratch / tool.RECONSIDERED_MARKER_NAME
     marker.write_text("I checked #13 and it is a different matter.\n")
     passed = Recorder({ASK: Completed("verdict: too-similar #13\n")})
@@ -1271,7 +1516,7 @@ def run_cases(scratch: Path):
     failed_fetch = Recorder({
         "git fetch": Completed("", returncode=128,
                                stderr="fatal: could not read from remote"),
-        "git ls-tree": Completed(LANDED + "\n"),
+        "git ls-tree": Completed(LANDED + "\0"),
     })
     try:
         tool.link_body(REPO, 570, scratch, failed_fetch, quiet, LANDED)
@@ -1537,10 +1782,10 @@ def run_edit_cases(scratch: Path):
     # --- The body reaches files that moved into their system's directory -
 
     listing = Recorder({"git ls-tree": Completed(
-        "docs/issues/570-design.md\n"
-        "nc-systems/statusline/570-contract.md\n"
-        "docs/issues/5700-unrelated.md\n"
-        "docs/issues/571-another.md\n")})
+        "docs/issues/570-design.md\0"
+        "nc-systems/statusline/570-contract.md\0"
+        "docs/issues/5700-unrelated.md\0"
+        "docs/issues/571-another.md\0")})
     check("the file set spans docs/issues/ and the system directories",
           tool.ghi_md_paths_for_issue(570, scratch, listing)
           == ["docs/issues/570-design.md",
@@ -1571,19 +1816,19 @@ def run_edit_cases(scratch: Path):
     # would have rewritten these issues' bodies on the next create run.
 
     MAIN_TREE = (
-        "docs/issues/18-write-test-plan-riders-and-test-evidence-rules.md\n"
-        "docs/issues/3-credential-work-measured-state-and-rulings.md\n"
-        "docs/issues/3-dismiss-stale-reviews-experiment-design.md\n"
-        "docs/issues/3-main-gatekeeper-build-slice-plan.md\n"
-        "docs/issues/3-slice-6-review-evidence-not-built.md\n"
-        "docs/issues/45-remote-named-agent-launch-and-reattach.md\n"
-        "docs/issues/archived/43-step-2-claude-md-inputs.md\n"
-        "docs/issues/queue/18-riders-still-waiting-in-the-queue.md\n"
-        "docs/issues/queue/3-bindings-still-waiting-in-the-queue.md\n"
-        "docs/issues/queue/3-checks-note-still-waiting-in-the-queue.md\n"
-        "docs/issues/queue/45-inventory-still-waiting-in-the-queue.md\n"
-        "docs/issues/queue/45-riders-still-waiting-in-the-queue.md\n"
-        "nc-systems/main-gatekeeper/main-gatekeeper-design.md\n")
+        "docs/issues/18-write-test-plan-riders-and-test-evidence-rules.md\0"
+        "docs/issues/3-credential-work-measured-state-and-rulings.md\0"
+        "docs/issues/3-dismiss-stale-reviews-experiment-design.md\0"
+        "docs/issues/3-main-gatekeeper-build-slice-plan.md\0"
+        "docs/issues/3-slice-6-review-evidence-not-built.md\0"
+        "docs/issues/45-remote-named-agent-launch-and-reattach.md\0"
+        "docs/issues/archived/43-step-2-claude-md-inputs.md\0"
+        "docs/issues/queue/18-riders-still-waiting-in-the-queue.md\0"
+        "docs/issues/queue/3-bindings-still-waiting-in-the-queue.md\0"
+        "docs/issues/queue/3-checks-note-still-waiting-in-the-queue.md\0"
+        "docs/issues/queue/45-inventory-still-waiting-in-the-queue.md\0"
+        "docs/issues/queue/45-riders-still-waiting-in-the-queue.md\0"
+        "nc-systems/main-gatekeeper/main-gatekeeper-design.md\0")
 
     main_tree = Recorder({"git ls-tree": Completed(MAIN_TREE)})
     check("issue 3's files are the four directly under docs/issues/, which "
@@ -1630,9 +1875,9 @@ def run_edit_cases(scratch: Path):
           not disagreed, str(disagreed))
 
     deeper = Recorder({"git ls-tree": Completed(
-        "nc-systems/statusline/570-contract.md\n"
-        "nc-systems/statusline/tests/570-contract-test.md\n"
-        "nc-systems/570-loose.md\n")})
+        "nc-systems/statusline/570-contract.md\0"
+        "nc-systems/statusline/tests/570-contract-test.md\0"
+        "nc-systems/570-loose.md\0")})
     check("a system's own directory is one level down, so a filed name "
           "buried deeper under it is not the issue's file, and neither is "
           "one loose in the system tree",
@@ -1650,7 +1895,7 @@ def run_edit_cases(scratch: Path):
         "git ls-remote": Completed(""),
         "gh pr create": Completed("https://github.com/x/y/pull/11\n"),
         "gh issue view": issue_json("Older", one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     edited_number, finished = tool.edit(source, REPO, scratch, landing, quiet)
     check("the edit lands the file on a pull request of its own",
@@ -1684,6 +1929,107 @@ def run_edit_cases(scratch: Path):
           < landing.commands().index("git worktree add"),
           str(landing.commands()))
     check("the run is unfinished while its pull request waits", not finished)
+    check("an edit with no ruling question records nothing on the issue",
+          not landing.ran("gh issue comment")
+          and not landing.ran("conflicts-with-a-ruling"),
+          str(landing.commands()))
+
+    conflicting_edit = Recorder({
+        ASK: Completed("", returncode=3, stderr=(
+            "ghi-info found a ruling of the user's that it cannot tell "
+            "still applies: #46 closed issues are frozen\n"
+            "Ask the user whether that ruling still applies, and put the "
+            "question on your task list.\n")),
+        "gh issue view 46": Completed("Closed issues are frozen\n"),
+        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("https://github.com/x/y/pull/11\n"),
+        "gh issue view": issue_json("Older", one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
+    })
+    edit_lines = []
+    try:
+        tool.edit(source, REPO, scratch, conflicting_edit, edit_lines.append)
+        edit_order = conflicting_edit.commands()
+        check("edit with a ruling question records it on the issue before "
+              "landing the edit",
+              "gh pr create" in edit_order
+              and "gh issue comment" in edit_order
+              and edit_order.index("gh issue comment")
+              < edit_order.index("gh pr create")
+              and conflicting_edit.ran("gh issue edit 570 --repo "
+                                       "nedschorus/nedschorus --add-label "
+                                       "conflicts-with-a-ruling")
+              and any(line.startswith("Issue 570: ghi-info thinks this "
+                                      "edit conflicts with")
+                      for line in edit_lines)
+              and not any("Edited issue" in line for line in edit_lines),
+              (edit_order, edit_lines))
+    except tool.Refused as refusal:
+        check("edit with a ruling question records it on the issue before "
+              "landing the edit", False, f"refused: {refusal}")
+
+    # Recording runs before the edit lands, so its failure must not claim
+    # the edit landed, and must send the agent to the rerun that asks
+    # ghi-info again.
+    failing_edit_recording = Recorder({
+        **conflicting_edit.answers,
+        "gh issue comment": Completed("", returncode=1, stderr="HTTP 502"),
+    })
+    edit_recording_case = ("an edit whose recording fails lands nothing and "
+                           "says so, sending the agent to rerun")
+    try:
+        tool.edit(source, REPO, scratch, failing_edit_recording, quiet)
+        check(edit_recording_case, False, "it reported success")
+    except tool.Refused as refusal:
+        refused_text = str(refusal)
+        check(edit_recording_case,
+              refusal.code == 1
+              and not failing_edit_recording.ran("git push")
+              and not failing_edit_recording.ran("gh pr create")
+              and "HTTP 502" in refused_text
+              and "was not landed" in refused_text
+              and "was edited" not in refused_text
+              and "Do not rerun" not in refused_text
+              and "the rerun asks ghi-info again" in refused_text
+              and "Tell the user that this edit of issue 570 may conflict "
+              "with a ruling of his: closed issues are frozen"
+              in refused_text,
+              (refused_text, failing_edit_recording.commands()))
+    rerun_after_failed_recording = Recorder(dict(conflicting_edit.answers))
+    try:
+        tool.edit(source, REPO, scratch, rerun_after_failed_recording, quiet)
+        check("the rerun after a failed recording asks ghi-info again, "
+              "records the question and lands the edit",
+              rerun_after_failed_recording.ran("ghi-info-ask.py")
+              and rerun_after_failed_recording.ran("gh issue comment 570")
+              and rerun_after_failed_recording.ran("gh pr create"),
+              rerun_after_failed_recording.commands())
+    except tool.Refused as refusal:
+        check("the rerun after a failed recording asks ghi-info again, "
+              "records the question and lands the edit", False,
+              f"refused: {refusal}")
+
+    # The landing failing after the push leaves state already-pushed, and a
+    # rerun from there skips adjudication; the question must be recorded
+    # by this run.
+    failing_edit_landing = Recorder({
+        **conflicting_edit.answers,
+        "gh pr create": Completed("", returncode=1, stderr="HTTP 502"),
+    })
+    try:
+        tool.edit(source, REPO, scratch, failing_edit_landing, quiet)
+        check("an edit whose landing fails after a ruling question has "
+              "already recorded the question", False, "the landing passed")
+    except tool.Refused:
+        check("an edit whose landing fails after a ruling question has "
+              "already recorded the question",
+              failing_edit_landing.ran("gh issue comment 570")
+              and failing_edit_landing.ran(
+                  "--add-label conflicts-with-a-ruling"),
+              failing_edit_landing.commands())
     check("a heading the edit did change renames the issue",
           ran_with(landing, "gh issue edit", "--title", EDIT_TITLE),
           str(landing.commands()))
@@ -1715,7 +2061,7 @@ def run_edit_cases(scratch: Path):
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json("Older", one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     tool.edit(source, REPO, scratch, reader, quiet)
     check("the file that lands is the author's, at its own path, carrying "
@@ -1723,7 +2069,7 @@ def run_edit_cases(scratch: Path):
           reader.staged == staged, repr((reader.staged or "")[:140]))
 
     # --- What that issue line cites --------------------------------------
-    # The issue, by title, as CLAUDE.md says to cite one. It was built from
+    # The issue, by title, as the project's citation rule says to cite one. It was built from
     # the file's first HEADING, which is the title only in `create`, where
     # the issue is filed under the heading. Here the two part company on 25
     # of the 26 filed GHI-MDs on main, and each of an issue's files would
@@ -1739,7 +2085,7 @@ def run_edit_cases(scratch: Path):
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json(ISSUE_TITLE_ON_GITHUB, one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     tool.edit(source, REPO, scratch, citing, quiet)
     check("an edit that leaves the heading alone cites the issue by the "
@@ -1759,7 +2105,7 @@ def run_edit_cases(scratch: Path):
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json(ISSUE_TITLE_ON_GITHUB, one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     tool.edit(filed_ghi_md(scratch, text=MOVED_HEADING_TEXT), REPO, scratch,
               renaming, quiet)
@@ -1781,7 +2127,7 @@ def run_edit_cases(scratch: Path):
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json(ISSUE_TITLE_ON_GITHUB, one_link),
         "git ls-tree": Completed(
-            EDIT_RELATIVE + "\ndocs/issues/570-test-design.md\n"),
+            EDIT_RELATIVE + "\0docs/issues/570-test-design.md\0"),
     })
     tool.edit(filed_ghi_md(scratch, text=MOVED_HEADING_TEXT), REPO, scratch,
               several_citing, quiet)
@@ -1825,7 +2171,7 @@ def run_edit_cases(scratch: Path):
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json(EDIT_TITLE, one_link),
         "git ls-tree": Completed(
-            EDIT_RELATIVE + "\ndocs/issues/570-test-design.md\n"),
+            EDIT_RELATIVE + "\0docs/issues/570-test-design.md\0"),
     })
     tool.edit(moved_source, REPO, scratch, moved, quiet)
     check("a moved file is added at its new path",
@@ -1861,7 +2207,7 @@ def run_edit_cases(scratch: Path):
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json(EDIT_TITLE, one_link),
         "git ls-tree": Completed(
-            EDIT_RELATIVE + f"\n{MOVED_RELATIVE}\n"),
+            EDIT_RELATIVE + f"\0{MOVED_RELATIVE}\0"),
     })
     tool.edit(source, REPO, scratch, in_place, quiet)
     check("an edit in place removes no copy of itself from elsewhere on "
@@ -1886,7 +2232,7 @@ def run_edit_cases(scratch: Path):
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json(EDIT_TITLE, one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     said = []
     tool.edit(renamed_source, REPO, scratch, renamed, said.append)
@@ -1920,7 +2266,7 @@ def run_edit_cases(scratch: Path):
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json(EDIT_TITLE, one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     said_in_place = []
     tool.edit(renamed_in_place, REPO, scratch, in_place, said_in_place.append)
@@ -1953,7 +2299,7 @@ def run_edit_cases(scratch: Path):
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json(EDIT_TITLE, one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     tool.edit(moved_heading_source, REPO, scratch, moved_heading, quiet)
     check("a heading changed on a file the author moved still reaches the "
@@ -1975,7 +2321,7 @@ def run_edit_cases(scratch: Path):
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json("A title nobody derived", one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     tool.edit(filed_ghi_md(scratch, directory="nc-systems/statusline"), REPO,
               scratch, moved_same_heading, quiet)
@@ -2015,6 +2361,39 @@ def run_edit_cases(scratch: Path):
           and not conflicted.ran("gh issue edit"),
           str(conflicted.commands()))
 
+    # A draft the conflict refusal rejects must leave the issue as it was,
+    # ruling question or not: the refusals run before the question is
+    # recorded.
+    for case, extra in (
+            ("a file that moved on main", {}),
+            ("an earlier edit still open", {
+                "ghi-570-edit-*": Completed(
+                    f"abc123\trefs/heads/{EARLIER_EDIT_BRANCH}\n"),
+                f"--head {EARLIER_EDIT_BRANCH}": earlier_edit_pull_request(
+                    EDIT_RELATIVE)})):
+        # The case's own answers go first: the first prefix that matches
+        # answers the call.
+        rejected_with_question = Recorder({
+            **extra,
+            **conflicted.answers,
+            ASK: Completed("", returncode=3, stderr=(
+                "ghi-info found a ruling of the user's that it cannot tell "
+                "still applies: #46 closed issues are frozen\n")),
+            "gh issue view 46": Completed("Closed issues are frozen\n"),
+        })
+        rejected_case = (f"{case} with a ruling question refuses before "
+                         "labelling or commenting on the issue")
+        try:
+            tool.edit(source, REPO, scratch, rejected_with_question, quiet)
+            check(rejected_case, False, "it proceeded")
+        except tool.Refused as refusal:
+            check(rejected_case,
+                  refusal.code == 66
+                  and rejected_with_question.ran(ASK)
+                  and not rejected_with_question.ran("conflicts-with-a-ruling")
+                  and not rejected_with_question.ran("gh issue comment"),
+                  (refusal.code, rejected_with_question.commands()))
+
     # A move puts a second path under the same ruling: the author's path is
     # where the file lands, the moved-from path is where main's copy is
     # deleted. Main holds nothing at the author's path on a move, so that
@@ -2038,7 +2417,7 @@ def run_edit_cases(scratch: Path):
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json(EDIT_TITLE, one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     try:
         tool.edit(filed_ghi_md(scratch, directory="nc-systems/statusline"),
@@ -2093,7 +2472,7 @@ def run_edit_cases(scratch: Path):
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json("Older", one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     try:
         tool.edit(source, REPO, scratch, second_edit, quiet)
@@ -2140,7 +2519,7 @@ def run_edit_cases(scratch: Path):
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json("Older", one_link),
         "git ls-tree": Completed(
-            EDIT_RELATIVE + "\ndocs/issues/570-test-design.md\n"),
+            EDIT_RELATIVE + "\0docs/issues/570-test-design.md\0"),
     })
     other_file_refusal = None
     try:
@@ -2169,7 +2548,7 @@ def run_edit_cases(scratch: Path):
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json("Older", one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     stranded_refusal_on_earlier = None
     try:
@@ -2202,7 +2581,7 @@ def run_edit_cases(scratch: Path):
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json(EDIT_TITLE, one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     try:
         tool.edit(filed_ghi_md(scratch, directory="nc-systems/statusline"),
@@ -2262,7 +2641,7 @@ def run_edit_cases(scratch: Path):
                 "# Older\n"),
             "gh pr create": Completed("pr\n"),
             "gh issue view": issue_json("Older", one_link),
-            "git ls-tree": Completed(EDIT_RELATIVE + "\n")}))
+            "git ls-tree": Completed(EDIT_RELATIVE + "\0")}))
         unaskable_refusal = None
         try:
             tool.edit(source, REPO, scratch, unaskable, quiet)
@@ -2298,7 +2677,7 @@ def run_edit_cases(scratch: Path):
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "gh issue view": issue_json("Stale title", one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     done, wrongly_refused = False, None
     try:
@@ -2331,7 +2710,7 @@ def run_edit_cases(scratch: Path):
             '[{"number": 11, "title": "GHI-MD edit for issue 570", '
             '"url": "https://github.com/x/y/pull/11"}]'),
         "gh issue view": issue_json("Older", one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
         ASK: Completed("verdict: too-similar #13\n"),
     })
     still_waiting, waiting_refusal = False, None
@@ -2367,7 +2746,7 @@ def run_edit_cases(scratch: Path):
         "gh pr list": Completed("[]"),
         "gh pr create": Completed("https://github.com/x/y/pull/12\n"),
         "gh issue view": issue_json("Older", one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
         # Standing over that state, the verdict that refused the first run.
         # The question is the same draft with the same exclusion, so this is
         # the answer every rerun gets.
@@ -2412,7 +2791,7 @@ def run_edit_cases(scratch: Path):
         "gh pr list": Completed("[]"),
         "gh pr create": Completed("https://github.com/x/y/pull/12\n"),
         "gh issue view": issue_json("Older", one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     moved_refusal = None
     try:
@@ -2477,7 +2856,7 @@ def run_edit_cases(scratch: Path):
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json("Older", one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
         ASK: Completed("verdict: too-similar #13\n"),
     })
     try:
@@ -2507,7 +2886,7 @@ def run_edit_cases(scratch: Path):
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "git ls-remote": Completed(""),
         "gh issue view": issue_json(EDIT_TITLE, one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
         ASK: Completed("verdict: too-similar #13\n"),
     })
     try:
@@ -2534,7 +2913,7 @@ def run_edit_cases(scratch: Path):
     unchanged = Recorder({
         f"git show origin/main:{EDIT_RELATIVE}": Completed(staged),
         "gh issue view": issue_json(EDIT_TITLE, one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     tool.edit(source, REPO, scratch, unchanged, quiet)
     check("a body that already lists the files is left alone",
@@ -2548,7 +2927,7 @@ def run_edit_cases(scratch: Path):
         f"git show origin/main:{EDIT_RELATIVE}": Completed(staged),
         "gh issue view": issue_json(EDIT_TITLE, one_link),
         "git ls-tree": Completed(
-            EDIT_RELATIVE + "\nnc-systems/statusline/570-contract.md\n"),
+            EDIT_RELATIVE + "\0nc-systems/statusline/570-contract.md\0"),
     })
     tool.edit(source, REPO, scratch, added, quiet)
     check("a file added to the issue is relinked into the body",
@@ -2564,7 +2943,7 @@ def run_edit_cases(scratch: Path):
         "gh issue view": issue_json("An issue with several documents",
                                     one_link),
         "git ls-tree": Completed(
-            EDIT_RELATIVE + "\ndocs/issues/570-test-design.md\n"),
+            EDIT_RELATIVE + "\0docs/issues/570-test-design.md\0"),
     })
     tool.edit(source, REPO, scratch, several, quiet)
     check("an issue with several filed GHI-MDs is not renamed after one of "
@@ -2583,7 +2962,7 @@ def run_edit_cases(scratch: Path):
     renamed_to_a_date = Recorder({
         f"git show origin/main:{EDIT_RELATIVE}": Completed(staged),
         "gh issue view": issue_json(EDIT_TITLE, one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     try:
         tool.edit(dated_source, REPO, scratch, renamed_to_a_date, quiet)
@@ -2604,7 +2983,7 @@ def run_edit_cases(scratch: Path):
         f"git show origin/main:{EDIT_RELATIVE}": Completed(
             staged_form(text=dated_text, title=dated_heading)),
         "gh issue view": issue_json(dated_heading, one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     try:
         tool.edit(dated_source, REPO, scratch, already_dated, quiet)
@@ -2623,7 +3002,7 @@ def run_edit_cases(scratch: Path):
         "gh issue view": issue_json("An issue with several documents",
                                     one_link),
         "git ls-tree": Completed(
-            EDIT_RELATIVE + "\ndocs/issues/570-test-design.md\n"),
+            EDIT_RELATIVE + "\0docs/issues/570-test-design.md\0"),
     })
     try:
         tool.edit(dated_source, REPO, scratch, several_dated, quiet)
@@ -2644,7 +3023,7 @@ def run_edit_cases(scratch: Path):
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
         "gh issue view": issue_json(dated_heading, one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     try:
         tool.edit(dated_source, REPO, scratch, retitled_already, quiet)
@@ -2665,7 +3044,7 @@ def run_edit_cases(scratch: Path):
         "gh issue view": issue_json(
             EDIT_TITLE, "The statusline drops its branch name after a "
                         "rebase. Reproduced twice."),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\n"),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     prose_refusal, prose_finished = None, False
     try:
@@ -2960,13 +3339,13 @@ def run_landed_design_cases(scratch: Path):
 
     listing = Recorder({
         "git ls-tree": Completed(
-            "docs/issues/120-crash-recovery-for-seats-design.md\n"
-            "docs/issues/queue/120-recovery-notes.md\n"
-            f"{LANDED_DESIGN}\n"
-            f"{SUBSYSTEM_DESIGN}\n"
-            "nc-systems/handoff/docs/handoff-unfiled-design.md\n"
-            "nc-systems/handoff/docs/120-numbered-design.md\n"
-            "nc-systems/handoff/handoff-supervisor.py\n"),
+            "docs/issues/120-crash-recovery-for-seats-design.md\0"
+            "docs/issues/queue/120-recovery-notes.md\0"
+            f"{LANDED_DESIGN}\0"
+            f"{SUBSYSTEM_DESIGN}\0"
+            "nc-systems/handoff/docs/handoff-unfiled-design.md\0"
+            "nc-systems/handoff/docs/120-numbered-design.md\0"
+            "nc-systems/handoff/handoff-supervisor.py\0"),
         f"git show origin/main:{LANDED_DESIGN}": Completed(landed_form()),
         f"git show origin/main:{SUBSYSTEM_DESIGN}": Completed(
             landed_form(number=284, title="Cold read")),
@@ -2995,7 +3374,7 @@ def run_landed_design_cases(scratch: Path):
     # would fall out of the issue's body, which is the empty answer the
     # listing refuses to give for the same reason.
     unreadable = Recorder({
-        "git ls-tree": Completed(f"{LANDED_DESIGN}\n"),
+        "git ls-tree": Completed(f"{LANDED_DESIGN}\0"),
         f"git show origin/main:{LANDED_DESIGN}": Completed(
             "", returncode=128, stderr="fatal: bad object"),
     })
@@ -3035,9 +3414,9 @@ def run_landed_design_cases(scratch: Path):
     # from main. The edited design names 120 on disk and nothing on main;
     # the unfiled one names nothing on disk and 120 on main.
     disagreeing = Recorder({
-        "git ls-tree": Completed(f"{LANDED_DESIGN}\n"
+        "git ls-tree": Completed(f"{LANDED_DESIGN}\0"
                                  "nc-systems/handoff/docs/"
-                                 "handoff-unfiled-design.md\n"),
+                                 "handoff-unfiled-design.md\0"),
         f"git show origin/main:{LANDED_DESIGN}": Completed(LANDED_TEXT),
         "git show origin/main:nc-systems/handoff/docs/handoff-unfiled":
             Completed(landed_form()),
@@ -3068,7 +3447,7 @@ def run_landed_design_cases(scratch: Path):
     rerun = Recorder({
         f"git show origin/main:{LANDED_DESIGN}": Completed(landed_form()),
         "gh issue view": issue_json(LANDED_TITLE, old_body),
-        "git ls-tree": Completed(f"{LANDED_DESIGN}\n"),
+        "git ls-tree": Completed(f"{LANDED_DESIGN}\0"),
     })
     _, done = tool.edit(design, REPO, scratch, rerun, quiet)
     check("the rerun after a landed design's move relinks the body to where "
@@ -3098,7 +3477,7 @@ def run_landed_design_cases(scratch: Path):
             "git ls-remote": Completed(""),
             "gh pr create": Completed("https://github.com/x/y/pull/12\n"),
             "gh issue view": issue_json(LANDED_TITLE, body),
-            "git ls-tree": Completed("".join(f"{p}\n" for p in listed)),
+            "git ls-tree": Completed("".join(f"{p}\0" for p in listed)),
         })
 
     two_files = adding_the_line([other_file, LANDED_DESIGN],
@@ -3167,8 +3546,8 @@ def run_landed_design_cases(scratch: Path):
                                                    heading)
     moved_on_main = Recorder({
         GHI_MD_LISTING_CALL: Completed(""),
-        f"git ls-tree -r --name-only {MAIN_COMMIT} nc-systems/": Completed(
-            f"{LANDED_DESIGN}\nnc-systems/handoff/handoff-supervisor.py\n"),
+        f"git ls-tree -r --name-only -z {MAIN_COMMIT} nc-systems/": Completed(
+            f"{LANDED_DESIGN}\0nc-systems/handoff/handoff-supervisor.py\0"),
         f"git show {MAIN_COMMIT}:{LANDED_DESIGN}": Completed(
             filed_then_moved),
     })
@@ -3184,8 +3563,8 @@ def run_landed_design_cases(scratch: Path):
               and "/issues/120" in str(refusal), str(refusal))
     other_design = Recorder({
         GHI_MD_LISTING_CALL: Completed(""),
-        f"git ls-tree -r --name-only {MAIN_COMMIT} nc-systems/": Completed(
-            f"{LANDED_DESIGN}\n"),
+        f"git ls-tree -r --name-only -z {MAIN_COMMIT} nc-systems/": Completed(
+            f"{LANDED_DESIGN}\0"),
         f"git show {MAIN_COMMIT}:{LANDED_DESIGN}": Completed(
             tool.with_issue_frontmatter("# Another design\n", REPO, 120,
                                         "Another design")),
@@ -3204,10 +3583,37 @@ def run_landed_design_cases(scratch: Path):
           == "Crash recovery for seats — recover-crashed-seats.py")
 
 
+def run_real_git_listing_cases(scratch: Path):
+    """The listings read real git, with a file name git would C-quote."""
+    repository = scratch / "repository"
+    accented = "docs/issues/12-café-notes.md"
+    for arguments in (["init", "-q", "-b", "main", str(repository)],
+                      ["-C", str(repository), "config", "user.email", "test@example.com"],
+                      ["-C", str(repository), "config", "user.name", "test"]):
+        subprocess.run(["git", *arguments], check=True, capture_output=True)
+    (repository / accented).parent.mkdir(parents=True)
+    (repository / accented).write_text("# Notes\n")
+    for arguments in (["add", "-A"], ["commit", "-q", "-m", "one"],
+                      ["update-ref", "refs/remotes/origin/main", "HEAD"]):
+        subprocess.run(["git", "-C", str(repository), *arguments], check=True,
+                       capture_output=True)
+    check("the tracked paths at HEAD name a non-ASCII file as stored",
+          accented in tool.tracked_paths_at_head(repository, tool.run),
+          str(tool.tracked_paths_at_head(repository, tool.run)))
+    check("the filed GHI-MDs on main include a non-ASCII name",
+          tool.ghi_md_paths_on_main("HEAD", repository, tool.run) == [accented],
+          str(tool.ghi_md_paths_on_main("HEAD", repository, tool.run)))
+    check("and so do the issue's files",
+          tool.ghi_md_paths_for_issue(12, repository, tool.run) == [accented],
+          str(tool.ghi_md_paths_for_issue(12, repository, tool.run)))
+
+
 def main():
     import tempfile
     with tempfile.TemporaryDirectory(prefix="ghi-issue-write-test-") as name:
         run_cases(Path(name))
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-real-git-test-") as name:
+        run_real_git_listing_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-landed-test-") as name:
         run_landed_design_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-main-test-") as name:

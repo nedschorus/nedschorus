@@ -6,8 +6,14 @@ not a report, the relaunch of a cell that saved no report with the
 instructions a failed cell ends on (cases 38 to 43), and how a run ends when
 it is stopped from outside, what the next run removes after a killed one, the
 bytes an agent-binary may write, and the record of a run that saved no report
-(cases 44 to 48), and a stop that lands as a launch is prepared, after the
-cells have ended, or while a review copy is claimed (cases 49 to 53).
+(cases 44 to 48), a stop that lands as a launch is prepared, after the
+cells have ended, or while a review copy is claimed (cases 49 to 53), and an
+agent-binary started as the stop begins, a stop that lands while a report is
+saved, a review copy whose removal fails, and a cell that first runs after
+the stop (cases 54 to 57), and a stop that lands while a cell's git call,
+version probe or agent-binary runs as the cell saves its report (cases 58 to
+60). No case
+starts a real agent-binary: see CONTAINMENT below.
 
 The detector's only value is being trustworthy about whether a review cell
 wrote to the worktree. A hole in it is silent by construction, and a warning
@@ -30,10 +36,6 @@ holes under test were found reviewing PRs #98, #102 and #147, and nedschorus#161
     deliberate limit case 11 records)
   - a write the runner's own report write erased before anything compared it:
     the artifact ended up correct and the cell's write was reported nowhere
-  - two runs overlapping in one worktree, each naming the other's reports as
-    its own cells' stray writes, and a ledger entry that assumed the record
-    directory was still ignored, which named the runner's own report wherever
-    that ignore rule was absent
   - the check itself gated to codex, so a claude cell's write went unseen: on
     2026-08-21 a claude cell wrote a 25,170-byte file to the worktree root and
     nothing caught it, because run_cell only ran the comparison for codex
@@ -61,13 +63,13 @@ import os
 import pathlib
 import re
 import shlex
-import fcntl
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import threading
+from unittest.mock import patch
 import time
 
 # Before anything runs git: a run started with GIT_DIR set, or with another
@@ -109,6 +111,30 @@ SUITE_SCRATCH_LOG_STORE_PATH = pathlib.Path(SUITE_SCRATCH_LOG_STORE.name)
 os.environ[RECORD_SHIP_DESTINATION_VARIABLE] = str(
     SUITE_SCRATCH_LOG_STORE_PATH / "cold-read-records")
 
+# CONTAINMENT, second half: no case starts a real agent-binary. The cases
+# replace the runner's run_agent_binary_unless_run_stopped with stand-ins, and
+# a runner whose launchers do not call that function (an older runner, or a
+# deliberate break a reviewer runs this suite against) starts whatever
+# `claude` or `codex` is on PATH, which costs a model call and lets an agent
+# read the machine. So the suite runs with a `claude` and a `codex` first on
+# PATH that write their arguments to a log and exit 1. main() checks before
+# the first case that both names resolve to them, and after the last that
+# none was asked for more than its version. A case that runs the runner as a
+# process puts its own stand-ins first on that process's PATH.
+AGENT_BINARY_TRIPWIRES = tempfile.TemporaryDirectory(
+    prefix="sanity-check-attacks-test-agent-binary-tripwires-")
+AGENT_BINARY_TRIPWIRE_DIRECTORY = pathlib.Path(AGENT_BINARY_TRIPWIRES.name).resolve()
+AGENT_BINARY_TRIPWIRE_LOG = AGENT_BINARY_TRIPWIRE_DIRECTORY / "calls.log"
+for _tripwire_name in ("claude", "codex"):
+    _tripwire = AGENT_BINARY_TRIPWIRE_DIRECTORY / _tripwire_name
+    _tripwire.write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"{_tripwire_name} $*\" >> {shlex.quote(str(AGENT_BINARY_TRIPWIRE_LOG))}\n"
+        "exit 1\n", encoding="utf-8")
+    _tripwire.chmod(0o755)
+os.environ["PATH"] = os.pathsep.join(
+    [str(AGENT_BINARY_TRIPWIRE_DIRECTORY), os.environ.get("PATH", "")])
+
 failures = []
 
 
@@ -125,6 +151,20 @@ def load_runner():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def agent_binary_launch_a_case_replaces(runner):
+    """The runner's run_agent_binary_unless_run_stopped, which a case is about
+    to replace with a stand-in and put back afterwards. Raises when the runner
+    has none: a stand-in set on a name the launchers never call is never
+    used, and the case would start the agent-binary on PATH instead."""
+    launch = getattr(runner, "run_agent_binary_unless_run_stopped", None)
+    if launch is None:
+        raise AssertionError(
+            "the runner under test has no run_agent_binary_unless_run_stopped, "
+            "so the stand-ins these cases set on it would never be called; no "
+            "further case runs")
+    return launch
 
 
 def git(repo, *arguments):
@@ -169,10 +209,16 @@ def main():
           shipper_host is None
           and pathlib.Path(shipper_path).is_relative_to(SUITE_SCRATCH_LOG_STORE_PATH),
           f"the shipper would ship to {shipper_host}:{shipper_path}")
+    for name in ("claude", "codex"):
+        resolved = shutil.which(name)
+        check(f"`{name}` resolves to this suite's tripwire, which starts no agent",
+              resolved is not None
+              and pathlib.Path(resolved).resolve().parent == AGENT_BINARY_TRIPWIRE_DIRECTORY,
+              f"`{name}` resolves to {resolved}")
     if failures:
         print("containment failed: no case runs, because a case that drove the "
               "runner to completion would ship this suite's fixture reports to "
-              "the log-store on ned-box.")
+              "the log-store on ned-box, or start a real agent-binary.")
         return 1
 
     runner = load_runner()
@@ -257,6 +303,34 @@ def main():
         check("a write after a staged rename is still detected",
               "zz-last.md" in found, f"stray list was {found}; baseline was {baseline}")
 
+    # Case 6b: a rename in the worktree column, which `git add -N` of a moved
+    # file produces. Its origin path is a field of its own too, and a walk
+    # that looked only at the index column read it as an entry.
+    with tempfile.TemporaryDirectory() as scratch:
+        repo = new_repo(pathlib.Path(scratch))
+        (repo / "zz-last.md").write_text("tail\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "add tail file")
+        (repo / "tracked.md").rename(repo / "moved.md")
+        git(repo, "add", "-N", "moved.md")
+        baseline = snapshot(repo)
+        check("a worktree-column rename leaves no origin path read as an entry",
+              set(baseline) == {"moved.md"}, f"baseline was {baseline}")
+        uncommitted = runner.uncommitted_review_paths(["moved.md", "zz-last.md"], repo)
+        check("uncommitted_review_paths after a worktree-column rename",
+              uncommitted == ["moved.md"], f"returned {uncommitted}")
+
+    # Case 6c: the quote corpus reads a tracked file whose name git would
+    # C-quote without -z.
+    with tempfile.TemporaryDirectory() as scratch:
+        repo = new_repo(pathlib.Path(scratch))
+        (repo / "café notes.md").write_text("the quick brown fox jumps\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "add a non-ASCII name")
+        corpus = runner.tracked_files_corpus(repo)
+        check("the quote corpus reads a file with a non-ASCII name",
+              "the quick brown fox jumps" in corpus, f"corpus was {corpus}")
+
     # Case 7: a cell writing to an ignored path. `git status` never reports an
     # ignored path in any form, so a write there was invisible to the detector
     # no matter how the porcelain was parsed. The record directory is the
@@ -288,80 +362,6 @@ def main():
         check("a cell overwriting a report in the ignored record directory is detected",
               f"{records_name}/2026-08-23-design/cut-claude.md" in found,
               f"stray list was {found}; baseline was {baseline}")
-
-    # Case 8: the runner writes every cell's report INTO the watched record
-    # directory, so its own writes have to be told apart from a cell's, or the
-    # first report written would be named as a stray by every cell that
-    # finished after it. The ledger records what the runner wrote and what it
-    # contained: a bare path exemption would excuse exactly the write case 7
-    # exists to catch.
-    ledger_class = getattr(runner, "RunnerReportWriteLedger", None)
-    missing_ledger = "RunnerReportWriteLedger is not present on the runner under test"
-    with tempfile.TemporaryDirectory() as scratch:
-        repo = new_repo(pathlib.Path(scratch))
-        (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
-        git(repo, "add", "-A")
-        git(repo, "commit", "-qm", "ignore the record directory")
-        out_dir = repo / records_name / "2026-08-23-design"
-        out_dir.mkdir(parents=True)
-        baseline = snapshot(repo)
-        if ledger_class is None:
-            check("a report the runner wrote itself is not reported as a stray",
-                  False, missing_ledger)
-            check("a cell overwriting another cell's finished report is detected",
-                  False, missing_ledger)
-        else:
-            ledger = ledger_class()
-            report = out_dir / "cut-claude.md"
-            ledger.write_report(report, "the report this cell produced\n", repo)
-            found = ledger.stray_paths_since(baseline, repo)
-            check("a report the runner wrote itself is not reported as a stray",
-                  found == [], f"stray list was {found}")
-            report.write_text("a cell wrote over this finished report\n", encoding="utf-8")
-            found = ledger.stray_paths_since(baseline, repo)
-            check("a cell overwriting another cell's finished report is detected",
-                  f"{records_name}/2026-08-23-design/cut-claude.md" in found,
-                  f"stray list was {found}")
-
-    # Case 9: the ledger under the concurrency main() actually creates. The
-    # cells run in a ThreadPoolExecutor, so one cell's report write and
-    # another cell's stray snapshot interleave, and a snapshot that catches a
-    # report mid-write — or before its fingerprint is recorded — names a stray
-    # where nothing strayed. A warning on an ordinary run is worse than no
-    # warning: it teaches its reader to skip the one that means something.
-    # Measured 2026-08-23 with the ledger's lock replaced by a no-op: 45 of 60
-    # rounds reported a spurious stray; with the lock, none of 60.
-    if ledger_class is None:
-        check("concurrent report writes produce no spurious stray", False, missing_ledger)
-    else:
-        with tempfile.TemporaryDirectory() as scratch:
-            repo = new_repo(pathlib.Path(scratch))
-            (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
-            git(repo, "add", "-A")
-            git(repo, "commit", "-qm", "ignore the record directory")
-            out_dir = repo / records_name / "2026-08-23-design"
-            out_dir.mkdir(parents=True)
-            ledger = ledger_class()
-            baseline = snapshot(repo)
-            spurious = []
-
-            def write_reports_and_check(cell_name):
-                for round_number in range(15):
-                    ledger.write_report(
-                        out_dir / f"{cell_name}.md",
-                        f"{cell_name} report body, round {round_number}\n" * 50, repo)
-                    found = ledger.stray_paths_since(baseline, repo)
-                    if found:
-                        spurious.append((cell_name, round_number, found))
-
-            workers = [threading.Thread(target=write_reports_and_check,
-                                        args=(f"cell-{index}",)) for index in range(4)]
-            for worker in workers:
-                worker.start()
-            for worker in workers:
-                worker.join()
-            check("concurrent report writes produce no spurious stray", spurious == [],
-                  f"{len(spurious)} spurious report(s); first was {spurious[:1]}")
 
     # Case 10: the watched ignored paths belong to the write detector, not to
     # the provenance line. They are not part of any commit, so a record
@@ -397,192 +397,18 @@ def main():
         check("a write to an ignored path outside the watch list is NOT detected "
               "(the declared limit)", found == [], f"stray list was {found}")
 
-    # A ledger for one run's own report directory. Before PR #147 the ledger
-    # took no record directory, so a pre-fix runner raises TypeError here; the
-    # cases below then report themselves failing rather than crashing the run.
-    def new_ledger(own_record_dir):
-        if ledger_class is None:
-            return None
-        try:
-            return ledger_class(own_record_dir)
-        except TypeError:
-            return None
-
-    ledger_takes_no_record_dir = ("the ledger under test takes no record "
-                                  "directory (pre-PR-#147 signature)")
-
-    # Case 12: two runner invocations overlapping in one worktree. Each run's
-    # stray check walks the whole record root, so it sees the other run's
-    # legitimately written reports — which are in neither its own baseline
-    # (taken before the other run's directory had files) nor its own ledger,
-    # which is per-invocation state. Reported on PR #147: both runs printed
-    # `WARNING: cut-codex modified the worktree`, each naming a file the other
-    # run's RUNNER wrote, one of them accusing its own cell of a write that
-    # cell never made. Concurrent runs are a scenario this file supports on
-    # purpose — see fresh_record_dir's docstring and case 17.
     with tempfile.TemporaryDirectory() as scratch:
-        repo = new_repo(pathlib.Path(scratch))
-        (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
-        git(repo, "add", "-A")
-        git(repo, "commit", "-qm", "ignore the record directory")
-        dir_a = repo / records_name / "2026-08-23-design"
-        dir_b = repo / records_name / "2026-08-23-design-2"
-        dir_a.mkdir(parents=True)
-        dir_b.mkdir(parents=True)
-        ledger_a, ledger_b = new_ledger(dir_a), new_ledger(dir_b)
-        if ledger_a is None or ledger_b is None:
-            for case_name in (
-                    "a concurrent run's reports are not this run's stray",
-                    "a concurrent run that started first is not this run's stray",
-                    "a new file a cell writes in this run's own record directory is detected",
-                    "a new file elsewhere under the record root is NOT reported "
-                    "(the concurrency carve-out)"):
-                check(case_name, False, ledger_takes_no_record_dir)
-        else:
-            # Run A takes its baseline, then run B writes a report of its own.
-            baseline_a = snapshot(repo)
-            ledger_b.write_report(dir_b / "cut-claude.md", "run B's report\n", repo)
-            found = ledger_a.stray_paths_since(baseline_a, repo)
-            check("a concurrent run's reports are not this run's stray",
-                  found == [], f"stray list was {found}")
-
-            # The other ordering: run A's directory already held a report when
-            # run B took its baseline, and A goes on writing.
-            ledger_a.write_report(dir_a / "cut-claude.md", "run A's report\n", repo)
-            baseline_b = snapshot(repo)
-            ledger_a.write_report(dir_a / "cut-codex.md", "run A's second report\n", repo)
-            found = ledger_b.stray_paths_since(baseline_b, repo)
-            check("a concurrent run that started first is not this run's stray",
-                  found == [], f"stray list was {found}")
-
-            # What the run's own directory still buys: a cell writing anything
-            # into it is this run's business and is named.
-            (dir_a / "cell-scribble.md").write_text("a cell wrote this\n", encoding="utf-8")
-            found = ledger_a.stray_paths_since(baseline_a, repo)
-            check("a new file a cell writes in this run's own record directory is detected",
-                  f"{records_name}/2026-08-23-design/cell-scribble.md" in found,
-                  f"stray list was {found}")
-
-            # The price of the fix, asserted rather than left to be discovered:
-            # a brand-new file under the record root but outside this run's own
-            # directory is exactly what a concurrent run legitimately makes, so
-            # it is no longer reported. Overwriting a file that was there when
-            # the run started, or one this run wrote, is still reported — those
-            # are the cases above and cases 7, 8 and 14.
-            (repo / records_name / "cell-scribble-elsewhere.md").write_text(
-                "a cell wrote this\n", encoding="utf-8")
-            found = ledger_a.stray_paths_since(baseline_a, repo)
-            check("a new file elsewhere under the record root is NOT reported "
-                  "(the concurrency carve-out)",
-                  f"{records_name}/cell-scribble-elsewhere.md" not in found,
-                  f"stray list was {found}")
-
-    # Case 13: the runner invoked where `sanity-check-records/` is NOT ignored
-    # — a revision without that .gitignore line, or a worktree where it has
-    # been edited. git then reports every report the runner writes as `??`,
-    # while the ledger recorded `!!` on the assumption that the ignore rule
-    # still held, so each later codex cell named the runner's own report as a
-    # worktree modification even though its fingerprint matched
-    # (chatgpt-codex-connector, P2 on PR #147).
-    with tempfile.TemporaryDirectory() as scratch:
-        repo = new_repo(pathlib.Path(scratch))  # no ignore rule for the record root
-        out_dir = repo / records_name / "2026-08-23-design"
-        out_dir.mkdir(parents=True)
-        if ledger_class is None:
-            check("a report written where the record root is not ignored is not a stray",
-                  False, missing_ledger)
-        else:
-            ledger = ledger_class()
-            baseline = snapshot(repo)
-            ledger.write_report(out_dir / "cut-claude.md", "the report\n", repo)
-            found = ledger.stray_paths_since(baseline, repo)
-            check("a report written where the record root is not ignored is not a stray",
-                  found == [], f"stray list was {found}")
-
-    # Case 14: a cell running `git add -f` on a report the runner wrote. The
-    # ledger records the status git gives the path, so a later change of that
-    # status diverges from the record and is named — the property case 13's
-    # fix must not trade away. Passes before and after case 13.
-    with tempfile.TemporaryDirectory() as scratch:
-        repo = new_repo(pathlib.Path(scratch))
-        (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
-        git(repo, "add", "-A")
-        git(repo, "commit", "-qm", "ignore the record directory")
-        out_dir = repo / records_name / "2026-08-23-design"
-        out_dir.mkdir(parents=True)
-        if ledger_class is None:
-            check("a cell force-adding a report the runner wrote is detected",
-                  False, missing_ledger)
-        else:
-            ledger = ledger_class()
-            baseline = snapshot(repo)
-            report = out_dir / "cut-claude.md"
-            ledger.write_report(report, "the report\n", repo)
-            git(repo, "add", "-f", str(report))
-            found = ledger.stray_paths_since(baseline, repo)
-            check("a cell force-adding a report the runner wrote is detected",
-                  f"{records_name}/2026-08-23-design/cut-claude.md" in found,
-                  f"stray list was {found}")
-
-    # Case 15: a cell writing to a report path BEFORE the runner writes its
-    # report there. The runner's own write repaired the file, the ledger then
-    # recorded the repaired content, and the cell's write was never reported
-    # (PR #147 finding 2). The record directory is claimed fresh by mkdir and
-    # only the ledger writes reports into it, so anything already at the path
-    # was put there during this run by something else.
-    with tempfile.TemporaryDirectory() as scratch:
-        repo = new_repo(pathlib.Path(scratch))
-        (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
-        git(repo, "add", "-A")
-        git(repo, "commit", "-qm", "ignore the record directory")
-        out_dir = repo / records_name / "2026-08-23-design"
-        out_dir.mkdir(parents=True)
-        if ledger_class is None:
-            check("a report path a cell wrote to first is reported", False, missing_ledger)
-            check("an unoccupied report path is not reported", False, missing_ledger)
-        else:
-            ledger = ledger_class()
-            scribbled = out_dir / "cut-claude.md"
-            scribbled.write_text("a cell scribbled here first\n", encoding="utf-8")
-            check("a report path a cell wrote to first is reported",
-                  ledger.write_report(scribbled, "the claude report\n", repo) is True,
-                  "write_report did not report the occupied path")
-            check("an unoccupied report path is not reported",
-                  ledger.write_report(out_dir / "cut-codex.md",
-                                      "the codex report\n", repo) is False,
-                  "write_report reported an unoccupied path")
-
-    # Case 16: the ledger fingerprints the text it was handed, not the file it
-    # has just written — which closes the window where a cell writing between
-    # those two steps would have its content recorded as the runner's own work,
-    # and removes a subprocess per report (PR #147 finding 3, raised as a
-    # simplification; the window is microseconds wide and was not reproduced).
-    # The window cannot be hit on demand, so the mechanism is what is checked:
-    # file_fingerprint is replaced by a sentinel for the duration of the write,
-    # and a ledger that consults the disk records the sentinel — after which
-    # its own report reads as a stray.
-    with tempfile.TemporaryDirectory() as scratch:
-        repo = new_repo(pathlib.Path(scratch))
-        (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
-        git(repo, "add", "-A")
-        git(repo, "commit", "-qm", "ignore the record directory")
-        out_dir = repo / records_name / "2026-08-23-design"
-        out_dir.mkdir(parents=True)
-        if ledger_class is None:
-            check("the ledger fingerprints the text it was handed, not the file on disk",
-                  False, missing_ledger)
-        else:
-            ledger = ledger_class()
-            baseline = snapshot(repo)
-            real_file_fingerprint = runner.file_fingerprint
-            try:
-                runner.file_fingerprint = lambda *arguments: "SENTINEL-NOT-A-FINGERPRINT"
-                ledger.write_report(out_dir / "cut-claude.md", "the report\n", repo)
-            finally:
-                runner.file_fingerprint = real_file_fingerprint
-            found = ledger.stray_paths_since(baseline, repo)
-            check("the ledger fingerprints the text it was handed, not the file on disk",
-                  found == [], f"stray list was {found}")
+        out_dir = pathlib.Path(scratch)
+        scribbled = out_dir / "cut-claude.md"
+        scribbled.write_text("a cell scribbled here first\n", encoding="utf-8")
+        check("a report path a cell wrote to first is reported",
+              runner.write_report(scribbled, "the claude report\n") is True,
+              "write_report did not report the occupied path")
+        check("an unoccupied report path is not reported",
+              runner.write_report(out_dir / "cut-codex.md", "the codex report\n") is False,
+              "write_report reported an unoccupied path")
+        check("the occupied report contains the runner's report",
+              scribbled.read_text(encoding="utf-8") == "the claude report\n")
 
     # Case 17: two runs starting together must not be handed the same record
     # directory. A look-then-create claim passes both when neither has written
@@ -599,28 +425,35 @@ def main():
     if records_root is not None:
         runner.RECORDS_ROOT = records_root
 
-    # Case 18: run_cell's worktree check must run for a claude cell, not only
-    # a codex one. On 2026-08-21 a claude cell wrote a 25,170-byte file to the
-    # worktree root anyway, and run_cell's `if runtime == "codex":` gate never
-    # looked (nedschorus#161). run_claude is replaced by a stand-in so no
-    # model is called, and report_ledger is a bare stand-in too — cases 1-17
-    # above already cover the real ledger's bookkeeping; this case is about
-    # the gate in run_cell, exercised directly, not the ledger it calls.
+    with tempfile.TemporaryDirectory() as scratch:
+        repo = pathlib.Path(scratch) / "review-copy"
+        repo.mkdir()
+        new_repo(repo)
+        (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-qm", "ignore records")
+        out_dir = pathlib.Path(scratch) / "reports"
+        out_dir.mkdir()
+        copy_record_dir = repo / records_name / "current-run"
+        baseline = snapshot(repo)
+        runner.write_report(out_dir / "cut-claude.md", "report\n")
+        found = runner.stray_paths_since(baseline, repo, copy_record_dir)
+        check("reports outside the review copy do not appear as stray writes",
+              found == [], f"stray list was {found}")
+        scribbled = repo / records_name / "elsewhere.md"
+        scribbled.parent.mkdir(parents=True)
+        scribbled.write_text("a cell wrote here\n", encoding="utf-8")
+        found = runner.stray_paths_since(baseline, repo, copy_record_dir)
+        check("new files anywhere under the watched record root are detected",
+              found == [f"{records_name}/elsewhere.md"], f"stray list was {found}")
+
+    # The worktree check must run for either runtime.
     import contextlib
     import io
 
-    class StubLedger:
-        def __init__(self, stray):
-            self._stray = stray
-
-        def stray_paths_since(self, baseline):
-            return self._stray
-
-        def write_report(self, out_path, text):
-            return False
-
     runner_gate = load_runner()
     stray_name = "stray-file-a-claude-cell-should-not-write.md"
+    runner_gate.worktree_snapshot = lambda checkout: {stray_name: ("??", "content")}
     # Report-shaped, so the cell reaches the report write the way a real one
     # does: a text lacking the cut prompt's sections is refused (case 23).
     runner_gate.run_claude = lambda prompt, checkout=None: (
@@ -632,12 +465,17 @@ def main():
     # scratch directory under the one it is handed, and a relative path here
     # would leave that directory wherever this file happens to be run from.
     with tempfile.TemporaryDirectory() as scratch:
+        out_path = pathlib.Path(scratch) / "cut-claude.md"
+        out_path.write_text("occupied", encoding="utf-8")
         with contextlib.redirect_stdout(buffer):
             runner_gate.run_cell(
                 "cut", "claude", "docs/agents/sanity-checker-cut-attack-prompt.md",
                 [], pathlib.Path("unused-problem-statement.md"),
-                pathlib.Path(scratch), {}, (), StubLedger([stray_name]))
+                pathlib.Path(scratch), {}, ())
     output = buffer.getvalue()
+    check("an occupied report path prints the existing warning",
+          f"WARNING: cut-claude found a stray write at its own report path and "
+          f"overwrote it: {out_path}\n" in output, f"output was {output!r}")
     check("a claude cell that leaves a stray path behind is warned about, "
           "same as a codex cell",
           "WARNING: the review copy was modified outside the cells' scratch "
@@ -665,7 +503,7 @@ def main():
     # Case 20: the write detector exempts this run's scratch subtree. A cell
     # writing notes where its prompt told it to write must not be named as a
     # stray — a warning on ordinary behaviour teaches its reader to skip the
-    # warning that means something, the same defect case 9 measures. The
+    # warning that means something. The
     # exemption is of the subtree and only of THIS run's: everywhere else,
     # inside the run's own record directory included, is watched unchanged.
     with tempfile.TemporaryDirectory() as scratch:
@@ -680,60 +518,42 @@ def main():
         earlier_scratch.mkdir(parents=True)
         (earlier_scratch / "leftover.md").write_text("an earlier run's notes\n",
                                                      encoding="utf-8")
-        ledger = new_ledger(out_dir)
-        if ledger is None:
-            for case_name in (
-                    "a cell writing in its own scratch directory is not a stray",
-                    "the exemption covers the whole scratch subtree",
-                    "the scratch exemption does not reach the rest of the record directory",
-                    "an earlier run's scratch is not exempt"):
-                check(case_name, False, ledger_takes_no_record_dir)
-        else:
-            baseline = snapshot(repo)
-            cell_scratch = runner.cell_scratch_dir(out_dir, "cut-claude")
-            (cell_scratch / "working-notes.md").write_text(
-                "the notes this cell took\n", encoding="utf-8")
-            found = ledger.stray_paths_since(baseline, repo)
-            check("a cell writing in its own scratch directory is not a stray",
-                  found == [], f"stray list was {found}")
+        baseline = snapshot(repo)
+        cell_scratch = runner.cell_scratch_dir(out_dir, "cut-claude")
+        (cell_scratch / "working-notes.md").write_text(
+            "the notes this cell took\n", encoding="utf-8")
+        found = runner.stray_paths_since(baseline, repo, out_dir)
+        check("a cell writing in its own scratch directory is not a stray",
+              found == [], f"stray list was {found}")
 
-            # Every cell's directory, not just the one that happens to ask:
-            # stray_paths_since is per run and cannot tell which cell is
-            # calling it, so the exemption is of the whole subtree.
-            other_scratch = runner.cell_scratch_dir(out_dir, "fresh-eyes-codex")
-            (other_scratch / "sketch-draft.md").write_text(
-                "another cell's draft\n", encoding="utf-8")
-            found = ledger.stray_paths_since(baseline, repo)
-            check("the exemption covers the whole scratch subtree",
-                  found == [], f"stray list was {found}")
+        # Every cell's directory, not just the one that happens to ask:
+        # stray_paths_since is per run and cannot tell which cell is
+        # calling it, so the exemption is of the whole subtree.
+        other_scratch = runner.cell_scratch_dir(out_dir, "fresh-eyes-codex")
+        (other_scratch / "sketch-draft.md").write_text(
+            "another cell's draft\n", encoding="utf-8")
+        found = runner.stray_paths_since(baseline, repo, out_dir)
+        check("the exemption covers the whole scratch subtree",
+              found == [], f"stray list was {found}")
 
-            # Where the exemption stops: the rest of the run's own record
-            # directory is the reports, and a cell writing there is case 12's
-            # third check — still named.
-            (out_dir / "cell-scribble.md").write_text("a cell wrote this\n",
-                                                      encoding="utf-8")
-            found = ledger.stray_paths_since(baseline, repo)
-            check("the scratch exemption does not reach the rest of the record directory",
-                  f"{records_name}/2026-08-29-design/cell-scribble.md" in found,
-                  f"stray list was {found}")
+        (out_dir / "cell-scribble.md").write_text("a cell wrote this\n",
+                                                  encoding="utf-8")
+        found = runner.stray_paths_since(baseline, repo, out_dir)
+        check("the scratch exemption does not reach the rest of the record directory",
+              f"{records_name}/2026-08-29-design/cell-scribble.md" in found,
+              f"stray list was {found}")
 
-            # An earlier run's scratch belongs to nobody here: it was on disk
-            # when this run started, sits in the baseline, and is compared like
-            # any other file.
-            (earlier_scratch / "leftover.md").write_text(
-                "a cell wrote over this\n", encoding="utf-8")
-            found = ledger.stray_paths_since(baseline, repo)
-            check("an earlier run's scratch is not exempt",
-                  f"{records_name}/2026-08-28-design/scratch/cut-claude/leftover.md"
-                  in found, f"stray list was {found}")
+        # An earlier run's scratch belongs to nobody here: it was on disk
+        # when this run started, sits in the baseline, and is compared like
+        # any other file.
+        (earlier_scratch / "leftover.md").write_text(
+            "a cell wrote over this\n", encoding="utf-8")
+        found = runner.stray_paths_since(baseline, repo, out_dir)
+        check("an earlier run's scratch is not exempt",
+              f"{records_name}/2026-08-28-design/scratch/cut-claude/leftover.md"
+              in found, f"stray list was {found}")
 
-    # Case 21: the boundary of case 20, asserted rather than assumed — the same
-    # service case 11 does for the ignored-path watch. The exemption is of the
-    # subtree, so it holds whatever git says about a path inside it: a cell
-    # running `git add -f` on its own scratch file is not reported, where the
-    # same act on a report is (case 14). This case passes before and after
-    # case 20's exemption is written; it states the carve-out's price, and it
-    # fails if the exemption ever silently narrows to unstaged files.
+    # Scratch is permitted regardless of git status, including staged files.
     with tempfile.TemporaryDirectory() as scratch:
         repo = new_repo(pathlib.Path(scratch))
         (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
@@ -741,18 +561,13 @@ def main():
         git(repo, "commit", "-qm", "ignore the record directory")
         out_dir = repo / records_name / "2026-08-29-design"
         out_dir.mkdir(parents=True)
-        ledger = new_ledger(out_dir)
-        if ledger is None:
-            check("a cell force-adding its own scratch file is NOT reported "
-                  "(the declared limit)", False, ledger_takes_no_record_dir)
-        else:
-            baseline = snapshot(repo)
-            note = runner.cell_scratch_dir(out_dir, "cut-claude") / "working-notes.md"
-            note.write_text("the notes this cell took\n", encoding="utf-8")
-            git(repo, "add", "-f", str(note))
-            found = ledger.stray_paths_since(baseline, repo)
-            check("a cell force-adding its own scratch file is NOT reported "
-                  "(the declared limit)", found == [], f"stray list was {found}")
+        baseline = snapshot(repo)
+        note = runner.cell_scratch_dir(out_dir, "cut-claude") / "working-notes.md"
+        note.write_text("the notes this cell took\n", encoding="utf-8")
+        git(repo, "add", "-f", str(note))
+        found = runner.stray_paths_since(baseline, repo, out_dir)
+        check("a cell force-adding its own scratch file is NOT reported "
+              "(the declared limit)", found == [], f"stray list was {found}")
 
     # Case 22: the scratch path reaches the cell. The sentence granting the
     # working space lives in the prompt MD, where the cold read reviews it;
@@ -776,8 +591,7 @@ def main():
     # it, and the runner saved the answer — the text below opens one of them —
     # in place of a 3,684-word review, printed `saved:` and
     # exited 0 (nedschorus#397). The runtime stand-ins return what a cell
-    # captured; the ledger stand-in writes for real, so "no report" is
-    # checked on disk rather than read off a write that never happens. The
+    # captured; reports are checked on disk. The
     # stand-ins answer the same text at every launch, so the refused cell is
     # launched a second time and refused again (cases 38 to 43 are the
     # relaunch's own).
@@ -789,15 +603,8 @@ def main():
                   "**QUESTIONS**\n\nNone.\n\nLeanness Certification:\n\n"
                   "- the whole document\n")
 
-    class WritingStubLedger(StubLedger):
-        def __init__(self):
-            super().__init__([])
-
-        def write_report(self, out_path, text):
-            out_path.write_text(text, encoding="utf-8")
-            return False
-
     runner_refusal = load_runner()
+    runner_refusal.worktree_snapshot = lambda checkout: {}
     runner_refusal.CLI_VERSION_CACHE.update({"claude": "1.1.1-test",
                                              "codex": "2.2.2-test"})
     for runtime in runner_refusal.RUNTIMES:
@@ -812,7 +619,7 @@ def main():
                     _, cell_ok = runner_refusal.run_cell(
                         "cut", runtime, "docs/x.md", [],
                         pathlib.Path("unused-problem-statement.md"), out_dir,
-                        {}, (), WritingStubLedger())
+                        {}, ())
                 report_written = (out_dir / f"cut-{runtime}.md").is_file()
             output = buffer.getvalue()
             if is_report:
@@ -925,7 +732,7 @@ def main():
                         _, cell_ok = runner_timeout.run_cell(
                             "cut", runtime, "docs/x.md", [],
                             pathlib.Path("unused-problem-statement.md"),
-                            pathlib.Path(scratch), {}, (), StubLedger([]))
+                            pathlib.Path(scratch), {}, ())
                 except Exception as error:
                     raised = error
             output = buffer.getvalue()
@@ -971,7 +778,7 @@ def main():
             list(command), keywords.get("timeout"),
             output=b"next model: partial review", stderr=b"next model: still reading")
 
-    real_chain_timeout_run = getattr(runner_chain_timeout, "run_agent_binary_unless_run_stopped", None)
+    real_chain_timeout_run = agent_binary_launch_a_case_replaces(runner_chain_timeout)
     buffer = io.StringIO()
     cell_ok = None
     try:
@@ -981,7 +788,7 @@ def main():
                 _, cell_ok = runner_chain_timeout.run_cell(
                     "cut", "claude", "docs/x.md", [],
                     pathlib.Path("unused-problem-statement.md"),
-                    pathlib.Path(scratch), {}, (), StubLedger([]))
+                    pathlib.Path(scratch), {}, ())
     finally:
         runner_chain_timeout.run_agent_binary_unless_run_stopped = real_chain_timeout_run
     output = buffer.getvalue()
@@ -1147,7 +954,7 @@ def main():
     # replaced for the length of one call only, and goes back in a finally.
     runner_memories = load_runner()
     captured = {}
-    real_memories_launch = getattr(runner_memories, "run_agent_binary_unless_run_stopped", None)
+    real_memories_launch = agent_binary_launch_a_case_replaces(runner_memories)
 
     def capture_command(command, *arguments, **keywords):
         captured["command"] = list(command)
@@ -1221,7 +1028,7 @@ def main():
         # the last model's after a fallback.
         return subprocess.CompletedProcess(list(command), 0, "a review\n", "")
 
-    real_claude_run = getattr(runner_tools, "run_agent_binary_unless_run_stopped", None)
+    real_claude_run = agent_binary_launch_a_case_replaces(runner_tools)
     try:
         runner_tools.run_agent_binary_unless_run_stopped = capture_claude_command
         runner_tools.run_claude("a prompt no model ever sees")
@@ -1263,7 +1070,7 @@ def main():
             return subprocess.CompletedProcess(list(command), code, out, "")
         return fake_run
 
-    real_chain_run = getattr(runner_chain, "run_agent_binary_unless_run_stopped", None)
+    real_chain_run = agent_binary_launch_a_case_replaces(runner_chain)
     try:
         runner_chain.run_agent_binary_unless_run_stopped = answering({fable: (0, "fable's review\n")})
         answered = runner_chain.run_claude("a prompt no model ever sees")
@@ -1558,7 +1365,7 @@ def main():
         return subprocess.CompletedProcess(list(command), 0, "a review\n", "")
 
     review_checkout = pathlib.Path("/a/review/copy/of/the/commit")
-    real_launch_run = getattr(runner_launch, "run_agent_binary_unless_run_stopped", None)
+    real_launch_run = agent_binary_launch_a_case_replaces(runner_launch)
     # On Linux the codex cell's profile lists the credential files under the
     # home by running `find` there: emptied, so the real home is not scanned.
     real_launch_files_found = runner_launch.common.credential_files_found_now
@@ -1696,16 +1503,13 @@ def main():
         # Case 30: the run saves its own output and the request in its record,
         # so a later reader can see which warnings it printed and what the
         # fresh-eyes cells were asked; an agent used to copy both by hand. The
-        # log holds what was printed before the record directory existed —
-        # the LEAK-WARNING for the design's name in the request — and ends
-        # before the record is shipped, so the copy in the log-store is whole
+        # log ends before the record is shipped, so the copy in the log-store is whole
         # and a later ship of the dispositions file does not find it changed.
         run_log = record / "sanity-check-run.log" if record else None
         log_text = (run_log.read_text(encoding="utf-8")
                     if run_log and run_log.is_file() else "")
         check("the run's output is saved in the record as sanity-check-run.log",
-              log_text.count("saved: ") == 4
-              and "LEAK-WARNING: design name `widget-frobnicator`" in log_text,
+              log_text.count("saved: ") == 4,
               f"log was {log_text!r}")
         check("and the log ends before the record is shipped",
               bool(log_text) and "record: " not in log_text
@@ -1761,20 +1565,6 @@ def main():
             "q3")
     check("a quote differing from its source only in curly quotes raises no warning",
           buffer.getvalue() == "", f"output was {buffer.getvalue()!r}")
-
-    # Case 33: a LEAK-WARNING names the line it matched, so an expected hit on
-    # the request's off-limits list is told from a real leak without searching
-    # the file by hand (22 warnings in one run each named only the file).
-    runner_leak = load_runner()
-    buffer = io.StringIO()
-    with contextlib.redirect_stdout(buffer):
-        runner_leak.leak_scan({"widget-frobnicator"},
-                              "Problem: schedule nightly work.\n"
-                              "Off-limits: the widget-frobnicator design.\n",
-                              "the problem statement (request.md)")
-    check("a LEAK-WARNING names the line number and text it matched",
-          "line 2: Off-limits: the widget-frobnicator design." in buffer.getvalue(),
-          f"output was {buffer.getvalue()!r}")
 
     # Case 34: `--runtime` reruns one runtime; the other's cells do not launch.
     # A rerun used to repeat both. The target is a skill, and every skill's
@@ -1951,7 +1741,7 @@ def main():
     # are replaced, and each stand-in counts its launches.
     capacity = "ERROR: Selected model is at capacity. Please try a different model."
 
-    def run_cell_capturing(module, runtime, ledger=None, target="docs/x.md",
+    def run_cell_capturing(module, runtime, target="docs/x.md",
                            context=(), problem_statement=None):
         """(cell_ok, output, raised, out_dir's report text or None) for one
         cut cell run through run_cell in a temporary record directory."""
@@ -1960,10 +1750,11 @@ def main():
         with tempfile.TemporaryDirectory() as scratch:
             out_dir = pathlib.Path(scratch)
             try:
-                with contextlib.redirect_stdout(buffer):
+                with contextlib.redirect_stdout(buffer), patch.object(
+                        module, "worktree_snapshot", return_value={}):
                     _, cell_ok = module.run_cell(
                         "cut", runtime, target, list(context), problem_statement,
-                        out_dir, {}, (), ledger or WritingStubLedger())
+                        out_dir, {}, ())
             except Exception as error:
                 raised = error
             report_path = out_dir / f"cut-{runtime}.md"
@@ -2102,12 +1893,17 @@ def main():
 
     with_launcher(runner_relaunch, answering_in_turn([
         (1, "", "a-test-model", "", ("logged-out", "Not logged in"))]))
+    runner_relaunch.CELLS_FINISHED.clear()
     recording = WriteRecordingStream()
     with tempfile.TemporaryDirectory() as scratch:
         with contextlib.redirect_stdout(recording):
             runner_relaunch.run_cell("cut", "codex", "docs/x.md", [], None,
-                                     pathlib.Path(scratch), {}, (), StubLedger([]))
+                                     pathlib.Path(scratch), {}, ())
     failed_writes = [text for text in recording.writes if "FAILED:" in text]
+    check("a cell that ends on its FAILED lines is counted as finished, so a stop "
+          "after it does not make the run a stopped run",
+          "cut-codex" in runner_relaunch.CELLS_FINISHED,
+          f"finished {runner_relaunch.CELLS_FINISHED!r}")
     check("a failed cell's FAILED line and its instructions are printed as one write",
           len(failed_writes) == 1 and failed_writes[0].count("\n") == 4
           and failed_writes[0].startswith("FAILED: cut-codex — logged-out — ")
@@ -2169,7 +1965,7 @@ def main():
     # (nc-systems/cold-read/cold-read-claude-cell.py and
     # cold-read-codex-cell.py, recognised_failure_texts_for_model).
     runner_classes = load_runner()
-    real_classes_run = getattr(runner_classes, "run_agent_binary_unless_run_stopped", None)
+    real_classes_run = agent_binary_launch_a_case_replaces(runner_classes)
     # On Linux the codex cell's permission profile lists the credential files
     # under the home, which it finds by running `find` there: emptied for
     # these launches, as the launch-flag case above does, so the real home is
@@ -2225,7 +2021,7 @@ def main():
             del launched_commands[:]
             runner_classes.run_agent_binary_unless_run_stopped = fake_run
             cell_ok, output, raised, report = run_cell_capturing(
-                runner_classes, runtime, ledger=StubLedger([]))
+                runner_classes, runtime)
             failed = [line for line in output.splitlines() if line.startswith("FAILED:")]
             relaunched = expected_class not in runner_classes.common.USER_CLEARABLE_CAUSE_CLASSES
             check(f"a {runtime} CLI's own failure text is classed {expected_class} "
@@ -2291,7 +2087,7 @@ def main():
     runner_chain_relaunch = load_runner()
     runner_chain_relaunch.CLI_VERSION_CACHE.update({"claude": "1.1.1-test",
                                                     "codex": "2.2.2-test"})
-    real_chain_relaunch_run = getattr(runner_chain_relaunch, "run_agent_binary_unless_run_stopped", None)
+    real_chain_relaunch_run = agent_binary_launch_a_case_replaces(runner_chain_relaunch)
     chain_calls = []
 
     def chain_across_a_relaunch(command, *arguments, **keywords):
@@ -2510,9 +2306,14 @@ time.sleep(300)
         cell's second launch while its profile is built, after run_cell has
         read RUN_STOPPED unset, until that file exists (`<file>.held` says the
         hold has begun); DRIVER_STOP_WALK_DONE is written once the stop
-        handler has stopped the processes under the runner; and
+        handler has stopped the processes under the runner;
         DRIVER_HOLD_FIRST_SHIP holds the first shipping of the record until a
-        signal ends the hold (`<file>.held` again)."""
+        signal ends the hold (`<file>.held` again); and
+        DRIVER_HOLD_LAST_REPORT_CHECK holds the second cell to finish, after
+        its agent-binary has exited and before its report is saved, until that
+        file exists (`<file>.held` again). DRIVER_PROBE_VERSIONS, set to any
+        value, leaves the CLI version cache empty, so a cell probes the
+        stand-in's `--version` as a real run does."""
         driver = base / "run-the-runner.py"
         driver.write_text(f"""
 import importlib.util, os, pathlib, sys, time
@@ -2522,7 +2323,8 @@ spec.loader.exec_module(module)
 module.REPO_ROOT = pathlib.Path({str(repo)!r})
 module.RECORDS_ROOT = module.REPO_ROOT / "sanity-check-records"
 module.REVIEW_COPIES_ROOT = pathlib.Path({str(base / "review-copies")!r})
-module.CLI_VERSION_CACHE.update({{"claude": "1.1.1-test", "codex": "2.2.2-test"}})
+if not os.environ.get("DRIVER_PROBE_VERSIONS"):
+    module.CLI_VERSION_CACHE.update({{"claude": "1.1.1-test", "codex": "2.2.2-test"}})
 module.common.credential_files_found_now = lambda: []
 if hasattr(module, "STOPPED_PROCESS_GRACE_SECONDS"):
     module.STOPPED_PROCESS_GRACE_SECONDS = 3.0
@@ -2550,6 +2352,16 @@ if walk_done:
         stop_processes()
         pathlib.Path(walk_done).write_text("", encoding="utf-8")
     module.stop_processes_this_run_started = stop_processes_then_say_so
+report_check_hold = os.environ.get("DRIVER_HOLD_LAST_REPORT_CHECK")
+if report_check_hold:
+    check_report = module.missing_report_phrases
+    reports_checked = []
+    def last_report_check_held(*arguments, **keywords):
+        reports_checked.append(1)
+        if len(reports_checked) == 2:
+            held_until(report_check_hold)
+        return check_report(*arguments, **keywords)
+    module.missing_report_phrases = last_report_check_held
 ship_hold = os.environ.get("DRIVER_HOLD_FIRST_SHIP")
 if ship_hold:
     ship = module.ship_record
@@ -2611,7 +2423,7 @@ sys.exit(module.main())
     # cell has saved its report and the claude cell is still working, with a
     # process of its own under it, when the signal arrives at the runner
     # alone. Afterwards: the runner ended by that signal; the claude launch
-    # and the process under it are gone; the copy and its owner file are gone;
+    # and the process under it are gone; the copy is gone;
     # the report already saved, the cells' scratch directories and a log that
     # says what happened are in the record, which is shipped; and nothing was
     # relaunched. SIGINT here goes to the runner's process alone, which used
@@ -2651,8 +2463,8 @@ sys.exit(module.main())
                             if record and (record / "sanity-check-run.log").is_file() else "")
                 check(f"{signal_name} to the runner while a cell runs: the cells had "
                       f"started and the copy was there",
-                      started and len(copies_mid_run) == 2
-                      and any(name.endswith(".owner") for name in copies_mid_run),
+                      started and len(copies_mid_run) == 1
+                      and not any(name.endswith(".owner") for name in copies_mid_run),
                       f"started {started}, copies root held {copies_mid_run}")
                 check(f"the runner ends by {signal_name}, after its own steps",
                       process.returncode == -stop_signal,
@@ -2661,7 +2473,7 @@ sys.exit(module.main())
                       f"and the process under it, are stopped",
                       len(claude_launches) == 1 and still_running == [],
                       f"launches {claude_launches}, still running {still_running}")
-                check(f"the review copy and its owner file are gone after {signal_name}",
+                check(f"the review copy is gone after {signal_name}",
                       left_in_copies_root(base) == [],
                       f"copies root holds {left_in_copies_root(base)}")
                 check(f"the report saved before {signal_name}, the scratch directories "
@@ -2792,79 +2604,6 @@ sys.exit(module.main())
           and raised is None and report is None and output == "",
           f"launched {launched_after_stop}, cell_ok {cell_ok}, raised {raised!r}, "
           f"report {report!r}, output {output!r}")
-
-    # Case 46: what a run killed outright leaves, and what the next run does
-    # with it. SIGKILL cannot be answered, so the copy stays: while the killed
-    # run was alive its copy was its own, and a second run's look at the root
-    # leaves it alone, because the live run holds the lock on its owner file;
-    # once the run is dead the operating system has dropped the lock, and the
-    # next run removes the copy before making its own. A directory with no
-    # owner file, what the runner made before copies had owners, goes too, and
-    # so does an owner file with no directory. A copy whose owner is alive,
-    # here a lock this test holds, stays.
-    with tempfile.TemporaryDirectory() as scratch:
-        base = pathlib.Path(scratch).resolve()
-        repo = scratch_repository_with_design(base)
-        programs, recorded = stand_in_agent_binaries(base)
-        process = subprocess.Popen(
-            [sys.executable, "-B", str(runner_driver(base, repo)),
-             "--target", "docs/design.md", "--attack", "cut", "--runtime", "claude"],
-            env=runner_process_environment(programs, recorded),
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        driven = runner_over(repo, base)
-        remove_leftovers = getattr(driven, "remove_review_copies_no_live_run_owns", None)
-        try:
-            started = wait_until(
-                lambda: len(recorded_process_ids(recorded, "claude")) == 1)
-            copies_root = base / "review-copies"
-            live_copies = [path for path in copies_root.iterdir() if path.is_dir()]
-            buffer = io.StringIO()
-            with contextlib.redirect_stdout(buffer):
-                removed_while_alive = remove_leftovers() if remove_leftovers else None
-            check("a second run's look at the copies leaves a live run's copy alone",
-                  started and len(live_copies) == 1 and removed_while_alive == []
-                  and live_copies[0].is_dir() and (live_copies[0] / "checkout").is_dir(),
-                  f"started {started}, copies {live_copies}, "
-                  f"removed {removed_while_alive}, printed {buffer.getvalue()!r}")
-            process.kill()
-            process.communicate()
-            end_stand_ins(recorded)
-            check("a run killed outright leaves its copy behind",
-                  len(live_copies) == 1 and live_copies[0].is_dir(),
-                  f"copies root holds {left_in_copies_root(base)}")
-            legacy = copies_root / "design-made-before-owner-files"
-            (legacy / "checkout").mkdir(parents=True)
-            (copies_root / "design-no-directory.owner").write_text("", encoding="utf-8")
-            kept = copies_root / "design-owned-by-a-live-run"
-            (kept / "checkout").mkdir(parents=True)
-            kept_owner = open(copies_root / "design-owned-by-a-live-run.owner", "w",
-                              encoding="utf-8")
-            fcntl.flock(kept_owner.fileno(), fcntl.LOCK_EX)
-            try:
-                driven.run_claude = lambda prompt, checkout=None: (
-                    0, any_attack_report, "a-test-model", "", None)
-                code, out, err = drive_main(driven, [
-                    "--target", "docs/design.md", "--attack", "cut",
-                    "--runtime", "claude"])
-                left = left_in_copies_root(base)
-            finally:
-                kept_owner.close()
-            check("the next run removes the killed run's copy, a copy with no owner "
-                  "file and an owner file with no copy, and says so",
-                  code == 0 and bool(live_copies) and not live_copies[0].exists()
-                  and not legacy.exists()
-                  and out.count("removed: a review copy an earlier run left behind, ") == 2
-                  and f"left behind, {live_copies[0]}\n" in out,
-                  f"exit {code}, copies root holds {left}, stdout {out!r}, stderr {err!r}")
-            check("and leaves the copy a live run owns, and nothing of its own",
-                  left == ["design-owned-by-a-live-run",
-                           "design-owned-by-a-live-run.owner"],
-                  f"copies root holds {left}")
-        finally:
-            if process.poll() is None:
-                process.kill()
-                process.communicate()
-            end_stand_ins(recorded)
 
     # Case 47: a byte that is not UTF-8 in what an agent-binary writes. A
     # Codex session's captured streams hold everything the model and its tools
@@ -3142,6 +2881,7 @@ sys.exit(module.main())
                 list(command), -signal.SIGINT, "",
                 "Traceback (most recent call last):\nKeyboardInterrupt\n")
 
+        agent_binary_launch_a_case_replaces(runner_ended)
         runner_ended.run_agent_binary_unless_run_stopped = ended_by_the_stop
         real_ended_profile = runner_ended.common.codex_credential_denying_permission_profile_arguments
         runner_ended.common.codex_credential_denying_permission_profile_arguments = (
@@ -3205,49 +2945,395 @@ sys.exit(module.main())
                 process.communicate()
             end_stand_ins(recorded)
 
-    # Case 53: another run's removal takes this run's owner file in the moment
-    # between its creation and this run's lock. The lock is then on a file no
-    # path names, and a copy made beside it would have no owner file: the next
-    # run would remove it from under this run's cells. The claim checks the
-    # file's identity under the lock and starts again with a new name.
-    with tempfile.TemporaryDirectory() as scratch:
-        root = pathlib.Path(scratch).resolve()
-        runner_claim = load_runner()
-        runner_claim.REVIEW_COPIES_ROOT = root
-        real_make_owner_file = runner_claim.tempfile.mkstemp
-        made = []
+    # Case 54: an agent-binary started in the moment the stop handler waits
+    # for the launch lock. The handler makes later stop signals do nothing
+    # before it waits, and a cell's thread may be starting an agent-binary
+    # under the lock right then. With SIG_IGN that disposition survived the
+    # agent-binary's exec, so the SIGTERM that stops it did nothing and it ran
+    # on until the SIGKILL after the grace. Here the launch is held inside the
+    # lock until the handler has changed the dispositions, and the program it
+    # starts reports which of the three stop signals it starts with ignored.
+    runner_inherit = load_runner()
+    stop_signal_numbers = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+    dispositions_before = {number: signal.getsignal(number) for number in stop_signal_numbers}
 
-        def owner_file_taken_before_the_lock(*arguments, **keywords):
-            descriptor, name = real_make_owner_file(*arguments, **keywords)
-            made.append(name)
-            if len(made) == 1:
-                # What another run's remove_review_copies_no_live_run_owns
-                # does to an owner file no lock holds yet.
-                os.unlink(name)
-            return descriptor, name
+    def before_the_handler(_number, _frame):
+        pass
 
-        claimed, claim_error = None, None
+    for number in stop_signal_numbers:
+        signal.signal(number, before_the_handler)
+    reports_dispositions = (
+        "import signal\n"
+        "print(' '.join(str(signal.getsignal(number) == signal.SIG_IGN) for number in "
+        "(signal.SIGTERM, signal.SIGINT, signal.SIGHUP)))\n"
+        "# reports-its-stop-signal-dispositions\n")
+    real_inherit_popen = runner_inherit.subprocess.Popen
+    launch_entered = threading.Event()
+
+    def launch_held_until_the_handler_has_begun(command, *arguments, **keywords):
+        if command[-1] == reports_dispositions:
+            launch_entered.set()
+            deadline = time.monotonic() + 10
+            while (any(signal.getsignal(number) is before_the_handler
+                       for number in stop_signal_numbers)
+                   and time.monotonic() < deadline):
+                time.sleep(0.01)
+        return real_inherit_popen(command, *arguments, **keywords)
+
+    launched = {}
+    handler_error = None
+    try:
+        runner_inherit.subprocess.Popen = launch_held_until_the_handler_has_begun
+        runner_inherit.stop_processes_this_run_started = lambda: None
+        launching = threading.Thread(target=lambda: launched.setdefault(
+            "result", runner_inherit.run_agent_binary_unless_run_stopped(
+                [sys.executable, "-c", reports_dispositions],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)))
+        launching.start()
+        launch_entered.wait(10)
         try:
-            runner_claim.tempfile.mkstemp = owner_file_taken_before_the_lock
-            claimed = runner_claim.claim_review_copy_directory("design")
-        except Exception as error:
-            claim_error = error
+            runner_inherit.stop_run_on_signal(signal.SIGTERM, None)
+        except BaseException as error:
+            handler_error = error
+        launching.join(30)
+    finally:
+        runner_inherit.subprocess.Popen = real_inherit_popen
+        for number, handler in dispositions_before.items():
+            if handler is not None:
+                signal.signal(number, handler)
+    result = launched.get("result")
+    check("an agent-binary started while the stop handler waits for the launch lock "
+          "starts with SIGTERM, SIGINT and SIGHUP not ignored, so the stop's SIGTERM "
+          "can end it",
+          launch_entered.is_set()
+          and type(handler_error).__name__ == "RunStoppedBySignal"
+          and result is not None and result.stdout.split() == ["False", "False", "False"],
+          f"entered {launch_entered.is_set()}, handler raised {handler_error!r}, "
+          f"launched {result!r}")
+
+    # Case 55: a stop signal that lands after the last cell's agent-binary has
+    # exited and before its report is saved. The run is decided at the
+    # signal, and that cell had not finished then, so the run ends with its
+    # STOPPED line; the report the cell saves after the signal is kept.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-while-a-report-is-saved.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        report_check_hold = base / "report-check-hold"
+        walk_done = base / "stop-walk-done"
+        environment = runner_process_environment(
+            programs, recorded, codex="report", claude="report")
+        environment["DRIVER_HOLD_LAST_REPORT_CHECK"] = str(report_check_hold)
+        environment["DRIVER_STOP_WALK_DONE"] = str(walk_done)
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--attack", "cut"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            held = wait_until(lambda: pathlib.Path(str(report_check_hold) + ".held").exists())
+            process.send_signal(signal.SIGTERM)
+            walked = wait_until(walk_done.exists)
+            report_check_hold.write_text("", encoding="utf-8")
+            try:
+                out, err = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            records = sorted((repo / "sanity-check-records").glob("*"))
+            record = records[0] if len(records) == 1 else None
+            check("a stop that lands while the last cell saves its report ends the run "
+                  "with its STOPPED line, and the report is kept",
+                  held and walked and record is not None
+                  and (record / "cut-codex.md").is_file() and (record / "cut-claude.md").is_file()
+                  and "STOPPED: SIGTERM ended this run" in out
+                  and "sanity-check complete" not in out
+                  and sum(line.startswith("record: shipped: ") for line in out.splitlines()) == 1,
+                  f"held {held}, walked {walked}, record {record}, stdout {out!r}, "
+                  f"stderr {err!r}")
+            check("and that run still ends by the signal, its copy removed",
+                  process.returncode == -signal.SIGTERM and left_in_copies_root(base) == [],
+                  f"exit {process.returncode}, copies root {left_in_copies_root(base)}")
         finally:
-            runner_claim.tempfile.mkstemp = real_make_owner_file
-        holder, owner_file = claimed if claimed else (None, None)
-        owner_path = (holder.with_name(holder.name + runner_claim.REVIEW_COPY_OWNER_FILE_SUFFIX)
-                      if holder else None)
-        check("a claim whose owner file was taken before its lock starts again, and "
-              "its copy's directory has its owner file beside it",
-              claim_error is None and len(made) == 2 and holder is not None
-              and holder.is_dir() and owner_path.is_file()
-              and os.stat(owner_path).st_ino == os.fstat(owner_file.fileno()).st_ino
-              and sorted(path.name for path in root.iterdir())
-              == sorted([holder.name, owner_path.name]),
-              f"error {claim_error!r}, owner files made {made}, holder {holder}, "
-              f"root holds {sorted(path.name for path in root.iterdir())}")
-        if owner_file is not None:
-            owner_file.close()
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # A failed removal must prevent a successful exit and name the manual action.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        repo = scratch_repository_with_design(base)
+        runner_removal = runner_over(repo, base)
+        runner_removal.run_claude = lambda prompt, checkout=None: (
+            0, any_attack_report, "a-test-model", "", None)
+        runner_removal.remove_directory_whatever_signal_arrives = lambda directory: None
+        code, out, err = drive_main(runner_removal, [
+            "--target", "docs/design.md", "--attack", "cut", "--runtime", "claude"])
+        holders = list(runner_removal.REVIEW_COPIES_ROOT.iterdir())
+        holder = holders[0] if len(holders) == 1 else None
+        expected = (f"WARNING: the review copy could not be removed: {holder}\n"
+                    "Delete that directory by hand.\n")
+        check("failed removal ends nonzero, names the full path and manual deletion, "
+              "and still ships the record",
+              code == 1 and holder is not None and holder.is_dir()
+              and expected in out and "record: " in out,
+              f"exit {code}, holders {holders}, stdout {out!r}, stderr {err!r}")
+        runner_removal = runner_over(repo, base)
+        head = git(repo, "rev-parse", "HEAD").strip()
+        with runner_removal.review_copy_of_commit(head, "design", repo) as checkout:
+            check("a new run creates only its directory and leaves earlier copies alone",
+                  holder is not None and holder.is_dir()
+                  and set(runner_removal.REVIEW_COPIES_ROOT.iterdir())
+                  == {holder, checkout.parent},
+                  str(list(runner_removal.REVIEW_COPIES_ROOT.iterdir())))
+        check("a new run removes only its own copy",
+              list(runner_removal.REVIEW_COPIES_ROOT.iterdir()) == holders,
+              str(list(runner_removal.REVIEW_COPIES_ROOT.iterdir())))
+
+        # A stop signal that lands during a removal that leaves the copy: the
+        # signal still propagates, and the copy is still reported.
+        runner_stopped_removal = runner_over(repo, base)
+
+        def removal_stopped_by_signal(directory):
+            raise runner_stopped_removal.RunStoppedBySignal(signal.SIGTERM)
+
+        runner_stopped_removal.remove_directory_whatever_signal_arrives = (
+            removal_stopped_by_signal)
+        before = set(runner_stopped_removal.REVIEW_COPIES_ROOT.iterdir())
+        printed = io.StringIO()
+        propagated = None
+        try:
+            with contextlib.redirect_stdout(printed):
+                with runner_stopped_removal.review_copy_of_commit(head, "design", repo):
+                    pass
+        except runner_stopped_removal.RunStoppedBySignal as raised:
+            propagated = raised
+        left = set(runner_stopped_removal.REVIEW_COPIES_ROOT.iterdir()) - before
+        stopped_holder = next(iter(left)) if len(left) == 1 else None
+        check("a removal a stop signal interrupts and that leaves the copy still "
+              "names the copy and manual deletion, and the signal still propagates",
+              propagated is not None and stopped_holder is not None
+              and runner_stopped_removal.REVIEW_COPY_NOT_REMOVED == stopped_holder
+              and (f"WARNING: the review copy could not be removed: "
+                   f"{stopped_holder.resolve()}\nDelete that directory by hand.\n")
+              in printed.getvalue(),
+              f"propagated {propagated!r}, left {left}, stdout {printed.getvalue()!r}")
+
+    # Case 57: a cell whose thread first runs after the run is stopped. It
+    # launches nothing and does not count as finished, so the run ends with
+    # its STOPPED line: a run that never launched that cell has not saved
+    # every report it was going to.
+    runner_late = load_runner()
+    late_launches = []
+
+    def launch_recorded(*arguments, **keywords):
+        late_launches.append(1)
+        return 0, "a review\n", "a-model", "", None
+
+    runner_late.run_codex = launch_recorded
+    runner_late.RUN_STOPPED.set()
+    late_ok, late_output, late_raised, _ = run_cell_capturing(runner_late, "codex")
+    check("a cell whose thread finds the run already stopped launches nothing, and is "
+          "not counted as finished",
+          late_raised is None and late_ok is False and not late_launches
+          and late_output == ""
+          and getattr(runner_late, "CELLS_FINISHED", None) == set(),
+          f"raised {late_raised!r}, ok {late_ok}, launches {len(late_launches)}, "
+          f"printed {late_output!r}, "
+          f"finished {getattr(runner_late, 'CELLS_FINISHED', None)}")
+
+    # Case 58: a stop signal that lands while the last cell is in a git call
+    # it makes to save its report, after its agent-binary has exited. The
+    # stop's walk ends that call; the call runs with check=False, so the cell
+    # saves its report anyway, with `commit=unknown`. That report is what the
+    # stop cut short, so the run ends with its STOPPED line, not as a finished
+    # run over it. A stand-in `git`, first on the runner's PATH, holds the
+    # cell inside its `git rev-parse --short HEAD`.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-in-a-git-call.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        real_git = shutil.which("git")
+        (programs / "git").write_text(
+            "#!/bin/sh\n"
+            'if [ -n "$GIT_HOLD_REV_PARSE" ] && [ "$1" = rev-parse ] && [ "$2" = --short ]; then\n'
+            '    : > "$GIT_HOLD_REV_PARSE.held"\n'
+            '    while [ ! -e "$GIT_HOLD_REV_PARSE" ]; do sleep 0.05; done\n'
+            "fi\n"
+            f'exec {shlex.quote(real_git)} "$@"\n', encoding="utf-8")
+        (programs / "git").chmod(0o755)
+        git_hold = base / "git-hold"
+        walk_done = base / "stop-walk-done"
+        environment = runner_process_environment(programs, recorded, codex="report")
+        environment["GIT_HOLD_REV_PARSE"] = str(git_hold)
+        environment["DRIVER_STOP_WALK_DONE"] = str(walk_done)
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--attack", "cut", "--runtime", "codex"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            held = wait_until(lambda: pathlib.Path(str(git_hold) + ".held").exists())
+            process.send_signal(signal.SIGTERM)
+            walked = wait_until(walk_done.exists)
+            try:
+                out, err = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            records = sorted((repo / "sanity-check-records").glob("*"))
+            record = records[0] if len(records) == 1 else None
+            report = record / "cut-codex.md" if record is not None else None
+            report_text = (report.read_text(encoding="utf-8")
+                           if report is not None and report.is_file() else "")
+            check("a stop that ends the git call a cell makes to save its report ends "
+                  "the run with its STOPPED line, not as a finished run",
+                  held and walked and "commit=unknown" in report_text
+                  and "STOPPED: SIGTERM ended this run" in out
+                  and "sanity-check complete" not in out,
+                  f"held {held}, walked {walked}, report {report_text[:200]!r}, "
+                  f"stdout {out!r}, stderr {err!r}")
+            check("and that run ends by the signal, its copy removed",
+                  process.returncode == -signal.SIGTERM and left_in_copies_root(base) == [],
+                  f"exit {process.returncode}, copies root {left_in_copies_root(base)}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 59: a stop signal that lands while the last cell probes its
+    # agent-binary's version to save its report, where the probe answers the
+    # signal by exiting 0 with nothing on stdout, as the npm `codex` wrapper
+    # on ned-box does when a signal ends its native child. The run is decided
+    # at the signal: the cell had not finished then, so the run ends with its
+    # STOPPED line, whatever the probe returned.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-in-a-version-probe.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        # The stand-in reads its mode from its own name, so it keeps the name
+        # `codex`, in a directory of its own.
+        (base / "stand-in-behind-the-wrapper").mkdir()
+        behind_the_wrapper = base / "stand-in-behind-the-wrapper" / "codex"
+        (programs / "codex").rename(behind_the_wrapper)
+        (programs / "codex").write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = --version ] && [ -n "$CODEX_HOLD_VERSION" ]; then\n'
+            '    : > "$CODEX_HOLD_VERSION.held"\n'
+            "    trap 'exit 0' TERM\n"
+            "    while :; do sleep 0.05; done\n"
+            "fi\n"
+            f'exec {shlex.quote(str(behind_the_wrapper))} "$@"\n',
+            encoding="utf-8")
+        (programs / "codex").chmod(0o755)
+        probe_hold = base / "probe-hold"
+        environment = runner_process_environment(programs, recorded, codex="report")
+        environment["CODEX_HOLD_VERSION"] = str(probe_hold)
+        environment["DRIVER_PROBE_VERSIONS"] = "1"
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--attack", "cut", "--runtime", "codex"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            held = wait_until(lambda: pathlib.Path(str(probe_hold) + ".held").exists())
+            process.send_signal(signal.SIGTERM)
+            try:
+                out, err = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            check("a stop during a cell's version probe, which then exits 0, ends the run "
+                  "with its STOPPED line, not as a finished run",
+                  held and "STOPPED: SIGTERM ended this run" in out
+                  and "sanity-check complete" not in out
+                  and process.returncode == -signal.SIGTERM,
+                  f"held {held}, exit {process.returncode}, stdout {out!r}, "
+                  f"stderr {err!r}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 60: an agent-binary that is running when the run is stopped was
+    # ended by the stop, whatever its exit code: one that answered SIGTERM by
+    # exiting 0 with what it had written so far must not have that saved as a
+    # report. run_codex returns a failed launch with no review.
+    for stopped_while_it_ran in (True, False):
+        codex_launches = []
+        runner_exit_zero = load_runner()
+        real_exit_zero_popen = runner_exit_zero.subprocess.Popen
+
+        class RunStoppedWhileItRuns(real_exit_zero_popen):
+            def __init__(self, command, *arguments, **keywords):
+                # A stand-in codex: writes its last message where the runner
+                # reads the review from, and exits 0. Any other command
+                # run_codex starts (on Linux, more than the codex launch goes
+                # through Popen) runs as given, and only the codex stand-in's
+                # end stops the run, so the stop reaches the check after it.
+                self.is_codex_launch = "--output-last-message" in command
+                if self.is_codex_launch:
+                    last_message = command[command.index("--output-last-message") + 1]
+                    command = [sys.executable, "-c",
+                               "import sys; open(sys.argv[1], 'w').write("
+                               "'what it had written so far\\n')", last_message]
+                    codex_launches.append(last_message)
+                super().__init__(command, *arguments, **keywords)
+
+            def communicate(self, *arguments, module=runner_exit_zero,
+                            stop=stopped_while_it_ran, **keywords):
+                answered = super().communicate(*arguments, **keywords)
+                if stop and self.is_codex_launch:
+                    module.RUN_STOPPED.set()
+                return answered
+
+        with tempfile.TemporaryDirectory() as exit_zero_copy:
+            try:
+                runner_exit_zero.subprocess.Popen = RunStoppedWhileItRuns
+                code, review, _, _, _ = runner_exit_zero.run_codex(
+                    "a prompt", pathlib.Path(exit_zero_copy))
+            except Exception as error:
+                code, review = f"raised {error!r}", None
+            finally:
+                runner_exit_zero.subprocess.Popen = real_exit_zero_popen
+        if stopped_while_it_ran:
+            check("an agent-binary that exits 0 while the run is stopped is a failed "
+                  "launch with no review saved",
+                  len(codex_launches) == 1 and code == 1 and review == "",
+                  f"codex launches {len(codex_launches)}, exit {code!r}, review {review!r}")
+        else:
+            check("and one that exits 0 in a run not stopped returns its review",
+                  code == 0 and "what it had written so far" in (review or ""),
+                  f"exit {code!r}, review {review!r}")
+
+    # A version probe that returns while the run is stopped, such as one the
+    # stop ended with exit 0 and no output, is not cached as the runtime's
+    # version.
+    runner_probe = load_runner()
+    real_probe_run = runner_probe.subprocess.run
+    try:
+        runner_probe.subprocess.run = lambda *a, **k: subprocess.CompletedProcess(
+            a[0], 0, stdout="", stderr=None)
+        runner_probe.RUN_STOPPED.set()
+        probed = runner_probe.runtime_cli_version("codex")
+    finally:
+        runner_probe.subprocess.run = real_probe_run
+        runner_probe.RUN_STOPPED.clear()
+    check("a version probe that returns while the run is stopped is not cached",
+          probed == "unknown" and "codex" not in runner_probe.CLI_VERSION_CACHE,
+          f"probed {probed!r}, cache {runner_probe.CLI_VERSION_CACHE!r}")
+
+    # The containment set at import: no case asked the PATH's `claude` or
+    # `codex` for more than its version.
+    tripwire_calls = (AGENT_BINARY_TRIPWIRE_LOG.read_text(encoding="utf-8").splitlines()
+                      if AGENT_BINARY_TRIPWIRE_LOG.exists() else [])
+    check("no case started a real agent-binary: the PATH's claude and codex were asked "
+          "for nothing but their version",
+          all(call.split(" ", 1)[1:] == ["--version"] for call in tripwire_calls),
+          f"calls: {tripwire_calls}")
 
     print()
     if failures:
@@ -3262,3 +3348,4 @@ if __name__ == "__main__":
         sys.exit(main())
     finally:
         SUITE_SCRATCH_LOG_STORE.cleanup()
+        AGENT_BINARY_TRIPWIRES.cleanup()

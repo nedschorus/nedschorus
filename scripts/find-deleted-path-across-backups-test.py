@@ -24,6 +24,16 @@ import sys
 import tempfile
 from pathlib import Path
 
+# A variable that redirects git, left in this process, would send the scratch
+# repositories' git writes into the repository it names. Removed before any
+# git runs, so the programs this suite starts inherit the removal too.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().with_name("git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
 MODULE_PATH = Path(__file__).with_name("find-deleted-path-across-backups.py")
 spec = importlib.util.spec_from_file_location("find_deleted_path_across_backups", MODULE_PATH)
 finder = importlib.util.module_from_spec(spec)
@@ -42,6 +52,33 @@ def check(name, condition, detail=""):
     else:
         print("FAIL  %s%s" % (name, (" — " + detail) if detail else ""))
         failures.append(name)
+
+
+def git_redirecting_variables_reaching_git():
+    """Each variable the test runner strips that this process still holds, and
+    each place git resolves, in a scratch repository, outside that repository."""
+    leaked = [name for name in _git_environment_fixture.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
+              if name in os.environ]
+    with tempfile.TemporaryDirectory() as scratch:
+        repository = Path(scratch).resolve()
+        subprocess.run(["git", "-C", str(repository), "init", "-q"], env=dict(os.environ),
+                       capture_output=True, check=False)
+        resolved = subprocess.run(
+            ["git", "-C", str(repository), "rev-parse", "--path-format=absolute",
+             "--show-toplevel", "--git-dir", "--git-common-dir",
+             "--git-path", "index", "--git-path", "objects"],
+            env=dict(os.environ), capture_output=True, text=True, check=False)
+        outside = [line for line in resolved.stdout.splitlines()
+                   if not Path(line).resolve().is_relative_to(repository)]
+        if resolved.returncode != 0:
+            outside.append("git rev-parse exit %d: %s" % (resolved.returncode, resolved.stderr.strip()))
+    return leaked, outside
+
+
+_leaked, _outside = git_redirecting_variables_reaching_git()
+check("no variable that redirects git reaches this suite's git: a scratch repository's "
+      "work tree, git directory, index and objects all resolve inside it",
+      not _leaked and not _outside, "still set: %s; resolved outside: %s" % (_leaked, _outside))
 
 
 class FakeRunner:
@@ -114,7 +151,7 @@ check("a dotfile still matches itself by suffix",
 git_dotfile = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
-    ("--name-only", (0, "scripts/env\nREADME.md\n", "")),
+    ("--name-only", (0, "scripts/env\0README.md\0", "")),
     # scripts/env is alive and well in history; the fixture must let the
     # wrong match go all the way to a FOUND, or the case proves nothing.
     ("log --all --full-history --format=%H|%ad|%s", (0, "ba432e8e5|2026-08-20|add env\n", "")),
@@ -752,7 +789,7 @@ check("a git log that fails mid-search is UNAVAILABLE with git's words, not NOT 
 git_absent = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
-    ("--name-only", (0, "docs/other.md\nREADME.md\n", "")),
+    ("--name-only", (0, "docs/other.md\0README.md\0", "")),
 ])
 report = finder.search_git("nowhere.md", "/repo", git_absent)
 check("git reports NOT FOUND when no ref ever had the path", report.status == NOT_FOUND)
@@ -870,6 +907,33 @@ with tempfile.TemporaryDirectory() as tmp:
     report = finder.search_git("/definitely/elsewhere/a/b.md", str(repo))
     check("real git: an absolute path outside the repository is UNAVAILABLE",
           report.status == UNAVAILABLE, "%s %s" % (report.status, report.lines))
+
+# git log --name-only without -z C-quotes a non-ASCII path, so a fragment of
+# it matched nothing and the git surface said NOT FOUND for a file it held.
+with tempfile.TemporaryDirectory() as tmp:
+    repo = Path(tmp, "non-ascii-repo")
+    repo.mkdir()
+    environment = dict(os.environ)
+    environment.pop("GIT_DIR", None)
+    environment.pop("GIT_WORK_TREE", None)
+
+    def fixture_git(*args):
+        subprocess.run(["git", "-C", str(repo), "-c", "commit.gpgsign=false", "-c", "user.name=fixture",
+                        "-c", "user.email=fixture@example.com"] + list(args),
+                       check=True, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    fixture_git("init", "-q", "-b", "main")
+    Path(repo, "docs", "notes").mkdir(parents=True)
+    Path(repo, "docs", "notes", "café.md").write_text("kept\n")
+    fixture_git("add", "-A")
+    fixture_git("commit", "-q", "-m", "add the notes")
+    fixture_git("rm", "-q", "docs/notes/café.md")
+    fixture_git("commit", "-q", "-m", "delete the notes")
+    report = finder.search_git("notes/café.md", str(repo))
+    check("real git: a fragment of a deleted non-ASCII path is FOUND",
+          report.status == FOUND and report.recovery
+          and report.recovery[0].endswith("docs/notes/café.md'"),
+          "%s %s %s" % (report.status, report.lines, report.recovery))
 
 # --------------------------------------------------------------------------
 # git reflog — commits no branch or tag reaches, which only a reflog names
@@ -1825,7 +1889,7 @@ with tempfile.TemporaryDirectory() as tmp:
           "was not searched and why, and names the copy it looked for",
           by_surface["transcripts"].lines
           == ["ned-box: searched %s, no transcript mentions it" % Path(box, ".claude", "projects"),
-              "the Mac: not searched — no route from ned-box to the Mac is documented",
+              "the Mac: not searched — a run on ned-box cannot search the Mac; run the locator on the Mac, which searches both machines",
               "the Mac's log-store copy, %s, does not exist, so it was not searched either"
               % Path(NO_LOG_STORE_ON_THIS_MACHINE, "transcripts", "mac", "projects")],
           str(by_surface["transcripts"].lines))
@@ -1924,8 +1988,9 @@ with tempfile.TemporaryDirectory() as tmp:
           and ("    " + str(mac_session)) in transcripts.lines,
           "%s %s" % (transcripts.status, transcripts.lines))
     check("on the box: ... its recovery command reads the copy in place",
-          transcripts.recovery == ["grep -o '.\\{0,400\\}mac/only.md.\\{0,2000\\}' %s | head"
-                                   % shlex.quote(str(mac_session))],
+          transcripts.recovery == ["N=mac/only.md perl -ne %s %s | head"
+                                   % (shlex.quote(finder.TRANSCRIPT_CONTEXT_PERL_PROGRAM),
+                                      shlex.quote(str(mac_session)))],
           str(transcripts.recovery))
     check("on the box: ... the copy is grepped in place, and nothing goes over ssh",
           any(c.startswith("grep -rl") and c.endswith(str(copy)) for c in on_box.calls)
@@ -1938,12 +2003,45 @@ with tempfile.TemporaryDirectory() as tmp:
     age_line = ("the copy's newest transcript was last written on the Mac at %s UTC, 10 min before this search; "
                 "a Mac transcript written after the copy's last mirror pass is not in it"
                 % time.strftime("%Y-%m-%d %H:%M", time.gmtime(written)))
+    stamp = Path(store, "transcripts", "mac", "last-complete-mirror-pass-utc.txt")
+    no_stamp_line = ("the Mac's mirror has left no pass-time stamp at %s, so when the Mac's mirror last completed "
+                     "a pass is not known on ned-box" % stamp)
     check("on the box: a copy grepped in full and empty is NOT FOUND, with the copy's measured age",
           transcripts.status == NOT_FOUND
           and transcripts.lines == ["ned-box: searched %s, no transcript mentions it" % Path(box, ".claude", "projects"),
                                     "the Mac, from its log-store copy: searched %s, no transcript mentions it" % copy,
-                                    age_line],
+                                    age_line, no_stamp_line],
           "%s %s" % (transcripts.status, transcripts.lines))
+
+    passed = time.time() - 3 * 60
+    stamp.write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(passed)) + "\n")
+    reports = run_as_if_on(True, "nowhere/c.md", box, RunsBashAndGrepHere([], box), skip=ONLY_TRANSCRIPTS,
+                           log_store_root=str(store))
+    check("on the box: the mirror's pass-time stamp is read and its time and age printed after the copy's age, "
+          "the status unchanged",
+          reports[0].status == NOT_FOUND
+          and reports[0].lines[-2:] == [
+              age_line,
+              "the Mac's mirror last completed a pass that started at %s UTC, 3 min before this search, by its stamp at %s"
+              % (time.strftime("%Y-%m-%d %H:%M", time.gmtime(passed)), stamp)],
+          "%s %s" % (reports[0].status, reports[0].lines))
+
+    reports = run_as_if_on(True, "mac/only.md", box, RunsBashAndGrepHere([], box), skip=ONLY_TRANSCRIPTS,
+                           log_store_root=str(store))
+    check("on the box: ... and after a hit as well, FOUND unchanged",
+          reports[0].status == FOUND
+          and any(line.startswith("the Mac's mirror last completed a pass that started at ") for line in reports[0].lines),
+          "%s %s" % (reports[0].status, reports[0].lines))
+
+    stamp.write_text("half a ti")
+    reports = run_as_if_on(True, "nowhere/c.md", box, RunsBashAndGrepHere([], box), skip=ONLY_TRANSCRIPTS,
+                           log_store_root=str(store))
+    check("on the box: a stamp that holds no time says so, quoting it, and the pass time is not known",
+          reports[0].status == NOT_FOUND
+          and reports[0].lines[-1] == ("the Mac's mirror pass-time stamp at %s holds no time ('half a ti'), so when "
+                                       "the Mac's mirror last completed a pass is not known on ned-box" % stamp),
+          "%s %s" % (reports[0].status, reports[0].lines))
+    stamp.unlink()
     check("on the box: ... so transcripts leaves 'Could NOT search', and a run of that surface alone exits 1",
           finder.exit_status(reports) == finder.EXIT_NOT_FOUND_EVERYWHERE
           and "Could NOT search" not in finder.render_summary(reports),
@@ -1957,7 +2055,7 @@ with tempfile.TemporaryDirectory() as tmp:
                            log_store_root=str(empty_store))
     check("on the box: a copy holding no session transcript is UNAVAILABLE, keeping the not-searched line",
           reports[0].status == UNAVAILABLE
-          and reports[0].lines[1:] == ["the Mac: not searched — no route from ned-box to the Mac is documented",
+          and reports[0].lines[1:] == ["the Mac: not searched — a run on ned-box cannot search the Mac; run the locator on the Mac, which searches both machines",
                                        "the Mac's log-store copy, %s, holds no session transcript, so it was not "
                                        "searched either" % empty_copy],
           "%s %s" % (reports[0].status, reports[0].lines))
@@ -1966,7 +2064,7 @@ with tempfile.TemporaryDirectory() as tmp:
                            log_store_root=str(store))
     check("on the box: a copy grep that fails is UNAVAILABLE, keeps the not-searched line, and quotes grep",
           reports[0].status == UNAVAILABLE
-          and reports[0].lines[1:] == ["the Mac: not searched — no route from ned-box to the Mac is documented",
+          and reports[0].lines[1:] == ["the Mac: not searched — a run on ned-box cannot search the Mac; run the locator on the Mac, which searches both machines",
                                        "the Mac's log-store copy, %s: grep failed (exit 2) — grep: %s/p: "
                                        "Permission denied" % (copy, copy)],
           "%s %s" % (reports[0].status, reports[0].lines))
@@ -1997,9 +2095,17 @@ check("the Mac's copy is where the mirror writes it: <log-store>/transcripts/<th
       copy_parts is not None and len(copy_parts) == 3
       and str(mirror_transcripts_root) == os.path.join(finder.DEFAULT_LOG_STORE_ROOT, copy_parts[0])
       and copy_parts[1] == mirror.MACHINE_NAME_ELSEWHERE
-      and (copy_parts[2], Path(".claude", "projects")) in [(name, Path(path)) for name, path in mirror.SOURCES]
+      and (copy_parts[2], Path(".claude", "projects")) in [(name, Path(path)) for name, path, *_ in mirror.SOURCES]
       and Path(finder.DEFAULT_TRANSCRIPTS_DIR) == Path("~", ".claude", "projects"),
       "%s %s %s" % (copy_parts, mirror_transcripts_root, mirror.SOURCES))
+
+check("the stamp the backup search reads is the one the mirror writes, beside the Mac copy's projects/, in the "
+      "format the mirror writes",
+      getattr(finder, "MAC_MIRROR_PASS_STAMP_FILE_NAME", None) == getattr(mirror, "MIRROR_PASS_STAMP_FILE_NAME", ())
+      and getattr(finder, "MAC_MIRROR_PASS_STAMP_FORMAT", None) == "%Y-%m-%dT%H:%M:%SZ"
+      and '"%Y-%m-%dT%H:%M:%SZ"' in MODULE_PATH.with_name("transcript-mirror-to-log-store.py").read_text(),
+      "%s %s" % (getattr(finder, "MAC_MIRROR_PASS_STAMP_FILE_NAME", None),
+                 getattr(mirror, "MIRROR_PASS_STAMP_FILE_NAME", None)))
 
 check("the machine test is the locator's: the host name before its first dot is ned-box",
       callable(real_running_on_ned_box)
@@ -2351,7 +2457,7 @@ check("exit 0 when a surface FOUND it", code == 0 and "Recoverable from: git." i
 mixed = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
-    ("--name-only", (0, "docs/other.md\n", "")),
+    ("--name-only", (0, "docs/other.md\0", "")),
     ("ssh", (255, "", "ssh: connect to host ned-box port 22: No route to host\n")),
 ])
 code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "transcripts", "--skip", "timemachine",
@@ -2755,7 +2861,7 @@ check("condition 4 — an absolute path is a known path and does qualify",
 SPEAKS = [
     ("rev-parse --git-dir", (0, ".git\n", "")),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
-    ("--name-only", (0, "docs/other.md\n", "")),
+    ("--name-only", (0, "docs/other.md\0", "")),
     DELETED_2026_08_13_NOON,
     ("tmutil destinationinfo", DESTINATION_INFO),
     ("diskutil info", DISKUTIL_MOUNTED),
@@ -2818,7 +2924,7 @@ check("... and the report names the rule as what carried it, not a warm credenti
 rule_installed_run = FakeRunner(RULE_INSTALLED + [
     ("rev-parse --git-dir", (0, ".git\n", "")),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
-    ("--name-only", (0, "docs/other.md\n", "")),
+    ("--name-only", (0, "docs/other.md\0", "")),
     DELETED_2026_08_13_NOON,
 ])
 finder.build_report("docs/a/b.md", "/repo", "/nonexistent", "", "/snap", (),
@@ -3058,6 +3164,104 @@ with tempfile.TemporaryDirectory() as tmp:
                           " listed; list every name with: %s)" % command]
           and listed_by_command.returncode == 0 and len(listed_by_command.stdout.splitlines()) == 3,
           "%s -> exit %s\n%s" % (older_lines, listed_by_command.returncode, listed_by_command.stdout))
+
+# --------------------------------------------------------------------------
+# A searched name that starts with "-", or holds a quote or regex characters,
+# reaches every transcripts grep as text, and the printed recovery command
+# runs and matches it literally.
+# --------------------------------------------------------------------------
+
+DASH_NAME = "-notes.md"
+QUOTE_AND_REGEX_NAME = "ned's.v2[1].md"
+
+
+def run_recovery_command(command, path_entry=None):
+    environment = dict(os.environ)
+    if path_entry:
+        environment["PATH"] = "%s%s%s" % (path_entry, os.pathsep, environment["PATH"])
+    return subprocess.run(["sh", "-c", command], capture_output=True, text=True, env=environment, timeout=30)
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    mac_dir = Path(tmp, "mac-transcripts", "p")
+    mac_dir.mkdir(parents=True)
+    session = Path(mac_dir, "session.jsonl")
+    # Each decoy is matched by the name read as a regex but not by the name read literally:
+    # "." matches any character and "[1]" matches "1".
+    session.write_text('{"text": "decoy ned\'sXv21Xmd and -notesXmd"}\n'
+                       '{"text": "wrote -notes.md here"}\n'
+                       '{"text": "and ned\'s.v2[1].md there"}\n')
+
+    for name in (DASH_NAME, QUOTE_AND_REGEX_NAME):
+        report = finder.search_transcripts(name, str(mac_dir.parent), "", finder.run_command)
+        check("transcripts: the name %r is searched as text on this machine, and FOUND" % name,
+              report.status == FOUND and ("    " + str(session)) in report.lines,
+              "%s %s" % (report.status, report.lines))
+        command = report.recovery[0] if report.recovery else ""
+        printed = run_recovery_command(command)
+        matched = printed.stdout.splitlines()
+        check("transcripts: the printed recovery command for %r runs and prints only the lines that hold the "
+              "name literally" % name,
+              printed.returncode == 0 and printed.stderr == "" and matched
+              and all(name in line for line in matched) and not any("decoy" in line for line in matched),
+              "%r -> exit %s\n%s%s" % (command, printed.returncode, printed.stdout, printed.stderr))
+
+    long_line_session = Path(mac_dir, "long-line-session.jsonl")
+    long_line_session.write_text('{"text": "%s -notes.md %s"}\n' % ("x" * 3000000, "y" * 3000000))
+    command = finder._transcript_context_print_command(DASH_NAME, str(long_line_session)) + " | head"
+    started = time.monotonic()
+    try:
+        printed = run_recovery_command(command)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        timed_out = True
+    elapsed = time.monotonic() - started
+    check("transcripts: the printed recovery command finishes on a transcript line 6 MB long and prints the "
+          "context window around the name",
+          not timed_out and elapsed < 20 and printed.returncode == 0
+          and [len(line) for line in printed.stdout.splitlines()] == [400 + len(DASH_NAME) + 2000],
+          "timed_out=%s elapsed=%.1fs" % (timed_out, elapsed))
+    long_line_session.unlink()
+
+    fake_bin = Path(tmp, "fake-bin")
+    fake_bin.mkdir()
+    fake_ssh = Path(fake_bin, "ssh")
+    # Runs the remote command here, the way the remote shell would.
+    fake_ssh.write_text('#!/bin/sh\nfor argument; do last=$argument; done\nexec sh -c "$last"\n')
+    fake_ssh.chmod(0o755)
+    for name in (DASH_NAME, QUOTE_AND_REGEX_NAME):
+        box_hit_table = FakeRunner([("ssh", (0, "%s\n" % session, ""))])
+        report = finder.search_transcripts(name, "/nonexistent-dir", "nedlern@ned-box", box_hit_table)
+        command = report.recovery[0] if report.recovery else ""
+        printed = run_recovery_command(command, path_entry=fake_bin)
+        matched = printed.stdout.splitlines()
+        check("transcripts: the printed ssh recovery command for %r survives both quoting layers and prints only "
+              "the lines that hold the name literally" % name,
+              command.startswith("ssh nedlern@ned-box ") and printed.returncode == 0 and printed.stderr == ""
+              and matched
+              and all(name in line for line in matched) and not any("decoy" in line for line in matched),
+              "%r -> exit %s\n%s%s" % (command, printed.returncode, printed.stdout, printed.stderr))
+
+    box_home = Path(tmp, "box-home")
+    box_projects = Path(box_home, ".claude", "projects", "p")
+    box_projects.mkdir(parents=True)
+    Path(box_projects, "box-session.jsonl").write_text('{"text": "the box wrote -notes.md"}\n')
+    box_runner = LocalShellRunner([], box_home)
+    report = finder.search_transcripts(DASH_NAME, "/nonexistent-dir", "nedlern@ned-box", box_runner)
+    check("transcripts: the box's grep script searches %r as text, and FINDS it" % DASH_NAME,
+          any(l.startswith("the box") and "1 session transcript(s) mention it" in l for l in report.lines),
+          str(report.lines))
+
+    store = Path(tmp, "store")
+    copy_session = Path(store, "transcripts", "mac", "projects", "-Users-el-x", "copy-session.jsonl")
+    copy_session.parent.mkdir(parents=True)
+    copy_session.write_text('{"text": "the Mac wrote -notes.md"}\n')
+    on_box = RunsBashAndGrepHere([], box_home)
+    reports = run_as_if_on(True, DASH_NAME, box_home, on_box, skip=ONLY_TRANSCRIPTS, log_store_root=str(store))
+    check("transcripts: on the box, the log-store copy of the Mac's transcripts is searched for %r as text, and "
+          "FOUND" % DASH_NAME,
+          "the Mac, from its log-store copy: 1 session transcript(s) mention it" in reports[0].lines,
+          str(reports[0].lines))
 
 print()
 if failures:

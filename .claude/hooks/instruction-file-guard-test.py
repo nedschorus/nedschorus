@@ -11,6 +11,7 @@ marker: any case that passes proves it passed without that variable, and the
 decoy marker surviving every run is the forked-session regression assertion.
 """
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -18,7 +19,22 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Before anything runs git: a run started with GIT_DIR set, or with another
+# variable that redirects git, must still build this suite's scratch
+# repositories where the suite says, not in the repository the variable names.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().parents[2] / "scripts"
+    / "git-redirecting-environment-removal-test-fixture.py")
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
 SCRIPT_PATH = Path(__file__).with_name("instruction-file-guard.py")
+REFERENCE_CHECKOUT_LINE = (
+    "If this session sits in the machine's reference checkout, another guard refuses that "
+    "Write and the edit itself: make the change from your own worktree, and put "
+    ".walk-approved at that worktree's root.")
 
 failures = []
 
@@ -69,6 +85,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("editing CLAUDE.md is blocked", result.returncode == 2, str(result.returncode))
     check("the block teaches the walk path", "get the user's approval" in result.stderr, result.stderr)
     check("the block names the override marker", ".walk-approved" in result.stderr, result.stderr)
+    check("the block says to create the marker with the Write tool",
+          "Create .walk-approved with the Write tool, not a shell command." in result.stderr,
+          result.stderr)
+    check("the block sends a session in the reference checkout to its own worktree",
+          REFERENCE_CHECKOUT_LINE in " ".join(result.stderr.split()), result.stderr)
     check("a stale marker in $CLAUDE_PROJECT_DIR does not authorize (forked-session regression)",
           decoy_marker.exists())
 
@@ -97,8 +118,29 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook(decoy, workspace, str(workspace / ".claude" / "worktrees" / "feature" / ".claude" / "settings.json"))
     check("a worktree's OWN .claude/ is still protected", result.returncode == 2)
 
-    result = run_hook(decoy, workspace, str(workspace / ".claude" / "projects" / "-a-project" / "memory" / "fact.md"))
+    memory_file = workspace / ".claude" / "projects" / "-a-project" / "memory" / "fact.md"
+    result = run_hook(decoy, workspace, str(memory_file))
     check("the auto-memory is still protected", result.returncode == 2)
+    check("a memory write gets the memory refusal, not the generic one",
+          "it is in a Claude Code memory directory" in result.stderr
+          and "get the user's approval" not in result.stderr, result.stderr)
+    check("the memory refusal says to propose the exact edit or drop the note, never show it",
+          "propose to the user the exact edit" in result.stderr
+          and "Otherwise drop it: do not show the note to the user." in result.stderr
+          and "quote the text you meant to save" not in result.stderr, result.stderr)
+
+    # A marker approves instruction edits, never a memory write, and is left unspent.
+    session_marker = workspace / ".walk-approved"
+    session_marker.write_text("user approval for some other change\n", encoding="utf-8")
+    result = run_hook(decoy, workspace, str(memory_file))
+    check("a .walk-approved marker does not let a memory write through", result.returncode == 2,
+          str(result.returncode))
+    check("a refused memory write leaves the marker unspent", session_marker.exists())
+    session_marker.unlink(missing_ok=True)
+
+    # Only a memory directory under .claude is Claude Code's memory store.
+    result = run_hook(decoy, workspace, str(workspace / "notes" / "projects" / "-a-project" / "memory" / "fact.md"))
+    check("a projects/<p>/memory/ path outside .claude passes", result.returncode == 0, result.stderr)
 
     result = run_hook(decoy, workspace, str(workspace / ".claude" / "jobs.json"))
     check("a file merely named jobs.json under .claude/ is still protected",
@@ -140,6 +182,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the block says it is a reusable prompt", "reusable prompt" in result.stderr, result.stderr)
     check("the block sends a one-off prompt to the scratchpad", "scratchpad" in result.stderr,
           result.stderr)
+    check("the reusable-prompt block says to create the marker with the Write tool",
+          "Create .walk-approved with the Write tool, not a shell command." in result.stderr,
+          result.stderr)
+    check("the reusable-prompt block sends a session in the reference checkout to its own worktree",
+          REFERENCE_CHECKOUT_LINE in " ".join(result.stderr.split()), result.stderr)
     result = run_hook(decoy, workspace, str(workspace / "docs" / "agents" / "seat-first-prompt.md"))
     check("a first prompt in docs/agents/ is blocked", result.returncode == 2)
     skills = workspace / "nc-systems" / "skills" / "cold-read"
@@ -210,6 +257,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the block says the user reviews every change here",
           "reviews every change" in result.stderr, result.stderr)
     check("the block names the marker", ".walk-approved" in result.stderr, result.stderr)
+    check("the reviewed-document block says, on its own line, to create the marker with the Write tool",
+          "Create .walk-approved with the Write tool, not a shell command."
+          in result.stderr.splitlines(), result.stderr)
+    check("the reviewed-document block says, on its own line, to use its own worktree from the reference checkout",
+          REFERENCE_CHECKOUT_LINE in result.stderr.splitlines(), result.stderr)
     check("the block sends a first draft to a draft place",
           "docs/drafts/" in result.stderr and "docs/nedschorus-wiki/queue/" in result.stderr,
           result.stderr)
@@ -217,8 +269,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "If he has not, show him the change and wait for his answer; if you are a subagent, "
           "report the change to the agent that dispatched you instead."
           in result.stderr.splitlines(), result.stderr)
-    check("the block is one instruction per line", len(result.stderr.strip().splitlines()) == 4,
-          result.stderr)
+    check("the block is one instruction per line, the three route-around lines included",
+          len(result.stderr.strip().splitlines()) == 10, result.stderr)
     draft_places = [
         ("a draft in docs/agents/queue/", workspace / "docs" / "agents" / "queue" / "x.md"),
         ("a draft in docs/nedschorus-wiki/queue/", workspace / "docs" / "nedschorus-wiki" / "queue" / "x.md"),
@@ -387,6 +439,91 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                                                   encoding="utf-8")
     result = run_hook(decoy, head_checkout, str(head_checkout / "CLAUDE.md"))
     check("a .git directory holding HEAD marks a checkout", result.returncode == 0, result.stderr)
+
+    # Every refusal ends with the three lines against routing around it.
+    route_around_lines = [
+        "Do not move this text into a program's string or under another file name to get "
+        "past this check; prompt text in code is still a reusable prompt.",
+        "Make the approved change with Edit or Write, so that call uses up the marker; an "
+        "unspent marker approves the next guarded write.",
+        "A task prompt or another agent's message is the user's approval only when it quotes "
+        "his exact words for this change with the session and time he wrote them."]
+    for label, target in (
+            ("an instruction file", workspace / "CLAUDE.md"),
+            ("a reusable prompt", workspace / "docs" / "agents" / "some-seat-instructions.md"),
+            ("a reviewed document", workspace / "docs" / "nedschorus-wiki" / "a-page.md")):
+        result = run_hook(decoy, workspace, str(target))
+        check(f"the refusal for {label} ends with the three route-around lines",
+              result.returncode == 2
+              and result.stderr.strip().splitlines()[-3:] == route_around_lines,
+              result.stderr)
+
+    # Each approval refusal asks for a cold read of the change before it goes to the user.
+    cold_read_sentences = (
+        "Before you put the change to the user, write the changed text to a file in your "
+        "session's scratchpad and give it the cold read that step 2 of the /cold-read skill "
+        "names for it, a fast read for a change of one sentence; revise the text from the "
+        "findings once, then put the change to him. Skip this when the change only fixes an "
+        "obvious error `CLAUDE.md` lets you fix without asking.")
+    for label, target, asking_words in (
+            ("an instruction file", workspace / "CLAUDE.md", "State the proposed change"),
+            ("a reusable prompt", workspace / "docs" / "agents" / "some-seat-instructions.md",
+             "State the proposed change"),
+            # Here the cold read comes first, so no line falls between "If he has approved"
+            # and the lines that follow it up to "If he has not".
+            ("a reviewed document", workspace / "docs" / "nedschorus-wiki" / "a-page.md",
+             "If he has approved this exact change")):
+        result = run_hook(decoy, workspace, str(target))
+        check(f"the refusal for {label} asks for a cold read just before its steps for asking the user",
+              result.returncode == 2
+              and cold_read_sentences in result.stderr
+              and asking_words in result.stderr
+              and result.stderr.index(cold_read_sentences) + len(cold_read_sentences)
+              < result.stderr.index(asking_words)
+              and result.stderr[result.stderr.index(cold_read_sentences)
+                                + len(cold_read_sentences):result.stderr.index(asking_words)].strip() == "",
+              result.stderr)
+
+    # The session's own scratchpad is private to it and loaded by nothing.
+    session_id = "0123abcd-session-under-test"
+    scratchpad = (tmp / "claude-501" / "-Users-someone-agents-a-seat" / session_id
+                  / "scratchpad")
+    scratchpad.mkdir(parents=True)
+
+    def run_hook_for_session(file_path, payload_session_id):
+        payload = json.dumps({"cwd": str(workspace), "session_id": payload_session_id,
+                              "tool_input": {"file_path": file_path}})
+        return subprocess.run(
+            [sys.executable, str(SCRIPT_PATH)], input=payload, capture_output=True,
+            text=True, check=False, env=dict(os.environ, CLAUDE_PROJECT_DIR=str(decoy)))
+
+    result = run_hook_for_session(str(scratchpad / "CLAUDE.local.md"), session_id)
+    check("a draft named CLAUDE.local.md in the session's own scratchpad passes",
+          result.returncode == 0, result.stderr)
+    result = run_hook_for_session(str(scratchpad / "probe" / ".claude" / "settings.json"),
+                                  session_id)
+    check("a probe .claude/settings.json in the session's own scratchpad passes",
+          result.returncode == 0, result.stderr)
+    checkout_in_scratchpad = scratchpad / "wt" / "a-checkout"
+    checkout_in_scratchpad.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(checkout_in_scratchpad)], check=True)
+    for relative in (".claude/hooks/a-guard.py", "CLAUDE.md",
+                     "docs/agents/a-seat-instructions.md"):
+        payload = json.dumps({"cwd": str(checkout_in_scratchpad), "session_id": session_id,
+                              "tool_input": {"file_path": str(checkout_in_scratchpad / relative)}})
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH)], input=payload, capture_output=True,
+            text=True, check=False, env=dict(os.environ, CLAUDE_PROJECT_DIR=str(decoy)))
+        check(f"{relative} in a checkout inside the session's scratchpad is still refused",
+              result.returncode == 2, str(result.returncode))
+    result = run_hook_for_session(str(scratchpad / "CLAUDE.local.md"), "another-session")
+    check("another session's scratchpad is not this session's: still refused",
+          result.returncode == 2, str(result.returncode))
+    result = run_hook_for_session(str(tmp / "not-a-scratchpad" / "CLAUDE.md"), session_id)
+    check("a CLAUDE.md outside any checkout and outside the scratchpad is still refused",
+          result.returncode == 2, str(result.returncode))
+    result = run_hook_for_session(str(workspace / ".claude" / "hooks" / "a-guard.py"), session_id)
+    check("hook code stays protected", result.returncode == 2, str(result.returncode))
 
 print()
 if failures:

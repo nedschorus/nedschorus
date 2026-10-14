@@ -28,9 +28,27 @@ a second session in the same worktree makes that a race.
 Kept verbatim: user prompts and assistant display text; a slash command the
 user typed with words is kept as "/command words". Dropped: tool
 calls and their results, thinking blocks, system and harness records,
-subagent turns (isSidechain), and harness-injected pseudo-prompts with the
+the subagents' own records (isSidechain), and harness-injected pseudo-prompts with the
 short agent acknowledgements that answer them — none of which the successor
 needs and all of which are large.
+
+Kept as a third voice, Subagent: for each subagent the session dispatched,
+what it was asked and what it reported, never its own records. These subagent
+turns have the voice "subagent" even when the session's agent wrote them, as
+it wrote each task. The subagent tracker,
+scripts/handoff-extract-conversation-subagent-tracker-nbd.py, finds them and
+says which records it reads. The tracker is nice-but-dirty: when it cannot be
+loaded or raises, the subagent turns are left out, and one note says so and
+why: as a line in the header of the conversation-tail, which is also what
+stdout gets; as a section of its own, "Subagent tasks and reports left out",
+in the body of the complete dialog, when one is written; and on stderr. The
+handoff still writes its dialog and exits 0. Because a report answers
+the session, the agent's short reply to one is kept, not dropped as an
+acknowledgement. Subagent turns go in the complete dialog only, every one
+whole: the tail, which the successor reads first, carries the user's and the
+agent's turns alone, so a handoff writes the complete dialog whenever the
+session has a subagent turn. read_dialog_turns returns subagent turns only when
+asked, so its other callers keep the two voices they expect.
 
 Alongside the extraction, when it leaves turns behind, the complete filtered
 dialog is written as a sibling file: the tail is the successor's working set,
@@ -42,41 +60,24 @@ found, 4 transcript unusable (empty, unparseable, or boundary not found).
 """
 
 import argparse
+import importlib.util
 import json
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 
-# One transcript record above this size is a pathological tool dump, not
-# dialog. Skipping it by size keeps a single oversized line from defeating
-# the whole extraction.
+# Bound oversized tool dumps so one record cannot defeat extraction.
 MAXIMUM_RECORD_BYTES = 4 * 1024 * 1024
 
-# How much dialog the successor receives (trimmed from 2500 after live
-# restarts showed the longer tail unused, then from 1600 to 1000 when the
-# injected-record filter below made every counted word a real one — ruled
-# 2026-08-17: the 2026-08-17 merge-lane restart succeeded on 341 real words,
-# so 1000 carries ~3x that with margin. The asymmetry favors lean: a starved
-# successor reads the companion dialog or transcript it is pointed at once; a
-# fat tail taxes every restart). This number, plus those pointers and the
-# left-behind count in the header, is what replaced asking the retiring agent
-# to judge a boundary.
+# A short tail limits every restart's context cost; the companion and transcript let a successor recover omitted dialog.
 MINIMUM_DIALOG_WORDS = 1000
 
 
-# Harness-injected user records open with one of these. The list is the
-# 2026-08-17 census of 341 transcripts across both machines and every project
-# (script: nc-systems/handoff/handoff-census-user-record-shapes.py): of all
-# user-record words the old filter kept, 59% were injected, task-notifications
-# alone 860 records — displacing exactly the dialog the tail exists to carry.
-# <bash-input> is deliberately absent: those are commands the user personally
-# typed via the "!" prefix. A slash command the user typed WITH words also
-# opens with <command-message> or <command-name>; typed_slash_command carries
-# it as "/command words" before this list is consulted, so only a bare command
-# falls here.
+# Do not include <bash-input>: those commands are user-typed.
+# Typed slash commands with arguments must be recovered before checking these injected prefixes.
 INJECTED_TEXT_PREFIXES = (
     "<task-notification>",
     "<command-message>",
@@ -89,12 +90,13 @@ INJECTED_TEXT_PREFIXES = (
     "[Request interrupted",
 )
 
-# An assistant turn at most this many words, immediately after an injected
-# record, is a routine acknowledgement of it ("Routine — … On watch.") and
-# falls with it. A longer reaction is real dialog and survives: length is the
-# only signal that distinguishes the watcher's one-line acks from an urgent
-# analysis a successor genuinely needs.
+# Short post-notification replies are acknowledgements; longer reactions may contain substantive analysis.
 MAXIMUM_ACKNOWLEDGEMENT_WORDS = 60
+
+SUBAGENT_VOICE = "subagent"
+SUBAGENT_TRACKER_MODULE_FILE_NAME = "handoff-extract-conversation-subagent-tracker-nbd.py"
+# The kind of the one turn that says the subagent turns were left out; it is not a subagent turn.
+SUBAGENT_TURNS_LEFT_OUT_KIND = "left-out"
 
 
 class TranscriptProblem(Exception):
@@ -102,11 +104,7 @@ class TranscriptProblem(Exception):
 
 
 def project_directory_for_working_directory(working_directory: Path) -> Path:
-    """Return the ~/.claude/projects directory holding a worktree's sessions.
-
-    The harness mangles the absolute path by replacing every character that
-    is not alphanumeric, a dash, or an underscore with a dash.
-    """
+    """Return the harness project directory holding the worktree's sessions."""
     mangled = "".join(
         character if (character.isalnum() or character in "-_") else "-"
         for character in str(working_directory)
@@ -115,7 +113,7 @@ def project_directory_for_working_directory(working_directory: Path) -> Path:
 
 
 def find_transcript_path(session_id: str, working_directory: Path) -> Path:
-    """Locate a session's JSONL by id: keyed lookup first, then a search."""
+    """Find a session transcript by keyed lookup, then by search."""
     keyed_path = project_directory_for_working_directory(working_directory) / f"{session_id}.jsonl"
     if keyed_path.is_file():
         return keyed_path
@@ -134,30 +132,32 @@ def find_transcript_path(session_id: str, working_directory: Path) -> Path:
     )
 
 
-def read_dialog_turns(transcript_path: Path):
-    """Return (turns, skip_counts) for one transcript.
+def read_dialog_turns(transcript_path: Path, drop_acknowledgements=True,
+                      include_subagent_tasks_and_reports=False):
+    """Return (turns, skip_counts), counting malformed and oversized records as skipped.
 
-    A turn is {"voice": "user"|"assistant", "text": str}. Malformed and
-    oversized records are skipped and counted rather than raising: a
-    transcript is being read while its writer may still be exiting, so the
-    final record can be a partial write.
+    Each turn holds its voice, its text and its record's timestamp ("" when the record has none).
+    With drop_acknowledgements False, every agent message is kept, a short one after a
+    notification included, so a reader attributing a user's reply sees the message it followed.
+    With include_subagent_tasks_and_reports True, the turns also carry each subagent's tasks and reports,
+    in voice SUBAGENT_VOICE, with the keys SubagentTracker documents. A task is the session's agent's
+    words but has that voice too, so a caller collecting the "assistant" voice will not see it.
     """
+    tracker = None
+    tracker_failure = None
+    if include_subagent_tasks_and_reports:
+        try:
+            tracker = new_subagent_tracker()
+        except Exception as error:
+            tracker_failure = subagent_turns_left_out_turn(error)
+    # The writer may still be exiting, leaving a partial final record.
     turns = []
     skip_counts = {
         "malformed": 0, "oversized": 0, "partial_final_record": 0,
         "injected": 0, "acknowledgement": 0, "resent_after_interrupt": 0,
     }
-    # True while the latest dropped record was harness-injected: the very next
-    # assistant turn, if short, is its acknowledgement and falls with it.
     following_injected_record = False
-    # A message typed mid-turn and then interrupted is persisted twice: as the
-    # queued_command attachment at its delivery point, and again as a plain
-    # user record when the harness re-sends it after the interrupt (field
-    # specimen, 2026-08-12: 4 records and 5.7 seconds apart). The text of a
-    # just-carried queued message is held here until another turn is
-    # appended; a plain user record with the same text, arriving across an
-    # interrupt and nothing else, is that re-send and is counted, not carried
-    # a second time. The same text with no interrupt between is two replies.
+    # The harness re-sends queued user text after an interrupt; deduplicate only across that interrupt without intervening dialog.
     carried_queued_text = None
     interrupted_since_queued = False
 
@@ -178,27 +178,23 @@ def read_dialog_turns(transcript_path: Path):
         try:
             record = json.loads(stripped)
         except (json.JSONDecodeError, UnicodeDecodeError):
-            # An unterminated final line is a partial write, not corruption.
+            # An unterminated final line may still be in flight.
             if is_final_line and not stripped.endswith(b"}"):
                 skip_counts["partial_final_record"] += 1
             else:
                 skip_counts["malformed"] += 1
             continue
+        # A subagent's own records belong to its transcript, not to this session's dialog or its subagent turns.
+        if isinstance(record, dict) and record.get("isSidechain"):
+            continue
 
         turn = dialog_turn_from_record(record)
         if turn is None:
-            # Harness/state records (system, queue-operation, attachment) sit
-            # between a notification and its acknowledgement without breaking
-            # the pair. A tool-bearing record does break it: the agent moved
-            # on to real work, so its next text is a report the successor
-            # needs, not the notification's ack (review finding, 2026-08-17 —
-            # a short real conclusion after intervening tool work was being
-            # dropped unrecoverably).
+            # Harness state can separate a notification from its acknowledgement; intervening tool work ends that pairing.
             if record_shows_tool_activity(record):
                 following_injected_record = False
-            continue
-
-        if turn["voice"] == "user":
+        elif turn["voice"] == "user":
+            turn["timestamp"] = record.get("timestamp") or ""
             if turn["text"].startswith(INJECTED_TEXT_PREFIXES):
                 skip_counts["injected"] += 1
                 following_injected_record = True
@@ -207,34 +203,79 @@ def read_dialog_turns(transcript_path: Path):
             elif interrupted_since_queued and turn["text"] == carried_queued_text:
                 skip_counts["resent_after_interrupt"] += 1
                 carried_queued_text = None
-                # The re-send closes the acknowledgement window exactly as
-                # carrying it would: the next short assistant text answers the
-                # user, it is not an acknowledgement of the interrupt.
+                # A re-sent user message ends the acknowledgement window: the next assistant text answers the user.
                 following_injected_record = False
             else:
                 turns.append(turn)
                 following_injected_record = False
                 carried_queued_text = turn["text"] if record.get("type") == "attachment" else None
                 interrupted_since_queued = False
-            continue
-
-        if (following_injected_record
-                and len(turn["text"].split()) <= MAXIMUM_ACKNOWLEDGEMENT_WORDS):
-            skip_counts["acknowledgement"] += 1
         else:
-            turns.append(turn)
-            carried_queued_text = None
-        following_injected_record = False
+            turn["timestamp"] = record.get("timestamp") or ""
+            # Once the tracker fails, no record can show it carried a report, so a short reply may answer one: keep it.
+            if (drop_acknowledgements and following_injected_record and tracker_failure is None
+                    and len(turn["text"].split()) <= MAXIMUM_ACKNOWLEDGEMENT_WORDS):
+                skip_counts["acknowledgement"] += 1
+            else:
+                turns.append(turn)
+                carried_queued_text = None
+            following_injected_record = False
 
+        if tracker is not None:
+            try:
+                subagent_turns, carried_subagent_report = tracker.turns_from_record(record)
+            except Exception as error:
+                tracker = None
+                tracker_failure = subagent_turns_left_out_turn(error)
+                turns = [turn for turn in turns if turn["voice"] != SUBAGENT_VOICE]
+                continue
+            for subagent_turn in subagent_turns:
+                subagent_turn["timestamp"] = record.get("timestamp") or ""
+            turns.extend(subagent_turns)
+            # Every copy of a carried report, the first or a repeat, makes the agent's next reply an answer to it.
+            if carried_subagent_report:
+                following_injected_record = False
+
+    if tracker_failure is not None:
+        turns.append(tracker_failure)
     return turns, skip_counts
 
 
+_subagent_tracker_module = None
+
+
+def new_subagent_tracker():
+    """Return a new SubagentTracker, loading the tracker's file on first use; any failure raises."""
+    global _subagent_tracker_module
+    if _subagent_tracker_module is None:
+        specification = importlib.util.spec_from_file_location(
+            "handoff_extract_conversation_subagent_tracker_nbd", subagent_tracker_module_path())
+        module = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+        if module.SUBAGENT_VOICE != SUBAGENT_VOICE:
+            raise ValueError(f"the tracker's voice is {module.SUBAGENT_VOICE!r}, "
+                             f"the extractor's {SUBAGENT_VOICE!r}")
+        _subagent_tracker_module = module
+    return _subagent_tracker_module.SubagentTracker()
+
+
+def subagent_tracker_module_path() -> Path:
+    # Asked for only when subagent turns are, because a caller may run this file's source with no __file__.
+    return Path(__file__).resolve().with_name(SUBAGENT_TRACKER_MODULE_FILE_NAME)
+
+
+def subagent_turns_left_out_turn(error):
+    text = (f"The subagent tracker, {SUBAGENT_TRACKER_MODULE_FILE_NAME}, failed, so this dialog leaves out every "
+            f"subagent task and report: {type(error).__name__}: {error}")
+    return {"voice": SUBAGENT_VOICE, "kind": SUBAGENT_TURNS_LEFT_OUT_KIND, "text": text,
+            "subagent": {"agent_id": "", "description": "", "details": []}, "status": "", "timestamp": ""}
+
+
 def record_shows_tool_activity(record) -> bool:
-    """True for a record carrying tool calls or results (not a subagent's)."""
+    """Return whether the record carries tool calls or results from this session."""
     if not isinstance(record, dict) or record.get("isSidechain"):
         return False
-    # "message": null appears on some harness record types; .get's default
-    # only covers a MISSING key (review finding, 2026-08-17 — this crashed).
+    # Some harness records have message=null; dict.get's default handles only a missing key.
     content = (record.get("message") or {}).get("content")
     return isinstance(content, list) and any(
         isinstance(block, dict) and block.get("type") in ("tool_use", "tool_result")
@@ -243,11 +284,6 @@ def record_shows_tool_activity(record) -> bool:
 
 
 def joined_text_blocks(content) -> str:
-    """Join the text blocks of a content list, dropping every other block.
-
-    Tool calls, tool results, and thinking blocks all live in these lists;
-    only text blocks are dialog.
-    """
     if not isinstance(content, list):
         return ""
     return "\n".join(
@@ -258,43 +294,17 @@ def joined_text_blocks(content) -> str:
 
 
 def dialog_turn_from_record(record):
-    """Return a dialog turn for a transcript record, or None to drop it."""
+    """Return a dialog turn for a record, or None to drop it."""
     if not isinstance(record, dict):
         return None
     if record.get("isSidechain"):
-        return None  # subagent conversation, not this session's dialog
+        return None
     if record.get("type") == "user" and record.get("isMeta"):
-        return None  # harness-injected, not typed by the user
+        return None
 
     record_type = record.get("type")
 
-    # A message the user types WHILE the agent is mid-turn is not stored as a
-    # user record at all. The harness queues it and persists an `attachment`
-    # record of type queued_command, so the type check below dropped it and
-    # every such message was invisible to the handoff — the successor read a
-    # dialog its predecessor's own transcript said nothing about.
-    #
-    # Observed 2026-08-23: a ruling the user typed at 19:37:20, one second
-    # before his session was reincarnated, reached neither the retiring agent nor
-    # its successor and had to be dug out of the JSONL by hand. A census of 530
-    # transcripts found 294 human-origin records of this shape, 283 of which
-    # appear nowhere else in their transcript.
-    #
-    # Only human origin is carried. The same shape also holds cross-session
-    # messages from other agents (origin.kind "peer") and task-notifications
-    # (no origin) — the injected traffic INJECTED_TEXT_PREFIXES already keeps
-    # out of the dialog.
-    #
-    # An identical plain user record can follow one of these. Measured on this
-    # Mac 2026-08-28 (534 transcripts, 302 human-origin records with text): 5
-    # have one. Four sit 25 to 380 records and 2 minutes to 18 hours apart with
-    # no interrupt between, and each is a separate reply — in one, "y" approves
-    # item 1 of a walk, the agent lands it, and the next "y" approves item 2.
-    # The fifth is the harness re-sending a message that was queued and then
-    # interrupted, 4 records and 5.7 seconds later. read_dialog_turns drops
-    # that re-send and only that: a match across an interrupt with nothing
-    # else carried between. (An earlier version of this comment generalized
-    # from one checked far-apart case to the whole set — review of PR #145.)
+    # Mid-turn human messages arrive as queued_command attachments; the same shape also carries injected peer traffic.
     if record_type == "attachment":
         attachment = record.get("attachment")
         if not isinstance(attachment, dict) or attachment.get("type") != "queued_command":
@@ -307,7 +317,7 @@ def dialog_turn_from_record(record):
         return {"voice": "user", "text": text} if text else None
 
     if record_type not in ("user", "assistant"):
-        return None  # system, queue-operation, other harness state
+        return None
 
     content = (record.get("message") or {}).get("content")
     if record_type == "user" and isinstance(content, str):
@@ -322,31 +332,8 @@ def dialog_turn_from_record(record):
 
 
 def typed_slash_command(text: str, record):
-    """Return "/command words" for a slash command the user typed with words,
-    or None for any other record.
-
-    The harness stores a typed slash command as a user record wrapped in tags,
-    so it opens with an INJECTED_TEXT_PREFIXES entry and the whole record was
-    dropped as injected, the user's words with it:
-
-      <command-message>walk-me-through</command-message>
-      <command-name>/walk-me-through</command-name>
-      <command-args>what is standing with me. ...</command-args>
-
-    A built-in command such as /model or /compact opens with <command-name>
-    instead. Measured 2026-09-27 over the Mac's transcripts: 134 commands
-    carried words (76 /walk-me-through, 2 /cold-read, 47 /model, 8 /effort,
-    1 /compact) and the extractor carried none of them as a user turn, so a
-    successor never saw what the user asked a walk to cover. A skill's
-    expanded body arrives as a separate isMeta record and stays out; a
-    command with no words stays dropped as injected, as before.
-
-    Only human origin is carried, the queued_command rule above. A record
-    with no origin is carried too: built-in command records never carry one
-    (80 of them, the latest 2026-09-23), and skill command records had none
-    until the harness added it (13, all before the first human-origin one on
-    2026-08-29). The user typed all of those.
-    """
+    """Return a human-typed command with its arguments, or None for other records."""
+    # Built-in and older skill-command records omit origin; their tag-wrapped words are still user input.
     if not text.startswith(("<command-message>", "<command-name>")):
         return None
     origin = record.get("origin")
@@ -371,27 +358,27 @@ def first_line_of(text: str) -> str:
 
 
 def word_count(turns) -> int:
-    return sum(len(turn["text"].split()) for turn in turns)
+    """Return the words of the user's and the agent's turns; subagent turns do not count."""
+    return sum(len(turn["text"].split()) for turn in turns if turn["voice"] != SUBAGENT_VOICE)
+
+
+def turns_left_out_notes(turns) -> list:
+    return [turn for turn in turns if turn["voice"] == SUBAGENT_VOICE and turn["kind"] == SUBAGENT_TURNS_LEFT_OUT_KIND]
+
+
+def subagent_turn_count(turns) -> int:
+    return sum(1 for turn in turns if turn["voice"] == SUBAGENT_VOICE) - len(turns_left_out_notes(turns))
 
 
 def select_tail_clearing_floor(turns, minimum_words: int = MINIMUM_DIALOG_WORDS):
-    """Return the tail of the conversation that clears the word floor.
-
-    Walks back from the end until the selection clears the floor, then keeps
-    walking to the nearest earlier user prompt so the extract opens on a
-    prompt rather than mid-exchange. Short trailing assistant turns are
-    trimmed first: the extraction runs after the retiring session was killed,
-    so its last turns are routinely fragments announcing the handoff
-    ("Writing the successor's first-action prompt:"). Only short turns fall —
-    a substantive final answer is real dialog and survives. Returns
-    (selected_turns, start_index).
-    """
+    """Return (selected_turns, start_index) for a tail clearing the word floor at a user prompt."""
+    # Short final assistant turns may be fragments cut off by the retiring session's termination.
     end = len(turns)
     while (end > 0 and turns[end - 1]["voice"] == "assistant"
            and len(turns[end - 1]["text"].split()) <= MAXIMUM_ACKNOWLEDGEMENT_WORDS):
         end -= 1
     if end == 0:
-        end = len(turns)  # nothing but short assistant turns: keep what exists
+        end = len(turns)
 
     index = end
     while index > 0 and word_count(turns[index:end]) < minimum_words:
@@ -404,11 +391,7 @@ def select_tail_clearing_floor(turns, minimum_words: int = MINIMUM_DIALOG_WORDS)
 
 
 def widen_to_minimum_words(turns, boundary_index: int, minimum_words: int) -> int:
-    """Walk a boundary backwards to earlier user prompts until it clears the floor.
-
-    Returns the widened index. A boundary already clearing the floor, or one
-    with no earlier user prompt to reach, is returned unchanged.
-    """
+    """Return the boundary widened to an earlier user prompt to clear the word floor when possible."""
     index = boundary_index
     while word_count(turns[index:]) < minimum_words:
         earlier = [
@@ -423,11 +406,7 @@ def widen_to_minimum_words(turns, boundary_index: int, minimum_words: int) -> in
 
 
 def select_turns_from_boundary(turns, boundary_quote: str, minimum_words: int = MINIMUM_DIALOG_WORDS):
-    """Return the turns from the boundary-quoted user prompt to the end.
-
-    The selection is widened backwards when it falls under the word floor, so
-    a too-tight boundary cannot strand the successor.
-    """
+    """Return turns from the quoted user prompt, widened as needed to clear the word floor."""
     wanted = boundary_quote.strip()
     for index, turn in enumerate(turns):
         if turn["voice"] != "user":
@@ -443,7 +422,7 @@ def select_turns_from_boundary(turns, boundary_quote: str, minimum_words: int = 
 
 @dataclass
 class ExtractionReport:
-    """What the extraction did, for the successor's header."""
+    """Extraction results for the successor's header."""
 
     session_id: str
     transcript_path: Path
@@ -452,13 +431,15 @@ class ExtractionReport:
     total_turns: int
     skip_counts: dict
     companion_path: Path = None
+    left_out_notes: list = field(default_factory=list)
 
 
 def render_pointers(report: ExtractionReport) -> list:
     lines = []
     if report.companion_path:
         lines.append(
-            f"Earlier dialog, complete and noise-free: {report.companion_path}."
+            f"The complete dialog, noise-free, with every earlier turn and every subagent task "
+            f"and report: {report.companion_path}."
         )
     lines.append(
         f"The full transcript is at {report.transcript_path} — every tool call "
@@ -466,6 +447,52 @@ def render_pointers(report: ExtractionReport) -> list:
         "behind a decision often lives."
     )
     return lines
+
+
+def subagent_directory(report: ExtractionReport) -> Path:
+    return report.transcript_path.with_suffix("") / "subagents"
+
+
+def subagent_transcripts_pointer(report: ExtractionReport) -> str:
+    return (f"Each subagent's own transcript, its tool calls included, is "
+            f"{subagent_directory(report)}/agent-<agent id>.jsonl; a workflow's agents "
+            f"are under {subagent_directory(report)}/workflows/<run id>/.")
+
+
+def subagent_turns_note(turns) -> str:
+    count = subagent_turn_count(turns)
+    return f"; {count} subagent turns, not counted in the words" if count else ""
+
+
+SUBAGENT_HEADINGS = {
+    "task": "Subagent task",
+    "follow-up": "Subagent task, continued",
+    "report": "Subagent report",
+    "message": "Subagent message",
+    SUBAGENT_TURNS_LEFT_OUT_KIND: "Subagent tasks and reports left out",
+}
+
+
+def render_turn(turn) -> list:
+    """Return the Markdown lines of one turn."""
+    if turn["voice"] != SUBAGENT_VOICE:
+        speaker = "User" if turn["voice"] == "user" else "Agent"
+        return [f"## {speaker}", "", turn["text"], ""]
+    subagent = turn["subagent"]
+    heading = SUBAGENT_HEADINGS[turn["kind"]]
+    if subagent.get("description"):
+        heading += f" — {subagent['description']}"
+    facts = []
+    if subagent.get("agent_id"):
+        facts.append(f"agent {subagent['agent_id']}")
+    if turn["kind"] == "task":
+        facts += subagent.get("details") or []
+    if turn.get("status") and turn["status"] != "completed":
+        facts.append(turn["status"])
+    lines = [f"## {heading}", ""]
+    if facts:
+        lines += [f"({', '.join(facts)})", ""]
+    return lines + [turn["text"] or "(no text)", ""]
 
 
 def render_extraction(turns, report: ExtractionReport) -> str:
@@ -492,12 +519,13 @@ def render_extraction(turns, report: ExtractionReport) -> str:
     skipped = ", ".join(f"{count} {name}" for name, count in report.skip_counts.items() if count)
     if skipped:
         lines.append(f"Records skipped while reading: {skipped}.")
+    # The tail holds no subagent turn, so a tracker-failure note is carried here, where the successor reads it.
+    lines += [note["text"] for note in report.left_out_notes]
 
     lines += ["", "---", ""]
 
     for turn in turns:
-        speaker = "User" if turn["voice"] == "user" else "Agent"
-        lines += [f"## {speaker}", "", turn["text"], ""]
+        lines += render_turn(turn)
 
     lines += ["---", "", "Need more than this?"]
     lines += render_pointers(report)
@@ -506,26 +534,42 @@ def render_extraction(turns, report: ExtractionReport) -> str:
 
 
 def render_companion(turns, report: ExtractionReport) -> str:
-    """The complete filtered dialog: every real turn, none of the noise."""
+    """Render the complete filtered dialog."""
     lines = [
         f"# Complete session dialog — {report.session_id}",
         "",
-        f"All {len(turns)} dialog turns ({word_count(turns)} words), "
+        f"All {len(turns) - len(turns_left_out_notes(turns))} dialog turns ({word_count(turns)} words{subagent_turns_note(turns)}), "
         f"harness-injected records and their acknowledgements filtered out.",
         f"Tool calls, results, and the agent's thinking are only in the full "
         f"transcript: {report.transcript_path}",
-        "",
-        "---",
-        "",
     ]
+    if subagent_turn_count(turns):
+        lines.append(subagent_transcripts_pointer(report))
+    lines += ["", "---", ""]
     for turn in turns:
-        speaker = "User" if turn["voice"] == "user" else "Agent"
-        lines += [f"## {speaker}", "", turn["text"], ""]
+        lines += render_turn(turn)
     return "\n".join(lines)
 
 
+def render_complete_dialog_of_transcript_as_markdown(transcript_path: Path) -> str:
+    """Return a transcript's complete filtered dialog, subagent turns included.
+
+    A transcript with no dialog turns still yields a dialog, one that says it holds none,
+    so a caller that writes it has a file to say the session was read.
+    """
+    turns, skip_counts = read_dialog_turns(transcript_path, include_subagent_tasks_and_reports=True)
+    report = ExtractionReport(
+        session_id=transcript_path.stem,
+        transcript_path=transcript_path,
+        boundary_note="the whole session",
+        turns_left_behind=0,
+        total_turns=len(turns),
+        skip_counts=skip_counts,
+    )
+    return render_companion(turns, report)
+
+
 def resolve_transcript_path(arguments) -> Path:
-    """Return the transcript to read: an explicit path, or an id-keyed lookup."""
     if arguments.transcript_path:
         transcript_path = Path(arguments.transcript_path).expanduser()
         if not transcript_path.is_file():
@@ -560,8 +604,6 @@ def main(argv=None) -> int:
     if arguments.last_turns is not None and arguments.last_turns < 1:
         parser.error("--last-turns must be at least 1")
     if arguments.minimum_words < 1:
-        # A floor of zero used to crash the tail walk with an IndexError
-        # rather than refusing (review finding, 2026-08-17).
         parser.error("--minimum-words must be at least 1")
 
     try:
@@ -573,8 +615,9 @@ def main(argv=None) -> int:
     session_id = arguments.session_id or transcript_path.stem
 
     try:
-        turns, skip_counts = read_dialog_turns(transcript_path)
-        if not turns:
+        turns, skip_counts = read_dialog_turns(transcript_path, include_subagent_tasks_and_reports=True)
+        dialog = [turn for turn in turns if turn["voice"] != SUBAGENT_VOICE]
+        if not dialog:
             raise TranscriptProblem(
                 f"{transcript_path} yielded no dialog turns "
                 f"(skipped: {skip_counts}) — refusing to write an empty extraction"
@@ -582,7 +625,7 @@ def main(argv=None) -> int:
 
         if arguments.boundary_quote:
             selected, start_index, quoted_index = select_turns_from_boundary(
-                turns, arguments.boundary_quote, arguments.minimum_words
+                dialog, arguments.boundary_quote, arguments.minimum_words
             )
             boundary_note = (
                 f"the prompt quoted as {arguments.boundary_quote.strip()!r} "
@@ -594,11 +637,11 @@ def main(argv=None) -> int:
                     f"{arguments.minimum_words}-word floor"
                 )
         elif arguments.last_turns:
-            start_index = max(0, len(turns) - arguments.last_turns)
-            selected = turns[start_index:]
+            start_index = max(0, len(dialog) - arguments.last_turns)
+            selected = dialog[start_index:]
             boundary_note = f"final {len(selected)} turns (explicit turn count)"
         else:
-            selected, start_index = select_tail_clearing_floor(turns, arguments.minimum_words)
+            selected, start_index = select_tail_clearing_floor(dialog, arguments.minimum_words)
             boundary_note = (
                 f"the tail of the conversation clearing {arguments.minimum_words} words, "
                 f"opening at the user prompt on turn {start_index + 1}"
@@ -607,18 +650,24 @@ def main(argv=None) -> int:
         print(f"handoff-extract-conversation: {problem}", file=sys.stderr)
         return 4
 
+    # stderr also carries the note, so the supervisor's console shows the tracker's failure as it happens.
+    for note in turns_left_out_notes(turns):
+        print(f"handoff-extract-conversation: {note['text']}", file=sys.stderr)
+
     report = ExtractionReport(
         session_id=session_id,
         transcript_path=transcript_path,
         boundary_note=boundary_note,
         turns_left_behind=start_index,
-        total_turns=len(turns),
+        total_turns=len(dialog),
         skip_counts=skip_counts,
+        left_out_notes=turns_left_out_notes(turns),
     )
 
     if arguments.output:
         output_path = Path(arguments.output).expanduser()
-        if len(selected) < len(turns):
+        # The tail leaves out every subagent turn, so a session with one also gets its complete dialog.
+        if len(selected) < len(dialog) or subagent_turn_count(turns):
             report.companion_path = output_path.with_name(
                 f"{output_path.stem}-complete{output_path.suffix}"
             )
@@ -628,7 +677,8 @@ def main(argv=None) -> int:
         if report.companion_path:
             report.companion_path.write_text(
                 render_companion(turns, report), encoding="utf-8")
-            print(f"wrote all {len(turns)} turns to {report.companion_path}", file=sys.stderr)
+            print(f"wrote all {len(turns) - len(turns_left_out_notes(turns))} turns to {report.companion_path}",
+                  file=sys.stderr)
     else:
         sys.stdout.write(render_extraction(selected, report))
 

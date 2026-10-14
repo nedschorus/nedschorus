@@ -1,77 +1,24 @@
 #!/usr/bin/env python3
-"""Print the status line.
+"""Print the status line from the harness's JSON payload on stdin.
 
-Wire it as the statusLine command in settings.json. The harness pipes one
-JSON object on stdin at every refresh.
+Usage: scripts/session-statusline-command.py < <payload.json>
 
-(Until 2026-08-12 this script was also half of the handoff auto-trigger,
-relaying the context percentage to a side file for the Stop hook — cut when
-the hook moved to reading the transcript, which covers every session type;
-see handoff-context-threshold-hook.py.)
-
-A malformed or unexpected payload never breaks the status line: the script
-prints what it can and exits 0, because a broken status line is worse than
-none, and the next refresh is a second away. Every field below is optional
-in that same spirit — a payload missing one drops that segment rather than
-failing.
-
-The visible line, left to right (user-walked 2026-08-08):
-
-  ned-box:choirmaster  Opus 5 · high  46% 2h 77% 3d 89%
-
-  host         green — which machine this session runs on. The user drives
-               from a Mac over SSH while the agents run here, so the box name
-               is the one thing a pane cannot be assumed to share.
-  directory    blue, the working directory's name alone — not its path
-               (user-ruled 2026-08-15; the path crowded every later segment
-               off the screen, worst under .claude/worktrees/). One agent,
-               one worktree, so several panes differ mainly by this. Home
-               itself still renders as ~.
-               (A "(branch)" segment followed the directory until 2026-09-14,
-               when the user ruled it dropped: seats work on topic branches
-               now, whose names are long by the naming rule, so the segment
-               crowded the line and said little.)
-  agent        agent.name, present only for a session launched with
-               --agent <name>; absent for an ordinary session.
-  model        model.display_name
-  effort       effort.level
-  the numbers  five values, all REMAINING, in one block:
-                 <context>% <5h-time-left> <5h>% <7d-time-left> <7d>%
-               Quota remaining is 100 - rate_limits.*.used_percentage; the
-               times count down to each window's resets_at.
-
-The three percentages are colored by how much is left, so a line that needs
-attention looks different from one that does not.
-
-Deliberately not shown, having been weighed and dropped: username (identical
-in every pane), cost and lines changed, thinking (on unless deliberately
-disabled, so it renders as a constant), fast mode, output style, session
-name, and the worktree and pull-request fields.
-
-Payload fields are those of Claude Code 2.1.220 and 2.1.226, read from the
-binary's status line builder rather than from documentation.
+Configure as the statusLine command in settings.json. Missing or malformed
+fields omit their segments: a rendering fault must not blank the whole line.
 """
 
-# Annotations are evaluated at definition time unless deferred, and `Path |
-# None` below is PEP 604, which lands in Python 3.10. Under an older
-# interpreter the script therefore dies on import with a TypeError, before
-# main() runs — so the graceful-degradation contract above never gets a
-# chance, and the status line renders empty with nothing said. A Mac's
-# Xcode-provided python3 is still 3.9, so the interpreter that a pane
-# resolves cannot be assumed. This import defers the annotations and keeps
-# the script running from 3.7 up. It must stay the first statement after the
-# docstring, which is why the imports below it are not in alphabetical order.
+# Defer annotations so Path | None does not fail at import on Python 3.9.
 from __future__ import annotations
 
 import importlib.util
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Two plain spaces between segments (user-ruled: the │ dividers go — they
-# spent width the narrow panes need, and color already separates segments).
+# Spaces and color separate segments without spending width on dividers.
 SEPARATOR = "  "
 
 RESET = "\033[00m"
@@ -81,16 +28,19 @@ GREEN = "\033[32m"
 YELLOW = "\033[33m"
 RED = "\033[31m"
 RED_BOLD = "\033[01;31m"
+CYAN_BOLD = "\033[01;36m"
 
-# Thresholds on how much is LEFT — of the context window, or of a quota
-# window. The handoff fires at roughly half the context used, so the first
-# warning arrives a little before the trigger rather than with it.
+# Warn shortly before the handoff trigger at roughly half the context used.
 COMFORTABLE_REMAINING_PERCENT = 55.0
 TIGHT_REMAINING_PERCENT = 25.0
 
 SECONDS_PER_MINUTE = 60
 SECONDS_PER_HOUR = 3600
 SECONDS_PER_DAY = 86400
+
+# Claude Code keeps one record per running session here; a session with a Remote
+# Control connection has a bridgeSessionId in its record.
+CLAUDE_CODE_LIVE_SESSION_REGISTRY_DIRECTORY = Path.home() / ".claude" / "sessions"
 
 
 def colored(text: str, color: str) -> str:
@@ -110,16 +60,7 @@ def remaining_percent_text(remaining_percent: float) -> str:
 
 
 def working_directory_name(working_directory: str) -> str:
-    """The directory's own name, not the road to it.
-
-    The full path crowded the rest of the line off the screen (user-ruled
-    2026-08-15): a session in .claude/worktrees/<name> spent 63 characters
-    restating a project root every pane already shares, and with a long
-    branch beside it the location segment alone ran to 135 — past the width
-    of an ordinary window, so model, effort and the whole remaining-quota
-    block were never visible. The name is what differs between panes; the
-    road to it is not.
-    """
+    # Full paths crowd model and quota segments out of narrow panes.
     if not working_directory:
         return ""
     path = Path(working_directory)
@@ -129,11 +70,7 @@ def working_directory_name(working_directory: str) -> str:
 
 
 def git_head_file(working_directory: Path) -> Path | None:
-    """Locate the HEAD file governing this directory, worktrees included.
-
-    A worktree's .git is a file pointing at the real git directory, so the
-    branch cannot be read from a fixed relative path.
-    """
+    """Locate the governing HEAD file, including worktree .git indirection."""
     for directory in [working_directory, *working_directory.parents]:
         git_path = directory / ".git"
         if git_path.is_dir():
@@ -150,15 +87,8 @@ def git_head_file(working_directory: Path) -> Path | None:
 
 
 def freshness_suffix(working_directory: str) -> str:
-    """⇣N when this checkout is behind origin/main, per the freshness stamp.
-
-    The stamp is written by scripts/checkout-freshness-catch-up.py (the Stop
-    hook) into the checkout's git directory; this function only displays it —
-    the status line never fetches anything itself (user-ruled 2026-08-17).
-    Silent when there is no stamp (the hook has not run here) or when the
-    checkout is current; a trailing ? marks a stamp whose last fetch failed,
-    so a behind-count is never mistaken for fresh knowledge.
-    """
+    """Return the behind-count suffix from the freshness stamp, marking failed fetches with ?."""
+    # The Stop hook writes the stamp; rendering the status line must not fetch.
     if not working_directory:
         return ""
     head_file = git_head_file(Path(working_directory))
@@ -174,15 +104,19 @@ def freshness_suffix(working_directory: str) -> str:
     if isinstance(behind, int) and behind > 0:
         return f"⇣{behind}{'?' if doubt else ''}"
     if doubt:
-        # The last fetch failed, so "current" is a claim off stale refs —
-        # show the doubt rather than nothing (silent-safety rule).
+        # A failed fetch makes even a zero behind-count stale; show the uncertainty.
         return "⇣?"
     return ""
 
 
+def status_line_this_machine_short_name() -> str:
+    if sys.platform == "darwin":
+        return "Mac"
+    return os.uname().nodename.split(".")[0]
+
+
 def location_segment(working_directory: str) -> str:
-    """host:directory — where this session is, on which machine."""
-    host = os.uname().nodename.split(".")[0]
+    host = status_line_this_machine_short_name()
 
     pieces = []
     if host:
@@ -192,40 +126,49 @@ def location_segment(working_directory: str) -> str:
         pieces.append(prefix + colored(working_directory_name(working_directory), BLUE_BOLD))
     freshness = freshness_suffix(working_directory)
     if freshness:
-        pieces.append(" " + colored(freshness, RED_BOLD))
+        pieces.append(" " + colored(freshness, CYAN_BOLD))
     return "".join(pieces)
 
 
 def agent_segment(payload: dict) -> str:
-    """The named agent type, when the session was launched as one."""
     return str(payload.get("agent", {}).get("name", "") or "")
 
 
 def model_segment(payload: dict) -> str:
-    """Model and effort — the two facts that set what the session costs."""
-    model = payload.get("model", {}).get("display_name", "")
-    effort = payload.get("effort", {}).get("level", "")
-    return " · ".join(str(part) for part in (model, effort) if part)
+    """Return the model and effort as Opus5.5/medium, without the context size."""
+    model = str(payload.get("model", {}).get("display_name", "") or "")
+    model = re.sub(r"\s*\([^)]*\)", "", model).replace(" ", "")
+    effort = str(payload.get("effort", {}).get("level", "") or "")
+    return "/".join(part for part in (model, effort) if part)
+
+
+def status_line_remote_control_missing_warning_segment(payload: dict,
+        records_directory: Path | None = None) -> str:
+    """Return a red No RC when this session's record shows no Remote Control connection."""
+    # Without a record for the session the state is unknown, and nothing shows.
+    session_id = payload.get("session_id")
+    if not session_id:
+        return ""
+    directory = records_directory or CLAUDE_CODE_LIVE_SESSION_REGISTRY_DIRECTORY
+    try:
+        record_paths = list(directory.glob("*.json"))
+    except OSError:
+        return ""
+    for record_path in record_paths:
+        try:
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(record, dict) and record.get("sessionId") == session_id:
+            if record.get("bridgeSessionId"):
+                return ""
+            return colored("No RC", RED_BOLD)
+    return ""
 
 
 def time_until(reset_timestamp: str | int | float) -> str:
-    """Coarse countdown to a quota reset: days, else hours, else minutes.
-
-    `resets_at` arrives as Unix epoch SECONDS, a number — the shape the
-    harness documents for the status line payload. It was read here as an
-    ISO-8601 string, so `.replace` raised AttributeError on every refresh,
-    the field was dropped as if absent, and both countdowns had silently
-    never rendered: the line showed three bare percentages where it promised
-    `<context>% <5h-left> <5h>% <7d-left> <7d>%` (found 2026-08-15 from the
-    user's own status line, which read `73% 85% 75%`).
-
-    Two forms are accepted, and only two: a number, which is the live
-    contract, and an ISO-8601 string, which costs two lines and keeps a
-    payload that ever sends ISO working. A numeric STRING is deliberately not
-    accepted — `float("2000")` would read a year-only ISO date as 33 minutes
-    past the epoch, and a wrong countdown is worse than none. It drops the
-    field like any other unparseable value.
-    """
+    """Return a coarse countdown to a quota reset."""
+    # resets_at is epoch seconds. Do not parse numeric strings as seconds: an ISO year is ambiguous.
     if isinstance(reset_timestamp, bool):
         return ""
     if isinstance(reset_timestamp, (int, float)):
@@ -252,7 +195,7 @@ def time_until(reset_timestamp: str | int | float) -> str:
 
 
 def consumption_segment(payload: dict) -> str:
-    """<context>% <5h-left> <5h>% <7d-left> <7d>% — everything remaining."""
+    """Return remaining context and quota percentages with reset countdowns."""
     parts = []
 
     context_remaining = payload.get("context_window", {}).get("remaining_percentage")
@@ -277,18 +220,8 @@ def consumption_segment(payload: dict) -> str:
 
 
 def backup_health_segment() -> str:
-    """Warn when this machine's backups have stopped; empty when they are fine.
-
-    First in the line rather than last, because a line that is truncated or
-    wrapped loses its tail, and this is the one segment whose whole purpose is
-    to be seen. It appears only when something is wrong, so the jarring change
-    of shape is the point.
-
-    Loaded by path because the checker's filename is hyphenated, and lazily so
-    that a missing or broken checker costs nothing until the line is rendered.
-    Any failure yields an empty segment: a health check that blanks the status
-    line would be a worse fault than the one it reports.
-    """
+    """Return a backup warning, or an empty string when healthy or unavailable."""
+    # Place the warning first so truncation cannot hide it; checker failures must not blank the line.
     try:
         checker_path = Path(__file__).with_name("backup-health-check.py")
         if not checker_path.exists():
@@ -301,12 +234,11 @@ def backup_health_segment() -> str:
         if not headline:
             return ""
         return colored(f"⚠ {headline}", RED_BOLD)
-    except Exception:  # noqa: BLE001 - see docstring
+    except Exception:  # noqa: BLE001 - a checker failure must not blank the status line
         return ""
 
 
 def status_line_text(payload: dict) -> str:
-    """Compose the visible line; every segment is independently optional."""
     working_directory = payload.get("workspace", {}).get("current_dir") or payload.get("cwd", "")
     segments = [
         backup_health_segment(),
@@ -314,6 +246,7 @@ def status_line_text(payload: dict) -> str:
         agent_segment(payload),
         model_segment(payload),
         consumption_segment(payload),
+        status_line_remote_control_missing_warning_segment(payload),
     ]
     return SEPARATOR.join(segment for segment in segments if segment)
 
@@ -322,26 +255,8 @@ PAYLOAD_CAPTURE_VARIABLE = "NEDSCHORUS_STATUSLINE_PAYLOAD_CAPTURE"
 
 
 def capture_payload(payload: dict) -> None:
-    """Write one real payload to disk when asked, for the contract canary.
-
-    Every fixture in the test suite asserts what this script BELIEVES the
-    harness sends. That belief was wrong once already and cost two days of
-    blank countdowns: `resets_at` is epoch seconds, the fixture used an ISO
-    string, and the suite stayed green throughout (fixed 2026-08-15). A
-    fixture cannot catch that class of error, because the same wrong belief
-    writes both the code and the test.
-
-    Ground truth is the payload the harness actually delivers. Set
-    NEDSCHORUS_STATUSLINE_PAYLOAD_CAPTURE to a file path in a live session,
-    let the line refresh once, and the canary in
-    session-statusline-command-test.py checks the captured payload's field
-    TYPES against what this script consumes. Types, not values: values change
-    every refresh, types are the contract.
-
-    Off unless the variable is set, so an ordinary session pays nothing. Any
-    failure here is swallowed — a capture is a diagnostic, and the rule that
-    no fault may blank the status line outranks it.
-    """
+    """Capture a live harness payload when the diagnostic environment variable is set."""
+    # Fixtures cannot verify their own assumptions about harness field types; the canary needs live data.
     destination = os.environ.get(PAYLOAD_CAPTURE_VARIABLE)
     if not destination:
         return
@@ -354,6 +269,10 @@ def capture_payload(payload: dict) -> None:
 
 
 def main() -> int:
+    # Claude Code passes the status line command no arguments, so only a person running it by hand reaches this.
+    if sys.argv[1:] in (["--help"], ["-h"]):
+        print(__doc__)
+        return 0
     try:
         payload = json.loads(sys.stdin.read() or "{}")
         if not isinstance(payload, dict):

@@ -16,7 +16,7 @@ For each flag also propose the exact words of the best fix:
 (a) the glossary already has the name: give it;
 (b) a standard term fits: give it;
 (c) {TARGET_PATH} already uses a better term elsewhere: use that one everywhere;
-(d) no name exists: propose a project-term, following the rules for one: a hyphenated phrase, explicit and precise, with as many words as it takes to be clear and to clash with nothing that exists, and with the standard term inside it where one exists. Give it a one-sentence definition. Mark it as a candidate for the user, who alone adds project-terms.
+(d) no name exists: propose a project-term, built as `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md` says: a hyphenated phrase, with as many words as it takes to be clear and to clash with nothing that exists, and with the standard term inside it where one exists. Give it a one-sentence definition. Mark it as a candidate for the user, who alone adds project-terms.
 For a term flagged under (3), give one fix for each meaning, and say which uses in {TARGET_PATH} take which.
 
 Give each proposed project-term a one-sentence definition, for the author to include where the name is first used in {TARGET_PATH}. A term {TARGET_PATH} defines that the glossary also defines is defined twice; say so in the item, quoting the glossary's entry, and propose dropping {TARGET_PATH}'s definition in favour of the glossary's. When you cannot tell what the author meant, do not guess: quote the term and the passage, and phrase the item as a question for the author.

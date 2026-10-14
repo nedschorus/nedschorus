@@ -1,0 +1,56 @@
+---
+issue: "[Warn an agent when its reply names a document for the user without a link the user can open on his Mac](https://github.com/nedschorus/nedschorus/issues/1213)"
+---
+
+# Warn an agent when its reply names a document for the user without a link the user can open on his Mac
+
+The user reads agents' replies on his Mac. When an agent names a document in a reply as a repository path, such as `docs/nedschorus-wiki/nedschorus-glossary.md`, or as a ned-box path, such as `/home/nedlern/agents/...`, the user cannot open the document from the reply: the path resolves on neither his Mac nor in his viewer. This GHI builds a warning: when the user sends his next message, a hook reads the agent's previous reply, and for each document the reply names without a link the Mac can open, it tells the agent the link to use. Once the warning works, the standing sentence that asks agents to remember the link form leaves `~/.claude/CLAUDE.md`; that removal goes to the user.
+
+## Why
+
+On 2026-10-12, in the cold-read-improvement agent-seat, an agent explaining an approval-walk item cited the project's objective page as `` `docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md` ``. The user's viewer turned the path into the link `http://docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md`, which opens nothing. The user asked why the agent had not written a Mac link, and whether the project had built, or had a GHI to build, a check for these links.
+
+The rule was in front of the agent twice: `~/.claude/CLAUDE.md` says "files linked for the user are clickable in the `file:///Volumes/nedhome/...` form", and `nc-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md`, which the /explain skill the agent was running told it to follow at that step, says a wiki page is cited by "its title, linked". The agent did not open that file. A rule an agent must remember is the class of fix the user ruled fails (2026-09-08, recorded in GHI [Reference-integrity checker: links resolve and cited revision-paths exist — pure-code review check (and the home for what-else-can-code-check)](https://github.com/nedschorus/nedschorus/issues/42), section "Third caller"); the same day's reply also drew three bare-number warnings from the hook below, which shows a warning at the next prompt is read and acted on.
+
+## What exists today
+
+- **`scripts/bare-number-citation-in-markdown-and-agent-reply-warning-hook.py`**, registered on UserPromptSubmit in `.claude/settings.json`: when the user sends a message, it reads the agent's previous reply from the transcript and hands the agent a note listing each pull request, GitHub issue or task the reply cited by a bare number. It never blocks the prompt. It skips fenced code, inline code spans and whole Markdown links. It replaced a `CLAUDE.md` bullet, which was removed when the hook landed (commit 1fd931a2, approved as item 6 of an approval-walk whose minutes are `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/nedschorus-where-agent-rules-live-decision-guide-draft-2026-10-05-minutes.md`).
+- **`scripts/cold-read-fast-read-due-for-linked-document-reminder-hook.py`**, a Stop hook: its function `find_markdown_file_paths_linked_or_named_in_agent_reply` finds the `.md` paths in the agent's last reply that name existing files: `file://` links, absolute paths under `/home/` or `/Volumes/`, and paths starting `docs/`, `nc-systems/` or `.claude/`, with no part of the reply skipped, code included. It maps `/Volumes/nedhome/<path>` to `/home/nedlern/<path>` when that file exists, and returns resolved paths, so it does not report which form the reply wrote. On 2026-10-12 it found the objective page's bare path above.
+- **`scripts/open-file-in-typora-on-mac-from-ned-box.py`** opens a ned-box file in Typora on the Mac through the Mac's mount of ned-box's home, `/Volumes/nedhome`, which `scripts/mac-window-opened-for-ned-box-forced-command.py` checks is mounted.
+
+## How a link to a ned-box file opens on the Mac
+
+`/Volumes/nedhome` is the Mac's network (SMB) mount of ned-box's home directory, `/home/nedlern`. A `file:///Volumes/nedhome/<path>` link opens ned-box's own file through that mount, not a copy: an edit saved there is an edit of the file on ned-box, the same file the agent works on. No symbolic link is needed, and one would add nothing: a symbolic link on the Mac pointing into `/Volumes/nedhome` opens the same file through the same mount, and one pointing anywhere else opens a different file.
+
+The copy the user must not edit by mistake is a different clone holding the same repository path. The same `~/Projects/...` paths exist on both machines and are different clones, so a `file:///Users/...` link to the Mac's `~/Projects/nedschorus` opens the Mac's copy, not the ned-box file the agent changed; a `/Volumes/nedhome` link to a ned-box checkout other than the agent's own opens that checkout's version, which may lack the agent's unmerged changes. The warning below does not judge these: a fresh Codex review found that two checkouts often hold identical text and that linking another checkout or main can be deliberate, so a check on them would mostly report correct links.
+
+On 2026-10-12 the user clicked a `file:///Volumes/nedhome/...` link in a reply to a log-store file, which exists only on ned-box, and it opened ("that works"). Which of the two places he reads replies in (the terminal on the Mac, the claude.ai page that follows a session) was not recorded, so the other place is still unchecked; that is the first step of the next action.
+
+## How often it happens
+
+A fresh Codex review on 2026-10-12 sampled 324 recent replies across six agent-seats (cold-read-improvement, agent-instructions-editor, ned-box-helper, fleet-restart-at-login, reboot-test and merge-lane-2). Outside fenced code they held 26 `file://` links in 25 replies, and 3 replies, 0.9%, named an existing Markdown document without a link; in all three the document was cited as a source or as the subject of a proposed change, as in the 2026-10-12 case, not offered for reading. Replies that offered a report or a walk-document for reading already linked it. So the warning would fire about once in a hundred replies, and nearly always on a cited source, which the user's viewer still turns into a broken link.
+
+## Proposed
+
+A note, never a refusal, handed to the agent with the user's next message, listing each Markdown document the previous reply named without a link the Mac can open, with the `file:///Volumes/nedhome/...` link to write instead. The note reaches the agent only when the user next writes, so it corrects the agent's later replies, not the reply already read.
+
+1. **What is checked.** Each path in the previous reply that names an existing Markdown file on ned-box, inline code spans included, since the 2026-10-12 path was one, and fenced code skipped, in the forms the patterns of `find_markdown_file_paths_linked_or_named_in_agent_reply` already match: absolute paths under `/home/`, paths starting `docs/`, `nc-systems/` or `.claude/`, and `file://` links. A repository path is resolved against the hook payload's `cwd` and then the top of that directory's checkout, as that function does. The hook has a finder of its own built on those patterns, because it needs each occurrence's written form, which that function discards. Files at the top of a checkout, such as `CLAUDE.md`, are not added: in the Codex sample they would have raised the rate from 0.9% to 11.4% of replies, mostly on discussion of a `CLAUDE.md` rule, and a reply's "your global `CLAUDE.md`" would resolve to the wrong file.
+2. **What is reported.** Each document named in the reply only in forms the Mac cannot open: a repository path, a ned-box absolute path, or a `file:///home/...` link. A document is listed once, however many times and in however many forms the reply names it, and not at all if the reply also links it in the `file:///Volumes/nedhome/...` form anywhere. The note goes out as `hookSpecificOutput.additionalContext`, listing at most ten documents, as the bare-number hook's note does.
+3. **Where it lives.** In a hook of its own on UserPromptSubmit, reading the previous reply with `read_turn` from `scripts/absence-claim-locator-reminder-hook.py`, as the other two hooks do. The bare-number hook's program also runs on PostToolUse for Markdown edits, and the fast-read Stop hook's finder decides which documents get a cold-read reminder; widening either changes what they do.
+4. **Removal of the rule.** When the hook's pull request merges, put to the user the removal of the `~/.claude/CLAUDE.md` sentence "The Mac mounts this box's home as `/Volumes/nedhome/...`, so files linked for the user are clickable in the `file:///Volumes/nedhome/...` form.", as the bare-number hook's `CLAUDE.md` bullet was removed when that hook landed.
+
+## Related GHIs
+
+- GHI [Reference-integrity checker: links resolve and cited revision-paths exist — pure-code review check (and the home for what-else-can-code-check)](https://github.com/nedschorus/nedschorus/issues/42): its third part checks citations in committed files that the reader's machine cannot resolve, as a review check at pull-request time, built in the gatekeeper era. This GHI checks replies to the user with one hook and needs no review machinery, so it has its own lifecycle.
+- GHI [Cite files by name, not by path](https://github.com/nedschorus/nedschorus/issues/610): how a file is cited in committed text so a search finds every reference. A reply's link is for the user to click; the two do not conflict.
+- GHI [cold-read-record-ship.py prints a citation without its host when it runs on ned-box, where the seats run](https://github.com/nedschorus/nedschorus/issues/299), closed: an earlier case of a citation that did not resolve from where the reader sat, fixed in one program.
+
+## What is not decided
+
+1. **Sessions on the Mac.** A Mac agent-session can cite a document in its own clone or a ned-box document through the mount; the hook as proposed checks ned-box paths only and says nothing in a session on the Mac.
+2. **Documents that do not exist yet**, such as a report a reply says it will write: the finder skips them, so the hook says nothing.
+3. **The log-store.** `CLAUDE.md` tells agents to cite a log-store file in the scp form `nedlern@ned-box:/home/nedlern/nedschorus-logs/<path>`, which another agent can use from either machine but the user cannot click, and which the finder does not match. Whether a reply to the user gives the `file:///Volumes/nedhome/nedschorus-logs/...` link instead, or both.
+
+## Next action
+
+Ask the user which place the 2026-10-12 test was in; he clicks one `file:///Volumes/nedhome/...` link to a ned-box document in the other place, and says whether it opened. Then put the three undecided points to him, and build the hook with tests that feed it transcripts: a last reply naming a document by a bare repository path, for which the note gives that document's `file:///Volumes/nedhome/...` link; a reply naming the same document both bare and as a `/Volumes/nedhome` link, and a reply holding the path only in a fenced command, for both of which the hook prints nothing.

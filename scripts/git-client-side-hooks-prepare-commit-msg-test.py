@@ -352,8 +352,29 @@ def run_cases(scratch: Path):
     check("a failed stamp exits 0, so the commit goes ahead",
           completed.returncode == 0,
           f"exit {completed.returncode}, stderr {completed.stderr!r}")
-    check("and says so on stderr",
-          "could not add the session trailer" in completed.stderr,
+    failure_lines = [line for line in completed.stderr.splitlines()
+                     if line.startswith(("prepare-commit-msg:", "If ", "Otherwise"))]
+    trailer = "Claude-Session: " + url(FAKE_SESSION)
+    check("and says on stderr that the trailer, named, may be missing",
+          bool(failure_lines) and failure_lines[0] == (
+              'prepare-commit-msg: git interpret-trailers failed, so the trailer "%s" '
+              "may be missing from this commit's message; the trailer is how a "
+              "reviewer finds the agent-session that made a commit. git's error is "
+              "just above this line." % trailer),
+          repr(completed.stderr))
+    check("and gives the amend that adds that trailer, message only",
+          ('Otherwise, if git log -1 shows the commit you just made, that commit '
+           "is not pushed, and its message lacks the trailer, add it with: git "
+           'commit --amend --only --no-edit --trailer "%s"' % trailer) in failure_lines,
+          repr(completed.stderr))
+    check("and says what to do for a rebase, merge or cherry-pick, and a failed amend",
+          failure_lines[1:2] == [
+              "If this commit was made by a rebase, merge or cherry-pick, leave the "
+              "commits as they are, and tell the user this message once the "
+              "operation is done."]
+          and failure_lines[-1:] == [
+              "If that amend fails, or the commit is already pushed, leave the "
+              "commit as it is and tell the user this whole message."],
           repr(completed.stderr))
 
     check("the hook is executable, or git would silently skip it",

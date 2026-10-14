@@ -203,8 +203,7 @@ def make_plan(base, other="ssh", timeout_seconds=20, extra_mac_roots=()):
          "roots": [str(base / "box" / "agents"), str(base / "box" / "Projects"),
                    str(base / "box" / "tmp")],
          "git": True},
-        {"name": "log-store", "roots": [str(base / "box" / "logs")],
-         "prune": [str(base / "box" / "logs" / "transcripts")]},
+        {"name": "log-store", "roots": [str(base / "box" / "logs")]},
         {"name": "handoffs", "roots": [str(base / "box" / "handoffs")]},
     ], "this_repository": {
         "clones": [str(base / "box" / "Projects" / "nedschorus")],
@@ -338,7 +337,6 @@ with scratch() as directory:
     write(base / "box/logs/seats/x/report-draft-from-origin-x.md", "gamma",
           NOW - 10)
     write(base / "box/handoffs/report-draft-handoff.md", "zeta", NOW - 20)
-    write(base / "box/logs/transcripts/report-draft.md", "delta")
     write(base / "mac/agents/seat-a/node_modules/pkg/report-draft.md", "eps")
     write(base / "mac/Projects/old/.git/report-draft-in-git-dir.md", "eta")
     write(base / "mac/Projects/a-report-draft-dir/notes.md", "theta")
@@ -372,8 +370,6 @@ with scratch() as directory:
           "/box/handoffs/report-draft-handoff.md" in other, other)
     check("each entry carries its size",
           "(5 bytes)" in stdout and "(4 bytes)" in stdout, stdout)
-    check("the log-store's transcripts directory is not searched",
-          "/box/logs/transcripts/" not in same + other, stdout)
     check("a node_modules tree is not searched",
           "node_modules" not in same + other, stdout)
     check("nothing inside a .git directory is listed",
@@ -384,11 +380,9 @@ with scratch() as directory:
           stdout)
     check("a symbolic link is not listed as a copy",
           "report-draft-link.md" not in stdout, stdout)
-    check("the searched lines name every surface on both machines, and the "
-          "log-store's exception",
+    check("the searched lines name every surface on both machines",
           "mac checkouts:" in searched and "mac handoffs:" in searched
           and "ned-box log-store:" in searched
-          and f"except {base / 'box/logs/transcripts'}" in searched
           and "ned-box handoffs:" in searched and "mac git:" in searched,
           searched)
     check("a complete search prints no instruction to tell the user anything",
@@ -402,6 +396,43 @@ with scratch() as directory:
           and first[4] == FAKE_BOX
           and first[5].startswith("python3 - --this-machine-json "),
           argv_log)
+
+# --- The transcript mirror's copies in the log-store ----------------------------
+# transcript-mirror-to-log-store.py never deletes, so its copies of task lists,
+# seat-briefs, the global CLAUDE.md, handoffs, memory store files and session
+# transcripts can be the only ones left.
+with scratch() as directory:
+    base = pathlib.Path(directory)
+    make_stand_in_bin(base)
+    mirror = base / "box/logs/transcripts"
+    write(mirror / "mac/seat-briefs/some-seat/CLAUDE.local.md", "brief")
+    write(mirror / "ned-box/tasks/nedschorus-some-seat-tasks/41.json", "task")
+    write(mirror / "mac/CLAUDE.md", "global instructions")
+    write(mirror / "mac/handoffs/mirror-only-handoff.md", "handoff")
+    write(mirror / "mac/projects/-Users-el-x/memory/mirror-only-memory.md",
+          "memory")
+    write(mirror / "ned-box/projects/-home-nedlern-x/memory/MEMORY.md", "index")
+    write(mirror / "mac/projects/-Users-el-x/mirror-session.jsonl", "mac")
+    write(mirror / "ned-box/projects/-home-nedlern-x/mirror-session.jsonl", "box")
+    write(mirror / "recovered/from-a-backup/-Users-el-x/mirror-session.jsonl",
+          "old")
+    for query, paths in (
+            ("CLAUDE.local.md", ["mac/seat-briefs/some-seat/CLAUDE.local.md"]),
+            ("41.json", ["ned-box/tasks/nedschorus-some-seat-tasks/41.json"]),
+            ("CLAUDE.md", ["mac/CLAUDE.md"]),
+            ("mirror-only-handoff.md", ["mac/handoffs/mirror-only-handoff.md"]),
+            ("mirror-only-memory.md",
+             ["mac/projects/-Users-el-x/memory/mirror-only-memory.md"]),
+            ("MEMORY.md", ["ned-box/projects/-home-nedlern-x/memory/MEMORY.md"]),
+            ("mirror-session.jsonl",
+             ["mac/projects/-Users-el-x/mirror-session.jsonl",
+              "ned-box/projects/-home-nedlern-x/mirror-session.jsonl",
+              "recovered/from-a-backup/-Users-el-x/mirror-session.jsonl"])):
+        code, stdout, stderr = run(base, query)
+        same, _, _ = sections(stdout)
+        for path in paths:
+            check(f"a copy only in the transcript mirror is found: {path}",
+                  code == 0 and str(mirror / path) in same, stdout + stderr)
 
 # --- Ranking inside the same-name list ------------------------------------------
 with scratch() as directory:
@@ -732,7 +763,7 @@ with scratch() as directory:
     plan["this"].pop("not_searched_because", None)
     code, stdout, stderr = run(base, "absent-everywhere.md", plan=plan)
     check("run on ned-box, nothing found exits 3: the Mac was not searched",
-          code == 3 and "mac: no route from ned-box to the Mac is documented"
+          code == 3 and "mac: a run on ned-box cannot search the Mac; run the locator on the Mac, which searches both machines"
           in stdout, stdout + stderr)
     check("run on ned-box, the agent is told to run it on the Mac too",
           "To search the Mac as well, run this program on the Mac." in stdout
@@ -769,9 +800,10 @@ check("the production plan searches ned-box's scratch worktrees, "
       len(box_checkouts) == 2
       and all("/tmp/claude-1000" in roots for roots in box_checkouts),
       box_checkouts)
-check("the production log-store surface leaves out transcripts/",
-      log_store and log_store[0]["prune"]
-      == ["/home/nedlern/nedschorus-logs/transcripts"], log_store)
+check("the production log-store surface searches the whole log-store, the "
+      "transcript mirror included",
+      log_store == [{"name": "log-store",
+                     "roots": ["/home/nedlern/nedschorus-logs"]}], log_store)
 
 # --- The query reaches the other machine intact ---------------------------------
 with scratch() as directory:
@@ -1789,6 +1821,20 @@ with scratch() as directory:
           in sections(result.stdout)[0]
           and "NOT searched" not in result.stdout,
           f"exit {result.returncode}\n{result.stdout}{result.stderr}")
+
+# Without -z, git worktree list ends each attribute at a newline, so a
+# worktree path holding a newline was listed cut short.
+with scratch() as directory:
+    base = pathlib.Path(directory).resolve()
+    clone = base / "newline-clone"
+    commit_files(clone, {"README.md": "a clone"}, "Start")
+    newline_worktree = base / "two\nlines-wt"
+    git(clone, "worktree", "add", "-q", "-b", "newline-topic", str(newline_worktree))
+    worktrees, listing_failure = program.worktrees_listed_by(str(clone / ".git"))
+    check("a worktree path holding a newline is listed whole",
+          listing_failure is None
+          and sorted(worktrees) == sorted([str(clone), str(newline_worktree)]),
+          (worktrees, listing_failure))
 
 # --- A printed read-it command reads its clone, whatever the caller's shell sets ---
 # The command runs later in the caller's own shell, which this program never

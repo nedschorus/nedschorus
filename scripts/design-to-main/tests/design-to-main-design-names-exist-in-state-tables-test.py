@@ -79,6 +79,8 @@ def machine_names_in_the_state_tables_module(tables):
             value for name, value in vars(tables).items() if name.startswith("REFUSAL_")},
         "coverage-type": set(tables.COVERAGE_TYPES_THAT_ARE_AGENT_INSTRUCTIONS)
                          | {tables.COVERAGE_TYPE_NO_TESTS},
+        "user-ruling the machine acts on": {
+            value for name, value in vars(tables).items() if name.startswith("RULING_")},
     }
 
 
@@ -110,8 +112,6 @@ MACHINE_NAMES_DEFINED_OUTSIDE_THE_STATE_TABLES_MODULE = {
                              "the state-package's key for the investigation report's path "
                              "(sections 2 and 9)"),
     "tests-begun": ("design-to-main-run-state.py", "a run-state.json field (section 9)"),
-    "reset": ("design-to-main-state-machine.py",
-              "the user's ruling the machine reads in `rulings` (section 7)"),
 }
 
 # Backticked words that are not the machine's names, each with its reason.

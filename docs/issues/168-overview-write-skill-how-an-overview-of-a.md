@@ -21,16 +21,13 @@ The user's rulings on 2026-08-25, in his words: "My intent with readme is that i
 4. Nothing discovers it by its frontmatter. Neither Claude Code nor Codex indexes the frontmatter of ordinary markdown (measured 2026-08-25 from the documentation and the Codex source); an overview is found by its name and place. The name should say what it overviews and end in `-overview`, the naming rule GHI [Write the sanity-checker-overview wiki page: the system map for future editors (user-wanted 2026-08-22)](https://github.com/nedschorus/nedschorus/issues/130) applied.
 5. The rules for how its prose is written are draft-md's (direct and clear, for a naive reader, terms defined before use, one paragraph per line) — this skill does not restate them; it says what an overview must contain and how its claims are checked.
 
-## What the skill must settle
+## Settled by the architecture-overview page
 
-- What an overview contains: the parts of the system and how they fit; what each part reads and writes; where the system's rules live; what a reader must do before touching it; what is not yet built. Which of these are required and which depend on the system.
-- The check: how each claim about code or scripts is verified against them before the overview lands — the sanity-check's mechanization half, or a cold-read cell licensed to run commands, or a new pass; keyed so that only overviews pay for it.
-- The examples-first method: which systems get the first overviews, written by different agents given nothing but "explain this to someone who has to act on it," so the skill is codified from what the user prefers rather than from theory. Candidates named 2026-08-25: the cold read, the sanity-check (which makes GHI [Write the sanity-checker-overview wiki page: the system map for future editors (user-wanted 2026-08-22)](https://github.com/nedschorus/nedschorus/issues/130)'s page the first deliverable), the PR-to-main lane.
-- Where overviews live (`docs/wiki/` is the commissioned home) and how the steward duty attaches.
+The page `docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md` settles what an overview contains and leaves out, where it lives (`docs/nedschorus-wiki/nedschorus-<system>-architecture-overview.md`, one per system under `nc-systems/`), how long it runs, how a refresh keeps it true, and how it is checked against the code: by the overview checks of `scripts/md-drift-lint.py`, which the page specifies and which are not built yet, and by a fresh-agent that checks every assertion the overview makes about the code. "Architecture overview" is listed in `docs/nedschorus-wiki/nedschorus-sdlc-terms.md`. What the page leaves to this issue is the examples-first test, and the skill text if a skill is still needed.
 
 ## Next action
 
-Write the skill's design as a pair document, in the bottom-up order the user set: first the overview type itself, then the check, then the skill text. The design gets a cold read; the skill gets the examples-first test before it is installed. This issue is the home for the rulings as they land.
+Run the examples-first test on the page, without waiting for the `scripts/md-drift-lint.py` checks: two fresh-agents each write the handoff-system's architecture overview from the page alone, and the user picks the better one, which replaces `docs/nedschorus-wiki/nedschorus-handoff-system-overview.md` as `docs/nedschorus-wiki/nedschorus-handoff-architecture-overview.md`. Then the user decides whether an overview-write skill is still needed or the page is enough; if the page is enough, this issue closes.
 
 ## Relations
 

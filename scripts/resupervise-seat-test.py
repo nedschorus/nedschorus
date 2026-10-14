@@ -10,18 +10,23 @@ work.
 Refusal cases run against a scratch handoff directory. The proceed path is
 exercised with --dry-run and with a stub launcher, never by killing a real seat:
 the suite runs on a machine whose own agents are live, so any case that could
-touch a real tmux session is expressed against a name no seat uses.
+touch a real tmux session is expressed against a name no seat uses, on tmux
+servers in a namespace private to this run, so two copies running at once
+cannot share a session.
 
 Run: python3 scripts/resupervise-seat-test.py
 """
 
+import fcntl
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 RESUPERVISE_SCRIPT = Path(__file__).with_name("resupervise-seat.py")
@@ -30,6 +35,79 @@ SUPERVISOR_SCRIPT = (RESUPERVISE_SCRIPT.resolve().parent.parent
                      / "nc-systems" / "handoff" / "handoff-supervisor.py")
 
 failures = []
+
+# Variables Claude Code sets for an agent-session's commands, and one supervisor variable naming
+# the calling agent-seat. TMUX is left out: the script reads it to find the session it runs in.
+CALLING_AGENT_SESSION_TEST_VARIABLES = {
+    "CLAUDECODE": "1",
+    "CLAUDE_CODE_SESSION_ID": "calling-session",
+    "CLAUDE_CODE_CHILD_SESSION": "1",
+    "CLAUDE_CODE_MESSAGING_SOCKET": "/run/user/1000/cc-socks/calling.sock",
+    "CLAUDE_CODE_MESSAGING_TOKEN": "calling-token",
+    "CLAUDE_CODE_SESSION_ATTENDED": "0",
+    "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "calling-seat",
+    "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "/calling/seat/directory",
+    "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": "calling-supervisor-session",
+}
+
+# Set by isolate_tmux_for_this_run(): an empty config file every server this suite starts reads.
+PRIVATE_TMUX_CONFIG = None
+
+OVERLAP_BARRIER_DIRECTORY_VARIABLE = "RESUPERVISE_SEAT_TEST_OVERLAP_BARRIER_DIRECTORY"
+OVERLAP_PEER_COUNT_VARIABLE = "RESUPERVISE_SEAT_TEST_OVERLAP_PEER_COUNT"
+OVERLAP_EXIT_AT_BARRIER_VARIABLE = "RESUPERVISE_SEAT_TEST_OVERLAP_EXIT_AT_BARRIER"
+OVERLAP_BARRIER_TIMEOUT_SECONDS = 60
+
+
+def isolate_tmux_for_this_run() -> Path:
+    """Give every tmux call in this run, the script's included, a private server namespace.
+
+    tmux places the socket for `-L <name>` under $TMUX_TMPDIR, so a fresh
+    TMUX_TMPDIR keeps the logical `default` and per-seat server names the
+    script under test probes, while two copies of this suite never share a
+    server or a session. $TMUX is cleared so nothing resolves to a surrounding
+    seat's server. /tmp is used where it exists because a socket path longer
+    than about 104 bytes is refused, and macOS's per-user temp directory alone
+    takes about 50 of them.
+    """
+    global PRIVATE_TMUX_CONFIG
+    base = "/tmp" if os.path.isdir("/tmp") else tempfile.gettempdir()
+    namespace = Path(tempfile.mkdtemp(prefix="resupervise-tmux-", dir=base))
+    os.environ["TMUX_TMPDIR"] = str(namespace)
+    os.environ.pop("TMUX", None)
+    os.environ.pop("TMUX_PANE", None)
+    PRIVATE_TMUX_CONFIG = namespace / "empty-tmux.conf"
+    PRIVATE_TMUX_CONFIG.write_text("", encoding="utf-8")
+    return namespace
+
+
+def end_private_tmux_namespace(namespace: Path):
+    """Kill every server in this run's own namespace, by socket path, then remove it."""
+    socket_directory = namespace / f"tmux-{os.getuid()}"
+    if socket_directory.is_dir() and shutil.which("tmux") is not None:
+        for socket in socket_directory.iterdir():
+            subprocess.run(["tmux", "-S", str(socket), "kill-server"],
+                           capture_output=True, check=False)
+    shutil.rmtree(namespace, ignore_errors=True)
+
+
+def overlap_barrier(point: str):
+    """Hold here until every overlapping copy reaches the same point; a no-op in an ordinary run.
+
+    The paired-overlap test sets these variables so two copies hold their tmux
+    sessions at the same moment, which is when the copies used to collide.
+    """
+    directory = os.environ.get(OVERLAP_BARRIER_DIRECTORY_VARIABLE)
+    if not directory:
+        return
+    peers = int(os.environ.get(OVERLAP_PEER_COUNT_VARIABLE, "2"))
+    Path(directory, f"{point}-arrived-{os.getpid()}").touch()
+    deadline = time.monotonic() + OVERLAP_BARRIER_TIMEOUT_SECONDS
+    while len(list(Path(directory).glob(f"{point}-arrived-*"))) < peers and time.monotonic() < deadline:
+        time.sleep(0.05)
+    Path(directory, f"{point}-released-{os.getpid()}").touch()
+    if os.environ.get(OVERLAP_EXIT_AT_BARRIER_VARIABLE) == point:
+        os._exit(9)
 
 
 def check(case_name, condition, detail=""):
@@ -220,24 +298,28 @@ def run_missing_launcher_case(workspace: Path):
     # which transcript is worth resuming from scripts/ (issue 242 change 5).
     # Both are resolved from the repository root, so the isolated copy needs
     # the repository's SHAPE around it rather than two files beside it.
-    # The supervisor also imports the agent-binary update lock from scripts/
-    # (2026-09-22), so that module is copied beside the first, and the
-    # pinned-line reader in stale-code-citation-check.py (2026-09-28). The
-    # daily memory review's mark program (2026-09-30) sits beside the
-    # supervisor, so it is copied beside the supervisor's copy, and so is the
-    # mark program of the day's overview refresh reminder (2026-10-01).
+    # The modules the supervisor loads from scripts/ are read from its own
+    # source, so a new import there needs no change here.
     supervisor_home = workspace / "nc-systems" / "handoff"
     supervisor_home.mkdir(parents=True)
     for supervisor_file in ("handoff-supervisor.py", "daily-memory-review-mark.py",
-                            "daily-overview-refresh-reminder-mark.py"):
+                            "daily-overview-refresh-reminder-mark.py",
+                            "uncommitted-work-snapshots.py"):
         (supervisor_home / supervisor_file).write_text(
             SUPERVISOR_SCRIPT.with_name(supervisor_file).read_text(encoding="utf-8"),
             encoding="utf-8")
+    # uncommitted-work-snapshots.py reads git's output with the shared module.
+    general_tools_home = workspace / "nc-systems" / "general-tools"
+    general_tools_home.mkdir(parents=True)
+    git_output_module = "git-machine-readable-output-runner-and-parser-common.py"
+    (general_tools_home / git_output_module).write_text(
+        (SUPERVISOR_SCRIPT.parents[1] / "general-tools" / git_output_module)
+        .read_text(encoding="utf-8"), encoding="utf-8")
     scripts_home = workspace / "scripts"
     scripts_home.mkdir(parents=True, exist_ok=True)
-    for supervisor_import in ("seat-transcript-worth-resuming.py",
-                              "agent-binary-update-under-lock.py",
-                              "stale-code-citation-check.py"):
+    for supervisor_import in re.findall(
+            r'SCRIPTS_DIRECTORY / "([\w-]+\.py)"\)',
+            SUPERVISOR_SCRIPT.read_text(encoding="utf-8")):
         (scripts_home / supervisor_import).write_text(
             RESUPERVISE_SCRIPT.with_name(supervisor_import)
             .read_text(encoding="utf-8"), encoding="utf-8")
@@ -309,9 +391,11 @@ def run_end_to_end_case(workspace: Path):
     isolated = workspace / "isolated"
     copied = isolated / "resupervise-seat.py"
     launcher_record = workspace / "launcher-ran.txt"
+    launcher_environment_record = workspace / "launcher-environment.txt"
     stub_launcher = isolated / "launch-claude-mac"
     stub_launcher.write_text(
-        f'#!/bin/sh\necho "ran $1" >> {launcher_record}\n', encoding="utf-8"
+        f'#!/bin/sh\necho "ran $1" >> {launcher_record}\n'
+        f'env > {launcher_environment_record}\n', encoding="utf-8"
     )
     stub_launcher.chmod(0o755)
 
@@ -326,25 +410,45 @@ def run_end_to_end_case(workspace: Path):
     # 30-s-limited lsof and tmux calls, and a session that ended first reads as
     # the script's kill failing (measured 2026-09-24 with both slowed 29 s: a
     # `sleep 120` pane was gone when kill-session ran at 145 s). Not a read of
-    # stdin to EOF: a pane's stdin is its tty, which never closes.
+    # stdin to EOF: a pane's stdin is its tty, which never closes. Not this
+    # suite's pid either: the default server can run outside the suite's PID
+    # namespace, where that number names another process or none. The pane
+    # waits on a lock this suite holds, which the kernel frees when it exits.
+    alive_lock_path = workspace / "suite-alive.lock"
+    alive_lock = open(alive_lock_path, "w")
+    fcntl.flock(alive_lock, fcntl.LOCK_EX)
+    wait_for_suite = ("import fcntl, sys; fcntl.flock(open(sys.argv[1]), fcntl.LOCK_SH)")
     created = subprocess.run(
-        ["tmux", "-L", "default", "new-session", "-d", "-s", session,
-         "-c", str(workspace), f"while kill -0 {os.getpid()} 2>/dev/null; do sleep 1; done"],
+        ["tmux", "-f", str(PRIVATE_TMUX_CONFIG), "-L", "default", "new-session", "-d", "-s", session,
+         "-c", str(workspace),
+         shlex.join([sys.executable, "-c", wait_for_suite, str(alive_lock_path)])],
         capture_output=True, text=True, check=False,
     )
+    overlap_barrier("default-server-session-held")
+    # tmux is installed, so a session that cannot be made is a failure: a skip here once hid every check below.
     if created.returncode != 0:
-        print(f"SKIP  end-to-end: could not create a tmux session ({created.stderr.strip()})")
+        alive_lock.close()
+        check("end-to-end: the suite's tmux session is created", False, created.stderr.strip())
         return
 
     try:
+        # Run as from another agent-session's shell, whose variables must not reach the seat.
         result = subprocess.run(
             [sys.executable, str(copied), session,
              "--handoff-dir", str(workspace), "--agents-root", str(workspace / "agents")],
             capture_output=True, text=True, check=False,
+            env={**os.environ, **CALLING_AGENT_SESSION_TEST_VARIABLES},
         )
         check("the proceed path runs the launcher",
               launcher_record.is_file() and session in launcher_record.read_text(),
               result.stdout + result.stderr)
+        launcher_environment = {
+            line.split("=", 1)[0] for line in (
+                launcher_environment_record.read_text().splitlines()
+                if launcher_environment_record.is_file() else [])}
+        leaked = sorted(set(CALLING_AGENT_SESSION_TEST_VARIABLES) & launcher_environment)
+        check("the launcher gets none of the calling agent-session's variables",
+              launcher_environment_record.is_file() and not leaked, leaked)
         still_there = subprocess.run(
             ["tmux", "-L", "default", "has-session", "-t", f"={session}"],
             capture_output=True, text=True, check=False,
@@ -358,6 +462,7 @@ def run_end_to_end_case(workspace: Path):
     finally:
         subprocess.run(["tmux", "-L", "default", "kill-session", "-t", f"={session}"],
                        capture_output=True, check=False)
+        alive_lock.close()
 
 
 def run_per_seat_server_end_to_end_case(workspace: Path):
@@ -392,13 +497,14 @@ def run_per_seat_server_end_to_end_case(workspace: Path):
     # given in run_end_to_end_case: a fixed `sleep 120` expired before the
     # script's kill-session when its lsof and tmux calls were slow.
     created = subprocess.run(
-        ["tmux", "-L", session, "new-session", "-d", "-s", session,
+        ["tmux", "-f", str(PRIVATE_TMUX_CONFIG), "-L", session, "new-session", "-d", "-s", session,
          "-c", str(workspace), f"while kill -0 {os.getpid()} 2>/dev/null; do sleep 1; done"],
         capture_output=True, text=True, check=False,
     )
+    overlap_barrier("per-seat-server-session-held")
     if created.returncode != 0:
-        print(f"SKIP  per-seat end-to-end: could not create a per-seat tmux session "
-              f"({created.stderr.strip()})")
+        check("per-seat end-to-end: the suite's per-seat tmux session is created",
+              False, created.stderr.strip())
         return
 
     try:
@@ -692,6 +798,15 @@ def run_ubuntu_launcher_hook_case():
 
 
 def main() -> int:
+    tmux_namespace = isolate_tmux_for_this_run()
+    print(f"tmux namespace for this run: {tmux_namespace}", flush=True)
+    try:
+        return run_all_cases()
+    finally:
+        end_private_tmux_namespace(tmux_namespace)
+
+
+def run_all_cases() -> int:
     with tempfile.TemporaryDirectory(prefix="resupervise-seat-test-") as scratch:
         workspace = Path(scratch)
         run_no_handoff_cases(workspace)

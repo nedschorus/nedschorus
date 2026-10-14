@@ -461,9 +461,10 @@ with tempfile.TemporaryDirectory() as workspace:
     check("companion extraction exits 0", exit_code == 0, f"got {exit_code}")
     check("companion file is written when turns are left behind",
           companion_output.is_file())
+    companion_text = companion_output.read_text(encoding="utf-8") if companion_output.is_file() else ""
     check("companion carries every dialog turn",
-          companion_output.read_text(encoding="utf-8").count("\n## ") == 20,
-          companion_output.read_text(encoding="utf-8").count("\n## "))
+          companion_text.count("\n## User\n") + companion_text.count("\n## Agent\n") == 20,
+          companion_text.count("\n## "))
     tail_text = tail_output.read_text(encoding="utf-8")
     check("extract points at the companion", str(companion_output) in tail_text)
     check("extract names thinking in the transcript pointer", "thinking" in tail_text)

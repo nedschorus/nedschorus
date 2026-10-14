@@ -164,8 +164,8 @@ with tempfile.TemporaryDirectory() as workspace:
     # Markdown lets a target be written `[x](<docs/file.md>)`, and that target
     # is the path inside the brackets. Before the unwrap, every angle-bracket
     # target matched the placeholder skip above and a missing file behind one
-    # was never reported. A path ends in a known extension; a placeholder such
-    # as <URL> does not, and the placeholder cases above still pass.
+    # was never reported. A path has a "/" or a file extension; a placeholder
+    # such as <URL> has neither, and the placeholder cases above still pass.
     findings = problems_for("[doc](<docs/absent-angle-doc.md>)", root)
     check("a missing path in an angle-bracket link target is reported",
           findings == ["link target does not exist: docs/absent-angle-doc.md"],
@@ -179,6 +179,45 @@ with tempfile.TemporaryDirectory() as workspace:
     check("an angle-bracket link target with an anchor is checked without the anchor",
           findings == ["link target does not exist: docs/absent-angle-doc.md"],
           str(findings))
+    # A link target carrying a line number is a broken link in either form,
+    # so the angle form is reported exactly as the plain form is.
+    findings = problems_for("[doc](<docs/real-doc.md:12>)", root)
+    check("an angle-bracket link target with a line number is reported like the plain form",
+          findings == ["link target does not exist: docs/real-doc.md:12"]
+          and findings == problems_for("[doc](docs/real-doc.md:12)", root),
+          str(findings))
+    # An extension the backtick path check does not know is still a file in a link.
+    (root / "docs" / "real-image.png").write_bytes(b"png")
+    findings = problems_for("[img](<docs/absent-angle-image.png>)", root)
+    check("a missing angle-bracket link target with any extension is reported",
+          findings == ["link target does not exist: docs/absent-angle-image.png"],
+          str(findings))
+    findings = problems_for("[img](<docs/real-image.png>)", root)
+    check("an existing angle-bracket link target with any extension passes",
+          findings == [], str(findings))
+    findings = problems_for("[img](<absent-angle-sibling.png>)", root)
+    check("an angle-bracket link target with an extension and no directory is reported",
+          findings == ["link target does not exist: absent-angle-sibling.png"],
+          str(findings))
+    # The extension is read before the "#anchor": an anchor ending in "." gives
+    # the whole text no suffix under Python 3.13.
+    findings = problems_for("[doc](<absent-angle-sibling.md#section.>)", root)
+    check("an angle-bracket link target's extension is read before its anchor",
+          findings == ["link target does not exist: absent-angle-sibling.md"],
+          str(findings))
+    findings = problems_for("[dir](<docs/absent-angle-directory>)", root)
+    check("an angle-bracket link target with a directory and no extension is reported",
+          findings == ["link target does not exist: docs/absent-angle-directory"],
+          str(findings))
+    findings = problems_for("[doc](<URL>)", root)
+    check("a one-word angle-bracket link target is a placeholder, not checked",
+          findings == [], str(findings))
+    # The number check finds its code file through referenced_files, which
+    # unwraps the target too; without that unwrap this line reports nothing.
+    findings = problems_for(
+        "the floor in [the script](<scripts/real-script.py>) is `9999`", root)
+    check("a number is checked against a code file cited in an angle-bracket link",
+          findings == ["number 9999 not found in real-script.py"], str(findings))
 
     # --- Dates ------------------------------------------------------------
     check("a real date passes", problems_for("ruled 2026-08-12 by", root) == [])

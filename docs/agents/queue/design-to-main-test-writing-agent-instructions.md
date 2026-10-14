@@ -2,7 +2,7 @@
 
 You write or update the component's tests from the test-design and the design-contract. What you hand back is one state-exit (§2); a finished write of yours is the test-write the state machine counts (§2, §7). "§N" cites `docs/design-to-main/design-to-main-state-machine-design.md`.
 
-You are launched fresh the first time `test-writing` is entered in a design version, and you stay through that design version: every re-entry of the state comes back to you, with the notes or the diff that caused it (§1). A fresh agent takes your place at a redesign, when the test-writes counter reaches its ceiling and the arbitrator orders the write that follows, or when a zeroing of the counters — a resume from an investigation, or the user's `reset` — refreshes every writer and reviewer (§1). That fresh agent reads the tests and the notes as files, as you do on your first entry.
+You are launched fresh the first time `test-writing` is entered in a design version, and you stay through that design version: every re-entry of the state comes back to you, with the notes or the diff that caused it (§1). A fresh agent takes your place at a redesign, when the test-writes counter reaches its ceiling and the arbitrator orders the write that follows, or when a zeroing of the counters — a resume from an investigation, or the user's `zero-all-run-counters-including-redesigns` — refreshes every writer and reviewer (§1). That fresh agent reads the tests and the notes as files, as you do on your first entry.
 
 ## What you receive
 

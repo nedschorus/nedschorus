@@ -61,8 +61,7 @@ DEFAULT_UNIT_NAME = "restart-live-seats-at-login"
 PROGRAM_FILE_NAME = "restart-live-seats-at-login.py"
 SYSTEMD_OUTPUT_FILE_NAME = "restart-live-seats-at-login-systemd-output.txt"
 PYTHON_PATH = "/usr/bin/python3"
-# Where the fleet's binaries live on the box, measured 2026-09-14: claude in
-# ~/.local/bin, tmux and gh in /usr/bin.
+# The boot-time manager needs ~/.local/bin for claude and /usr/bin for tmux and gh.
 SYSTEMD_PATH = "{home}/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
 
@@ -71,8 +70,7 @@ def default_user_unit_directory() -> Path:
 
 
 def output_directory_of(handoff_directory, home: Path = Path.home()) -> Path:
-    """Where the unit's output file lives: the handoff directory passed to
-    the program, made absolute, or the program's default."""
+    """Return the absolute output directory, using the program default if unspecified."""
     if handoff_directory is None:
         return home / ".claude" / "handoffs"
     return Path(os.path.abspath(handoff_directory))
@@ -80,10 +78,8 @@ def output_directory_of(handoff_directory, home: Path = Path.home()) -> Path:
 
 def unit_text(unit_name: str, checkout: Path, handoff_directory,
               home: Path = Path.home()) -> str:
-    """The unit file. handoff_directory None means the program's default
-    (~/.claude/handoffs); a directory is passed to the program and holds the
-    output file. Paths are made absolute whatever was typed, because the
-    manager resolves nothing against the shell's working directory."""
+    """Return the systemd unit text."""
+    # The manager does not resolve paths against the invoking shell's working directory.
     checkout = Path(os.path.abspath(checkout))
     program = checkout / "scripts" / PROGRAM_FILE_NAME
     command = f"{PYTHON_PATH} {program}"
@@ -114,11 +110,7 @@ def systemctl(run, *arguments):
 
 
 def unit_is_enabled(unit_name: str, run=subprocess.run) -> bool:
-    """Whether the manager holds an enable symlink for this unit. is-enabled
-    exits 0 for enabled and nonzero for disabled, unknown, or unreachable —
-    the last two read as not enabled, which is the safe reading here: the
-    refusal below guards a symlink that exists, and a manager that cannot
-    answer has none to report."""
+    """Return whether systemctl reports the unit enabled."""
     return run(["systemctl", "--user", "is-enabled", f"{unit_name}.service"],
                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
@@ -133,10 +125,7 @@ def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: P
               file=sys.stderr)
         return 1
     if start_now and unit_is_enabled(unit_name, run):
-        # Refused before anything is written: start leaves the enable
-        # symlink in place, so the unit would run at every boot too, and
-        # its file — rewritten here with this run's --handoff-dir — is the
-        # one boot would run (PR #358 review, items 1 and 2).
+        # Starting preserves enable symlinks; rewriting an enabled unit would alter future boots.
         print(f"install-restart-live-seats-at-login-systemd-unit: {unit_name} is enabled, "
               "so a test start would leave it running at every boot with this run's "
               "arguments; --remove it first, or pass a throwaway --unit-name",
@@ -144,10 +133,7 @@ def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: P
         return 1
     unit_path = unit_directory / f"{unit_name}.service"
     unit_directory.mkdir(parents=True, exist_ok=True)
-    # StandardOutput=append: does not create the file's directory, and a
-    # start into a missing one fails before the program's own mkdir can run
-    # (PR #358 review, item 4). The program's default directory exists on
-    # any machine that has run a seat; a throwaway --handoff-dir may not.
+    # StandardOutput=append: cannot create directories; startup fails before the program can mkdir.
     output_directory_of(handoff_directory, home).mkdir(parents=True, exist_ok=True)
     unit_path.write_text(unit_text(unit_name, checkout, handoff_directory, home=home),
                          encoding="utf-8")
@@ -158,7 +144,7 @@ def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: P
               "unit is written but the manager has not read it", file=sys.stderr)
         return 1
     if start_now:
-        # Started, not enabled: a throwaway must not run at every boot.
+        # Throwaway test units must not run at boot.
         started = systemctl(run, "start", f"{unit_name}.service")
         if started.returncode != 0:
             print(f"  systemctl --user start failed (exit {started.returncode})",
@@ -177,13 +163,8 @@ def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: P
 
 
 def remove(unit_name: str, unit_directory: Path, run=subprocess.run) -> int:
-    """Disable, delete, reload — and say only what happened (PR #358 review,
-    item 3: the old version printed "disabled ... and removed ..." and exited
-    0 with the manager unreachable). disable fails for a unit the manager
-    does not know, which is expected when there is no unit file — nothing to
-    disable — and is a failure when there is one: the manager should know
-    it, so the enable symlink may still be there. A failed reload always
-    counts: the manager still holds the old unit."""
+    """Disable and remove the unit, returning nonzero on failure."""
+    # A missing unit need not disable successfully; a failed reload still leaves stale manager state.
     unit_path = unit_directory / f"{unit_name}.service"
     had_file = unit_path.is_file()
     disabled = systemctl(run, "disable", f"{unit_name}.service").returncode == 0
@@ -232,8 +213,7 @@ def main(argv=None, platform: str = sys.platform, unit_directory: Path = None,
         parser.error("systemd units are for the box; on the Mac the sibling is the "
                      "LaunchAgent, install-restart-live-seats-at-login-launch-agent.py")
     if arguments.start_now and arguments.unit_name == DEFAULT_UNIT_NAME:
-        # The product unit is what boot runs; a test start of it would
-        # rewrite it with this run's arguments (PR #358 review, item 2).
+        # A test start would overwrite the product unit's boot arguments.
         parser.error(f"--start-now needs a throwaway --unit-name: {DEFAULT_UNIT_NAME} is "
                      "the unit boot runs")
     unit_directory = unit_directory or default_user_unit_directory()

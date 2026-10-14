@@ -1,10 +1,10 @@
 # File naming and location standards
 
-The naming and location convention for this project's files. Where internal or external systems dictate the name or location of files we follow those dictates. Our standards only cover this project's systems. Our CLAUDE.md has our general naming rules, which include file names. Our skills and scripts may specify their own file names and locations. This document complements, not replaces, those other methods and instructions. 
+The naming and location convention for this project's files. Where internal or external systems dictate the name or location of files we follow those dictates. Our standards only cover this project's systems. `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md` says how to choose the words of every name, file names included, and CLAUDE.md states it in brief; this page gives the patterns and locations for each kind of file. Our skills and scripts may specify their own file names and locations. This document complements, not replaces, those other methods and instructions. 
 
 ## Terms this page uses
 
-`docs/nedschorus-wiki/nedschorus-glossary.md` defines the project-terms. `.claude/skills/skills-glossary.md` and `docs/design-to-main/design-to-main-glossary.md` define the system-terms of the skills and of design-to-main. We avoid spaces in directory and file names, using a hyphen, `-`, instead.
+`docs/nedschorus-wiki/nedschorus-glossary.md` defines the project-terms. `.claude/skills/skills-glossary.md`, `docs/design-to-main/design-to-main-glossary.md` and `nc-systems/main-gatekeeper/main-gatekeeper-glossary.md` define the system-terms of the skills, of design-to-main and of the main-gatekeeper. We avoid spaces in directory and file names, using a hyphen, `-`, instead.
 
 - **stem**: a filename without its extension.
 - **suffix**, on this page: the last hyphen-separated part of the filename
@@ -14,7 +14,7 @@ The naming and location convention for this project's files. Where internal or e
 
 A file on main that is not where this page says is moved there by GHI [Rationalize the repository layout: group components by owning system under nc-systems/, and a hook dispatcher](https://github.com/nedschorus/nedschorus/issues/224), one system at a time, each move repointing every citation in the same commit. A new file goes where this page says, creating the directory if needed, unless its system, skill or script names another place.
 
-A file in a queue directory is named as it will be at its home, apart from the issue number a GHI-MD gains when its GHI is filed, so promoting it is a `git mv`.
+A file in a queue directory is named as it will be at its canonical location, apart from the issue number a GHI-MD gains when its GHI is filed, so promoting it is a `git mv`.
 
 - **Skill prompt, the text a skill's own reviewer or cell runs**
   - **Location:** `nc-systems/skills/<skill name>/`
@@ -24,7 +24,7 @@ A file in a queue directory is named as it will be at its home, apart from the i
   - **Naming:** `<what it does>.py`, such as `instruction-file-guard.py` or `ghi-issue-write-redirect.py`
 - **Tests, test-designs, design-contracts**
   - **Location:** a test goes in a `tests/` subdirectory when the code sits in a directory of its own, such as `nc-systems/main-gatekeeper/tests/` or `scripts/design-to-main/tests/`; beside the script it tests when the script sits loose in `scripts/` or `.claude/hooks/`, for example `scripts/dangling-path-citation-check-test.py`.
-  - **Test Names:** `<multi-part-name>-test.<extension>`, for example `scripts/dangling-path-citation-check-test.py`
+  - **Test Names:** `<name of the program tested>-test.<extension>`, for example `scripts/dangling-path-citation-check-test.py`; when one program has several test files, see "Name a test file after what it tests" in `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md`
   - **Test-Design Name:** `<multi-part-name>-test-design.md`
   - **Test-Design Location:** beside its design
   - **Design-contract Name:** its design's name with `-design.md` replaced by `-contract.md`, beside its design
@@ -46,7 +46,11 @@ A file in a queue directory is named as it will be at its home, apart from the i
 - **Program, in Python or shell**
   - **Location:** `nc-systems/<system-name>/` for a system's own; `nc-systems/general-tools/` for one that belongs to no system
   - **Naming:** `<multi-part-name>.py` or `<multi-part-name>.sh`; a launcher people type as a command, such as `launch-claude-mac`, has no extension
-- **Draft of a kind that has no queue**
+- **Prose a program reads as its data**: a fixed file whose content a program parses, such as the style guide's word table; a prompt, agent-instructions and a GHI-MD keep their own entries above
+  - **Location:** where the agents who should read it look: `docs/nedschorus-wiki/` when every agent should read it; otherwise the `docs/` directory of the system whose program reads it, or `nc-systems/general-tools/docs/` when that program belongs to no one system
+  - **Naming:** by that location's rule
+  - **Pairing:** each program that reads the file names the file in one constant, and the file names, before its data, each program that reads it
+- **A `-draft` file of a kind that has no queue**
   - **Location:** `docs/drafts/`
   - **Naming:** `<subject>-draft.md`; a version frozen for reviewers is `<subject>-candidate.md`. Candidates move to the log-store's `seats/<seat name>/` once the work they served has landed on main. 
 
@@ -60,7 +64,7 @@ The user reviews every change to these files, from a file's first version in its
 - every reusable prompt, a file whose name ends `-prompt.md` or `-instructions.md`;
 - `CLAUDE.md`, any `CLAUDE.local.md`, and everything under `.claude/` except its working space: `worktrees/`, `jobs/` and `handoffs/`.
 
-The list does not reach the draft places, where agents write drafts freely: any `queue/` directory, such as `docs/agents/queue/`, `docs/issues/queue/` or `docs/nedschorus-wiki/queue/`, `nc-queue/`, and `docs/drafts/`. Test-designs and design-contracts are not on the list, wherever they sit, `nc-systems/skills/` included: design-to-main brings them to the user. Nor are the frozen copies inside `cold-read-records/`, `md-review-records/` and `sanity-check-records/`. `.claude/hooks/instruction-file-guard.py` enforces the list for an agent's file-editing tools; a shell command, `git mv` or a program is not checked.
+The list does not reach the places for documents pending approval, where agents write them freely: any `queue/` directory, such as `docs/agents/queue/`, `docs/issues/queue/` or `docs/nedschorus-wiki/queue/`, `nc-queue/`, and `docs/drafts/`. Test-designs and design-contracts are not on the list, wherever they sit, `nc-systems/skills/` included: design-to-main brings them to the user. Nor are the frozen copies inside `cold-read-records/`, `md-review-records/` and `sanity-check-records/`. `.claude/hooks/instruction-file-guard.py` enforces the list for an agent's file-editing tools; a shell command, `git mv` or a program is not checked.
 
 ## Filename suffixes
 
@@ -71,5 +75,5 @@ The list does not reach the draft places, where agents write drafts freely: any 
 * `-candidate`: a version frozen for reviewers to read.
 * `-analysis`: a study of data, with its method and conclusions.
 
-A file with one of the six suffixes above is a log, kept in the log-store and never in git, with two exceptions: a draft or candidate while it waits for review, in `docs/drafts/` or a queue directory; and a GHI-MD, which is its GHI's substance even when it ends `-report`, such as `docs/issues/142-draft-md-prompt-research-report.md`. The log-store's `README.md`, `nedlern@ned-box:/home/nedlern/nedschorus-logs/README.md`, names the program or skill that owns each of its directories, and that owner names the files.
+A file with one of the six suffixes above is a log, kept in the log-store and never in git, with two exceptions: a `-draft` or `-candidate` file while it waits for review, in `docs/drafts/` or a queue directory; and a GHI-MD, which is its GHI's substance even when it ends `-report`, such as `docs/issues/142-draft-md-prompt-research-report.md`. The log-store's `README.md`, `nedlern@ned-box:/home/nedlern/nedschorus-logs/README.md`, names the program or skill that owns each of its directories, and that owner names the files.
 

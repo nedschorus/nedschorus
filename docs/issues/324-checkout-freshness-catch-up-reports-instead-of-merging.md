@@ -1,3 +1,7 @@
+---
+issue: "[checkout-freshness catch-up merges main into a branch whose head is frozen under review](https://github.com/nedschorus/nedschorus/issues/324)"
+---
+
 # checkout-freshness catch-up reports instead of merging
 
 Pair document for issue [checkout-freshness catch-up merges main into a branch whose head is frozen under review](https://github.com/nedschorus/nedschorus/issues/324).
@@ -282,3 +286,7 @@ The merges the old behaviour made onto frozen or finished heads, from the
 | 2026-09-15 | the same | after PR [restart-live-seats-at-login restarts whatever was live at the stop, however long the machine sat off (user-ruled 2026-09-15)](https://github.com/nedschorus/nedschorus/pull/370) merged |
 
 None was pushed. Nine in five days on one seat is the rate.
+
+## Outcome
+
+Closed as completed on 2026-09-15. Three pull requests carried the work: [checkout-freshness catch-up reports instead of merging into the working branch (#324)](https://github.com/nedschorus/nedschorus/pull/372) and [ghi-info-ask fast-forwards its own checkout before each ask (#324's open question, answered)](https://github.com/nedschorus/nedschorus/pull/375), both merged on 2026-09-15, and [The hook rebases a never-pushed branch onto main and tells the agent what moved](https://github.com/nedschorus/nedschorus/pull/388), merged the same day, which built the walk's ruling. One leftover went to GHI [checkout-freshness catch-up: pin the two git rebase --abort shapes healthy git cannot produce](https://github.com/nedschorus/nedschorus/issues/389), filed just before this issue closed. The section "Next, proposed and not built: warn on the obsolete FILE, not the branch" was not built when this issue closed.

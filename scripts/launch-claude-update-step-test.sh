@@ -46,6 +46,8 @@ EOF
 cat > "$STUBS/tmux" << 'EOF'
 #!/bin/sh
 echo "tmux $*" >> "${TMUX_CALL_LOG:?}"
+# Each argument bracketed, so a test can tell one argument from two.
+printf '<%s>' "$@" >> "${TMUX_CALL_LOG:?}.arguments"; echo >> "${TMUX_CALL_LOG:?}.arguments"
 # The transition-fallback case makes the SEAT's own server look empty: a
 # has-session against the socket named by TMUX_STUB_SEATLESS_SOCKET fails,
 # while every other call (the default socket's has-session included)
@@ -123,6 +125,10 @@ grep -q -- "-L seat-okcase new-session" "$WORKSPACE/tmux-calls-okcase"
 check "the mac seat is created on its own tmux server (-L <name>)" $?
 grep -q -- "-L seat-okcase new-session .*; set-option -g set-titles on" "$WORKSPACE/tmux-calls-okcase"
 check "the mac launcher chains set-titles onto the seat's own server" $?
+# The window title starts with the machine, so a Mac seat's window cannot be
+# mistaken for a box seat's window with a similar name.
+grep -qF -- "<set-titles-string><[mac] #S>" "$WORKSPACE/tmux-calls-okcase.arguments"
+check "the mac launcher's window title reads [mac] <seat>" $?
 
 # The rollout transition: a seat still running on the DEFAULT server
 # (launched before per-seat servers) must be reached there, not duplicated on
@@ -233,6 +239,10 @@ case "$box_command" in
     (*'\; set-option -g set-titles on'*) check "ubuntu box command chains set-titles onto the seat's server" 0 ;;
     (*) check "ubuntu box command chains set-titles onto the seat's server" 1 ;;
 esac
+case "$box_command" in
+    (*"\\; set-option -g set-titles-string '[box] #S'"*) check "ubuntu box command's window title reads [box] <seat>" 0 ;;
+    (*) check "ubuntu box command's window title reads [box] <seat>" 1 ;;
+esac
 
 # The after-exit prompt, both twins. When a supervisor exits, its shell offers
 # the operator a choice, and the ordering is load-bearing: `claude --continue`
@@ -271,6 +281,10 @@ assert_supervised_option_is_first() {
 PATH="$STUBS:$PATH" sh "$SCRIPT_DIRECTORY/launch-claude-ubuntu" seatub \
     > "$WORKSPACE/out-ubuntu-attached" 2>&1
 assert_supervised_option_is_first "ubuntu box command" "$(cat "$WORKSPACE/out-ubuntu-attached")"
+case "$(cat "$WORKSPACE/out-ubuntu-attached")" in
+    (*"new-session -A"*"\\; set-option -g set-titles-string '[box] #S'"*) check "ubuntu box command's attached launch titles the window [box] <seat>" 0 ;;
+    (*) check "ubuntu box command's attached launch titles the window [box] <seat>" 1 ;;
+esac
 
 # The Mac twin's prompt rides in the command it hands tmux, which the tmux stub
 # logs. --no-attach never reaches the after-exit shell (a detached seat keeps
@@ -290,6 +304,11 @@ NEDSCHORUS_AGENTS_ROOT="$WORKSPACE/agents" \
 PATH="$STUBS:$PATH" sh "$SCRIPT_DIRECTORY/launch-claude-mac" seatprompt \
     > "$WORKSPACE/out-mac-prompt" 2>&1
 assert_supervised_option_is_first "mac tmux command" "$(cat "$WORKSPACE/tmux-calls-afterexit")"
+# The attached launch sets the title again, so it is checked on its own: a
+# title right on one path and wrong on the other is the drift this catches.
+grep -qF -- "<new-session><-A>" "$WORKSPACE/tmux-calls-afterexit.arguments" \
+    && grep -qF -- "<set-titles-string><[mac] #S>" "$WORKSPACE/tmux-calls-afterexit.arguments"
+check "the mac launcher's attached launch titles the window [mac] <seat>" $?
 
 # The sandbox itself, asserted rather than assumed. The launcher's pre-trust step
 # always writes a .claude.json somewhere; the only question is whose. Thirteen

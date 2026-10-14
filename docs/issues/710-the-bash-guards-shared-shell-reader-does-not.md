@@ -4,7 +4,17 @@ issue: "[The Bash guards' shared shell reader does not read inside a double-quot
 
 # The Bash guards' shared shell reader does not read inside a double-quoted command substitution
 
-Agent-filed by merge-lane-2 on 2026-09-24, from a reproduced review finding. The reproduction is first; the cause and the next action follow it.
+Agent-filed by merge-lane-2 on 2026-09-24, from a reproduced review finding. Its outcome is first; the reproduction, the cause and the next action follow it.
+
+## Outcome
+
+PR [The Bash guards' shell reader reads a command substitution inside double quotes as commands](https://github.com/nedschorus/nedschorus/pull/886) builds the next action below. It merged on 2026-10-02 as `36c270f1`, after four review rounds. The shared reader in `scripts/synthetic-keystroke-guard-hook.py` now reads a `$( … )` inside double quotes as commands, and reads the `$( … )` substitutions in a heredoc's body, which bash also runs. All three guards that use the reader take the change, and so does the leading-dash guard, `scripts/search-file-argument-read-as-option-guard-hook.py`, which main gained while the pull request was in review; its test, `scripts/search-file-argument-read-as-option-guard-hook-test.py`, gained cases for the change.
+
+As the next action asks, both reproductions are test cases in each guard's own test, written with that guard's own command: `.claude/hooks/ghi-issue-write-redirect-test.py`, `scripts/synthetic-keystroke-guard-hook-test.py` and `scripts/force-push-with-open-pull-request-guard-hook-test.py`.
+
+The pull request also refuses some commands that main let through, in each of which bash runs a guarded command. The user ruled on 2026-10-02 that those refusals stay. His "Y for both" covers a `$'…\'…'` string before a guarded command, and a guarded command in a substitution inside a heredoc's body. His "Y" covers three more found in round 3: a partly quoted or backslashed heredoc delimiter followed by a guarded command; a `"$( … )"` whose heredoc body holds a `"`, followed by a guarded command; and a backticked guarded command after a `$'…\'…'` string. In the same review, he adopted a stopping rule for reviews of the guards' reader: a finding blocks a merge only when replaying the real commands agents typed changes a guard's verdict, or when evidence shows agents commonly type the form; a form found only by construction or by a random generator is a non-blocking note. Replayed at the merged head, 103,032 real (command, working directory) pairs from both machines changed no verdict.
+
+Left as notes, not built: at about 500 nested unquoted heredocs inside body substitutions, the guards raise RecursionError and let the command through (in `scripts/synthetic-keystroke-guard-hook.py`, the reader's limit on nesting depth, `MAX_SUBSTITUTION_NESTING`, is not checked on the heredoc path). It is a constructed form, so under the stopping rule it does not block; the seat fleet-restart-at-login holds it as a follow-up.
 
 ## Reproduction
 
@@ -65,4 +75,4 @@ In `tokenize_simple_commands` and `split_out_heredocs`, treat a `$(` inside doub
 
 ## Where it came from
 
-The false refusal is `mac-claude`'s non-blocking finding on PR [Hand-typed gh issue comments, creates and body edits are refused](https://github.com/nedschorus/nedschorus/pull/708), [inline comment 4096774424](https://github.com/nedschorus/nedschorus/pull/708#discussion_r4096774424). The missed refusal is question 3 of merge-lane-2's review of the same PR, [review 5308447683](https://github.com/nedschorus/nedschorus/pull/708#pullrequestreview-5308447683). The keystroke guard's instance predates PR 708; that PR added a third consumer of the reader.
+The false refusal is `mac-claude`'s non-blocking finding on PR [Hand-typed gh issue comments, creates and body edits are refused](https://github.com/nedschorus/nedschorus/pull/708), [inline comment 4096774424](https://github.com/nedschorus/nedschorus/pull/708#discussion_r4096774424). The missed refusal is question 3 of merge-lane-2's review of the same PR, [review 5308447683](https://github.com/nedschorus/nedschorus/pull/708#pullrequestreview-5308447683). The keystroke guard's instance predates PR [Hand-typed gh issue comments, creates and body edits are refused](https://github.com/nedschorus/nedschorus/pull/708); that pull request added a third consumer of the reader.

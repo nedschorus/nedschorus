@@ -1,0 +1,85 @@
+---
+issue: "[A fresh agent of the other agent-binary tries to break each proposal that changes how a program or an agent works, before the user decides on it](https://github.com/nedschorus/nedschorus/issues/1230)"
+---
+
+# A fresh agent of the other agent-binary tries to break each proposal that changes how a program or an agent works, before the user decides on it
+
+## What is wanted
+
+Before an agent asks the user to decide on a proposal that would change what a program or an agent does, must do or may do, one fresh-agent of the other agent-binary, Codex when the agent runs on Claude, tries to break the proposal. It looks for the ordinary actions of this project's agents, and of the user, that the proposal would get wrong, and for what in it could be simpler or dropped, and it runs what it needs to check each finding. The review starts by itself when the proposal's file gets its cold-read-fast-read. The agent revises the proposal from the findings; the revised items get one second review, and the user sees each item with what the reviews found and what changed. The review is a stopgap: it is removed when design-to-main becomes mandatory.
+
+The user approved this plan in the approval-walk `proposal-adversarial-review-by-the-other-agent-binary-before-the-user-decides-until-design-to-main-is-mandatory-2026-10-11` on 2026-10-12, after its cold-read-full-run and its /sanity-check by Codex and by Claude. The walk-minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/proposal-adversarial-review-by-the-other-agent-binary-before-the-user-decides-until-design-to-main-is-mandatory-2026-10-11-minutes.md`.
+
+## The problem: proposals reach the user checked only for how they read
+
+Today a proposal that changes how something works usually reaches the user after one cold-read-fast-read, which reports how a fresh-reader understood the text and what confused it. Nobody tests whether the proposed behaviour would work. Three recorded cases show what that costs the user:
+
+1. **He decides twice.** On 2026-10-11, in agent-session 79d48a76 of the cold-read-improvement agent-seat on ned-box, the user approved item 2 of the approval-walk `codex-simplification-trawl-survivors-2026-10-10`: one check that catches a file the instruction-file guard protects changed without his approval. The agent then put three follow-up questions to him in conversation, written first to a file in its scratchpad. Question 2 proposed three rules for which version of such a file counts as approved. The text had had a cold-read-fast-read only. The user approved the rules, then asked whether they had been reviewed. A fresh Claude agent then ran git experiments in a throwaway repository and found that rule 1 would undo the file changes of every rebase, merge, pull, cherry-pick and revert, merge-lane-2's merge of every pull request included, and that rule 2 could not work, because the guard deletes the approval marker file before the write. The user then decided again, on eight changes, which he approved the same day. The review's report, and the prompt the reviewer was given (`brief.md`), are in `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-improvement/approved-version-rules-review-2026-10-11/`.
+2. **A fix made in answer to a review was itself wrong.** One of those eight changes said that a version of a guarded file the check had moved aside is never approved later. Nobody reviewed the eight changes. The cold-read-full-run of the GHI-MD built from them found that this change would also block the user's own approved writing back of such a version (record: `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/unapproved-guarded-file-changes-set-aside-and-restore-the-approved-version-2026-10-11-2/triage.md`).
+3. **He does the reviewer's work.** On 2026-10-03, in agent-session 17346de4 of the MD-skills agent-seat on the Mac, between 22:07 and 22:09 UTC, the agent recommended making guarded files unwritable through shell commands. The user asked: "are you 100% that is safe. Bash is used for a ton of stuff, and theres infinite ways to write files (for instance a c progrm)." Only then did the agent see that no guard can recognize every way to write a file, and that read-only files break git; it withdrew the recommendation.
+
+Later checks do not reliably catch such errors. A cold-read-full-run's cold-read-cells read the text and run nothing; a rule that cannot work, clearly written, passes, and most proposals get no cold-read-full-run. A pull request reviewer gives a markdown file no findings, apart from the exceptions in `CLAUDE.md`'s review-scope rule. Code built from a rule is reviewed, but by then the user has decided.
+
+## What exists, and how it differs
+
+- **design-to-main** (`docs/design-to-main/design-to-main-state-machine-design.md`) has `design-acceptance-by-agent` (§6.2): a fresh agent checks a design "before the user reads the document", and every reviewer may write and run tests of its own (§6.1). §6.6 puts each of the user's acceptance checks after the document's cold read and its agent check. Once design-to-main is mandatory, every document the user accepts has had that check, which is why this review ends then. Its build is GHI [Build the design-to-main state machine: the Python machine, its per-state agent-instructions, and the nine items the design defers to the build](https://github.com/nedschorus/nedschorus/issues/282). The user decided on 2026-10-11 that design-to-main is used at discretion while it is tested and is mandatory once deployed; that decision is recorded in the walk-minutes of the approval-walk named in case 1.
+- **/sanity-check** (`.claude/skills/sanity-check/SKILL.md`) attacks a committed document that directs work, by deliberate decision, after its cold-read-full-run. Its runner takes a committed target only; the approval-walks' `-draft.md` files and the scratchpad files that hold proposals are not committed.
+- **GHI [Candidate skill: attack-artifact — isolated adversarial review; filed as a d-review comparison question](https://github.com/nedschorus/nedschorus/issues/19)** records an isolated adversarial reviewer as a candidate skill. It stays open, as source material for design-to-main's reviewer agent-instructions; this plan is filed as a GHI of its own and cites it as related.
+
+## The proposal
+
+**When it applies.** To a proposal the user is asked to decide that adds, alters or removes what a program or an agent does, must do or may do, including a fix to how a rule or a program behaves. The reviewer reads every item of the file it is given and judges this itself: an item that changes no behaviour, such as a change of wording or a corrected citation, gets "nothing to break" in the report. The agent does not choose which items are reviewed.
+
+**When it starts.** With the cold-read-fast-read, so the agent has no extra step to remember:
+- When `nc-systems/cold-read/cold-read-fast-read.py` reads an approval-walk's `docs/walk/<name>-draft.md` file, it also starts the review on the same frozen copy of the file.
+- For a proposal held in any other file, such as a file in the agent-session's scratchpad, the agent adds `--proposal` to the cold-read-fast-read, which starts the review the same way. The instruction-file guard's refusal, which already sends a proposed change to a guarded file to a cold-read-fast-read, names the flag.
+
+`cold-read-fast-read.py` prints the cold-read-fast-read's report path when that report is in, about two minutes later, as now. It then waits for the review and prints the review report's path on a line of its own when the review ends, about ten to twenty minutes later, or a line opening `FAILED` with the cause, and exits only then; the agent runs it in the background and keeps working. The review's report sits in its own record directory, which the program ships to the log-store. The agent shows the user the first item only after both reports are in, with each item's note from the review written into the walk-document.
+
+**Who reviews.** One fresh-agent of the other agent-binary. The review program picks it from the environment it runs in: Codex when it runs under Claude Code, Claude when it runs under Codex. A flag overrides the choice. The reviewer reads the proposal and the files it names, and writes only inside a scratch directory in the review's record directory, under the checkout's gitignored `cold-read-records/`, where it may build throwaway git repositories. A Codex cell cannot write under `/tmp`, whose sandbox profile is read-only, but can write in the checkout; the Codex sanity-check-cells of this plan's /sanity-check built git repositories in their scratch directories that way, such as `scratch/cut-codex/git-experiment-ytdxe7nm` in its record.
+
+**What it is asked.** For each item: which ordinary actions of this project's agents, and of the user, the proposal would get wrong (a false positive, a false negative, or a workflow it breaks), and what could be simpler, smaller or dropped. Each finding carries a `ran:` line saying what the reviewer ran to check it; the review program marks a finding with nothing on its `ran:` line as untested. It proposes no hardening against a deliberate attacker, by `CLAUDE.md`'s reviewer rule. The reviewer writes one report for the whole file, with one section per item.
+
+**The revision, and its one second review.** The agent revises the items from the findings. When it changes an item, the revised file gets one second review, started the same way with `--proposal`; the second reviewer reads the whole file, is told which items changed, and reports on those. The second review's findings go to the user beside the item, with no further revision before he decides, so the reviews end after two rounds. A fix made in answer to a review can itself be wrong, as case 2 shows; one second review catches that without a loop that never ends.
+
+**When the user's reply changes a proposal.** When the user's reply changes what a proposal would do, without deciding on it, the agent writes the changed version to a file and runs the cold-read-fast-read with `--proposal` on it, which starts the review, before asking him to decide. If he would rather decide at once, he says so, and the agent records in the walk-minutes that this version was not reviewed; a review already running finishes, and its report is kept with the record but changes nothing he has decided.
+
+**When a review fails.** The review program relaunches a failed review once by itself, by the rule `scripts/sanity-check-attacks.py` follows for its sanity-check-cells: never for a cause only the user can clear, such as a usage limit or a missing agent-binary, and never for a timeout. When the review still fails, the item is marked unreviewed, with the cause, and the user decides whether to wait for a working review, which the agent starts again once the cause is cleared, or decide at once.
+
+**What the user sees.** Each item carries a short note: what the reviews found and what the agent changed in response, or that they found nothing to change, with the report's path either way. A finding the agent did not act on is named in that note with its reason. An unreviewed item says so and why.
+
+**What runs it.** A small program built on the cold-read-cell launchers, `nc-systems/cold-read/cold-read-codex-cell.py` for Codex and `nc-systems/cold-read/cold-read-claude-cell.py` for Claude, and on `nc-systems/cold-read/cold-read-cell-common.py`, which already give a fresh-agent one target and one prompt, check for stray writes and fall back along a model chain, as each cold-read-cell does. The new parts are a prompt file, written from case 1's `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-improvement/approved-version-rules-review-2026-10-11/brief.md`, and a wrapper that takes the frozen file, writes the report into a record directory, prints the report's path or a line opening `FAILED` with the cause, and ships the record to the log-store as the cold-read programs do, printing `FAILED:` with the remedy when ned-box cannot be reached. The report names the hash of the file it read, so a report can be matched to the version the user saw. The program's name, its directory's name and its prompt file's name are chosen with `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md` before it is built.
+
+**Built to be removed.** Everything the review adds sits in one directory: the program, the prompt file and its tests. Five places outside that directory refer to it:
+1. the call in `cold-read-fast-read.py` that starts the review for a `-draft.md` file;
+2. the `--proposal` flag of `cold-read-fast-read.py`;
+3. the sentence in the instruction-file guard's refusal that names `--proposal`;
+4. the sentence in the /walk-me-through skill that has the agent show the first item only after the review's report is in;
+5. the sentence in the /cold-read skill that tells the agent to add `--proposal` for a proposal held outside an approval-walk.
+
+A test fails when the directory is gone and any of the five remains, in the pattern of `scripts/pr-reviewer-instructions-copies-test.py`. This agent-seat keeps a task with `waits_on: [{"issue_closed": <number>}]`, naming the GHI that makes design-to-main mandatory. No GHI does that alone today: requirement 12 of the design-to-main GHI above is being amended to make design-to-main mandatory once deployed, so the task waits on that GHI until a GHI of its own is filed. `scripts/agent-seat-due-task-raise-hook.py` raises the task when that GHI closes, and the agent then removes the directory and the five references. The prompt file goes to design-to-main's build as source material for the questions its agent check asks, which the design-to-main design leaves to its build. Nothing goes into `CLAUDE.md`.
+
+## What this does not cover
+
+- **A proposal made only in conversation**, never written to a file. Case 3 was such a proposal. design-to-main will cover it, by checking the design before anything is built; until then it is left uncovered. A hook on the agent's reply was weighed and dropped (see "Alternatives weighed").
+
+## Alternatives weighed
+
+- **Leave it as it is, and let the user ask for a review when a proposal looks risky.** Against: in cases 1 and 3 the user did not know the proposal was risky until he had decided, or until he had found the flaw himself.
+- **A cold-read-full-run of each proposal.** Against: its cold-read-cells read and run nothing; the defects in case 1 were found by running git.
+- **A /sanity-check of each proposal, one attack on Codex.** Its runner takes committed targets only, and none of its three attacks asks which ordinary actions a proposal gets wrong.
+- **The agent dispatches the review by hand, from one skill sentence and a prompt file.** Against: the agent would choose when to review, which is the judgement that failed in cases 1 and 3, and a reminder keyed on the file's name would treat a changed proposal in the same file as reviewed.
+- **A hook on the agent's reply, for proposals made only in conversation.** A MessageDisplay hook runs before the user sees a reply, but each call sees only the lines just completed, and the screen waits for it. A Codex review on 2026-10-12 tried three word patterns on 800 past replies the user answered: they were right about a third of the time, missed a third or more of the real proposals, and the best flagged 409 of the 800 (record: `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-improvement/conversation-proposal-message-display-review-2026-10-12/report.md`). The user decided to leave the gap to design-to-main.
+- **Wait for design-to-main.** Against: it is not built, and until it is mandatory it is used at discretion.
+
+## Cost
+
+One model run for each version of a file reviewed, about ten to twenty minutes, plus one more run when the agent revises items; the approval-walk starts that much later. A walk whose items change no behaviour still costs one run, because the agent does not choose which files are reviewed. A failed review is relaunched once, as "When a review fails" says.
+
+## How we will know whether it works
+
+This agent-seat keeps a dated task: on 2026-11-15, count from the review reports in the log-store how many proposals were reviewed and how many the reviews changed, and put the count to the user with a recommendation to keep or drop the program. The user decides.
+
+## Next action
+
+File this plan as a new GHI through the /ghi-write skill, citing GHI [Candidate skill: attack-artifact — isolated adversarial review; filed as a d-review comparison question](https://github.com/nedschorus/nedschorus/issues/19) as related. Then build the program, its prompt file, its tests, the removal test and the five references on one topic branch. The prompt file gets a cold-read-full-run, and each one-sentence change to a skill gets a cold-read-fast-read, as the /cold-read skill directs. Create the removal task and the 2026-11-15 task when the pull request merges.

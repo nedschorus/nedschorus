@@ -1,27 +1,15 @@
 # PR reviewer instructions
 
-This file's text is included verbatim in the prompt of every commissioned PR reviewer.
-The instruments that commission reviewers read it at composition time and paste it in —
-never point at it, never paraphrase it. (Ruled 2026-08-30: one copy, included everywhere;
-a pointed-at rule gets skipped, a paraphrased one drifts.)
+This file's text is pasted whole into the prompt of every commissioned Claude PR reviewer. The Codex reviewer reads the review-scope section below, which `CLAUDE.md` holds as one of its bullets. `scripts/pr-reviewer-instructions-copies-test.py` fails when the two copies differ, so change both together.
 
-## Review scope: code blocks, prose does not
+## Review scope: code findings block the merge; prose gets none, apart from the exceptions below
 
-Code needs reviewers; prose already has reviewers, including the user.
+Code needs PR reviewers. Prose is reviewed before the PR.
 
-- **Code is reviewed adversarially and blocks.** The class follows the CONTENT, not the
-  file it sits in: `scripts/`, `.claude/hooks/`, `.claude/settings.json`, and every shell
-  command, invocation, and code block embedded in any markdown file — commands inside
-  skills included.
-- **Operative prose is gospel — not reviewed, not reported on at all.** `CLAUDE.md`, any
-  `CLAUDE.local.md`, everything under `.claude/skills/`. Operative prose reaches the PR
-  already cold-read and walked with the user; a reviewer improving settled instruction
-  text is a regression.
-- **All other prose is silent — not a finding, not a remark, not a question.** `docs/`
-  entire (designs and GHI-MDs included), `nc-queue/`, walk minutes, and provenance
-  or recovery citations anywhere. Silent rather than non-blocking, because everything a
-  reviewer writes gets read and "fixed" by another agent, and those fixes introduce
-  defects. A citation written as a command is silent as prose and reviewable as a
-  fact: its wording, its placement and whether it is needed are silent; whether it
-  resolves is a blocking finding that states the command and what it returned.
-  Check one by running it, and run only commands that read.
+- **Code is reviewed skeptically, hunting for defects, and its findings block the merge.** Review the code the pull request changes. If you notice that the change breaks other code, in the same file or another, that break is a finding too. A file of any type other than markdown is reviewed this way: source code, such as a script, a test or a hook; settings, such as `.claude/settings.json` or `.gitignore`; data, such as a JSON or YAML file a test reads; and any other file. A docstring is treated as code, and so is a comment that says what a piece of code does or why the code does it: a finding says where the docstring or the comment and the code it describes disagree. A comment that tells a program what to do, such as a script's `#!` first line or `# noqa`, is code. Every other comment, such as one that only cites a user-ruling or a pull request, is prose, and so are a message the code prints and a prompt the code hands to an agent. A pull request reviewer gives such a comment, message or prompt no finding, remark or question, with one exception: a finding may say that a message or a prompt names a file, a flag or a script that does not work as the message or the prompt says, such as a marker file a guard no longer reads, a flag the named script does not accept, or a script the message or the prompt places in this repository that is not there. Such a finding blocks the merge. Code that fills in the placeholders of a message or a prompt, or copies a prompt's text from another file, is code and is reviewed; the English of the message or the prompt is not. A finding about code may name a markdown file the change breaks, such as a `CLAUDE.md` line that quotes output the code no longer prints.
+- **A markdown file is prose, whole, the shell commands inside included.** A pull request reviewer says nothing about a markdown file, with two exceptions: a finding about code may name a markdown file the change breaks, as the code bullet above says; and when the pull request's description names a markdown file and asks for a review of the code or shell commands inside that file, review the ones the pull request changes as code and say nothing about the English around them.
+- **A file whose name ends with the -nbd suffix, just before any extension, is nice-but-dirty code, as the project glossary defines it, and only three kinds of finding on it block the merge.** Review the file as code, but a finding on it blocks the merge only when it shows one of these: the code damages other systems or data, or blocks other work; the code hides one of its own failures, reports one as success, or reports one where neither an agent nor the user will see it; or deleting the file, or reverting the pull request that added it, would leave something broken. A failing test still blocks. Every other finding on the file is advice, and does not block. A file without the suffix, which the pull request adds or changes, and which needs code from an -nbd file in order to work, is a finding that blocks: that file is nice-but-dirty too, so it must be renamed with the suffix, or stop depending on the -nbd file. A test whose only job is to test an -nbd file is named `<name>-nbd-test.py` and is exempt from this rule.
+
+## A pull request that fixes a defect
+
+Decide whether the pull request fixes a defect: a flaw in a program, or in instructions an agent follows, that makes or would make it do the wrong thing. If it does, its description must carry, for each defect it fixes, a line labelled `Root cause:`, giving the root cause as `CLAUDE.md` defines it and what in the change removes that root cause, or `Root cause not fixed:`, giving why the root cause is left in place and what it is, or that it was not found. If no such line is there, report one finding that blocks the merge, saying the description needs one; adding the line settles the finding and needs no new commit. If a `Root cause:` line names no root cause, or one the change does not remove, say so in a finding that does not block. The pull request's description is outside the review scope above, so these findings are not exceptions to it; a defect in the code itself is still a code finding.

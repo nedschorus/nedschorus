@@ -114,6 +114,14 @@ def silent(result) -> bool:
     return result.returncode == 0 and result.stdout.strip() == ""
 
 
+def reported(result, fault_words) -> bool:
+    """A fault: exit 1, no warning on stdout, one stderr line naming the hook and the fault."""
+    lines = result.stderr.splitlines()
+    return (result.returncode == 1 and result.stdout == "" and len(lines) == 1
+            and lines[0].startswith("obsolete-file-edit-warning-hook: ")
+            and fault_words in lines[0])
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     tmp = Path(temporary_directory)
 
@@ -223,7 +231,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the warning is one line",
           warning != "" and "\n" not in warning, repr(warning))
     check("the warning counts the commits on main that touched that file",
-          "1 commit(s) on origin/main have changed since this branch's merge base" in warning,
+          "1 commit(s) on origin/main have changed since this checkout's merge base with origin/main" in warning,
           warning)
     check("the warning reaches the agent on additionalContext, under the PostToolUse event",
           (emitted_object(result) or {}).get("hookSpecificOutput", {})
@@ -237,6 +245,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           result.stdout)
     check("a never-pushed branch is told to rebase it itself, not that something will",
           "never been pushed" in warning and "git rebase origin/main" in warning, warning)
+    check("the never-pushed advice names the selective test run",
+          "--only-suites-whose-recorded-inputs-changed-since origin/main" in warning, warning)
     check("and told the Stop hook's rebase needs a clean tree",
           "only when the tree is clean" in warning, warning)
     check("the first warning cost exactly one three-dot diff",
@@ -266,22 +276,28 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
     # -----------------------------------------------------------------------
     # THE CACHE. Same origin/main tip, same HEAD: the answer cannot have
-    # changed, and the diff is not run again.
+    # changed, and the diff is not run again. The warning already given is not
+    # given again word for word.
     # -----------------------------------------------------------------------
     call_log.unlink()
     first = run_hook(hook_payload(checkout, edited_file), path_prefix=recording_git_directory)
     diffs_after_first = recorded_calls("diff")
     second = run_hook(hook_payload(checkout, edited_file), path_prefix=recording_git_directory)
-    check("the cached path set still warns on a second edit of the same file",
-          "scripts/recover-crashed-seats.py" in agent_text(second), second.stdout)
+    check("a second edit of the same file, whose warning would be the same text, is silent",
+          silent(second) and second.stderr == "", second.stdout + second.stderr)
     check("and the second call runs no further diff — the set was cached",
           recorded_calls("diff") == diffs_after_first,
           f"{diffs_after_first} then {recorded_calls('diff')}: "
           + call_log.read_text(encoding="utf-8"))
-    check("the cache is keyed on both origin/main's tip and this checkout's HEAD",
+    check("the cache is keyed on both origin/main's tip and this checkout's HEAD, "
+          "and holds the warnings given",
           sorted(json.loads(cache_path.read_text(encoding="utf-8")).keys())
-          == ["head", "main_tip", "paths"],
+          == ["head", "main_tip", "paths", "warned"],
           cache_path.read_text(encoding="utf-8") if cache_path.exists() else "no cache written")
+    check("the record holds the text of the warning given about the file",
+          json.loads(cache_path.read_text(encoding="utf-8")).get("warned", {}).get(
+              "scripts/recover-crashed-seats.py") == warning,
+          cache_path.read_text(encoding="utf-8"))
     check("the cache sits in the checkout's own git directory, beside the freshness stamp",
           cache_path.parent == checkout_git_dir, str(cache_path))
 
@@ -298,6 +314,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           recorded_calls("diff") == 1, call_log.read_text(encoding="utf-8"))
     check("and a file that has only just gone obsolete now warns",
           "scripts/untouched-by-main.py" in agent_text(result), result.stdout)
+    result = run_hook(hook_payload(checkout, edited_file), path_prefix=recording_git_directory)
+    check("when main moves, a file already warned about is warned about again",
+          "scripts/recover-crashed-seats.py" in agent_text(result), result.stdout)
 
     # -----------------------------------------------------------------------
     # HEAD MOVES: so does the merge base, so the answer can change.
@@ -310,6 +329,32 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           recorded_calls("diff") == 1, call_log.read_text(encoding="utf-8"))
     check("and the warning is still made from the fresh set",
           "scripts/recover-crashed-seats.py" in agent_text(result), result.stdout)
+
+    # -----------------------------------------------------------------------
+    # A RECORD THAT CANNOT BE WRITTEN. A directory where the cache file should
+    # be: the warning is still given, says the record was not written, and so
+    # is given again at the next edit.
+    # -----------------------------------------------------------------------
+    cache_path.unlink()
+    cache_path.mkdir()
+    try:
+        unrecorded_first = run_hook(hook_payload(checkout, edited_file),
+                                    path_prefix=recording_git_directory)
+        unrecorded_second = run_hook(hook_payload(checkout, edited_file),
+                                     path_prefix=recording_git_directory)
+    finally:
+        cache_path.rmdir()
+    for label, result in (("first", unrecorded_first), ("second", unrecorded_second)):
+        text = agent_text(result)
+        check(f"a record that cannot be written: the {label} edit is still warned, exit 0",
+              result.returncode == 0 and "scripts/recover-crashed-seats.py" in text
+              and "so your edit is built on an old copy of the file." in text,
+              result.stdout + result.stderr)
+        check(f"a record that cannot be written: the {label} warning says so and why",
+              text.split("\n")[-1].startswith(
+                  "obsolete-file-edit-warning could not record that it gave this warning, so it "
+                  "will give it again at your next edit of this file (")
+              and "IsADirectoryError" in text, text)
 
     # -----------------------------------------------------------------------
     # A PUSHED head gets the other advice: the frozen-head rule, not a rebase.
@@ -348,6 +393,40 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "2 commit(s) on origin/main" in pushed_warning, pushed_warning)
 
     # -----------------------------------------------------------------------
+    # PUSHED HISTORY UNDER A NEW NAME (GHI "The checkout-freshness hook treats
+    # a new branch cut at a pull request's pushed head as never pushed, and
+    # rebases it"). A fix-round agent cuts a NEW branch at a pull request's
+    # pushed head, so no origin/<that name> exists, yet the commits are the
+    # pull request's. Before the fix this warning told it "This branch has
+    # never been pushed, so nobody else has it" and to rebase.
+    # -----------------------------------------------------------------------
+    git(["checkout", "-q", "-b", "a-fix-round-under-a-new-name",
+         "origin/a-pushed-topic-branch"], pushed_checkout)
+    result = run_hook(hook_payload(pushed_checkout,
+                                   pushed_checkout / "scripts/recover-crashed-seats.py"),
+                      path_prefix=recording_git_directory)
+    history_warning = agent_text(result)
+    check("a new branch cut at a pushed head is not told it was never pushed",
+          "never been pushed" not in history_warning
+          and "git rebase origin/main" not in history_warning, history_warning)
+    check("it is told its commits are already on GitHub and not to rebase them, word for word",
+          "This branch's commits are already on GitHub under another branch name, so the "
+          "branch is treated as pushed and is not rebased: a pushed head may be under "
+          "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
+          "fix is a new commit on top. If it conflicts with main, clear the conflict with "
+          "the hand-merge that scripts/branch-conflict-check.py describes."
+          in history_warning, history_warning)
+    check("the pushed-history warning is one line", history_warning != ""
+          and "\n" not in history_warning, repr(history_warning))
+    commit_file(pushed_checkout, "scripts/the-fix.py", "fixed\n", "the fix-round's commit on top")
+    result = run_hook(hook_payload(pushed_checkout,
+                                   pushed_checkout / "scripts/recover-crashed-seats.py"),
+                      path_prefix=recording_git_directory)
+    check("with an unpushed fix commit on top, the advice is still the pushed-history advice",
+          "already on GitHub under another branch name" in agent_text(result)
+          and "never been pushed" not in agent_text(result), agent_text(result))
+
+    # -----------------------------------------------------------------------
     # OUTSIDE THE CHECKOUT. Another worktree of the same repository, and a
     # scratch directory: in neither is a comparison against THIS checkout's
     # merge base meaningful, so neither is warned about — even when the path
@@ -370,8 +449,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           silent(result), result.stdout + result.stderr)
 
     # -----------------------------------------------------------------------
-    # BROKEN OR ABSENT INPUT. Every one of these exits 0 and prints nothing:
-    # a staleness warning must never be why an agent's edit reports a failure.
+    # ABSENT INPUT exits 0 and prints nothing: there is nothing to compare.
     # -----------------------------------------------------------------------
     no_file_path = hook_payload(checkout, edited_file)
     no_file_path["tool_input"] = {}
@@ -383,9 +461,26 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a payload with no tool_input at all exits 0 and prints nothing",
           silent(run_hook(no_tool_input)), "")
 
-    check("an unreadable payload exits 0 and prints nothing",
-          silent(run_hook("{not json at all")), "")
-    check("empty stdin exits 0 and prints nothing", silent(run_hook("")), "")
+    # A payload that is not a JSON object is a fault, reported on stderr.
+    for case_name, payload, fault_words in (
+            ("an unreadable payload", "{not json at all", "JSONDecodeError"),
+            ("a payload that is a JSON list", "[1, 2]", "a JSON list, not an object"),
+            ("empty stdin", "", "JSONDecodeError")):
+        result = run_hook(payload)
+        check(f"{case_name} is reported on stderr, exit 1",
+              reported(result, fault_words), result.stdout + result.stderr)
+
+    # A hook copied away from checkout-freshness-catch-up.py: the load raises
+    # FileNotFoundError, which only the top-level handler catches.
+    lone_hook_directory = tmp / "hook-without-checkout-freshness"
+    lone_hook_directory.mkdir()
+    lone_hook = lone_hook_directory / SCRIPT_PATH.name
+    shutil.copy(str(SCRIPT_PATH), str(lone_hook))
+    result = subprocess.run([sys.executable, str(lone_hook)],
+                            input=json.dumps(hook_payload(checkout, edited_file)),
+                            capture_output=True, text=True, check=False)
+    check("checkout-freshness-catch-up.py failing to load is reported on stderr, exit 1",
+          reported(result, "FileNotFoundError"), result.stdout + result.stderr)
 
     not_a_repository = tmp / "not-a-repository"
     not_a_repository.mkdir()
@@ -475,8 +570,20 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "scripts/main-will-rename-this.py" in renamed_warning,
           result.stdout + result.stderr)
     check("and the rename commit is counted for the path it was renamed away from",
-          "1 commit(s) on origin/main have changed since this branch's merge base"
+          "1 commit(s) on origin/main have changed since this checkout's merge base with origin/main"
           in renamed_warning, renamed_warning)
+
+    # A path git would C-quote without -z: main changes "docs/café.md".
+    commit_file(origin, "docs/café.md", "main's copy\n", "main adds a non-ASCII path")
+    git(["fetch", "-q", "origin"], checkout)
+    non_ascii_file = checkout / "docs/café.md"
+    non_ascii_file.parent.mkdir(parents=True, exist_ok=True)
+    non_ascii_file.write_text("the branch's copy\n", encoding="utf-8")
+    result = run_hook(hook_payload(checkout, non_ascii_file, tool_name="Write"),
+                      path_prefix=recording_git_directory)
+    check("editing a non-ASCII path main changed warns the agent, the path read from -z output",
+          "docs/café.md" in agent_text(result), result.stdout + result.stderr)
+    non_ascii_file.unlink()
 
     # A checkout with no origin/main — a repository, but nothing to compare to.
     lonely = tmp / "no-origin-main-repo"
@@ -486,6 +593,259 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     commit_file(lonely, "scripts/alone.py", "alone\n", "the only commit")
     result = run_hook(hook_payload(lonely, lonely / "scripts/alone.py"))
     check("a repository with no origin/main exits 0 and prints nothing",
+          silent(result), result.stdout + result.stderr)
+
+    # -----------------------------------------------------------------------
+    # A DETACHED HEAD, and a branch state git could not report: the hook works
+    # out the facts the agent would otherwise have to find, and says each on a
+    # line of its own.
+    # -----------------------------------------------------------------------
+    detached_origin = tmp / "detached-origin-repo"
+    detached_origin.mkdir()
+    git(["init", "-q", "-b", "main"], detached_origin)
+    configure_identity(detached_origin)
+    shared_lines = [f"line {number}\n" for number in range(1, 11)]
+    commit_file(detached_origin, "lib/shared.py", "".join(shared_lines), "shared file")
+    commit_file(detached_origin, "lib/gone.py", "main will delete this\n", "a file main deletes")
+    latin1_lines = [f"ligne {number} \xe9t\xe9\n".encode("latin-1") for number in range(1, 11)]
+    (detached_origin / "lib" / "latin1.txt").write_bytes(b"".join(latin1_lines))
+    git(["add", "lib/latin1.txt"], detached_origin)
+    git(["commit", "-q", "-m", "a file that is not UTF-8"], detached_origin)
+    detached = tmp / "detached-checkout"
+    git(["clone", "-q", str(detached_origin), str(detached)], tmp)
+    configure_identity(detached)
+    git(["checkout", "-q", "--detach"], detached)
+    detached_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], detached).stdout.strip())
+    changed_on_main = list(shared_lines)
+    changed_on_main[1] = "line 2, as main rewrote it\n"
+    commit_file(detached_origin, "lib/shared.py", "".join(changed_on_main), "main rewrites line 2")
+    latin1_on_main = list(latin1_lines)
+    latin1_on_main[1] = "ligne 2, r\xe9\xe9crite sur main\n".encode("latin-1")
+    (detached_origin / "lib" / "latin1.txt").write_bytes(b"".join(latin1_on_main))
+    git(["add", "lib/latin1.txt"], detached_origin)
+    git(["commit", "-q", "-m", "main rewrites line 2 of the file that is not UTF-8"], detached_origin)
+    git(["rm", "-q", "lib/gone.py"], detached_origin)
+    git(["commit", "-q", "-m", "main deletes gone.py"], detached_origin)
+    git(["fetch", "-q", "origin"], detached)
+    shared_file = detached / "lib/shared.py"
+
+    def detached_warning(edited):
+        return agent_text(run_hook(hook_payload(detached, edited)))
+
+    edited_far_away = list(shared_lines)
+    edited_far_away[8] = "line 9, as the agent edited it\n"
+    shared_file.write_text("".join(edited_far_away), encoding="utf-8")
+    warning = detached_warning(shared_file)
+    lines = warning.split("\n")
+    check("detached: the first line says the edit is built on an old copy",
+          lines[0].endswith("so your edit is built on an old copy of the file.")
+          and "this checkout's merge base with origin/main" in lines[0], warning)
+    check("detached: the warning tells the agent to make a branch before committing",
+          len(lines) > 1 and lines[1] == (
+              "This checkout is on a detached HEAD: make a branch (git switch -c "
+              "<a-branch-name>) before you commit, because a commit on a detached HEAD "
+              "is on no branch."), warning)
+    check("detached: an edit away from main's changes is told they do not overlap",
+          len(lines) == 3 and lines[2] == (
+              "main's changes to lib/shared.py do not overlap this checkout's copy; a "
+              "rebase merges them cleanly."), warning)
+    check("detached: the overlap check leaves the agent's file as the agent wrote it",
+          shared_file.read_text(encoding="utf-8") == "".join(edited_far_away),
+          shared_file.read_text(encoding="utf-8"))
+
+    latin1_file = detached / "lib/latin1.txt"
+    latin1_edited = list(latin1_lines)
+    latin1_edited[8] = "ligne 9, \xe9dit\xe9e par l'agent\n".encode("latin-1")
+    latin1_file.write_bytes(b"".join(latin1_edited))
+    result = run_hook(hook_payload(detached, latin1_file))
+    check("detached: a file that is not UTF-8 gets the overlap verdict, exit 0",
+          result.returncode == 0 and agent_text(result).split("\n")[-1] == (
+              "main's changes to lib/latin1.txt do not overlap this checkout's copy; a "
+              "rebase merges them cleanly."), result.stdout + result.stderr)
+
+    check("detached: the same edit again, whose warning would be the same text, is silent",
+          detached_warning(shared_file) == "", "")
+
+    edited_same_line = list(shared_lines)
+    edited_same_line[1] = "line 2, as the agent edited it\n"
+    shared_file.write_text("".join(edited_same_line), encoding="utf-8")
+    warning = detached_warning(shared_file)
+    check("detached: an edit of the lines main changed is told they overlap, "
+          "though the file was warned about before",
+          warning.split("\n")[-1] == (
+              "main's changes to lib/shared.py overlap this checkout's copy: after you "
+              "make the branch and commit your edit, run git rebase origin/main, which "
+              "will stop on this file, and resolve the conflict there."), warning)
+
+    gone_file = detached / "lib/gone.py"
+    gone_file.write_text("the agent edited this\n", encoding="utf-8")
+    warning = detached_warning(gone_file)
+    check("detached: an edit of a file main deleted is told main no longer has it",
+          warning.split("\n")[-1] == (
+              "main no longer has a file at lib/gone.py: find out whether main moved or "
+              "deleted it (git log origin/main -- lib/gone.py) before you commit."), warning)
+
+    (detached_git_dir / "rebase-merge").mkdir()
+    try:
+        warning = detached_warning(shared_file)
+    finally:
+        (detached_git_dir / "rebase-merge").rmdir()
+    lines = warning.split("\n")
+    check("detached mid-rebase: one line, finish the operation, and nothing else",
+          len(lines) == 2 and lines[1] ==
+          "A git operation is in progress (rebase-merge): finish it before anything else.",
+          warning)
+
+    (detached_git_dir / "BISECT_LOG").write_text("git bisect start\n", encoding="utf-8")
+    try:
+        warning = detached_warning(shared_file)
+    finally:
+        (detached_git_dir / "BISECT_LOG").unlink()
+    check("detached mid-bisect: the ordinary detached facts, not finish-the-operation",
+          "in progress" not in warning and len(warning.split("\n")) > 2, warning)
+
+    main_blob = git(["rev-parse", "origin/main:lib/shared.py"], detached).stdout.strip()
+    main_blob_file = detached_git_dir / "objects" / main_blob[:2] / main_blob[2:]
+    check("fixture: main's copy of lib/shared.py is a loose object that can be hidden",
+          main_blob_file.is_file(), str(main_blob_file))
+    if main_blob_file.is_file():
+        hidden_blob_file = main_blob_file.with_name(main_blob_file.name + ".hidden")
+        main_blob_file.rename(hidden_blob_file)
+        try:
+            warning = detached_warning(shared_file)
+            repeated_warning = detached_warning(shared_file)
+        finally:
+            hidden_blob_file.rename(main_blob_file)
+        check("detached: main's copy still unreadable at the next edit is reported again, "
+              "never held back as a repeat",
+              repeated_warning == warning, repeated_warning)
+        last_line = warning.split("\n")[-1]
+        check("detached: main's copy that git cannot read is reported with git's text, "
+              "not as a deleted file",
+              last_line.startswith("git could not read lib/shared.py on origin/main (")
+              and last_line.endswith("), so this warning cannot say whether main's "
+                                     "changes overlap your edit: stop and tell the user "
+                                     "before you make the branch or commit.")
+              and "no longer has" not in warning, warning)
+        check("detached: the unreadable-copy line carries git's own error text",
+              "(fatal: " in last_line and "git show exited" not in last_line, warning)
+
+    main_lib_tree = git(["rev-parse", "origin/main:lib"], detached).stdout.strip()
+    main_lib_tree_file = detached_git_dir / "objects" / main_lib_tree[:2] / main_lib_tree[2:]
+    check("fixture: main's lib tree is a loose object that can be hidden",
+          main_lib_tree_file.is_file(), str(main_lib_tree_file))
+    if main_lib_tree_file.is_file():
+        hidden_tree_file = main_lib_tree_file.with_name(main_lib_tree_file.name + ".hidden")
+        main_lib_tree_file.rename(hidden_tree_file)
+        try:
+            warning = detached_warning(shared_file)
+        finally:
+            hidden_tree_file.rename(main_lib_tree_file)
+        check("detached: main's tree that git cannot read is reported as unreadable, "
+              "not as a deleted file",
+              "git could not read lib/shared.py on origin/main (" in warning
+              and "no longer has" not in warning, warning)
+
+    branch_state_failing_git_directory = tmp / "branch-state-failing-git"
+    branch_state_failing_git_directory.mkdir()
+    (branch_state_failing_git_directory / "git").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "rev-parse" ] && [ "$2" = "--abbrev-ref" ]; then\n'
+        '  printf "shimmed: no branch state\\n" >&2\n'
+        "  exit 128\n"
+        "fi\n"
+        f'exec "{real_git}" "$@"\n', encoding="utf-8")
+    (branch_state_failing_git_directory / "git").chmod(0o755)
+    result = run_hook(hook_payload(detached, shared_file),
+                      path_prefix=branch_state_failing_git_directory)
+    lines = agent_text(result).split("\n")
+    check("unknown branch state: the hook passes on git's own failure and says to stop",
+          len(lines) == 2 and lines[1] == (
+              "git could not report this checkout's branch state (shimmed: no branch "
+              "state): stop and tell the user before you commit."), agent_text(result))
+    result = run_hook(hook_payload(detached, shared_file),
+                      path_prefix=branch_state_failing_git_directory)
+    check("unknown branch state: the same failure at the next edit is reported again, "
+          "never held back as a repeat",
+          agent_text(result) == "\n".join(lines), agent_text(result))
+
+    # head_state() answering "unknown" on a branch: no origin/<branch>, and the
+    # walk of the branch's own commits fails, so whether they were pushed is unknown.
+    unknown_state_checkout = tmp / "unknown-head-state-checkout"
+    git(["clone", "-q", str(origin), str(unknown_state_checkout)], tmp)
+    configure_identity(unknown_state_checkout)
+    git(["checkout", "-q", "-b", "a-branch-whose-pushes-git-cannot-check"],
+        unknown_state_checkout)
+    commit_file(unknown_state_checkout, "lib/branch-own.py", "own\n", "the branch's own commit")
+    unknown_state_main_tip = git(["rev-parse", "origin/main"], unknown_state_checkout).stdout.strip()
+    git(["checkout", "-q", "--detach", "origin/main"], unknown_state_checkout)
+    commit_file(unknown_state_checkout, "scripts/recover-crashed-seats.py",
+                "main moved this file\n", "main moves a file the branch has")
+    moved_main_tip = git(["rev-parse", "HEAD"], unknown_state_checkout).stdout.strip()
+    git(["checkout", "-q", "a-branch-whose-pushes-git-cannot-check"], unknown_state_checkout)
+    git(["update-ref", "refs/remotes/origin/main", moved_main_tip, unknown_state_main_tip],
+        unknown_state_checkout)
+    own_commit_walk_failing_git_directory = tmp / "own-commit-walk-failing-git"
+    own_commit_walk_failing_git_directory.mkdir()
+    (own_commit_walk_failing_git_directory / "git").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "rev-list" ] && [ "$2" = "origin/main..HEAD" ]; then\n'
+        '  printf "shimmed: the own-commit walk fails\\n" >&2\n'
+        "  exit 128\n"
+        "fi\n"
+        f'exec "{real_git}" "$@"\n', encoding="utf-8")
+    (own_commit_walk_failing_git_directory / "git").chmod(0o755)
+    unknown_state_file = unknown_state_checkout / "scripts/recover-crashed-seats.py"
+    result = run_hook(hook_payload(unknown_state_checkout, unknown_state_file),
+                      path_prefix=own_commit_walk_failing_git_directory)
+    first_unknown_state_warning = agent_text(result)
+    check("unknown head state on a branch: the warning says git could not report the "
+          "branch state",
+          "git could not report this checkout's branch state (head state unknowable"
+          in first_unknown_state_warning, result.stdout + result.stderr)
+    result = run_hook(hook_payload(unknown_state_checkout, unknown_state_file),
+                      path_prefix=own_commit_walk_failing_git_directory)
+    check("unknown head state on a branch: the same warning at the next edit is given "
+          "again, never held back as a repeat",
+          agent_text(result) == first_unknown_state_warning, result.stdout + result.stderr)
+
+    # A path on main whose name is not UTF-8: git's output is decoded with
+    # surrogateescape, so the path set holds a lone surrogate the record must
+    # still be able to write. The name only ever lives in git's objects, never
+    # on disk, so the case runs on a filesystem that refuses such names.
+    byte_path_checkout = tmp / "byte-path-checkout"
+    git(["clone", "-q", str(origin), str(byte_path_checkout)], tmp)
+    configure_identity(byte_path_checkout)
+    git(["checkout", "-q", "-b", "a-branch-beside-a-byte-named-path"], byte_path_checkout)
+    byte_path_main_tip = git(["rev-parse", "origin/main"], byte_path_checkout).stdout.strip()
+    byte_path_index = tmp / "byte-path-index"
+    index_environment = dict(os.environ, GIT_INDEX_FILE=str(byte_path_index))
+    def plumbing(arguments, stdin=b""):
+        return subprocess.run(["git", *arguments], cwd=str(byte_path_checkout),
+                              input=stdin, capture_output=True, check=True,
+                              env=index_environment).stdout.decode().strip()
+    plumbing(["read-tree", byte_path_main_tip])
+    byte_named_blob = plumbing(["hash-object", "-w", "--stdin"], b"named in bytes\n")
+    moved_blob = plumbing(["hash-object", "-w", "--stdin"], b"main moved this file too\n")
+    plumbing(["update-index", "--index-info"],
+             b"100644 " + byte_named_blob.encode() + b"\tdocs/byte-\xff-named.md\n"
+             + b"100644 " + moved_blob.encode() + b"\tscripts/recover-crashed-seats.py\n")
+    byte_path_tree = plumbing(["write-tree"])
+    byte_path_commit = plumbing(["commit-tree", byte_path_tree, "-p", byte_path_main_tip,
+                                 "-m", "main adds a path whose name is not UTF-8"])
+    git(["update-ref", "refs/remotes/origin/main", byte_path_commit, byte_path_main_tip],
+        byte_path_checkout)
+    byte_path_neighbour = byte_path_checkout / "scripts/recover-crashed-seats.py"
+    result = run_hook(hook_payload(byte_path_checkout, byte_path_neighbour))
+    check("a path on main whose name is not UTF-8: an edit of an ordinary file main "
+          "changed still warns, exit 0",
+          result.returncode == 0
+          and "scripts/recover-crashed-seats.py" in agent_text(result)
+          and "could not record" not in agent_text(result),
+          result.stdout + result.stderr)
+    result = run_hook(hook_payload(byte_path_checkout, byte_path_neighbour))
+    check("a path on main whose name is not UTF-8: the record was written and read back, "
+          "so the same warning is not repeated",
           silent(result), result.stdout + result.stderr)
 
     # -----------------------------------------------------------------------

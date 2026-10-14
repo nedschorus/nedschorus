@@ -76,7 +76,7 @@ LEGALITY_CASES = [
     ("10", dict(APPROVED, counters={"contract-revisions": 1}),
      exit_from(T.CONTRACT_ACCEPTANCE_BY_USER, T.V_DISCUSS)),
     ("11", dict(APPROVED, counters={"contract-revisions": 1}),
-     exit_from(T.CONTRACT_ACCEPTANCE_BY_USER, T.V_REDESIGN)),
+     exit_from(T.CONTRACT_ACCEPTANCE_BY_USER, T.V_REDESIGN_ORDERED_BY_USER_AFTER_CONTRACT_FAILED_TWICE)),
     ("12", {}, exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN)),
     ("13", dict(counters={"design-revisions": 2}),
      exit_from(T.DESIGN_ACCEPTANCE_BY_AGENT, T.V_REJECT_DESIGN)),
@@ -410,8 +410,9 @@ class EveryRowOfSection32(unittest.TestCase):
         design_rows = set(T.DESIGN_TRANSITION_ROWS)
         # Row 65 has no verdict: the arbitrator's third entry is a row the
         # machine applies on entering test-suite-arbitrating, never on a
-        # state-exit, so no legality case can find it; the counters test
-        # drives it through the machine.
+        # state-exit, so no legality case can find it;
+        # design-to-main-counters-write-and-ruling-ceilings-test.py drives it
+        # through the machine.
         entry_rule_rows = {row.row for row in T.TRANSITION_TABLE if not row.verdicts}
         self.assertEqual(entry_rule_rows, {T.ROW_THE_ARBITRATORS_THIRD_ENTRY})
         self.assertEqual(design_rows - hit - entry_rule_rows, set(),

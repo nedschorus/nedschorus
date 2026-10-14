@@ -57,9 +57,7 @@ import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-# The record shipper is imported rather than copied, so the two programs cannot
-# drift on the store's rules or its location. The convention -- importlib for a
-# module whose filename has hyphens -- is scripts/seat-shared-file-ship.py's.
+# Share the shipper so store rules and location cannot drift.
 _shipper_spec = importlib.util.spec_from_file_location(
     "cold_read_record_ship", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py")
 shipper = importlib.util.module_from_spec(_shipper_spec)
@@ -70,10 +68,7 @@ RECORDS_DIR = REPO_ROOT / SANITY_CHECK_KIND_DIRECTORY
 
 
 def destination_for_this_machine() -> tuple:
-    """(host, path) for this kind: the record shipper's destination with the
-    kind directory swapped, so the store's location is defined in exactly one
-    place. The host is that function's -- None on ned-box itself, where the
-    store is a local directory, and the store's host from anywhere else."""
+    """Return (host, path) using the shared store location and sanity-check kind."""
     host, records_path = shipper.destination_for_this_machine()
     return host, records_path.parent / SANITY_CHECK_KIND_DIRECTORY
 

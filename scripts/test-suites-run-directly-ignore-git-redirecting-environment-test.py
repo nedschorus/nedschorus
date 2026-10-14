@@ -101,14 +101,10 @@ REMOVE_THE_VARIABLES_ANOTHER_WAY = {
     "nc-systems/cold-read/tests/"
     "cold-read-scratch-repository-fixture-ignores-git-redirecting-environment-test.py":
         "it removes the six from its own environment before it runs git",
-    "nc-systems/cold-read/tests/cold-read-fast-read-test.py":
-        "its own `git init` runs with GIT_DIR and GIT_WORK_TREE removed",
     "scripts/branch-conflict-check-test.py":
         "its git runs with every GIT_ variable removed",
     "scripts/daily-full-test-run-of-main-test.py":
         "its fixture_git() runs with the runner's own stripped environment",
-    "scripts/find-deleted-path-across-backups-test.py":
-        "its git helpers remove GIT_DIR, and GIT_WORK_TREE with it",
     "scripts/git-client-side-hooks-pre-push-test.py":
         "every GIT_ variable is removed from each case's environment",
     "scripts/locate-file-copies-across-machines-test.py":
@@ -127,13 +123,15 @@ REMOVE_THE_VARIABLES_ANOTHER_WAY = {
 # to read another file fails its "exits 0" case until the file is listed.
 SUITES_RUN_WITH_GIT_DIR = {
     "scripts/dangling-path-citation-check-test.py": (
-        "scripts/dangling-path-citation-check.py", "scripts/md-drift-lint.py"),
+        "scripts/dangling-path-citation-check.py", "scripts/md-drift-lint.py",
+        "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py"),
 }
 SUITE_RUN_WITH_EVERY_VARIABLE = "scripts/code-review-codex-cell-test.py"
 FILES_THE_SUITE_RUN_WITH_EVERY_VARIABLE_READS = (
     "scripts/code-review-codex-cell.py",
     "nc-systems/cold-read/cold-read-cell-common.py",
     "nc-systems/cold-read/cold-read-record-names.py",
+    "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
 )
 
 # Where each variable points, relative to the named repository's top

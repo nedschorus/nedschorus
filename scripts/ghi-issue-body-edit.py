@@ -89,9 +89,7 @@ EXIT_FAILED = 1
 EXIT_REFUSED = 2
 EXIT_BAD_INVOCATION = 64
 
-# A gh that never ran (missing binary, timeout) reports a code gh itself
-# cannot return, so "no answer" is never read as "ran and failed" — the
-# same convention as ghi-mirror-refresh.py's GH_DID_NOT_RUN.
+# Distinguish a command that could not run from gh's own failure statuses.
 GH_DID_NOT_RUN = -1
 
 GH_TIMEOUT_SECONDS = 60
@@ -107,14 +105,7 @@ def run_gh(arguments, timeout=GH_TIMEOUT_SECONDS):
 
 
 class BadInvocationArgumentParser(argparse.ArgumentParser):
-    """argparse's own command-line errors join EXIT_BAD_INVOCATION.
-
-    argparse exits 2 on a missing or unknown option, and 2 here means
-    REFUSED — the one answer a caller must never confuse with a mistyped
-    flag, since a refusal says another seat's change is at stake and a
-    mistyped flag says nothing of the kind. Usage text and message are
-    argparse's, unchanged; only the exit code moves.
-    """
+    """Keep bad-invocation errors distinct from refusal code 2, which signals a conflicting edit."""
 
     def error(self, message):
         self.print_usage(sys.stderr)
@@ -122,19 +113,12 @@ class BadInvocationArgumentParser(argparse.ArgumentParser):
 
 
 def normalized_body(text: str) -> str:
-    """The comparable form of an issue body: LF line endings, no trailing
-    newlines. See the module docstring for why both halves are needed."""
+    """Return the body with LF line endings and no trailing newlines."""
     return text.replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
 
 
 def read_issue_body(issue_number: int, repo: str):
-    """The issue's body and last-updated stamp as GitHub holds them now.
-
-    Returns ({"body": str, "updatedAt": str}, None) or (None, error). Both
-    fields are in the field allowlist of the box's gh 2.46.0 as well as the
-    Mac's 2.97.0 (verified 2026-09-08) — unlike `stateReason`, which
-    ghi-mirror-refresh.py had to route around.
-    """
+    """Return (body and updatedAt, None), or (None, error)."""
     result = run_gh(["issue", "view", str(issue_number), "--repo", repo,
                      "--json", "body,updatedAt"])
     if result.returncode != 0:
@@ -150,7 +134,6 @@ def read_issue_body(issue_number: int, repo: str):
 
 def conflict_report(issue_number: int, repo: str, updated_at: str,
                     base_body: str, current_body: str) -> str:
-    """What the refusal prints: that it changed, when, and the difference."""
     diff = difflib.unified_diff(
         base_body.splitlines(), current_body.splitlines(),
         fromfile="the body you read", tofile=f"the body on GitHub now (updated {updated_at})",
@@ -203,9 +186,7 @@ def main(argv=None) -> int:
 
     base_body_path = Path(arguments.base_body_file)
     try:
-        # An EMPTY base record is legal and means what it says: the issue had
-        # no body when the caller read it. Only an unreadable one is a bad
-        # invocation.
+        # An empty base is valid: the issue may have had no body when read.
         base_body_text = base_body_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
         print(f"ghi-issue-body-edit: could not read the base record at "
@@ -239,7 +220,6 @@ def main(argv=None) -> int:
           f"{arguments.repo} rewritten from {new_body_path} — the body you read "
           f"(GitHub's copy, updated {updated_at}) was still current, so no one "
           "else's change was discarded.")
-    # gh issue edit prints the issue URL; pass it through rather than swallow it.
     if result.stdout.strip():
         print(result.stdout.strip())
     return EXIT_EDITED

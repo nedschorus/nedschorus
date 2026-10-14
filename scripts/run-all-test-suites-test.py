@@ -20,7 +20,10 @@ run does not trust the thing it is testing.
 Run: python3 scripts/run-all-test-suites-test.py   (exit 0 = all passed)
 """
 
+import contextlib
+import datetime
 import fcntl
+import io
 import importlib.util
 import json
 import os
@@ -29,6 +32,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 # Before anything runs git: a run started with GIT_DIR set, or with another
 # variable that redirects git, must still build this suite's scratch
@@ -302,6 +306,34 @@ with tempfile.TemporaryDirectory() as scratch:
           holder.startswith("pid ") and f"checkout {repo.resolve()}, started 20" in holder,
           holder)
 
+# --- A *-test.sh suite runs under sh, and keeps no recording ------------------
+SHELL_SUITE_PREAMBLE = f'echo "$0" >> "${RAN_FILE_VARIABLE}"\n'
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"a-test.py": PASSES})
+    (repo / "passes-test.sh").write_text(SHELL_SUITE_PREAMBLE + "exit 0\n")
+    (repo / "nested/fails-test.sh").parent.mkdir()
+    (repo / "nested/fails-test.sh").write_text(SHELL_SUITE_PREAMBLE + "exit 1\n")
+    git(repo, "add", "--", "passes-test.sh", "nested/fails-test.sh")
+    git(repo, "commit", "-q", "-m", "shell suites")
+    result = run(root)
+    check("a tracked *-test.sh runs under sh, beside the *-test.py suites",
+          ran(root) == ["a-test.py", "nested/fails-test.sh", "passes-test.sh"], ran(root))
+    check("a *-test.sh suite is judged by its exit code, and its failure fails the run",
+          result.returncode == 1
+          and "FAIL nested/fails-test.sh exit 1" in result.stdout
+          and lines(result.stdout)[-1].startswith("SUMMARY: 2 passed, 1 failed, 3 total;"),
+          (result.returncode, result.stdout, result.stderr))
+    check("a *-test.sh suite keeps no recording of its inputs",
+          not list((root / "recordings").glob("*/*test.sh.json")),
+          sorted(str(path) for path in (root / "recordings").glob("*/*")))
+    (root / "ran.txt").unlink()
+    result = run(root, "--only-suites-whose-recorded-inputs-changed-since", "HEAD")
+    check("so every selective run selects a *-test.sh suite, even unchanged",
+          "SELECTED passes-test.sh: no recording of its inputs on this machine yet"
+          in result.stdout and "passes-test.sh" in ran(root),
+          (result.stdout, ran(root)))
+
 # --- An all-passing checkout exits 0 -----------------------------------------
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
@@ -342,6 +374,19 @@ with tempfile.TemporaryDirectory() as scratch:
     result = run(root, "-j", "1", rendezvous_seconds="0.5")
     check("-j 1 runs one suite at a time", result.returncode == 1
           and lines(result.stdout)[-1].startswith("SUMMARY: 1 passed, 1 failed"),
+          (result.returncode, result.stdout))
+    check("-j 1 overrides the default, and the first line names it",
+          "; -j 1; logs in " in lines(result.stdout)[0], lines(result.stdout)[:1])
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"first-test.py": rendezvous("first.flag", "second.flag"),
+                     "second-test.py": rendezvous("second.flag", "first.flag")})
+    result = run(root)
+    expected_jobs = min(os.cpu_count() or 4, 2)
+    check("with no -j, the run uses one job per core, capped at the 2 suites it runs, and "
+          "the first line names the number used",
+          f"; -j {expected_jobs}; logs in " in lines(result.stdout)[0]
+          and result.returncode == (0 if expected_jobs == 2 else 1),
           (result.returncode, result.stdout))
 
 # --- --python: the given interpreter runs each suite and names itself ---------
@@ -456,6 +501,27 @@ with tempfile.TemporaryDirectory() as scratch:
           == str(root / "the-child-s-own-git-directory"), saw)
     check("the suite still exits 0, so none of the above is read off a failure",
           result.returncode == 0, (result.returncode, result.stdout, result.stderr))
+
+# --- The environment each suite is launched with: no agent-session attendance --
+# Whether a user attends the agent-session changes what some messages under test say, so a suite
+# must not inherit it from the agent-session that runs it.
+SUITE_THAT_REPORTS_SESSION_VARIABLES = "reports-session-variables-test.py"
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {SUITE_THAT_REPORTS_SESSION_VARIABLES: (
+        "import json\n"
+        f"here = pathlib.Path(os.environ['{RAN_FILE_VARIABLE}']).parent\n"
+        "(here / 'session-variables-the-suite-saw.json').write_text(json.dumps("
+        "{name: os.environ.get(name) for name in "
+        "['CLAUDE_CODE_SESSION_ATTENDED', 'NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER']}))\n")})
+    result = run(root, environment_extra={"CLAUDE_CODE_SESSION_ATTENDED": "0",
+                                         "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "1"})
+    saw_file = root / "session-variables-the-suite-saw.json"
+    saw = json.loads(saw_file.read_text()) if saw_file.exists() else None
+    check("a suite launched by the program sees neither variable that says whether a user attends",
+          saw == {"CLAUDE_CODE_SESSION_ATTENDED": None,
+                  "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": None},
+          (saw, result.returncode, result.stdout[-300:], result.stderr[-300:]))
 
 # --- The program's own git calls: no git redirection either ------------------
 # nedschorus#639, the program's half. The program's OWN process is given an
@@ -943,44 +1009,524 @@ with tempfile.TemporaryDirectory() as scratch:
           ran(root) == ["runs-git-show-test.py"] and result.returncode == 1,
           (ran(root), result.stdout))
 
-# A recording that could not be saved.
+# --- Saving recordings while runs in other checkouts save them too -----------
+# A sitecustomize.py on the program's PYTHONPATH holds each run at a barrier
+# after its recording is written and before it is published: at the suite's
+# publication lock, or at the rename where no lock is taken. The case then
+# releases the runs one at a time, or makes one fail to publish.
+BARRIER_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_BARRIER"
+STORE_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_STORE"
+WRITER_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_WRITER"
+SHARED_TEMPORARY_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_SHARED_TEMPORARY"
+# Only the case that publishes during another run's check sets this; a case without it
+# would otherwise wait out the hold's deadline.
+HOLD_CHECK_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_HOLD_CHECK"
+PUBLICATION_BARRIER_SITECUSTOMIZE = f'''import os, time, pathlib
+if os.environ.get("{BARRIER_VARIABLE}"):
+    import fcntl, tempfile
+    _here = pathlib.Path(os.environ["{BARRIER_VARIABLE}"])
+    _store = os.environ["{STORE_VARIABLE}"]
+    _name = os.environ["{WRITER_VARIABLE}"]
+    _real_replace, _real_flock, _real_mkstemp = os.replace, fcntl.flock, tempfile.mkstemp
+    _state = {{}}
+
+    def _barrier_once():
+        if "go" in _state:
+            return
+        (_here / f"written-{{_name}}").touch()
+        go = _here / f"go-{{_name}}"
+        deadline = time.monotonic() + 60
+        while not go.exists():
+            if time.monotonic() > deadline:
+                raise OSError("the case never released this run's barrier")
+            time.sleep(0.01)
+        _state["go"] = go.read_text().strip()
+
+    def _flock(handle, operation):
+        if str(getattr(handle, "name", "")).startswith(_store) \\
+                and str(handle.name).endswith(".json.lock"):
+            _barrier_once()
+        return _real_flock(handle, operation)
+
+    def _replace(source, destination, *rest, **keywords):
+        if str(destination).startswith(_store) and str(destination).endswith(".json"):
+            _barrier_once()
+            if _state["go"] == "fail" and "failed" not in _state:
+                _state["failed"] = True
+                raise OSError(5, "a publication failure the case injected")
+            answer = _real_replace(source, destination, *rest, **keywords)
+            (_here / f"renamed-{{_name}}").touch()
+            return answer
+        return _real_replace(source, destination, *rest, **keywords)
+
+    _real_stat = os.stat
+
+    def _stat(path, *rest, **keywords):
+        # After its injected failure, hold the run inside its check of the recording.
+        if os.environ.get("{HOLD_CHECK_VARIABLE}") and _state.get("failed") \\
+                and "checked" not in _state \\
+                and str(path).startswith(_store) and str(path).endswith(".json"):
+            _state["checked"] = True
+            (_here / f"checking-{{_name}}").touch()
+            release = _here / f"go-check-{{_name}}"
+            deadline = time.monotonic() + 60
+            while not release.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+        return _real_stat(path, *rest, **keywords)
+
+    def _mkstemp(suffix=None, prefix=None, dir=None, text=False):
+        if os.environ.get("{SHARED_TEMPORARY_VARIABLE}") and dir is not None \\
+                and str(dir).startswith(_store):
+            path = os.path.join(str(dir), (prefix or "") + "shared" + (suffix or ""))
+            return os.open(path, os.O_RDWR | os.O_CREAT | os.O_TRUNC, 0o600), path
+        return _real_mkstemp(suffix, prefix, dir, text)
+
+    fcntl.flock, os.replace, tempfile.mkstemp, os.stat = _flock, _replace, _mkstemp, _stat
+'''
+READS_DATA = "assert pathlib.Path('data.txt').read_text()\n"
+
+
+def publication_barrier(root):
+    """A directory holding the barrier's sitecustomize.py, and its marker directory."""
+    shadow = root / "barrier-sitecustomize"
+    shadow.mkdir()
+    (shadow / "sitecustomize.py").write_text(PUBLICATION_BARRIER_SITECUSTOMIZE)
+    markers = root / "barrier"
+    markers.mkdir()
+    return shadow, markers
+
+
+def start_writer(root, checkout, name, store, shadow, markers, shared_temporary=False,
+                 hold_check=False):
+    """A run of the program in `checkout`, saving into `store`, held at the barrier as `name`."""
+    environment = dict(os.environ)
+    environment.update({
+        RAN_FILE_VARIABLE: str(root / f"ran-{name}.txt"), RENDEZVOUS_WAIT_VARIABLE: "20",
+        "PYTHONPATH": str(shadow), BARRIER_VARIABLE: str(markers),
+        STORE_VARIABLE: str(store), WRITER_VARIABLE: name})
+    if shared_temporary:
+        environment[SHARED_TEMPORARY_VARIABLE] = "1"
+    if hold_check:
+        environment[HOLD_CHECK_VARIABLE] = "1"
+    command = [sys.executable, str(PROGRAM), "--checkout", str(checkout),
+               "--log-dir", str(root / f"logs-{name}"),
+               "--lock-file", str(root / f"run-{name}.lock"),
+               "--recorded-inputs-directory", str(store)]
+    return subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=environment, stdin=subprocess.DEVNULL)
+
+
+def wait_for(path, seconds=60):
+    deadline = time.monotonic() + seconds
+    while not path.exists():
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.01)
+    return True
+
+
+READER = f'''import importlib.util, json, pathlib, sys, time
+spec = importlib.util.spec_from_file_location("runner", {str(PROGRAM)!r})
+runner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runner)
+store, stop, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
+polling = pathlib.Path(sys.argv[4])
+seen = []
+while True:
+    stopping = stop.exists()
+    directories = list(store.glob("*/"))
+    if not directories:
+        seen.append("absent")
+    for directory in directories:
+        target = runner.recording_file_for(directory, "a-test.py")
+        try:
+            text = target.read_text()
+        except OSError:
+            seen.append("absent")
+            continue
+        try:
+            seen.append(json.loads(text).get("commit", "no commit"))
+        except ValueError:
+            seen.append("INCOMPLETE")
+    polling.touch()
+    if stopping:
+        break
+    time.sleep(0.001)
+pathlib.Path(out).write_text(json.dumps(seen))
+'''
+
+
+def two_branch_checkouts(root):
+    """root/repo on its first branch and root/other on a second, which changes data.txt."""
+    repo = make_repo(root, {"a-test.py": READS_DATA})
+    first = commit_files(repo, {"data.txt": "first branch\n"}, "data")
+    git(repo, "worktree", "add", "-q", "-b", "second", str(root / "other"))
+    second = commit_files(root / "other", {"data.txt": "second branch\n"}, "change data")
+    return repo, first, root / "other", second
+
+
+def solo_recording(root, checkout, name):
+    """The recording one run alone in `checkout` saves, in a store of its own."""
+    store = root / f"solo-store-{name}"
+    environment = dict(os.environ)
+    environment.update({RAN_FILE_VARIABLE: str(root / f"ran-solo-{name}.txt"),
+                        RENDEZVOUS_WAIT_VARIABLE: "20"})
+    subprocess.run([sys.executable, str(PROGRAM), "--checkout", str(checkout),
+                    "--log-dir", str(root / f"logs-solo-{name}"),
+                    "--lock-file", str(root / f"run-solo-{name}.lock"),
+                    "--recorded-inputs-directory", str(store)],
+                   capture_output=True, text=True, env=environment,
+                   stdin=subprocess.DEVNULL, check=False)
+    found = list(store.glob("*/a-test.py.json"))
+    return json.loads(found[0].read_text()) if found else {}
+
+
+def published(store):
+    found = list(store.glob("*/a-test.py.json"))
+    try:
+        return json.loads(found[0].read_text()) if found else {}
+    except ValueError:
+        return {"commit": "INCOMPLETE"}
+
+
+def leftover_temporaries(store):
+    return sorted(path.name for path in store.glob("*/*.tmp"))
+
+
+def overlap_publishing_in_turn(shared_temporary, prefill):
+    """Two runs on two branches save one suite at once; returns what each step saw."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        repo, first, other, second = two_branch_checkouts(root)
+        solo = {"first": solo_recording(root, repo, "first"),
+                "second": solo_recording(root, other, "second")}
+        store = root / "shared-store"
+        if prefill:
+            subprocess.run([sys.executable, str(PROGRAM), "--checkout", str(other),
+                            "--log-dir", str(root / "logs-prefill"),
+                            "--lock-file", str(root / "run-prefill.lock"),
+                            "--recorded-inputs-directory", str(store)],
+                           capture_output=True, text=True, check=False,
+                           env={**os.environ, RAN_FILE_VARIABLE: str(root / "ran-prefill.txt"),
+                                RENDEZVOUS_WAIT_VARIABLE: "20"}, stdin=subprocess.DEVNULL)
+        shadow, markers = publication_barrier(root)
+        stop, seen_file = root / "stop-reading", root / "seen.json"
+        reader_polling = root / "reader-polling"
+        reader = subprocess.Popen([sys.executable, "-c", READER, str(store), str(stop),
+                                   str(seen_file), str(reader_polling)])
+        writers = {name: start_writer(root, checkout, name, store, shadow, markers,
+                                      shared_temporary)
+                   for name, checkout in (("first", repo), ("second", other))}
+        seen = {"both held": all(wait_for(markers / f"written-{name}") for name in writers)}
+        seen["temporaries while held"] = leftover_temporaries(store)
+        # Released only once the reader is polling, and the reader polls once more after
+        # the stop, so its reads span both publications however slowly it started.
+        seen["reader polling before release"] = wait_for(reader_polling, 60)
+        (markers / "go-first").write_text("go")
+        wait_for(markers / "renamed-first", 30)
+        seen["after first"] = published(store)
+        (markers / "go-second").write_text("go")
+        wait_for(markers / "renamed-second", 30)
+        seen["after second"] = published(store)
+        seen["exits"] = {name: writer.wait(timeout=120) for name, writer in writers.items()}
+        seen["outputs"] = {name: writer.stdout.read() for name, writer in writers.items()}
+        stop.touch()
+        reader.wait(timeout=60)
+        seen["reads"] = json.loads(seen_file.read_text()) if seen_file.exists() else []
+        seen["commits"] = {"first": first, "second": second}
+        seen["solo"] = solo
+        seen["leftover"] = leftover_temporaries(store)
+        return seen
+
+
+def overlap_second_fails_after_first_publishes(prefill):
+    """The first run publishes, then the second fails to publish; returns what was left."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        repo, first, other, second = two_branch_checkouts(root)
+        store = root / "shared-store"
+        if prefill:
+            subprocess.run([sys.executable, str(PROGRAM), "--checkout", str(repo),
+                            "--log-dir", str(root / "logs-prefill"),
+                            "--lock-file", str(root / "run-prefill.lock"),
+                            "--recorded-inputs-directory", str(store)],
+                           capture_output=True, text=True, check=False,
+                           env={**os.environ, RAN_FILE_VARIABLE: str(root / "ran-prefill.txt"),
+                                RENDEZVOUS_WAIT_VARIABLE: "20"}, stdin=subprocess.DEVNULL)
+        shadow, markers = publication_barrier(root)
+        writers = {name: start_writer(root, checkout, name, store, shadow, markers)
+                   for name, checkout in (("first", repo), ("second", other))}
+        held = all(wait_for(markers / f"written-{name}") for name in writers)
+        (markers / "go-first").write_text("go")
+        wait_for(markers / "renamed-first", 30)
+        (markers / "go-second").write_text("fail")
+        failed_at = time.monotonic()
+        exits = {name: writer.wait(timeout=120) for name, writer in writers.items()}
+        after_failure = time.monotonic() - failed_at
+        outputs = {name: writer.stdout.read() for name, writer in writers.items()}
+        return {"held": held, "exits": exits, "outputs": outputs, "commits": (first, second),
+                "left": published(store), "leftover": leftover_temporaries(store),
+                "after failure": after_failure,
+                "checking": (markers / "checking-second").exists()}
+
+
+def overlap_first_publishes_while_second_checks():
+    """The second run fails and is held inside its check of the earlier recording; the first
+    run is then released to publish. Returns what was left once both finished."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        repo, first, other, second = two_branch_checkouts(root)
+        store = root / "shared-store"
+        subprocess.run([sys.executable, str(PROGRAM), "--checkout", str(other),
+                        "--log-dir", str(root / "logs-prefill"),
+                        "--lock-file", str(root / "run-prefill.lock"),
+                        "--recorded-inputs-directory", str(store)],
+                       capture_output=True, text=True, check=False,
+                       env={**os.environ, RAN_FILE_VARIABLE: str(root / "ran-prefill.txt"),
+                            RENDEZVOUS_WAIT_VARIABLE: "20"}, stdin=subprocess.DEVNULL)
+        shadow, markers = publication_barrier(root)
+        writers = {name: start_writer(root, checkout, name, store, shadow, markers,
+                                      hold_check=(name == "second"))
+                   for name, checkout in (("first", repo), ("second", other))}
+        held = all(wait_for(markers / f"written-{name}") for name in writers)
+        (markers / "go-second").write_text("fail")
+        checking = wait_for(markers / "checking-second", 30)
+        (markers / "go-first").write_text("go")
+        published_during_check = wait_for(markers / "renamed-first", 3)
+        (markers / "go-check-second").touch()
+        exits = {name: writer.wait(timeout=120) for name, writer in writers.items()}
+        outputs = {name: writer.stdout.read() for name, writer in writers.items()}
+        return {"held": held, "checking": checking,
+                "published during check": published_during_check, "exits": exits,
+                "outputs": outputs, "first": first, "left": published(store)}
+
+
+during_check = overlap_first_publishes_while_second_checks()
+check("a run publishing while another checks whether to remove the suite's recording waits "
+      "for that check to finish",
+      during_check["held"] and during_check["checking"]
+      and not during_check["published during check"], during_check)
+check("so the recording it then publishes survives the other run's failed save",
+      during_check["left"].get("commit") == during_check["first"]
+      and during_check["exits"] == {"first": 0, "second": 0}, during_check)
+
+for prefill in (False, True):
+    store_was = "a store already holding the suite's recording" if prefill else "an empty store"
+    seen = overlap_publishing_in_turn(shared_temporary=False, prefill=prefill)
+    commits = seen["commits"]
+    check(f"two runs on two branches, saving one suite into {store_was}, are both held "
+          f"after writing and before publishing, each with a temporary file of its own",
+          seen["both held"] and len(seen["temporaries while held"]) == 2, seen)
+    check(f"with {store_was}, the first run released publishes its own run's recording",
+          seen["after first"].get("commit") == commits["first"], seen["after first"])
+    check(f"with {store_was}, the second run released publishes its own run's recording",
+          seen["after second"].get("commit") == commits["second"], seen["after second"])
+    check(f"with {store_was}, both runs pass and leave no temporary file",
+          seen["exits"] == {"first": 0, "second": 0} and seen["leftover"] == [],
+          (seen["exits"], seen["leftover"], seen["outputs"]))
+    allowed = {"absent", commits["first"], commits["second"]}
+    check(f"with {store_was}, a reader polling throughout sees only whole recordings, "
+          f"each from one run",
+          seen["reader polling before release"] and len(seen["reads"]) >= 2
+          and set(seen["reads"]) <= allowed,
+          (seen["reader polling before release"], len(seen["reads"]),
+           sorted(set(seen["reads"]) - allowed)))
+    check(f"with {store_was}, each run's published recording reads the same files as a "
+          f"run alone on its branch",
+          seen["after first"].get("reads", {}).keys() == seen["solo"]["first"].get("reads", {}).keys()
+          and seen["after second"].get("reads", {}).keys()
+          == seen["solo"]["second"].get("reads", {}).keys()
+          and "data.txt" in seen["solo"]["first"].get("reads", {}),
+          (seen["after first"].get("reads"), seen["solo"]["first"].get("reads")))
+    left = overlap_second_fails_after_first_publishes(prefill)
+    check(f"with {store_was}, when the second run fails to publish after the first has "
+          f"published, the first run's recording survives",
+          left["held"] and left["left"].get("commit") == left["commits"][0]
+          and left["leftover"] == [], left)
+    check(f"with {store_was}, the second run's failed save is not held in its check, so it "
+          f"finishes promptly",
+          not left["checking"] and left["after failure"] < 30,
+          (left["checking"], left["after failure"]))
+    check(f"with {store_was}, the second run's report says the recording another run saved "
+          f"is kept",
+          any(line.startswith("inputs of a-test.py not recorded: ")
+              and "another run saved while this one ran is kept" in line
+              for line in lines(left["outputs"]["second"])), left["outputs"]["second"])
+
+# The control: runs that share one temporary file name, and so publish each
+# other's recordings or lose one, must fail the checks above. Which run writes
+# the shared file last is a race, so the control asks only that some check fail.
+control = overlap_publishing_in_turn(shared_temporary=True, prefill=False)
+control_passes = (len(control["temporaries while held"]) == 2
+                  and control["after first"].get("commit") == control["commits"]["first"]
+                  and control["after second"].get("commit") == control["commits"]["second"])
+check("control: when the runs share one temporary file, the checks above fail",
+      not control_passes,
+      (control["temporaries while held"], control["after first"].get("commit"),
+       control["after second"].get("commit"), control["commits"]))
+
+# A recording that could not be saved, with no other run saving it.
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
     repo = make_repo(root, {"a-test.py": PASSES})
     base = head(repo)
     run(root)
     stored = next((root / "recordings").glob("*/a-test.py.json"))
-    stored.with_suffix(".json.tmp").mkdir()
-    result = run(root)
+    shadow, markers = publication_barrier(root)
+    (markers / "go-alone").write_text("fail")
+    started = time.monotonic()
+    result = run(root, environment_extra={
+        "PYTHONPATH": str(shadow), BARRIER_VARIABLE: str(markers),
+        STORE_VARIABLE: str(root / "recordings"), WRITER_VARIABLE: "alone"})
+    check("a failed save with no other run is not held in its check",
+          not (markers / "checking-alone").exists() and time.monotonic() - started < 30,
+          ((markers / "checking-alone").exists(), time.monotonic() - started))
     check("when a recording cannot be saved, the report says the earlier one is removed",
           any(line.startswith("inputs of a-test.py not recorded: ")
               and "Its earlier recording is removed" in line
               for line in lines(result.stdout)) and not stored.exists(),
           (result.stdout, stored.exists()))
+    check("and the run leaves no temporary file behind",
+          leftover_temporaries(root / "recordings") == [],
+          leftover_temporaries(root / "recordings"))
     result = select_since(root, base)
     check("so the next selective run selects the suite",
           ran(root) == ["a-test.py"], (ran(root), result.stdout))
 
-# A run killed by SIGKILL leaves its suites' strace directories behind.
+# A first recording that could not be saved: there is nothing earlier to remove.
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
-    make_repo(root, {"a-test.py": PASSES})
+    repo = make_repo(root, {"a-test.py": PASSES})
+    shadow, markers = publication_barrier(root)
+    (markers / "go-alone").write_text("fail")
+    started = time.monotonic()
+    result = run(root, environment_extra={
+        "PYTHONPATH": str(shadow), BARRIER_VARIABLE: str(markers),
+        STORE_VARIABLE: str(root / "recordings"), WRITER_VARIABLE: "alone"})
+    check("a failed first save with no other run is not held in its check",
+          not (markers / "checking-alone").exists() and time.monotonic() - started < 30,
+          ((markers / "checking-alone").exists(), time.monotonic() - started))
+    check("when a suite's first recording cannot be saved, the report does not claim "
+          "another run saved one",
+          any(line.startswith("inputs of a-test.py not recorded: ")
+              and "Its earlier recording is removed" in line
+              for line in lines(result.stdout))
+          and not list((root / "recordings").glob("*/a-test.py.json")), result.stdout)
+
+# A recorded run that skipped cases recorded nothing for them.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"skips-one-test.py": "print('SKIP  a case this fixture skips')\n",
+                            "passes-test.py": PASSES})
+    base = head(repo)
+    run(root)
+    result = select_since(root, base)
+    check("a suite whose recorded run skipped cases is selected again, and says why",
+          ran(root) == ["skips-one-test.py"]
+          and "SELECTED skips-one-test.py: its last recorded run skipped 1 case(s), so it "
+              "recorded only what the cases that ran read" in lines(result.stdout),
+          (ran(root), result.stdout))
+    stored = next((root / "recordings").glob("*/skips-one-test.py.json"))
+    recorded = json.loads(stored.read_text())
+    recorded.pop("skipped_cases")
+    stored.write_text(json.dumps(recorded))
+    result = select_since(root, base)
+    check("and so is one whose recording does not say how many cases it skipped",
+          "SELECTED skips-one-test.py: its last recorded run skipped an unrecorded number "
+          "of cases, so it recorded only what the cases that ran read" in lines(result.stdout),
+          result.stdout)
+
+# A run killed by SIGKILL leaves its suites' strace directories behind. On
+# Linux a later run removes them only when the killed run's record shows that
+# nothing of it still runs.
+def ended_process():
+    """The pid and start ticks of a process that has ended and been reaped."""
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    ticks = module.process_start_ticks(child.pid)
+    child.terminate()
+    child.wait()
+    return child.pid, ticks
+
+
+def killed_run_record(root, killed_logs, runner, suite_processes, temporary=False):
+    runs = module.run_records_directory_for_lock_file(root / "run.lock")
+    runs.mkdir(parents=True, exist_ok=True)
+    record = runs / f"{runner[0]}-{runner[1]}.json"
+    record.write_text(json.dumps({
+        "runner": {"pid": runner[0], "start_ticks": runner[1]},
+        "log_dir": str(killed_logs), "log_dir_is_temporary": temporary,
+        "started": "2026-10-08T00:00:00+00:00", "finished": None,
+        "suite_processes": [{"pid": pid, "start_ticks": ticks, "namespace_init": True}
+                            for pid, ticks in suite_processes]}))
+    return record
+
+
+def killed_run_logs(root):
     killed_logs = root / "logs-of-a-killed-run"
     left = killed_logs / "recorded-inputs" / "a-test.py.strace"
     left.mkdir(parents=True)
     (left / "trace.4242").write_text("a trace nobody removed\n")
     hook_log = killed_logs / "recorded-inputs" / "a-test.py.hook"
     hook_log.write_text("read\t/elsewhere\n")
-    (root / "run.lock").write_text(f"pid 4242, checkout {root / 'repo'}, started "
-                                   f"2026-09-30T00:00:00Z, logs in {killed_logs}\n")
-    result = run(root)
-    check("a run removes the strace directories the lock's last holder left behind",
-          result.returncode == 0 and not left.exists(), (result.stdout, left.exists()))
-    check("and nothing else in that holder's log directory", hook_log.exists())
-    holder = (root / "run.lock").read_text()
-    check("the lock names its holder's log directory, on one line",
-          holder.endswith(f", logs in {(root / 'logs').resolve()}\n")
-          and holder.count("\n") == 1 and holder.startswith("pid "), holder)
+    return killed_logs, left, hook_log
+
+
+if sys.platform.startswith("linux"):
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        make_repo(root, {"a-test.py": PASSES})
+        killed_logs, left, hook_log = killed_run_logs(root)
+        record = killed_run_record(root, killed_logs, ended_process(), [ended_process()])
+        result = run(root)
+        check("a run removes the strace directories a killed run left, once its record "
+              "shows its runner and suite processes have all ended",
+              result.returncode == 0 and not left.exists(), (result.stdout, left.exists()))
+        check("and nothing else in that run's log directory", hook_log.exists())
+        check("and the record goes with them, since that run's caller chose its log "
+              "directory", not record.exists())
+        holder = (root / "run.lock").read_text()
+        check("the lock names its holder's log directory, on one line",
+              holder.endswith(f", logs in {(root / 'logs').resolve()}\n")
+              and holder.count("\n") == 1 and holder.startswith("pid "), holder)
+
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        make_repo(root, {"a-test.py": PASSES})
+        killed_logs, left, hook_log = killed_run_logs(root)
+        still_running = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        try:
+            killed_run_record(root, killed_logs, ended_process(),
+                              [(still_running.pid,
+                                module.process_start_ticks(still_running.pid))])
+            # The lock still names the killed run, as it does after a SIGKILL.
+            (root / "run.lock").write_text(f"pid 4242, checkout {root / 'repo'}, started "
+                                           f"2026-09-30T00:00:00Z, logs in {killed_logs}\n")
+            result = run(root)
+            check("a run keeps the traces of a killed run whose suite process still runs",
+                  result.returncode == 0 and left.exists(), (result.stdout, left.exists()))
+            check("and says why it kept them",
+                  "has no runner, but 1 of its suite processes still run; its files are kept"
+                  in result.stdout, result.stdout)
+        finally:
+            still_running.terminate()
+            still_running.wait()
+        result = run(root)
+        check("a run after that suite process ended removes the traces",
+              result.returncode == 0 and not left.exists(), (result.stdout, left.exists()))
+
+    with tempfile.TemporaryDirectory() as scratch:
+        root = pathlib.Path(scratch)
+        make_repo(root, {"a-test.py": PASSES})
+        result = run(root)
+        records = list(module.run_records_directory_for_lock_file(root / "run.lock").glob("*.json"))
+        check("a run that logged to a directory its caller chose leaves no record behind",
+              result.returncode == 0 and records == [], (result.stdout, records))
+        with open(root / "logs" / module.LOG_DIRECTORY_LOCK_FILE_NAME, "a") as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+            result = run(root, lock_file=root / "another.lock")
+        check("a run refuses a --log-dir another run is writing to, with exit 3",
+              result.returncode == 3 and "another run is writing to the log directory"
+              in result.stderr, (result.returncode, result.stderr))
 
 # --- Git calls that read no file of the checkout -----------------------------
 # Full arguments distinguish location and config reads from calls whose
@@ -1218,14 +1764,70 @@ with tempfile.TemporaryDirectory() as scratch:
     run(root)
     stored = next((root / "recordings").glob("*/a-test.py.json"))
     recorded = json.loads(stored.read_text())
-    recorded["format"] = 2
+    recorded["format"] = 4
+    recorded.pop("seconds", None)
     stored.write_text(json.dumps(recorded))
     result = select_since(root, base)
-    check("format 2 selects a suite once so its git calls can be recorded with format 3",
+    check("a format 4 recording, saved before runs in two checkouts could save it safely, "
+          "selects its suite once so it is recorded afresh in format 5",
           result.returncode == 0 and ran(root) == ["a-test.py"]
           and "SELECTED a-test.py: its recording was made by an older version of this program"
-          in lines(result.stdout) and recording(root, "a-test.py").get("format") == 3,
+          in lines(result.stdout) and recording(root, "a-test.py").get("format") == 5
+          and isinstance(recording(root, "a-test.py").get("seconds"), float),
           (ran(root), result.stdout))
+
+# --- Suites start longest first, by the seconds their recordings kept --------
+# At -j 1 suites start one at a time in the order they were submitted, so the
+# order the suites appended their paths to the ran file is that order.
+LONGEST_FIRST_SUITES = {
+    "a-sleeps-test.py": "time.sleep(0.3)\n",
+    "b-test.py": PASSES, "c-test.py": PASSES, "d-test.py": PASSES, "e-test.py": PASSES,
+    "f-fails-test.py": "sys.exit(1)\n", "g-test.py": PASSES,
+}
+
+
+def ran_in_starting_order(root):
+    path = root / "ran.txt"
+    return path.read_text().split() if path.exists() else []
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, LONGEST_FIRST_SUITES)
+    first = run(root, "-j", "1")
+    check("with no recording yet, suites start in the order git lists them",
+          ran_in_starting_order(root) == sorted(LONGEST_FIRST_SUITES),
+          (ran_in_starting_order(root), first.stdout))
+    recorded = recording(root, "a-sleeps-test.py")
+    seconds = recorded.get("seconds")
+    check("a recording keeps the seconds its suite ran, the number the suite's line prints",
+          isinstance(seconds, float) and seconds >= 0.3
+          and f"PASS a-sleeps-test.py ({seconds:.1f}s)" in lines(first.stdout),
+          (recorded, first.stdout))
+    check("a failed suite's recording keeps its seconds too",
+          isinstance(recording(root, "f-fails-test.py").get("seconds"), float),
+          recording(root, "f-fails-test.py"))
+
+    def set_recorded(suite, change):
+        stored = next((root / "recordings").glob(f"*/{suite}.json"))
+        recorded = json.loads(stored.read_text())
+        change(recorded)
+        stored.write_text(json.dumps(recorded))
+
+    set_recorded("b-test.py", lambda recorded: recorded.update(seconds=5.0))
+    set_recorded("c-test.py", lambda recorded: recorded.update(seconds=30.0))
+    set_recorded("d-test.py", lambda recorded: recorded.update(seconds=5.0))
+    next((root / "recordings").glob("*/e-test.py.json")).unlink()
+    set_recorded("f-fails-test.py", lambda recorded: recorded.update(seconds=0.01))
+    set_recorded("g-test.py", lambda recorded: recorded.pop("seconds", None))
+    (root / "ran.txt").unlink()
+    run(root, "-j", "1")
+    check("suites start longest recorded first, ties in git's order, after every suite with "
+          "no recording, a recorded run that did not pass, or no recorded seconds",
+          ran_in_starting_order(root) == [
+              "e-test.py", "f-fails-test.py", "g-test.py",
+              "c-test.py", "b-test.py", "d-test.py", "a-sleeps-test.py"],
+          ran_in_starting_order(root))
 
 # --- The recorder runs the sitecustomize.py it shadows ------------------------
 # Both machines' Pythons ship one (Homebrew's on the Mac sets sys.executable),
@@ -1250,13 +1852,248 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a sitecustomize.py already on PYTHONPATH still runs beneath the recorder",
           result.returncode == 0, (result.stdout, result.stderr))
 
+# --- Run records: what a later run removes, decided without real processes ---
+def fake_proc(root, processes):
+    """A /proc holding a stat file per pid: processes maps pid -> (state, start ticks)."""
+    proc = root / "proc"
+    for pid, (state, ticks) in processes.items():
+        (proc / str(pid)).mkdir(parents=True)
+        fields = [state] + ["0"] * 18 + [str(ticks)] + ["0"] * 10
+        (proc / str(pid) / "stat").write_text(f"{pid} (a (strange) name) {' '.join(fields)}\n")
+    return proc
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    proc = fake_proc(root, {10: ("S", 500), 11: ("Z", 600)})
+    check("start ticks are read after the command name's last ')', which may hold spaces",
+          module.process_start_ticks(10, proc) == 500, module.process_start_ticks(10, proc))
+    check("a zombie counts as ended", module.process_start_ticks(11, proc) is None)
+    check("a pid with no /proc entry counts as ended",
+          module.process_start_ticks(12, proc) is None)
+    check("a process with the same pid but another start time is another process",
+          not module.process_alive(10, 499, proc) and module.process_alive(10, 500, proc))
+
+
+def reap_case(alive_pids, temporary=False, ages=(0,), finished_age=None, record_age=0,
+              unremovable_log_dir=False, unremovable_trace=False):
+    """Run remove_leftovers_of_ended_runs_named_in_run_records on one record whose runner
+    is pid 1 and suite process pid 2, with liveness stubbed, once for each age in ages
+    (seconds after the record was written); return (lines of the last run, trace left,
+    log dir left, record left, the record's content or None)."""
+    scratch = pathlib.Path(tempfile.mkdtemp())
+    locked = None
+    try:
+        runs = scratch / "runs"
+        runs.mkdir()
+        log_dir = scratch / "logs"
+        trace = log_dir / "recorded-inputs" / "a-test.py.strace"
+        trace.mkdir(parents=True)
+        record = runs / "1-100.json"
+        written = time.time() - record_age
+        finished = (None if finished_age is None else datetime.datetime.fromtimestamp(
+            written - finished_age, datetime.timezone.utc).isoformat())
+        record.write_text(json.dumps({
+            "runner": {"pid": 1, "start_ticks": 100}, "log_dir": str(log_dir),
+            "log_dir_is_temporary": temporary, "started": "x", "finished": finished,
+            "suite_processes": [{"pid": 2, "start_ticks": 200, "namespace_init": True}]}))
+        os.utime(record, (written, written))
+        if unremovable_log_dir or unremovable_trace:
+            locked = (trace if unremovable_trace else log_dir) / "kept-by-permissions"
+            locked.mkdir()
+            (locked / "file").write_text("x")
+            locked.chmod(0o500)
+        lines = []
+        for age in ages:
+            lines = module.remove_leftovers_of_ended_runs_named_in_run_records(
+                runs, now=time.time() + age, alive=lambda pid, ticks: pid in alive_pids)
+        content = json.loads(record.read_text()) if record.exists() else None
+        return lines, trace.exists(), log_dir.exists(), record.exists(), content
+    finally:
+        if locked is not None and locked.exists():
+            locked.chmod(0o700)
+        shutil.rmtree(scratch)
+
+
+RETENTION = module.FINISHED_RUN_LOG_RETENTION_SECONDS
+lines, trace_left, log_left, record_left, _ = reap_case({1})
+check("a run whose runner still runs is left alone",
+      trace_left and record_left and lines == [], (lines, trace_left, record_left))
+lines, trace_left, log_left, record_left, _ = reap_case({2})
+check("a run whose runner ended but whose suite process still runs keeps its traces",
+      trace_left and record_left, (lines, trace_left, record_left))
+lines, trace_left, log_left, record_left, _ = reap_case(set())
+check("a run whose runner and suite processes all ended loses its traces and its record",
+      not trace_left and log_left and not record_left, (lines, trace_left, record_left))
+lines, trace_left, log_left, record_left, _ = reap_case(set(), temporary=True,
+                                                       finished_age=3600)
+check("a finished run's temporary log directory is kept until two days after it finished",
+      not trace_left and log_left and record_left, (lines, trace_left, log_left))
+lines, trace_left, log_left, record_left, _ = reap_case(set(), temporary=True,
+                                                       finished_age=RETENTION)
+check("and removed, with its record, once they have",
+      not log_left and not record_left, (lines, log_left, record_left))
+lines, trace_left, log_left, record_left, content = reap_case(
+    set(), temporary=True, record_age=3 * 24 * 3600)
+check("a killed run whose processes ran on for days keeps its log directory when first "
+      "found ended, and its record gains the time it was found ended",
+      log_left and record_left and content.get("confirmed_ended") is not None,
+      (lines, log_left, content))
+lines, trace_left, log_left, record_left, _ = reap_case(
+    set(), temporary=True, ages=(0, RETENTION))
+check("and loses it two days after that",
+      not log_left and not record_left, (lines, log_left, record_left))
+lines, trace_left, log_left, record_left, _ = reap_case(
+    {2}, temporary=True, finished_age=RETENTION)
+check("however old, a run with a suite process still running keeps its log directory",
+      trace_left and log_left and record_left, (lines, log_left))
+if os.geteuid() != 0:
+    lines, trace_left, log_left, record_left, _ = reap_case(
+        set(), temporary=True, finished_age=RETENTION, unremovable_log_dir=True)
+    check("a log directory that cannot be removed keeps its record, and the run says so",
+          log_left and record_left and any("could not remove" in line for line in lines)
+          and not any(line.startswith("removed the log directory") for line in lines),
+          (lines, log_left, record_left))
+else:
+    print("SKIP  a log directory that cannot be removed keeps its record: running as root, "
+          "who can remove any directory")
+if os.geteuid() != 0:
+    lines, trace_left, log_left, record_left, _ = reap_case(set(), unremovable_trace=True)
+    check("a caller-chosen log directory whose strace directory cannot be removed keeps its "
+          "run record, so a later run tries again, and the run says so",
+          trace_left and record_left and any("could not remove" in line for line in lines),
+          (lines, trace_left, record_left))
+else:
+    print("SKIP  a caller-chosen log directory whose strace directory cannot be removed keeps "
+          "its run record: running as root, who can remove any directory")
+
+ended_pid, ended_ticks = ended_process()
+check("a process recorded without a start time never counts as running",
+      module.process_alive(ended_pid, None) is False)
+with tempfile.TemporaryDirectory() as scratch:
+    record = module.RunRecord(pathlib.Path(scratch) / "runs", pathlib.Path(scratch) / "logs",
+                              True)
+    record.note_suite_process(ended_pid, True)
+    check("a suite process that ended before its start time was read is not recorded",
+          record.content["suite_processes"] == [], record.content["suite_processes"])
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    runs = root / "runs"
+    runs.mkdir()
+    (runs / "broken.json").write_text("{not json")
+    lines = module.remove_leftovers_of_ended_runs_named_in_run_records(runs, alive=lambda pid, ticks: False)
+    check("a record that cannot be read is kept and named",
+          (runs / "broken.json").exists() and any("could not be read" in line
+                                                  for line in lines), lines)
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    runs = root / "runs"
+    runs.mkdir()
+    temp = root / "tmp"
+    old = temp / "run-all-test-suites-old"
+    recent = temp / "run-all-test-suites-recent"
+    named = temp / "run-all-test-suites-named"
+    other = temp / "another-program-old"
+    for directory in (old, recent, named, other):
+        directory.mkdir(parents=True)
+        (directory / "report.txt").write_text("report\n")
+    (runs / "9-9.json").write_text(json.dumps({"log_dir": str(named)}))
+    now = time.time() + module.FINISHED_RUN_LOG_RETENTION_SECONDS + 60
+    for directory in (old, named, other):
+        for path in (directory, directory / "report.txt"):
+            os.utime(path, (time.time(), time.time()))
+    for path in (recent, recent / "report.txt"):
+        os.utime(path, (now, now))
+    explicit = temp / "run-all-test-suites-explicit"
+    deep = temp / "run-all-test-suites-deep"
+    for directory in (explicit, deep):
+        (directory / "recorded-inputs" / "a-test.py.strace").mkdir(parents=True)
+        (directory / "recorded-inputs" / "a-test.py.strace" / "trace.1").write_text("x")
+    (explicit / module.LOG_DIRECTORY_LOCK_FILE_NAME).write_text("")
+    for path in (explicit, explicit / module.LOG_DIRECTORY_LOCK_FILE_NAME,
+                 explicit / "recorded-inputs", explicit / "recorded-inputs" / "a-test.py.strace",
+                 explicit / "recorded-inputs" / "a-test.py.strace" / "trace.1",
+                 deep, deep / "recorded-inputs", deep / "recorded-inputs" / "a-test.py.strace"):
+        os.utime(path, (time.time(), time.time()))
+    os.utime(deep / "recorded-inputs" / "a-test.py.strace" / "trace.1", (now, now))
+    removed, removal_failures = module.remove_old_temporary_log_directories_without_run_records(
+        runs, now=now, temp_dir=temp)
+    check("a log directory from before run records is removed once unchanged for two days",
+          removed == [old] and not old.exists() and removal_failures == [],
+          (removed, removal_failures))
+    check("but not a recent one, one a record names, or another program's",
+          recent.exists() and named.exists() and other.exists())
+    check("nor one a caller chose with --log-dir, which holds the log-directory lock file",
+          explicit.exists())
+    check("nor one with a trace deep inside it that changed recently",
+          deep.exists())
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    left = root / "logs" / "recorded-inputs" / "a-test.py.strace"
+    left.mkdir(parents=True)
+    lock = root / "run.lock"
+    lines = module.clean_up_after_earlier_runs(
+        lock, f"pid 4242, checkout x, started y, logs in {root / 'logs'}\n", platform="darwin")
+    check("on macOS a run still cleans up after the lock's last holder, as before",
+          not left.exists() and lines and "strace directories" in lines[0], lines)
+    check("and keeps no run records there",
+          not module.run_records_directory_for_lock_file(lock).exists())
+    left.mkdir(parents=True)
+    module.clean_up_after_earlier_runs(
+        lock, f"pid 4242, checkout x, started y, logs in {root / 'logs'}\n", platform="linux")
+    check("on Linux the lock's last holder alone is no reason to remove traces",
+          left.exists())
+
+# On macOS the whole run still takes the machine lock and writes no record.
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": PASSES})
+    darwin_module = load_program_module()
+    darwin_module.sys = type(sys)("sys_on_darwin")
+    darwin_module.sys.__dict__.update(sys.__dict__)
+    darwin_module.sys.platform = "darwin"
+    # This case is about the lock, not the sandbox, and sandbox-exec exists only on macOS.
+    darwin_module.signal_sandbox = lambda *arguments, **keywords: ((), None)
+    lock = root / "run.lock"
+    darwin_arguments = ["--checkout", str(root / "repo"), "--log-dir", str(root / "logs"),
+                        "--lock-file", str(lock),
+                        "--recorded-inputs-directory", str(root / "recordings")]
+    os.environ[RAN_FILE_VARIABLE] = str(root / "ran.txt")
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            with open(lock, "a+") as held:
+                fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+                held_code = darwin_module.main(darwin_arguments)
+            code = darwin_module.main(darwin_arguments)
+    finally:
+        del os.environ[RAN_FILE_VARIABLE]
+    check("on macOS a run refuses while another holds the machine lock",
+          held_code == module.EXIT_LOCKED, held_code)
+    check("and runs when the lock is free, naming itself in it, with no run record",
+          code == 0 and lock.read_text().startswith("pid ")
+          and not module.run_records_directory_for_lock_file(lock).exists(), (code, lock.read_text()))
+
 # --- The defaults -------------------------------------------------------------
 defaults = module.parse_arguments([])
 check("--checkout defaults to the checkout this program is in",
       pathlib.Path(defaults.checkout) == SCRIPTS_DIR.parent, defaults.checkout)
 check("--python defaults to the interpreter running the program",
       defaults.python == sys.executable, defaults.python)
-check("-j defaults to 4", defaults.jobs == 4, defaults.jobs)
+check("-j defaults to not given, so the run chooses the job count", defaults.jobs is None,
+      defaults.jobs)
+for jobs_given, suites_to_run, cores, expected, case in (
+        (None, 100, 16, 16, "with no -j, one suite runs per core"),
+        (None, 3, 16, 3, "with no -j, no more suites run at once than the run has"),
+        (None, 0, 16, 1, "with no -j and no suite to run, the job count is 1, not 0"),
+        (None, 100, None, 4, "with no -j and the core count unknown, 4 suites run at once"),
+        (2, 100, 16, 2, "-j N overrides the core count"),
+        (5, 2, 16, 5, "-j N is used as given, even above the number of suites")):
+    answer = module.suites_run_at_once(jobs_given, suites_to_run, cores)
+    check(case, answer == expected, (jobs_given, suites_to_run, cores, answer))
 check("--lock-file defaults to one file per machine under ~/.claude",
       pathlib.Path(defaults.lock_file) == pathlib.Path.home() / ".claude"
       / ".run-all-test-suites.lock", defaults.lock_file)

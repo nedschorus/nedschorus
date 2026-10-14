@@ -32,6 +32,8 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 CHECK_SCRIPT = Path(__file__).with_name("dangling-path-citation-check.py")
 LINT_SCRIPT = Path(__file__).with_name("md-drift-lint.py")
+GIT_OUTPUT_MODULE = (Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+                     / "git-machine-readable-output-runner-and-parser-common.py")
 
 failures = []
 
@@ -63,6 +65,9 @@ def build_repository(root: Path):
     for source in (CHECK_SCRIPT, LINT_SCRIPT):
         (root / "scripts" / source.name).write_text(source.read_text(encoding="utf-8"),
                                                    encoding="utf-8")
+    (root / "nc-systems" / "general-tools").mkdir(parents=True)
+    (root / "nc-systems" / "general-tools" / GIT_OUTPUT_MODULE.name).write_text(
+        GIT_OUTPUT_MODULE.read_text(encoding="utf-8"), encoding="utf-8")
     (root / "scripts" / "already-here.py").write_text("# a file that exists\n", encoding="utf-8")
     (root / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")
     git(root, "add", "-A")
@@ -610,19 +615,25 @@ echo hello
     (root / "docs" / "moving-angle-target.md").write_text(
         "# the target\n\n" + "An unrelated paragraph, carrying no citation.\n\n" * 12,
         encoding="utf-8")
+    (root / "docs" / "moving-angle-image.png").write_bytes(b"png")
     (root / "docs" / "cites-in-angle-brackets.md").write_text(
-        "The design is [the target](<moving-angle-target.md>) and stands.\n",
+        "The design is [the target](<moving-angle-target.md>) and stands.\n"
+        "The diagram is [the image](<moving-angle-image.png>) beside it.\n",
         encoding="utf-8")
     git(root, "add", "-A")
     git(root, "commit", "-qm", "add a target and a document citing it in angle brackets")
     angle_link_base = git(root, "rev-parse", "HEAD").stdout.strip()
     (root / "nc-systems").mkdir(parents=True, exist_ok=True)
     git(root, "mv", "docs/moving-angle-target.md", "nc-systems/moving-angle-target.md")
+    git(root, "mv", "docs/moving-angle-image.png", "nc-systems/moving-angle-image.png")
     git(root, "commit", "-qm", "move the target, sweeping no citation")
     code, out, err = run_check(root, angle_link_base)
     check("an angle-bracket markdown link to a moved file is reported",
           code == 1 and "docs/cites-in-angle-brackets.md:1: cites docs/moving-angle-target.md"
           in out, f"{code} {out!r} {err!r}")
+    check("an angle-bracket markdown link to a moved file with any extension is reported",
+          "docs/cites-in-angle-brackets.md:2: cites docs/moving-angle-image.png" in out,
+          f"{code} {out!r} {err!r}")
 
     # --- BACKWARD: a backticked citation inside a non-Markdown file ------
     # Not a pin for a fix but a pin against the rework narrowing: the literal
@@ -920,6 +931,51 @@ echo hello
     check("the emptied directory's own emptied parent is reported too",
           "docs/cites-the-outer-directory.md:1: cites scripts/outer-that-empties, "
           "which this change removed" in out, out)
+
+# --- paths git would C-quote without -z, read by their real names ---------
+with tempfile.TemporaryDirectory() as workspace:
+    root = Path(workspace) / "repo"
+    root.mkdir()
+    base = build_repository(root)
+    (root / "café").mkdir()
+    (root / "café" / "here.py").write_text("# exists\n", encoding="utf-8")
+    (root / "scripts" / "naïve.py").write_text("# the precedent\n", encoding="utf-8")
+    (root / "scripts" / "cites-naive").write_text(
+        "#!/bin/sh\n# follows scripts/naïve.py\necho hi\n", encoding="utf-8")
+    (root / "notes" / "naïve-dir").mkdir(parents=True)
+    for name in ("a.md", "b.md"):
+        (root / "notes" / "naïve-dir" / name).write_text("# note\n", encoding="utf-8")
+    (root / "docs" / "cites-the-directory.md").write_text(
+        "See `notes/naïve-dir` for the notes.\n", encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "-qm", "non-ASCII paths")
+    quoted_base = git(root, "rev-parse", "HEAD").stdout.strip()
+
+    commit_change(root, "docs/café-notes.md", "The program is `scripts/never-written.py`.\n")
+    code, out, err = run_check(root, quoted_base)
+    check("a citation added in a non-ASCII-named file is checked",
+          code == 1 and "docs/café-notes.md:1:" in out
+          and "scripts/never-written.py" in out, f"{code} {out!r} {err!r}")
+
+    git(root, "reset", "-q", "--hard", quoted_base)
+    commit_change(root, "scripts/plain-launcher",
+                  "#!/bin/sh\n# reads café/missing.py and café/here.py\necho hi\n",
+                  executable=True)
+    code, out, err = run_check(root, quoted_base)
+    check("a plain path under a non-ASCII top-level directory is checked",
+          code == 1 and "café/missing.py" in out and "café/here.py" not in out,
+          f"{code} {out!r} {err!r}")
+
+    git(root, "reset", "-q", "--hard", quoted_base)
+    git(root, "rm", "-q", "scripts/naïve.py", "notes/naïve-dir/a.md")
+    git(root, "commit", "-qm", "remove a non-ASCII path and one of two notes")
+    code, out, err = run_check(root, quoted_base)
+    check("a removed non-ASCII path still cited elsewhere is reported",
+          code == 1 and "scripts/cites-naive:2: cites scripts/naïve.py, "
+          "which this change removed" in out, f"{code} {out!r} {err!r}")
+    check("a non-ASCII directory that still holds a file is not reported as removed",
+          "notes/naïve-dir" not in out, out)
+
 
 if failures:
     print(f"\n{len(failures)} case(s) failed: {', '.join(failures)}")

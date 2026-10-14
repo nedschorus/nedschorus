@@ -46,9 +46,9 @@ T = generator.T
 
 ALL_VIEWS = T.DIAGRAM_VIEWS_DRAWN
 
-# The rows a run routes when every state advances (the whole-run test's
-# WholeRunThatPasses), less row 16, which is drawn inside the reviewing
-# states.
+# The rows a run routes when every state advances (WholeRunThatPasses, in
+# design-to-main-whole-run-record-and-recovery-test.py), less row 16, which
+# is drawn inside the reviewing states.
 ROWS_OF_THE_RUN_WHERE_EVERYTHING_ADVANCES = (
     "1", "2", "5", "18", "21", "24", "32", "41", "42", "47", "56", "74")
 

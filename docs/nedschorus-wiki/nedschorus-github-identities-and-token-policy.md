@@ -19,12 +19,12 @@ host runs as.
 
 | account | what it is | org standing |
 |---|---|---|
-| `nedlern` | the human owner's own account, and what `gh` is logged in as on the Mac. Seats launched by `scripts/launch-claude-mac` act as `mac-claude` instead. | owner |
-| `ned-review-merge` | merge-lane-2's identity: it reviews other seats' pull requests, approves them, and merges. Formerly the org's second owner, renamed and demoted to member on 2026-08-19. | member |
+| `nedlern` | the human owner's own account, and what `gh` is logged in as on the Mac. Agent-seats launched by `scripts/launch-claude-mac` act as `mac-claude` instead. | owner |
+| `ned-review-merge` | merge-lane-2's identity: it reviews other agent-seats' pull requests, approves them, and merges. Formerly the org's second owner, renamed and demoted to member on 2026-08-19. | member |
 | `ned-git-gatekeeper` | the main-gatekeeper's dedicated account (`nc-systems/main-gatekeeper/main-gatekeeper-design.md`, § The credential and enforcement): write on every repository in the organization, never admin or owner. The gate opens a pull request with it rather than pushing to main, so main's push allow-list does not name it. Created 2026-08-29. | member (measured 2026-09-28) |
 | `mac-claude` | the independent reviewer identity. It reviews and approves work merge-lane-2 itself authored — work `ned-review-merge` may not approve, because GitHub refuses an approving review from a pull request's author. | member since 2026-08-24 |
 | `mac-codex` | Mac-side Codex worker. No credential yet. | member (invited 2026-08-24; measured a member 2026-09-23 — listed by the organization's members API, absent from its pending invitations and outside collaborators) |
-| `ubuntu-claude` | the Ubuntu box's live credential; box seats act as this. | member (invited 2026-08-24; measured a member 2026-09-23 — listed by the organization's members API, absent from its pending invitations and outside collaborators) |
+| `ubuntu-claude` | the Ubuntu box's live credential; box agent-seats act as this. | member (invited 2026-08-24; measured a member 2026-09-23 — listed by the organization's members API, absent from its pending invitations and outside collaborators) |
 | `ubuntu-codex` | Ubuntu-side Codex worker. No credential yet. | member (invited 2026-08-24; measured a member 2026-09-23 — listed by the organization's members API, absent from its pending invitations and outside collaborators) |
 
 **Why the identities are separate at all.** GitHub refuses an approving review
@@ -46,7 +46,7 @@ box's GitHub account is `ubuntu-claude` and the Mac's Unix user is `el`. A bare
 | `ned-review-merge` | `~/.config/nedschorus/ned-review-merge.token`, on this Mac and on ned-box | fine-grained | 2027-08-20 |
 | `ned-git-gatekeeper` | this Mac's keychain, item `nedschorus-git-gatekeeper-github-token` (created 2026-08-29; present 2026-09-28) | fine-grained | 2027-08-30, as the main-gatekeeper design records it; not re-measured |
 | `mac-claude` | `~/.config/nedschorus/mac-claude.token`, on this Mac and on ned-box | fine-grained | 2027-08-25 |
-| `ubuntu-claude` | ned-box: `~/.config/nedschorus/ubuntu-claude.token`, which seats launched by `scripts/launch-claude-ubuntu` use; a classic token also remains in `gh`'s own store there | fine-grained (the file); classic (`gh`'s store) | 2027-09-24 (the file); 2027-08-24 (`gh`'s store) |
+| `ubuntu-claude` | ned-box: `~/.config/nedschorus/ubuntu-claude.token`, which agent-seats launched by `scripts/launch-claude-ubuntu` use; a classic token also remains in `gh`'s own store there | fine-grained (the file); classic (`gh`'s store) | 2027-09-24 (the file); 2027-08-24 (`gh`'s store) |
 
 Token files are mode 600.
 
@@ -118,7 +118,7 @@ Measured 2026-08-31, when a sudoers rule appeared at
 `/etc/sudoers.d/nedschorus-mount-apfs-readonly` and nobody knew who had
 installed it. The unified log showed a password accepted at 16:05:20 and the
 file created at 16:05:25 — and nothing at all about the command in between.
-Authorship was established by asking the seats, one of which read it out of a
+Authorship was established by asking the agent-seats, one of which read it out of a
 predecessor's handoff note. That is recollection, not evidence.
 
 Do not repeat the search expecting a different result.

@@ -110,13 +110,7 @@ import subprocess
 import sys
 import time
 
-# This file sits in nc-systems/cold-read/, two directories below the root.
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
-# What a cold-read-record is called and where it lives, defined once in a
-# module so no program keeps its own copy (user-ruled 2026-09-19, walk
-# file-naming-and-location-standards-cold-read-findings, item 4). The
-# convention -- importlib for a module whose filename has hyphens -- is
-# nc-systems/cold-read/cold-read-cell-common.py's.
 _record_names_spec = importlib.util.spec_from_file_location(
     "cold_read_record_names",
     pathlib.Path(__file__).with_name("cold-read-record-names.py"))
@@ -125,82 +119,39 @@ _record_names_spec.loader.exec_module(record_names)
 RECORDS_DIR = record_names.RECORDS_DIR
 JUDGE_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-restater-judge-cell.py")
 
-# The judge cold-read-cell itself, loaded the way the cold-read-grid loads
-# the shared module: for its label rule, its pass tokens and the refusals it
-# raises, so the two programs cannot drift on any of them.
 _judge_cell_spec = importlib.util.spec_from_file_location(
     "cold_read_restater_judge_cell", JUDGE_CELL_LAUNCHER
 )
 judge_cell = importlib.util.module_from_spec(_judge_cell_spec)
 _judge_cell_spec.loader.exec_module(judge_cell)
 
-# The shared module, taken from the judge cold-read-cell rather than loaded
-# again, for the status phrases it pins as contracts with whoever reads a
-# cold-read-cell's log.
-# THE COPY MATTERS: a second `spec_from_file_location` load of the same file
-# builds a second module object with its own classes, so a `CellRefusal`
-# raised by the judge cold-read-cell's copy is not caught by an `except`
-# naming this program's -- measured here, as a traceback where a refusal
-# exit 64 belonged.
+# Reuse the judge's module object: loading again creates a distinct CellRefusal class that except will miss.
 cell_common = judge_cell.common
 
 PROGRAM = "cold-read-restater-judge-runner"
 
-# Two judge runs per restater (user-ruled 2026-09-05). A constant rather than
-# a flag: the number is the ruling, and a run count chosen per invocation
-# would make two restaters' scores incomparable without saying so.
+# A fixed run count keeps restater scores comparable.
 JUDGE_RUNS = 2
 
-# The launcher's own refusal code (EXIT_BAD_INVOCATION in
-# nc-systems/cold-read/cold-read-cell-common.py), which this program also uses for its own
-# refusal.
 EXIT_BAD_INVOCATION = cell_common.EXIT_BAD_INVOCATION
 
-# The weights of the ruled composite. See the docstring for what they are
-# applied to and what the ruling left open.
 CAUGHT_WEIGHT = 0.8
 STUPID_WEIGHT = 0.2
 
-# WHAT THE JUDGE'S REPORT LOOKS LIKE, as the judge's prompt file tells it to
-# write -- neither program carries that text, see the docstring: a `## CASE
-# <number>` heading per case, and under it one line per item, each opening
-# with one of three prefixes. Parsed line by line because that is what the
-# judge was asked for; an item wrapped onto a second line is half an item, and
-# the prompt says so.
+# The judge prompt requires one item per line; wrapped continuations are not separate items.
 CASE_HEADING_PATTERN = re.compile(r"^#{1,6}\s*CASE\s+(\d+)\s*$", re.IGNORECASE)
-# ANY other markdown heading, which ENDS the case above it. The markdown rule
-# -- hashes, then whitespace, then text -- deliberately, rather than anything
-# opening with a `#`: a judge writing `#3` mid-case means defect 3, and reading
-# that as a heading would orphan the rest of a case that was reported
-# correctly. The CASE pattern above is tested first, so a case heading never
-# reaches this one.
+# Require whitespace after heading hashes so a defect reference such as #3 does not end a case.
 NON_CASE_HEADING_PATTERN = re.compile(r"^#{1,6}\s+\S")
 CAUGHT_ITEM_PREFIX = "CAUGHT:"
 STUPID_ITEM_PREFIX = "STUPID:"
 NOT_ON_LIST_ITEM_PREFIX = "NOT-ON-LIST:"
-# The defect number a CAUGHT line opens with, which is how the ruling counts
-# them. Optional decoration around it -- a `#`, a `D`, brackets, bold -- is
-# allowed because a judge writing "CAUGHT: #12" means defect 12; a CAUGHT line
-# with no number at its head is kept as unnumbered and scored as nothing,
-# because a catch that names no row cannot be placed on the list.
+# Allow decoration around defect numbers; unnumbered catches cannot identify a scored defect.
 CAUGHT_DEFECT_NUMBER_PATTERN = re.compile(r"^[\s*_`#\[\(]*[Dd]?\s*(\d+)")
 
-# Prepended to a combined result that reads only one of the two runs. The
-# marker is the first line of the file, ahead of the title, so it cannot be
-# missed by a reader who opens the file or by one who greps its head.
 PARTIAL_RESULT_MARKER_PREFIX = "<!-- PARTIAL RESULT:"
 
 
 def build_runner_argument_parser():
-    """This program's argument surface: the judge cold-read-cell's, minus the report.
-
-    The cases are the cold-read-cell's own --case, four paths in one flag, so an
-    operator who has run the cold-read-cell by hand types the same line here,
-    and --prompt-file is the cold-read-cell's own too, passed through unchanged
-    so both runs judge under one set of instructions. Where the reports go is
-    this program's business, not the caller's: two runs of one restater belong
-    in one cold-read-record, named for the restater.
-    """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
@@ -232,27 +183,8 @@ def build_runner_argument_parser():
 
 
 def make_record_directory_for(restater_class: str, today: str) -> pathlib.Path:
-    """This restater's cold-read-record: dated, named for the class, created here.
-
-    The date and the class together, because a restater is judged again
-    whenever a defect list grows -- the scrub accepting one off-list problem
-    rescores every hunter and every restater (the walk, item 5) -- and the
-    two sets must not land on each other.
-
-    THE SUFFIX LOOP IS WHY THIS FUNCTION CREATES THE DIRECTORY, and it is
-    `make_record_dir`'s in nc-systems/cold-read/cold-read-grid.py, followed rather than
-    reinvented: the first free name of `<base>`, `<base>-2`, `<base>-3` wins,
-    and `mkdir` is called with no `exist_ok`, so the name this returns is one
-    no other judging has written into. The date and the class alone were not
-    enough, because a restater judged twice in one day landed both judgings on
-    one name -- and the shared module clears a report path before every run
-    (`resolve_report_path`, so a failed run cannot pass as a successful one),
-    which made the second judging DELETE the first judging's two reports and
-    overwrite its combined result. The suffix flows into `record_dir.name` and
-    from there into every report's own filename, which is what the shared
-    module's near-miss recovery searches the records tree by, so the two
-    judgings' reports stay as distinguishable as their directories.
-    """
+    """Create a fresh record directory for the restater."""
+    # Reserve the name with mkdir: reusing a directory would let report pre-clearing erase earlier results.
     record_dir = record_names.fresh_record_directory(
         RECORDS_DIR / f"{today}-restater-judge-{restater_class}")
     record_dir.mkdir(parents=True)
@@ -260,41 +192,19 @@ def make_record_directory_for(restater_class: str, today: str) -> pathlib.Path:
 
 
 def judge_report_path(record_dir: pathlib.Path, run_number: int) -> pathlib.Path:
-    """Where one run's report goes.
-
-    `<record dir name>--<runtime>-<pass token>-run<N>.md`, following the
-    record convention that every file carries its run's own name (user-ruled
-    2026-08-25). The last token is a cold-read-tier on the other
-    cold-read-cells; the judge has one cold-read-tier, so the run number
-    takes that slot -- and it MUST take some slot, because the shared module's
-    near-miss recovery searches the records tree for a file of the report's
-    exact name. Two runs of one restater sharing a name is exactly the
-    collision that ruling was written about.
-    """
+    # Distinct run filenames keep near-miss recovery from confusing the two judge runs.
     return record_dir / (
         f"{record_dir.name}--{judge_cell.JUDGE_RUNTIME}-{judge_cell.JUDGE_CELL}"
         f"-run{run_number}.md")
 
 
 def combined_result_path(record_dir: pathlib.Path) -> pathlib.Path:
-    """Where the reading of the two reports goes. No runtime token in the
-    name: no model wrote this file, this program did."""
     return record_dir / f"{record_dir.name}--{judge_cell.JUDGE_CELL}-combined.md"
 
 
 def judge_cell_status_line(line: str, phrase: str) -> bool:
-    """True when `line` is the judge cold-read-cell's own status line carrying `phrase`.
-
-    The cold-read-grid's rule, applied to this program's one cold-read-cell:
-    the cold-read-cell writes every line of its own as `<program>: <sentence>`,
-    and the phrases lifted here each open that sentence. A bare substring test
-    cannot tell the cold-read-cell's sentence from the model's -- on 2026-09-02
-    a cold-read-target quoting a code comment with "fell back to" in it made
-    two cold-read-cells read as fallen back when both had run on the models
-    asked for (nedschorus#244) -- and the judge's own materials are documents
-    about cold-read-cells, so the phrases it is handed to read are exactly the
-    phrases this test must not confuse.
-    """
+    """Return whether a line is the judge cell's own status carrying the phrase."""
+    # A substring match could mistake quoted model text for launcher status.
     stripped = line.strip()
     return stripped.startswith(f"{judge_cell.PROGRAM}: {phrase}")
 
@@ -303,15 +213,8 @@ def launch_judge_runs(
     restater_class: str, case_arguments, record_dir: pathlib.Path,
     prompt_file_argument: str,
 ) -> dict:
-    """Start both judge runs in parallel. Returns {run number: (process,
-    report path, stderr log path)}.
-
-    In parallel, as the cold-read-grid launches its cold-read-cells:
-    the two runs are independent readings of the same materials, and one
-    waiting on the other buys nothing. The parent's file handle is closed
-    right after each spawn; the child keeps its own copy, so a with-block
-    is the wrong shape here.
-    """
+    """Launch both runs and return their processes, report paths, and log paths."""
+    # Close the parent's log handles after spawning; each child keeps its own copy.
     running = {}
     for run_number in range(1, JUDGE_RUNS + 1):
         report_path = judge_report_path(record_dir, run_number)
@@ -335,14 +238,7 @@ def launch_judge_runs(
 
 
 def wait_for_judge_runs(running: dict) -> dict:
-    """Poll until both runs finish. Returns {run number: exit code}.
-
-    Every run's log is re-emitted whole on this program's stderr as it
-    finishes, so a caller reading stderr gets the cold-read-cell's account and
-    the runtime's; the lines the cold-read-cell pins as contracts are lifted
-    out of it first and printed again on their own, because a fallback, a stray
-    write or a write check that never ran should not have to be found in a log.
-    """
+    """Wait for both runs and return their exit codes, relaying logs and status lines."""
     exit_codes = {}
     while running:
         time.sleep(1)
@@ -375,14 +271,7 @@ def wait_for_judge_runs(running: dict) -> dict:
 
 
 def provenance_fields(report_text: str) -> dict:
-    """The stamp's fields, as a map, or {} when the report carries no stamp.
-
-    The stamp is the first line of a report the shared module wrote, and it
-    is where the record says which model judged and what it fell back from.
-    Parsed by splitting on whitespace and on the first `=` in each token,
-    which is the shape `stamp_provenance` writes: `target=` is last precisely
-    so a path with a space in it cannot swallow a field after it.
-    """
+    """Return provenance fields, or an empty mapping when no stamp is present."""
     first_line = report_text.split("\n", 1)[0]
     if not first_line.startswith("<!-- provenance:"):
         return {}
@@ -395,47 +284,9 @@ def provenance_fields(report_text: str) -> dict:
 
 
 def parse_judge_report(report_text: str, case_count: int) -> dict:
-    """Read one judge report into items, per case.
-
-    Returns {"cases": {case number: {"caught": [defect numbers, in the order
-    named, deduplicated], "caught_lines": [...], "stupid": [...],
-    "not_on_list": [...], "unnumbered_caught": [...]}},
-    "items_outside_any_case": [(the heading the item sat under, the line)],
-    "case_headings_naming_no_case_of_this_run": [heading lines]}.
-
-    DEDUPLICATED BY NUMBER, per the ruling's own wording: the count is of
-    problems caught, by defect number, so a judge that names defect 12 twice
-    in one case has named one caught defect. The line that repeats it is kept
-    in `caught_lines`, so nothing the judge wrote is thrown away.
-
-    ONE RULE DECIDES WHERE AN ITEM GOES: it is counted against a case only
-    while this parser is certain which of THIS RUN's cases it belongs to, and
-    every other item is set aside in `items_outside_any_case` with the heading
-    it sat under. Three headings end that certainty, and two of them used to
-    leave it intact.
-
-      - A `## CASE <n>` naming a case this invocation never passed -- `## CASE
-        4` in a three-case run. Such a heading parsed, and its items were
-        filed under case 4, and `score_run` then iterated 1..3 and never
-        looked at it, so every CAUGHT, STUPID and NOT-ON-LIST line under it
-        vanished from the counts, the tables and the kept-verbatim sections
-        while the run still read as usable. An off-list item lost that way is
-        a problem the ruling sends back to the scrub, and it never arrived.
-        The heading is recorded by name as well, because a judge numbering its
-        cases wrongly is something the reader of the record has to see.
-
-      - Any other markdown heading -- a trailing `## Summary`, a `### Notes`
-        inside a case. The case above it used to keep collecting, so a judge's
-        closing remark was counted against the last case it happened to
-        follow. The cost of the rule as written is the reverse: a judge that
-        nests a sub-heading inside a case has that case's remaining items set
-        aside rather than counted. Set aside is the survivable error -- the
-        items are kept verbatim under the heading they sat under, where a
-        reader of the combined result sees them, and no number lands in a
-        column it may not belong in.
-
-      - No heading at all yet, which was already handled this way.
-    """
+    """Parse report items by case, retaining unplaceable items separately."""
+    # Count each defect number once; repeated mentions are not additional catches.
+    # Any non-case heading ends attribution so later items are not scored against the wrong case.
     cases = {}
     outside = []
     headings_naming_no_case = []
@@ -454,11 +305,7 @@ def parse_judge_report(report_text: str, case_count: int) -> dict:
                     "not_on_list": [], "unnumbered_caught": [],
                 })
             else:
-                # NOT `setdefault` into `cases`: a report whose only heading is
-                # out of range must leave `cases` empty, so `read_run` calls it
-                # unusable rather than scoring an empty run as a judge that
-                # found nothing. Recorded once however often the judge repeats
-                # the heading.
+                # Do not create out-of-range cases: a report with no valid cases is unusable, not an empty score.
                 current_case = None
                 if line not in headings_naming_no_case:
                     headings_naming_no_case.append(line)
@@ -472,10 +319,7 @@ def parse_judge_report(report_text: str, case_count: int) -> dict:
             (STUPID_ITEM_PREFIX, "stupid"),
             (NOT_ON_LIST_ITEM_PREFIX, "not_on_list"),
         ):
-            # NOT-ON-LIST is tested before CAUGHT would ever match it: the
-            # prefixes share no head, so the order of this tuple is not load
-            # bearing. What is load bearing is the case-insensitive compare,
-            # because a judge that writes `Caught:` means the same thing.
+            # Case-insensitive prefixes accept Caught: as the same item type as CAUGHT:.
             if not line.upper().startswith(prefix):
                 continue
             body = line[len(prefix):].strip()
@@ -503,24 +347,13 @@ def parse_judge_report(report_text: str, case_count: int) -> dict:
 
 
 def composite_score(caught_count: int, stupid_count: int) -> float:
-    """The ruled composite: 80 percent caught, 20 percent stupid.
-
-    Rounded to two places because the weights are not representable in binary
-    -- 0.8 * 7 - 0.2 * 3 is 4.999999999999999 unrounded -- and a score that
-    prints as 5.00 in one column and 4.999999999999999 in another would be
-    read as two scores.
-    """
+    # Round to avoid displaying binary floating-point artifacts as different scores.
     return round(CAUGHT_WEIGHT * caught_count - STUPID_WEIGHT * stupid_count, 2)
 
 
 def score_run(parsed: dict, case_count: int) -> dict:
-    """One run's counts and composites, per case and pooled.
-
-    Every case the invocation named gets a row, including one the judge wrote
-    no heading for: a case with a heading and no items is a judge that found
-    nothing, a case with no heading is a judge that did not report on it, and
-    the row says which.
-    """
+    """Return counts and composite scores per case and pooled."""
+    # A missing case heading means no report on that case, not zero findings.
     per_case = []
     pooled_caught = 0
     pooled_stupid = 0
@@ -549,18 +382,7 @@ def score_run(parsed: dict, case_count: int) -> dict:
 
 
 def read_run(report_path: pathlib.Path, exit_code: int, case_count: int) -> dict:
-    """One run, as the combined result needs it: what judged it, what it
-    reported, and whether it can be scored at all.
-
-    THREE OUTCOMES, kept apart. A run that produced no report is a run that
-    did not happen -- the cold-read-cell enforces that and this reads it back
-    from the file, not from the exit code alone. A run whose report holds no
-    `## CASE` heading naming one of THIS run's own cases produced text this
-    program cannot place: it is unusable, and saying "0 caught" of it would be
-    inventing a judgment. Only a run with at least one such heading is scored
-    -- a report whose every heading is a `## CASE 4` in a three-case run is as
-    unplaceable as one with no heading at all.
-    """
+    """Read a run's provenance and findings, distinguishing missing, unusable, and scoreable reports."""
     run = {
         "report_path": report_path, "exit_code": exit_code, "model": "",
         "effort": "", "fallback_from": "", "usable": False, "why_unusable": "",
@@ -604,14 +426,6 @@ def format_defect_numbers(numbers) -> str:
 def render_combined_result(
     restater_class: str, cases, runs: dict, case_arguments,
 ) -> str:
-    """The reading of the two runs, as the file the cold-read-record keeps.
-
-    Both runs are shown separately throughout -- one row each, per case and
-    pooled -- because the ruling asks for that whenever they disagree, and a
-    table that changes shape depending on whether they agree is a table that
-    hides which case it is in. What agreement adds is the section below it,
-    naming the defect numbers one run caught and the other did not.
-    """
     usable_runs = {number: run for number, run in runs.items() if run["usable"]}
     lines = []
 
@@ -822,14 +636,7 @@ def main() -> int:
     parser = build_runner_argument_parser()
     args = parser.parse_args()
 
-    # Refused here as well as in the cold-read-cell, and before anything is
-    # launched: the cold-read-cell would refuse each of these the same way, but
-    # only after two processes had started, and an operator who mistyped one of
-    # twelve paths -- or pointed --prompt-file at a file that is not there yet
-    # -- should be told once rather than twice from inside a cold-read-record
-    # that had already been created. The cold-read-cell's own resolvers
-    # are called, not copies of them, which is part of why this program
-    # imports the cold-read-cell.
+    # Validate before spawning to report bad inputs once, without creating a record for two refused runs.
     try:
         judge_cell.validate_restater_class(args.restater)
         judge_cell.resolve_judge_prompt_file(args.prompt_file)
@@ -840,9 +647,6 @@ def main() -> int:
         return EXIT_BAD_INVOCATION
 
     if args.record_dir:
-        # The caller named it, so it is used as named: an operator pointing two
-        # judgings at one directory has said what he wants, and the default
-        # path below is where this program chooses for itself.
         record_dir = pathlib.Path(args.record_dir)
         if not record_dir.is_absolute():
             record_dir = REPO_ROOT / record_dir
@@ -869,9 +673,6 @@ def main() -> int:
               f"{runs[run_number]['why_unusable']}", file=sys.stderr)
 
     if len(unusable) == JUDGE_RUNS:
-        # No combined result at all: it is the reading of the runs, and there
-        # is nothing to read. The reports, if any text was written, stay where
-        # they are as evidence of what happened.
         print(f"FAILED (no judge run produced a report this program could "
               f"score; see {record_dir})")
         return 1

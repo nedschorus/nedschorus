@@ -1,84 +1,29 @@
 #!/usr/bin/env python3
-"""Which of a seat's transcripts is worth resuming — defined once.
+"""Select seat transcripts worth resuming.
 
-Two programs need this judgement. scripts/recover-crashed-seats.py has always
-needed it: it picks the transcript a crashed seat is resumed from.
-nc-systems/handoff/handoff-supervisor.py needs it since issue 242's change 5, so that a
-by-hand `launch-claude-mac <seat>` resumes a crashed seat instead of minting an
-empty session.
-
-It is a module and nothing else, because neither program can own it. The
-dependency between them runs one way — recover-crashed-seats.py loads
-handoff-supervisor.py with spec_from_file_location at its module level — and a
-supervisor that loaded the recovery tool back would execute that module body a
-second time as an orphan copy. Putting the judgement in the supervisor instead
-would be worse in a quieter way: EMPTY_SUCCESSOR_MARKERS mixes literals the two
-programs own separately, and `scripts/recover-crashed-seats-test.py`'s F8 group
-asserts the supervisor-owned ones against handoff-supervisor.py's own source --
-an assertion that means nothing once the thing asserted and the thing asserted
-against are the same file. The convention here — importlib for a module whose
-filename has hyphens — is nc-systems/cold-read/cold-read-cell-common.py's, and the
-precedent for a module that exists only to stop two programs drifting is
-nc-systems/cold-read/cold-read-record-names.py.
-
-It is imported, never run. A program loads it:
-
-    _worth_resuming_spec = importlib.util.spec_from_file_location(
-        "seat_transcript_worth_resuming",
-        Path(__file__).with_name("seat-transcript-worth-resuming.py"))
-    worth_resuming = importlib.util.module_from_spec(_worth_resuming_spec)
-    _worth_resuming_spec.loader.exec_module(worth_resuming)
-
-recover-crashed-seats.py re-exports every name below at its own module level,
-so `recovery.EMPTY_SUCCESSOR_MARKERS` and the rest keep working for the
-eighteen references in its test suite.
-"""
+Shared by recovery and the handoff supervisor to avoid circular imports and
+keep their definitions of an empty successor aligned."""
 
 import json
 from pathlib import Path
 
-# The phrase every first prompt after a recorded exit carries
-# (write_first_prompt_after_recorded_exit in recover-crashed-seats.py), and so
-# its marker.
 FIRST_PROMPT_AFTER_RECORDED_EXIT_MARKER = "as it does when a session is stopped on purpose"
-# First-turn shapes of sessions this machinery itself composes — the
-# supervisor's no-handoff prompt and the recovery tool's own ignition and
-# resume prompts. A marker alone writes nothing off: a first-ever session
-# legitimately opens with the no-handoff prompt and then works (observed
-# live 2026-08-22), and an ignited successor can crash mid-work — both must
-# be resumed, not skipped for an older parent. What marks a failed successor
-# is a marker AND no work: substantive_turn_count() below measures work, and
-# the gate applies to every marker uniformly (round 4 finding 1 — markers
-# were measured skipping real work on size alone). The supervisor-owned
-# literals are asserted against the supervisor's actual source in
-# recover-crashed-seats-test.py's F8 group, so a wording change there fails
-# loudly.
+# A machinery-written opener can precede real work; reject only when work is also absent.
 EMPTY_SUCCESSOR_MARKERS = (
-    "No handoff exists yet",            # handoff-supervisor's default first prompt
-    "crash recovery, nedschorus#120",   # recovery's ignition (initial agent instructions)
-    "resumed by crash recovery",        # the resume prompt of recovery AND of the supervisor
-    FIRST_PROMPT_AFTER_RECORDED_EXIT_MARKER,  # recovery's prompts after a recorded exit
+    "No handoff exists yet",
+    "crash recovery, nedschorus#120",
+    "resumed by crash recovery",
+    FIRST_PROMPT_AFTER_RECORDED_EXIT_MARKER,
 )
 SUBSTANTIVE_ASSISTANT_TURNS_MINIMUM = 2
-# The size guard: a seat's first-ever session legitimately starts with the
-# no-handoff prompt and can then do real work (observed live 2026-08-22 —
-# fixer1's 1880KB genuine session began exactly so, and a marker-only filter
-# wrongly wrote it off). The crash-day empty successors were a few KB. A
-# transcript too small to hold real work is also skipped when its first
-# user turn is missing or unreadable — a 0-byte or no-user-turn file is
-# not the seat's real work either (finding 3's second shape).
+# Large transcripts can hold real work even when the opener matches a successor marker.
 EMPTY_SUCCESSOR_MAX_BYTES = 100_000
-# The model name the harness writes on assistant turns it authors itself --
-# API error notices (a session limit, "Not logged in", 529 Overloaded,
-# "Prompt is too long") and the "No response requested." filler that a
-# resume of an interrupted session appends. None of them is work. Measured
-# 2026-09-11 across forty days of this Mac's transcripts: every such record
-# is text-only.
+# The harness uses this model for error notices and filler, neither of which is work.
 SYNTHETIC_ASSISTANT_MODEL = "<synthetic>"
 
 
 def first_user_turn_text(transcript_path: Path) -> str:
-    """The first non-meta user turn's text, or "" when none is readable."""
+    """Return the first non-meta user text, or "" if unreadable."""
     try:
         with transcript_path.open(encoding="utf-8", errors="replace") as stream:
             for line in stream:
@@ -100,19 +45,8 @@ def first_user_turn_text(transcript_path: Path) -> str:
 
 
 def substantive_turn_count(transcript_path: Path) -> int:
-    """Assistant turns carrying text or tool use — the working measure of
-    "this session did something". A failed successor dies at or before its
-    first reply; a crashed-but-working one replied or called tools after the
-    opener. Tool calls count because a terse tool-heavy stint is an ordinary
-    seat shape (PR #131 review round 3, finding 2: text-only counting wrote
-    off a successor whose work was 12 tool calls and one reply). The
-    harness's own turns are not counted (SYNTHETIC_ASSISTANT_MODEL): on
-    2026-09-10 a session-limit notice was a successor's only "reply".
-
-    Decoding replaces rather than raises: the handoff-supervisor reads this on
-    a session's death path, before the exit record is written, and a
-    transcript cut off inside a multibyte character must cost its last line,
-    not the record."""
+    """Count assistant turns with text or tool use, excluding harness messages."""
+    # Replacing invalid UTF-8 preserves the death-path exit record when a transcript ends mid-character.
     count = 0
     try:
         with transcript_path.open(encoding="utf-8", errors="replace") as stream:
@@ -140,18 +74,10 @@ def substantive_turn_count(transcript_path: Path) -> int:
 
 
 def newest_real_transcript(project_directory: Path):
-    """(session_id, transcript_path) of the newest transcript that is not an
-    empty-successor session, or (None, reason).
-    """
+    """Return (session id, path) for the newest real transcript, or (None, reason)."""
     if not project_directory.is_dir():
         return None, f"no harness project directory at {project_directory}"
-    # The st_mtime sort is load-bearing, not incidental: it is what makes
-    # "newest" mean the session written to most recently, and the walk below
-    # relies on the order to find the first transcript that is not an
-    # empty-successor. A session id sorts by its uuid, which is not time, and
-    # a directory listing has no defined order at all, so neither can replace
-    # this. The cost of losing it is silent: the function still returns a
-    # transcript, just not the one the seat was last working in.
+    # UUID order is not chronological; modification time identifies the session last worked in.
     candidates = sorted(
         project_directory.glob("*.jsonl"),
         key=lambda item: item.stat().st_mtime,
@@ -163,11 +89,11 @@ def newest_real_transcript(project_directory: Path):
         if transcript.stat().st_size <= EMPTY_SUCCESSOR_MAX_BYTES:
             first_turn = first_user_turn_text(transcript)
             if not first_turn.strip():
-                continue  # small with no readable user turn: not real work
+                continue
             if (any(marker in first_turn for marker in EMPTY_SUCCESSOR_MARKERS)
                     and substantive_turn_count(transcript)
                         < SUBSTANTIVE_ASSISTANT_TURNS_MINIMUM):
-                continue  # machinery-composed opener and no work: failed successor
+                continue
         return transcript.stem, transcript
     return None, ("every transcript is an empty-successor session; nothing "
                   "worth resuming")

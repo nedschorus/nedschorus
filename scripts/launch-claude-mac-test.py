@@ -50,17 +50,21 @@ alone.
 Run: python3 scripts/launch-claude-mac-test.py
 """
 
+import errno
 import fcntl
 import os
+import pty
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
 
 LAUNCHER = Path(__file__).with_name("launch-claude-mac")
 UPDATE_LOCK_HELPER_NAME = "agent-binary-update-under-lock.py"
+# The bytes launch-claude-mac writes to colour an iTerm2 session's background:
+# iTerm2's SetColors sequence, OSC 1337 ... BEL, with the seat colour.
+ITERM2_PALE_PINK_BACKGROUND_SEQUENCE = "\x1b]1337;SetColors=bg=FFE6EE\x07"
 
 failures = []
 
@@ -110,6 +114,13 @@ def environment_lines(capture: Path) -> dict:
             recorded[name] = value
     return recorded
 
+
+def tmux_argv_sets_mouse_mode_and_pbcopy(tmux_argv):
+    """True when the tmux argv sets mouse mode on and pipes mouse copies to
+    pbcopy, each as its own set-option command."""
+    joined = "\n".join(tmux_argv)
+    return ("set-option\n-g\nmouse\non" in joined
+            and "set-option\n-s\ncopy-command\npbcopy" in joined)
 
 class MacLaunchSandbox:
     """A per-case sandbox: recording stubs, throwaway HOME and cwd."""
@@ -174,8 +185,10 @@ class MacLaunchSandbox:
                    '  esac\n'
                    'done\n'
                    'exit 0\n')
-        for stub_name in ("claude", "git"):
-            write_stub(self.stubs, stub_name, record + "exit 0\n")
+        write_stub(self.stubs, "git", record + "exit 0\n")
+        write_stub(self.stubs, "claude", record +
+                   '[ "${1:-}" = "update" ] || exit 0\n'
+                   f'echo update >> "{self.captures}/claude-updates.txt"\n')
         # An attached pane ends in `exec $SHELL`. This stand-in records where
         # that shell starts and what it inherited — the environment a
         # `claude --continue` typed there would read its task-list binding
@@ -211,7 +224,8 @@ class MacLaunchSandbox:
     def run(self, agents_root, seat_name="seat-t", attach=False,
             extra_arguments=None, update_timeout_seconds=None,
             seat_github_account=None, ambient_gh_token=None,
-            ambient_git_identity=None):
+            ambient_git_identity=None, term_program=None,
+            stdout_on_terminal=False):
         """Run the launcher in the sandbox. extra_arguments, when given, is
         placed in LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS the way
         recover-crashed-seats.py's launch_seat places it — after the strip
@@ -220,11 +234,15 @@ class MacLaunchSandbox:
         way, after the strip of ambient NEDSCHORUS_* values.
         ambient_gh_token puts a GH_TOKEN in the launcher's environment after
         the strip, standing in for the shell of a seat that already exports
-        one — which the merge-lane seat does by hand today."""
+        one — which the merge-lane seat does by hand today.
+        term_program sets TERM_PROGRAM, which is otherwise stripped so the
+        terminal the suite runs in cannot decide a case.
+        stdout_on_terminal gives the launcher a pseudo-terminal as stdout in
+        place of a pipe, and returns what it wrote there as result.stdout."""
         arguments = [seat_name] if attach else [seat_name, "--no-attach"]
         environment = {
             **{key: value for key, value in os.environ.items()
-               if key != "GH_TOKEN"
+               if key not in ("GH_TOKEN", "TERM_PROGRAM")
                and key not in GIT_IDENTITY_VARIABLES
                and not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_",
                                        "CLAUDE_CODE_"))},
@@ -243,6 +261,11 @@ class MacLaunchSandbox:
             environment["GH_TOKEN"] = ambient_gh_token
         if ambient_git_identity is not None:
             environment.update(ambient_git_identity)
+        if term_program is not None:
+            environment["TERM_PROGRAM"] = term_program
+        if stdout_on_terminal:
+            return run_with_stdout_on_terminal(
+                [str(LAUNCHER), *arguments], str(self.workdir), environment)
         return subprocess.run(
             [str(LAUNCHER), *arguments],
             capture_output=True, text=True, check=False,
@@ -271,16 +294,6 @@ class MacLaunchSandbox:
     def update_lock_path(self):
         return self.home / ".local" / "state" / "claude" / "agent-binary-update.lock"
 
-    def claude_records_updates_against(self, release_marker: Path):
-        """Replace the claude stub with one that records, per `update`, whether
-        the other update's release marker existed yet: `after-release` means
-        this update waited for the lock, `before-release` means it did not."""
-        write_stub(self.stubs, "claude",
-                   '[ "${1:-}" = "update" ] || exit 0\n'
-                   f'if [ -e "{release_marker}" ]; then echo after-release; '
-                   'else echo before-release; fi '
-                   f'>> "{self.captures}/claude-updates.txt"\n')
-
     def claude_updates(self):
         path = self.captures / "claude-updates.txt"
         return (path.read_text(encoding="utf-8").splitlines()
@@ -292,35 +305,48 @@ class MacLaunchSandbox:
                 if path.is_file() else "")
 
 
+def run_with_stdout_on_terminal(command, working_directory, environment):
+    """Run command with a pseudo-terminal as its stdout, so `[ -t 1 ]` holds
+    in it, and return a CompletedProcess whose stdout is what it wrote
+    there. The terminal is read while the command runs: a full terminal
+    buffer would otherwise block the command forever."""
+    controller, terminal = pty.openpty()
+    process = subprocess.Popen(
+        command, stdin=subprocess.DEVNULL, stdout=terminal,
+        stderr=subprocess.PIPE, cwd=working_directory, env=environment)
+    os.close(terminal)
+    written = bytearray()
+    while True:
+        try:
+            chunk = os.read(controller, 4096)
+        except OSError as error:
+            # Linux reports the last writer closing the terminal as EIO.
+            if error.errno != errno.EIO:
+                raise
+            break
+        if not chunk:
+            break
+        written.extend(chunk)
+    os.close(controller)
+    stderr = process.stderr.read().decode("utf-8", errors="replace")
+    process.stderr.close()
+    returncode = process.wait(timeout=60)
+    return subprocess.CompletedProcess(
+        command, returncode,
+        written.decode("utf-8", errors="replace"), stderr)
+
+
 class AnotherUpdateHoldsTheLock:
-    """Hold the machine's update lock from this test, as another update would,
-    releasing it after release_after_seconds (None: held until the block ends).
-    The release marker is written BEFORE the lock is released, so an update
-    that ran only after taking the lock always sees it."""
-
-    def __init__(self, lock_path: Path, release_marker: Path,
-                 release_after_seconds=None):
-        self.lock_path = lock_path
-        self.release_marker = release_marker
-        self.release_after_seconds = release_after_seconds
-        self.timer = None
-
-    def release(self):
-        self.release_marker.write_text("released", encoding="utf-8")
-        fcntl.flock(self.lock_file, fcntl.LOCK_UN)
+    def __init__(self, lock_path):
+        self.lock_path = Path(lock_path)
 
     def __enter__(self):
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         self.lock_file = open(self.lock_path, "a")
         fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if self.release_after_seconds is not None:
-            self.timer = threading.Timer(self.release_after_seconds, self.release)
-            self.timer.start()
         return self
 
     def __exit__(self, *exception):
-        if self.timer is not None:
-            self.timer.join()
         self.lock_file.close()
 
 
@@ -387,52 +413,107 @@ def main() -> int:
               result.returncode == 0 and sandbox.tmux_argv(),
               (result.returncode, result.stderr[:300]))
 
-        # --- the update runs under the machine-wide lock (user-approved
-        # 2026-09-22): a launch whose update finds another update holding the
-        # lock waits for it, then runs its own; one held past the limit is
-        # skipped with one line, and the launch still completes. The lock is
-        # held from this process on the sandbox HOME's lock file, which is
-        # the file the launcher's helper resolves there. ---------------------
-        sandbox = MacLaunchSandbox(root / "update-lock-wait")
-        release_marker = root / "update-lock-wait-released"
-        sandbox.claude_records_updates_against(release_marker)
-        with AnotherUpdateHoldsTheLock(sandbox.update_lock_path(), release_marker,
-                                       release_after_seconds=1.5):
-            result = sandbox.run(str(root / "update-lock-wait-agents"),
-                                 update_timeout_seconds=30)
-        check("update lock: an update started while another holds the lock "
-              "waits, then runs",
-              sandbox.claude_updates() == ["after-release"],
-              (sandbox.claude_updates(), result.stderr[:400]))
-        check("update lock: the waiting launch says it is waiting",
-              "launch-claude-mac: waiting for another update on this machine "
-              "to finish" in result.stderr, result.stderr[:400])
-        check("update lock: the launch completes after the wait, reaching tmux",
-              result.returncode == 0 and sandbox.tmux_argv(),
-              (result.returncode, result.stderr[:300]))
-
         sandbox = MacLaunchSandbox(root / "update-lock-bound")
-        release_marker = root / "update-lock-bound-released"
-        sandbox.claude_records_updates_against(release_marker)
-        with AnotherUpdateHoldsTheLock(sandbox.update_lock_path(), release_marker):
+        sandbox.write_seat_token("mac-claude", "test-token")
+        with AnotherUpdateHoldsTheLock(sandbox.update_lock_path()):
             started = time.monotonic()
             result = sandbox.run(str(root / "update-lock-bound-agents"),
-                                 update_timeout_seconds=1)
+                                 update_timeout_seconds=30)
             elapsed = time.monotonic() - started
-        check("update lock: a lock held past the limit skips this update",
+        check("update lock: a held lock skips this update immediately",
               sandbox.claude_updates() == [], sandbox.claude_updates())
-        check("update lock: the skip is reported in one line naming the limit",
-              "launch-claude-mac: another update on this machine was still "
-              "running after 1s; skipping this update and launching on the "
-              "installed version" in result.stderr, result.stderr[:400])
+        check("update lock: the skip is reported in exactly one line",
+              "Another claude update is running; this launch uses the claude already installed.\n"
+              == result.stderr, result.stderr[:400])
         check("update lock: the skipped launch still completes, without hanging",
               result.returncode == 0 and sandbox.tmux_argv() and elapsed < 15,
               (result.returncode, f"{elapsed:.1f}s", result.stderr[:300]))
 
+        with AnotherUpdateHoldsTheLock(sandbox.update_lock_path()):
+            result = subprocess.run(
+                [sys.executable, str(LAUNCHER.with_name(UPDATE_LOCK_HELPER_NAME)),
+                 "--program-name", "launch-claude-mac", "--timeout-seconds", "30",
+                 "--", sys.executable, "-c", "raise SystemExit(3)"],
+                env={**os.environ, "HOME": str(sandbox.home)},
+                capture_output=True, text=True, timeout=3)
+        check("update lock: a second process skips with exit status zero",
+              result.returncode == 0 and result.stdout == ""
+              and result.stderr == "Another claude update is running; this launch uses the claude already installed.\n",
+              (result.returncode, result.stdout, result.stderr))
+
+        result = sandbox.run(str(root / "update-lock-bound-agents"),
+                             update_timeout_seconds=30)
+        check("update lock: a free lock runs the update and completes the launch",
+              sandbox.claude_updates() == ["update"]
+              and result.returncode == 0 and sandbox.tmux_argv(),
+              (sandbox.claude_updates(), result.returncode, result.stderr))
+
+        result = subprocess.run(
+            [sys.executable, str(LAUNCHER.with_name(UPDATE_LOCK_HELPER_NAME)),
+             "--program-name", "launch-claude-mac", "--timeout-seconds", "30",
+             "--", sys.executable, "-c",
+             "import sys; print('update failed', file=sys.stderr); sys.exit(3)"],
+            env={**os.environ, "HOME": str(sandbox.home)},
+            capture_output=True, text=True, timeout=3)
+        check("update lock: a failed update preserves its diagnosis and exit status",
+              result.returncode == 3 and result.stderr == "update failed\n",
+              (result.returncode, result.stderr))
+
+        # A lock that cannot be opened is a failure, not "another update is
+        # running": exit 1, the lock path in the line, and the update not run.
+        # ~/.local is a regular file here, so the lock's directory cannot exist.
+        unopenable_home = root / "update-lock-unopenable-home"
+        unopenable_home.mkdir()
+        (unopenable_home / ".local").write_text("not a directory\n")
+        update_ran_marker = root / "update-lock-unopenable-update-ran"
+        unopenable_lock_path = unopenable_home / ".local" / "state" / "claude" / "agent-binary-update.lock"
+        result = subprocess.run(
+            [sys.executable, str(LAUNCHER.with_name(UPDATE_LOCK_HELPER_NAME)),
+             "--program-name", "launch-claude-mac", "--timeout-seconds", "30",
+             "--", sys.executable, "-c",
+             f"open({str(update_ran_marker)!r}, 'w').close()"],
+            env={**os.environ, "HOME": str(unopenable_home)},
+            capture_output=True, text=True, timeout=3)
+        check("update lock: an unopenable lock exits 1, names the lock, and skips the update",
+              result.returncode == 1 and result.stdout == ""
+              and result.stderr.startswith(
+                  f"launch-claude-mac: the update lock {unopenable_lock_path} could not be opened (")
+              and result.stderr.endswith(
+                  "); skipping the update and launching on the installed version\n")
+              and result.stderr.count("\n") == 1
+              and not update_ran_marker.exists(),
+              (result.returncode, result.stdout, result.stderr, update_ran_marker.exists()))
+
+        # flock failing for any reason but "held" (ENOLCK on a network
+        # filesystem, for one) is also a failure. No real filesystem here gives
+        # ENOLCK on demand, so the helper runs in a child whose flock raises it.
+        enolck_lock_path = root / "update-lock-enolck" / "agent-binary-update.lock"
+        update_ran_marker = root / "update-lock-enolck-update-ran"
+        enolck_driver = (
+            "import errno, importlib.util, sys\n"
+            f"spec = importlib.util.spec_from_file_location('helper', {str(LAUNCHER.with_name(UPDATE_LOCK_HELPER_NAME))!r})\n"
+            "helper = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(helper)\n"
+            "def flock_fails(*_):\n"
+            "    raise OSError(errno.ENOLCK, 'No locks available')\n"
+            "helper.fcntl.flock = flock_fails\n"
+            "sys.exit(helper.run_agent_binary_update_under_lock(\n"
+            f"    [sys.executable, '-c', \"open({str(update_ran_marker)!r}, 'w').close()\"],\n"
+            f"    30, 'launch-claude-mac', lock_path={str(enolck_lock_path)!r}))\n")
+        result = subprocess.run([sys.executable, "-B", "-c", enolck_driver],
+                                capture_output=True, text=True, timeout=10)
+        check("update lock: a flock error other than held exits 1, names the lock, and skips the update",
+              result.returncode == 1 and result.stdout == ""
+              and result.stderr == (
+                  f"launch-claude-mac: the update lock {enolck_lock_path} could not be "
+                  f"taken ([Errno {errno.ENOLCK}] No locks available); skipping the update "
+                  "and launching on the installed version\n")
+              and not update_ran_marker.exists(),
+              (result.returncode, result.stdout, result.stderr, update_ran_marker.exists()))
+
         # A limit of 0 skips the update entirely, lock included: nothing
         # waits, no update runs, and the lock file is never created.
         sandbox = MacLaunchSandbox(root / "update-lock-zero")
-        sandbox.claude_records_updates_against(root / "update-lock-zero-released")
         result = sandbox.run(str(root / "update-lock-zero-agents"),
                              update_timeout_seconds=0)
         check("update lock: a limit of 0 runs no update and takes no lock",
@@ -452,6 +533,9 @@ def main() -> int:
         check("detached: the launcher runs to its tmux launch (exit 0)",
               result.returncode == 0 and sandbox.tmux_argv(),
               (result.returncode, result.stderr[:300]))
+        check("detached: tmux gets mouse mode on and copy-command pbcopy",
+              tmux_argv_sets_mouse_mode_and_pbcopy(sandbox.tmux_argv()),
+              sandbox.tmux_argv())
         check("task list: the pin reaches the supervisor as nedschorus-<seat>-tasks",
               sandbox.supervisor_environment().get("CLAUDE_CODE_TASK_LIST_ID")
               == "nedschorus-seat-a-tasks",
@@ -541,6 +625,9 @@ def main() -> int:
         check("attached: new-session -A with the wrapper executes to exit 0",
               result.returncode == 0 and "-A" in sandbox.tmux_argv(),
               (result.returncode, result.stderr[:300]))
+        check("attached: tmux gets mouse mode on and copy-command pbcopy",
+              tmux_argv_sets_mouse_mode_and_pbcopy(sandbox.tmux_argv()),
+              sandbox.tmux_argv())
         check("task list (attached): the supervisor gets nedschorus-<seat>-tasks",
               sandbox.supervisor_environment().get("CLAUDE_CODE_TASK_LIST_ID")
               == "nedschorus-seat-c-tasks"
@@ -768,6 +855,40 @@ def main() -> int:
               (sandbox.invoked_commands()[:200],
                sorted(str(p) for p in sandbox.workdir.iterdir())))
 
+        # --help alone prints the usage and exits 0 before any side effect.
+        sandbox = MacLaunchSandbox(root / "help-option-alone")
+        result = sandbox.run("~/agents", seat_name="--help", attach=True)
+        check("--help alone: exit 0, printing the usage line on stdout",
+              result.returncode == 0
+              and "usage: launch-claude-mac <name>" in result.stdout,
+              (result.returncode, result.stdout[:300], result.stderr[:300]))
+        check("--help alone: no side effect",
+              sandbox.invoked_commands() == ""
+              and not any(sandbox.workdir.iterdir()),
+              (sandbox.invoked_commands()[:200],
+               sorted(str(p) for p in sandbox.workdir.iterdir())))
+
+        # A first argument starting with - is refused as a seat name: the
+        # first argument is always the name, so the launcher would otherwise
+        # launch a seat named after the option.
+        for label, first_argument, attach in (
+                ("--help typed first, with another argument", "--help", False),
+                ("an option typed before the name", "--no-attach", True)):
+            sandbox = MacLaunchSandbox(root / f"dash-seat-name-{first_argument}")
+            result = sandbox.run("~/agents", seat_name=first_argument,
+                                 attach=attach)
+            check(f"{label}: refused with exit 2, naming the argument and "
+                  "printing the usage line",
+                  result.returncode == 2
+                  and f'a seat named "{first_argument}"' in result.stderr
+                  and "usage: launch-claude-mac <name>" in result.stderr,
+                  (result.returncode, result.stderr[:300]))
+            check(f"{label}: refused before any side effect",
+                  sandbox.invoked_commands() == ""
+                  and not any(sandbox.workdir.iterdir()),
+                  (sandbox.invoked_commands()[:200],
+                   sorted(str(p) for p in sandbox.workdir.iterdir())))
+
         # --- the after-exit shell inherits the credential, as it inherits
         # the task-list pin and for the same reason: the `claude --continue`
         # that shell offers is the same seat, and a `gh` typed there is the
@@ -784,6 +905,40 @@ def main() -> int:
         check("attached: the after-exit shell keeps the seat's credential",
               sandbox.after_exit_environment().get("GH_TOKEN") == seat_token,
               sandbox.after_exit_environment().get("GH_TOKEN"))
+
+        # --- the iTerm2 background colour: written on an attached launch from
+        # an iTerm2 terminal, before tmux, and nowhere else. A pipe, another
+        # terminal program or a --no-attach launch must receive no escape
+        # bytes, and each must still reach tmux.
+        sandbox = MacLaunchSandbox(root / "iterm2-background-written")
+        result = sandbox.run("~/agents", seat_name="seat-t9", attach=True,
+                             term_program="iTerm.app",
+                             stdout_on_terminal=True)
+        check("iTerm2 background: an attached launch in iTerm2 on a terminal "
+              "writes the pale pink SetColors sequence",
+              result.returncode == 0
+              and ITERM2_PALE_PINK_BACKGROUND_SEQUENCE in result.stdout
+              and sandbox.tmux_argv(),
+              (result.returncode, repr(result.stdout[-300:]),
+               result.stderr[:300]))
+        for label, slug, term_program, stdout_on_terminal, attach in (
+                ("TERM_PROGRAM is another terminal", "other-terminal",
+                 "Apple_Terminal", True, True),
+                ("stdout is not a terminal", "stdout-pipe",
+                 "iTerm.app", False, True),
+                ("--no-attach", "no-attach", "iTerm.app", True, False)):
+            sandbox = MacLaunchSandbox(
+                root / f"iterm2-background-not-written-{slug}")
+            result = sandbox.run("~/agents", seat_name="seat-t10",
+                                 attach=attach, term_program=term_program,
+                                 stdout_on_terminal=stdout_on_terminal)
+            check(f"iTerm2 background: no escape sequence when {label}, "
+                  "and the launch still reaches tmux",
+                  result.returncode == 0
+                  and "\x1b]1337;" not in result.stdout
+                  and sandbox.tmux_argv(),
+                  (result.returncode, repr(result.stdout[-300:]),
+                   result.stderr[:300]))
 
         # --- an inherited GH_TOKEN is DROPPED, not kept. The seat's account
         # is decided by the launcher and never inherited from the shell that

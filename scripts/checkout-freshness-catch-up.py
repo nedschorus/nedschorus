@@ -33,12 +33,25 @@ Wired as a Stop hook, so it runs at every turn boundary. Each run:
      landed merge commits on FROZEN heads; this moves only heads nobody else
      has, creates no merge commit, and leaves the pushed-head rule untouched.
      Walked and ruled 2026-09-15 (docs/walk/keeping-branches-current-telling-
-     and-rebase).
+     and-rebase). "Never pushed" takes two facts, not one: no branch of this
+     name is on origin, AND none of the branch's own commits is on any remote
+     branch. A branch cut under a new name at a pull request's pushed head
+     passes the first test and fails the second; its commits are that pull
+     request's, under review, so it is left alone like a pushed branch (head
+     state "pushed-history", see head_state()).
   5. If the branch is behind and HAS been pushed, never moves it. The agent
      is TOLD, once per update of main: how far behind, which files main has
      changed that it lacks — named, grouped by why they matter, computed from
      `git diff --name-only --no-renames HEAD...origin/main`, never assumed —
      and to leave the branch alone and cut its next topic from origin/main.
+  5b. If HEAD is detached and behind, and holds no commits of its own, no
+     uncommitted tracked change and no operation in progress, fast-forwards
+     it to origin/main and tells the agent which files moved: an agent-seat's
+     own checkout sits detached while its work happens in other worktrees,
+     and CLAUDE.md, the skills and the hooks load from it. Otherwise it is
+     not moved, and the agent is told why and what to do, once per update of
+     main; a refusal git gives for anything but an untracked file is also a
+     user line, once per distinct error.
   6. The machine's reference checkout — the main worktree of the same
      repository, parked on main — gets a fast-forward-only pull on the same
      rhythm, under its own stamp. Never a real merge there: the reference
@@ -74,6 +87,7 @@ because launchers read them on a terminal):
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import subprocess
@@ -81,14 +95,21 @@ import sys
 import time
 from pathlib import Path
 
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
+
 STAMP_FILE_NAME = "checkout-freshness-stamp.json"
 
 # A git that never ran reports a code git itself cannot return, so "no answer"
 # can never be read as an answer. NOT 1: git uses 1 as a real answer in this
 # project's guards (`rev-parse --verify --quiet HEAD` exits 1 for "HEAD does
-# not exist"), and synthesizing 1 for a launch failure made the two
-# indistinguishable — the defect found on PR #103. Aligned here so the same
-# function name does not mean two different things in two files.
+# not exist"), and synthesizing 1 for a launch failure would make the two
+# indistinguishable. Aligned here so the same function name does not mean two
+# different things in two files.
 GIT_DID_NOT_RUN = -1
 DEFAULT_FETCH_INTERVAL_SECONDS = 300
 
@@ -104,31 +125,48 @@ MERGE_TREE_CONFLICT_EXIT_CODE = 1
 MERGE_TREE_OID_LENGTHS = (40, 64)  # sha1 and sha256 object ids
 MERGE_TREE_OID_CHARACTERS = "0123456789abcdef"
 
-# In-progress operation markers: the reference fast-forward must not run in
-# a tree that is mid-anything.
-GIT_IN_PROGRESS_MARKERS = (
-    "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG",
-    "rebase-merge", "rebase-apply",
-)
+# In-progress operation markers in the git directory, each with the operation
+# it means: no fast-forward or rebase may run in a tree that is mid-anything.
+# A multi-commit cherry-pick or revert paused on a conflict that was resolved
+# with `--no-commit` leaves a clean index, no CHERRY_PICK_HEAD or REVERT_HEAD,
+# and only the sequencer directory; its todo file says which of the two it is.
+GIT_IN_PROGRESS_OPERATION_BY_MARKER = {
+    "MERGE_HEAD": "merge", "CHERRY_PICK_HEAD": "cherry-pick", "REVERT_HEAD": "revert",
+    "BISECT_LOG": "bisect", "rebase-merge": "rebase", "rebase-apply": "rebase",
+    "sequencer": "cherry-pick or revert",
+}
+GIT_SEQUENCER_OPERATION_BY_TODO_COMMAND = {"pick": "cherry-pick", "revert": "revert"}
+GIT_IN_PROGRESS_MARKERS = tuple(GIT_IN_PROGRESS_OPERATION_BY_MARKER)
 
 # What the agent is told to DO, decided by one fact: whether the branch has
-# ever been pushed. Walked and ruled 2026-09-15 (docs/walk/keeping-branches-
-# current-telling-and-rebase). A never-pushed branch is rebased by this hook
+# ever been pushed. A never-pushed branch is rebased by this hook
 # itself, so REBASE_ADVICE is what the agent gets only when the hook could
 # not — a dirty tree, or a conflict it aborted. A pushed branch is never
 # moved by anyone but its author, and then only forward.
 # A pushed branch that conflicts with main is the one exception: no commit on
 # top can clear a conflict, so it is cleared by a hand-merge (CLAUDE.md, "How a
-# change reaches main"; user-ruled 2026-09-21, worded 2026-09-30 in walk
-# open-items-this-seat-holds-2026-09-24, items 22 to 24). This text used to
-# forbid every merge, which sent an agent with a conflict to the one move that
-# cannot clear it.
+# change reaches main"). Forbidding every merge here would send an agent with a
+# conflict away from the one move that clears it.
+# The runner selects the suites a change can affect, so no agent picks them by hand.
+SELECTIVE_TEST_RUN_COMMAND = (
+    "python3 scripts/run-all-test-suites.py "
+    "--only-suites-whose-recorded-inputs-changed-since origin/main"
+)
+# The last line names the pre-push check because that check, not the agent,
+# fetches origin and refuses a conflicting push.
 REBASE_ADVICE = (
-    "This branch has never been pushed, so nobody else has it. Bring it up to "
-    "date now: commit or set aside any uncommitted work, run `git rebase "
-    "origin/main`, then rerun the test suites for what you touched. If the "
-    "rebase stops on a conflict, `git rebase --abort` puts everything back; then "
-    "resolve it by hand or stay behind, which costs nothing at merge."
+    "This branch has never been pushed, so nobody else has it. Bring the branch up "
+    "to date now: commit or set aside any uncommitted work, run `git rebase "
+    f"origin/main`, then run `{SELECTIVE_TEST_RUN_COMMAND}`.\n"
+    "If the rebase stops on a conflict that you can resolve now, resolve the "
+    "conflict and run `git rebase --continue`.\n"
+    "If the rebase stops on a conflict that you cannot resolve now, run `git rebase "
+    "--abort`, which puts everything back, and finish what you are doing first; this "
+    "note comes back at each turn's end until the branch is up to date.\n"
+    "A push that conflicts with origin/main is refused by the pre-push check, which "
+    "names the conflicting commit; if you cannot resolve that conflict, stop and tell "
+    "the user which files conflict: a conflict you cannot resolve changes the work "
+    "you are doing with him, so the last line of this note does not forbid telling him."
 )
 LEAVE_IT_ADVICE = (
     "This branch is pushed, so its review may be running. Do not rebase or "
@@ -137,35 +175,79 @@ LEAVE_IT_ADVICE = (
     "scripts/branch-conflict-check.py describes. "
     "Start your next topic with `git checkout -b <name> origin/main`."
 )
-DETACHED_ADVICE = "You are on a detached HEAD; check out your branch before working."
-UNKNOWN_ADVICE = ("Your head state could not be determined (git did not run); nothing was "
-                  "changed. Check `git status` before working.")
-AFTER_REBASE_ADVICE = "Rerun the test suites for what you touched: your work now sits on newer code."
+# A branch whose own commits are already on a remote branch, under another
+# name: the shape a fix-round agent makes when it cuts a branch at a pull
+# request's pushed head, because that pull request's own branch is checked out
+# in another worktree. Rebasing it would rewrite the pull request's commits
+# under their review, so it gets the pushed branch's instructions. Read by
+# obsolete-file-edit-warning-hook.py too, so both hooks say the same thing.
+PUSHED_HISTORY_ADVICE = (
+    "This branch's commits are already on GitHub under another branch name, so the "
+    "branch is treated as pushed and is not rebased: a pushed head may be under "
+    "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
+    "fix is a new commit on top. If it conflicts with main, clear the conflict with "
+    "the hand-merge that scripts/branch-conflict-check.py describes."
+)
+# A detached HEAD with no work of its own is moved forward by this hook; these
+# are what the agent is told after a move (A) or when it could not be made (B).
+# CLAUDE.md, the skills and the hooks load from the checkout, so a stale one
+# runs the agent under stale instructions.
+DETACHED_MOVED_ADVICE = (
+    "This checkout's detached HEAD was moved forward to origin/main: it held no commits "
+    "of its own and no uncommitted tracked changes, so nothing was lost.\n"
+    "CLAUDE.md and the skills load from this checkout, so what you read from them earlier "
+    "in this session may be out of date; the hooks already run from the new files.\n"
+    "If CLAUDE.md is listed above, read it again before your next action.\n"
+    "If a skill you are following is listed above, read that skill's SKILL.md under "
+    ".claude/skills/ again before its next step."
+)
+DETACHED_NOT_MOVED_ADVICE = (
+    "This checkout's detached HEAD was not moved forward: {reason}.\n"
+    "CLAUDE.md, the skills and the hooks load from this checkout, so until it moves, the "
+    "files listed above stay older here than on main."
+)
+DETACHED_OPERATION_IN_PROGRESS_LINE = (
+    "A {operation} is in progress: finish it or abort it; the next turn's end moves the "
+    "checkout forward."
+)
+DETACHED_WORK_OF_ITS_OWN_LINE = (
+    "It holds work of its own: run `git switch -c <branch name>` to put that work on a "
+    "branch, and commit any uncommitted changes there; from then on the hook's rules for a "
+    "branch apply."
+)
+DETACHED_FAST_FORWARD_REFUSED_LINES = (
+    "Git refused the fast-forward: {error}\n"
+    "If git names an untracked file that main would overwrite, move that file out of the "
+    "way; the next turn's end moves the checkout forward.\n"
+    "If git names anything else, leave the checkout as it is: the refusal has been "
+    "reported to the user."
+)
+# Git's wording when a fast-forward would overwrite an untracked file: the one
+# refusal the agent can clear, so the one not sent to the user.
+GIT_UNTRACKED_FILE_WOULD_BE_OVERWRITTEN_TEXT = "untracked working tree files would be overwritten"
+UNKNOWN_ADVICE = ("Your head state could not be determined (a git command failed); nothing "
+                  "was changed. Check `git status` before working.")
+AFTER_REBASE_ADVICE = f"Run `{SELECTIVE_TEST_RUN_COMMAND}`: your work now sits on newer code."
 
 # Appended to EVERY note the agent receives, by tell() itself, so no note can
-# forget it. Agents were relaying these notes to the user, who ruled
-# 2026-09-18: "you don't need to tell me what other agents are doing." and
-# "Seems like we should change the hook to mention that the user doesn't need
-# to be told."
+# forget it. Without it, agents relay these notes to the user, who does not
+# need to hear what other agents merged.
 NOT_FOR_THE_USER_ADVICE = (
     "Do not report this to the user: he does not need to hear that main moved, or "
     "what other agents merged, unless it changes the work you are doing with him."
 )
 
 # Categories worth naming, most consequential first, each labelled with WHY an
-# agent should care where that is not self-evident (user, 2026-09-15: "explain
-# which files should be updated (and perhaps why, unless that is obvious)").
-# A file's category is decided by path, and the first match wins.
+# agent should care where that is not self-evident. A file's category is
+# decided by path, and the first match wins.
 #
 # nc-systems/ holds the project's systems kept whole — a system's code, its
 # tests and its design of record in one directory — so a change there is
 # neither a loose script nor a document the agent merely cites: the design it
-# builds to may have moved under it. Until 2026-09-22 the directory matched no
-# category and fell to the catch-all, which reported it to every seat under
-# the least informative label available. Observed live that day, when
-# nc-systems/handoff/handoff-design.md changed on main and this hook reported
-# it as "other files". Placed above scripts/ because a system kept whole
-# outranks a loose script, per "most consequential first" above.
+# builds to may have moved under it. Without its own category it would fall to
+# the catch-all and be reported under the least informative label. Placed
+# above scripts/ because a system kept whole outranks a loose script, per
+# "most consequential first" above.
 DRIFT_PATH_CATEGORIES = (
     ("your standing instructions",
      lambda path: path == "CLAUDE.md" or path.endswith("/CLAUDE.md")),
@@ -193,20 +275,16 @@ def obsolete_files_by_category(checkout: Path):
     checkout has not, grouped by why they matter. Empty when there is nothing
     to say or the comparison cannot be made.
 
-    NAMED RATHER THAN ASSUMED. The first draft of the agent's line ended with a
-    fixed sentence: "your tests, hooks, skills and documents here are older than
-    main." The user asked "are you sure they are older than main — or are you
-    just saying that?" (2026-09-15). Just saying it. Measured on the seat that
-    built the feature, in a twelve-commit gap: ten scripts and four documents
-    had moved, and ZERO hooks and ZERO skills had. Two thirds of the sentence
-    was false at every printing, and an agent that reads one false clause learns
-    to discount the whole line — the ignoring this exists to end.
+    NAMED RATHER THAN ASSUMED. A fixed sentence such as "your tests, hooks,
+    skills and documents here are older than main" is false wherever one of
+    those kinds did not move, which is most gaps, and an agent that reads one
+    false clause learns to discount the whole line. So the files are measured
+    and only the kinds that moved are named.
 
     Three dots, not two: `HEAD...origin/main` diffs from the MERGE BASE, so it
     answers "what did main change that I do not have". Two dots would compare
     the trees outright and report this branch's OWN work as though main had
-    changed it — the branch that built this would have claimed its own new files
-    as ones it was missing.
+    changed it, claiming the branch's own new files as ones it was missing.
 
     --no-renames, because rename detection is on by default and prints only a
     rename's DESTINATION. Without the flag, a file main renamed away from the
@@ -216,11 +294,11 @@ def obsolete_files_by_category(checkout: Path):
     for the same reason, is in obsolete-file-edit-warning-hook.py's
     obsolete_path_set(), so both programs run the same diff.
     """
-    listed = run_git(["diff", "--name-only", "--no-renames", "HEAD...origin/main"],
+    listed = run_git(["diff", "-z", "--name-only", "--no-renames", "HEAD...origin/main"],
                      checkout, timeout=30)
     if listed.returncode != 0:
         return []
-    paths = sorted(line.strip() for line in listed.stdout.splitlines() if line.strip())
+    paths = sorted(git_output.nul_separated_fields(listed.stdout))
     if not paths:
         return []
 
@@ -275,14 +353,12 @@ def flush_hook_output() -> None:
 
     A Stop hook's plain stdout on exit 0 reaches neither — only
     `UserPromptSubmit`, `SessionStart` and their kin get plain stdout added to
-    the agent's context. That is why every report this script made before
-    2026-09-15 was read by nobody: it was speaking on the one channel with no
-    listener at either end. `systemMessage` is shown to the user;
+    the agent's context, so plain stdout here would be read by nobody.
+    `systemMessage` is shown to the user;
     `hookSpecificOutput.additionalContext` is added to the AGENT's context.
 
-    No `decision` field, ever. Blocking costs the agent a turn, and the
-    blocking channel went with the merge (ruled 2026-09-14, nedschorus#324).
-    Silence stays meaningful: nothing queued prints nothing at all.
+    No `decision` field, ever: blocking costs the agent a turn, and this hook
+    only tells. Silence stays meaningful: nothing queued prints nothing at all.
     """
     if not REPORT_LINES and not AGENT_LINES:
         return
@@ -303,16 +379,17 @@ def run_git(arguments, working_directory: Path, timeout: int = 60):
     """Run git somewhere; never raise, whatever goes wrong.
 
     LC_ALL=C because this script READS git's prose: the reference
-    fast-forward reports git's own refusal text, and a matched word in a
-    translated message once skipped a cleanup entirely (PR #87's review, on
-    the merge path this script no longer has). Forcing the C locale keeps
-    every message stable, whatever the host is configured for.
+    fast-forward reports git's own refusal text, and a word matched in a
+    translated message can be missed. Forcing the C locale keeps every
+    message stable, whatever the host is configured for. surrogateescape
+    because -z output carries each path's bytes as stored, which need not be
+    UTF-8.
     """
     try:
         return subprocess.run(
             ["git", *arguments], cwd=str(working_directory),
-            capture_output=True, text=True, check=False, timeout=timeout,
-            env={**os.environ, "LC_ALL": "C"},
+            capture_output=True, text=True, errors="surrogateescape", check=False,
+            timeout=timeout, env={**os.environ, "LC_ALL": "C"},
         )
     except (OSError, subprocess.SubprocessError) as error:
         return subprocess.CompletedProcess(arguments, GIT_DID_NOT_RUN, "",
@@ -391,24 +468,100 @@ def own_commit_count(checkout: Path):
         return None
 
 
+def remote_branches_holding_own_commits(checkout: Path):
+    """The remote branches that already hold commits of this branch, as a list
+    of names; [] when none does; None when git could not answer.
+
+    "This branch's commits" are those in origin/main..HEAD, merge commits and
+    the commits a merge brought in alike: if any one of them is on a remote
+    branch, rebasing the branch would rewrite history someone else has. The
+    test is a set difference of two local-ref walks, `origin/main..HEAD`
+    against `HEAD --not --remotes`, so it needs no fetch and no network, and
+    it sees past the agent's own new commits on top, which are on no remote
+    branch yet, to the pushed commits beneath them. A third call, made only
+    when a pushed commit is found, names the remote branches that hold the
+    newest one, for the agent's message.
+
+    Every remote-tracking ref counts, origin's and any other remote's, and so
+    does a ref left behind by a branch deleted on GitHub: a commit that was
+    ever pushed may be under review or in someone's hands, and leaving such a
+    branch unrebased costs only a hand-merge if it ever conflicts.
+    """
+    own = run_git(["rev-list", "origin/main..HEAD"], checkout, timeout=30)
+    if own.returncode != 0:
+        return None
+    own_commits = own.stdout.split()
+    if not own_commits:
+        return []
+    not_on_any_remote = run_git(["rev-list", "HEAD", "--not", "--remotes"], checkout,
+                                timeout=30)
+    if not_on_any_remote.returncode != 0:
+        return None
+    unpushed = set(not_on_any_remote.stdout.split())
+    # rev-list lists newest first, so this is the newest pushed commit: the one
+    # a remote branch's tip is likeliest to be.
+    newest_pushed = next((sha for sha in own_commits if sha not in unpushed), None)
+    if newest_pushed is None:
+        return []
+    holders = run_git(["for-each-ref", "--format=%(refname:short)", "--contains",
+                       newest_pushed, "refs/remotes"], checkout, timeout=15)
+    names = holders.stdout.split() if holders.returncode == 0 else []
+    # Already known to be on a remote branch; failing to name it changes
+    # nothing about what may be done with it.
+    return names or ["a remote branch"]
+
+
+# How many of the remote branches holding a branch's commits the head state
+# names before it counts the rest.
+PUSHED_HISTORY_BRANCHES_NAMED = 2
+
+
 def head_state(checkout: Path, branch: str):
     """(key, text) for where HEAD stands against its remote branch. The
-    frozen-head rule (CLAUDE.md, 2026-09-08) freezes a head the moment it is
+    frozen-head rule in CLAUDE.md freezes a head the moment it is
     pushed, so "pushed and equal to origin/<branch>" is the fact the rule
     keys on; whether a pull request is open is not asked, because that
-    needs gh and the network at every turn end, and the rule does not."""
+    needs gh and the network at every turn end, and the rule does not.
+
+    PUSHED HISTORY UNDER A NEW NAME. No origin/<branch> does not, on its own,
+    mean nobody else has the branch. An agent that fixes a pull request from
+    a worktree of its own cannot check out the pull request's branch there,
+    since git checks a branch out in one worktree at a time, so it cuts a new
+    branch at the pushed head. That branch has no remote branch of its name,
+    yet every commit under the agent's fix is the pull request's, under
+    review. Read as "unpushed", the Stop hook would rebase it, moving the
+    frozen head, and the obsolete-file warning would tell the agent to rebase
+    it. So before answering
+    "unpushed", the branch's own commits are checked against every remote
+    branch, and a branch carrying any of them is "pushed-history": treated
+    as pushed, never rebased. A new key rather
+    than "pushed", because "pushed" says HEAD equals origin/<branch>, which
+    is false here, and the head state is what the agent and the stamp read.
+    A git failure in that check is "unknown", never "unpushed": "unpushed" is
+    the one answer that authorises a rebase."""
     if branch in ("", "HEAD"):
         return "detached", "detached HEAD"
     remote = run_git(["rev-parse", "--verify", "--quiet", f"origin/{branch}"],
                      checkout, timeout=15)
     if remote.returncode == GIT_DID_NOT_RUN:
         # "git did not run" is not "no such ref": it must never read as
-        # "unpushed", the one answer that authorises a rebase (PR #388 review,
-        # the asymmetry with counts_against_main, which treats the same failure
-        # class as unknowable).
+        # "unpushed", the one answer that authorises a rebase, and so must
+        # match counts_against_main, which treats the same failure class as
+        # unknowable.
         return "unknown", "head state unknowable (git did not run)"
     if remote.returncode != 0:
-        return "unpushed", "head unpushed"
+        holders = remote_branches_holding_own_commits(checkout)
+        if holders is None:
+            return "unknown", ("head state unknowable (git could not check whether this "
+                               "branch's commits are on a remote branch)")
+        if not holders:
+            return "unpushed", "head unpushed"
+        named = ", ".join(holders[:PUSHED_HISTORY_BRANCHES_NAMED])
+        if len(holders) > PUSHED_HISTORY_BRANCHES_NAMED:
+            named += f" and {len(holders) - PUSHED_HISTORY_BRANCHES_NAMED} more"
+        return "pushed-history", (f"no branch of this name on origin, but its commits are "
+                                  f"already on {named} (pushed history: a fix is a new "
+                                  f"commit on top, never a rebase)")
     head = run_git(["rev-parse", "HEAD"], checkout, timeout=15).stdout.strip()
     if remote.stdout.strip() == head:
         return "pushed", (f"head pushed and equal to origin/{branch} (frozen: a fix is a "
@@ -419,7 +572,7 @@ def head_state(checkout: Path, branch: str):
     if count == "0":
         # HEAD is behind its own remote branch: the shape the fix-on-frozen-head
         # process leaves once the authoring seat fetches a fresh agent's fix
-        # commit (PR #372 review). The truth is that the remote is ahead.
+        # commit. The truth is that the remote is ahead.
         remote_only = run_git(["rev-list", "--count", f"HEAD..origin/{branch}"], checkout,
                               timeout=30)
         remote_count = remote_only.stdout.strip() if remote_only.returncode == 0 else "some"
@@ -431,7 +584,7 @@ def head_state(checkout: Path, branch: str):
     if ancestor.returncode != 0:
         # Neither side contains the other: the pushed history was rewritten —
         # an amend or a rebase after a push, which moves a frozen head under
-        # its reviewer (CLAUDE.md, ruled 2026-09-08). Named to the user.
+        # its reviewer (CLAUDE.md's frozen-head rule). Named to the user.
         return "diverged-from-remote", (f"head has diverged from origin/{branch}: the pushed "
                                         f"history was rewritten after the push")
     return "pushed-with-local-commits", (f"head pushed, with {count} local commit(s) not "
@@ -448,22 +601,84 @@ def merge_blockers(checkout: Path, git_dir: Path):
         blockers.append("detached HEAD")
     if branch == "main":
         blockers.append("parked on main (reference checkouts fast-forward only)")
-    status = run_git(["status", "--porcelain"], checkout, timeout=30)
-    if status.returncode != 0:
-        # An unreadable tree must read as unsafe, never as clean — a status
-        # failure that passed for "no changes" would authorize a merge on
-        # exactly the tree nothing could inspect (review finding, PR #87).
+    tracked_changes = uncommitted_tracked_change_count(checkout)
+    if tracked_changes is None:
         blockers.append("git status unreadable")
-    else:
-        tracked_changes = [line for line in status.stdout.splitlines()
-                           if not line.startswith("??")]
-        if tracked_changes:
-            blockers.append(f"{len(tracked_changes)} uncommitted tracked change(s)")
+    elif tracked_changes:
+        blockers.append(f"{tracked_changes} uncommitted tracked change(s)")
+    marker = in_progress_marker(git_dir)
+    if marker is not None:
+        blockers.append(f"a git operation in progress ({marker})")
+    return blockers, branch
+
+
+def uncommitted_tracked_change_count(checkout: Path):
+    """Staged or unstaged changes to tracked files, or None when git status
+    cannot be read. Untracked files are not counted: a fast-forward or rebase
+    refuses on its own to overwrite one, and names it."""
+    status = run_git(["status", "--porcelain", "-z"], checkout, timeout=30)
+    if status.returncode != 0:
+        # An unreadable tree must read as unsafe, never as clean.
+        return None
+    return len([entry for entry in git_output.status_entries(status.stdout)
+                if entry.code != "??"])
+
+
+def in_progress_marker(git_dir: Path):
+    """The first in-progress operation marker present in the git directory, or None."""
     for marker in GIT_IN_PROGRESS_MARKERS:
         if (git_dir / marker).exists():
-            blockers.append(f"a git operation in progress ({marker})")
-            break
-    return blockers, branch
+            return marker
+    return None
+
+
+def in_progress_operation(git_dir: Path, marker: str) -> str:
+    """The operation a marker means, reading the sequencer's todo file to tell a
+    cherry-pick sequence from a revert sequence."""
+    if marker == "sequencer":
+        try:
+            words = (git_dir / "sequencer" / "todo").read_text().split()
+        except OSError:
+            words = []
+        if words and words[0] in GIT_SEQUENCER_OPERATION_BY_TODO_COMMAND:
+            return GIT_SEQUENCER_OPERATION_BY_TODO_COMMAND[words[0]]
+    return GIT_IN_PROGRESS_OPERATION_BY_MARKER[marker]
+
+
+def move_detached_checkout_forward(checkout: Path, git_dir: Path, ahead: int):
+    """Fast-forward a detached HEAD to origin/main when it holds no work of its
+    own and no operation is in progress, or say why not.
+
+    Returns (outcome, reasons, condition_lines, error): "moved"; "blocked" with
+    every condition that holds and its lines, the in-progress line alone while an
+    operation is in progress; or "refused" with git's
+    error, which is the only outcome where git was asked to move.
+    """
+    reasons, lines = [], []
+    marker = in_progress_marker(git_dir)
+    if marker is not None:
+        operation = in_progress_operation(git_dir, marker)
+        reasons.append(f"a {operation} in progress")
+        lines.append(DETACHED_OPERATION_IN_PROGRESS_LINE.format(operation=operation))
+    tracked_changes = uncommitted_tracked_change_count(checkout)
+    if ahead:
+        reasons.append(f"{ahead} commit(s) of its own")
+    if tracked_changes is None:
+        reasons.append("git status unreadable")
+    elif tracked_changes:
+        reasons.append(f"{tracked_changes} uncommitted tracked change(s)")
+    # Mid-operation, the other conditions are not yet what they will be once it
+    # ends, and `git switch -c` inside a rebase is the wrong move.
+    if (ahead or tracked_changes) and marker is None:
+        lines.append(DETACHED_WORK_OF_ITS_OWN_LINE)
+    if reasons:
+        return "blocked", reasons, lines, ""
+    moved = run_git(["merge", "--ff-only", "origin/main"], checkout, timeout=120)
+    if moved.returncode == 0:
+        return "moved", [], [], ""
+    # Every line, not the first: git names the untracked file on a later line.
+    error = "; ".join(line.strip() for line in moved.stderr.splitlines() if line.strip())
+    return "refused", ["git refused the fast-forward"], [], error or "no detail"
 
 
 def drift_facts(checkout: Path, stamp: dict, branch: str, state_key: str, state_text: str):
@@ -511,16 +726,14 @@ def merge_parents_conflict(checkout: Path, first_parent: str, second_parent: str
     hand-merge of either kind is one the author had no choice about. The two
     paragraphs below say which hand-merge each re-merge exists to recognise.
 
-    -X NO-RENAMES IS LOAD-BEARING, not tidiness. With git's default rename
-    detection the merge that PR "A conflict is the one case a commit on top
-    cannot clear" (600) made by hand re-merges CLEAN: main had renamed
-    handoff-supervisor.py and its test out of scripts/ while the branch held
-    edits to the old paths, and rename detection follows the move silently.
-    GitHub's merge candidate does not follow it, which is why that branch showed
-    CONFLICTING and had to be merged by hand at all — its merge commit
-    413c1afa51d4 says so. So the conflict the author actually faced is the one
-    seen WITHOUT rename detection, and with detection alone this function would
-    return False for the exact case it exists to recognise.
+    -X NO-RENAMES IS LOAD-BEARING, not tidiness. When main renames a file out
+    of a directory while the branch holds edits to the old path, git's default
+    rename detection follows the move silently and the parents re-merge CLEAN.
+    GitHub's merge candidate does not follow it, so the branch shows
+    CONFLICTING and has to be merged by hand. The conflict the author actually
+    faced is the one seen WITHOUT rename detection, and with detection alone
+    this function would return False for the exact case it exists to
+    recognise.
 
     THE DEFAULT RE-MERGE IS LOAD-BEARING TOO. Some conflicts exist only WITH
     rename detection: a file added under a directory the other side moved is
@@ -529,10 +742,10 @@ def merge_parents_conflict(checkout: Path, first_parent: str, second_parent: str
     asks git with detection on, and so do `git merge` and the pre-push hook that
     runs that check: the check prints VERDICT: CONFLICT, CLAUDE.md sends the
     author to the hand-merge, and git's own merge stops until it is resolved by
-    hand. With the no-renames re-merge alone this function returned False for
-    that hand-merge, and the user was told the branch had done what was ruled
-    out. merges_from_main's docstring records the one such merge in main's
-    history and why asking both ways loses nothing.
+    hand. With the no-renames re-merge alone this function would return False
+    for that hand-merge, and the user would be told the branch had made a
+    banned catch-up merge. merges_from_main's docstring says why asking both
+    ways loses nothing.
 
     EXIT 1 IS NOT ENOUGH ON ITS OWN, for either re-merge. merge-tree exits 1 for
     an argument it cannot resolve as well as for a conflict
@@ -551,10 +764,9 @@ def merge_parents_conflict(checkout: Path, first_parent: str, second_parent: str
     when that one is clean or errors as well. With both erroring this detector
     degrades to exactly what it did before this exception existed — it reports
     every merge from main. A false report is visible to the user and corrects
-    itself in one exchange; a misbehaviour that is skipped is invisible for good
-    (the merge-lane-2 seat's judgement, 2026-09-22; the user ruled the
-    exception, not this error path). Nothing here can block a turn either way:
-    the caller only shortens a list.
+    itself in one exchange; a misbehaviour that is skipped is invisible for
+    good. Nothing here can block a turn either way: the caller only shortens a
+    list.
     """
     for strategy_arguments in (["-X", "no-renames"], []):
         remerged = run_git(["merge-tree", "--write-tree", *strategy_arguments,
@@ -571,76 +783,44 @@ def merge_parents_conflict(checkout: Path, first_parent: str, second_parent: str
 def merges_from_main(checkout: Path):
     """Short SHAs of merge commits on this branch whose second parent lies on
     origin/main AND whose two parents merge cleanly, with rename detection and
-    without it — the catch-up merge this hook itself used to make, and which
-    nedschorus#324 ruled out after nine landed on frozen heads in five days.
+    without it — the catch-up merge CLAUDE.md bans, because such merges moved
+    frozen heads under running reviews.
 
     A merge of another topic branch is not the banned thing, so the second
     parent is tested for being on main rather than every merge being flagged.
-    A branch that carries pre-#324 merges is flagged once at rollout, which is
+    A branch that carries older catch-up merges is flagged once, which is
     correct: those merges are real and the user has not been told of them.
 
-    WHY A CLEAN RE-MERGE IS THE TEST. The user ruled a narrow exception on
-    2026-09-21: a branch that genuinely CONFLICTS with main merges origin/main
-    in by hand, once, resolves only the conflict, reruns its tests and announces
-    the new head. That merge has the same shape as the banned one — a merge
-    commit whose second parent is on main — so shape alone reports every author
-    who obeys the rule for committing the thing the user banned. It was firing
-    on the head of PR "A conflict is the one case a commit on top cannot clear"
-    (600), the pull request that added the exception. Re-merging the parents
-    tells the two apart: parents that CONFLICT mean the author had no choice,
-    which is the case the user allowed, so the merge is skipped;
-    parents that merge cleanly mean the merge was unnecessary, which is the
-    banned catch-up, and it is still reported. The user approved fixing the
-    hook on 2026-09-22; which test tells the two apart is the merge-lane-2
-    seat's design.
+    WHY A CLEAN RE-MERGE IS THE TEST. CLAUDE.md allows one exception: a branch
+    that genuinely CONFLICTS with main merges origin/main in by hand, once,
+    resolves only the conflict, reruns its tests and announces the new head.
+    That hand-merge has the same shape as the banned one — a merge commit whose
+    second parent is on main — so shape alone would report every author who
+    obeys the rule. Re-merging the parents tells the two apart: parents that
+    CONFLICT mean the author had no choice, so the merge is skipped; parents
+    that merge cleanly mean the merge was unnecessary, which is the banned
+    catch-up, and it is still reported. Over main's own history, the merges
+    this skips are, almost to a merge, ones whose commit messages say they
+    resolved a conflict and whose recorded trees differ from the clean
+    automatic merge of their parents.
 
-    MEASURED over main's own history before it was written: 81 merge commits
-    sit off main's first-parent line with a second parent that is an ancestor of
-    origin/main — the population this detector's own condition selects. The rule
-    skips 17 of them and still reports 64. Fifteen of the 17 say in their own
-    commit messages that they resolved a conflict, and 16 of the 17 recorded a
-    tree that differs from the clean automatic merge of their parents, so the
-    author edited something while merging. Both hand merges of 2026-09-22 are
-    among the skipped: PR "GHI write create verb: no second issue, no ignored
-    git failure" (605) at 3a8355a66fa7 and PR "Blocks are told apart by whose
-    words clear them" (611) at b1ba4bd102fd.
+    WHY THE TEST ASKS BOTH WAYS. A directory rename produces CONFLICT (file
+    location), which only rename DETECTION can see, so -X no-renames merges it
+    cleanly and would report a real conflict resolution as a catch-up.
+    scripts/branch-conflict-check.py's own answer from git and `git merge` both
+    use default rename detection, so parents that conflict under it are a
+    branch that check reports as VERDICT: CONFLICT and a merge that stopped
+    until it was resolved by hand: a conflict resolution, not a catch-up. No
+    catch-up merge is made to look conflicted by rename detection alone, so
+    asking both ways loses no misbehaviour. merge_parents_conflict therefore
+    re-merges both ways and the merge is skipped when either conflicts.
 
-    413c1afa51d4, the head of PR "A conflict is the one case a commit on top
-    cannot clear" (600), is NOT in those 81 and was measured on its own: that
-    pull request is still open, so the commit is not reachable from origin/main.
-    Re-merging its parents with -X no-renames exits 1 and writes tree
-    754e8337e110, so this rule skips it; the default strategy merges them
-    cleanly to tree 722221eb04f7, which is what the -X is there to prevent.
-
-    ONE SHAPE THE NO-RENAMES RE-MERGE REPORTED FALSELY, AND WHY THE TEST NOW ASKS
-    BOTH WAYS. A directory rename produces CONFLICT (file location), which only
-    rename DETECTION can see, so -X no-renames merges it cleanly. Merge
-    6bd0aa5850ce, which relocated two drafts main had moved under
-    docs/nedschorus-wiki/queue/, is a real conflict resolution that the
-    no-renames re-merge alone reported: the single such case in the 81. It was
-    first recorded rather than fixed, on the reasoning that widening the test to
-    "either strategy conflicts" would skip catch-up merges that renames alone
-    make look conflicted, the direction that loses misbehaviours silently. That
-    category is empty. scripts/branch-conflict-check.py's own answer from git
-    and `git merge` both use default rename detection, so parents that conflict
-    under it are a branch that check reports as VERDICT: CONFLICT and a merge
-    that stopped until it was resolved by hand: a conflict resolution, not a
-    catch-up. So merge_parents_conflict re-merges both ways and the merge is
-    skipped when either conflicts.
-
-    WHAT THE WIDENING GIVES UP. CLAUDE.md's conflict rule has two branches: a
-    conflict with work main deleted or replaced closes the pull request, and
-    any other conflict is cleared by a hand-merge. This detector has never told
-    the two apart: a merge made over a modify/delete conflict was always
-    skipped. A branch that RENAMED a file main deleted conflicts only with
-    rename detection, so a merge made over it used to be reported, as a
-    catch-up, which it was not; it is now skipped like the others.
-
-    RE-MEASURED when the test was widened, by a stricter condition than the
-    81's: merge commits off main's first-parent line whose second parent is ON
-    that line, 75 of them. One is newly skipped, 6bd0aa5850ce; 53 merge cleanly
-    both ways and are still reported; 21 conflict without rename detection and
-    are skipped as before. The 81 and the 75 have not been reconciled.
+    WHAT ASKING BOTH WAYS GIVES UP. CLAUDE.md's conflict rule has two branches:
+    a conflict with work main deleted or replaced closes the pull request, and
+    any other conflict is cleared by a hand-merge. This detector does not tell
+    the two apart: a merge made over a modify/delete conflict is skipped, and
+    so is one made over a branch that RENAMED a file main deleted, which
+    conflicts only with rename detection.
     """
     merges = run_git(["rev-list", "--merges", "origin/main..HEAD"], checkout, timeout=30)
     if merges.returncode != 0:
@@ -672,13 +852,13 @@ def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
     "abort-failed", the one outcome that is a fault — the tree was left
     mid-rebase — and is reported to the user.
 
-    WHY THIS HOOK MAY MOVE A BRANCH AT ALL, when nedschorus#324 removed its
-    merge: #324's merge landed merge commits on FROZEN heads — pushed, with a
-    review running — nine times in five days. This is a rebase of a branch that
-    has NEVER been pushed: no review exists to disturb, no merge commit is
-    created, and the pushed-head rule is untouched. The 2026-08-13 objection to
-    rewriting files under a running agent is answered by telling the agent, at
-    its next turn, exactly which files moved. Walked and ruled 2026-09-15.
+    WHY THIS HOOK MAY MOVE A BRANCH AT ALL, when it must never merge: a merge
+    from main lands a merge commit on a head that may be FROZEN — pushed, with
+    a review running. This is a rebase of a branch that has NEVER been pushed:
+    no review exists to disturb, no merge commit is created, and the
+    pushed-head rule is untouched. Rewriting files under a running agent is
+    answered by telling the agent, at its next turn, exactly which files
+    moved.
 
     --no-autostash: a user-level rebase.autoStash would stash a dirty tree and
     rebase anyway, and "skip if dirty" is a promise. The timeout is short
@@ -699,16 +879,17 @@ def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
         # just added ("could not detach HEAD"), or --no-autostash on a dirty
         # tree. Nothing was touched and there is nothing to abort: `git rebase
         # --abort` here exits 128 "no rebase in progress", and reading that as
-        # a failed abort told the user the tree was left mid-rebase, every
-        # turn end, about a tree git never entered (PR #388 review).
+        # a failed abort would tell the user the tree was left mid-rebase,
+        # every turn end, about a tree git never entered.
         detail = "; ".join(line.strip() for line in rebased.stderr.splitlines() if line.strip())
         return "refused", detail or "no detail"
-    conflicting = run_git(["diff", "--name-only", "--diff-filter=U"], checkout,
-                          timeout=15).stdout.split()
+    conflicting = git_output.nul_separated_fields(
+        run_git(["diff", "-z", "--name-only", "--diff-filter=U"], checkout,
+                timeout=15).stdout)
     aborted = run_git(["rebase", "--abort"], checkout, timeout=30)
     # Whether the abort worked is decided by whether rebase state REMAINS, never
     # by the abort's exit code: the state on disk is the truth about the tree.
-    # And a failed abort shows ITS OWN error, not the rebase's (PR #388 review).
+    # And a failed abort shows ITS OWN error, not the rebase's.
     if rebase_state_exists():
         return "abort-failed", (aborted.stderr.strip() or rebased.stderr.strip() or "no detail")
     return "conflict", ", ".join(conflicting) or (rebased.stderr.strip() or "no detail")
@@ -716,10 +897,9 @@ def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
 
 def fetch_failure_note(stamp: dict, what_may_be_stale: str = "this list") -> str:
     """One line when the numbers rest on a fetch that failed, or "".
-    Ruled 2026-09-15: a stale list must say it is stale. The reference
-    checkout's path passes its own subject, because what may be stale there
-    is a count, not a list (approved 2026-09-17, backlog-recheck walk item 1,
-    fix 11)."""
+    A stale list must say it is stale. The reference checkout's path passes
+    its own subject, because what may be stale there is a count, not a
+    list."""
     if stamp.get("fetch_ok", True):
         return ""
     when = time.strftime("%H:%M", time.localtime(stamp.get("fetched_at", 0)))
@@ -727,20 +907,20 @@ def fetch_failure_note(stamp: dict, what_may_be_stale: str = "this list") -> str
 
 
 def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
-    """The Stop-hook body for the session's own checkout. Walked and ruled
-    2026-09-15 (docs/walk/keeping-branches-current-telling-and-rebase):
+    """The Stop-hook body for the session's own checkout:
 
       1. Misbehaviour detectors run EVERY turn, before and independent of the
          drift path — a branch that merged main into itself is 0 behind, which
          is exactly where a drift-first design would return early. What they
-         find goes to the USER, and it is the only thing the user hears:
-         "If the agents are doing the wrong thing, or not doing the right
-         thing, that's when I probably need to be told." Routine drift is not
-         reported to the user at all.
+         find goes to the USER, and it is the only thing the user hears: agents
+         doing the wrong thing, or not doing the right thing. Routine drift is
+         not reported to the user at all.
       2. Drift is counted. If none, every "already said" key is cleared.
       3. A never-pushed branch is REBASED onto origin/main here, and the agent
-         told what moved. A pushed branch is never moved; the agent is TOLD,
-         once per update of main, which files are stale and to leave it.
+         told what moved. A detached HEAD with nothing of its own is
+         fast-forwarded, and the agent told what moved. A pushed branch is
+         never moved; the agent is TOLD, once per update of main, which files
+         are stale and to leave it.
     """
     git_dir = git_directory(checkout)
     if git_dir is None:
@@ -789,9 +969,8 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     # what moved under the agent.
     listing = format_obsolete_files(obsolete_files_by_category(checkout))
     # The heading must be true of every path the diff lists: changed, added,
-    # and deleted. It once read "Older here than on main", which is false of a
-    # file main ADDED, since this checkout has no copy at all — 5 of 32 paths
-    # on a real 12-commit gap. User-ruled 2026-09-18, with --no-renames.
+    # and deleted. "Older here than on main" would be false of a file main
+    # ADDED, since this checkout has no copy at all.
     changed_on_main_clause = (f"\nChanged on main since your merge base:\n{listing}"
                               if listing else "")
     note = fetch_failure_note(stamp)
@@ -822,10 +1001,7 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
             # the next turn end drift_facts counts 0 behind and returns
             # early; and were main to advance meanwhile, head_state answers
             # "detached", not "unpushed", so this branch is not taken either.
-            # (Traced against a real mid-rebase tree by the PR #390 reviewer,
-            # after PR #388's review recorded the merge_blockers mechanism and
-            # was corrected; the PR #401 reviewer measured HEAD != origin/main
-            # with one commit replayed.) While main is still nothing is said
+            # While main is still nothing is said
             # on either channel; once main advances the agent is told about
             # its detached HEAD once per main tip. The user channel stays
             # empty either way.
@@ -850,25 +1026,54 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
         write_stamp(stamp_path, stamp)
         return
 
-    # 3b. Pushed, or detached: never moved. Told once per update of main.
+    # 3b. Detached: moved forward when it holds nothing of its own. A move is
+    # ALWAYS told, since files changed under the agent; a block is told once
+    # per update of main, and attempted every turn end.
+    if state_key == "detached":
+        outcome, reasons, lines, error = move_detached_checkout_forward(
+            checkout, git_dir, parts["ahead"])
+        if outcome == "moved":
+            stamp["behind"], stamp["ahead"] = 0, 0
+            stamp["last_action"] = f"moved a detached HEAD forward {parts['behind']}"
+            stamp.pop("last_told", None)
+            stamp.pop("last_detached_refusal", None)
+            tell(f"{heading}{changed_on_main_clause}\n{DETACHED_MOVED_ADVICE}")
+            write_stamp(stamp_path, stamp)
+            return
+        if outcome == "refused":
+            stamp["last_action"] = f"detached fast-forward refused: {error}"
+            lines = [DETACHED_FAST_FORWARD_REFUSED_LINES.format(error=error)]
+            if (GIT_UNTRACKED_FILE_WOULD_BE_OVERWRITTEN_TEXT not in error
+                    and stamp.get("last_detached_refusal") != error):
+                report(f"catch-up: {checkout} is {parts['behind']} behind origin/main and "
+                       f"could not fast-forward: {error}")
+            stamp["last_detached_refusal"] = error
+        else:
+            stamp["last_action"] = f"detached HEAD not moved: {'; '.join(reasons)}"
+        if not already_told:
+            stamp["last_told"] = told
+            advice = DETACHED_NOT_MOVED_ADVICE.format(reason="; ".join(reasons))
+            tell(f"{heading}{changed_on_main_clause}{note}\n{advice}\n" + "\n".join(lines))
+        write_stamp(stamp_path, stamp)
+        return
+
+    # 3c. Pushed: never moved. Told once per update of main.
     stamp["last_action"] = "reported, not merged (ruled 2026-09-14)"
     if not already_told:
         stamp["last_told"] = told
-        advice = {"detached": DETACHED_ADVICE, "unknown": UNKNOWN_ADVICE}.get(
-            state_key, LEAVE_IT_ADVICE)
+        advice = {"unknown": UNKNOWN_ADVICE,
+                  "pushed-history": PUSHED_HISTORY_ADVICE}.get(state_key, LEAVE_IT_ADVICE)
         tell(f"{heading}{changed_on_main_clause}{note}\n{advice}")
     write_stamp(stamp_path, stamp)
 
 
 def reference_checkout_of(checkout: Path):
     """The main worktree of the same repository — the machine's reference copy."""
-    listing = run_git(["worktree", "list", "--porcelain"], checkout, timeout=15)
+    listing = run_git(["worktree", "list", "--porcelain", "-z"], checkout, timeout=15)
     if listing.returncode != 0:
         return None
-    for line in listing.stdout.splitlines():
-        if line.startswith("worktree "):
-            return Path(line.split(" ", 1)[1])
-    return None
+    records = git_output.worktree_records(listing.stdout)
+    return Path(records[0].path) if records else None
 
 
 def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
@@ -879,8 +1084,7 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
     any local commit, any tracked change, any in-progress operation, and it
     is left alone with a line saying so — to the USER, because a reference
     checkout that cannot update is someone having left work where none
-    belongs, which is the kind of thing the user asked to hear (ruled
-    2026-09-15).
+    belongs, which is the kind of thing the user asked to hear.
 
     Two audiences, two rates. operator_facing=True is --reference-pull, which
     launchers print at launch: every outcome is reported, every time,
@@ -890,22 +1094,19 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
     `last_reference_blockers` — never per turn, and never on `behind`, which
     would re-fire at every update of main. This function runs at every turn
     end off local refs regardless of the fetch throttle, so without that key
-    a reference with one uncommitted edit named itself to the user at every
-    turn end (found before PR #388 merged; it had always repeated, to plain
-    stdout that nobody read).
+    a reference with one uncommitted edit would name itself to the user at
+    every turn end.
 
-    A failed fetch is a reason like any other. Before 2026-09-22 a reference
-    whose fetch failed counted "0 behind" off the refs that fetch never
-    updated and returned silently, which read as up to date (user-approved
-    2026-09-17, backlog-recheck walk item 1, fix 11). Its reason key is the
+    A failed fetch is a reason like any other: otherwise a reference whose
+    fetch failed would count "0 behind" off the refs that fetch never updated
+    and return silently, which reads as up to date. Its reason key is the
     constant "fetch failed", not the failure's time, so a network that stays
     down is reported once rather than at every fetch interval; the key is
     cleared by the next run that is 0 behind off a fetch that worked. The
     skip line's key is its blockers plus "fetch failed" while the fetch is
     failing, so the same blockers are reported again when the fetch starts or
     stops failing; with the blockers alone, a failure that began after the
-    blockers were reported never reached the user (PR 666's review, 2026-09-23,
-    item 1; fix ruled 2026-09-24, meta-walk item 7).
+    blockers were reported would never reach the user.
     """
     git_dir = git_directory(reference)
     if git_dir is None:
@@ -925,7 +1126,7 @@ def fast_forward_reference_checkout(reference: Path, interval_seconds: int,
     if counts is None:
         # Unknowable is not "still whatever it was" — same silent-safety rule
         # the seat's own path applies. Leaving the previous numbers in place
-        # renders a stale count as knowledge (PR #87's review).
+        # renders a stale count as knowledge.
         stamp["behind"] = stamp["ahead"] = None
         write_stamp(stamp_path, stamp)
         return
@@ -987,7 +1188,7 @@ def report_line(checkout: Path, interval_seconds: int) -> str:
     if counts is None:
         # Same rule again: the line about to be printed says the comparison
         # could not be made, so the stamp behind it must not keep claiming a
-        # number (PR #87's review).
+        # number.
         stamp["behind"] = stamp["ahead"] = None
         write_stamp(stamp_path, stamp)
         return f"freshness: {checkout} has no origin/main to compare against"

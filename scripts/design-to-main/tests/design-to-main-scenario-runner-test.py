@@ -308,12 +308,13 @@ class TheScenarioFile(unittest.TestCase):
             "    fields:\n"
             "      investigation-focus: design\n"
             "      coverage_types: [script, prompt]\n"
-            "      rulings: reset\n")
+            "      rulings: zero-all-run-counters-including-redesigns\n")
         self.assertEqual(scenario.name, "fields")
         self.assertEqual([(s.state, s.verdict, s.line) for s in scenario.steps],
                          [(T.TEST_SUITE_EXECUTING, T.V_FAIL, 4), (T.TEST_SUITE_ARBITRATING, T.V_ESCALATE_TO_USER, 5)])
         self.assertEqual(scenario.steps[1].fields, {
-            "investigation_focus": "design", "coverage_types": ("script", "prompt"), "rulings": ("reset",)})
+            "investigation_focus": "design", "coverage_types": ("script", "prompt"),
+            "rulings": (T.RULING_ZERO_ALL_RUN_COUNTERS_INCLUDING_REDESIGNS,)})
 
     def test_an_unknown_verdict_is_refused_with_its_line(self):
         with self.assertRaises(runner.MalformedScenario) as refused:
