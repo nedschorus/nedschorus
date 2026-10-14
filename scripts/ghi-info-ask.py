@@ -146,8 +146,8 @@ mirror_refresh = importlib.util.module_from_spec(_mirror_spec)
 _mirror_spec.loader.exec_module(mirror_refresh)
 
 _project_directory_spec = importlib.util.spec_from_file_location(
-    "claude_code_session_transcript_project_directory_for_seat_common",
-    SCRIPT_DIRECTORY / "claude-code-session-transcript-project-directory-for-seat-common.py")
+    "claude_code_session_transcript_project_directory_for_agent_seat_common",
+    SCRIPT_DIRECTORY / "claude-code-session-transcript-project-directory-for-agent-seat-common.py")
 project_directory_module = importlib.util.module_from_spec(_project_directory_spec)
 _project_directory_spec.loader.exec_module(project_directory_module)
 

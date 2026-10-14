@@ -30,7 +30,11 @@ fast (measured: eight minutes with no output before it was killed). The model
 cannot tell you its own id ("not exposed to me") and will not guess a new one.
 
 **Running non-interactively.** `codex exec` with the prompt as the last
-positional argument, or on stdin. Flags the cells use:
+positional argument, or on stdin. An agent runs a Codex task with
+`scripts/run-codex-task-from-brief.py -C <checkout> --brief <file> -o <report>`
+(add `--sandbox workspace-write` to let it edit), which closes stdin, logs
+Codex's output and stops Codex at a deadline, never with a hand-typed
+`codex exec`. Flags the cells use:
 `--sandbox read-only` (or `workspace-write` when it must write the report),
 `--disable memories`, `-C <repo>`, `-m <model>`, `-c model_reasoning_effort=<low|medium|high|xhigh|max>`.
 Outside a trusted git checkout it refuses with "Not inside a trusted directory";

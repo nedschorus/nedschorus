@@ -27,7 +27,10 @@ THE HOOK STAYS SILENT when any of these holds:
     or CLAUDE_CODE_SESSION_ATTENDED == "0". The reminder would otherwise
     become the child's last words, which its caller reads as the answer;
   - a SubagentStop payload names no agent_transcript_path: the main
-    transcript holds the parent's reply, not the subagent's.
+    transcript holds the parent's reply, not the subagent's;
+  - a SubagentStop payload names an agent_transcript_path that does not
+    exist: Claude Code sends that for most subagent stops, so it is the
+    ordinary case, not a fault, and nothing is logged for it.
 
 OUTPUT when it reminds: {"decision": "block", "reason": <reminder>}, which
 keeps the agent going with the reminder as its next instruction.
@@ -41,8 +44,15 @@ must not wait on ssh. NEDSCHORUS_ABSENCE_CLAIM_REMINDER_LOG overrides the
 path, and NEDSCHORUS_ABSENCE_CLAIM_REMINDER_STATE_DIRECTORY overrides where
 the once-per-session markers go.
 
-The hook never exits nonzero and prints nothing on a fault: a fault here must
-not stop a turn ending.
+A fault, such as a payload that is not a JSON object, a transcript that
+cannot be read or any exception: the error is logged as above, one line goes
+to stderr naming the hook and the fault, nothing goes to stdout, and the hook
+exits 1. No program reads the log's error lines, so stderr is where the fault
+is seen. Claude Code records a Stop or SubagentStop hook's exit 1 as a
+non-blocking error and still ends the turn. Exit 2 would continue the
+conversation, and a fault that recurs at every stop would then never let the
+agent stop. A log line that cannot be written is not a fault: the log is for
+rechecking precision, and the reminder still goes out.
 
 --measure-precision LABELS_CSV runs absence_claim_matches() over a labelled
 reply file (columns reply_id, label, reply_text; label CORRECT, INCORRECT or
@@ -299,6 +309,8 @@ def claim_once_per_session(directory, key):
 def run(stdin_text, environment, home, now):
     """Return the text to print, or None; append what it decided to the log."""
     payload = json.loads(stdin_text)
+    if not isinstance(payload, dict):
+        raise ValueError(f"the input on the hook's stdin is a JSON {type(payload).__name__}, not an object")
     event = payload.get("hook_event_name") or "Stop"
     if payload.get("stop_hook_active"):
         return None
@@ -307,6 +319,8 @@ def run(stdin_text, environment, home, now):
     else:
         transcript_path = payload.get("transcript_path")
     if not transcript_path:
+        return None
+    if event == "SubagentStop" and not Path(transcript_path).expanduser().exists():
         return None
     reply, locator_ran = read_turn(Path(transcript_path).expanduser())
     matches = absence_claim_matches(reply)
@@ -363,9 +377,10 @@ def main(argv=None):
     arguments = parser.parse_args(argv)
     if arguments.measure_precision:
         return measure_precision(arguments.measure_precision)
-    stdin_text = sys.stdin.read()
     try:
-        output = run(stdin_text, os.environ, Path.home(), datetime.now(timezone.utc))
+        output = run(sys.stdin.read(), os.environ, Path.home(), datetime.now(timezone.utc))
+        if output is not None:
+            print(output)
     except Exception as error:
         try:
             append_log_line(log_path(os.environ, Path.home()), {
@@ -374,13 +389,11 @@ def main(argv=None):
                 "error": f"{type(error).__name__}: {error}",
             })
         except Exception:
-            pass
-        return 0
-    if output is not None:
-        try:
-            print(output)
-        except Exception:
-            return 0
+            pass  # the stderr line below reports the fault whether or not it was logged
+        print(f"absence-claim-locator-reminder-hook: the last reply was not checked for a "
+              f"claim that a file is missing, because the hook failed; the turn ends as "
+              f"usual: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
     return 0
 
 

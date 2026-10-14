@@ -114,6 +114,14 @@ def silent(result) -> bool:
     return result.returncode == 0 and result.stdout.strip() == ""
 
 
+def reported(result, fault_words) -> bool:
+    """A fault: exit 1, no warning on stdout, one stderr line naming the hook and the fault."""
+    lines = result.stderr.splitlines()
+    return (result.returncode == 1 and result.stdout == "" and len(lines) == 1
+            and lines[0].startswith("obsolete-file-edit-warning-hook: ")
+            and fault_words in lines[0])
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     tmp = Path(temporary_directory)
 
@@ -406,8 +414,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           silent(result), result.stdout + result.stderr)
 
     # -----------------------------------------------------------------------
-    # BROKEN OR ABSENT INPUT. Every one of these exits 0 and prints nothing:
-    # a staleness warning must never be why an agent's edit reports a failure.
+    # ABSENT INPUT exits 0 and prints nothing: there is nothing to compare.
     # -----------------------------------------------------------------------
     no_file_path = hook_payload(checkout, edited_file)
     no_file_path["tool_input"] = {}
@@ -419,9 +426,26 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a payload with no tool_input at all exits 0 and prints nothing",
           silent(run_hook(no_tool_input)), "")
 
-    check("an unreadable payload exits 0 and prints nothing",
-          silent(run_hook("{not json at all")), "")
-    check("empty stdin exits 0 and prints nothing", silent(run_hook("")), "")
+    # A payload that is not a JSON object is a fault, reported on stderr.
+    for case_name, payload, fault_words in (
+            ("an unreadable payload", "{not json at all", "JSONDecodeError"),
+            ("a payload that is a JSON list", "[1, 2]", "a JSON list, not an object"),
+            ("empty stdin", "", "JSONDecodeError")):
+        result = run_hook(payload)
+        check(f"{case_name} is reported on stderr, exit 1",
+              reported(result, fault_words), result.stdout + result.stderr)
+
+    # A hook copied away from checkout-freshness-catch-up.py: the load raises
+    # FileNotFoundError, which only the top-level handler catches.
+    lone_hook_directory = tmp / "hook-without-checkout-freshness"
+    lone_hook_directory.mkdir()
+    lone_hook = lone_hook_directory / SCRIPT_PATH.name
+    shutil.copy(str(SCRIPT_PATH), str(lone_hook))
+    result = subprocess.run([sys.executable, str(lone_hook)],
+                            input=json.dumps(hook_payload(checkout, edited_file)),
+                            capture_output=True, text=True, check=False)
+    check("checkout-freshness-catch-up.py failing to load is reported on stderr, exit 1",
+          reported(result, "FileNotFoundError"), result.stdout + result.stderr)
 
     not_a_repository = tmp / "not-a-repository"
     not_a_repository.mkdir()
@@ -548,6 +572,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     shared_lines = [f"line {number}\n" for number in range(1, 11)]
     commit_file(detached_origin, "lib/shared.py", "".join(shared_lines), "shared file")
     commit_file(detached_origin, "lib/gone.py", "main will delete this\n", "a file main deletes")
+    latin1_lines = [f"ligne {number} \xe9t\xe9\n".encode("latin-1") for number in range(1, 11)]
+    (detached_origin / "lib" / "latin1.txt").write_bytes(b"".join(latin1_lines))
+    git(["add", "lib/latin1.txt"], detached_origin)
+    git(["commit", "-q", "-m", "a file that is not UTF-8"], detached_origin)
     detached = tmp / "detached-checkout"
     git(["clone", "-q", str(detached_origin), str(detached)], tmp)
     configure_identity(detached)
@@ -556,6 +584,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     changed_on_main = list(shared_lines)
     changed_on_main[1] = "line 2, as main rewrote it\n"
     commit_file(detached_origin, "lib/shared.py", "".join(changed_on_main), "main rewrites line 2")
+    latin1_on_main = list(latin1_lines)
+    latin1_on_main[1] = "ligne 2, r\xe9\xe9crite sur main\n".encode("latin-1")
+    (detached_origin / "lib" / "latin1.txt").write_bytes(b"".join(latin1_on_main))
+    git(["add", "lib/latin1.txt"], detached_origin)
+    git(["commit", "-q", "-m", "main rewrites line 2 of the file that is not UTF-8"], detached_origin)
     git(["rm", "-q", "lib/gone.py"], detached_origin)
     git(["commit", "-q", "-m", "main deletes gone.py"], detached_origin)
     git(["fetch", "-q", "origin"], detached)
@@ -584,6 +617,16 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("detached: the overlap check leaves the agent's file as the agent wrote it",
           shared_file.read_text(encoding="utf-8") == "".join(edited_far_away),
           shared_file.read_text(encoding="utf-8"))
+
+    latin1_file = detached / "lib/latin1.txt"
+    latin1_edited = list(latin1_lines)
+    latin1_edited[8] = "ligne 9, \xe9dit\xe9e par l'agent\n".encode("latin-1")
+    latin1_file.write_bytes(b"".join(latin1_edited))
+    result = run_hook(hook_payload(detached, latin1_file))
+    check("detached: a file that is not UTF-8 gets the overlap verdict, exit 0",
+          result.returncode == 0 and agent_text(result).split("\n")[-1] == (
+              "main's changes to lib/latin1.txt do not overlap this checkout's copy; a "
+              "rebase merges them cleanly."), result.stdout + result.stderr)
 
     edited_same_line = list(shared_lines)
     edited_same_line[1] = "line 2, as the agent edited it\n"

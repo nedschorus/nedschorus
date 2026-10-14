@@ -2,8 +2,8 @@
 """Keep every session's complete filtered dialog current in the log-store, beside the transcripts.
 
 Usage:
-  scripts/log-store-session-dialogs-refresh.py                   # one pass, a summary line
-  scripts/log-store-session-dialogs-refresh.py --failures-only   # one pass, only FAILED lines (cron)
+  scripts/log-store-session-dialogs-refresh-nbd.py                   # one pass, a summary line
+  scripts/log-store-session-dialogs-refresh-nbd.py --failures-only   # one pass, only FAILED lines (cron)
 
 WHAT IT READS AND WRITES. It runs on ned-box, where the log-store is. The
 transcript mirror (scripts/transcript-mirror-to-log-store.py) copies each
@@ -25,23 +25,38 @@ or not a handoff wrote one. The subagents' own transcripts under
 `<session-id>/subagents/` are read only through the session's own records.
 
 WHEN A DIALOG IS WRITTEN. When there is none yet, when its modification
-time differs from its transcript's, or when the extractor has changed since
-the last pass that wrote every dialog it needed to. Each dialog written is
-given its transcript's modification time as read before the transcript was
-read, so a transcript that grows while it is being read, or whose growth
-reaches the mirror late, is written again on the next pass, and an unchanged
-one is never read twice. rsync -a keeps each transcript's own time, which is
-what makes the comparison hold across the mirror. The extractor is known by
-the sha256 of its bytes, kept in session-dialogs/ after each pass that had no
-failure; a pass that finds another extractor rewrites every dialog, so one
-change to the extractor rewrites every dialog once. A transcript with no
+time differs from its transcript's change time (st_ctime), or when the
+extractor has changed since the last pass that wrote every dialog it needed
+to. Each dialog written is given, as its modification time, its transcript's
+change time as read before the transcript was read, so a transcript that
+grows while it is being read is written again on the next pass, and an
+unchanged one is never read twice. The change time, not the modification
+time, because the mirror keeps the Mac's modification times only to the
+whole second, so a Mac transcript that grows again within the same second
+keeps the same modification time; the change time is set by ned-box's own
+file system whenever rsync puts a new copy in place. The extractor is known
+by the sha256 of its bytes and its subagent tracker's
+(scripts/handoff-extract-conversation-subagent-tracker-nbd.py), kept in
+session-dialogs/ after each pass that had no failure; a pass that finds
+either file changed rewrites every dialog, so one change rewrites every
+dialog once. A transcript with no
 dialog in it still gets a dialog, one saying it holds no turns, so it is not
 read again until it changes.
 
 OUTPUT AND FAILURE. A transcript that cannot be read, a directory or file on
 the way to the transcripts that cannot be listed or examined, or a dialog that cannot be written, prints
 a line opening FAILED naming the path and the error, and the pass goes on to
-the next; the exit is then 1. A store with no
+the next; the exit is then 1. A session whose dialog could not be rewritten
+also gets, as the first line of its dialog, a stale-dialog warning:
+
+  This dialog could not be refreshed since <YYYY-MM-DD HH:MM> UTC: <error>; what follows may be out of date.
+
+because the cron log the FAILED lines go to is read by no one, and the
+reader of the dialog is the one the stale text would mislead. The warning
+keeps the time the failure began across passes, is the whole dialog when
+there was none before, and goes when a later pass rewrites the dialog. A
+warned dialog is given modification time 0, which no transcript's change
+time equals, so the next pass tries the transcript again. A store with no
 transcripts/ directory is FAILED too: on ned-box that means the store is not
 where this program looks. Without --failures-only a pass ends with one line
 counting the dialogs written, the ones already current, and the failures.
@@ -56,13 +71,14 @@ SCHEDULE. Every 10 minutes, by cron on ned-box only, installed by
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the
 table beside that program:
 
-  ned-box: */10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/log-store-session-dialogs-refresh.py --failures-only >> /home/nedlern/.claude/log-store-session-dialogs-refresh.log 2>&1
+  ned-box: */10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/log-store-session-dialogs-refresh-nbd.py --failures-only >> /home/nedlern/.claude/log-store-session-dialogs-refresh.log 2>&1
 
 LOG_STORE_SESSION_DIALOGS_REFRESH_LOG_STORE_ROOT_OVERRIDE in the environment overrides the
 store's root for the tests, which point it at a scratch directory.
 """
 
 import argparse
+import datetime
 import fcntl
 import hashlib
 import os
@@ -79,7 +95,11 @@ SESSION_DIALOGS_DIRECTORY_NAME = "session-dialogs"
 SESSION_DIALOG_SUFFIX = "-dialog-complete.md"
 LOCK_FILE_NAME = ".log-store-session-dialogs-refresh.lock"
 EXTRACTOR_SHA256_FILE_NAME = ".dialogs-written-by-extractor-sha256"
+STALE_DIALOG_WARNING_OPENING = "This dialog could not be refreshed since "
+STALE_DIALOG_WARNING_TIME_FORMAT = "%Y-%m-%d %H:%M UTC"
 EXTRACTOR_PATH = pathlib.Path(__file__).resolve().with_name("handoff-extract-conversation.py")
+SUBAGENT_TRACKER_PATH = pathlib.Path(__file__).resolve().with_name(
+    "handoff-extract-conversation-subagent-tracker-nbd.py")
 
 EXIT_REFRESHED = 0
 EXIT_FAILED = 1
@@ -87,14 +107,22 @@ EXIT_LOCKED = 3
 
 
 def load_extractor():
-    """Return (the extractor module, the sha256 of the bytes it was built from)."""
+    """Return (the extractor module, the sha256 of its bytes and its subagent tracker's, the error reading the tracker or None).
+
+    A tracker that cannot be read counts as empty in the digest: the extractor then writes each dialog without
+    subagent turns and says so in it, which beats leaving every dialog stale.
+    """
     # One read for both, so a change to the file during a pass cannot pair old code with the new digest.
     source = EXTRACTOR_PATH.read_bytes()
     module = types.ModuleType("handoff_extract_conversation")
     module.__file__ = str(EXTRACTOR_PATH)
     sys.modules[module.__name__] = module
     exec(compile(source, str(EXTRACTOR_PATH), "exec"), module.__dict__)
-    return module, hashlib.sha256(source).hexdigest()
+    try:
+        tracker_source, tracker_error = SUBAGENT_TRACKER_PATH.read_bytes(), None
+    except OSError as error:
+        tracker_source, tracker_error = b"", error
+    return module, hashlib.sha256(source + tracker_source).hexdigest(), tracker_error
 
 
 def store_root() -> pathlib.Path:
@@ -141,20 +169,41 @@ def session_transcripts(transcripts_directory: pathlib.Path, unreadable: list):
 
 
 def refresh_one(extractor, extractor_unchanged: bool, transcript: pathlib.Path, dialog: pathlib.Path) -> bool:
-    """Write the transcript's dialog unless it exists, carries the transcript's time, and the extractor is unchanged.
+    """Write the transcript's dialog unless it exists, carries the transcript's change time, and the extractor is unchanged.
 
     Return whether it was written.
     """
-    transcript_modified = transcript.stat().st_mtime_ns
-    if extractor_unchanged and dialog.exists() and dialog.stat().st_mtime_ns == transcript_modified:
+    transcript_changed = transcript.stat().st_ctime_ns
+    if extractor_unchanged and dialog.exists() and dialog.stat().st_mtime_ns == transcript_changed:
         return False
     text = extractor.render_complete_dialog_of_transcript_as_markdown(transcript)
     dialog.parent.mkdir(parents=True, exist_ok=True)
     partial = dialog.with_name(dialog.name + ".partial")
     partial.write_text(text, encoding="utf-8")
-    os.utime(partial, ns=(transcript_modified, transcript_modified))
+    os.utime(partial, ns=(transcript_changed, transcript_changed))
     os.replace(partial, dialog)
     return True
+
+
+def mark_dialog_stale(dialog: pathlib.Path, error: BaseException) -> None:
+    """Put the stale-dialog warning first in the dialog, keeping the time an earlier warning gives; any failure raises."""
+    try:
+        text = dialog.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        text = ""
+    since = datetime.datetime.now(datetime.timezone.utc).strftime(STALE_DIALOG_WARNING_TIME_FORMAT)
+    if text.startswith(STALE_DIALOG_WARNING_OPENING):
+        first_line, _, text = text.partition("\n")
+        since = first_line[len(STALE_DIALOG_WARNING_OPENING):].split(" UTC: ", 1)[0] + " UTC"
+        text = text.removeprefix("\n")
+    reason = " ".join(f"{type(error).__name__}: {error}".split())
+    warning = f"{STALE_DIALOG_WARNING_OPENING}{since}: {reason}; what follows may be out of date.\n"
+    dialog.parent.mkdir(parents=True, exist_ok=True)
+    partial = dialog.with_name(dialog.name + ".partial")
+    partial.write_text(warning + ("\n" + text if text else ""), encoding="utf-8")
+    # No change time is 0, so the next pass never takes a stale dialog for current, even within one timestamp tick.
+    os.utime(partial, ns=(0, 0))
+    os.replace(partial, dialog)
 
 
 def refresh_all(root: pathlib.Path, failures_only: bool) -> int:
@@ -163,10 +212,21 @@ def refresh_all(root: pathlib.Path, failures_only: bool) -> int:
         print(f"FAILED: no {transcripts_directory} directory to read transcripts from; "
               "scripts/transcript-mirror-to-log-store.py creates it on its first pass")
         return EXIT_FAILED
-    extractor, extractor_sha256 = load_extractor()
+    extractor, extractor_sha256, tracker_error = load_extractor()
     dialogs_directory = root / SESSION_DIALOGS_DIRECTORY_NAME
     extractor_sha256_file = dialogs_directory / EXTRACTOR_SHA256_FILE_NAME
     written = current = failed = 0
+    if tracker_error is not None:
+        # Counted as a failure, so the digest is not kept and every dialog is written again once the tracker is back.
+        failed += 1
+        print(f"FAILED: cannot read {SUBAGENT_TRACKER_PATH}, so every dialog this pass writes leaves out its "
+              f"subagent tasks and reports and says so — {type(tracker_error).__name__}: {tracker_error}")
+        # The kept digest names the working tracker; without it the dialogs written now would pass for current later.
+        try:
+            extractor_sha256_file.unlink(missing_ok=True)
+        except OSError as error:
+            print(f"FAILED: could not remove {extractor_sha256_file}, so the dialogs this pass writes without "
+                  f"subagent turns may not be written again when the tracker is back — {type(error).__name__}: {error}")
     try:
         extractor_unchanged = extractor_sha256_file.read_text(encoding="utf-8").strip() == extractor_sha256
     except FileNotFoundError:
@@ -189,6 +249,11 @@ def refresh_all(root: pathlib.Path, failures_only: bool) -> int:
             # One unreadable transcript must not keep every other session's dialog stale.
             failed += 1
             print(f"FAILED: {transcript} — {type(error).__name__}: {error}")
+            try:
+                mark_dialog_stale(dialog, error)
+            except Exception as marking_error:
+                print(f"FAILED: could not warn in {dialog} that it is stale — "
+                      f"{type(marking_error).__name__}: {marking_error}")
     for path, error in unreadable:
         failed += 1
         print(f"FAILED: cannot read {path}, so the sessions under it get no dialog — "

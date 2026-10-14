@@ -15,7 +15,6 @@ import importlib.util
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -46,18 +45,19 @@ REMINDER_TEMPLATE = (
     "or agents will meet:\n{names}\n"
     "Send them, with one sentence on what each names, to the {agent} subagent, run in the "
     "background, and keep working.\n"
-    "If you are a subagent and cannot start one, run the same check through Codex instead, in "
-    "the background, and act on its report the same way.\n"
-    "First run `git fetch` yourself; Codex's sandbox cannot write the git directory.\n"
-    "Then run: `codex exec -m gpt-6.1-sol -c model_reasoning_effort=medium --disable memories "
-    "--sandbox workspace-write -c sandbox_workspace_write.network_access=true -c {writable_roots} "
-    "-C {checkout} \"git fetch has already been run; skip that step and use origin/main as it is. "
-    "Read .claude/agents/{agent}.md and do exactly what it says, for these entries, one per line: "
-    "<name>: <one sentence saying what it names>\" < /dev/null`\n"
-    "Keep the `< /dev/null`: Codex hangs when stdin is left open.\n"
-    "When it flags a name, rename it everywhere your branch uses it, in one commit.\n"
-    "If it flags a new project-term or system-term, put the new term to the user before you "
-    "use it.\n"
+    "If you are a subagent and cannot start one, do not run the check yourself. In your final "
+    "report, put a heading `New shared names: send these to the {agent} subagent` and under it "
+    "one line per name: <name>: <one sentence saying what it names and which file it is in>, "
+    "leaving out the parentheses that follow each name above. The agent that dispatched you "
+    "runs the check and makes any renames.\n"
+    "If you sent the names to the {agent} subagent yourself:\n"
+    "- When its report lists a name under its Rename: heading, rename that name everywhere "
+    "your branch uses it.\n"
+    "- Check each name it lists under Not checked: by hand against the naming page named on "
+    "this reminder's last line, and rename any name that breaks the page.\n"
+    "- Make every rename, from its report and from your own check, in one single commit.\n"
+    "If a suggested name under Rename: is a new project-term or system-term, put the new term "
+    "to the user before you use it.\n"
     "If a listed name is not one you chose, such as quoted text or an existing name written "
     "differently, do not send it and do not rename it.\n"
     "How names are chosen: {page}."
@@ -333,21 +333,14 @@ def failure_report_once(state: dict, error: str):
     return FAILURE_TEMPLATE.format(error=error, page=NAMING_PAGE_PATH)
 
 
-def codex_writable_roots_argument() -> str:
-    # The fresh-agent's blind guess runs agy, which must write under ~/.gemini inside Codex's sandbox.
-    gemini_directory = str(Path.home() / ".gemini")
-    return shlex.quote("sandbox_workspace_write.writable_roots=" + json.dumps([gemini_directory]))
-
-
-def reminder_text(new_names, checkout: Path) -> str:
+def reminder_text(new_names) -> str:
     lines = [f"  {name} ({kind}{', in ' + path if path and path != name else ''})"
              for path, kind, name in new_names[:REMINDER_NAME_LIMIT]]
     if len(new_names) > REMINDER_NAME_LIMIT:
         lines.append(MORE_NAMES_LINE.format(count=len(new_names) - REMINDER_NAME_LIMIT,
                                             command=LISTER_COMMAND))
     return REMINDER_TEMPLATE.format(names="\n".join(lines), agent=NAMING_FRESH_AGENT_NAME,
-                                    page=NAMING_PAGE_PATH, checkout=shlex.quote(str(checkout)),
-                                    writable_roots=codex_writable_roots_argument())
+                                    page=NAMING_PAGE_PATH)
 
 
 def emit(text: str) -> None:
@@ -459,7 +452,7 @@ def main() -> int:
         record_merge_prune_and_write_telling_failures(newly_reported)
     write_state(session_id, state)
     if names:
-        messages.append(reminder_text(names, checkout))
+        messages.append(reminder_text(names))
     if messages:
         emit("\n\n".join(messages))
     return 0

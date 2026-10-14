@@ -393,6 +393,14 @@ def silent(result):
     return result.returncode == 0 and result.stdout.strip() == "" and result.stderr.strip() == ""
 
 
+def reported(result, fault_words):
+    """A fault: exit 1, no report on stdout, one stderr line naming the hook and the fault."""
+    lines = result.stderr.splitlines()
+    return (result.returncode == 1 and result.stdout == "" and len(lines) == 1
+            and lines[0].startswith("style-guide-word-checker-markdown-edit-hook: ")
+            and fault_words in lines[0])
+
+
 def agent_text(result):
     try:
         parsed = json.loads(result.stdout)
@@ -596,12 +604,14 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a markdown file outside the session's checkout produces no output", silent(result),
           result.stdout + result.stderr)
 
-    # --- Faults are silence -----------------------------------------------
-    for case_name, payload in (("malformed JSON", "{not json"), ("a JSON list", "[1, 2]"),
-                               ("empty input", "")):
+    # --- Faults are reported on stderr with exit 1 ------------------------
+    for case_name, payload, fault_words in (
+            ("malformed JSON", "{not json", "JSONDecodeError"),
+            ("a JSON list", "[1, 2]", "a JSON list, not an object"),
+            ("empty input", "", "JSONDecodeError")):
         result = run_hook(payload)
-        check(f"{case_name} on stdin exits 0 with no output", silent(result),
-              result.stdout + result.stderr)
+        check(f"{case_name} on stdin is reported on stderr, exit 1",
+              reported(result, fault_words), result.stdout + result.stderr)
 
     lone_hook_directory = tmp / "hook-without-its-checker"
     lone_hook_directory.mkdir()
@@ -609,22 +619,22 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     shutil.copy(str(HOOK_PATH), str(lone_hook))
     new_page = checkout / "docs" / "new-page.md"
     result = run_hook(write_payload(checkout, new_page, "The seat.\n"), hook_path=lone_hook)
-    check("a checker that fails to load exits 0 with no output", silent(result),
-          result.stdout + result.stderr)
+    check("a checker that fails to load is reported on stderr, exit 1",
+          reported(result, "FileNotFoundError"), result.stdout + result.stderr)
 
-    # A checker whose style guide page is missing raises at import, so the hook
-    # loads no checker and stays silent rather than flagging against no list.
+    # A checker whose style guide page is missing raises at import, and the hook
+    # reports that rather than flagging against no list.
     pageless_scripts_directory = tmp / "pageless-checkout" / "scripts"
     pageless_scripts_directory.mkdir(parents=True)
     pageless_hook = pageless_scripts_directory / HOOK_PATH.name
     shutil.copy(str(HOOK_PATH), str(pageless_hook))
     shutil.copy(str(CHECKER_PATH), str(pageless_scripts_directory / CHECKER_PATH.name))
     result = run_hook(write_payload(checkout, new_page, "The seat.\n"), hook_path=pageless_hook)
-    check("a checker without its style guide page exits 0 with no output", silent(result),
-          result.stdout + result.stderr)
+    check("a checker without its style guide page is reported on stderr, exit 1",
+          reported(result, "nedschorus-style-guide.md"), result.stdout + result.stderr)
 
     # A page whose table is broken: the checker refuses to load rather than
-    # flagging against the rows it could read, and the hook stays silent.
+    # flagging against the rows it could read, and the hook reports that.
     broken_checker_path, broken_hook_path = build_checker_tree(
         tmp / "broken-page-checkout",
         FIXTURE_PAGE.replace("\n| `seat` |", "\n`seat` |"))
@@ -637,12 +647,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           broken_load_raised)
     result = run_hook(write_payload(checkout, new_page, "The seat.\n"),
                       hook_path=broken_hook_path)
-    check("a hook whose style guide page is broken exits 0 with no output", silent(result),
-          result.stdout + result.stderr)
+    check("a hook whose style guide page is broken is reported on stderr, exit 1",
+          reported(result, "StyleGuidePageError"), result.stdout + result.stderr)
 
     # The last-resort handler: git missing from PATH raises FileNotFoundError
-    # inside the hook, and only the top-level handler keeps that from
-    # becoming a traceback after every markdown Edit.
+    # inside the hook, and the top-level handler reports it in one line.
     empty_path_directory = tmp / "empty-path-directory"
     empty_path_directory.mkdir()
     reset_committed_file()
@@ -650,8 +659,20 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     no_git = subprocess.run([sys.executable, str(HOOK_PATH)], input=json.dumps(payload),
                             capture_output=True, text=True, check=False,
                             env=dict(CLEAN_ENVIRONMENT, PATH=str(empty_path_directory)))
-    check("a hook whose git cannot be found exits 0 with no output", silent(no_git),
-          no_git.stdout + no_git.stderr)
+    check("a hook whose git cannot be found is reported on stderr, exit 1",
+          reported(no_git, "FileNotFoundError"), no_git.stdout + no_git.stderr)
+
+    # A checkout whose .git file names a git directory that does not exist:
+    # the hook finds the checkout root, and git check-ignore exits 128 there.
+    # Read as "git would not track the file", that failure would be silence.
+    broken_checkout = tmp / "checkout-whose-git-directory-is-gone"
+    (broken_checkout / "docs").mkdir(parents=True)
+    (broken_checkout / ".git").write_text("gitdir: " + str(tmp / "no-such-git-directory") + "\n")
+    broken_page = broken_checkout / "docs" / "page.md"
+    broken_page.write_text("The seat.\n", encoding="utf-8")
+    result = run_hook(edit_payload(broken_checkout, broken_page, "x", "The seat."))
+    check("a git check-ignore that fails is reported on stderr, exit 1",
+          reported(result, "git check-ignore exited 128"), result.stdout + result.stderr)
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")
