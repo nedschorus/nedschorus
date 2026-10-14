@@ -16,6 +16,8 @@ Each registered Stop or SubagentStop hook is checked two ways:
 That run has nothing for most hooks to speak about, so it cannot show that
 the rule's check comes before the hook's work; each hook's own test does that, with
 a case where the hook would speak but for stop_hook_active.
+A registered Stop or SubagentStop command that names no Python file fails,
+because this test cannot read it.
 A hook whose source lacks the call is not run, because a hook that skips the
 rule's check may act on the checkout it is started in.
 """
@@ -45,6 +47,15 @@ MISSING_CALL_MESSAGE = (
     "state or prints:\n"
     "    if stop_hooks_stay_silent_rule.{function}(payload):\n"
     "        exit 0, printing nothing")
+UNCHECKABLE_MESSAGE = (
+    "{event} hook command {command!r} in .claude/settings.json names no Python file, so "
+    "this test cannot check that the hook obeys the rule in {module}.\n"
+    "Why: every Stop hook must stay silent while the agent answers a Stop hook, or the "
+    "agent keeps answering hooks instead of stopping; a hook this test cannot read could "
+    "break that rule unseen.\n"
+    "Fix: write the hook in Python and have it call {function} first, as the other Stop "
+    "hooks do.\n"
+    "If the hook must be another kind of program, teach this test to check that kind.")
 SPOKE_MESSAGE = (
     "{hook}, run as a {event} hook with stop_hook_active true, {what}.\n"
     "Why: stop_hook_active true means this Stop ends the agent's answer to a Stop hook; "
@@ -66,17 +77,26 @@ def check(case_name, condition, detail=""):
 
 
 def registered_stop_hooks(settings):
-    """[(event, hook path relative to the repository)] for every Stop and SubagentStop hook."""
-    hooks = []
+    """([(event, hook path relative to the repository)], [(event, command)]) for every
+    Stop and SubagentStop hook: the Python hooks this test checks, and the commands
+    that name no Python file, which it cannot check."""
+    hooks, unchecked = [], []
     for event in STOP_EVENTS:
         for matcher in settings.get("hooks", {}).get(event, []):
             for hook in matcher.get("hooks", []):
-                for word in hook.get("command", "").split():
+                command = hook.get("command", "")
+                paths = []
+                for word in command.split():
                     word = word.replace('"$CLAUDE_PROJECT_DIR"/', "").replace(
                         "$CLAUDE_PROJECT_DIR/", "").strip("\"'")
-                    if word.endswith(".py") and (event, word) not in hooks:
-                        hooks.append((event, word))
-    return hooks
+                    if word.endswith(".py"):
+                        paths.append(word)
+                if not paths:
+                    unchecked.append((event, command))
+                for path in paths:
+                    if (event, path) not in hooks:
+                        hooks.append((event, path))
+    return hooks, unchecked
 
 
 def source_calls_rule_function(source):
@@ -118,7 +138,19 @@ def main():
     check("the source check finds a call through the loaded module",
           source_calls_rule_function(f"if stop_hooks_stay_silent_rule.{RULE_FUNCTION}(payload):\n    pass\n"))
 
-    hooks = registered_stop_hooks(json.loads(SETTINGS.read_text(encoding="utf-8")))
+    sample_hooks, sample_unchecked = registered_stop_hooks({"hooks": {"Stop": [{"hooks": [
+        {"type": "command", "command": 'python3 "$CLAUDE_PROJECT_DIR"/scripts/a-hook.py'},
+        {"type": "command", "command": "bash scripts/a-hook.sh"}]}]}})
+    check("the settings reader returns a Python hook to check and a hook it cannot check",
+          sample_hooks == [("Stop", "scripts/a-hook.py")]
+          and sample_unchecked == [("Stop", "bash scripts/a-hook.sh")],
+          (sample_hooks, sample_unchecked))
+
+    hooks, unchecked = registered_stop_hooks(json.loads(SETTINGS.read_text(encoding="utf-8")))
+    for event, command in unchecked:
+        check(f"{event} hook {command!r} can be checked", False,
+              UNCHECKABLE_MESSAGE.format(event=event, command=command, module=RULE_MODULE,
+                                         function=RULE_FUNCTION))
     check("settings.json registers at least one Stop hook", bool(hooks),
           f"{SETTINGS} registers no Stop or SubagentStop hook this test can read")
     for event, hook_path in hooks:

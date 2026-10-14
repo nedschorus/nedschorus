@@ -192,13 +192,13 @@ second = seat.run()
 check("raised once: the next stop is silent", silent(second), second)
 
 # --- silent while the agent answers a Stop hook, raised at the next stop -----
-seat = Seat()
-seat.task("12", metadata={"due_utc": PAST_DUE})
-answering = seat.run(json.dumps({**json.loads(STOP_PAYLOAD), "stop_hook_active": True}))
+answering_seat = Seat()
+answering_seat.task("12", metadata={"due_utc": PAST_DUE})
+answering = answering_seat.run(json.dumps({**json.loads(STOP_PAYLOAD), "stop_hook_active": True}))
 check("stop_hook_active: silent while the agent answers a Stop hook", silent(answering), answering)
 check("stop_hook_active: no state written, so the raise is not lost",
-      not seat.state_path.exists())
-later = seat.run()
+      not answering_seat.state_path.exists())
+later = answering_seat.run()
 check("stop_hook_active: the next ordinary stop raises the task",
       context_of(later) is not None and "task 12" in context_of(later), later.stdout)
 
