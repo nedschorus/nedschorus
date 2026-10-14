@@ -452,8 +452,8 @@ COUNT_FAILED_NOTE = (
     "Run `git fetch origin` and then `git rev-list --count HEAD..origin/main` to see the "
     "count, or git's message.\n"
     "If git cannot make the count either, tell the user what git said: a checkout that "
-    "cannot be compared with main changes the work you are doing with him, so the last line "
-    "of this note does not forbid telling him."
+    "cannot be compared with main changes the work you are doing with him, so the line "
+    "below that begins 'Do not report' does not forbid telling him."
 )
 NOTES_NOT_CLEARED_LINE = (
     "checkout-freshness: these notes could not be cleared from {path} ({error}), so they "
@@ -696,17 +696,23 @@ def fetch_if_stale(checkout: Path, stamp_path: Path, interval_seconds: int) -> d
 def counts_against_main(checkout: Path):
     """((behind, ahead), None) of HEAD against origin/main, or (None, error)
     when git could not make the count."""
-    if run_git(["rev-parse", "--verify", "--quiet", "origin/main"], checkout,
-               timeout=15).returncode != 0:
-        return None, "there is no origin/main"
+    def failure(command, result):
+        detail = "; ".join(line.strip() for line in result.stderr.splitlines()
+                           if line.strip())
+        return f"git {command} exited {result.returncode}" + (f": {detail}" if detail else "")
+
+    main = run_git(["rev-parse", "--verify", "--quiet", "origin/main"], checkout, timeout=15)
+    if main.returncode != 0:
+        # --quiet makes a missing ref exit 1 with nothing on stderr; anything
+        # else is a failure whose reason the agent needs.
+        if main.returncode == 1 and not main.stderr.strip():
+            return None, "there is no origin/main"
+        return None, failure("rev-parse", main)
     behind = run_git(["rev-list", "--count", "HEAD..origin/main"], checkout, timeout=30)
     ahead = run_git(["rev-list", "--count", "origin/main..HEAD"], checkout, timeout=30)
     for counted in (behind, ahead):
         if counted.returncode != 0:
-            detail = "; ".join(line.strip() for line in counted.stderr.splitlines()
-                               if line.strip())
-            return None, (f"git rev-list exited {counted.returncode}"
-                          + (f": {detail}" if detail else ""))
+            return None, failure("rev-list", counted)
     try:
         return (int(behind.stdout.strip()), int(ahead.stdout.strip())), None
     except ValueError:
@@ -1050,7 +1056,8 @@ def merges_from_main(checkout: Path):
     """Short SHAs of merge commits on this branch whose second parent lies on
     origin/main AND whose two parents merge cleanly, with rename detection and
     without it — the catch-up merge CLAUDE.md bans, because such merges moved
-    frozen heads under running reviews.
+    frozen heads under running reviews. None when git could not list the
+    branch's merges.
 
     A merge of another topic branch is not the banned thing, so the second
     parent is tested for being on main rather than every merge being flagged.
@@ -1090,7 +1097,7 @@ def merges_from_main(checkout: Path):
     """
     merges = run_git(["rev-list", "--merges", "origin/main..HEAD"], checkout, timeout=30)
     if merges.returncode != 0:
-        return []
+        return None
     flagged = []
     for sha in merges.stdout.split():
         second = run_git(["rev-parse", "--verify", "--quiet", f"{sha}^2"], checkout, timeout=15)
@@ -1262,20 +1269,29 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     state_key, state_text = head_state(checkout, branch)
 
     # 1. Misbehaviour, to the agent, once per distinct finding.
+    # A check git could not make is not an answer: the last finding stands,
+    # so its queued note is neither dropped nor told again.
     found = {}
+    last_found = stamp.get("last_misbehaviour")
+    last_found = last_found if isinstance(last_found, dict) else {}
     merged = merges_from_main(checkout)
     if merged:
         found["merges_from_main"] = merged
+    elif merged is None and "merges_from_main" in last_found:
+        found["merges_from_main"] = last_found["merges_from_main"]
     if state_key == "diverged-from-remote":
         head = run_git(["rev-parse", "HEAD"], checkout, timeout=15).stdout.strip()[:12]
         remote = run_git(["rev-parse", f"origin/{branch}"], checkout, timeout=15).stdout.strip()[:12]
         found["rewritten_head"] = [head, remote]
+    elif state_key == "unknown" and "rewritten_head" in last_found:
+        found["rewritten_head"] = last_found["rewritten_head"]
     if "merges_from_main" not in found:
         drop_queued_notes_of_kinds(NOTE_KIND_MERGES_FROM_MAIN)
     if "rewritten_head" not in found:
         drop_queued_notes_of_kinds(NOTE_KIND_REWRITTEN_HEAD)
     if found and stamp.get("last_misbehaviour") != found:
         if "merges_from_main" in found:
+            merged = found["merges_from_main"]
             tell(f"checkout-freshness: {branch} carries {len(merged)} merge commit(s) from "
                  f"main ({', '.join(merged)}). This project brings a branch up to date by "
                  f"rebasing it onto main, not by merging main into it. If the branch was "

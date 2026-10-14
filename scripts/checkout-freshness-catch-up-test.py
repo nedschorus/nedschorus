@@ -2119,8 +2119,8 @@ with tempfile.TemporaryDirectory() as notes_scratch:
               "Run `git fetch origin` and then `git rev-list --count HEAD..origin/main` to see "
               "the count, or git's message.\n"
               "If git cannot make the count either, tell the user what git said: a checkout that "
-              "cannot be compared with main changes the work you are doing with him, so the last "
-              "line of this note does not forbid telling him.\n")
+              "cannot be compared with main changes the work you are doing with him, so the line "
+              "below that begins 'Do not report' does not forbid telling him.\n")
           and count_failed_text.endswith("\n" + NOT_FOR_THE_USER_LINE), count_failed_text)
     deliver(notes_seat)
     again = stop_only(notes_seat, path_prefix=str(count_fails))
@@ -2154,6 +2154,50 @@ with tempfile.TemporaryDirectory() as notes_scratch:
     check("a queued count-failed note is dropped once a count succeeds",
           "count-failed" not in [note.get("kind") for note in queued_notes(notes_seat)]
           and "last_count_error" not in stamp_of(notes_seat), str(queued_notes(notes_seat)))
+
+    def git_shim(name, cases):
+        """A git that answers the given argument shapes itself and passes
+        every other call to the real git. cases: (shell test, shell action)."""
+        directory = tmp / name
+        directory.mkdir()
+        lines = ["#!/bin/sh", 'all=" $* "']
+        for test, action in cases:
+            lines.append(f"if {test}; then {action}; fi")
+        lines.append(f'exec "{real_git}" "$@"')
+        (directory / "git").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        (directory / "git").chmod(0o755)
+        return str(directory)
+
+    def count_failed_texts(checkout):
+        return [note["text"] for note in queued_notes(checkout)
+                if note.get("kind") == "count-failed"]
+
+    origin_repo, notes_seat = notes_fixture()
+    commit_file(origin_repo, "a.txt", "a\n", "advance a")
+    main_ref_fails = git_shim("main-ref-fails-shim", [(
+        'case "$all" in *" --verify "*" origin/main "*) true;; *) false;; esac',
+        'echo "fatal: shimmed ref failure" >&2; exit 128')])
+    stop_only(notes_seat, path_prefix=main_ref_fails)
+    told = count_failed_texts(notes_seat)
+    check("a failure to look up origin/main is told with git's own reason, not as a missing origin/main",
+          len(told) == 1 and "(git rev-parse exited 128: fatal: shimmed ref failure)" in told[0]
+          and "there is no origin/main" not in told[0], str(told))
+    deliver(notes_seat)
+    other_ref_failure = git_shim("other-ref-failure-shim", [(
+        'case "$all" in *" --verify "*" origin/main "*) true;; *) false;; esac',
+        'echo "fatal: a different ref failure" >&2; exit 128')])
+    stop_only(notes_seat, path_prefix=other_ref_failure)
+    told = count_failed_texts(notes_seat)
+    check("a later failure at the same step with a different reason is told again",
+          len(told) == 1 and "fatal: a different ref failure" in told[0], str(told))
+    deliver(notes_seat)
+    count_not_a_number = git_shim("count-not-a-number-shim", [(
+        'case "$all" in *" --count "*) true;; *) false;; esac', 'echo "many"; exit 0')])
+    stop_only(notes_seat, path_prefix=count_not_a_number)
+    told = count_failed_texts(notes_seat)
+    check("a count git prints that is not a number is told as a failed count, not as level with main",
+          len(told) == 1 and "(git rev-list printed 'many' and 'many', not counts)" in told[0]
+          and stamp_of(notes_seat).get("behind") is None, str(told))
 
     origin_repo, notes_seat = notes_fixture()
     git(["push", "-q", "-u", "origin", "seat"], notes_seat)
@@ -2222,7 +2266,23 @@ with tempfile.TemporaryDirectory() as notes_scratch:
           told.count("no longer contains its pushed head") == 1
           and f"seat's HEAD ({second_amend})" in told, told)
     git(["commit", "-q", "--amend", "-m", "amended a third time"], notes_seat)
+    third_amend = git(["rev-parse", "--short=12", "HEAD"], notes_seat).stdout.strip()
     stop_only(notes_seat)
+    head_state_unknown = git_shim("head-state-unknown-shim", [
+        ('case "$all" in *" --verify "*" origin/seat "*) true;; *) false;; esac', "exit 1"),
+        ('case "$all" in *" --remotes "*) true;; *) false;; esac',
+         'echo "fatal: shimmed remotes failure" >&2; exit 128')])
+    stop_only(notes_seat, path_prefix=head_state_unknown)
+    rewritten = [note["text"] for note in queued_notes(notes_seat)
+                 if note.get("kind") == "rewritten-head"]
+    check("a queued rewritten-head note stays, unchanged, when git cannot tell where the head stands",
+          len(rewritten) == 1 and f"seat's HEAD ({third_amend})" in rewritten[0], str(rewritten))
+    deliver(notes_seat)
+    stop_only(notes_seat, path_prefix=head_state_unknown)
+    stop_only(notes_seat)
+    check("and once delivered, the same rewritten head is not told again after a check git could not make",
+          "rewritten-head" not in [note.get("kind") for note in queued_notes(notes_seat)],
+          str(queued_notes(notes_seat)))
     git(["reset", "-q", "--hard", "origin/seat"], notes_seat)
     stop_only(notes_seat)
     check("a queued rewritten-head note is dropped once the head contains its pushed head again",
@@ -2253,6 +2313,21 @@ with tempfile.TemporaryDirectory() as notes_scratch:
     git(["fetch", "-q", "origin"], notes_seat)
     git(["merge", "-q", "--no-edit", "origin/main"], notes_seat)
     stop_only(notes_seat)
+    queued_before = queued_notes(notes_seat)
+    merges_unlisted = git_shim("merges-unlisted-shim", [(
+        'case "$all" in *" --merges "*) true;; *) false;; esac',
+        'echo "fatal: shimmed merges failure" >&2; exit 128')])
+    stop_only(notes_seat, path_prefix=merges_unlisted)
+    check("a queued merges-from-main note stays, unchanged, when git cannot list the branch's merges",
+          [note for note in queued_notes(notes_seat) if note.get("kind") == "merges-from-main"]
+          == [note for note in queued_before if note.get("kind") == "merges-from-main"]
+          and len(queued_before) >= 1, str(queued_notes(notes_seat)))
+    deliver(notes_seat)
+    stop_only(notes_seat, path_prefix=merges_unlisted)
+    stop_only(notes_seat)
+    check("and once delivered, the same merges are not told again after a check git could not make",
+          "merges-from-main" not in [note.get("kind") for note in queued_notes(notes_seat)],
+          str(queued_notes(notes_seat)))
     git(["reset", "-q", "--hard", before_merge], notes_seat)
     stop_only(notes_seat)
     check("a queued merges-from-main note is dropped once the branch no longer carries the merges",
