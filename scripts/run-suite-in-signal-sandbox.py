@@ -464,7 +464,10 @@ def parse_arguments(argv):
     parser.add_argument("--lock-file", default=str(runner.DEFAULT_LOCK_FILE))
     parser.add_argument("--wait-for-lock-seconds", type=float,
                         default=runner.MACHINE_LOCK_WAIT_SECONDS_SUGGESTED)
-    return parser.parse_args(argv)
+    arguments = parser.parse_args(argv)
+    if arguments.wait_for_lock_seconds < 0:
+        parser.error("--wait-for-lock-seconds takes a number of seconds of at least 0")
+    return arguments
 
 
 def run(arguments, platform):
@@ -497,6 +500,10 @@ def run(arguments, platform):
     if unconfined_because:
         raise NotRun(f"no signal sandbox: {unconfined_because}")
 
+    if arguments.wait_for_lock_seconds > 0:
+        # A caller waiting under a timeout of its own sees why nothing has happened yet.
+        print(f"{PROGRAM}: waiting up to {arguments.wait_for_lock_seconds:g} s for "
+              f"{arguments.lock_file}", flush=True)
     lock_handle, holder, previous_holder = runner.take_machine_lock(
         Path(arguments.lock_file), top, arguments.wait_for_lock_seconds)
     if lock_handle is None:

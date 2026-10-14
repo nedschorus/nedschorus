@@ -952,6 +952,10 @@ else:
               and "after waiting 1 s" in last and waited >= 1
               and "all cases passed" not in completed.stdout and unchanged(repository),
               (completed.returncode, completed.stdout))
+        check("while it waits for the lock it has said so, first, on stdout",
+              completed.stdout.startswith(
+                  f"run-suite-in-signal-sandbox: waiting up to 1 s for {lock_path}\n"),
+              completed.stdout)
         check("the wait for the lock defaults to the runner's suggested hour",
               program.parse_arguments(["a-test.py"]).wait_for_lock_seconds
               == program.runner.MACHINE_LOCK_WAIT_SECONDS_SUGGESTED == 3600)

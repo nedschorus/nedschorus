@@ -507,6 +507,50 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a refused run runs no suite and prints nothing on stdout",
           result.stdout == "", result.stdout)
 
+# --- A run that waited: its timer is cancelled, and it reads the checkout under the lock
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": "time.sleep(2)\nprint('ok')\n"})
+    result = run(root, "--wait-for-lock-seconds", "1", lock_file=root / "free.lock")
+    check("a run that takes a free lock at once with a 1 s wait is not stopped by that "
+          "deadline later: its 2 s suite passes and the run exits 0",
+          result.returncode == 0 and ran(root) == ["a-test.py"],
+          (result.returncode, result.stdout[-500:], result.stderr))
+    check("a run given a wait says on stderr that it is waiting for the lock, before "
+          "anything else",
+          result.stderr.startswith(f"run-all-test-suites: waiting up to 1 s for "
+                                   f"{root / 'free.lock'}\n"), result.stderr)
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"a-test.py": PASSES})
+    lock_file = root / "inventory.lock"
+    with open(lock_file, "a+") as held:
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        waiting_run = subprocess.Popen(
+            [sys.executable, str(PROGRAM), "--checkout", str(root / "repo"),
+             "--log-dir", str(root / "logs"), "--lock-file", str(lock_file),
+             "--recorded-inputs-directory", str(root / "recordings"),
+             "--wait-for-lock-seconds", "60"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            stdin=subprocess.DEVNULL,
+            env={**os.environ, RAN_FILE_VARIABLE: str(root / "ran.txt"),
+                 RENDEZVOUS_WAIT_VARIABLE: "0"})
+        time.sleep(1.5)
+        # A suite committed while the run waits, as a seat working in the checkout would.
+        (root / "repo" / "b-test.py").write_text(SUITE_PREAMBLE + PASSES)
+        git(root / "repo", "add", "--", "b-test.py")
+        git(root / "repo", "commit", "-q", "-m", "a suite added while the run waits")
+    try:
+        run_stdout, run_stderr = waiting_run.communicate(timeout=120)
+    except subprocess.TimeoutExpired:
+        waiting_run.kill()
+        run_stdout, run_stderr = waiting_run.communicate()
+    check("a suite committed while the run waits for the lock is run: the run lists the "
+          "suites after it takes the lock",
+          waiting_run.returncode == 0 and ran(root) == ["a-test.py", "b-test.py"],
+          (waiting_run.returncode, ran(root), run_stderr))
+
 # --- Refusals before anything runs: exit 2 -----------------------------------
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
@@ -2165,8 +2209,20 @@ check("a description naming a running process is the holder",
 check("an empty lock file names no holder",
       module.lock_holder_described("") == "a process that wrote no description of itself",
       module.lock_holder_described(""))
+saved_kill = module.os.kill
+
+
+def kill_refused(pid, signal_number):
+    raise PermissionError(1, "Operation not permitted")
+
+
+module.os.kill = kill_refused
+try:
+    refused_counts_as_running = module.process_running(4242)
+finally:
+    module.os.kill = saved_kill
 check("a process this user may not signal still counts as running",
-      module.process_running(1) is True)
+      refused_counts_as_running is True)
 
 # --- The defaults -------------------------------------------------------------
 defaults = module.parse_arguments([])
@@ -2187,6 +2243,15 @@ for jobs_given, suites_to_run, cores, expected, case in (
     check(case, answer == expected, (jobs_given, suites_to_run, cores, answer))
 check("--wait-for-lock-seconds defaults to 0, so a plain run refuses at once",
       defaults.wait_for_lock_seconds == 0, defaults.wait_for_lock_seconds)
+with contextlib.redirect_stderr(io.StringIO()) as refused_negative:
+    try:
+        module.parse_arguments(["--wait-for-lock-seconds", "-1"])
+        negative_exit = None
+    except SystemExit as stopped:
+        negative_exit = stopped.code
+check("a negative --wait-for-lock-seconds is a bad invocation, exit 2",
+      negative_exit == 2 and "at least 0" in refused_negative.getvalue(),
+      (negative_exit, refused_negative.getvalue()))
 check("--lock-file defaults to one file per machine under ~/.claude",
       pathlib.Path(defaults.lock_file) == pathlib.Path.home() / ".claude"
       / ".run-all-test-suites.lock", defaults.lock_file)

@@ -130,6 +130,7 @@ if behaviour.get("leaves_a_directory_its_owner_may_not_write_to"):
 if behaviour.get("removes_the_git_file_of_the_checkout"):
     (checkout / ".git").unlink()
 if exit_code == 3:
+    print("run-all-test-suites: waiting up to 3600 s for /a/lock", file=sys.stderr)
     print("run-all-test-suites: not run — waited 3600 s for /a/lock, the lock that keeps "
           "test runs on one machine apart, and it was still held by pid 1, checkout "
           "/a/checkout, started 2026-10-01T03:29:00Z.", file=sys.stderr)

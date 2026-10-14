@@ -50,11 +50,11 @@ WHAT ONE RUN DOES, in order.
      fetch can move. A worktree a killed run left at the same path is removed
      first.
   3. Runs `<the Python running this program>
-     <worktree>/scripts/run-all-test-suites.py --log-dir <logs>` from the
-     worktree, with no selection option and no -j, so the runner chooses how
-     many suites run at once. While the runner exits 3, another run holding
-     the machine's lock, this program waits 2 seconds and runs it again, for
-     up to an hour; after that the record says the lock was never released.
+     <worktree>/scripts/run-all-test-suites.py --log-dir <logs>
+     --wait-for-lock-seconds 3600` from the worktree, with no selection
+     option and no -j, so the runner chooses how many suites run at once. The
+     runner waits up to an hour for the machine's lock itself; when it exits
+     3 after that hour, the record says the lock was not released within it.
      The verdict is the runner's exit code and its `SUMMARY:` line, read from
      the runner's own captured output and never from a pipeline.
   4. Removes the worktree, whatever step 3 did. When `git worktree remove
@@ -301,13 +301,20 @@ def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, 
     return completed, seconds, False
 
 
+def runner_refusal_line(stderr):
+    """The runner's "not run" line; the runner prints that it is waiting before it."""
+    refusal = [line for line in stderr.splitlines()
+               if line.startswith(f"{run_all_test_suites.PROGRAM}: not run")]
+    return refusal[0] if refusal else first_stderr_line_or_no_detail(stderr)
+
+
 def lock_never_taken_step_failed(completed, seconds_waiting_for_lock):
     """The failed step recorded when the runner waited for the machine's lock in vain."""
     return (f"not run — the machine's lock was not released within "
             f"{DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS:g} s: "
             f"{run_all_test_suites.PROGRAM} waited {seconds_waiting_for_lock:.0f} s for it and "
             f"exited {run_all_test_suites.EXIT_LOCKED}; its refusal: "
-            f"{first_stderr_line_or_no_detail(completed.stderr)}",
+            f"{runner_refusal_line(completed.stderr)}",
             "Run this again after the run holding that lock has finished.")
 
 

@@ -2031,6 +2031,8 @@ def parse_arguments(argv):
     arguments = parser.parse_args(argv)
     if arguments.jobs is not None and arguments.jobs < 1:
         parser.error("-j takes a whole number of at least 1")
+    if arguments.wait_for_lock_seconds < 0:
+        parser.error("--wait-for-lock-seconds takes a number of seconds of at least 0")
     return arguments
 
 
@@ -2059,6 +2061,10 @@ def main(argv=None):
         print(signal_sandbox_refusal(error), file=sys.stderr)
         return EXIT_COULD_NOT_RUN
 
+    if arguments.wait_for_lock_seconds > 0:
+        # A caller waiting under a timeout of its own sees why nothing has happened yet.
+        print(f"{PROGRAM}: waiting up to {arguments.wait_for_lock_seconds:g} s for "
+              f"{arguments.lock_file}", file=sys.stderr, flush=True)
     lock_wait_started = time.monotonic()
     lock_handle, holder, previous_holder = take_machine_lock(
         Path(arguments.lock_file), top, arguments.wait_for_lock_seconds)
@@ -2070,6 +2076,13 @@ def main(argv=None):
 
     log_dir_handle = run_record = None
     try:
+        # Read again under the lock: the checkout may have changed while this run waited,
+        # and the commit this run reports is read under the lock too.
+        try:
+            suites = suites_listed_by_git(top)
+        except CouldNotRun as refusal:
+            print(refusal, file=sys.stderr)
+            return EXIT_COULD_NOT_RUN
         if arguments.log_dir:
             log_dir = Path(arguments.log_dir).resolve()
             log_dir.mkdir(parents=True, exist_ok=True)
