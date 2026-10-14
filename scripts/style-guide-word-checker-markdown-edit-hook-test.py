@@ -46,6 +46,7 @@ SHARED_GIT_TRACKING_CHECK_RELATIVE_PATH = Path(
     "nc-systems", "general-tools", "edited-file-path-within-checkout-root-and-git-check-ignore-common.py")
 SHARED_GIT_TRACKING_CHECK_PATH = (Path(__file__).resolve().parents[1]
                                   / SHARED_GIT_TRACKING_CHECK_RELATIVE_PATH)
+GIT_RUNNER_MODULE_NAME = "git-machine-readable-output-runner-and-parser-common.py"
 
 GIT_REDIRECTING_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
                              "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR",
@@ -79,10 +80,13 @@ FIXTURE_PAGE = '# Style guide (test fixture)\n\n## Words to avoid\n\n| Word | Fo
 
 
 def copy_shared_git_tracking_check(root):
-    """Copy the module the hook loads its git helpers from into root, where the hook looks for it."""
+    """Copy the module the hook loads its git helpers from into root, where the hook looks for it,
+    with the git runner module that module loads GitCommandFailed from."""
     shared_copy = Path(root) / SHARED_GIT_TRACKING_CHECK_RELATIVE_PATH
     shared_copy.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(str(SHARED_GIT_TRACKING_CHECK_PATH), str(shared_copy))
+    shutil.copy(str(SHARED_GIT_TRACKING_CHECK_PATH.with_name(GIT_RUNNER_MODULE_NAME)),
+                str(shared_copy.with_name(GIT_RUNNER_MODULE_NAME)))
 
 
 def build_checker_tree(root, page_text):
@@ -674,7 +678,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a hook whose style guide page is broken is reported on stderr, exit 1",
           reported(result, "StyleGuidePageError"), result.stdout + result.stderr)
 
-    # git missing from PATH: the shared module raises GitIgnoreCheckFailed,
+    # git missing from PATH: the shared module raises GitCommandFailed,
     # and the top-level handler reports it in one line.
     empty_path_directory = tmp / "empty-path-directory"
     empty_path_directory.mkdir()
@@ -684,7 +688,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                             capture_output=True, text=True, check=False,
                             env=dict(CLEAN_ENVIRONMENT, PATH=str(empty_path_directory)))
     check("a hook whose git cannot be found is reported on stderr, exit 1",
-          reported(no_git, "GitIgnoreCheckFailed: git check-ignore could not run"),
+          reported(no_git, "GitCommandFailed: git check-ignore -q -- ")
+          and "could not start git" in no_git.stderr,
           no_git.stdout + no_git.stderr)
     # The Write path runs git show HEAD:<path> first.
     no_git = subprocess.run([sys.executable, str(HOOK_PATH)],
@@ -692,7 +697,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                             capture_output=True, text=True, check=False,
                             env=dict(CLEAN_ENVIRONMENT, PATH=str(empty_path_directory)))
     check("a Write whose git cannot be found is reported on stderr, exit 1",
-          reported(no_git, "GitIgnoreCheckFailed: git show could not run"),
+          reported(no_git, "GitCommandFailed: git show HEAD:")
+          and "could not start git" in no_git.stderr,
           no_git.stdout + no_git.stderr)
 
     # A checkout whose .git file names a git directory that does not exist:
@@ -705,7 +711,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     broken_page.write_text("The seat.\n", encoding="utf-8")
     result = run_hook(edit_payload(broken_checkout, broken_page, "x", "The seat."))
     check("a git check-ignore that fails is reported on stderr, exit 1",
-          reported(result, "git check-ignore exited 128"), result.stdout + result.stderr)
+          reported(result, "GitCommandFailed: git check-ignore -q -- docs/page.md in")
+          and "failed (exit 128" in result.stderr, result.stdout + result.stderr)
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

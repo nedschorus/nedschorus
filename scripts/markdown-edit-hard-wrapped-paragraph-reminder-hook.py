@@ -214,7 +214,7 @@ def main() -> int:
     root, relative_path = located
     try:
         trackable = checks.git_would_track(root, relative_path)
-    except checks.GitIgnoreCheckFailed as error:
+    except checks.GitCommandFailed as error:
         print(f"markdown-edit-hard-wrapped-paragraph-reminder: {error}, so no reminder check was made.",
               file=sys.stderr)
         return 1

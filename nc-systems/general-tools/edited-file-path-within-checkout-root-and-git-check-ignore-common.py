@@ -3,9 +3,9 @@
 
 The hooks that check a Markdown file after an Edit or Write share these helpers,
 so a git failure is reported the same way in each: every function here that
-runs git raises GitIgnoreCheckFailed when git fails, cannot start or times
-out, and never reads the failure as "not tracked". The caller reports the
-exception as its own failure.
+runs git raises GitCommandFailed, the class the project's git runner module
+defines, when git fails, cannot start or times out, and never reads the
+failure as "not tracked". The caller reports the exception as its own failure.
 
 Load it by path, under the snake_case form of its file name:
 
@@ -16,25 +16,35 @@ Load it by path, under the snake_case form of its file name:
 # Deferred annotations let the module load on the Mac's system Python 3.9.
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 from pathlib import Path
+
+_git_machine_readable_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    Path(__file__).resolve().with_name("git-machine-readable-output-runner-and-parser-common.py"))
+_git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
+_git_machine_readable_output_spec.loader.exec_module(_git_machine_readable_output)
+GitCommandFailed = _git_machine_readable_output.GitCommandFailed
 
 # A hook runs on every edit; a bounded git call keeps a hung git from hanging the agent's turn.
 GIT_TIMEOUT_SECONDS = 10
 
 
-class GitIgnoreCheckFailed(Exception):
-    """git could not say whether the file is ignored, or what HEAD holds of it."""
-
-
 def _run_git(arguments, working_directory: Path):
-    """Run git; raise GitIgnoreCheckFailed when git cannot start or times out."""
+    """Run git; raise GitCommandFailed when git cannot start or times out."""
+    # Not the runner module's run_git: that returns only stdout, and the callers
+    # here need git's exit code.
     try:
         return subprocess.run(["git", *arguments], cwd=str(working_directory),
                               capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=GIT_TIMEOUT_SECONDS, check=False)
-    except (OSError, subprocess.SubprocessError) as error:
-        raise GitIgnoreCheckFailed(f"git {arguments[0]} could not run: {error}") from error
+    except subprocess.TimeoutExpired as error:
+        raise GitCommandFailed(arguments, working_directory, None,
+                               f"did not finish within {GIT_TIMEOUT_SECONDS} s") from error
+    except OSError as error:
+        raise GitCommandFailed(arguments, working_directory, None,
+                               f"could not start git: {error}") from error
 
 
 def enclosing_checkout_root(directory: Path):
@@ -62,23 +72,24 @@ def checkout_relative_path(file_path: str, working_directory: Path):
 
 
 def git_would_track(root: Path, relative_path: str) -> bool:
-    """Return whether git would track relative_path; raise GitIgnoreCheckFailed when git cannot say."""
+    """Return whether git would track relative_path; raise GitCommandFailed when git cannot say."""
     # check-ignore exits 0 for ignored, 1 for trackable, and 128 for failure; tracked files are never ignored.
-    completed = _run_git(["check-ignore", "-q", "--", relative_path], root)
+    arguments = ["check-ignore", "-q", "--", relative_path]
+    completed = _run_git(arguments, root)
     if completed.returncode == 1:
         return True
     if completed.returncode == 0:
         return False
+    # Only git's first stderr line: each hook reports a failure in one line.
     detail = completed.stderr.strip().splitlines()
-    raise GitIgnoreCheckFailed(
-        f"git check-ignore exited {completed.returncode} in {root}" + (f": {detail[0]}" if detail else ""))
+    raise GitCommandFailed(arguments, root, completed.returncode, detail[0] if detail else "")
 
 
 def file_lines_at_head_unless_git_ignores_file(root: Path, relative_path: str):
     """Return the file's lines at HEAD, each with trailing whitespace removed, as a set.
 
     Return an empty set when HEAD lacks the file and git would track it, and None
-    when git ignores it. Raise GitIgnoreCheckFailed when git cannot say which."""
+    when git ignores it. Raise GitCommandFailed when git cannot say which."""
     committed = _run_git(["show", "HEAD:" + relative_path], root)
     if committed.returncode == 0:
         return set(line.rstrip() for line in committed.stdout.split("\n"))

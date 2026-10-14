@@ -793,7 +793,8 @@ broken_payload["cwd"] = str(broken_checkout)
 result = run_hook(broken_payload)
 check("a git check-ignore that fails is reported on stderr, no note, exit 1",
       result.returncode == 1 and result.stdout == ""
-      and "no check was made: GitIgnoreCheckFailed: git check-ignore exited 128" in result.stderr,
+      and "no check was made: GitCommandFailed: git check-ignore -q -- docs/page.md in" in result.stderr
+      and "failed (exit 128" in result.stderr,
       (result.returncode, result.stdout, result.stderr))
 
 # git missing from PATH on the Write path, where the hook first runs git show HEAD:<path>.
@@ -804,8 +805,8 @@ result = run_hook(tool_payload("Write", REPOSITORY / "docs" / "new.md",
                   environment={**HOOK_ENVIRONMENT, "PATH": str(empty_path_directory)})
 check("a Write whose git cannot be found is reported on stderr, no note, exit 1",
       result.returncode == 1 and result.stdout == "" and len(result.stderr.splitlines()) == 1
-      and "no check was made: GitIgnoreCheckFailed: git show could not run"
-      in result.stderr,
+      and "no check was made: GitCommandFailed: git show HEAD:docs/new.md in" in result.stderr
+      and "could not start git" in result.stderr,
       (result.returncode, result.stdout, result.stderr))
 
 # The hook without the shared module it loads its git helpers from.
