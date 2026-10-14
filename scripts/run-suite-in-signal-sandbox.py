@@ -10,11 +10,15 @@ Usage:
   <suite>      the suite's path relative to the checkout's top directory,
                such as scripts/run-all-test-suites-test.py, or an absolute
                path inside the checkout
-  --mutant     a patch `git apply` can apply in the checkout; the suite runs
-               once without it, which must pass, then the patch is applied to
-               the files it names, the suite runs again, and those files are
-               put back byte for byte with their mode and modification time,
-               whatever happens to the suite
+  --mutant     a patch `git apply` can apply in the checkout. The checkout is
+               never changed: the program makes a git worktree of it whose
+               directory name ends in -mutation-testing-worktree, copies the checkout's
+               tracked and untracked files into it as they are now, runs the
+               suite there once without the patch, which must pass, then
+               applies the patch there and runs the suite again, and removes
+               the worktree, whatever happens to the suite. The pre-push hook
+               refuses a push from a directory whose name ends in
+               -mutation-testing-worktree, so a mutant cannot be pushed from it either
   --checkout   the checkout's top directory; default the current directory
   --python     the interpreter for a Python suite; default this one
   --lock-file  default ~/.claude/.run-all-test-suites.lock, the lock
@@ -42,8 +46,7 @@ link from a process whose parent has exited back to that parent, so a leftover
 process that moved to another process group and outlived its parent is not found.
 
 The patch may only change files that already exist; a patch that creates,
-deletes or renames a file is refused, because putting the files back is then
-more than restoring their bytes.
+deletes or renames a file is refused.
 
 The last line printed is the verdict:
   VERDICT: suite passed            exit 0
@@ -55,8 +58,6 @@ The last line printed is the verdict:
                                             be trusted, or the suite failed
                                             without the mutant
   VERDICT: not run (lock held)     exit 3   another test run holds the lock
-  VERDICT: RESTORE FAILED (...)    exit 4   a mutated file could not be put
-                                            back; the message names its copy
 
 Run: python3 scripts/run-suite-in-signal-sandbox.py scripts/a-test.py --mutant /tmp/m.patch
 """
@@ -70,7 +71,6 @@ import signal
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 
 PROGRAM = "run-suite-in-signal-sandbox"
@@ -86,7 +86,9 @@ EXIT_PASSED_OR_KILLED = 0
 EXIT_FAILED_OR_SURVIVED = 1
 EXIT_NOT_RUN = 2
 EXIT_LOCKED = 3
-EXIT_RESTORE_FAILED = 4
+# The end of the name of every copy a mutant runs in. The pre-push hook refuses a push from a
+# directory or of a branch whose name ends in it.
+MUTATION_TESTING_WORKTREE_LABEL = "-mutation-testing-worktree"
 
 
 def load_run_all_test_suites():
@@ -104,19 +106,8 @@ class NotRun(Exception):
     """Nothing was run; the message says why."""
 
 
-class RestoreFailed(Exception):
-    """A mutated file could not be put back; the message names where its original is kept."""
-
-
 class Terminated(BaseException):
-    """SIGTERM, SIGHUP or SIGINT arrived; raised so the mutated files are still put back."""
-
-
-@dataclass
-class KeptOriginal:
-    data: bytes
-    mode: int
-    times_ns: tuple
+    """SIGTERM, SIGHUP or SIGINT arrived; raised so the mutation-testing worktree is still removed."""
 
 
 def note_later_interruption(signal_number, frame):
@@ -124,7 +115,7 @@ def note_later_interruption(signal_number, frame):
 
 
 def raise_terminated(signal_number, frame):
-    # A second signal must not abort the restore the first one started.
+    # A second signal must not abort the cleanup the first one started.
     for interrupting in INTERRUPTING_SIGNALS:
         signal.signal(interrupting, note_later_interruption)
     raise Terminated(signal.Signals(signal_number).name)
@@ -215,60 +206,49 @@ def files_the_patch_changes(top, patch):
     return paths
 
 
-def keep_originals(top, paths, keep_dir):
-    """Copy each file's bytes into keep_dir and return {path: KeptOriginal}."""
-    originals = {}
-    for relative in paths:
-        target = top / relative
-        status = target.stat()
-        data = target.read_bytes()
-        kept = keep_dir / relative
-        kept.parent.mkdir(parents=True, exist_ok=True)
-        kept.write_bytes(data)
-        originals[relative] = KeptOriginal(data, status.st_mode & 0o7777,
-                                           (status.st_atime_ns, status.st_mtime_ns))
-    return originals
+def mutation_testing_worktree_make(top, work):
+    """Return a new git worktree of top's HEAD, in work, whose directory name ends in the label."""
+    copy = work / f"{top.name}{MUTATION_TESTING_WORKTREE_LABEL}"
+    added = runner.git(top, "worktree", "add", "--quiet", "--detach", str(copy), "HEAD")
+    if added.returncode != 0:
+        raise NotRun(f"the mutation-testing worktree {copy} could not be made: {added.stderr.strip()}")
+    return copy
 
 
-def restore_originals(top, originals, keep_dir):
-    """Write each original back and read it back; raise RestoreFailed naming any that differ."""
-    # A signal arriving half-way through would leave some files mutated.
-    failed = []
-    blocked = signal.pthread_sigmask(signal.SIG_BLOCK, INTERRUPTING_SIGNALS)
-    try:
-        failed = write_back(top, originals)
-    finally:
-        try:
-            signal.pthread_sigmask(signal.SIG_SETMASK, blocked)
-        except (Terminated, KeyboardInterrupt) as interruption:
-            if failed:
-                raise RestoreFailed(
-                    f"{', '.join(failed)}; the original of each is kept under {keep_dir} "
-                    f"(the run was also interrupted: {interruption})") from interruption
-            raise
-    if failed:
-        raise RestoreFailed(
-            f"{', '.join(failed)}; the original of each is kept under {keep_dir}")
+def mutation_testing_worktree_fill(top, copy):
+    """Make copy hold top's files as they are now.
+
+    Tracked files, with their uncommitted edits, and untracked files that are not ignored are
+    copied. A file of HEAD that top no longer has, whether deleted, staged for deletion or
+    renamed, is deleted in the copy.
+    """
+    listed = runner.git(top, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+    if listed.returncode != 0:
+        raise NotRun(f"git ls-files failed in {top}: {listed.stderr.strip()}")
+    for relative in sorted(set(path for path in listed.stdout.split("\0") if path)):
+        source, target = top / relative, copy / relative
+        if source.is_symlink() or source.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.is_symlink() or target.exists():
+                target.unlink()
+            shutil.copy2(source, target, follow_symlinks=False)
+    of_head = runner.git(copy, "ls-files", "-z")
+    if of_head.returncode != 0:
+        raise NotRun(f"git ls-files failed in {copy}: {of_head.stderr.strip()}")
+    for relative in (path for path in of_head.stdout.split("\0") if path):
+        target = copy / relative
+        if not os.path.lexists(top / relative) and (target.is_symlink() or target.is_file()):
+            target.unlink()
 
 
-def write_back(top, originals):
-    failed = []
-    for relative, original in originals.items():
-        target = top / relative
-        try:
-            target.write_bytes(original.data)
-            os.chmod(target, original.mode)
-            os.utime(target, ns=original.times_ns)
-            remove_cached_bytecode(target)
-            status = target.stat()
-            if target.read_bytes() != original.data:
-                failed.append(f"{relative} (read back differs)")
-            elif status.st_mode & 0o7777 != original.mode:
-                failed.append(f"{relative} (mode {oct(status.st_mode & 0o7777)}, "
-                              f"was {oct(original.mode)})")
-        except OSError as error:
-            failed.append(f"{relative} ({error})")
-    return failed
+def mutation_testing_worktree_remove(top, copy):
+    """Remove the mutation-testing worktree and its worktree record; return why it could not be, or None."""
+    removed = runner.git(top, "worktree", "remove", "--force", str(copy))
+    if removed.returncode != 0:
+        return (f"the mutation-testing worktree {copy} could not be removed "
+                f"({removed.stderr.strip()}). Remove it with: git -C {top} worktree remove "
+                f"--force {copy} (or, once that directory is gone, git -C {top} worktree prune)")
+    return None
 
 
 def remove_cached_bytecode(source):
@@ -277,8 +257,8 @@ def remove_cached_bytecode(source):
     A process that does not inherit PYTHONPYCACHEPREFIX, such as a child started
     with `python3 -I`, reads and writes bytecode beside the source. The mutant
     has the original's size, so bytecode written within the same second passes
-    Python's size-and-seconds staleness check: the original's would run during
-    the mutant run, and the mutant's after the restore.
+    Python's size-and-seconds staleness check: the original's, cached by the run
+    without the mutant in the same copy, would run during the mutant run.
     """
     if source.suffix != ".py":
         return
@@ -400,7 +380,7 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
     With bytecode_dir, Python started with this environment reads and writes
     bytecode only there, so a mutant run neither runs nor caches bytecode beside
     the sources. A child that drops the environment, such as `python3 -I`, still
-    caches beside them; the restore deletes that bytecode.
+    caches beside them, in the mutation-testing worktree, which is removed after the run.
 
     However the suite ends, every process it left is killed before this returns:
     inside a sandbox that this program did not start, nothing else would. On
@@ -471,7 +451,7 @@ def parse_arguments(argv):
 
 
 def run(arguments, platform):
-    """Return (verdict line, exit code). Raises NotRun or RestoreFailed."""
+    """Return (verdict line, exit code). Raises NotRun."""
     try:
         top = runner.checkout_top_directory(arguments.checkout)
         interpreter, _ = runner.interpreter_and_version(arguments.python)
@@ -527,31 +507,41 @@ def run(arguments, platform):
                 code = run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file,
                                           platform=platform)
                 return verdict(code, mutant=False)
-            paths = files_the_patch_changes(top, patch)
-            baseline = run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file,
-                                          platform=platform)
-            if baseline != 0:
-                raise NotRun(f"the suite fails without the mutant ({runner.describe_exit(baseline)}), "
-                             f"so a failure with the mutant in would not show the mutant "
-                             f"was caught; the mutant was not applied")
-            print(f"{PROGRAM}: the suite passes without the mutant", flush=True)
-            keep_dir = Path(tempfile.mkdtemp(prefix=f"{PROGRAM}-originals-"))
-            originals = keep_originals(top, paths, keep_dir)
+            copy = mutation_testing_worktree_make(top, work)
+            outcome = None
+            # Removal is armed before the copy is filled, so a failure or a signal while filling
+            # does not leave the worktree registered.
             try:
-                applied = runner.git(top, "apply", str(patch))
+                mutation_testing_worktree_fill(top, copy)
+                paths = files_the_patch_changes(copy, patch)
+                baseline = run_suite_confined(copy, suite, interpreter, sandbox_prefix,
+                                              proof_file, platform=platform)
+                if baseline != 0:
+                    raise NotRun(f"the suite fails without the mutant "
+                                 f"({runner.describe_exit(baseline)}), so a failure with the "
+                                 f"mutant in would not show the mutant was caught; the mutant "
+                                 f"was not applied")
+                print(f"{PROGRAM}: the suite passes without the mutant", flush=True)
+                applied = runner.git(copy, "apply", str(patch))
                 if applied.returncode != 0:
                     raise NotRun(f"git apply failed: {applied.stderr.strip()}")
                 for relative in paths:
-                    remove_cached_bytecode(top / relative)
-                print(f"{PROGRAM}: mutant applied to {', '.join(paths)}; originals kept "
-                      f"under {keep_dir}", flush=True)
-                code = run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file,
+                    remove_cached_bytecode(copy / relative)
+                print(f"{PROGRAM}: mutant applied to {', '.join(paths)} in the mutation-testing "
+                      f"worktree {copy}; {top} is not changed", flush=True)
+                code = run_suite_confined(copy, suite, interpreter, sandbox_prefix, proof_file,
                                           bytecode_dir=work / "bytecode", platform=platform)
+                outcome = verdict(code, mutant=True)
             finally:
-                restore_originals(top, originals, keep_dir)
-            print(f"{PROGRAM}: restored {', '.join(paths)} byte for byte", flush=True)
-            shutil.rmtree(keep_dir)
-            return verdict(code, mutant=True)
+                not_removed = mutation_testing_worktree_remove(top, copy)
+                if not_removed is not None:
+                    # A worktree left behind is a failure, whatever the run found.
+                    found = (outcome[0].removeprefix("VERDICT: ") if outcome
+                             else sys.exc_info()[1])
+                    raise NotRun(f"{not_removed}, then run this again. The run itself ended with: "
+                                 f"{found}; it counts as not run, because it left the worktree "
+                                 f"behind.")
+            return outcome
     finally:
         lock_handle.close()
 
@@ -580,11 +570,14 @@ def main(argv=None, platform=None):
         line, code = run(arguments, sys.platform if platform is None else platform)
     except NotRun as error:
         line, code = f"VERDICT: not run — {error}", EXIT_NOT_RUN
-    except RestoreFailed as error:
-        line, code = f"VERDICT: RESTORE FAILED — {error}", EXIT_RESTORE_FAILED
+    except OSError as error:
+        # A failure of the machine, such as a full disk while the worktree is filled.
+        line = (f"VERDICT: not run — {type(error).__name__}: {error}; run this again once "
+                f"that is put right")
+        code = EXIT_NOT_RUN
     except (Terminated, KeyboardInterrupt) as interruption:
         line = (f"VERDICT: not run — interrupted ({type(interruption).__name__} "
-                f"{interruption}); any mutated file was put back")
+                f"{interruption}); the checkout was not changed")
         code = EXIT_NOT_RUN
     print(line, flush=True)
     return code
