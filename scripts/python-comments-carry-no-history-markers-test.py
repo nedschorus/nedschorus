@@ -130,8 +130,6 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/open-iterm-window-running-command-test.py": 3,
     "scripts/post-compaction-session-continues-hook-test.py": 1,
     "scripts/pr-reviewer-instructions-copies-test.py": 5,
-    "scripts/protection-experiment-dismiss-stale-reviews-test.py": 11,
-    "scripts/protection-experiment-dismiss-stale-reviews.py": 12,
     "scripts/recover-crashed-seats-test.py": 168,
     "scripts/recover-crashed-seats.py": 31,
     "scripts/restart-live-seats-at-login-test.py": 38,
