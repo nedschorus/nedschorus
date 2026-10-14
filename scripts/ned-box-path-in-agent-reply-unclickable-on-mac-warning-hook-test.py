@@ -114,6 +114,39 @@ found = replacements_in("Not /Volumes/nedhome/a.md, not https://example.com/home
                         "not ~/home/nedlern/a, and not /homes/nedlern/a.")
 check("text that only resembles a /home/nedlern/ path is not noted", found == [], found)
 
+found = replacements_in("Run this on ned-box:\n\n```sh\nls `/home/nedlern/a.md`\n```\n")
+check("a code span on a line of a fenced code block is not noted", found == [], found)
+
+found = replacements_in("See [`/home/nedlern/a.md`](file:///Volumes/nedhome/a.md).")
+check("a link to a /Volumes/nedhome file whose text is a code-span path is not noted", found == [], found)
+
+found = replacements_in("See [`a]b` notes](/home/nedlern/a.md).")
+check("a link whose text holds a code span with a bracket is noted, keeping the text",
+      found == ["[`a]b` notes](file:///Volumes/nedhome/a.md)"], found)
+
+found = replacements_in("The chart: ![chart](/home/nedlern/agents/a/chart.png).")
+check("an image whose target is a /home/nedlern/ path is noted, as an image",
+      found == ["![chart](file:///Volumes/nedhome/agents/a/chart.png)"], found)
+
+found = hook.unopenable_paths_in("Open **file:///home/nedlern/report.md**, (file:///home/nedlern/b.md) "
+                                 "or <file:///home/nedlern/c.md>.")
+check("a bare file URL in bold, in parentheses or in angle brackets is noted without the delimiter",
+      [(path.written, path.replacement) for path in found]
+      == [("file:///home/nedlern/report.md", "[/home/nedlern/report.md](file:///Volumes/nedhome/report.md)"),
+          ("file:///home/nedlern/b.md", "[/home/nedlern/b.md](file:///Volumes/nedhome/b.md)"),
+          ("file:///home/nedlern/c.md", "[/home/nedlern/c.md](file:///Volumes/nedhome/c.md)")],
+      [(path.written, path.replacement) for path in found])
+
+found = hook.unopenable_paths_in("See _/home/nedlern/report.md_ and __/home/nedlern/b_.md__.")
+check("a bare path in underscore emphasis is noted without the underscores",
+      [path.written for path in found] == ["/home/nedlern/report.md", "/home/nedlern/b_.md"],
+      [path.written for path in found])
+
+found = replacements_in("The file is `</home/nedlern/a.md>` or `<file:///home/nedlern/b.md>`.")
+check("a code span holding one angle-bracketed path or file URL is noted",
+      found == ["[/home/nedlern/a.md](file:///Volumes/nedhome/a.md)",
+                "[/home/nedlern/b.md](file:///Volumes/nedhome/b.md)"], found)
+
 found = hook.unopenable_paths_in("Open file://localhost/home/nedlern/c.md.")
 check("a bare file URL is quoted without the sentence's punctuation",
       [path.written for path in found] == ["file://localhost/home/nedlern/c.md"],
@@ -241,10 +274,13 @@ check("as a subprocess, the hook notes the reply on ned-box and is silent elsewh
 
 
 result = run_hook("not json")
-check("a payload that is not JSON is a fault: one line on stderr, nothing on stdout, exit 1",
+check("a payload that is not JSON is a fault: stderr says the reply was not checked, why, and what to do; "
+      "nothing on stdout, exit 1",
       result.returncode == 1 and result.stdout == ""
-      and result.stderr.startswith(hook.PROGRAM + ": no check was made: JSONDecodeError")
-      and len(result.stderr.strip().splitlines()) == 1, (result.returncode, result.stdout, result.stderr))
+      and result.stderr.splitlines()[0] == hook.FAULT_LINES[0].format(
+          reason="JSONDecodeError: Expecting value: line 1 column 1 (char 0)")
+      and result.stderr.splitlines()[1:] == list(hook.FAULT_LINES[1:]),
+      (result.returncode, result.stdout, result.stderr))
 
 result = run_hook(json.dumps({"hook_event_name": "Stop"}))
 check("as a subprocess, a payload with nothing to check prints nothing and exits 0",

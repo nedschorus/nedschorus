@@ -21,18 +21,22 @@ nc-systems/handoff/daily-memory-review-mark.py decides: a session on the Mac
 names its own files by their Mac paths.
 
 NOTED, outside fenced code blocks:
-  - a link whose target is /home/nedlern/..., file:///home/nedlern/... or
-    file://localhost/home/nedlern/...; the link text is kept, so a log-store
-    citation's scp-form text stays as CLAUDE.md prescribes;
-  - a bare file:///home/nedlern/... URL;
+  - a link or an image whose target is /home/nedlern/...,
+    file:///home/nedlern/... or file://localhost/home/nedlern/...; the link
+    text is kept, so a log-store citation's scp-form text stays as CLAUDE.md
+    prescribes;
+  - a bare file:///home/nedlern/... URL, which ends where a bare path does, so
+    emphasis or a bracket around it is not taken into the suggested link;
   - a bare /home/nedlern/... path in the text, outside any link, unless the
     scp form's host prefix, such as nedlern@ned-box:, stands right before it;
-  - a code span whose whole content is one such path or file URL: the span
-    cites the path, as a reader would click it.
+    underscore emphasis around the path is not taken into it;
+  - a code span whose whole content is one such path or file URL, with or
+    without angle brackets: the span cites the path, as a reader would click it.
 NOT NOTED: a code span holding more than one word, which is a command, such
 as one the user runs on ned-box; a fenced code block, which holds commands
-or output; a link whose target is already file:///Volumes/nedhome/...; the
-scp form written as plain text.
+or output, including any code span on its lines; a link whose target is
+already file:///Volumes/nedhome/..., whatever its text holds; the scp form
+written as plain text.
 
 The suggested link keeps the link text a flagged link had. For a bare path in
 the log-store, its text is the scp citation nedlern@ned-box:/home/nedlern/...;
@@ -43,8 +47,9 @@ ONE NOTE PER REPLY, keyed by the reply's message id in a record per
 agent-session under the temporary directory, as the sibling hook keeps it: a
 task notification submits a prompt with no reply in between. A record that
 cannot be read or written leaves the note as it is and adds a line saying so.
-Nothing found: nothing printed, exit 0. A fault: one line naming it on stderr,
-nothing on stdout, exit 1, which Claude Code records as a non-blocking error.
+Nothing found: nothing printed, exit 0. A fault: FAULT_LINES on stderr, naming
+it and saying the reply went unchecked, nothing on stdout, exit 1, which Claude
+Code records as a non-blocking error.
 """
 
 import functools
@@ -66,8 +71,11 @@ SCP_CITATION_HOST_PREFIX = "nedlern@ned-box:"
 
 # Characters that end a path in prose: whitespace, quotes, brackets, Markdown
 # emphasis and table bars, and the barrier the sibling hook's masking writes.
+# An underscore is allowed in a path, so underscore emphasis is matched by
+# its opening run and the same run is cut from the path's end.
 PATH_REST = r"[^\s`'\"<>()\[\]{}|*\x00]*"
-BARE_PATH_PATTERN = re.compile(r"(?<![\w/.~-])/home/nedlern/" + PATH_REST)
+PATH_REST_PATTERN = re.compile(PATH_REST)
+BARE_PATH_PATTERN = re.compile(r"(?<![\w/.~-])(?P<emphasis>_*)(?P<path>/home/nedlern/" + PATH_REST + ")")
 SCP_HOST_PREFIX_BEFORE_PATH_PATTERN = re.compile(r"(?:[\w.-]+@)?ned-box:$")
 UNOPENABLE_TARGET_PATTERN = re.compile(
     r"^<?(?:file://(?:localhost)?)?/home/nedlern/(?P<rest>[^<>\s]*?)>?$", re.IGNORECASE)
@@ -93,6 +101,13 @@ HIT_LINE = '"{written}" in "{excerpt}": write {replacement}'
 MORE_HITS_LINE = ("{count} more not listed: reread the rest of the same reply for paths under "
                   "/home/nedlern/ given the same way.")
 SUGGESTED_LINK_TEMPLATE = "[{text}](file://" + MAC_MOUNT_OF_NED_BOX_HOME + "{rest})"
+FAULT_LINES = (
+    PROGRAM + ": your previous reply was not checked for /home/nedlern/ paths the user cannot "
+    "open on the Mac, because the check failed: {reason}",
+    "When you give the user a ned-box file to open, link the file as "
+    "file:///Volumes/nedhome/<the path after /home/nedlern/>.",
+    "If this failure is reported again on later prompts, tell the user, quoting the first line.",
+)
 NOTE_RECORD_FAILED_LINE = (
     PROGRAM + ": its record of the replies it has noted, {record}, could not be {action} "
     "({reason}), so this note may be sent again for the same reply. Nothing needs doing about "
@@ -141,6 +156,12 @@ def without_trailing_punctuation(path):
     return path.rstrip(TRAILING_SENTENCE_PUNCTUATION)
 
 
+def path_rest_as_in_prose(rest):
+    """rest cut where a bare path in prose would end, without the
+    sentence's punctuation."""
+    return without_trailing_punctuation(PATH_REST_PATTERN.match(rest).group(0))
+
+
 def spans_of(pattern, line):
     return [match.span() for match in pattern.finditer(line)]
 
@@ -166,31 +187,38 @@ def unopenable_paths_in(text):
         hits = []
         link_spans = spans_of(hook.MARKDOWN_LINK_PATTERN, linked)
         for start, end in link_spans:
-            parts = hook.LINK_TEXT_AND_TARGET_PATTERN.match(original, start)
-            if parts is None:
-                continue
+            image_marker = "!" if linked[start] == "!" else ""
+            # Matched on linked, where a code span in the link text is blanked
+            # and cannot end the text early; columns are the same as original's.
+            parts = hook.LINK_TEXT_AND_TARGET_PATTERN.match(linked, start + len(image_marker))
             target = UNOPENABLE_TARGET_PATTERN.match(parts.group("target"))
             if target:
+                text = original[parts.start("text"):parts.end("text")]
                 hits.append((start, original[start:end],
-                             suggested_link(target.group("rest"), parts.group("text"))))
+                             image_marker + suggested_link(target.group("rest"), text)))
         links_blanked = hook.MARKDOWN_LINK_PATTERN.sub(hook._blank, linked)
         for match in hook.BARE_URL_PATTERN.finditer(links_blanked):
             file_url = UNOPENABLE_FILE_URL_PATTERN.match(match.group(0))
             if file_url:
-                rest = without_trailing_punctuation(file_url.group("rest"))
-                hits.append((match.start(), without_trailing_punctuation(match.group(0)), suggested_link(rest)))
+                rest = path_rest_as_in_prose(file_url.group("rest"))
+                url_start = 1 if match.group(0).startswith("<") else 0
+                written = match.group(0)[url_start:file_url.start("rest") + len(rest)]
+                hits.append((match.start() + url_start, written, suggested_link(rest)))
         for match in hook.INLINE_CODE_PATTERN.finditer(original):
             if inside_any(match.start(), match.end(), link_spans):
                 continue
             content = match.group(0).strip("`").strip()
             path = UNOPENABLE_TARGET_PATTERN.match(without_trailing_punctuation(content))
-            if path and not path.group(0).startswith("<"):
+            if path:
                 hits.append((match.start(), match.group(0), suggested_link(path.group("rest"))))
         for match in BARE_PATH_PATTERN.finditer(prose):
             if SCP_HOST_PREFIX_BEFORE_PATH_PATTERN.search(prose, 0, match.start()):
                 continue
-            path = without_trailing_punctuation(match.group(0))
-            hits.append((match.start(), path, suggested_link(path[len(NED_BOX_HOME):])))
+            path = without_trailing_punctuation(match.group("path"))
+            emphasis = match.group("emphasis")
+            if emphasis and path.endswith(emphasis):
+                path = without_trailing_punctuation(path[:-len(emphasis)])
+            hits.append((match.start("path"), path, suggested_link(path[len(NED_BOX_HOME):])))
         for start, written, replacement in sorted(hits, key=lambda hit: hit[0]):
             if any(earlier.replacement == replacement for earlier in found):
                 continue
@@ -270,7 +298,8 @@ def main():
             print(output)
     except Exception as error:
         try:
-            print(f"{PROGRAM}: no check was made: {type(error).__name__}: {error}", file=sys.stderr)
+            reason = f"{type(error).__name__}: {error}"
+            print("\n".join(FAULT_LINES).format(reason=reason), file=sys.stderr)
         except Exception:
             pass
         return 1
