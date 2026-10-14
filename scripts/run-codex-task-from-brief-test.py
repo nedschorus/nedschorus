@@ -4,7 +4,9 @@
 The fake records its arguments and, by the FAKE_CODEX_MODE environment
 variable, writes a report, fails with or without a report, writes nothing,
 sleeps past the deadline with a child that may ignore SIGTERM, or blocks
-reading stdin. Each case runs the real program as a process.
+reading stdin. Each case runs the real program as a process. The deadline and
+stdin cases run a second time with a fake `find` that sleeps 31 s first, so the
+credential-file scan done before Codex starts must not count against their limits.
 
 Run: python3 scripts/run-codex-task-from-brief-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -16,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -78,20 +81,69 @@ try:
     brief.write_text("Do the task.\nSecond line.\n")
     arguments_file = scratch / "arguments.json"
     child_pid_file = scratch / "child.pid"
+    # A scratch HOME keeps each run's credential-file scan, done before Codex starts,
+    # from walking the real home directory; it only shortens the suite.
+    scratch_home = scratch / "home"
+    scratch_home.mkdir()
+    # Stands in for a scan slowed by a busy machine: the time limits must not count it.
+    slow_find_dir = scratch / "slow-find-bin"
+    slow_find_dir.mkdir()
+    real_find = shutil.which("find")
+    slow_find = slow_find_dir / "find"
+    slow_find.write_text(f'#!/bin/sh\nsleep 31\nexec "{real_find}" "$@"\n')
+    slow_find.chmod(0o755)
 
-    def run(mode, *extra, stdin=None, timeout=60):
-        environment = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-                           FAKE_CODEX_MODE=mode,
+    def run(mode, *extra, stdin=None, timeout=60, path_first=None):
+        """Run the program; return (completed, report, seconds since it said it is running Codex).
+
+        timeout counts from that stderr line, which the program prints after building
+        Codex's command line, so preparing the command line counts against no limit.
+        On timeout the program is killed and subprocess.TimeoutExpired is raised.
+        """
+        path = os.pathsep.join(str(d) for d in (path_first, bin_dir) if d)
+        environment = dict(os.environ, PATH=f"{path}{os.pathsep}{os.environ['PATH']}",
+                           HOME=str(scratch_home), FAKE_CODEX_MODE=mode,
                            FAKE_CODEX_ARGUMENTS_FILE=str(arguments_file),
                            FAKE_CODEX_CHILD_PID_FILE=str(child_pid_file))
         report = scratch / f"report-{mode}.md"
-        started = time.monotonic()
-        completed = subprocess.run(
-            [sys.executable, str(PROGRAM), "-C", str(checkout), "--brief", str(brief),
-             "-o", str(report), *extra],
-            env=environment, stdin=stdin, capture_output=True, text=True,
-            timeout=timeout, check=False)
-        return completed, report, time.monotonic() - started
+        command = [sys.executable, str(PROGRAM), "-C", str(checkout), "--brief", str(brief),
+                   "-o", str(report), *extra]
+        process = subprocess.Popen(command, env=environment, stdin=stdin,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout_parts, stderr_lines = [], []
+        codex_started = threading.Event()
+        started_at = []
+
+        def read_stderr():
+            for line in process.stderr:
+                if not codex_started.is_set() and "running Codex in" in line:
+                    started_at.append(time.monotonic())
+                    codex_started.set()
+                stderr_lines.append(line)
+            codex_started.set()
+
+        readers = [threading.Thread(target=read_stderr),
+                   threading.Thread(target=lambda: stdout_parts.append(process.stdout.read()))]
+        for reader in readers:
+            reader.start()
+        # The wait before that line has a bound only so a hung scan cannot hang the suite.
+        if not codex_started.wait(timeout=600):
+            process.kill()
+        start = started_at[0] if started_at else time.monotonic()
+        try:
+            process.wait(timeout=max(0, timeout - (time.monotonic() - start)))
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            for reader in readers:
+                reader.join()
+            raise
+        for reader in readers:
+            reader.join()
+        elapsed = time.monotonic() - start
+        completed = subprocess.CompletedProcess(command, process.returncode,
+                                                "".join(stdout_parts), "".join(stderr_lines))
+        return completed, report, elapsed
 
     completed, report, _ = run("report")
     arguments = json.loads(arguments_file.read_text())
@@ -172,7 +224,8 @@ try:
     dash_brief = scratch / "dash-brief.md"
     dash_brief.write_text("---\ntitle: front matter\n---\nDo the task.\n")
     environment = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-                       FAKE_CODEX_MODE="report", FAKE_CODEX_ARGUMENTS_FILE=str(arguments_file))
+                       HOME=str(scratch_home), FAKE_CODEX_MODE="report",
+                       FAKE_CODEX_ARGUMENTS_FILE=str(arguments_file))
     completed = subprocess.run(
         [sys.executable, str(PROGRAM), "-C", str(checkout), "--brief", str(dash_brief),
          "-o", str(scratch / "dash-report.md")], env=environment, capture_output=True,
@@ -190,22 +243,26 @@ try:
           and not report.exists(),
           f"exit {completed.returncode}, stderr {completed.stderr!r}")
 
-    child_pid_file.unlink(missing_ok=True)
-    completed, report, elapsed = run("sleep", "--deadline-minutes", "0.05")
-    child_pid = int(child_pid_file.read_text()) if child_pid_file.exists() else None
-    time.sleep(0.5)
-    child_alive = False
-    if child_pid:
-        try:
-            os.kill(child_pid, 0)
-            child_alive = True
-        except ProcessLookupError:
-            pass
-    check("the deadline stops Codex, exits 1 and says so",
-          completed.returncode == 1 and "deadline" in completed.stderr and elapsed < 30,
-          f"exit {completed.returncode}, {elapsed:.1f}s, stderr {completed.stderr!r}")
-    check("the deadline also stops the processes Codex started",
-          child_pid is not None and not child_alive, f"child {child_pid} alive={child_alive}")
+    def check_deadline_stops_codex(case_suffix="", path_first=None):
+        child_pid_file.unlink(missing_ok=True)
+        completed, report, elapsed = run("sleep", "--deadline-minutes", "0.05",
+                                         path_first=path_first)
+        child_pid = int(child_pid_file.read_text()) if child_pid_file.exists() else None
+        time.sleep(0.5)
+        child_alive = False
+        if child_pid:
+            try:
+                os.kill(child_pid, 0)
+                child_alive = True
+            except ProcessLookupError:
+                pass
+        check("the deadline stops Codex, exits 1 and says so" + case_suffix,
+              completed.returncode == 1 and "deadline" in completed.stderr and elapsed < 30,
+              f"exit {completed.returncode}, {elapsed:.1f}s, stderr {completed.stderr!r}")
+        check("the deadline also stops the processes Codex started" + case_suffix,
+              child_pid is not None and not child_alive, f"child {child_pid} alive={child_alive}")
+
+    check_deadline_stops_codex()
 
     child_pid_file.unlink(missing_ok=True)
     completed, report, elapsed = run("sleep-child-ignores-sigterm", "--deadline-minutes", "0.05")
@@ -224,19 +281,32 @@ try:
           completed.returncode == 1 and child_pid is not None and not child_alive,
           f"exit {completed.returncode}, child {child_pid} alive={child_alive}, {elapsed:.1f}s")
 
-    # The caller's own stdin is an open pipe that never closes; the fake must still see EOF.
-    holder = subprocess.Popen(["sleep", "60"], stdout=subprocess.PIPE)
-    try:
-        completed, report, elapsed = run("read-stdin", stdin=holder.stdout, timeout=30)
-    except subprocess.TimeoutExpired:
-        completed, elapsed = None, 30
-    finally:
-        holder.kill()
-        holder.wait()
-    check("Codex's stdin is closed even when the caller's stdin is an open pipe",
-          completed is not None and completed.returncode == 0
-          and report.read_text().strip() == "stdin held 0 characters",
-          f"completed {completed!r}")
+    def check_codex_stdin_closed(case_suffix="", path_first=None):
+        # The caller's own stdin is an open pipe that never closes; the fake must still see EOF.
+        holder = subprocess.Popen(["sleep", "600"], stdout=subprocess.PIPE)
+        try:
+            completed, report, elapsed = run("read-stdin", stdin=holder.stdout, timeout=30,
+                                             path_first=path_first)
+        except subprocess.TimeoutExpired:
+            completed, report = None, None
+        finally:
+            holder.kill()
+            holder.wait()
+        check("Codex's stdin is closed even when the caller's stdin is an open pipe" + case_suffix,
+              completed is not None and completed.returncode == 0
+              and report.read_text().strip() == "stdin held 0 characters",
+              f"completed {completed!r}")
+
+    check_codex_stdin_closed()
+
+    # The program scans for credential files with find only on Linux.
+    if sys.platform.startswith("linux"):
+        slow_scan_suffix = ", with a credential-file scan that takes 31 s"
+        check_deadline_stops_codex(slow_scan_suffix, path_first=slow_find_dir)
+        check_codex_stdin_closed(slow_scan_suffix, path_first=slow_find_dir)
+    else:
+        print("SKIP  the deadline and stdin cases with a 31 s credential-file scan: "
+              "the program runs find only on Linux")
 
     empty_brief = scratch / "empty.md"
     empty_brief.write_text("  \n")
