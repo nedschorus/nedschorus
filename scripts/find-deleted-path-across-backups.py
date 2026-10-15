@@ -1763,8 +1763,9 @@ def main(argv=None, runner=run_command):
         description="Find a deleted path across this Mac's local snapshots, git and its reflog, the log-store, "
                     "agent transcripts, Timeshift on the box, and Time Machine.",
     )
-    parser.add_argument("path", help="repo-relative, absolute, or the path's last whole components, "
-                                     "such as dispositions.md for docs/dispositions.md but not docs/old-dispositions.md; "
+    parser.add_argument("path", help="repo-relative, absolute, or the path's last whole component or components, "
+                                     "such as dispositions.md for docs/dispositions.md but not docs/old-dispositions.md, "
+                                     "matched with case; "
                                      "the scp form nedlern@ned-box:<path>, ../<path> and ~/<path> are read too; "
                                      "a path that opens with a dash goes after --")
     parser.add_argument("--repo", default=os.environ.get("FIND_DELETED_PATH_REPO", "."),
