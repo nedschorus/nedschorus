@@ -23,12 +23,12 @@ paragraph it wrote, and to write later Markdown files the same way.
 
 Which lines form a paragraph is decided by markdown-it-py's CommonMark parser, not
 by this file: a paragraph, in a list item or at the top level, is broken when its
-inline content holds a soft line break. Without markdown-it-py installed, the hook
-writes one line to stderr and exits 1, which Claude Code shows as a non-blocking
-hook error, so a machine lacking the package is told the reminder is off there.
-Install it with the python3 the hooks run, the one `command -v python3` finds in
-the shell Claude Code runs hooks from:
-python3 -m pip install --user --break-system-packages markdown-it-py
+inline content holds a soft line break. markdown-it-py is pinned in
+nc-systems/general-tools/python-libraries-pinned-requirements.txt; when it is
+missing, the hook installs the pinned file through the shared install module,
+for the python3 the hooks run. When that install fails, the hook writes to
+stderr what failed, what the install printed and the command that installs it
+by hand, and exits 1, which Claude Code shows as a non-blocking hook error.
 
 A file holding display math ($$) or a footnote definition ([^label]:) gets no
 reminder at all: CommonMark reads both as paragraphs, and judging their line
@@ -41,14 +41,17 @@ exit 1. Claude Code records a PostToolUse exit 1 as a non-blocking error and kee
 write; exit 0 would read as "no broken paragraph found". A file that is not UTF-8 is
 not a fault: the hook judges only UTF-8 text, and stays silent on other bytes."""
 
+import functools
+import importlib.util
 import json
 import re
+import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 MARKDOWN_SUFFIXES = (".md", ".markdown")
-GIT_TIMEOUT_SECONDS = 10
 
 REMINDER_MESSAGE = (
     "markdown-edit-hard-wrapped-paragraph-reminder: the text you just wrote in {path} holds a "
@@ -71,69 +74,102 @@ UNJUDGED_BLOCK_START_PATTERN = re.compile(r"\$\$|\[\^[^\]]+\]:")
 # An inline <br> at a line's end is a hard break the author chose, like two trailing spaces.
 LINE_END_BREAK_TAG_PATTERN = re.compile(r"^<br\s*/?>$", re.IGNORECASE)
 PARSER_MISSING_MESSAGE = (
-    "markdown-edit-hard-wrapped-paragraph-reminder: markdown-it-py is not installed, "
-    "so the hard-wrap reminder is off on this machine.")
+    "markdown-edit-hard-wrapped-paragraph-reminder: markdown-it-py is missing on {host} and "
+    "installing it failed, so the paragraphs you just wrote were not checked for hard wraps.\n"
+    "Go on with your task, and write each paragraph and list item as one line, however long.\n"
+    "Tell the user, or, if you are a subagent, the agent that dispatched you, in these words: "
+    "\"markdown-it-py is missing on {host} and could not be installed, so the hard-wrap reminder "
+    "is off there. To install it by hand, run this command {where}:\" Then give the install "
+    "command on a line of its own:\n"
+    "{command}\n"
+    "Then pass on what the install printed, quoted as it is: {install_output}")
+PARSER_MISSING_BELOW_MINIMUM_PYTHON_MESSAGE = (
+    "markdown-edit-hard-wrapped-paragraph-reminder: markdown-it-py is missing on {host} and "
+    "installing it failed, so the paragraphs you just wrote were not checked for hard wraps.\n"
+    "Go on with your task, and write each paragraph and list item as one line, however long.\n"
+    "Tell the user, or, if you are a subagent, the agent that dispatched you, in these words: "
+    "\"markdown-it-py is missing on {host} and could not be installed, so the hard-wrap reminder "
+    "is off there. {instruction}\" "
+    "Then pass on what the install printed, quoted as it is: {install_output}")
+# PostToolUse hooks run under a 30-second timeout; a cached wheel installs in about a second.
+INSTALL_TIMEOUT_SECONDS = 8
+INSTALL_STATE_DIRECTORY = Path.home() / ".cache" / "nedschorus-markdown-edit-hard-wrapped-paragraph-reminder"
 
 
 class MarkdownParserMissing(Exception):
-    """markdown-it-py cannot be imported."""
+    """markdown-it-py cannot be imported, and installing it failed; install_output says how."""
+
+    def __init__(self, install_output):
+        super().__init__(install_output)
+        self.install_output = install_output
 
 
-class GitIgnoreCheckFailed(Exception):
-    """git check-ignore could not say whether the file is ignored."""
+@functools.lru_cache(maxsize=None)
+def python_libraries_pinned_requirements_install_if_missing_then_import_common():
+    """Return the shared install module, loaded by path when first needed."""
+    specification = importlib.util.spec_from_file_location(
+        "python_libraries_pinned_requirements_install_if_missing_then_import_common",
+        Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+        / "python-libraries-pinned-requirements-install-if-missing-then-import-common.py")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
 
-def run_git(arguments, working_directory: Path):
-    return subprocess.run(["git", *arguments], cwd=str(working_directory),
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=GIT_TIMEOUT_SECONDS, check=False)
+
+def import_markdown_it():
+    """Return the MarkdownIt class, raising ImportError when markdown-it-py is missing."""
+    from markdown_it import MarkdownIt
+    return MarkdownIt
 
 
-def enclosing_checkout_root(directory: Path):
-    """Return the nearest checkout root at or above directory, or None."""
-    for candidate in (directory, *directory.parents):
-        git_marker = candidate / ".git"
+def _install_pinned_python_libraries(runner=subprocess.run):
+    return python_libraries_pinned_requirements_install_if_missing_then_import_common().pinned_requirements_pip_install(
+        INSTALL_TIMEOUT_SECONDS, runner)
+
+
+def parser_missing_message(error, host=None, python_version=None):
+    """Return the stderr text for markdown-it-py missing on this machine and its install failed."""
+    host = host or socket.gethostname().split(".")[0]
+    install = python_libraries_pinned_requirements_install_if_missing_then_import_common()
+    where, command = install.pinned_requirements_by_hand_install_command(
+        host, python_version=python_version)
+    if command is None:
+        return PARSER_MISSING_BELOW_MINIMUM_PYTHON_MESSAGE.format(
+            host=host, instruction=install.python_below_minimum_version_instruction(host, python_version),
+            install_output=error.install_output)
+    return PARSER_MISSING_MESSAGE.format(host=host, where=where, command=command,
+                                         install_output=error.install_output)
+
+
+def _load_edited_file_path_within_checkout_root_and_git_check_ignore():
+    """Return the shared checkout and git-tracking helpers, loaded by path; raises when they will not load."""
+    specification = importlib.util.spec_from_file_location(
+        "edited_file_path_within_checkout_root_and_git_check_ignore_common",
+        Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+        / "edited-file-path-within-checkout-root-and-git-check-ignore-common.py")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def markdown_parser(importer=import_markdown_it, installer=_install_pinned_python_libraries, clock=time.time):
+    """Return a CommonMark parser with tables, installing markdown-it-py when it is missing.
+
+    markdown-it-py and mdurl are written only in Python, so once their half-imported modules
+    are dropped, this process imports the installed copy and never needs a new process.
+
+    Raises MarkdownParserMissing when markdown-it-py is missing and installing it failed.
+    """
+    try:
+        markdown_it_class = importer()
+    except ImportError:
+        install = python_libraries_pinned_requirements_install_if_missing_then_import_common()
         try:
-            if git_marker.is_file() or (git_marker / "HEAD").is_file():
-                return candidate
-        except OSError:
-            continue
-    return None
-
-
-def checkout_relative_path(file_path: str, working_directory: Path):
-    """Return (checkout root, Git-relative path), or None outside the session checkout."""
-    # Resolve both paths so macOS /tmp and /private/tmp compare equal.
-    try:
-        root = enclosing_checkout_root(working_directory.resolve())
-        if root is None:
-            return None
-        return root, Path(file_path).resolve().relative_to(root).as_posix()
-    except (ValueError, OSError, RuntimeError):
-        return None
-
-
-def git_would_track(root: Path, relative_path: str) -> bool:
-    """Return whether git would track relative_path; raise GitIgnoreCheckFailed when git cannot say."""
-    # check-ignore exits 0 for ignored, 1 for trackable, and 128 for failure; tracked files are never ignored.
-    try:
-        completed = run_git(["check-ignore", "-q", "--", relative_path], root)
-    except (OSError, subprocess.SubprocessError) as error:
-        raise GitIgnoreCheckFailed(f"git check-ignore could not run: {error}") from error
-    if completed.returncode == 1:
-        return True
-    if completed.returncode == 0:
-        return False
-    detail = completed.stderr.strip().splitlines()
-    raise GitIgnoreCheckFailed(
-        f"git check-ignore exited {completed.returncode}" + (f": {detail[0]}" if detail else ""))
-
-
-def markdown_parser():
-    try:
-        from markdown_it import MarkdownIt
-    except ImportError as error:
-        raise MarkdownParserMissing(str(error)) from error
-    return MarkdownIt("commonmark").enable("table")
+            markdown_it_class = install.python_libraries_pinned_requirements_install_if_missing_then_import(
+                importer, installer, clock, lambda: False, INSTALL_STATE_DIRECTORY, ("markdown_it", "mdurl"))
+        except install.PythonLibrariesPinnedRequirementsInstallOrImportFailed as error:
+            raise MarkdownParserMissing(error.install_output) from error
+    return markdown_it_class("commonmark").enable("table")
 
 
 def front_matter_blanked(text: str) -> str:
@@ -179,7 +215,7 @@ def markdown_broken_paragraph_line_ranges(text: str) -> list:
     the line breaks of the text it quotes. Hard breaks, two trailing spaces, a
     trailing backslash or a trailing <br>, are breaks the author chose. A file
     holding display math or a footnote definition is never reported.
-    Raises MarkdownParserMissing when markdown-it-py cannot be imported."""
+    Raises MarkdownParserMissing when markdown-it-py is missing and installing it failed."""
     parser = markdown_parser()
     if holds_math_or_footnote_definition(text):
         return []
@@ -228,7 +264,7 @@ def edit_added_line_numbers(tool_response) -> set:
 
 def markdown_has_hard_wrapped_paragraph(text: str) -> bool:
     """True when the file holds a paragraph markdown_broken_paragraph_line_ranges reports.
-    Raises MarkdownParserMissing when markdown-it-py cannot be imported."""
+    Raises MarkdownParserMissing when markdown-it-py is missing and installing it failed."""
     return bool(markdown_broken_paragraph_line_ranges(text))
 
 def main() -> int:
@@ -246,13 +282,14 @@ def main() -> int:
     if not isinstance(working_directory, str) or not Path(working_directory).is_dir():
         return 0
 
-    located = checkout_relative_path(file_path, Path(working_directory))
+    checks = _load_edited_file_path_within_checkout_root_and_git_check_ignore()
+    located = checks.checkout_relative_path(file_path, Path(working_directory))
     if located is None:
         return 0
     root, relative_path = located
     try:
-        trackable = git_would_track(root, relative_path)
-    except GitIgnoreCheckFailed as error:
+        trackable = checks.git_would_track(root, relative_path)
+    except checks.GitCommandFailed as error:
         print(f"markdown-edit-hard-wrapped-paragraph-reminder: {error}, so no reminder check was made.",
               file=sys.stderr)
         return 1
@@ -264,8 +301,8 @@ def main() -> int:
         return 0
     try:
         broken_ranges = markdown_broken_paragraph_line_ranges(text)
-    except MarkdownParserMissing:
-        print(PARSER_MISSING_MESSAGE, file=sys.stderr)
+    except MarkdownParserMissing as error:
+        print(parser_missing_message(error), file=sys.stderr)
         return 1
     if tool_name == "Edit" and broken_ranges:
         try:

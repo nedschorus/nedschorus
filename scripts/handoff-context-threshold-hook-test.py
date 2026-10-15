@@ -666,6 +666,14 @@ with tempfile.TemporaryDirectory() as workspace:
               result.returncode == 0 and not result.stderr.strip(),
               f"code {result.returncode}, stderr {result.stderr[:120]}")
 
+        result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(loud),
+                           "stop_hook_active": True})
+        check("hook stays silent at the threshold while the agent answers a Stop hook",
+              result.returncode == 0 and not result.stderr.strip() and not result.stdout.strip(),
+              f"code {result.returncode}, stderr {result.stderr[:120]}")
+        check("hook marks nothing fired while the agent answers a Stop hook",
+              not marker_file.exists(), marker_file)
+
         result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(loud)})
         check("hook fires at the threshold", result.returncode == 2, f"code {result.returncode}")
         check("hook names the handoff skill", "handoff skill" in result.stderr, result.stderr[:160])

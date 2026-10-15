@@ -4,6 +4,7 @@
 Usage:
   scripts/run-all-test-suites.py [--checkout DIR] [--python INTERPRETER]
                                  [-j N] [--log-dir DIR] [--lock-file PATH]
+                                 [--wait-for-lock-seconds N]
                                  [--only-suites-whose-recorded-inputs-changed-since COMMIT]
                                  [--recorded-inputs-directory DIR]
 
@@ -11,14 +12,23 @@ Usage:
                 checkout this file is in
   --python      the interpreter that runs each suite file; default, the one
                 running this program
-  -j            how many suites run at once; default, the machine's core
-                count, or the number of suites to run when that is fewer
+  -j            how many suites of this run may run at once; default, on Linux
+                in test sandboxes, every suite to run, up to admission's
+                ceiling, and otherwise the machine's core count, or the number
+                of suites to run when that is fewer
   --log-dir     where each suite's output and the report are written;
                 default, a new directory under the system temp directory,
                 removed two days after its run ends. Two runs cannot share
                 one --log-dir: the second exits 3
-  --lock-file   the lock that keeps two runs on one machine apart; default
-                ~/.claude/.run-all-test-suites.lock
+  --lock-file   default ~/.claude/.run-all-test-suites.lock. Where each suite
+                runs in a test sandbox (Linux with bwrap), no lock is taken: the
+                run records and the admission directory beside this path are
+                shared by every run that names it. Elsewhere (macOS, or Linux
+                without bwrap), the lock that keeps two runs on one machine apart
+  --wait-for-lock-seconds N
+                where the lock is taken, wait up to N seconds for it, in the
+                kernel's queue as `flock -w` waits, before exiting 3; default 0,
+                no wait. Accepted and without effect where no lock is taken
   --only-suites-whose-recorded-inputs-changed-since COMMIT
                 run only the suites whose recorded inputs differ between
                 COMMIT and the checkout's files; see RECORDED INPUTS below.
@@ -59,12 +69,54 @@ checkout's top directory, stdin closed,
 stdout and stderr together into its own log file. A suite that starts
 `python3` itself gets whatever PATH finds, not --python.
 
-EACH SUITE RUNS IN A SIGNAL SANDBOX on Linux: `bwrap --dev-bind / /
---unshare-pid --die-with-parent --proc /proc`, so the suite and everything it
-starts sit in a PID namespace of their own. The file system and network are
-unchanged, and the suite runs as the same user, so a signal a suite sends can
-reach only the processes it started, never the agent-seats that run as the
-same account. bwrap also gives the suite a user namespace of its own, in which
+EACH SUITE RUNS IN A SIGNAL SANDBOX on Linux: bwrap with
+SIGNAL_SANDBOX_BWRAP_ARGUMENTS, so the suite and everything it starts sit in a
+PID namespace of their own. The suite runs as the same user, so a signal a
+suite sends can reach only the processes it started, never the agent-seats
+that run as the same account.
+
+THE SIGNAL SANDBOX IS ALSO EACH SUITE'S TEST SANDBOX, built when the
+suite starts and gone when it ends. It hides by default, because a list of
+files or sockets to cover misses every one not on it and every one made after
+the list. The file system is read-only, except: a private /tmp, which TMPDIR
+and TMUX_TMPDIR name, so no tmux server or socket of an agent-seat is
+reachable; a private /dev and System V IPC; the home directory, an empty
+tmpfs the suite may write, into which only the paths in
+TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY are bound, read-only, each with the
+reason suites need it, so no credential in the home directory is there; the
+checkout under test, bound writable, so what the suite writes there stays;
+and the suite's own input record and strace traces, which this program reads
+after the suite ends. An interpreter given with --python from inside the home
+directory is shown read-only too. The directories in
+TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS, such as /mnt, where the
+backup drive holds copies of the home directory, are empty tmpfs, and so is
+every other directory this account can create a file in, such as /var/tmp,
+found by one scan of the machine per process: a socket or file a process
+outside makes there after the suite starts is never visible inside. The run's
+log directory, where this program writes, is out of the suite's reach, and
+the input recorder is shown read-only; this program writes and reads the
+files there without following a symbolic link. The checkout's git common
+directory is bound read-only above the checkout, since every worktree of the
+repository shares it, and so is a linked worktree's .git file, which names
+the git directory every later git command in the checkout uses; when the
+common directory cannot be found, the run stops with exit 2. No variable
+that TEST_SUITE_CREDENTIAL_ENVIRONMENT_VARIABLE_PATTERNS matches reaches a
+suite. /run is an empty tmpfs: it holds the machine's sockets, Docker's and
+the system bus among them, and the session's runtime directory, with the
+D-Bus session bus, through which `systemd-run --user` would start processes
+outside the sandbox, and the sockets of the running agent-sessions. A
+read-only mount does not stop a connection to a socket, so a listening Unix
+socket still visible after that, made by a service in a directory this
+account cannot write, is hidden with its whole directory, so one the service
+makes there again stays hidden; one directly in a system directory such as
+/var is covered by an empty file. The variables in
+TEST_SANDBOX_OUTSIDE_SOCKET_VARIABLES, which name sockets
+outside, are unset. The suite gets a network of its own, holding only loopback, so it
+reaches no port and no abstract Unix socket outside, the X server's included;
+a suite in SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK keeps the
+machine's network, for the reason listed there.
+scripts/run-all-test-suites-test-sandbox-escape-test.py tries
+each escape and fails if one works. bwrap also gives the suite a user namespace of its own, in which
 every file owned by another user, root included, shows as owned by nobody: a
 check of a file's owner, such as ssh's check of its config files, fails there. bwrap is
 tried once before any suite runs; when it is on PATH but cannot start, the
@@ -174,13 +226,20 @@ prints its skips and then "all cases passed", which is how a run that
 dropped its end-to-end cases used to read as a full pass. A skip never
 changes a verdict; it is reported beside it.
 
-ONE RUN AT A TIME PER MACHINE. Measured 2026-09-21: two overlapping runs of
-scripts/resupervise-seat-test.py both exit 0 and both print "all cases
-passed" while silently dropping cases to SKIP, because the suites share
-machine state. So a run takes an exclusive lock on --lock-file, and a
-second run on the same machine exits 3 without running anything. The lock
-file names its holder (process id, checkout, start time), and the refusal
-prints it.
+RUNS THAT OVERLAP, AND ONE RUN AT A TIME WITHOUT TEST SANDBOXES. Measured
+2026-09-21: two overlapping runs of scripts/resupervise-seat-test.py both exit
+0 and both print "all cases passed" while silently dropping cases to SKIP,
+because the suites share machine state. On Linux with bwrap each suite runs in
+a test sandbox of its own (see THE SIGNAL SANDBOX IS ALSO EACH SUITE'S TEST SANDBOX above), which shares no /tmp, tmux
+directory or home directory writes with any other suite, so runs overlap
+freely and no lock is taken; ADMISSION below decides when each suite starts.
+Where suites do not run in test sandboxes, a run takes an exclusive lock on
+--lock-file, and a second run on the same machine exits 3 without running
+anything, or, with --wait-for-lock-seconds, waits for the lock first. A wait blocks in the
+kernel's queue: a caller that instead retried every few seconds lost the lock
+to every `flock -w` waiter on it and never ran. The lock file names its
+holder (process id, checkout, start time), and the refusal prints it, unless
+that process has ended.
 
 RUN RECORDS, on Linux. Each run writes a record into the directory beside
 its lock file (<lock file>.runs): its own process id and start time, its
@@ -198,6 +257,27 @@ started in a session of its own is not covered. The temporary log
 directories runs made before records existed are removed once nothing in
 them has changed for two days. macOS has no /proc to read start times
 from, so there a run still cleans up after the lock's last holder.
+
+ADMISSION, on Linux in test sandboxes.
+Every run on the machine shares one admission, kept in the directory beside
+--lock-file. A suite starts only while the machine's CPU use averaged over the
+last 5 s is under 50% and its available memory is above 10 GB, read with
+psutil; at most 4 suites start per second and at most 64 run at once on the
+machine, each holding an flock on one of 64 slot files, so the kernel frees
+the slot of a killed run. A suite run outside the test sandbox first takes the
+lock those suites share, then a slot, so it never holds a slot while it waits.
+A suite that cannot start waits with no time limit, and once a minute the run
+reports what its suites wait for. A failure to decide, such as a machine
+reading that fails or a slot file that cannot be opened, stops the run with
+exit 2. Every suite runs at nice 10, in a cgroup scope of its own
+(`systemd-run --user --scope`), whose counters give the suite's CPU seconds
+and peak memory, every process it starts included. The
+run records the machine's CPU use, available memory and load every second in
+machine-cpu-and-memory-readings.tsv in its log directory, each suite's kind, admission wait,
+CPU seconds and peak memory in test-suite-resource-use.tsv, each case line's time in
+test-case-times.tsv, and all of it as JUnit XML in junit.xml. Every failing
+case is added to test-case-failure-history.jsonl in
+--recorded-inputs-directory, with its commit and branch.
 
 CONCURRENCY. -j N runs N suites at once. The default is the machine's core
 count (4 when Python cannot tell), or the number of suites to run when that
@@ -417,15 +497,17 @@ these.
 EXIT. 0 when every suite exited 0; 1 when any suite failed; 2 when the run
 could not start (not a checkout's top directory, no suites listed, git or
 the interpreter unusable, a COMMIT git cannot resolve); 3 when another run
-holds the lock.
+holds the lock, where a lock is taken.
 """
 
 import argparse
 import codecs
+import collections
 import concurrent.futures
 import contextlib
 import datetime
 import fcntl
+import fnmatch
 import functools
 import hashlib
 import json
@@ -433,11 +515,13 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import xml.etree.ElementTree
 from pathlib import Path
 
 PROGRAM = "run-all-test-suites"
@@ -472,8 +556,77 @@ AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES = (
 # again (Ubuntu's AppArmor profile denies them capabilities), so a run inside
 # the sandbox, such as a suite that tests this program, runs its suites as they
 # are: they are already inside.
+#
+# On Linux, each suite's test sandbox is these signal-sandbox arguments, shared by every
+# suite, plus the per-suite arguments of bwrap_arguments_for_one_suites_test_sandbox();
+# on macOS the signal sandbox is sandbox-exec alone and there is no test sandbox. The
+# test sandbox hides by default: the
+# file system read-only, a private /tmp, /dev and System V IPC, the home directory an
+# empty tmpfs into which only the paths in TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY are
+# bound, and /run hidden, since it holds the machine's sockets: Docker's, the system bus,
+# and in the session's runtime directory the D-Bus session bus, through which
+# `systemd-run --user` starts processes outside the sandbox, and the sockets of the
+# running agent-sessions. A Unix socket accepts a connection through a read-only mount,
+# so hiding it is the only protection, and a list of files to cover misses every file
+# not on it, so whole directories are hidden instead.
+# bwrap_arguments_for_one_suites_test_sandbox() adds, per suite, the paths the suite may
+# write for real and every other directory this account can create a file in.
+REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX = str(Path.home())
+# Relative to the home directory: the only paths of it a suite sees, each read-only, with
+# why suites need it. Nothing else of the home directory is there, credentials included.
+TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY = {
+    ".local/lib": "the Python libraries pip installs for this account, tree-sitter and "
+                  "coverage among them, which suites import",
+    ".gitconfig": "git's settings for this account, which suites that run git read",
+    "nedschorus-logs/seats/ned-box-helper/absence-claim-trigger-phrases-2026-10-05/out/"
+    "precision/labels.csv": "the labelled replies scripts/absence-claim-locator-reminder-"
+                            "hook-test.py measures the reminder's precision against",
+}
+# Directories hidden whole, with why: each holds what no suite needs and a scan for
+# writable directories should not walk.
+TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS = {
+    "/mnt": "mounted file systems such as the backup drive, whose snapshots hold copies "
+            "of the home directory, credentials included",
+    "/media": "removable media",
+    "/var/snap": "snap services' data and listening sockets, which a snap refresh "
+                 "re-creates under a new directory",
+}
+XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX = f"/run/user/{os.getuid()}"
+# Variables naming a socket or a server outside the test sandbox.
+TEST_SANDBOX_OUTSIDE_SOCKET_VARIABLES = (
+    "TMUX",
+    "TMUX_PANE",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "SSH_AUTH_SOCK",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "GPG_AGENT_INFO",
+)
+# Environment variables that carry a credential; no suite is given one. Matched against
+# the variable's name in capitals.
+TEST_SUITE_CREDENTIAL_ENVIRONMENT_VARIABLE_PATTERNS = (
+    "*_TOKEN", "*_TOKEN_*", "*_API_KEY", "*_SECRET", "*_SECRET_*", "*PASSWORD*",
+    "*_CREDENTIALS",
+)
 SIGNAL_SANDBOX_BWRAP_ARGUMENTS = (
-    "--dev-bind", "/", "/", "--unshare-pid", "--die-with-parent", "--proc", "/proc")
+    "--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/dev/shm", "--proc", "/proc",
+    "--tmpfs", "/tmp", "--tmpfs", "/run",
+    *(("--tmpfs", XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,
+       "--setenv", "XDG_RUNTIME_DIR", XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX)
+      if os.path.isdir(XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX)
+      else ("--unsetenv", "XDG_RUNTIME_DIR")),
+    "--tmpfs", REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,
+    *(argument for relative in TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY
+      for argument in ("--ro-bind-try",
+                       os.path.join(REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX, relative),
+                       os.path.join(REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX, relative))),
+    *(argument for directory in TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS
+      if os.path.isdir(directory) for argument in ("--tmpfs", directory)),
+    "--unshare-pid", "--unshare-ipc", "--die-with-parent",
+    "--setenv", "TMPDIR", "/tmp", "--setenv", "TMUX_TMPDIR", "/tmp",
+    *(argument for variable in TEST_SANDBOX_OUTSIDE_SOCKET_VARIABLES
+      for argument in ("--unsetenv", variable)))
 SIGNAL_SANDBOX_INSIDE_VARIABLE = "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX"
 SIGNAL_SANDBOX_START_TIMEOUT_SECONDS = 60
 # The profile the user's Mac run of the check passed on 2026-10-08 (macOS 26.6.2).
@@ -507,10 +660,72 @@ SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX = {
         "it starts the agy cell's own bwrap, which cannot start inside bwrap",
     "scripts/run-all-test-suites-cleanup-after-killed-runs-real-process-test.py":
         "it starts this program, whose suites run in bwrap, which cannot start inside bwrap",
+    "scripts/run-all-test-suites-test-sandbox-escape-test.py":
+        "it builds test sandboxes itself with bwrap, which cannot start inside bwrap",
+    "scripts/run-all-test-suites-overlapping-runs-real-process-test.py":
+        "it starts this program, whose suites run in bwrap, which cannot start inside bwrap",
     "scripts/mac-window-opened-for-ned-box-forced-command-test.py":
         "it runs the real ssh, which refuses its root-owned config files because "
         "inside the sandbox's user namespace they show as owned by nobody",
 }
+
+# Suites that must write the git directory of the repository under test, such as with
+# `git worktree add`. Their git directory is a copy-on-write overlay instead of read-only,
+# so the writes work inside the suite and vanish when it ends.
+SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY = {
+    "nc-systems/general-tools/tests/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check-test.py":
+        "it replays at two refs, each in a worktree it adds to this repository",
+}
+
+# Suites whose test sandbox keeps the machine's network, each with its reason. Every
+# other suite's test sandbox has a network of its own with only loopback, so no
+# suite reaches a port or an abstract Unix socket (such as the X server's) outside it.
+SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK = {}
+
+# Admission, shared by every run on this machine: a suite starts only while the
+# machine has room for it. The run records the machine's readings every second
+# (MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME), so these thresholds can be moved from evidence.
+TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 50
+TEST_SUITE_ADMISSION_CPU_AVERAGE_SECONDS = 5
+TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE = 10 * 10**9
+TEST_SUITE_ADMISSION_STARTS_PER_SECOND = 4
+TEST_SUITE_ADMISSION_SUITES_RUNNING_AT_ONCE_CEILING = 64
+TEST_SUITE_ADMISSION_WAIT_REPORT_INTERVAL_SECONDS = 60
+TEST_SUITE_ADMISSION_RETRY_SECONDS = 0.25
+# Beside the lock file, so a test that passes its own lock file also gets its own admission.
+TEST_SUITE_ADMISSION_DIRECTORY_SUFFIX = ".test-suite-admission"
+TEST_SUITE_ADMISSION_START_TIMES_FILE_NAME = "start-times"
+TEST_SUITE_ADMISSION_SLOT_FILE_PREFIX = "slot-"
+SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX_LOCK_FILE_NAME = "suites-run-outside-the-signal-sandbox.lock"
+TEST_SUITE_NICE_INCREMENT = 10
+MACHINE_READINGS_INTERVAL_SECONDS = 1
+MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME = "machine-cpu-and-memory-readings.tsv"
+TEST_SUITE_RESOURCE_USE_FILE_NAME = "test-suite-resource-use.tsv"
+TEST_CASE_TIMES_FILE_NAME = "test-case-times.tsv"
+JUNIT_XML_FILE_NAME = "junit.xml"
+TEST_CASE_FAILURE_HISTORY_FILE_NAME = "test-case-failure-history.jsonl"
+ADMISSION_WAITED_LINE_PREFIX = "seconds suites waited for admission: "
+# The suites print one line per case opening PASS, FAIL or ok.
+TEST_CASE_LINE = re.compile(r"^\s*(?P<verdict>PASS|FAIL|ok)\b:?\s*(?P<text>.*)$")
+# A process a suite outside the test sandbox leaves running can hold its output open.
+TEST_SUITE_OUTPUT_DRAIN_SECONDS = 10
+# Runs inside the suite's own cgroup scope and reads the scope's counters just before
+# the scope ends, because systemd removes a scope's cgroup when its last process exits.
+# $0 is the open file descriptor the counters go to, which the suite does not inherit;
+# the suite's command follows. bash, because dash cannot name a descriptor above 9.
+TEST_SUITE_CGROUP_STATISTICS_WRAPPER = (
+    'if [ "$0" != 3 ]; then eval "exec 3>&$0 $0>&-"; fi\n'
+    'cgroup=$(sed -n "s/^0:://p" /proc/self/cgroup)\n'
+    '"$@" 3>&-\n'
+    'status=$?\n'
+    '{ cat "/sys/fs/cgroup$cgroup/cpu.stat" && '
+    'printf "memory.peak %s\\n" "$(cat "/sys/fs/cgroup$cgroup/memory.peak")"; } >&3 2>&1\n'
+    'exit $status\n')
+TEST_SUITE_CGROUP_SCOPE_COMMAND = (
+    "systemd-run", "--user", "--scope", "--quiet", "--expand-environment=no", "--")
+# Where the shell that keeps the counters stands between this program and bwrap, it is
+# killed when this program dies, so bwrap's --die-with-parent still ends the suite.
+TEST_SUITE_COUNTER_SHELL_DIES_WITH_THIS_PROGRAM = ("setpriv", "--pdeathsig", "KILL")
 
 DEFAULT_LOCK_FILE = Path.home() / ".claude" / ".run-all-test-suites.lock"
 RUN_RECORDS_DIRECTORY_SUFFIX = ".runs"
@@ -756,6 +971,8 @@ EXIT_ALL_PASSED = 0
 EXIT_SOME_FAILED = 1
 EXIT_COULD_NOT_RUN = 2
 EXIT_LOCKED = 3
+MACHINE_LOCK_WAIT_SECONDS_SUGGESTED = 3600
+MACHINE_LOCK_WAITED_LINE_PREFIX = "seconds waiting for the machine's lock: "
 
 
 class CouldNotRun(Exception):
@@ -915,16 +1132,76 @@ def commit_and_state(top):
     return commit, state
 
 
-def take_machine_lock(lock_file, top):
-    """Return (handle, refusal, previous holder), with None for unavailable fields."""
+class _MachineLockWaitEnded(Exception):
+    """The wait for the machine's lock reached its deadline."""
+
+
+def flock_exclusive_waiting_up_to(handle, wait_seconds):
+    """Take an exclusive flock on handle, waiting up to wait_seconds; False if not taken.
+
+    A wait blocks in the kernel's queue, like `flock -w`, rather than retrying: the
+    kernel hands a released lock to a blocked waiter, so a program that retries loses
+    to every blocked waiter and can wait forever. The deadline is a SIGALRM timer, so
+    a wait works only in the main thread."""
+    if wait_seconds <= 0:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
+        return True
+
+    def deadline_reached(signum, frame):
+        raise _MachineLockWaitEnded()
+
+    previous_handler = signal.signal(signal.SIGALRM, deadline_reached)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, wait_seconds)
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        except _MachineLockWaitEnded:
+            return False
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+    finally:
+        signal.signal(signal.SIGALRM, previous_handler)
+    return True
+
+
+def lock_holder_described(description):
+    """The lock file's holder description, or why it does not name the holder.
+
+    flock frees the lock when its holder dies, but nothing clears the description, and
+    a holder that is not a run of this program, such as `flock -w` on the lock, writes
+    none; so a description naming a process that has ended is from an earlier run."""
+    named = re.match(r"pid (?P<pid>\d+),", description)
+    if not description:
+        return "a process that wrote no description of itself"
+    if named is None or process_running(int(named["pid"])):
+        return description
+    return (f"a process that wrote no description of itself; the lock file still holds "
+            f"\"{description}\", from an earlier run whose process has ended")
+
+
+def process_running(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def take_machine_lock(lock_file, top, wait_seconds=0):
+    """Return (handle, refusal, previous holder), with None for unavailable fields.
+
+    With wait_seconds above 0, wait up to that long for the lock before refusing."""
     # Append mode preserves the holder's description when another run wins the lock.
     lock_file.parent.mkdir(parents=True, exist_ok=True)
     handle = open(lock_file, "a+")
-    try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    if not flock_exclusive_waiting_up_to(handle, wait_seconds):
         handle.seek(0)
-        holder = handle.read().strip() or "a run that has not described itself yet"
+        holder = lock_holder_described(handle.read().strip())
         handle.close()
         return None, holder, None
     handle.seek(0)
@@ -1196,6 +1473,458 @@ def clean_up_after_earlier_runs(lock_file, previous_holder, platform=None):
     return lines
 
 
+class MachineWideTestSuiteAdmissionCouldNotDecide(Exception):
+    """Admission could not be decided, such as a slot file that cannot be opened."""
+
+
+class MachineWideTestSuiteAdmissionCancelled(Exception):
+    """The run stopped admitting suites, so a suite still waiting does not start."""
+
+
+class TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler:
+    """The machine's CPU use, available memory and load, read every second by a thread.
+
+    Each reading is also written to a file, so the admission thresholds can be
+    moved from what the machine did. psutil is passed in, so a test can stub it."""
+
+    def __init__(self, psutil, readings_file=None, interval=MACHINE_READINGS_INTERVAL_SECONDS,
+                 average_seconds=TEST_SUITE_ADMISSION_CPU_AVERAGE_SECONDS):
+        self.psutil = psutil
+        self.readings_file = readings_file
+        self.interval = interval
+        self.cpu = collections.deque(maxlen=max(1, round(average_seconds / interval)))
+        self.lock = threading.Lock()
+        self.stopped = threading.Event()
+        self.thread = None
+        self.failure = None
+
+    def read_once(self, blocking_seconds=None):
+        cpu = self.psutil.cpu_percent(interval=blocking_seconds)
+        available = self.psutil.virtual_memory().available
+        load = os.getloadavg()[0]
+        with self.lock:
+            self.cpu.append(cpu)
+        if self.readings_file is not None:
+            with open_for_writing_without_following_symlinks(self.readings_file,
+                                                             append=True) as readings:
+                readings.write(f"{time.time():.3f}\t{cpu:.1f}\t{available}\t{load:.2f}\n")
+
+    def start(self):
+        try:
+            if self.readings_file is not None:
+                with open_for_writing_without_following_symlinks(self.readings_file) as readings:
+                    readings.write("unix time\tcpu percent\tavailable memory bytes\tload average 1 min\n")
+            # The first reading blocks for one interval: psutil measures CPU use between two calls.
+            self.read_once(blocking_seconds=self.interval)
+        except Exception as error:
+            raise MachineWideTestSuiteAdmissionCouldNotDecide(
+                f"the machine's first reading failed: {error!r}") from error
+        self.thread = threading.Thread(target=self.read_every_interval, daemon=True)
+        self.thread.start()
+
+    def read_every_interval(self):
+        # Each reading blocks for one interval: psutil keeps the CPU baseline of a
+        # nonblocking reading per thread, so this thread's first one would read 0.
+        while not self.stopped.is_set():
+            try:
+                self.read_once(blocking_seconds=self.interval)
+            except Exception as error:
+                # Admission must not decide on readings that stopped; it reports this instead.
+                with self.lock:
+                    self.failure = error
+                return
+
+    def stop(self):
+        self.stopped.set()
+        if self.thread is not None:
+            self.thread.join()
+
+    def failure_or_none(self):
+        """What stopped the readings, or None while they ran to the end."""
+        with self.lock:
+            return self.failure
+
+    def cpu_percent_average(self):
+        with self.lock:
+            if self.failure is not None:
+                raise MachineWideTestSuiteAdmissionCouldNotDecide(
+                    f"the machine's readings stopped: {self.failure!r}")
+            return sum(self.cpu) / len(self.cpu) if self.cpu else 0.0
+
+    def available_memory_bytes(self):
+        try:
+            return self.psutil.virtual_memory().available
+        except Exception as error:
+            raise MachineWideTestSuiteAdmissionCouldNotDecide(
+                f"the machine's available memory could not be read: {error!r}") from error
+
+
+def test_suite_admission_directory_for_lock_file(lock_file):
+    return Path(f"{lock_file}{TEST_SUITE_ADMISSION_DIRECTORY_SUFFIX}")
+
+
+class MachineWideTestSuiteAdmission:
+    """Decide, for every run on this machine together, when each suite may start.
+
+    A suite starts only while the machine's CPU use, averaged over the last few
+    seconds, is under TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW, its available memory
+    is above TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE, fewer than
+    TEST_SUITE_ADMISSION_STARTS_PER_SECOND suites started in the last second, and
+    one of TEST_SUITE_ADMISSION_SUITES_RUNNING_AT_ONCE_CEILING slots is free. A slot
+    is an flock on a slot file, so the kernel frees the slot of a run that is killed.
+    A suite run outside the test sandbox first takes the lock those suites share,
+    and only then a slot, so it never holds a slot while it waits for that lock.
+    A suite that cannot start waits, with no time limit; once a minute the run
+    reports what the suites wait for."""
+
+    def __init__(self, directory, readings, say, clock=time.monotonic, sleep=time.sleep,
+                 machine_clock=time.monotonic):
+        self.directory = Path(directory)
+        self.readings = readings
+        self.say = say
+        self.clock = clock
+        self.sleep = sleep
+        # Start times are compared across the runs of this machine, so the clock is one
+        # every process shares and that never steps back: Linux's monotonic clock.
+        self.machine_clock = machine_clock
+        self.lock = threading.Lock()
+        self.waiting = {}
+        self.last_report = None
+        self.cancelled = threading.Event()
+        try:
+            self.directory.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise MachineWideTestSuiteAdmissionCouldNotDecide(
+                f"the admission directory {self.directory} could not be made: {error}") from error
+
+    def open_locked(self, path, blocking):
+        """An open handle holding an exclusive flock on path, or None when another holds it."""
+        try:
+            handle = open(path, "a")
+        except OSError as error:
+            raise MachineWideTestSuiteAdmissionCouldNotDecide(
+                f"{path} could not be opened: {error}") from error
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        except BlockingIOError:
+            handle.close()
+            return None
+        except OSError as error:
+            handle.close()
+            raise MachineWideTestSuiteAdmissionCouldNotDecide(f"flock on {path} failed: {error}") from error
+        return handle
+
+    def free_slot(self):
+        for number in range(TEST_SUITE_ADMISSION_SUITES_RUNNING_AT_ONCE_CEILING):
+            slot = self.open_locked(
+                self.directory / f"{TEST_SUITE_ADMISSION_SLOT_FILE_PREFIX}{number:02d}",
+                blocking=False)
+            if slot is not None:
+                return slot
+        return None
+
+    def why_not_now(self):
+        """What keeps a suite from starting now, or None when only a slot is needed."""
+        cpu = self.readings.cpu_percent_average()
+        if cpu >= TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW:
+            return (f"the machine's CPU use, {cpu:.0f}% over the last "
+                    f"{TEST_SUITE_ADMISSION_CPU_AVERAGE_SECONDS} s, is not under "
+                    f"{TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW}%")
+        available = self.readings.available_memory_bytes()
+        if available <= TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE:
+            return (f"the machine's available memory, {available / 10**9:.1f} GB, is not "
+                    f"above {TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE / 10**9:g} GB")
+        return None
+
+    def take_a_start_and_a_slot(self):
+        """(slot handle, None) once this suite may start, or (None, why it may not)."""
+        why = self.why_not_now()
+        if why is not None:
+            return None, why
+        # One machine-wide decision at a time, so two runs cannot both take the last start.
+        times_lock = self.open_locked(
+            self.directory / f".{TEST_SUITE_ADMISSION_START_TIMES_FILE_NAME}.lock", blocking=True)
+        try:
+            times_file = self.directory / TEST_SUITE_ADMISSION_START_TIMES_FILE_NAME
+            now = self.machine_clock()
+            try:
+                recent = [float(line) for line in times_file.read_text().split()
+                          if 0.0 <= now - float(line) < 1.0]
+            except FileNotFoundError:
+                recent = []
+            except (OSError, ValueError) as error:
+                # Read as empty, it would lift the start-rate limit and overwrite the history.
+                raise MachineWideTestSuiteAdmissionCouldNotDecide(
+                    f"{times_file} could not be read: {error}") from error
+            if len(recent) >= TEST_SUITE_ADMISSION_STARTS_PER_SECOND:
+                return None, (f"{TEST_SUITE_ADMISSION_STARTS_PER_SECOND} suites started on this "
+                              f"machine in the last second, the most allowed")
+            slot = self.free_slot()
+            if slot is None:
+                return None, (f"{TEST_SUITE_ADMISSION_SUITES_RUNNING_AT_ONCE_CEILING} suites are "
+                              f"running on this machine, the most allowed")
+            try:
+                times_file.write_text("".join(f"{moment!r}\n" for moment in [*recent, now]))
+            except OSError as error:
+                slot.close()
+                raise MachineWideTestSuiteAdmissionCouldNotDecide(
+                    f"{times_file} could not be written: {error}") from error
+            return slot, None
+        finally:
+            times_lock.close()
+
+    def report_waiting(self, suite, why):
+        with self.lock:
+            self.waiting[suite] = why
+            now = self.clock()
+            if self.last_report is not None and \
+                    now - self.last_report < TEST_SUITE_ADMISSION_WAIT_REPORT_INTERVAL_SECONDS:
+                return
+            self.last_report = now
+            reasons = sorted(set(self.waiting.values()))
+            count = len(self.waiting)
+        self.say(f"{count} suite{'s' if count != 1 else ''} of this run wait to start: "
+                 + "; ".join(reasons))
+
+    def cancel(self):
+        """Stop admitting: every suite still waiting raises MachineWideTestSuiteAdmissionCancelled."""
+        self.cancelled.set()
+
+    def raise_if_cancelled(self, suite):
+        if self.cancelled.is_set():
+            raise MachineWideTestSuiteAdmissionCancelled(
+                f"{suite} was not started: the run stopped admitting suites")
+
+    @contextlib.contextmanager
+    def admitted(self, suite, outside_the_test_sandbox=False):
+        """Hold a slot, and for a suite outside the test sandbox that lock first, while the suite runs.
+
+        Yields the seconds the suite waited. Raises MachineWideTestSuiteAdmissionCancelled
+        once cancel() is called while the suite waits."""
+        started = self.clock()
+        held = []
+        try:
+            if outside_the_test_sandbox:
+                path = self.directory / SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX_LOCK_FILE_NAME
+                # Polled rather than a blocking flock, so a cancel reaches a suite waiting here.
+                while True:
+                    self.raise_if_cancelled(suite)
+                    outside_lock = self.open_locked(path, blocking=False)
+                    if outside_lock is not None:
+                        held.append(outside_lock)
+                        break
+                    self.report_waiting(suite, "another run's suite outside the test sandbox "
+                                               "holds the lock those suites share")
+                    self.sleep(TEST_SUITE_ADMISSION_RETRY_SECONDS)
+            while True:
+                self.raise_if_cancelled(suite)
+                slot, why = self.take_a_start_and_a_slot()
+                if slot is not None:
+                    held.append(slot)
+                    break
+                self.report_waiting(suite, why)
+                self.sleep(TEST_SUITE_ADMISSION_RETRY_SECONDS)
+            with self.lock:
+                self.waiting.pop(suite, None)
+            yield self.clock() - started
+        finally:
+            with self.lock:
+                self.waiting.pop(suite, None)
+            for handle in reversed(held):
+                handle.close()
+
+
+def psutil_imported_or_why_not():
+    """(psutil, None), or (None, the refusal to print) when this Python has no psutil."""
+    try:
+        import psutil
+    except ImportError as error:
+        return None, (
+            f"{PROGRAM}: not run — {sys.executable} cannot import psutil ({error}), which "
+            f"this program needs on Linux to read the machine's CPU use and available memory "
+            f"before it starts each suite.\n"
+            f"Install the pinned libraries, psutil among them, by running "
+            f"`python3 nc-systems/general-tools/python-libraries-pinned-requirements-check-and-install.py`, "
+            f"then run this again.\n"
+            f"If that install fails, tell the user what it printed.")
+    return psutil, None
+
+
+def why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(which=shutil.which,
+                                                                        runner=subprocess.run):
+    """None when each suite can run in a cgroup scope of its own, or why it cannot."""
+    for program in ("systemd-run", "setpriv", "bash"):
+        if which(program) is None:
+            return f"{program} is not on PATH"
+    trial_line = " ".join((*TEST_SUITE_CGROUP_SCOPE_COMMAND,
+                           *TEST_SUITE_COUNTER_SHELL_DIES_WITH_THIS_PROGRAM))
+    try:
+        trial = runner([*TEST_SUITE_CGROUP_SCOPE_COMMAND,
+                        *TEST_SUITE_COUNTER_SHELL_DIES_WITH_THIS_PROGRAM, "true"],
+                       stdin=subprocess.DEVNULL,
+                       capture_output=True, text=True,
+                       timeout=SIGNAL_SANDBOX_START_TIMEOUT_SECONDS, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return f"{trial_line} true: {error}"
+    if trial.returncode != 0:
+        return (f"{trial_line} true exited {trial.returncode}: "
+                f"{(trial.stderr or trial.stdout).strip()}")
+    return None
+
+
+def command_prefix_running_one_suite_in_its_cgroup_scope(statistics_descriptor, in_bwrap):
+    """The command prefix that runs a suite in a cgroup scope of its own and keeps its counters.
+
+    The counters are written to statistics_descriptor, an open file the caller passes on.
+    A suite outside bwrap outlives a killed run, as before, and the shell, which waits
+    for it, outlives the run with it, so the run's record still sees the suite running."""
+    return (*TEST_SUITE_CGROUP_SCOPE_COMMAND,
+            *(TEST_SUITE_COUNTER_SHELL_DIES_WITH_THIS_PROGRAM if in_bwrap else ()),
+            "bash", "-c", TEST_SUITE_CGROUP_STATISTICS_WRAPPER, str(statistics_descriptor))
+
+
+def cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(text):
+    """(CPU seconds, peak memory bytes, None), or (None, None, why they are missing)."""
+    if not text.strip():
+        return None, None, "the suite's cgroup counters were not written"
+    fields = dict(line.split(None, 1) for line in text.splitlines() if len(line.split(None, 1)) == 2)
+    try:
+        return (int(fields["usage_usec"]) / 10**6, int(fields["memory.peak"]), None)
+    except (KeyError, ValueError):
+        return None, None, f"the suite's cgroup counters could not be read: {text.strip()[:200]!r}"
+
+
+def copy_suite_output_to_log_noting_each_case_line(stream, log, started, cases, failures):
+    """Copy a suite's output to its open log, timing each PASS, FAIL or ok line as it arrives.
+
+    A write to the log that fails is appended to failures, and the rest of the output is
+    read and dropped, so the suite does not block on a full pipe."""
+    try:
+        with log:
+            copy_lines_of_suite_output(stream, log, started, cases)
+    except OSError as error:
+        failures.append(error)
+        for _ in iter(lambda: stream.read(1 << 16), b""):
+            pass
+    finally:
+        stream.close()
+
+
+def copy_lines_of_suite_output(stream, log, started, cases):
+    for raw in iter(stream.readline, b""):
+        log.write(raw)
+        log.flush()
+        arrived = time.monotonic() - started
+        found = TEST_CASE_LINE.match(raw.decode("utf-8", "replace").rstrip("\r\n"))
+        if found is None:
+            continue
+        text = found["text"]
+        name, detail = text, ""
+        if found["verdict"] == "FAIL" and ": " in text:
+            name, detail = text.split(": ", 1)
+        begun = cases[-1]["ended"] if cases else 0.0
+        cases.append({"verdict": "FAIL" if found["verdict"] == "FAIL" else "PASS",
+                      "name": name.strip(), "detail": detail.strip(),
+                      "began": begun, "ended": arrived, "seconds": arrived - begun,
+                      "unix_time": time.time()})
+
+
+def write_case_times_suite_resources_and_junit_xml_of_run(log_dir, results):
+    """Write the per-case times, per-suite resources and the JUnit XML of a run."""
+    with open_for_writing_without_following_symlinks(log_dir / TEST_CASE_TIMES_FILE_NAME) as times:
+        times.write("suite\tverdict\tseconds\tseconds from suite start\tunix time\tcase\n")
+        for result in results:
+            for case in result.get("cases", ()):
+                times.write(f"{result['suite']}\t{case['verdict']}\t{case['seconds']:.3f}\t"
+                            f"{case['ended']:.3f}\t{case['unix_time']:.3f}\t"
+                            f"{case['name']}\n")
+    with open_for_writing_without_following_symlinks(
+            log_dir / TEST_SUITE_RESOURCE_USE_FILE_NAME) as resources:
+        resources.write("suite\tkind\texit\tseconds\tseconds waiting for admission\t"
+                        "cpu seconds\tpeak memory bytes\tnote\n")
+        for result in results:
+            resources.write(
+                f"{result['suite']}\t{result.get('kind', '')}\t{result['exit']}\t"
+                f"{result['seconds']:.3f}\t{result.get('admission_wait', 0.0):.3f}\t"
+                f"{'' if result.get('cpu_seconds') is None else format(result['cpu_seconds'], '.3f')}\t"
+                f"{'' if result.get('peak_memory_bytes') is None else result['peak_memory_bytes']}\t"
+                f"{result.get('resources_note') or ''}\n")
+    root = xml.etree.ElementTree.Element("testsuites", name=PROGRAM)
+    for result in results:
+        cases = result.get("cases") or []
+        failed = sum(1 for case in cases if case["verdict"] == "FAIL")
+        # A suite that fails after its last case line gets one more, failing, case below.
+        failed_after_last_case = int(bool(cases) and result["exit"] != 0 and not failed)
+        suite_element = xml.etree.ElementTree.SubElement(
+            root, "testsuite", name=result["suite"],
+            tests=str(len(cases) + failed_after_last_case if cases else 1),
+            failures=str(failed + failed_after_last_case if cases else int(result["exit"] != 0)),
+            skipped=str(len(result["skips"])), time=f"{result['seconds']:.3f}")
+        if not cases:
+            # A suite that printed no case line is one case, judged by its exit code.
+            case_element = xml.etree.ElementTree.SubElement(
+                suite_element, "testcase", classname=result["suite"], name=result["suite"],
+                time=f"{result['seconds']:.3f}")
+            if result["exit"] != 0:
+                xml.etree.ElementTree.SubElement(
+                    case_element, "failure", message=describe_exit(result["exit"]))
+            continue
+        for case in cases:
+            case_element = xml.etree.ElementTree.SubElement(
+                suite_element, "testcase", classname=result["suite"], name=case["name"],
+                time=f"{case['seconds']:.3f}")
+            if case["verdict"] == "FAIL":
+                xml.etree.ElementTree.SubElement(case_element, "failure",
+                                                 message=case["detail"] or case["name"])
+        if failed_after_last_case:
+            # The suite failed after its last case line, such as by a crash.
+            case_element = xml.etree.ElementTree.SubElement(
+                suite_element, "testcase", classname=result["suite"],
+                name=f"{result['suite']} exit", time="0.000")
+            xml.etree.ElementTree.SubElement(case_element, "failure",
+                                             message=describe_exit(result["exit"]))
+    with open_for_writing_without_following_symlinks(log_dir / JUNIT_XML_FILE_NAME,
+                                                     binary=True) as junit:
+        xml.etree.ElementTree.ElementTree(root).write(junit, encoding="utf-8",
+                                                       xml_declaration=True)
+
+
+def append_test_case_failure_history(history_file, top, commit, branch, log_dir, results):
+    """Add each failing case of this run to the history of failing cases, one JSON line each."""
+    lines = []
+    for result in results:
+        if result["exit"] == 0:
+            continue
+        failing = [case for case in result.get("cases", ()) if case["verdict"] == "FAIL"]
+        for case in failing or [{"name": None, "detail": describe_exit(result["exit"])}]:
+            lines.append(json.dumps({
+                "unix_time": time.time(), "suite": result["suite"], "case": case["name"],
+                "detail": case["detail"], "exit": result["exit"], "commit": commit,
+                "branch": branch, "checkout": str(top), "log": str(result["log"]),
+                "run_log_directory": str(log_dir)}))
+    if not lines:
+        return
+    history_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(history_file, "a") as history:
+        fcntl.flock(history.fileno(), fcntl.LOCK_EX)
+        history.write("".join(line + "\n" for line in lines))
+
+
+@contextlib.contextmanager
+def lock_held_while_cleaning_up_after_earlier_runs(lock_file):
+    """Held while one of several overlapping runs cleans up after earlier runs."""
+    path = Path(f"{lock_file}.clean-up-after-earlier-runs.lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+
+
+def branch_of_checkout(top):
+    named = git(top, "rev-parse", "--abbrev-ref", "HEAD")
+    return named.stdout.strip() if named.returncode == 0 else None
+
+
 def lock_explicit_log_directory(log_dir):
     """Hold the given log directory for this run, or return None when another run holds it."""
     handle = open(log_dir / LOG_DIRECTORY_LOCK_FILE_NAME, "a")
@@ -1207,6 +1936,25 @@ def lock_explicit_log_directory(log_dir):
     return handle
 
 
+def open_for_writing_without_following_symlinks(path, append=False, binary=False):
+    """Open path for writing, refusing a symbolic link there in place of following it."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | (os.O_APPEND if append else os.O_TRUNC)
+    return os.fdopen(os.open(path, flags, 0o644),
+                     ("a" if append else "w") + ("b" if binary else ""))
+
+
+def read_text_without_following_symlinks(path, errors="surrogateescape"):
+    """The text of the regular file at path; OSError for a symbolic link or any other kind.
+
+    A suite writes the files this reads, and could leave a link to another file, or a
+    named pipe, whose open would wait for a writer that never comes."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, "r", errors=errors) as handle:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError(f"{path} is not a regular file")
+        return handle.read()
+
+
 def log_path_for(log_dir, suite):
     # Include the relative path to distinguish suites with the same filename.
     return log_dir / (suite.replace("/", "__") + ".log")
@@ -1214,7 +1962,7 @@ def log_path_for(log_dir, suite):
 
 def skipped_case_lines(log_file):
     try:
-        text = log_file.read_text(errors="replace")
+        text = read_text_without_following_symlinks(log_file, errors="replace")
     except OSError:
         return []
     return [line for line in text.splitlines() if SKIPPED_CASE_LINE.match(line)]
@@ -1228,11 +1976,18 @@ def environment_without_git_redirecting_variables():
     return environment
 
 
-def test_suite_launch_environment_without_git_redirecting_and_agent_session_attendance_variables():
+def is_credential_environment_variable(name):
+    return any(fnmatch.fnmatchcase(name.upper(), pattern)
+               for pattern in TEST_SUITE_CREDENTIAL_ENVIRONMENT_VARIABLE_PATTERNS)
+
+
+def launch_environment_for_a_test_suite_with_git_redirecting_agent_session_attendance_and_credential_variables_removed():
     """Return the environment every path that launches a test suite gives the suite."""
     environment = environment_without_git_redirecting_variables()
     for variable in AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES:
         environment.pop(variable, None)
+    for variable in [name for name in environment if is_credential_environment_variable(name)]:
+        del environment[variable]
     return environment
 
 
@@ -1322,6 +2077,336 @@ def signal_sandbox(platform=None, environment=None, which=shutil.which,
     return prefix, None
 
 
+# Directories the test sandbox already makes private or hides, which the scan for
+# writable directories does not walk.
+TEST_SANDBOX_PRIVATE_DIRECTORY_PATHS_NOT_SCANNED_FOR_WRITABLE_DIRECTORIES = ("/proc", "/sys", "/dev", "/tmp", "/run")
+
+
+# The scan never walks these, whatever the lists of hidden directories say, since walking
+# one is slow (the backup drive under /mnt holds the home directory many times over) or
+# meaningless; each must be hidden whole, or the scan refuses, so that a change to those
+# lists cannot make the scan crawl them instead.
+TEST_SANDBOX_DIRECTORIES_THE_WRITABLE_DIRECTORY_SCAN_NEVER_WALKS = (
+    "/proc", "/sys", "/dev", "/tmp", "/run", "/mnt", "/media", "/var/snap",
+    REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX)
+
+
+@functools.cache
+def directories_this_account_can_create_files_in_hidden_in_test_sandbox():
+    """Each topmost directory outside the sandbox's private ones that this account can write.
+
+    A suite that sees one could find there a socket or a file that some process outside
+    makes after the suite starts, so each is hidden whole by an empty tmpfs. A directory
+    made later sits inside one of these, so a scan once per process is enough. Raises
+    SignalSandboxCouldNotStart when the scan cannot run."""
+    pruned = (*TEST_SANDBOX_PRIVATE_DIRECTORY_PATHS_NOT_SCANNED_FOR_WRITABLE_DIRECTORIES,
+              REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,
+              *TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS)
+    unhidden = [path for path in TEST_SANDBOX_DIRECTORIES_THE_WRITABLE_DIRECTORY_SCAN_NEVER_WALKS
+                if path not in pruned and os.path.isdir(path)]
+    if unhidden:
+        raise SignalSandboxCouldNotStart(
+            f"{', '.join(unhidden)}, which the scan for directories this account can write "
+            f"never walks, would not be hidden whole in the test sandbox, so what they hold "
+            f"would show inside it")
+    pruned = tuple(dict.fromkeys(
+        (*pruned, *TEST_SANDBOX_DIRECTORIES_THE_WRITABLE_DIRECTORY_SCAN_NEVER_WALKS)))
+    expression = []
+    for path in pruned:
+        expression += (["-o"] if expression else []) + ["-path", path]
+    command = ["find", "/", "(", *expression, ")", "-prune", "-o",
+               "-type", "d", "-writable", "-print", "-prune"]
+    try:
+        # find exits 1 when some directory cannot be read; it still lists every
+        # directory it could, and a directory it cannot read it cannot write into either.
+        answer = subprocess.run(command, capture_output=True, text=True,
+                                stdin=subprocess.DEVNULL, check=False,
+                                timeout=SIGNAL_SANDBOX_START_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SignalSandboxCouldNotStart(
+            f"the scan for directories this account can write ({' '.join(command)}) could "
+            f"not run: {error}") from error
+    if answer.returncode not in (0, 1):
+        raise SignalSandboxCouldNotStart(
+            f"the scan for directories this account can write exited {answer.returncode}: "
+            f"{answer.stderr.strip()[-500:]}")
+    return tuple(line for line in answer.stdout.splitlines() if line.startswith("/"))
+
+
+# Asked of the interpreter itself: exactly the files and directories it loads, never a whole
+# installation prefix, since a prefix in the home directory such as ~/.local also holds
+# credentials. In a virtual environment, sysconfig names the base installation's standard
+# library and the environment's own site-packages.
+INTERPRETER_LOADED_PATHS_SOURCE = (
+    "import os, sys, sysconfig\n"
+    "paths = sysconfig.get_paths()\n"
+    "loaded = [sys.executable, os.path.realpath(sys.executable)]\n"
+    "loaded += [paths[name] for name in ('stdlib', 'platstdlib', 'purelib', 'platlib')]\n"
+    "configuration = os.path.join(sys.prefix, 'pyvenv.cfg')\n"
+    "if os.path.isfile(configuration):\n"
+    "    loaded.append(configuration)\n"
+    "library = os.path.join(sysconfig.get_config_var('LIBDIR') or '',\n"
+    "                       sysconfig.get_config_var('LDLIBRARY') or '')\n"
+    "if os.path.isfile(library):\n"
+    "    loaded.append(library)\n"
+    "print(chr(0).join(loaded))\n")
+INTERPRETER_LOADED_PATHS_TIMEOUT_SECONDS = 60
+
+
+@functools.lru_cache(maxsize=None)
+def interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden=None):
+    """The paths an interpreter loads that a test sandbox would hide: its executable under
+    the name given and its real one, its standard library, its site-packages, a virtual
+    environment's pyvenv.cfg and its shared libpython, each as the interpreter reports it;
+    none for an interpreter that loads nothing hidden.
+
+    Raises SignalSandboxCouldNotStart when the interpreter cannot report them, or when one
+    of them is or holds a directory the sandbox hides whole, since showing it would show
+    that directory."""
+    hidden = directories_hidden_whole_in_test_sandbox() if hidden is None else hidden
+    # A bare name, such as python3, is the one PATH finds, as the suite's command finds it.
+    given = os.path.abspath(interpreter if os.sep in interpreter
+                            else shutil.which(interpreter) or interpreter)
+    try:
+        answer = subprocess.run([given, "-I", "-c", INTERPRETER_LOADED_PATHS_SOURCE],
+                                capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                                timeout=INTERPRETER_LOADED_PATHS_TIMEOUT_SECONDS, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SignalSandboxCouldNotStart(
+            f"the interpreter {given} could not report the paths it loads, so what it needs "
+            f"inside the test sandbox is not known: {error}") from error
+    loaded = answer.stdout.strip().split("\0")
+    if answer.returncode != 0 or len(loaded) < 6 or not all(map(os.path.isabs, loaded)):
+        raise SignalSandboxCouldNotStart(
+            f"the interpreter {given} could not report the paths it loads, so what it needs "
+            f"inside the test sandbox is not known: exit {answer.returncode}: "
+            f"{(answer.stderr or answer.stdout).strip()}")
+    shown = []
+    for path in [given, *loaded]:
+        if not os.path.lexists(path):
+            continue
+        real = os.path.realpath(path)
+        for candidate in dict.fromkeys((os.path.abspath(path), real)):
+            if not any(candidate == top or candidate.startswith(top + "/") for top in hidden):
+                continue
+            if any(top == candidate or top.startswith(candidate.rstrip("/") + "/")
+                   for top in hidden):
+                raise SignalSandboxCouldNotStart(
+                    f"the interpreter {given} loads {candidate}, which is or holds a "
+                    f"directory the test sandbox hides whole, so showing it would show that "
+                    f"directory; run the suites with an interpreter installed elsewhere")
+            if candidate not in shown:
+                shown.append(candidate)
+    # A path inside another one shown is shown with it.
+    return [path for path in shown
+            if not any(path.startswith(other.rstrip("/") + "/") for other in shown)]
+
+
+def paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(interpreters, program_files=(),
+                                                                checkout=None):
+    """Every path a suite's launch reads that a test sandbox would hide: each interpreter's
+    directories, and the directory of each program file run inside the sandbox, such as the
+    launcher that checks the sandbox from inside it. A program file in the checkout needs
+    nothing shown: the sandbox shows the checkout writable, and a read-only directory bound
+    over it would make the suite's writes there fail."""
+    hidden = directories_hidden_whole_in_test_sandbox()
+    inside_checkout = os.path.realpath(checkout) if checkout is not None else None
+    shown = []
+    for interpreter in interpreters:
+        for path in interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden):
+            if path not in shown:
+                shown.append(path)
+    for program_file in program_files:
+        directory = os.path.dirname(os.path.realpath(program_file))
+        if inside_checkout is not None and (directory == inside_checkout
+                                            or directory.startswith(inside_checkout + "/")):
+            continue
+        if any(directory == top or directory.startswith(top + "/") for top in hidden) and \
+                directory not in shown:
+            shown.append(directory)
+    return shown
+
+
+def directories_hidden_whole_in_test_sandbox():
+    """Every directory a test sandbox shows as private or empty, the scanned ones included."""
+    return (*TEST_SANDBOX_PRIVATE_DIRECTORY_PATHS_NOT_SCANNED_FOR_WRITABLE_DIRECTORIES,
+            REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,
+            *TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS,
+            *directories_this_account_can_create_files_in_hidden_in_test_sandbox())
+
+
+# A directory whose hiding would hide what every program needs; a socket directly in one
+# is covered by an empty file instead, which a re-created socket would escape.
+TEST_SANDBOX_DIRECTORIES_WHERE_A_LISTENING_SOCKET_IS_COVERED_BY_AN_EMPTY_FILE_NOT_HIDDEN_WHOLE = (
+    "/", "/bin", "/boot", "/etc", "/lib", "/lib64", "/opt", "/sbin", "/srv", "/usr", "/var")
+
+
+def empty_file_bound_over_a_listening_socket_in_test_sandbox():
+    """An empty, read-only regular file to bind over a listening socket.
+
+    Fails rather than return a file that is not empty, which would hand a suite that
+    content."""
+    path = Path(tempfile.gettempdir()) / f"{PROGRAM}-empty-file-covering-sockets-{os.getuid()}"
+    descriptor = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW, 0o444)
+    try:
+        status = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if not stat.S_ISREG(status.st_mode) or status.st_size != 0 or status.st_uid != os.getuid():
+        raise SignalSandboxCouldNotStart(
+            f"{path}, the empty file that covers a listening socket inside the test "
+            f"sandbox, is not an empty regular file of this account; delete it, "
+            f"then run this again")
+    return str(path)
+
+
+def bwrap_arguments_for_one_suites_test_sandbox(checkout, writable_paths=(), suite=None,
+                                                read_only_paths=()):
+    """bwrap arguments, after SIGNAL_SANDBOX_BWRAP_ARGUMENTS, for one suite's environment.
+
+    The checkout under test is a copy-on-write overlay, so a suite can write in it but
+    nothing it writes there survives it: a suite could otherwise leave code in the
+    checkout that a suite outside the sandbox, or an agent's next command there, would
+    run. writable_paths, files or directories, are bound writable, so what a suite writes
+    there stays after it ends; read_only_paths are bound read-only. Above them the checkout's git common directory is bound read-only, since
+    every worktree of the repository shares it, or for a suite in
+    SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY is a
+    copy-on-write overlay, and so is a linked worktree's `.git` file, which names the
+    git directory every later git command in the checkout uses. Every directory this
+    account can create a file in is an empty tmpfs, and so is the directory of a
+    listening socket left visible. The sandbox gets a network of its own, unless the
+    suite is in SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK.
+
+    Raises SignalSandboxCouldNotStart when the checkout's git common directory cannot be
+    found, since the suite would then be able to write it."""
+    arguments = []
+    if suite not in SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK:
+        arguments.append("--unshare-net")
+    # bwrap mounts in order and a later mount hides what an earlier one put beneath it, so
+    # every broad cover comes first; then each path the suite reads or writes, a path
+    # before any path inside it, so a read-only path inside a writable one stays read-only
+    # and a writable one inside a read-only one stays writable; then the git directory's
+    # protection over the checkout.
+    arguments += broad_covers_of_one_suites_test_sandbox()
+    binds = []
+    for paths, bind in (((checkout,), "--tmp-overlay"), (writable_paths, "--bind"),
+                        (read_only_paths, "--ro-bind")):
+        for path in paths:
+            real = os.path.realpath(path)
+            binds.append((bind, real, real))
+            given = os.path.abspath(path)
+            if given != real:
+                binds.append((bind, real, given))
+    for bind, source, place in sorted(binds, key=lambda entry: len(Path(entry[2]).parts)):
+        # A checkout reached under two names gets one overlay under each, so a write under
+        # one name is not seen under the other; both are gone after the suite.
+        arguments += (["--overlay-src", source, "--tmp-overlay", place]
+                      if bind == "--tmp-overlay" else [bind, source, place])
+    real_checkout = Path(os.path.realpath(checkout))
+    common = git_common_directory_of_checkout(real_checkout)
+    if common is None or not os.path.isdir(common):
+        raise SignalSandboxCouldNotStart(
+            f"the git common directory of the checkout {real_checkout} could not be found "
+            f"(git rev-parse --git-common-dir named {common!r}), so it could not be kept "
+            f"read-only inside the test sandbox")
+    # A bind made after the checkout's does not show under a second name the checkout was
+    # bound at, so each protection is made under every name the checkout has.
+    given_checkout = Path(os.path.abspath(checkout))
+    names = [real_checkout] + ([given_checkout] if given_checkout != real_checkout else [])
+
+    def under_each_name(path):
+        path = Path(path)
+        if not path.is_relative_to(real_checkout):
+            return [str(path)]
+        return [str(name / path.relative_to(real_checkout)) for name in names]
+
+    for place in under_each_name(common):
+        if suite in SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY:
+            arguments += ["--overlay-src", common, "--tmp-overlay", place]
+        else:
+            arguments += ["--ro-bind", common, place]
+    git_file = real_checkout / ".git"
+    if git_file.is_file() and not git_file.is_symlink():
+        for place in under_each_name(git_file):
+            arguments += ["--ro-bind", str(git_file), place]
+    return arguments
+
+
+def broad_covers_of_one_suites_test_sandbox():
+    """The bwrap arguments that hide whole directories and listening sockets in a test
+    sandbox, to come before every bind of a path the suite needs."""
+    arguments = []
+    for directory in directories_this_account_can_create_files_in_hidden_in_test_sandbox():
+        arguments += ["--tmpfs", directory]
+    # A socket left visible, made by a service in a directory this account cannot write,
+    # is hidden with its whole directory, so one the service makes again there stays hidden.
+    for path in listening_unix_sockets_the_test_sandbox_would_show(
+            hidden=directories_hidden_whole_in_test_sandbox()):
+        directory = os.path.dirname(path)
+        if directory in TEST_SANDBOX_DIRECTORIES_WHERE_A_LISTENING_SOCKET_IS_COVERED_BY_AN_EMPTY_FILE_NOT_HIDDEN_WHOLE:
+            arguments += ["--ro-bind", empty_file_bound_over_a_listening_socket_in_test_sandbox(),
+                          path]
+        else:
+            arguments += ["--tmpfs", directory]
+    return arguments
+
+
+def listening_unix_sockets_the_test_sandbox_would_show(proc_net_unix="/proc/net/unix",
+                                                      unreachable=None,
+                                                      hidden=TEST_SANDBOX_PRIVATE_DIRECTORY_PATHS_NOT_SCANNED_FOR_WRITABLE_DIRECTORIES):
+    """Each listening Unix socket on this machine outside the directories in hidden.
+
+    A read-only mount does not stop a connection to a socket, so each left visible is
+    hidden too. A socket this program cannot lstat is left out, since a suite, running as
+    the same account with fewer rights, cannot reach it either; each such socket and its
+    error is appended to unreachable, when given. A socket gone before the lstat is left
+    out too."""
+    found = []
+    try:
+        rows = Path(proc_net_unix).read_text().splitlines()[1:]
+    except OSError as error:
+        raise SignalSandboxCouldNotStart(
+            f"{proc_net_unix}, the list of this machine's Unix sockets, could not be read, so "
+            f"the sockets a suite could connect to could not be covered: {error}") from error
+    for row in rows:
+        fields = row.split()
+        if len(fields) < 8 or not int(fields[3], 16) & 0x10000 or not fields[7].startswith("/"):
+            continue
+        real = os.path.realpath(fields[7])
+        if any(real == top or real.startswith(top + "/") for top in hidden):
+            continue
+        try:
+            if stat.S_ISSOCK(os.lstat(real).st_mode) and real not in found:
+                found.append(real)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            if unreachable is not None:
+                unreachable.append(f"{real} ({error.strerror})")
+    return found
+
+
+def uncovered_listening_sockets_report_line_or_none(proc_net_unix="/proc/net/unix"):
+    """The report's line naming listening sockets left uncovered because this program cannot reach them."""
+    unreachable = []
+    listening_unix_sockets_the_test_sandbox_would_show(
+        proc_net_unix, unreachable, hidden=directories_hidden_whole_in_test_sandbox())
+    if not unreachable:
+        return None
+    return ("listening sockets left uncovered in each test sandbox, because this program "
+            "cannot reach them and so neither can a suite: " + ", ".join(sorted(set(unreachable))))
+
+
+def command_prefix_starting_one_suite_in_its_test_sandbox(sandbox_prefix, checkout, writable_paths=(),
+                                                         suite=None, read_only_paths=()):
+    """The sandbox prefix with one suite's test sandbox added under bwrap."""
+    if not does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix):
+        return tuple(sandbox_prefix)
+    return (*sandbox_prefix,
+            *bwrap_arguments_for_one_suites_test_sandbox(checkout, writable_paths, suite,
+                                                         read_only_paths))
+
+
 def macos_signal_sandbox(runner, sandbox_exec, outside_process_id):
     """Return the sandbox-exec prefix once a trial inside it is refused a signal to outside_process_id."""
     if not Path(sandbox_exec).is_file():
@@ -1378,11 +2463,23 @@ def signal_sandbox_line(prefix, unconfined_because):
     return "suites run inside the signal sandbox this run was started in"
 
 
+TEST_SANDBOX_DID_NOT_START_NOTE = (
+    f"\n{PROGRAM}: the suite did not start: bwrap could not build its test sandbox, for the "
+    f"reason bwrap printed above.\n"
+    f"If bwrap says it can't create a file at a path, that path is a socket or credential "
+    f"file that disappeared between this program's scan and the sandbox's start: run the "
+    f"suite again.\n"
+    f"Otherwise, report bwrap's message to the user.\n")
+
+
 def suite_process_started(process, status_read, note_suite_process):
-    """Record the process whose end ends the suite: bwrap's namespace init, or the suite itself."""
+    """Record the process whose end ends the suite: bwrap's namespace init, or the suite itself.
+
+    Returns False when bwrap failed before starting the suite, True when it started it,
+    and None when there is no bwrap status to tell."""
     if status_read is None:
         note_suite_process(process.pid, namespace_init=False)
-        return
+        return None
     # bwrap's first status line names the init of the suite's PID namespace; when
     # that init ends, the kernel ends every process inside it.
     line = status_read.readline()
@@ -1391,21 +2488,35 @@ def suite_process_started(process, status_read, note_suite_process):
     except (ValueError, KeyError, TypeError):
         # bwrap failed before starting the suite; the outer bwrap is all there is.
         note_suite_process(process.pid, namespace_init=False)
-        return
+        return False
     note_suite_process(init, namespace_init=True)
+    return True
 
 
 def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefix=(),
-                  note_suite_process=None):
+                  note_suite_process=None, in_cgroup_scope=False, nice=False, platform=None):
+    """Run one suite; return its result, on Linux with each case line it printed timed.
+
+    With in_cgroup_scope, the suite runs in a cgroup scope of its own and its CPU seconds
+    and peak memory are read from there; with nice, at low priority. Inside its test
+    sandbox the suite may write only the checkout and its own recorded-input files: the
+    run's log directory, where this program writes, stays out of its reach."""
+    platform = sys.platform if platform is None else platform
     log_file = log_path_for(log_dir, suite)
-    environment = test_suite_launch_environment_without_git_redirecting_and_agent_session_attendance_variables()
+    environment = launch_environment_for_a_test_suite_with_git_redirecting_agent_session_attendance_and_credential_variables_removed()
     command = ["sh", suite] if is_shell_test_suite(suite) else [interpreter, "-u", suite]
+    writable_paths, read_only_paths = [], []
     if recorder is not None:
         recorder_dir, recording_dir, strace = recorder
         hook_log, strace_dir = recording_paths_for(recording_dir, suite)
         # The audit hook appends; clear old logs so earlier reads do not count for this run.
         hook_log.unlink(missing_ok=True)
         shutil.rmtree(strace_dir, ignore_errors=True)
+        # Made here, so the sandbox binds this file itself, which the suite cannot swap
+        # for a symbolic link while it is bound.
+        os.close(os.open(hook_log, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644))
+        writable_paths.append(hook_log)
+        read_only_paths.append(recorder_dir)
         environment["PYTHONPATH"] = os.pathsep.join(
             [str(recorder_dir)] + [entry for entry in
                                    environment.get("PYTHONPATH", "").split(os.pathsep) if entry])
@@ -1413,48 +2524,117 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         environment[RECORDED_INPUTS_CHECKOUT_VARIABLE] = str(top)
         if strace is not None:
             strace_dir.mkdir(parents=True, exist_ok=True)
+            writable_paths.append(strace_dir)
             command = [strace, "-f", "-ff", "--seccomp-bpf", "-z", "-qq", "-y", "-s", "4096",
                        "-e", "trace=%file", "-e", "signal=none",
                        "-o", str(strace_dir / "trace"), *command]
     if suite in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX:
         sandbox_prefix = ()
+    # The test sandbox is built from Linux's /proc and bwrap, so nothing of it is built
+    # on another platform, whatever the prefix.
+    if platform.startswith("linux"):
+        if does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix):
+            read_only_paths += paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(
+                [interpreter])
+        sandbox_prefix = command_prefix_starting_one_suite_in_its_test_sandbox(
+            sandbox_prefix, top, writable_paths, suite, read_only_paths)
     status_read = status_write = None
     if sandbox_prefix and note_suite_process is not None:
         status_read_fd, status_write = os.pipe()
         status_read = os.fdopen(status_read_fd, "r")
         sandbox_prefix = (sandbox_prefix[0], "--json-status-fd", str(status_write),
                           *sandbox_prefix[1:])
-    command = [*sandbox_prefix, *command]
+    resource_prefix = ()
+    statistics = None
+    if in_cgroup_scope:
+        # A file with no name, so nothing a suite can reach stands where the counters go.
+        statistics = tempfile.TemporaryFile()
+        resource_prefix += command_prefix_running_one_suite_in_its_cgroup_scope(
+            statistics.fileno(),
+            does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix))
+    if nice:
+        resource_prefix += ("nice", "-n", str(TEST_SUITE_NICE_INCREMENT))
+    # bwrap, and the shell that keeps the cgroup counters, exit 128+N when the suite is
+    # killed by signal N.
+    exit_reports_signal_as_128_plus = (
+        does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix)
+        or in_cgroup_scope)
+    command = [*resource_prefix, *sandbox_prefix, *command]
+    passed = tuple(descriptor for descriptor in
+                   (status_write, statistics.fileno() if statistics is not None else None)
+                   if descriptor is not None)
+    cases = []
+    copy_failures = []
+    output_note = None
+    # Case lines are timed on Linux only; elsewhere the output goes to the log as it always did.
+    time_case_lines = platform.startswith("linux")
     started = time.monotonic()
+    copier = None
     try:
-        with open(log_file, "wb") as log:
+        log = open_for_writing_without_following_symlinks(log_file, binary=True)
+        try:
             process = subprocess.Popen(
                 command, cwd=str(top), env=environment, stdin=subprocess.DEVNULL,
-                stdout=log, stderr=subprocess.STDOUT,
-                pass_fds=(status_write,) if status_write is not None else ())
-            if status_write is not None:
-                os.close(status_write)
-                status_write = None
-            if note_suite_process is not None:
-                suite_process_started(process, status_read, note_suite_process)
-            exit_code = process.wait()
+                stdout=subprocess.PIPE if time_case_lines else log,
+                stderr=subprocess.STDOUT, pass_fds=passed)
+        except BaseException:
+            log.close()
+            raise
+        if time_case_lines:
+            # The copier closes the log when the suite's output ends.
+            copier = threading.Thread(
+                target=copy_suite_output_to_log_noting_each_case_line,
+                args=(process.stdout, log, started, cases, copy_failures), daemon=True)
+            copier.start()
+        else:
+            log.close()
+        if status_write is not None:
+            os.close(status_write)
+            status_write = None
+        sandbox_started = None
+        if note_suite_process is not None:
+            sandbox_started = suite_process_started(process, status_read, note_suite_process)
+        exit_code = process.wait()
+        seconds = time.monotonic() - started
+        if copier is not None:
+            copier.join(TEST_SUITE_OUTPUT_DRAIN_SECONDS)
+            if copier.is_alive():
+                output_note = (f"a process the suite started still held its output open "
+                               f"{TEST_SUITE_OUTPUT_DRAIN_SECONDS} s after the suite ended; "
+                               f"its log may grow after this report")
     finally:
         if status_write is not None:
             os.close(status_write)
         # Closed only after bwrap exits: bwrap writes its exit status to this pipe last.
         if status_read is not None:
             status_read.close()
-    # bwrap exits 128+N when the suite is killed by signal N; report it as the signal, as unsandboxed runs do.
-    if does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix) and \
-            128 < exit_code <= 128 + SIGNAL_NUMBER_LIMIT:
+    if copy_failures:
+        raise OSError(f"the log of {suite}, {log_file}, could not be written while the suite "
+                      f"ran, so its output is incomplete: {copy_failures[0]}")
+    if sandbox_started is False:
+        with open_for_writing_without_following_symlinks(log_file, append=True) as log:
+            log.write(TEST_SANDBOX_DID_NOT_START_NOTE)
+    if exit_reports_signal_as_128_plus and 128 < exit_code <= 128 + SIGNAL_NUMBER_LIMIT:
         exit_code = -(exit_code - 128)
-    return {
+    result = {
         "suite": suite,
         "exit": exit_code,
-        "seconds": time.monotonic() - started,
+        "seconds": seconds,
         "log": log_file,
         "skips": skipped_case_lines(log_file),
+        "cases": list(cases),
+        "output_note": output_note,
+        "cpu_seconds": None,
+        "peak_memory_bytes": None,
+        "resources_note": None,
     }
+    if statistics is not None:
+        with statistics:
+            statistics.seek(0)
+            counters = statistics.read().decode("utf-8", "replace")
+        result["cpu_seconds"], result["peak_memory_bytes"], result["resources_note"] = \
+            cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(counters)
+    return result
 
 
 def unescaped_strace_string(text):
@@ -1466,7 +2646,7 @@ def paths_strace_saw(strace_dir):
     seen = set()
     for trace_file in sorted(strace_dir.glob("trace*")):
         try:
-            text = trace_file.read_text(errors="surrogateescape")
+            text = read_text_without_following_symlinks(trace_file)
         except OSError:
             continue
         for line in text.splitlines():
@@ -1509,7 +2689,8 @@ def blob_hashes(top, paths):
     """Each path's git blob hash as the checkout has it now."""
     if not paths:
         return {}
-    answer = subprocess.run(["git", "-C", str(top), "hash-object", "--stdin-paths"],
+    # A suite can write the checkout's .gitattributes; --no-filters runs no filter it names.
+    answer = subprocess.run(["git", "-C", str(top), "hash-object", "--no-filters", "--stdin-paths"],
                             input="\n".join(paths) + "\n", capture_output=True, text=True,
                             env=environment_without_git_redirecting_variables(), check=False)
     hashes = answer.stdout.split()
@@ -1563,7 +2744,7 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
     touched, probed, listed, git_commands = {suite}, set(), set(), set()
     git_calls = {}
     try:
-        hook_lines = hook_log.read_text(errors="surrogateescape").splitlines()
+        hook_lines = read_text_without_following_symlinks(hook_log).splitlines()
     except OSError:
         hook_lines = []
     for line in hook_lines:
@@ -1907,6 +3088,12 @@ def suite_line(result):
     detail = f"{result['seconds']:.1f}s"
     if result["skips"]:
         detail += f", {len(result['skips'])} skipped"
+    if result.get("admitted"):
+        detail += (f", {'outside the test sandbox' if result['kind'] != 'test sandbox' else 'test sandbox'}"
+                   f", waited {result['admission_wait']:.1f}s to start")
+        if result.get("cpu_seconds") is not None:
+            detail += (f", {result['cpu_seconds']:.1f} CPU s, peak "
+                       f"{result['peak_memory_bytes'] / 10**6:.0f} MB")
     if result["exit"] == 0:
         return f"PASS {result['suite']} ({detail})"
     return f"FAIL {result['suite']} {describe_exit(result['exit'])} ({detail})"
@@ -1917,7 +3104,7 @@ class Report:
 
     def __init__(self, report_file):
         self.lock = threading.Lock()
-        self.file = open(report_file, "w")
+        self.file = open_for_writing_without_following_symlinks(report_file)
 
     def line(self, text):
         with self.lock:
@@ -1929,6 +3116,23 @@ class Report:
         self.file.close()
 
 
+def machine_lock_refusal(lock_file, holder, wait_seconds):
+    """The refusal printed when this run could not take the machine's lock."""
+    if wait_seconds > 0:
+        return (f"{PROGRAM}: not run — waited {wait_seconds:g} s for {lock_file}, the lock "
+                f"that keeps test runs on one machine apart, and it was still held by "
+                f"{holder}.\n"
+                f"If you started this program under flock on that lock, that flock is the "
+                f"holder: run this program without flock, since it takes the lock itself.\n"
+                f"Otherwise, tell the user which process holds the lock, and do not run "
+                f"this again until the lock is released.")
+    return (f"{PROGRAM}: not run — another run holds {lock_file}: {holder}.\n"
+            f"To wait for the lock, run this again with --wait-for-lock-seconds "
+            f"{MACHINE_LOCK_WAIT_SECONDS_SUGGESTED}, instead of retrying in a loop: a "
+            f"process waiting on the lock always gets the lock before a process that "
+            f"retries.")
+
+
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         prog=PROGRAM, description="Run every *-test.py and *-test.sh suite git lists in a checkout.")
@@ -1937,6 +3141,7 @@ def parse_arguments(argv):
     parser.add_argument("-j", dest="jobs", type=int)
     parser.add_argument("--log-dir")
     parser.add_argument("--lock-file", default=str(DEFAULT_LOCK_FILE))
+    parser.add_argument("--wait-for-lock-seconds", type=float, default=0)
     parser.add_argument("--only-suites-whose-recorded-inputs-changed-since",
                         dest="changed_since", metavar="COMMIT")
     parser.add_argument("--recorded-inputs-directory",
@@ -1944,18 +3149,26 @@ def parse_arguments(argv):
     arguments = parser.parse_args(argv)
     if arguments.jobs is not None and arguments.jobs < 1:
         parser.error("-j takes a whole number of at least 1")
+    if arguments.wait_for_lock_seconds < 0:
+        parser.error("--wait-for-lock-seconds takes a number of seconds of at least 0")
     return arguments
 
 
-def suites_run_at_once(jobs_given, suites_to_run, cores):
-    """-j as given; otherwise one suite per core, never more than the suites to run."""
+def suites_run_at_once(jobs_given, suites_to_run, cores, admission_decides=False):
+    """-j as given; otherwise one suite per core, never more than the suites to run.
+
+    Where admission decides when each suite starts, the default is every suite to run,
+    up to admission's ceiling."""
     if jobs_given is not None:
         return jobs_given
+    if admission_decides:
+        return max(1, min(suites_to_run, TEST_SUITE_ADMISSION_SUITES_RUNNING_AT_ONCE_CEILING))
     # At least 1: the thread pool refuses zero workers when nothing is selected.
     return max(1, min(cores or SUITES_RUN_AT_ONCE_WHEN_CORE_COUNT_UNKNOWN, suites_to_run))
 
 
-def main(argv=None):
+def main(argv=None, platform=None):
+    platform = sys.platform if platform is None else platform
     arguments = parse_arguments(argv)
     try:
         top = checkout_top_directory(arguments.checkout)
@@ -1967,19 +3180,46 @@ def main(argv=None):
         print(refusal, file=sys.stderr)
         return EXIT_COULD_NOT_RUN
     try:
-        sandbox_prefix, unconfined_because = signal_sandbox()
+        sandbox_prefix, unconfined_because = signal_sandbox(platform=platform)
     except SignalSandboxCouldNotStart as error:
         print(signal_sandbox_refusal(error), file=sys.stderr)
         return EXIT_COULD_NOT_RUN
 
-    lock_handle, holder, previous_holder = take_machine_lock(Path(arguments.lock_file), top)
-    if lock_handle is None:
-        print(f"{PROGRAM}: not run — another run holds {arguments.lock_file}: {holder}.\n"
-              f"Run this again after that run has finished.", file=sys.stderr)
-        return EXIT_LOCKED
+    # In a test sandbox of its own each suite shares no machine state with another run's
+    # suites, so runs overlap, and admission decides when each suite starts.
+    in_test_sandboxes = platform.startswith("linux") and \
+        does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix)
+    lock_handle = None
+    previous_holder = ""
+    seconds_waiting_for_lock = 0.0
+    if in_test_sandboxes:
+        psutil, refusal = psutil_imported_or_why_not()
+        if psutil is None:
+            print(refusal, file=sys.stderr)
+            return EXIT_COULD_NOT_RUN
+    else:
+        if arguments.wait_for_lock_seconds > 0:
+            # A caller waiting under a timeout of its own sees why nothing has happened yet.
+            print(f"{PROGRAM}: waiting up to {arguments.wait_for_lock_seconds:g} s for "
+                  f"{arguments.lock_file}", file=sys.stderr, flush=True)
+        lock_wait_started = time.monotonic()
+        lock_handle, holder, previous_holder = take_machine_lock(
+            Path(arguments.lock_file), top, arguments.wait_for_lock_seconds)
+        seconds_waiting_for_lock = time.monotonic() - lock_wait_started
+        if lock_handle is None:
+            print(machine_lock_refusal(arguments.lock_file, holder,
+                                       arguments.wait_for_lock_seconds), file=sys.stderr)
+            return EXIT_LOCKED
 
-    log_dir_handle = run_record = None
+    log_dir_handle = run_record = readings = None
     try:
+        # Read again under the lock: the checkout may have changed while this run waited,
+        # and the commit this run reports is read under the lock too.
+        try:
+            suites = suites_listed_by_git(top)
+        except CouldNotRun as refusal:
+            print(refusal, file=sys.stderr)
+            return EXIT_COULD_NOT_RUN
         if arguments.log_dir:
             log_dir = Path(arguments.log_dir).resolve()
             log_dir.mkdir(parents=True, exist_ok=True)
@@ -1991,11 +3231,18 @@ def main(argv=None):
                 return EXIT_LOCKED
         else:
             log_dir = Path(tempfile.mkdtemp(prefix=f"{PROGRAM}-"))
-        if sys.platform.startswith("linux"):
+        if platform.startswith("linux"):
             run_record = RunRecord(run_records_directory_for_lock_file(arguments.lock_file), log_dir,
                                    log_dir_is_temporary=not arguments.log_dir)
-        name_log_directory_in_lock(lock_handle, log_dir)
-        clean_up_lines = clean_up_after_earlier_runs(Path(arguments.lock_file), previous_holder)
+        if lock_handle is not None:
+            name_log_directory_in_lock(lock_handle, log_dir)
+            clean_up_lines = clean_up_after_earlier_runs(Path(arguments.lock_file),
+                                                         previous_holder, platform)
+        else:
+            # Runs overlap here, so one cleans up at a time; a live run's files are never touched.
+            with lock_held_while_cleaning_up_after_earlier_runs(Path(arguments.lock_file)):
+                clean_up_lines = clean_up_after_earlier_runs(Path(arguments.lock_file),
+                                                             previous_holder, platform)
         commit, state = commit_and_state(top)
         recordings_dir = recordings_directory_for(arguments.recorded_inputs_directory, top)
         # Each recording is read once, so selection and starting order see the same one
@@ -2017,7 +3264,8 @@ def main(argv=None):
             return EXIT_COULD_NOT_RUN
         chosen = suites_longest_recorded_first(
             [suite for suite, selected, _ in selection if selected], recordings)
-        jobs = suites_run_at_once(arguments.jobs, len(chosen), os.cpu_count())
+        jobs = suites_run_at_once(arguments.jobs, len(chosen), os.cpu_count(),
+                                  admission_decides=in_test_sandboxes)
         strace = strace_usable()
         recording_dir = log_dir / "recorded-inputs"
         recording_dir.mkdir(parents=True, exist_ok=True)
@@ -2032,11 +3280,46 @@ def main(argv=None):
                     + (f" and {STRACE_INPUT_RECORDER_METHOD} ({strace})" if strace else "")
                     + f", kept in {recordings_dir}")
         report.line(signal_sandbox_line(sandbox_prefix, unconfined_because))
+        if lock_handle is not None and arguments.wait_for_lock_seconds > 0:
+            report.line(f"{MACHINE_LOCK_WAITED_LINE_PREFIX}{seconds_waiting_for_lock:.0f}")
         if sandbox_prefix:
             for suite in chosen:
                 if suite in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX:
                     report.line(f"{suite} runs WITHOUT the signal sandbox: "
                                 f"{SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX[suite]}")
+        if in_test_sandboxes:
+            uncovered = uncovered_listening_sockets_report_line_or_none()
+            if uncovered is not None:
+                report.line(uncovered)
+        admission = None
+        cgroup_unavailable_because = None
+        if in_test_sandboxes:
+            try:
+                readings = TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler(
+                    psutil, log_dir / MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME)
+                readings.start()
+                admission = MachineWideTestSuiteAdmission(
+                    test_suite_admission_directory_for_lock_file(arguments.lock_file), readings,
+                    report.line)
+            except MachineWideTestSuiteAdmissionCouldNotDecide as error:
+                report.line(f"{PROGRAM}: not run — admission could not start: {error}")
+                report.line("Fix what it names, then run this again.")
+                report.close()
+                return EXIT_COULD_NOT_RUN
+            report.line(
+                f"each suite starts only while the machine's CPU use over "
+                f"{TEST_SUITE_ADMISSION_CPU_AVERAGE_SECONDS} s is under "
+                f"{TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW}% and its available memory is above "
+                f"{TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE / 10**9:g} GB, at most "
+                f"{TEST_SUITE_ADMISSION_STARTS_PER_SECOND} starts a second and "
+                f"{TEST_SUITE_ADMISSION_SUITES_RUNNING_AT_ONCE_CEILING} suites at once on this "
+                f"machine, at nice {TEST_SUITE_NICE_INCREMENT}; readings every "
+                f"{MACHINE_READINGS_INTERVAL_SECONDS} s in "
+                f"{log_dir / MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME}")
+            cgroup_unavailable_because = why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none()
+            if cgroup_unavailable_because is not None:
+                report.line(f"suites run without a cgroup scope each, so their CPU seconds "
+                            f"and peak memory are not recorded: {cgroup_unavailable_because}")
         for line in clean_up_lines:
             report.line(line)
         note_suite_process = run_record.note_suite_process if run_record else None
@@ -2044,14 +3327,35 @@ def main(argv=None):
             for suite, selected, why in selection:
                 report.line(f"{'SELECTED' if selected else 'NOT SELECTED'} {suite}: {why}")
 
+        def run_admitted(suite, **options):
+            outside = suite in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX
+            kind = (f"outside the test sandbox: {SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX[suite]}"
+                    if outside and sandbox_prefix else
+                    "test sandbox" if in_test_sandboxes else
+                    "macOS sandbox" if platform == "darwin" and sandbox_prefix else
+                    "no sandbox")
+            if admission is None:
+                result = run_one_suite(top, interpreter, suite, log_dir,
+                                       sandbox_prefix=sandbox_prefix,
+                                       note_suite_process=note_suite_process,
+                                       platform=platform, **options)
+                result.update(kind=kind, admission_wait=0.0)
+                return result
+            with admission.admitted(suite, outside_the_test_sandbox=outside) as waited:
+                result = run_one_suite(top, interpreter, suite, log_dir,
+                                       sandbox_prefix=sandbox_prefix,
+                                       note_suite_process=note_suite_process,
+                                       in_cgroup_scope=cgroup_unavailable_because is None,
+                                       nice=True, platform=platform, **options)
+            result.update(kind=kind, admission_wait=waited, admitted=True)
+            if cgroup_unavailable_because is not None:
+                result["resources_note"] = cgroup_unavailable_because
+            return result
+
         def run_and_record(suite):
             if is_shell_test_suite(suite):
-                return run_one_suite(top, interpreter, suite, log_dir,
-                                     sandbox_prefix=sandbox_prefix,
-                                     note_suite_process=note_suite_process)
-            result = run_one_suite(top, interpreter, suite, log_dir, recorder,
-                                   sandbox_prefix=sandbox_prefix,
-                                   note_suite_process=note_suite_process)
+                return run_admitted(suite)
+            result = run_admitted(suite, recorder=recorder)
             try:
                 save_recording(recordings_dir, recording_of(
                     top, suite, result, recording_dir, files, commit, strace is not None))
@@ -2085,9 +3389,28 @@ def main(argv=None):
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
             running = [pool.submit(run_and_record, suite) for suite in chosen]
             for finished in concurrent.futures.as_completed(running):
-                result = finished.result()
+                try:
+                    result = finished.result()
+                except (MachineWideTestSuiteAdmissionCouldNotDecide, SignalSandboxCouldNotStart,
+                        OSError) as error:
+                    for waiting in running:
+                        waiting.cancel()
+                    # A suite already waiting for admission is running as far as its future knows.
+                    if admission is not None:
+                        admission.cancel()
+                    what = ("admission failed" if isinstance(error, MachineWideTestSuiteAdmissionCouldNotDecide)
+                            else "a suite's test sandbox could not be built"
+                            if isinstance(error, SignalSandboxCouldNotStart)
+                            else "a suite could not be started")
+                    report.line(f"{PROGRAM}: not run to the end — {what}: {error}")
+                    report.line("Fix what it names, then run this again. The suites already "
+                                "running finish first.")
+                    report.close()
+                    return EXIT_COULD_NOT_RUN
                 results.append(result)
                 report.line(suite_line(result))
+                if result.get("output_note"):
+                    report.line(f"{result['suite']}: {result['output_note']}")
 
         results.sort(key=lambda result: result["suite"])
         failed = [result for result in results if result["exit"] != 0]
@@ -2104,6 +3427,39 @@ def main(argv=None):
             for result in skipping:
                 for skip in result["skips"]:
                     report.line(f"{result['suite']}: {skip}")
+        records_failed = False
+        if admission is not None:
+            waits = [result["admission_wait"] for result in results]
+            report.line(f"{ADMISSION_WAITED_LINE_PREFIX}{sum(waits):.0f} in all, the longest "
+                        f"{max(waits, default=0.0):.0f}")
+            # A reading that fails after the last admission reaches no admission decision.
+            readings.stop()
+            stopped_by = readings.failure_or_none()
+            if stopped_by is not None:
+                records_failed = True
+                report.line(f"{PROGRAM}: the machine's readings stopped before the run ended: "
+                            f"{stopped_by!r}")
+                report.line(f"The suites' verdicts below stand, but "
+                            f"{log_dir / MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME} is cut "
+                            f"short, so this run exits 2 if every suite passed, and 1 if any "
+                            f"failed. Fix what it names, then run this again.")
+        # The case times, suite resources and failure history come with the test sandboxes.
+        if admission is not None:
+            try:
+                write_case_times_suite_resources_and_junit_xml_of_run(log_dir, results)
+                append_test_case_failure_history(
+                    Path(arguments.recorded_inputs_directory).expanduser()
+                    / TEST_CASE_FAILURE_HISTORY_FILE_NAME,
+                    top, commit, branch_of_checkout(top), log_dir, results)
+            except OSError as error:
+                records_failed = True
+                report.line(f"{PROGRAM}: the run's case times, suite resources, JUnit XML or "
+                            f"failure history could not be written: {error}")
+                report.line("The suites' verdicts below stand, but their records are "
+                            "missing, so this run exits 2 if every suite passed, and 1 if "
+                            "any failed. Fix what it names, then run this again.")
+            else:
+                report.line(f"case times, suite resources and JUnit XML in {log_dir}")
         skip_count = sum(len(result["skips"]) for result in results)
         not_selected = (f"; {len(suites) - len(chosen)} suites not selected, their recorded "
                         f"inputs unchanged since {changed_since[:12]}"
@@ -2114,11 +3470,18 @@ def main(argv=None):
         report.close()
         if run_record is not None:
             run_record.finish()
-        return EXIT_SOME_FAILED if failed else EXIT_ALL_PASSED
+        # A failing suite outranks missing records, since a caller that reads exit 2 as
+        # "no verdict" would otherwise let a failure through.
+        if failed:
+            return EXIT_SOME_FAILED
+        return EXIT_COULD_NOT_RUN if records_failed else EXIT_ALL_PASSED
     finally:
+        if readings is not None:
+            readings.stop()
         if log_dir_handle is not None:
             log_dir_handle.close()
-        lock_handle.close()
+        if lock_handle is not None:
+            lock_handle.close()
 
 
 if __name__ == "__main__":

@@ -26,6 +26,13 @@ _spec.loader.exec_module(writer)
 
 failures = []
 
+# The writer prunes the completed tasks of the list CLAUDE_CODE_TASK_LIST_ID
+# names, under HOME, against the log-store TRANSCRIPT_MIRROR_DESTINATION names.
+# Removed for every writer run, so a run inside an agent-seat never prunes that
+# agent-seat's real list; the prune cases set both on purpose with a fake HOME.
+for _task_list_environment_variable in ("CLAUDE_CODE_TASK_LIST_ID", "TRANSCRIPT_MIRROR_DESTINATION"):
+    os.environ.pop(_task_list_environment_variable, None)
+
 # What a handoff-supervisor tells every session it launches: the seat's name
 # and directory, and the session id they belong to. Scrubbed from every writer
 # run below that is not about them. These suites are run by agents inside
@@ -1225,6 +1232,333 @@ def run_written_by_session_field_cases(workspace: Path):
               "this run is not inside a Claude Code session")
 
 
+PRUNE_LIST_ID = "prune.case-tasks"
+# Claude Code names the list's directory with the "." mapped to "-".
+PRUNE_LIST_DIRECTORY_NAME = "prune-case-tasks"
+REMOTE_STORE_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/transcripts"
+
+
+def task_bytes(task_id: int, status: str, subject: str = "", blocks=(), blocked_by=()) -> bytes:
+    return json.dumps({
+        "id": str(task_id), "subject": subject or f"task {task_id} subject",
+        "description": "", "status": status,
+        "blocks": [str(item) for item in blocks], "blockedBy": [str(item) for item in blocked_by],
+    }, indent=2).encode("utf-8")
+
+
+class PruneFixture:
+    """A fake HOME holding one task list, and a local log-store holding copies of chosen tasks."""
+
+    def __init__(self, workspace: Path, slug: str):
+        self.root = workspace / f"prune-{slug}"
+        self.home = self.root / "home"
+        self.list_directory = self.home / ".claude" / "tasks" / PRUNE_LIST_DIRECTORY_NAME
+        self.list_directory.mkdir(parents=True)
+        self.store_root = self.root / "store"
+        self.store_list_directory = (self.store_root / writer.transcript_mirror.this_machine_name()
+                                     / "tasks" / PRUNE_LIST_DIRECTORY_NAME)
+        self.store_list_directory.mkdir(parents=True)
+        self.handoffs = self.root / "handoffs"
+        self.handoffs.mkdir()
+
+    def task(self, name, content: bytes, stored=True):
+        (self.list_directory / str(name)).write_bytes(content)
+        if stored is True:
+            (self.store_list_directory / str(name)).write_bytes(content)
+        elif stored is not False:
+            (self.store_list_directory / str(name)).write_bytes(stored)
+
+    def present(self, name) -> bool:
+        return (self.list_directory / str(name)).is_file()
+
+    def environment(self, **extra):
+        environment = {"HOME": str(self.home), "CLAUDE_CODE_TASK_LIST_ID": PRUNE_LIST_ID,
+                       "TRANSCRIPT_MIRROR_DESTINATION": str(self.store_root)}
+        environment.update(extra)
+        return environment
+
+    def run(self, next_step="carry on\n", *extra_arguments, **environment):
+        return run_writer(self.handoffs, next_step, "--agent", "prunecase", *extra_arguments,
+                          environment_overrides=self.environment(**environment))
+
+    def handoff_written(self) -> bool:
+        return (self.handoffs / "prunecase-handoff.md").is_file()
+
+
+def prune_line(completed) -> str:
+    return next((line for line in completed.stdout.splitlines() if "completed tasks pruned:" in line), "")
+
+
+def stub_ssh_directory(directory: Path, script: str) -> Path:
+    directory.mkdir(parents=True)
+    stub = directory / "ssh"
+    stub.write_text("#!/bin/sh\n" + script, encoding="utf-8")
+    stub.chmod(0o755)
+    return directory
+
+
+def run_completed_task_prune_cases(workspace: Path):
+    """The writer removes completed tasks the log-store holds, and keeps every other task."""
+    fixture = PruneFixture(workspace, "basic")
+    fixture.task("1.json", task_bytes(1, "completed"))
+    fixture.task("2.json", task_bytes(2, "pending"))
+    fixture.task("3.json", task_bytes(3, "in_progress"))
+    fixture.task("4.json", task_bytes(4, "completed"), stored=task_bytes(4, "pending"))
+    fixture.task("5.json", task_bytes(5, "completed"), stored=False)
+    completed = fixture.run()
+    line = prune_line(completed)
+    check("a completed task whose log-store copy matches is removed",
+          not fixture.present("1.json") and "removed 1 of 3 completed tasks" in line, line)
+    check("pending and in-progress tasks with matching log-store copies remain",
+          fixture.present("2.json") and fixture.present("3.json"), line)
+    check("a completed task whose log-store copy still has its older status is kept",
+          fixture.present("4.json"), line)
+    check("a completed task with no log-store copy is kept, and counted as not yet copied",
+          fixture.present("5.json") and "2 not yet in the log-store copy" in line, line)
+    check("the prune line says where the removed tasks stay",
+          str(fixture.store_list_directory) in line, line)
+    check("a pruning handoff is still written", fixture.handoff_written(), completed.stderr)
+
+    fixture = PruneFixture(workspace, "links")
+    fixture.task("10.json", task_bytes(10, "completed"))
+    fixture.task("11.json", task_bytes(11, "pending", blocked_by=[10]))
+    fixture.task("12.json", task_bytes(12, "completed", blocked_by=[11]))
+    fixture.task("14.json", task_bytes(14, "completed", blocks=[15]))
+    fixture.task("15.json", task_bytes(15, "completed", blocked_by=[14]))
+    fixture.task("16.json", task_bytes(16, "completed", blocked_by=[99]))
+    line = prune_line(fixture.run())
+    check("a completed task in an open task's blockedBy, with no link of its own, is kept",
+          fixture.present("10.json"), line)
+    check("a completed task that names an open task is kept", fixture.present("12.json"), line)
+    check("two completed tasks linked only to each other are both removed",
+          not fixture.present("14.json") and not fixture.present("15.json"), line)
+    check("a link to an id with no task file keeps nothing", not fixture.present("16.json"), line)
+    check("the open task's file is not rewritten",
+          (fixture.list_directory / "11.json").read_bytes() == task_bytes(11, "pending", blocked_by=[10]))
+
+    fixture = PruneFixture(workspace, "citations")
+    fixture.task("20.json", task_bytes(20, "completed"))
+    fixture.task("21.json", task_bytes(21, "completed", subject="Ship the widget"))
+    fixture.task("22.json", task_bytes(22, "completed"))
+    line = prune_line(fixture.run("Read task 20 first.\nThen finish what Ship the widget left.\n"))
+    check("a completed task whose id the next step names is kept", fixture.present("20.json"), line)
+    check("a completed task whose subject the next step contains is kept", fixture.present("21.json"), line)
+    check("an uncited completed task in the same list is removed", not fixture.present("22.json"), line)
+
+    fixture = PruneFixture(workspace, "citation-wrapped")
+    fixture.task("23.json", task_bytes(23, "completed", subject="Ship the shiny widget"))
+    line = prune_line(fixture.run("Then finish what Ship the\nshiny widget left.\n"))
+    check("a subject the next step wraps across a line break still keeps its task",
+          fixture.present("23.json"), line)
+
+    fixture = PruneFixture(workspace, "citation-subject-spaced")
+    fixture.task("24.json", task_bytes(24, "completed", subject="Ship  the\twidget"))
+    line = prune_line(fixture.run("Then finish what Ship the widget left.\n"))
+    check("a subject holding runs of spaces or a tab still matches the next step's single spaces",
+          fixture.present("24.json"), line)
+
+    fixture = PruneFixture(workspace, "high-water-mark")
+    (fixture.list_directory / ".highwatermark").write_text("3", encoding="utf-8")
+    fixture.task("1.json", task_bytes(1, "pending"))
+    fixture.task("9.json", task_bytes(9, "completed"))
+    line = prune_line(fixture.run())
+    mark = (fixture.list_directory / ".highwatermark").read_text(encoding="utf-8")
+    check("the high-water mark is raised to the highest task id before it is removed",
+          not fixture.present("9.json") and mark.strip().isdigit() and int(mark) >= 9, f"{mark!r} {line}")
+
+    fixture = PruneFixture(workspace, "high-water-mark-higher")
+    (fixture.list_directory / ".highwatermark").write_text("500", encoding="utf-8")
+    fixture.task("9.json", task_bytes(9, "completed"))
+    line = prune_line(fixture.run())
+    mark = (fixture.list_directory / ".highwatermark").read_text(encoding="utf-8")
+    check("a high-water mark above every task id is never lowered",
+          not fixture.present("9.json") and mark == "500", f"{mark!r} {line}")
+
+    fixture = PruneFixture(workspace, "high-water-mark-unreadable")
+    (fixture.list_directory / ".highwatermark").write_text("not a number", encoding="utf-8")
+    fixture.task("9.json", task_bytes(9, "completed"))
+    line = prune_line(fixture.run())
+    mark = (fixture.list_directory / ".highwatermark").read_text(encoding="utf-8")
+    check("a high-water mark that is not a number is replaced by the highest task id",
+          not fixture.present("9.json") and mark == "9", f"{mark!r} {line}")
+
+    fixture = PruneFixture(workspace, "high-water-mark-unwritable")
+    (fixture.list_directory / ".highwatermark").mkdir()
+    fixture.task("1.json", task_bytes(1, "pending"))
+    fixture.task("9.json", task_bytes(9, "completed"))
+    completed = fixture.run()
+    line = prune_line(completed)
+    check("when the high-water mark cannot be written, nothing is removed and the line says why",
+          fixture.present("9.json") and "high-water mark" in line and "removed nothing" in line, line)
+    check("a high-water mark that could not be written leaves no partial file behind",
+          not (fixture.list_directory / ".highwatermark.partial").exists(), line)
+
+    fixture = PruneFixture(workspace, "read-only")
+    (fixture.list_directory / ".highwatermark").write_text("30", encoding="utf-8")
+    fixture.task("30.json", task_bytes(30, "completed"))
+    fixture.list_directory.chmod(0o555)
+    try:
+        completed = fixture.run()
+    finally:
+        fixture.list_directory.chmod(0o755)
+    line = prune_line(completed)
+    check("a task file that cannot be removed is named in the prune line",
+          fixture.present("30.json") and "Could not remove" in line and "30.json" in line, line)
+    check("a failed removal still writes the handoff, with the exit code liveness alone decides",
+          fixture.handoff_written() and completed.returncode == 1, f"exit {completed.returncode}")
+
+    fixture = PruneFixture(workspace, "filtering")
+    fixture.task("notes.json", task_bytes(8, "completed"))
+    fixture.task("08.json", task_bytes(8, "completed"))
+    fixture.task("6.json", task_bytes(6, "completed"))
+    line = prune_line(fixture.run())
+    check("files not named <id>.json are kept", fixture.present("notes.json") and fixture.present("08.json"), line)
+    check("a completed task beside them is still removed", not fixture.present("6.json"), line)
+
+    for slug, content in (("unparsable", b"{not json"), ("not-an-object", b"[1]")):
+        fixture = PruneFixture(workspace, slug)
+        fixture.task("7.json", content)
+        fixture.task("6.json", task_bytes(6, "completed"))
+        line = prune_line(fixture.run())
+        check(f"a task file that is {slug} stops the prune with every task kept, and the line names it",
+              fixture.present("6.json") and fixture.present("7.json") and "could not be read" in line
+              and "7.json" in line and "Tell the user" in line, line)
+
+    fixture = PruneFixture(workspace, "open-task-unreadable")
+    fixture.task("1.json", task_bytes(1, "completed", blocks=[2]))
+    fixture.task("2.json", task_bytes(2, "pending", blocked_by=[1]))
+    (fixture.list_directory / "2.json").chmod(0o000)
+    try:
+        completed = fixture.run()
+    finally:
+        (fixture.list_directory / "2.json").chmod(0o644)
+    line = prune_line(completed)
+    check("an open task whose file cannot be read stops the prune, so its linked task is kept",
+          fixture.present("1.json") and "could not be read" in line and "2.json" in line
+          and fixture.handoff_written(), line)
+
+    fixture = PruneFixture(workspace, "store-copy-unreadable")
+    fixture.task("1.json", task_bytes(1, "completed"))
+    (fixture.store_list_directory / "1.json").chmod(0o000)
+    try:
+        completed = fixture.run()
+    finally:
+        (fixture.store_list_directory / "1.json").chmod(0o644)
+    line = prune_line(completed)
+    check("an unexpected failure inside the prune keeps every task, says so, and still writes the handoff",
+          fixture.present("1.json") and "failed, every completed task kept" in line
+          and "PermissionError" in line and fixture.handoff_written()
+          and completed.returncode == 1, f"exit {completed.returncode}: {line}")
+
+    fixture = PruneFixture(workspace, "unset")
+    fixture.task("1.json", task_bytes(1, "completed"))
+    completed = run_writer(fixture.handoffs, "carry on\n", "--agent", "prunecase",
+                           environment_overrides={"HOME": str(fixture.home),
+                                                  "TRANSCRIPT_MIRROR_DESTINATION": str(fixture.store_root)})
+    line = prune_line(completed)
+    check("with no task list id, the prune says it did not run and the handoff is written",
+          fixture.present("1.json") and "not run" in line and "CLAUDE_CODE_TASK_LIST_ID" in line
+          and fixture.handoff_written(), line)
+
+    fixture = PruneFixture(workspace, "no-folder")
+    completed = fixture.run(CLAUDE_CODE_TASK_LIST_ID="list-with-no-folder")
+    line = prune_line(completed)
+    check("a task list id whose folder is missing names the path it looked for",
+          f"no task folder at {fixture.home / '.claude' / 'tasks' / 'list-with-no-folder'}" in line
+          and fixture.handoff_written(), line)
+
+    fixture = PruneFixture(workspace, "refused")
+    fixture.task("1.json", task_bytes(1, "completed"))
+    (fixture.handoffs / "prunecase-handoff.md").write_text(
+        "written-at: 2000-01-01T00:00:00Z\nnext-step: another seat's work\nrestart-counter: 1\n"
+        f"written-in: {fixture.root / 'another-seat'}\n", encoding="utf-8")
+    refused = fixture.run()
+    check("a refused handoff prunes nothing",
+          refused.returncode == 2 and fixture.present("1.json"), refused.stdout + refused.stderr)
+
+
+def run_completed_task_prune_remote_store_cases(workspace: Path):
+    """On the Mac the log-store is checked over ssh, which can fail."""
+    fixture = PruneFixture(workspace, "unreachable")
+    fixture.task("1.json", task_bytes(1, "completed"))
+    record = fixture.root / "ssh-calls.txt"
+    stubs = stub_ssh_directory(fixture.root / "unreachable-stubs", (
+        'if [ -e "$PRUNE_STUB_HANDOFF_PATH" ]; then echo exists >> "$PRUNE_STUB_RECORD"; '
+        'else echo absent >> "$PRUNE_STUB_RECORD"; fi\n'
+        'echo "ssh: connect to host ned-box port 22: Operation timed out" >&2\nexit 255\n'))
+    completed = fixture.run(
+        "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=REMOTE_STORE_DESTINATION,
+        PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}",
+        PRUNE_STUB_HANDOFF_PATH=str(fixture.handoffs / "prunecase-handoff.md"),
+        PRUNE_STUB_RECORD=str(record))
+    line = prune_line(completed)
+    check("an unreachable log-store removes nothing", fixture.present("1.json"), line)
+    check("an unreachable log-store prints what ssh said and the remedy",
+          "Operation timed out" in line and "`ssh nedlern@ned-box true`" in line, line)
+    check("an unreachable log-store still writes the handoff, with the exit code liveness alone decides",
+          fixture.handoff_written() and completed.returncode == 1, f"exit {completed.returncode}")
+    calls = record.read_text(encoding="utf-8").split() if record.is_file() else []
+    check("the log-store is checked before the handoff file exists",
+          calls == ["absent"], str(calls))
+
+    # The stub runs the remote command here, so sha256sum reads the local store directory.
+    fixture = PruneFixture(workspace, "remote")
+    fixture.task("1.json", task_bytes(1, "completed"))
+    fixture.task("2.json", task_bytes(2, "completed"), stored=False)
+    stubs = stub_ssh_directory(fixture.root / "remote-stubs", 'for last; do :; done\nexec sh -c "$last"\n')
+    line = prune_line(fixture.run(
+        "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
+        PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+    check("over ssh, a completed task whose copy matches is removed", not fixture.present("1.json"), line)
+    check("over ssh, a completed task the log-store lacks is kept", fixture.present("2.json"), line)
+    check("over ssh, the prune line names the store in scp form",
+          f"stubhost:{fixture.store_list_directory}" in line, line)
+
+    fixture = PruneFixture(workspace, "remote-unreadable")
+    fixture.task("1.json", task_bytes(1, "completed"))
+    stubs = stub_ssh_directory(fixture.root / "remote-unreadable-stubs",
+                               'echo "sha256sum: 1.json: Permission denied" >&2\nexit 1\n')
+    line = prune_line(fixture.run(
+        "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
+        PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+    check("over ssh, a copy sha256sum cannot read is a failure, not a missing copy",
+          fixture.present("1.json") and "Permission denied" in line and "kept every completed task" in line, line)
+    check("over ssh, a copy sha256sum cannot read gets its own remedy naming the copy, not the ssh remedy",
+          f"`ls -l` on 1.json in {fixture.store_list_directory}" in line and "ssh stubhost true" not in line, line)
+
+    # 1.json is a substring of 11.json, so a loose match would name the readable 1.json too.
+    fixture = PruneFixture(workspace, "remote-unreadable-one-of-two")
+    fixture.task("1.json", task_bytes(1, "completed"))
+    fixture.task("11.json", task_bytes(11, "completed"))
+    stubs = stub_ssh_directory(fixture.root / "remote-unreadable-one-of-two-stubs",
+                               'echo "sha256sum: 11.json: Permission denied" >&2\nexit 1\n')
+    line = prune_line(fixture.run(
+        "carry on\n", TRANSCRIPT_MIRROR_DESTINATION=f"stubhost:{fixture.store_root}",
+        PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}"))
+    check("over ssh, the remedy names only the copy sha256sum could not read, not a readable copy whose name it contains",
+          f"`ls -l` on 11.json in {fixture.store_list_directory}" in line and "1.json," not in line, line)
+
+    stubs = stub_ssh_directory(workspace / "prune-silent-stubs", "sleep 5\n")
+    original_path, original_timeout = os.environ.get("PATH", ""), writer.LOG_STORE_TASK_FILE_COPIES_HASH_SSH_TIMEOUT_SECONDS
+    os.environ["PATH"] = f"{stubs}{os.pathsep}{original_path}"
+    writer.LOG_STORE_TASK_FILE_COPIES_HASH_SSH_TIMEOUT_SECONDS = 1
+    try:
+        writer.log_store_copy_sha256_of_each_task_file("stubhost", Path("/nowhere"), ["1.json"])
+        outcome = "returned"
+    except writer.LogStoreUnreachable as error:
+        outcome = str(error)
+    finally:
+        os.environ["PATH"], writer.LOG_STORE_TASK_FILE_COPIES_HASH_SSH_TIMEOUT_SECONDS = original_path, original_timeout
+    check("an ssh that never answers counts as an unreachable log-store",
+          "gave no answer" in outcome, outcome)
+
+    # On ned-box the store is a local path, cited with the log-store's host.
+    check("a local store with no override is cited in scp form with the log-store's host",
+          writer.log_store_task_list_copy_location_in_scp_form(None, Path("/home/nedlern/x"))
+          == "nedlern@ned-box:/home/nedlern/x",
+          writer.log_store_task_list_copy_location_in_scp_form(None, Path("/home/nedlern/x")))
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     run_collapse_cases()
     run_written_by_session_field_cases(Path(temporary_directory))
@@ -1238,6 +1572,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_spawned_subagent_roster_cases(Path(temporary_directory))
     run_roster_never_blocks_a_handoff_cases(Path(temporary_directory))
     run_seat_name_and_directory_from_the_handoff_supervisor_cases(Path(temporary_directory))
+    run_completed_task_prune_cases(Path(temporary_directory))
+    run_completed_task_prune_remote_store_cases(Path(temporary_directory))
 
 print()
 if failures:

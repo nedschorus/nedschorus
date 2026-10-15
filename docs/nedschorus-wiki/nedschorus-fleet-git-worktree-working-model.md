@@ -94,33 +94,7 @@ runtimes from the start.
 
 ## The enforcement ladder
 
-A *rule* is a do-or-not-do instruction expressed as text; an *enforcement
-program* is code that enforces one (user-ruled vocabulary, 2026-08-17).
-The ladder orders mechanisms by when they act, earliest first — not by
-resistance to evasion: a block acts before the deed but can be blind to
-some routes; detection acts after and sees routes a block is blind to.
-
-1. **Impossible** — the bad state cannot arise without a deliberate
-   override. Even rung 1 is "impossible by default": `git worktree add
-   --force` and a second clone both defeat git's one-branch-one-worktree
-   refusal.
-2. **Default** — the right thing happens without anyone deciding.
-3. **Block** — an enforcement program refuses at the moment of action
-   (PreToolUse hooks). Known blind spot: a block on file-write tools does
-   not see shell writes (R10 carries the ruling on that gap).
-4. **Detect and reverse** — the unwanted action is noticed after the
-   fact, undone, and the right way taught. Preconditions: an undo must
-   exist, and the damage must not be consumed before detection — both
-   argue for fast detection, not audits.
-5. **Remind** — the program surfaces the rule at the moment it matters
-   and proceeds.
-6. **Text** — no enforcement; prose only. The waiting room: a do-or-not-do
-   rule lives here only until mechanized (user-ruled 2026-08-17);
-   governing principles (R17's, R28's) live here permanently by design.
-
-Anchoring ruling, from the gatekeeper design: **CLAUDE.md is
-documentation, never enforcement** — no program reads it, and different
-machines may carry different copies.
+The rungs that the Index's Rung column names (impossible, default, block, detect and reverse, remind, text) are defined, with an example of each, on [the enforcement ladder](nedschorus-enforcement-ladder.md).
 
 ## Standing rulings and principles
 

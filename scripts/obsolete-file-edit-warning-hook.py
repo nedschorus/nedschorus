@@ -62,6 +62,19 @@ real answer is ever cached: a diff that failed is not an empty set, and
 writing one as though it were would silence this hook until the next commit
 or fetch.
 
+A WARNING IS NOT REPEATED WORD FOR WORD. The cache also holds, for each path
+already warned about, the text of the last warning given. An edit whose
+warning would be that same text again is silent; a warning whose text changed,
+such as a detached HEAD's verdict going from "do not overlap" to "overlap",
+is given. A warning that reports a git step failing is recorded like any other
+but never held back. Because the record lives in the path-set cache, a commit here or
+a fetch that moves main clears it, and the warning is given again. The record
+belongs to the worktree, not to an agent-session: a second agent-session in
+the same worktree is not warned about a file an earlier one was warned about
+until HEAD or origin/main moves. A record that cannot be written leaves the
+warning as it is and adds a line saying so, because the warning will then
+repeat.
+
 EVERY CLAUSE OF THE WARNING IS COMPUTED, never asserted: the commit count is
 measured and dropped if it cannot be, and the advice is chosen from the head's actual state, not
 guessed. Note what the never-pushed advice does NOT say: that the Stop hook
@@ -157,6 +170,11 @@ BRANCH_STATE_UNKNOWN_LINE = (
     "git could not report this checkout's branch state ({text}): stop and tell the "
     "user before you commit."
 )
+RECORD_WRITE_FAILED_LINE = (
+    "obsolete-file-edit-warning could not record that it gave this warning, so it "
+    "will give it again at your next edit of this file ({record}: {reason}). Nothing "
+    "needs doing about the record."
+)
 MERGE_FILE_TIMEOUT_SECONDS = 15
 # git merge-file exits with the number of conflicts, capped at 127; above that is an error.
 MERGE_FILE_HIGHEST_CONFLICT_COUNT = 127
@@ -220,8 +238,10 @@ def path_within_checkout(file_path: str, checkout: Path):
 
 def obsolete_path_set(freshness, checkout: Path, git_directory: Path,
                       head_sha: str, main_sha: str):
-    """The paths main has moved that this checkout has not, cached; or None
-    when git could not answer, which is NOT the same as nothing being obsolete.
+    """(the paths main has moved that this checkout has not, {path: the last
+    warning given about it}), cached; or None when git could not answer, which
+    is NOT the same as nothing being obsolete. A recomputed set starts with no
+    warnings given.
 
     The cache is valid only while BOTH origin/main's tip and this checkout's
     HEAD are what they were when it was written: a fetch that moves main
@@ -244,7 +264,8 @@ def obsolete_path_set(freshness, checkout: Path, git_directory: Path,
     cached = freshness.read_stamp(cache_path)
     if (cached.get("head") == head_sha and cached.get("main_tip") == main_sha
             and isinstance(cached.get("paths"), list)):
-        return set(cached["paths"])
+        warned = cached.get("warned")
+        return set(cached["paths"]), (warned if isinstance(warned, dict) else {})
 
     # run_git returns its own GIT_DID_NOT_RUN code rather than raising when
     # git is missing or the timeout expires, so one non-zero test covers a
@@ -256,8 +277,23 @@ def obsolete_path_set(freshness, checkout: Path, git_directory: Path,
         return None
     paths = set(freshness.git_output.nul_separated_fields(listed.stdout))
     freshness.write_stamp(cache_path, {"head": head_sha, "main_tip": main_sha,
-                                       "paths": sorted(paths)})
-    return paths
+                                       "paths": sorted(paths), "warned": {}})
+    return paths, {}
+
+
+def warning_record_write(git_directory: Path, head_sha: str, main_sha: str,
+                         paths, warned: dict):
+    """Write the path set with the warnings given; return None, or the reason
+    the write failed. Not write_stamp(), which drops a failure: a record that
+    was not written makes the warning repeat, and the agent is told why."""
+    try:
+        (git_directory / PATH_SET_CACHE_FILE_NAME).write_text(
+            json.dumps({"head": head_sha, "main_tip": main_sha, "paths": sorted(paths),
+                        "warned": warned}, indent=2) + "\n",
+            encoding="utf-8")
+    except OSError as error:
+        return f"{type(error).__name__}: {error}"
+    return None
 
 
 def commits_on_main_touching(freshness, checkout: Path, repository_path: str):
@@ -294,11 +330,13 @@ def git_operation_in_progress(freshness, git_directory: Path):
 
 
 def overlap_line(freshness, checkout: Path, repository_path: str):
-    """Whether main's changes to the file overlap this checkout's copy.
+    """(line, whether the line reports a git failure): whether main's changes to
+    the file overlap this checkout's copy.
 
-    Returns MAIN_HAS_NO_FILE_LINE when main's tree was read and lists no file at the
-    path, MAIN_COPY_UNREADABLE_LINE with git's text when main's copy or tree cannot
-    be read, and "" when another git step (merge base, base copy, merge-file) fails.
+    The line is MAIN_HAS_NO_FILE_LINE when main's tree was read and lists no file at
+    the path, MAIN_COPY_UNREADABLE_LINE with git's text when main's copy or tree
+    cannot be read, and "" when another git step (merge base, base copy, merge-file)
+    fails.
 
     A two-way diff against main cannot answer this, because the agent's own edit is
     part of it; a three-way merge of the file, with the merge base as the common
@@ -308,7 +346,7 @@ def overlap_line(freshness, checkout: Path, repository_path: str):
     merge_base = freshness.run_git(["merge-base", "HEAD", "origin/main"], checkout,
                                    timeout=REV_PARSE_TIMEOUT_SECONDS)
     if merge_base.returncode != 0 or not merge_base.stdout.strip():
-        return ""
+        return "", False
     main_copy = freshness.run_git(["show", f"origin/main:{repository_path}"], checkout,
                                   timeout=REV_PARSE_TIMEOUT_SECONDS)
     if main_copy.returncode != 0:
@@ -318,18 +356,18 @@ def overlap_line(freshness, checkout: Path, repository_path: str):
             ["ls-tree", "origin/main", "--", repository_path], checkout,
             timeout=REV_PARSE_TIMEOUT_SECONDS)
         if main_listing.returncode == 0 and not main_listing.stdout.strip():
-            return MAIN_HAS_NO_FILE_LINE.format(path=repository_path)
+            return MAIN_HAS_NO_FILE_LINE.format(path=repository_path), False
         text = ((main_copy.stderr or "").strip()
                 or "git show exited %d" % main_copy.returncode)
-        return MAIN_COPY_UNREADABLE_LINE.format(path=repository_path, text=text)
+        return MAIN_COPY_UNREADABLE_LINE.format(path=repository_path, text=text), True
     base_copy = freshness.run_git(
         ["show", f"{merge_base.stdout.strip()}:{repository_path}"], checkout,
         timeout=REV_PARSE_TIMEOUT_SECONDS)
     if base_copy.returncode != 0:
-        return ""
+        return "", False
     working_copy = checkout / repository_path
     if not working_copy.is_file():
-        return ""
+        return "", False
     with tempfile.TemporaryDirectory() as scratch:
         base_path = Path(scratch) / "merge-base-copy"
         main_path = Path(scratch) / "origin-main-copy"
@@ -340,14 +378,15 @@ def overlap_line(freshness, checkout: Path, repository_path: str):
             ["merge-file", "-p", "-q", str(working_copy), str(base_path), str(main_path)],
             checkout, timeout=MERGE_FILE_TIMEOUT_SECONDS)
     if merged.returncode == 0:
-        return NO_OVERLAP_LINE.format(path=repository_path)
+        return NO_OVERLAP_LINE.format(path=repository_path), False
     if 0 < merged.returncode <= MERGE_FILE_HIGHEST_CONFLICT_COUNT:
-        return OVERLAP_LINE.format(path=repository_path)
-    return ""
+        return OVERLAP_LINE.format(path=repository_path), False
+    return "", False
 
 
 def head_advice(freshness, checkout: Path, git_directory: Path, repository_path: str):
-    """(text, on its own lines) for what to do about the branch.
+    """(text, on its own lines, whether the text reports a git failure) for what
+    to do about the branch.
 
     On a branch the advice continues the warning's one line, as it always has. A
     detached HEAD and a branch state git could not report get lines of their own,
@@ -358,25 +397,25 @@ def head_advice(freshness, checkout: Path, git_directory: Path, repository_path:
     if branch_answer.returncode != 0:
         text = (branch_answer.stderr or "").strip() or (
             "git rev-parse exited %d" % branch_answer.returncode)
-        return BRANCH_STATE_UNKNOWN_LINE.format(text=text), True
+        return BRANCH_STATE_UNKNOWN_LINE.format(text=text), True, True
     branch = branch_answer.stdout.strip()
     state_key, state_text = freshness.head_state(checkout, branch)
     if state_key == "unpushed":
-        return NEVER_PUSHED_ADVICE, False
+        return NEVER_PUSHED_ADVICE, False, False
     if state_key == "pushed-history":
-        return freshness.PUSHED_HISTORY_ADVICE, False
+        return freshness.PUSHED_HISTORY_ADVICE, False, False
     if state_key in PUSHED_HEAD_STATE_KEYS:
-        return PUSHED_ADVICE, False
+        return PUSHED_ADVICE, False, False
     if state_key == "detached":
         marker = git_operation_in_progress(freshness, git_directory)
         if marker is not None:
-            return GIT_OPERATION_IN_PROGRESS_LINE.format(marker=marker), True
+            return GIT_OPERATION_IN_PROGRESS_LINE.format(marker=marker), True, False
         lines = [DETACHED_HEAD_LINE]
-        verdict = overlap_line(freshness, checkout, repository_path)
+        verdict, verdict_reports_failure = overlap_line(freshness, checkout, repository_path)
         if verdict:
             lines.append(verdict)
-        return "\n".join(lines), True
-    return BRANCH_STATE_UNKNOWN_LINE.format(text=state_text), True
+        return "\n".join(lines), True, verdict_reports_failure
+    return BRANCH_STATE_UNKNOWN_LINE.format(text=state_text), True, True
 
 
 def obsolete_file_warning_line(repository_path: str, commit_count, advice: str,
@@ -428,20 +467,28 @@ def main() -> int:
     if repository_path is None:
         return 0
 
-    obsolete = obsolete_path_set(freshness, checkout, git_directory, head_sha, main_sha)
+    answer = obsolete_path_set(freshness, checkout, git_directory, head_sha, main_sha)
     # None is git failing to answer, not an empty answer: both are silence
     # here, but only the empty answer was cached.
-    if obsolete is None or repository_path not in obsolete:
+    if answer is None or repository_path not in answer[0]:
         return 0
+    obsolete, warned = answer
 
     # Only from here on does anything cost more than a lookup: the count and
     # the head state are measured for the one file that actually warned.
-    advice, advice_on_own_lines = head_advice(freshness, checkout, git_directory,
-                                              repository_path)
+    advice, advice_on_own_lines, advice_reports_failure = head_advice(
+        freshness, checkout, git_directory, repository_path)
     line = obsolete_file_warning_line(
         repository_path,
         commits_on_main_touching(freshness, checkout, repository_path),
         advice, advice_on_own_lines)
+    if not advice_reports_failure and warned.get(repository_path) == line:
+        return 0
+    warned[repository_path] = line
+    write_failure = warning_record_write(git_directory, head_sha, main_sha, obsolete, warned)
+    if write_failure is not None:
+        line += "\n" + RECORD_WRITE_FAILED_LINE.format(
+            record=git_directory / PATH_SET_CACHE_FILE_NAME, reason=write_failure)
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PostToolUse",
         "additionalContext": line,

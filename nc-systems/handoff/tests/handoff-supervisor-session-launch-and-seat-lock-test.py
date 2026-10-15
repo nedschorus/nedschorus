@@ -747,7 +747,8 @@ def run_appended_system_prompt_agent_part_cases(workspace: Path):
 
 def run_launched_session_seat_environment_cases(workspace: Path):
     """Every launched session is told the seat's name and directory, and its own
-    session id.
+    session id, and runs with IS_DEMO=1 so Claude Code's onboarding screens
+    cannot stop it.
 
     The handoff writer the agent runs names its handoff after the name this
     supervisor watches only if the session carries it: taken from the shell's
@@ -757,7 +758,9 @@ def run_launched_session_seat_environment_cases(workspace: Path):
     environment holds, so what is proven is what a launched session sees.
     The supervisor itself is started with decoy values of all three variables,
     as it would be when run from inside another seat's session, so an
-    inherited value cannot pass for a value the supervisor set.
+    inherited value cannot pass for a value the supervisor set. IS_DEMO is
+    removed from the supervisor's own environment for the same reason: a
+    session the supervisor launched already carries it.
 
     The session id is what confines the name and directory to this session:
     the writer honours them only where CLAUDE_CODE_SESSION_ID equals it, and a
@@ -779,7 +782,8 @@ def run_launched_session_seat_environment_cases(workspace: Path):
         "    recorded = {variable: os.environ.get(variable) for variable in (\n"
         "        'NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME',\n"
         "        'NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY',\n"
-        "        'NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID')}\n"
+        "        'NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID',\n"
+        "        'IS_DEMO')}\n"
         "    recorded['argv'] = sys.argv[1:]\n"
         "    json.dump(recorded, handle)\n",
         encoding="utf-8",
@@ -789,6 +793,7 @@ def run_launched_session_seat_environment_cases(workspace: Path):
     environment["NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME"] = "decoy-outer-seat"
     environment["NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY"] = str(workspace / "decoy-outer-seat")
     environment["NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID"] = "decoy-outer-session"
+    environment.pop("IS_DEMO", None)
     subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--agent", name, "--cd", str(seat_directory),
          "--handoff-dir", str(handoff_directory), "--agent-command", str(stub_agent), "--agent-update-timeout-seconds", "0"],
@@ -805,6 +810,8 @@ def run_launched_session_seat_environment_cases(workspace: Path):
     check("the launched session is told the directory its supervisor launched it in",
           recorded.get("NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY")
           == str(seat_directory.resolve()), str(recorded))
+    check("the launched session runs with IS_DEMO=1, which skips Claude Code's onboarding screens",
+          recorded.get("IS_DEMO") == "1", str(recorded))
     launched_argv = recorded.get("argv") or []
     launched_session_id = (launched_argv[launched_argv.index("--session-id") + 1]
                            if "--session-id" in launched_argv[:-1] else None)
@@ -1015,6 +1022,59 @@ with tempfile.TemporaryDirectory() as update_workspace:
     check("a zero timeout prints no update check, directly or through a launch",
           "checking for" not in captured_output.getvalue(),
           captured_output.getvalue())
+
+with tempfile.TemporaryDirectory() as onboarding_workspace:
+    # A relaunch by a running supervisor writes the onboarding presets again: a
+    # /logout between two launches can clear hasCompletedOnboarding, and the
+    # session would stop at the welcome screen. Folder trust is never written here.
+    # The stub agent copies ~/.claude.json as it starts, so what is proven is
+    # what the launched session finds.
+    seen_at_start = Path(onboarding_workspace) / "claude-json-at-start"
+    agent = an_agent_recording_its_invocations(
+        onboarding_workspace,
+        body=f'cp "$HOME/.claude.json" "{seen_at_start}"')
+    claude_json = fixture.SCRATCH_CLAUDE_JSON_PATH
+    logged_out = {"numStartups": 3, "theme": "dark",
+                  "projects": {"/seats/other": {"history": ["kept"]}}}
+    try:
+        claude_json.write_text(json.dumps({**logged_out, "hasCompletedOnboarding": True}),
+                               encoding="utf-8")
+        supervisor.launch_agent_session(
+            str(agent), "session-before-logout", Path(onboarding_workspace), "prompt",
+            update_timeout_seconds=0).wait()
+        claude_json.write_text(json.dumps(logged_out), encoding="utf-8")
+        supervisor.launch_agent_session(
+            str(agent), "session-before-logout", Path(onboarding_workspace), "prompt",
+            resume=True, update_timeout_seconds=0).wait()
+        seen = (json.loads(seen_at_start.read_text(encoding="utf-8"))
+                if seen_at_start.exists() else None)
+        check("a relaunch records onboarding as done before the session starts, keeps the "
+              "set theme and every project, and trusts no folder",
+              len(invocations_of(onboarding_workspace)) == 2
+              and seen == {**logged_out, "hasCompletedOnboarding": True},
+              (invocations_of(onboarding_workspace), seen))
+
+        unparseable = '{"oauthAccount": {"accountUuid": "not-a-real'
+        claude_json.write_text(unparseable, encoding="utf-8")
+        seen_at_start.unlink(missing_ok=True)
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured):
+            supervisor.launch_agent_session(
+                str(agent), "session-before-logout", Path(onboarding_workspace), "prompt",
+                resume=True, update_timeout_seconds=0).wait()
+        check("a ~/.claude.json that is not valid JSON: the cause is printed, naming the file",
+              str(claude_json) in captured.getvalue()
+              and "not valid JSON" in captured.getvalue()
+              and "launched anyway" in captured.getvalue(),
+              captured.getvalue())
+        check("a ~/.claude.json that is not valid JSON: the session is launched anyway",
+              len(invocations_of(onboarding_workspace)) == 3,
+              invocations_of(onboarding_workspace))
+        check("a ~/.claude.json that is not valid JSON is left as it was",
+              claude_json.read_text(encoding="utf-8") == unparseable,
+              claude_json.read_text(encoding="utf-8"))
+    finally:
+        claude_json.unlink(missing_ok=True)
 
 for resume in (False, True):
     with tempfile.TemporaryDirectory() as naming_workspace:

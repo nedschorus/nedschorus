@@ -1889,7 +1889,7 @@ def run_edit_cases(scratch: Path):
 
     source = filed_ghi_md(scratch)
     landing = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git ls-remote": Completed(""),
@@ -1920,7 +1920,7 @@ def run_edit_cases(scratch: Path):
           not landing.ran("git rm"), str(landing.commands()))
     check("main is fetched before anything is compared against it",
           landing.commands().index("git fetch origin")
-          < landing.commands().index(f"git show origin/main:{EDIT_RELATIVE}"),
+          < landing.commands().index(f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}"),
           str(landing.commands()))
     check("the issue is read before the run touches git at all, so a "
           "number no issue has is found before a branch is pushed for it",
@@ -1933,6 +1933,11 @@ def run_edit_cases(scratch: Path):
           not landing.ran("gh issue comment")
           and not landing.ran("conflicts-with-a-ruling"),
           str(landing.commands()))
+    check("the issue's file set is listed at the main commit the conflict "
+          "check read, not at the ref a later fetch may have moved",
+          landing.ran(GHI_MD_LISTING_CALL)
+          and not landing.ran("git ls-tree -r --name-only -z origin/main"),
+          str(landing.commands()))
 
     conflicting_edit = Recorder({
         ASK: Completed("", returncode=3, stderr=(
@@ -1941,7 +1946,7 @@ def run_edit_cases(scratch: Path):
             "Ask the user whether that ruling still applies, and put the "
             "question on your task list.\n")),
         "gh issue view 46": Completed("Closed issues are frozen\n"),
-        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git ls-remote": Completed(""),
@@ -2055,7 +2060,7 @@ def run_edit_cases(scratch: Path):
             return super().__call__(arguments, timeout, cwd, check)
 
     reader = Reader({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git ls-remote": Completed(""),
@@ -2079,7 +2084,7 @@ def run_edit_cases(scratch: Path):
     # and the two answers coincide. These three separate them.
 
     citing = Reader({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "git ls-remote": Completed(""),
@@ -2099,7 +2104,7 @@ def run_edit_cases(scratch: Path):
           str(citing.commands()))
 
     renaming = Reader({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "git ls-remote": Completed(""),
@@ -2120,7 +2125,7 @@ def run_edit_cases(scratch: Path):
           str(renaming.commands()))
 
     several_citing = Reader({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "git ls-remote": Completed(""),
@@ -2155,7 +2160,7 @@ def run_edit_cases(scratch: Path):
     # way — it asks only whether the call succeeded.
     moved_source = filed_ghi_md(scratch, directory="nc-systems/statusline")
     moved = Recorder({
-        f"git show origin/main:{MOVED_RELATIVE}": Completed("",
+        f"git show {MAIN_COMMIT}:{MOVED_RELATIVE}": Completed("",
                                                             returncode=128),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{MOVED_RELATIVE}": Completed(
@@ -2165,7 +2170,7 @@ def run_edit_cases(scratch: Path):
         # it and the removal is this author's to make. Answered rather than
         # left to the recorder's default, which is an empty file that
         # succeeded — a state main is never in for a file it holds.
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
@@ -2186,9 +2191,14 @@ def run_edit_cases(scratch: Path):
           "move, is left where it is",
           not ran_with(moved, "git rm", "570-test-design.md"),
           str(moved.calls))
+    check("and the path main still holds the moved file at is looked up in "
+          "the file set at the checked main commit, not at the ref",
+          moved.count(GHI_MD_LISTING_CALL) >= 2
+          and not moved.ran("git ls-tree -r --name-only -z origin/main"),
+          str(moved.commands()))
     check("and the path the removal names is read on main and at the "
           "author's base before any of it, the removal being a deletion",
-          moved.ran(f"git show origin/main:{EDIT_RELATIVE}")
+          moved.ran(f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}")
           and moved.ran(f"git show {BASE_REVISION}:{EDIT_RELATIVE}")
           and moved.commands().index(f"git show {BASE_REVISION}:"
                                      f"{EDIT_RELATIVE}")
@@ -2200,7 +2210,7 @@ def run_edit_cases(scratch: Path):
     # copy is not this edit's to delete.
 
     in_place = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git ls-remote": Completed(""),
@@ -2224,7 +2234,7 @@ def run_edit_cases(scratch: Path):
     renamed_source = filed_ghi_md(scratch, name=RENAMED_NAME,
                                   directory="nc-systems/statusline")
     renamed = Recorder({
-        f"git show origin/main:{RENAMED_RELATIVE}": Completed(
+        f"git show {MAIN_COMMIT}:{RENAMED_RELATIVE}": Completed(
             "", returncode=128),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{RENAMED_RELATIVE}": Completed(
@@ -2258,7 +2268,7 @@ def run_edit_cases(scratch: Path):
     renamed_in_place = filed_ghi_md(scratch, name=RENAMED_NAME)
     renamed_in_place_relative = f"docs/issues/{RENAMED_NAME}"
     in_place = Recorder({
-        f"git show origin/main:{renamed_in_place_relative}": Completed(
+        f"git show {MAIN_COMMIT}:{renamed_in_place_relative}": Completed(
             "", returncode=128),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{renamed_in_place_relative}": Completed(
@@ -2289,12 +2299,12 @@ def run_edit_cases(scratch: Path):
     moved_heading_source = filed_ghi_md(
         scratch, directory="nc-systems/statusline", text=MOVED_HEADING_TEXT)
     moved_heading = Recorder({
-        f"git show origin/main:{MOVED_RELATIVE}": Completed("",
+        f"git show {MAIN_COMMIT}:{MOVED_RELATIVE}": Completed("",
                                                             returncode=128),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{MOVED_RELATIVE}": Completed(
             "", returncode=128),
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
@@ -2311,12 +2321,12 @@ def run_edit_cases(scratch: Path):
           str(moved_heading.commands()))
 
     moved_same_heading = Recorder({
-        f"git show origin/main:{MOVED_RELATIVE}": Completed("",
+        f"git show {MAIN_COMMIT}:{MOVED_RELATIVE}": Completed("",
                                                             returncode=128),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{MOVED_RELATIVE}": Completed(
             "", returncode=128),
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "git ls-remote": Completed(""),
         "gh pr create": Completed("pr\n"),
@@ -2333,7 +2343,7 @@ def run_edit_cases(scratch: Path):
     # --- The conflict the 2026-09-08 ruling is about ---------------------
 
     conflicted = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Theirs\n"),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Theirs\n"),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git diff": Completed("@@\n-# Older\n+# Theirs\n"),
@@ -2404,12 +2414,12 @@ def run_edit_cases(scratch: Path):
     # not hold the other seat's line at all.
 
     moved_conflict = Recorder({
-        f"git show origin/main:{MOVED_RELATIVE}": Completed("",
+        f"git show {MAIN_COMMIT}:{MOVED_RELATIVE}": Completed("",
                                                             returncode=128),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{MOVED_RELATIVE}": Completed(
             "", returncode=128),
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(OTHER_SEAT_TEXT),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(OTHER_SEAT_TEXT),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "git diff": Completed(
             "@@ -5,3 +5,5 @@\n Body.\n+\n"
@@ -2467,7 +2477,7 @@ def run_edit_cases(scratch: Path):
         f"--head {EARLIER_EDIT_BRANCH}": earlier_edit_pull_request(
             EDIT_RELATIVE),
         "git ls-remote": Completed(""),
-        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "gh pr create": Completed("pr\n"),
@@ -2513,7 +2523,7 @@ def run_edit_cases(scratch: Path):
         f"--head {EARLIER_EDIT_BRANCH}": earlier_edit_pull_request(
             "docs/issues/570-test-design.md"),
         "git ls-remote": Completed(""),
-        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "gh pr create": Completed("pr\n"),
@@ -2543,7 +2553,7 @@ def run_edit_cases(scratch: Path):
             f"abc123\trefs/heads/{EARLIER_EDIT_BRANCH}\n"),
         f"--head {EARLIER_EDIT_BRANCH}": Completed("[]"),
         "git ls-remote": Completed(""),
-        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "gh pr create": Completed("pr\n"),
@@ -2574,9 +2584,9 @@ def run_edit_cases(scratch: Path):
         f"--head {EARLIER_EDIT_BRANCH}": earlier_edit_pull_request(
             EDIT_RELATIVE),
         "git ls-remote": Completed(""),
-        f"git show origin/main:{MOVED_RELATIVE}": Completed(
+        f"git show {MAIN_COMMIT}:{MOVED_RELATIVE}": Completed(
             "", returncode=128),
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "gh pr create": Completed("pr\n"),
@@ -2635,7 +2645,7 @@ def run_edit_cases(scratch: Path):
               "git ls-remote": Completed("")},
              "gh pr list")]:
         unaskable = Recorder(dict(answers, **{
-            f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+            f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
             "git merge-base": Completed(BASE_REVISION + "\n"),
             f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(
                 "# Older\n"),
@@ -2672,7 +2682,7 @@ def run_edit_cases(scratch: Path):
     # HEADING instead would be a state this tool cannot produce, and the
     # rerun would read it as content of its own to land.
     resumed = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(
             staged_form(title="Stale title")),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
@@ -2702,7 +2712,7 @@ def run_edit_cases(scratch: Path):
     # --- The pull request is already open --------------------------------
 
     waiting = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git ls-remote": Completed("abc123\trefs/heads/ghi-570-edit-x\n"),
@@ -2739,7 +2749,7 @@ def run_edit_cases(scratch: Path):
     # would be reported that way forever, because nothing else opens one.
 
     pushed_only = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git ls-remote": Completed("abc123\trefs/heads/ghi-570-edit-x\n"),
@@ -2783,7 +2793,7 @@ def run_edit_cases(scratch: Path):
     # remote and no pull request on it.
 
     pushed_while_main_moved = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Theirs\n"),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Theirs\n"),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git diff": Completed("@@\n-# Older\n+# Theirs\n"),
@@ -2850,7 +2860,7 @@ def run_edit_cases(scratch: Path):
     # must still stop it before anything reaches the remote.
 
     new_to_land = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git ls-remote": Completed(""),
@@ -2879,9 +2889,9 @@ def run_edit_cases(scratch: Path):
     # author's path, so `on_main` is None and never equals the staged text.
 
     moved_to_land = Recorder({
-        f"git show origin/main:{MOVED_RELATIVE}": Completed("",
+        f"git show {MAIN_COMMIT}:{MOVED_RELATIVE}": Completed("",
                                                             returncode=128),
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
         "git ls-remote": Completed(""),
@@ -2911,7 +2921,7 @@ def run_edit_cases(scratch: Path):
     # --- The body is rewritten only when the file set changed ------------
 
     unchanged = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(staged),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(staged),
         "gh issue view": issue_json(EDIT_TITLE, one_link),
         "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
@@ -2924,7 +2934,7 @@ def run_edit_cases(scratch: Path):
           str(unchanged.commands()))
 
     added = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(staged),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(staged),
         "gh issue view": issue_json(EDIT_TITLE, one_link),
         "git ls-tree": Completed(
             EDIT_RELATIVE + "\0nc-systems/statusline/570-contract.md\0"),
@@ -2935,7 +2945,7 @@ def run_edit_cases(scratch: Path):
                    EDIT_NAME), str(added.commands()))
 
     several = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git ls-remote": Completed(""),
@@ -2960,7 +2970,7 @@ def run_edit_cases(scratch: Path):
     dated_text = FILE_TEXT.replace(EDIT_TITLE, dated_heading)
     dated_source = filed_ghi_md(scratch, text=dated_text)
     renamed_to_a_date = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(staged),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(staged),
         "gh issue view": issue_json(EDIT_TITLE, one_link),
         "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
@@ -2980,7 +2990,7 @@ def run_edit_cases(scratch: Path):
           str(renamed_to_a_date.commands()))
 
     already_dated = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(
             staged_form(text=dated_text, title=dated_heading)),
         "gh issue view": issue_json(dated_heading, one_link),
         "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
@@ -2994,7 +3004,7 @@ def run_edit_cases(scratch: Path):
               False, f"code {refusal.code}: {refusal}")
 
     several_dated = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed("# Older\n"),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
         "git ls-remote": Completed(""),
@@ -3017,7 +3027,7 @@ def run_edit_cases(scratch: Path):
     # dated title the issue already holds renames nothing, so it is not
     # refused (review of PR 829).
     retitled_already = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(staged),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(staged),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(staged),
         "git ls-remote": Completed(""),
@@ -3040,7 +3050,7 @@ def run_edit_cases(scratch: Path):
     # --- A body nobody has migrated yet ----------------------------------
 
     prose = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed(staged),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(staged),
         "gh issue view": issue_json(
             EDIT_TITLE, "The statusline drops its branch name after a "
                         "rebase. Reproduced twice."),
@@ -3064,7 +3074,7 @@ def run_edit_cases(scratch: Path):
     # --- The file is not on main at all ----------------------------------
 
     absent = Recorder({
-        f"git show origin/main:{EDIT_RELATIVE}": Completed("", returncode=1),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("", returncode=1),
         "git merge-base": Completed(BASE_REVISION + "\n"),
         f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("", returncode=1),
         "git ls-remote": Completed(""),
@@ -3370,6 +3380,24 @@ def run_landed_design_cases(scratch: Path):
     check("a subsystem's landed design is found for its own issue",
           for_subsystem == [SUBSYSTEM_DESIGN], str(for_subsystem))
 
+    # Read at a resolved commit, the listing and each landed design's
+    # issue: line both come from that commit: here only the commit's copy
+    # names issue 120, and the ref's names none, so a read at the ref
+    # would drop the design from the issue's files.
+    at_commit = Recorder({
+        f"git ls-tree -r --name-only -z {MAIN_COMMIT}": Completed(
+            f"{LANDED_DESIGN}\0"),
+        f"git show {MAIN_COMMIT}:{LANDED_DESIGN}": Completed(landed_form()),
+        f"git show origin/main:{LANDED_DESIGN}": Completed(LANDED_TEXT),
+    })
+    found_at_commit = tool.ghi_md_paths_for_issue(120, scratch, at_commit,
+                                                  MAIN_COMMIT)
+    check("given a commit, the issue's files are listed at that commit and "
+          "a landed design's issue: line is read from that commit's copy",
+          found_at_commit == [LANDED_DESIGN]
+          and not at_commit.ran("origin/main"),
+          f"{found_at_commit} {at_commit.commands()}")
+
     # A read that fails is not "names no issue". Dropped silently, the file
     # would fall out of the issue's body, which is the empty answer the
     # listing refuses to give for the same reason.
@@ -3445,7 +3473,7 @@ def run_landed_design_cases(scratch: Path):
     old_body = tool.links_body(
         REPO, ["docs/issues/120-crash-recovery-for-seats-design.md"])
     rerun = Recorder({
-        f"git show origin/main:{LANDED_DESIGN}": Completed(landed_form()),
+        f"git show {MAIN_COMMIT}:{LANDED_DESIGN}": Completed(landed_form()),
         "gh issue view": issue_json(LANDED_TITLE, old_body),
         "git ls-tree": Completed(f"{LANDED_DESIGN}\0"),
     })
@@ -3470,7 +3498,7 @@ def run_landed_design_cases(scratch: Path):
 
     def adding_the_line(listed, body):
         return Recorder({
-            f"git show origin/main:{LANDED_DESIGN}": Completed(LANDED_TEXT),
+            f"git show {MAIN_COMMIT}:{LANDED_DESIGN}": Completed(LANDED_TEXT),
             "git merge-base": Completed(BASE_REVISION + "\n"),
             f"git show {BASE_REVISION}:{LANDED_DESIGN}": Completed(
                 LANDED_TEXT),
@@ -3608,12 +3636,132 @@ def run_real_git_listing_cases(scratch: Path):
           str(tool.ghi_md_paths_for_issue(12, repository, tool.run)))
 
 
+def run_edit_landing_real_git_cases(scratch: Path):
+    """An edit lands only its own change while main moves under the run.
+
+    Real git, with a bare remote; only `gh` and the ghi-info ask are
+    stubbed. While the run waits on ghi-info, another seat lands a line in
+    the same GHI-MD and the author's checkout fetches it, as a fetch from any
+    other worktree of the same clone does, since they share origin/main. The
+    pull request the run opens must still carry the other seat's line once
+    it merges."""
+    remote = scratch / "remote.git"
+    author = scratch / "author"
+    other = scratch / "other"
+    relative = EDIT_RELATIVE
+
+    def git(*arguments, cwd=None):
+        return subprocess.run(
+            ["git", *arguments], cwd=cwd, check=True, capture_output=True,
+            text=True).stdout.strip()
+
+    git("init", "-q", "--bare", "-b", "main", str(remote))
+    for clone in (author, other):
+        git("clone", "-q", str(remote), str(clone))
+        git("config", "user.email", "test@example.com", cwd=clone)
+        git("config", "user.name", "test", cwd=clone)
+    body_lines = [f"Line {index} of the body." for index in range(1, 13)]
+    base_text = staged_form(title=EDIT_TITLE, text=(
+        f"# {EDIT_TITLE}\n\n" + "\n".join(body_lines) + "\n"))
+    (author / relative).parent.mkdir(parents=True)
+    (author / relative).write_text(base_text, encoding="utf-8")
+    ask = author / "scripts" / "ghi-info-ask.py"
+    ask.parent.mkdir(parents=True)
+    ask.write_text("# stands in for the real one; never executed\n")
+    git("add", "-A", cwd=author)
+    git("commit", "-q", "-m", "base", cwd=author)
+    git("push", "-q", "origin", "HEAD:main", cwd=author)
+    base_commit = git("rev-parse", "HEAD", cwd=author)
+
+    other_line = "Another seat's task line, landed while the run waited."
+    author_line = "The author's own task line."
+    (author / relative).write_text(base_text + author_line + "\n",
+                                   encoding="utf-8")
+
+    def runner(arguments, timeout=None, cwd=None, check=True):
+        joined = " ".join(str(argument) for argument in arguments)
+        if ASK in joined:
+            git("pull", "-q", "origin", "main", cwd=other)
+            other_text = (other / relative).read_text(encoding="utf-8")
+            (other / relative).write_text(
+                other_text.replace(f"# {EDIT_TITLE}\n\n",
+                                   f"# {EDIT_TITLE}\n\n{other_line}\n\n"),
+                encoding="utf-8")
+            git("commit", "-q", "-am", "other seat's line", cwd=other)
+            git("push", "-q", "origin", "HEAD:main", cwd=other)
+            git("fetch", "-q", "origin", cwd=author)
+            return Completed("verdict: unrelated\n")
+        if arguments[0] == "gh":
+            if "issue view" in joined:
+                return issue_json(EDIT_TITLE,
+                                  tool.links_body(REPO, [relative]))
+            if "pr list" in joined:
+                return Completed("[]")
+            return Completed("https://github.com/nedschorus/nedschorus/pull/1\n")
+        return tool.run(arguments, timeout=timeout or tool.GH_TIMEOUT_SECONDS,
+                        cwd=cwd, check=check)
+
+    tool.edit(author / relative, REPO, author, runner, quiet)
+
+    pushed = git("ls-remote", "--heads", str(remote), "ghi-570-edit-*")
+    branch = pushed.split("refs/heads/")[-1] if pushed else ""
+    check("an edit run while main moved under it pushes its branch",
+          bool(branch), pushed)
+    if not branch:
+        return
+    landed_parent = git("rev-parse", f"refs/heads/{branch}^",
+                        cwd=remote)
+    check("and cuts that branch from the main its conflict check read, "
+          "not from the main a later fetch moved the ref to",
+          landed_parent == base_commit,
+          f"parent {landed_parent}, checked {base_commit}")
+    git("pull", "-q", "origin", "main", cwd=other)
+    git("fetch", "-q", "origin", branch, cwd=other)
+    merging = subprocess.run(
+        ["git", "merge", "-q", "--no-edit", "FETCH_HEAD"], cwd=other,
+        capture_output=True, text=True)
+    check("and its pull request merges onto that newer main without a "
+          "conflict, the two seats having changed different lines",
+          merging.returncode == 0, merging.stdout + merging.stderr)
+    merged = (other / relative).read_text(encoding="utf-8")
+    check("so merging its pull request keeps the line another seat landed "
+          "meanwhile, beside the author's own",
+          other_line in merged and author_line in merged, merged)
+
+
+def run_pull_request_description_cases(directory):
+    """Both pull requests this tool opens carry a line scripts/merge-gate.sh
+    accepts, so the gate does not refuse every GHI-MD pull request."""
+    import re
+    # The gate's jq test, line for line, applied to each line of the body.
+    gate_line = re.compile(
+        r"^\s*(?:[-*+]\s+)?(?:\*\*|__)?(?:Root cause(?: not fixed)?(?:\*\*|__)?:"
+        r"|No defect fixed(?:\*\*|__)?\.)")
+    for name, function in (
+            ("create", tool.create_pull_request_for_branch),
+            ("edit", tool.create_pull_request_for_edit_branch)):
+        calls = []
+
+        def runner(command, cwd=None, calls=calls):
+            calls.append(command)
+            return Completed("https://github.com/x/y/pull/9\n")
+
+        function("x/y", "branch", 7, "Title", directory, runner, lambda line: None)
+        body = calls[0][calls[0].index("--body") + 1] if calls else ""
+        check(f"the {name} pull request's description carries a line the merge gate accepts",
+              any(gate_line.match(line) for line in body.splitlines()), repr(body))
+
+
 def main():
     import tempfile
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-pull-request-description-test-") as name:
+        run_pull_request_description_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-write-test-") as name:
         run_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-real-git-test-") as name:
         run_real_git_listing_cases(Path(name))
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-landing-test-") as name:
+        run_edit_landing_real_git_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-landed-test-") as name:
         run_landed_design_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-main-test-") as name:
