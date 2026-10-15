@@ -518,15 +518,18 @@ def is_guarded(path: str):
 
 
 def checkout_files(checkout: Path, decisions: dict):
-    """Every guarded file in the checkout, tracked, untracked or ignored.
+    """Every guarded file in the checkout: tracked files, untracked files that git does not
+    ignore, and ignored CLAUDE.local.md files. Other ignored files are never listed, since
+    Claude Code's own runtime files under .claude/, such as scheduled_tasks.lock, are ignored
+    and rewritten by Claude Code itself.
 
     decisions caches the guard's answer for each listed path between runs, since deciding takes
     most of a run's time; it is dropped when instruction-file-guard.py changes."""
     listed = git_text(checkout, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
-    # Ignored files are listed only where the guard can protect one, so large ignored trees
-    # are never read.
+    # An ignored file can be an instruction only as CLAUDE.local.md; listing ignored files under
+    # .claude/ would catch Claude Code's runtime files, and large ignored trees are never read.
     ignored = git_text(checkout, "ls-files", "-z", "--others", "--ignored", "--exclude-standard",
-                       "--", ":(glob)**/CLAUDE.local.md", ":(glob)**/.claude/**")
+                       "--", ":(glob)**/CLAUDE.local.md")
     guard_version = str(stat_data(str(HOOK_PATH.parent / "instruction-file-guard.py")))
     if decisions.get("") != guard_version:
         decisions.clear()
@@ -826,6 +829,11 @@ def scan(files, state_files, hash_function):
         changed[path] = (now, data, key, copy_hash)
     for path, before in list(state_files.items()):
         if path in files or path in changed:
+            continue
+        if os.path.isfile(path):
+            # No longer listed as guarded though present, such as a file git now ignores:
+            # forget it, so it is neither reported deleted nor reminded about.
+            del state_files[path]
             continue
         if before[4] != DELETED:
             changed[path] = (None, b"", DELETED, DELETED)

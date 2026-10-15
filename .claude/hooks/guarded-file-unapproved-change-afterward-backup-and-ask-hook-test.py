@@ -702,6 +702,45 @@ def cases(scratch):
           and f"{local} {world.key(local)}" in message.split("--approve", 1)[1].split("\n")[0],
           message)
 
+    # -- a git-ignored Claude Code runtime file under .claude/ is not guarded
+    world = fresh(scratch, "ignored-runtime-file")
+    exclude = world.repo / ".git" / "info" / "exclude"
+    exclude.write_text("**/.claude/scheduled_tasks.lock\nCLAUDE.local.md\n")
+    lock = world.repo / ".claude" / "scheduled_tasks.lock"
+    lock.parent.mkdir()
+    lock.write_text('{"pid": 1}\n')
+    world.run()
+    lock.write_text('{"pid": 2}\n')
+    message = world.run()
+    check("a changed git-ignored .claude/scheduled_tasks.lock is not asked about",
+          message == "" and str(lock) not in message, message)
+    check("a git-ignored .claude/scheduled_tasks.lock is not copied into the store",
+          world.versions(lock) == [], world.versions(lock))
+    check("a git-ignored .claude/scheduled_tasks.lock draws no reminder",
+          world.run() == "" and world.run(session="session-b", owner="owner-b") == "", "")
+
+    # -- a pending ask for a file that is no longer guarded is dropped, not reported as deleted
+    world = fresh(scratch, "formerly-guarded-file")
+    lock = world.repo / ".claude" / "scheduled_tasks.lock"
+    lock.parent.mkdir()
+    lock.write_text('{"pid": 1}\n')
+    world.run()
+    lock.write_text('{"pid": 2}\n')
+    check("a changed untracked .claude file is asked about", str(lock) in world.run(), "")
+    (world.repo / ".git" / "info" / "exclude").write_text("**/.claude/scheduled_tasks.lock\n")
+    message = world.run()
+    check("a file that git now ignores draws no further ask or reminder",
+          message == "" and world.run() == "", message)
+
+    # -- a git-ignored CLAUDE.local.md is still guarded
+    ignored_local = world.repo / "CLAUDE.local.md"
+    ignored_local.write_text("seat v1\n")
+    world.run()
+    ignored_local.write_text("seat v2\n")
+    message = world.run()
+    check("a changed git-ignored CLAUDE.local.md is still asked about",
+          str(ignored_local) in message and "has not approved" in message, message)
+
     # -- speed, on a copy of main
     if sys.platform != "linux":
         print("SKIP  with nothing changed, a run uses under 100 ms of CPU on ned-box: not on ned-box")
