@@ -34,6 +34,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **deferred-decisions** — the section of a design or GHI-MD, headed `Deferred-decisions` at any heading level, that lists the cases and decisions the document leaves for its build, for later evidence or for the user to settle; a reviewer does not report a case listed there as missing.
 - **design-contract** — the file beside a design listing what the component promises its component-consumers, one testable clause per observable effect.
 - **design-to-main** — the workflow that takes an approved design to code, tests and a pull request; its design and its own glossary are in `docs/design-to-main/`.
+- **detect-instruct-correct (aka DIC)** — a check, usually a hook, that detects when an agent has broken a rule, instructs the agent what is wrong and what to do, and lets the agent correct it, so a rule written for agents also holds in practice.
 - **edit-GHI** — the ghi-write-tool operation that merges an edit of a filed GHI-MD into main and updates the GHI from main.
 - **failed-restart-notice** — the page the agent-crash-watcher opens in the browser on the user's Mac when it cannot restart an agent-seat, with the command to restart it himself; when the page cannot be written or the Mac refuses the page, the notice opens in a terminal window on the Mac instead.
 - **fix-round** — one cycle of a pull request answering review findings, written by a forked subagent that inherits the author's full context, as one commit on top of the frozen-head.
