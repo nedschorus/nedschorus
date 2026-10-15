@@ -1,3 +1,7 @@
+---
+issue: "[Clarity registers: explanations and drafted instruction text land without the user's repeated corrections](https://github.com/nedschorus/nedschorus/issues/138)"
+---
+
 # Clarity registers for explanation and drafting — GHI-MD for issue [Clarity registers: explanations and drafted instruction text land without the user's repeated corrections](https://github.com/nedschorus/nedschorus/issues/138)
 
 The user has typed some form of "I don't understand", "too much", or "explain assuming zero context" thousands of times. Two registers fail: live explanation to the user, and instruction text drafted for fresh agents. Each item below that changes a file names the file, the pull request whose diff is the change's exact before/after, and the actor the text governs. The decisions were made in a walk on 2026-08-22, closed the same day; its marks are below.
@@ -76,3 +80,7 @@ Grounding observation (2026-08-22): when the user asks a question, the answering
    issue [Clarity registers: explanations and drafted instruction text land without the user's repeated corrections](https://github.com/nedschorus/nedschorus/issues/138) and issue [Build draft-md: the drafting-stage skill run before md-review (user-ruled 2026-08-22)](https://github.com/nedschorus/nedschorus/issues/142), the latter's
    GHI-MD `docs/issues/142-draft-md-skill-design-notes.md` (carried by
    PR [Pair document: draft-md design notes (nedschorus#142)](https://github.com/nedschorus/nedschorus/pull/160)), and this anchor.*
+
+## Outcome
+
+Closed as not planned on 2026-09-21. This issue held the explain skill until failures were seen in sessions running under the Zero-Context Explanation output style. The pull request [Remove the Zero-Context Explanation output style](https://github.com/nedschorus/nedschorus/pull/232) took that style off main on 2026-09-01, so no session could run under it and the hold's condition could no longer be met. The explain skill went on as GHI [Build the explain skill: re-say a message for a reader who does not carry the session's context — the draft exists, and the hold's reason expired](https://github.com/nedschorus/nedschorus/issues/603), whose GHI-MD, `docs/issues/603-explain-skill-design.md`, records this reasoning.

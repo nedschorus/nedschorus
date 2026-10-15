@@ -85,6 +85,7 @@ import argparse
 import importlib.util
 import os
 import shlex
+import socket
 import shutil
 import subprocess
 import sys
@@ -96,6 +97,16 @@ _supervisor_spec = importlib.util.spec_from_file_location(
 )
 supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)
+
+_tmux_error_pattern_spec = importlib.util.spec_from_file_location(
+    "tmux_target_or_server_does_not_exist_error_pattern_common",
+    Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
+    / "tmux-target-or-server-does-not-exist-error-pattern-common.py"
+)
+tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
+_tmux_error_pattern_spec.loader.exec_module(tmux_error_pattern)
+TMUX_GONE_ANSWERS = " or ".join(
+    f'"{wording}"' for wording, _ in tmux_error_pattern.TMUX_TARGET_OR_SERVER_DOES_NOT_EXIST_ERROR_WORDINGS)
 
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 
@@ -174,8 +185,13 @@ def directory_occupancy_keep_reason(directory: Path):
     return "no live process is rooted in the seat directory"
 
 
+# run_tmux returns None both when tmux cannot run and when it times out, so a
+# message about a None answer must be true for both.
+TMUX_GAVE_NO_ANSWER = "tmux could not be run, or did not answer within 30 seconds"
+
+
 def run_tmux(*arguments_after_tmux, socket_name=None):
-    """Run tmux, returning None if the command cannot run."""
+    """Run tmux, returning None if the command cannot run or times out after 30 seconds."""
     # Without socket_name, tmux uses $TMUX inside a session and the default socket outside one.
     if shutil.which("tmux") is None:
         return None
@@ -189,29 +205,97 @@ def run_tmux(*arguments_after_tmux, socket_name=None):
         return None
 
 
-def tmux_sockets_holding_seat_session(name: str) -> list:
-    """Return socket names holding the seat session, in kill order."""
+def tmux_has_session(name: str, socket_name: str, run=None):
+    """Return (held, detail) for one tmux server, with held None when tmux gave no answer.
+
+    has-session's failure is an answer ("not held") only when tmux says the session
+    or its server does not exist; a timeout or any other error says nothing about
+    whether the session is there. recover-crashed-seats.py probes through this
+    function too, passing its own run_tmux as run.
+    """
+    completed = (run or run_tmux)("has-session", "-t", f"={name}", socket_name=socket_name)
+    if completed is None:
+        return None, TMUX_GAVE_NO_ANSWER
+    if completed.returncode == 0:
+        return True, ""
+    reason = (completed.stderr or completed.stdout or "").strip()
+    if tmux_error_pattern.tmux_error_text_says_target_or_server_does_not_exist(reason):
+        return False, reason
+    return None, (f"tmux has-session on socket '{socket_name}' exited "
+                  f"{completed.returncode}: {reason or 'with no output'}")
+
+
+def tmux_sockets_holding_seat_session(name: str):
+    """Return (socket names holding the seat session in kill order, failure_detail).
+
+    A probe tmux did not answer is returned as failure_detail: the session may still
+    be there, and the launcher's `tmux new-session -A` would then attach to it
+    instead of starting a supervisor.
+    """
     # Check both seat and default servers: leaving either session alive creates a decoy seat.
+    if shutil.which("tmux") is None:
+        return [], None  # no tmux on this machine, so no tmux session either
     holding = []
     for socket_name in dict.fromkeys((name, "default")):
-        completed = run_tmux("has-session", "-t", f"={name}", socket_name=socket_name)
-        if completed is not None and completed.returncode == 0:
+        held, detail = tmux_has_session(name, socket_name)
+        if held is None:
+            return holding, (f"could not tell whether the tmux session {name} is still there "
+                             f"(tmux socket name {socket_name}): {detail}")
+        if held:
             holding.append(socket_name)
-    return holding
+    return holding, None
 
 
-def retire_seat_tmux_session(name: str):
-    """Retire every session named for the seat; return (killed_sockets, failure_detail)."""
+def tmux_sessions_killed_before_clause(name: str, killed_sockets) -> str:
+    if not killed_sockets:
+        return ""
+    return (f"; before that, the tmux session {name} was killed on tmux socket name "
+            f"{', '.join(killed_sockets)}")
+
+
+def this_machine_host_name() -> str:
+    return socket.gethostname()
+
+
+def retire_seat_tmux_session(name: str, check_ssh_alias=None):
+    """Retire every session named for the seat; return (killed_sockets, failure_detail, check).
+
+    failure_detail ends by saying what was killed, because only this function knows
+    whether a kill was attempted and whether tmux answered it. check is None, or, when
+    a kill's outcome is unknown, an instruction whose last line is the command to run.
+    check_ssh_alias wraps that command in ssh, for a caller who reached this machine
+    through that alias: tmux on the caller's own machine never held the session.
+    """
     killed_sockets = []
-    for socket_name in tmux_sockets_holding_seat_session(name):
+    holding, probe_failure = tmux_sockets_holding_seat_session(name)
+    if probe_failure is not None:
+        return killed_sockets, f"{probe_failure}; no tmux session was killed", None
+    for socket_name in holding:
         killed = run_tmux("kill-session", "-t", f"={name}", socket_name=socket_name)
-        if killed is None or killed.returncode != 0:
-            detail = "tmux could not be run" if killed is None else (
-                killed.stderr.strip() or "no detail")
-            return killed_sockets, (f"could not kill the stale tmux session {name} "
-                                    f"(server socket {socket_name}): {detail}")
+        before = tmux_sessions_killed_before_clause(name, killed_sockets)
+        if killed is None:
+            # tmux may have killed the session before its client timed out.
+            command = f"tmux -L {socket_name} has-session -t '={name}'"
+            # Name the machine: a caller who reached this one over ssh would otherwise check its own tmux.
+            where = f" on {this_machine_host_name()}"
+            if check_ssh_alias:
+                command = f'ssh {check_ssh_alias} "{command}"'
+                where = " from the machine you ran resupervise-seat on"
+            return killed_sockets, (
+                f"it is unknown whether the stale tmux session {name} (tmux socket name "
+                f"{socket_name}) was killed: {TMUX_GAVE_NO_ANSWER}{before}"), (
+                f"If the check exits 0, the session still exists: start no agent, and report "
+                f"to the user. If it prints {TMUX_GONE_ANSWERS}, the session is gone: run "
+                f"again the command that printed this message. Any other output, or a check that does not return, "
+                f"leaves the outcome unknown: start no agent, and report the output to the user.\n"
+                f"To check, run the command on the next line{where}:\n{command}")
+        if killed.returncode != 0:
+            return killed_sockets, (
+                f"could not kill the stale tmux session {name} (tmux socket name "
+                f"{socket_name}): {killed.stderr.strip() or 'no detail'}"
+                f"{before or '; no tmux session was killed'}"), None
         killed_sockets.append(socket_name)
-    return killed_sockets, None
+    return killed_sockets, None, None
 
 
 def launcher_for(machine: str) -> Path:
@@ -224,7 +308,8 @@ BOX_SCRIPT_PATH = "$HOME/Projects/nedschorus/scripts/resupervise-seat.py"
 def resupervise_box_seat(arguments) -> int:
     """Prepare the seat on ned-box, then run the launcher on the Mac."""
     # The Ubuntu launcher sends commands over ssh from the Mac; ned-box cannot resolve its own ssh alias.
-    remote_arguments = ["--prepare-only", "--machine", "ubuntu"]
+    remote_arguments = ["--prepare-only", "--machine", "ubuntu",
+                        "--agent-box", shlex.quote(arguments.agent_box)]
     # Preserve remote paths unexpanded; quote for the one remote-shell parse.
     if arguments.handoff_dir:
         remote_arguments += ["--handoff-dir", shlex.quote(arguments.handoff_dir)]
@@ -300,10 +385,15 @@ def main(argv=None) -> int:
              "launching; how --machine ubuntu reaches the box, and usable by hand",
     )
     parser.add_argument(
-        "--agent-box", default="ned",
-        help="ssh alias of the Ubuntu agent box, as launch-claude-ubuntu uses it",
+        "--agent-box", default=None,
+        help="ssh alias of the Ubuntu agent box, as launch-claude-ubuntu uses it (default ned); "
+             "with --prepare-only, the alias the caller used to reach this box, so a check "
+             "command in a refusal is given as an ssh command through it",
     )
     arguments = parser.parse_args(argv)
+    arguments.agent_box_given = arguments.agent_box is not None
+    if not arguments.agent_box_given:
+        arguments.agent_box = "ned"
 
     if arguments.machine == "ubuntu" and arguments.agents_root:
         print("resupervise-seat: with --machine ubuntu, re-run without --agents-root: "
@@ -370,7 +460,9 @@ def main(argv=None) -> int:
             )
 
     if arguments.dry_run:
-        stale_sockets = tmux_sockets_holding_seat_session(arguments.name)
+        stale_sockets, probe_failure = tmux_sockets_holding_seat_session(arguments.name)
+        if probe_failure is not None:
+            return refuse(f"{probe_failure}. This was a dry run: nothing was killed or started")
         would_launch = ("stop there (--prepare-only)" if arguments.prepare_only
                         else f"run {launcher} {arguments.name}")
         print(f"resupervise-seat: DRY RUN -- would "
@@ -378,12 +470,15 @@ def main(argv=None) -> int:
         return 0
 
     # tmux new-session -A attaches to an existing session instead of starting the supervisor; retire the old session first.
-    killed_sockets, retire_failure = retire_seat_tmux_session(arguments.name)
+    # The box half of --machine ubuntu was reached from the Mac through --agent-box.
+    check_ssh_alias = arguments.agent_box if arguments.agent_box_given and arguments.prepare_only else None
+    killed_sockets, retire_failure, check = retire_seat_tmux_session(arguments.name, check_ssh_alias)
     for socket_name in killed_sockets:
         print(f"resupervise-seat: killed the stale tmux session {arguments.name} "
-              f"(server socket {socket_name})")
+              f"(tmux socket name {socket_name})")
     if retire_failure is not None:
-        return refuse(retire_failure)
+        # The check's command stays alone on the last line, so it can be copied whole.
+        return refuse(f"{retire_failure}. No agent was started" + (f". {check}" if check else ""))
     if not killed_sockets:
         print(f"resupervise-seat: no tmux session named {arguments.name} to clear "
               "on its own server or the default one")

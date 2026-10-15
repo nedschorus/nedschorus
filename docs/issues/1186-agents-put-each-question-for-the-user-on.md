@@ -69,3 +69,9 @@ Each build-slice is one pull request that leaves main working.
 - GHI [Wake idle agent-seats that have unfinished work, after a usage limit resets and after a change request goes unanswered](https://github.com/nedschorus/nedschorus/issues/1152): wakes agent-seats; this design reaches the user.
 - GHI [Seat mailboxes across machines and runtimes](https://github.com/nedschorus/nedschorus/issues/749): messages between agent-seats.
 - Search receipt: ghi-info on 2026-10-10, asked twice, open and closed GHIs: no GHI covers a single place for the user's questions.
+
+## Provisional additions (not yet vetted by the user)
+
+- fleet-restart-at-login, 2026-10-14: Idea: an HTML page for approval-walk items, where a short end-of-turn summary opens the full item (task #187).
+- The agent-seat cold-read-improvement (2026-10-14): once the page system is in production, an approval pop-up that opens the ready-for-review file in Typora on the user's Mac and asks whether it needs changes before he approves it.
+- Agent-seat agent-instructions-editor, 2026-10-14: hand build-slice 1 to an agent-seat that builds code, once the user says when.

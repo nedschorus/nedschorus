@@ -46,7 +46,7 @@ Before the user narrowed it, this GHI also proposed nudging the author of a pull
 3. **Both machines**: ned-box first, then the Mac's agent-seats as a second step of this GHI.
 4. **When a "." does not take**, because nothing new appears in the transcript within 5 minutes, the waker types it once more and then tells the user. A new session-limit message after the "." is not a failure: the waker waits for that message's reset time instead.
 
-## What is not decided
+## Deferred-decisions
 
 - How the waker tells the user that a second "." did not take; GHI [Agents put each question for the user on a page that pops up on his Mac, and hold the dialog with him there](https://github.com/nedschorus/nedschorus/issues/1186) is one candidate.
 

@@ -112,6 +112,7 @@ SCRATCH_LOG_STORE_RELATIVE = Path("log-store") / "cold-read-records"
 # the script's override, and the record stamp that clock must produce. A case
 # that needs another minute passes its own.
 RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"
+AGENT_SESSION_ID_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 FIXED_RECORD_CLOCK_FOR_TESTS = "2026-09-16T10:42"
 FIXED_RECORD_STAMP_FOR_TESTS = "2026-09-16"
 STDOUT_RECOVERY_PHRASE = "recovered the report from the model's chat output"
@@ -229,7 +230,7 @@ def build_scratch_repository(scratch):
 
 def run_fast_read(repository, stub_directory, plan, expected_report, target_argument,
                   counter_path, ship_destination=None,
-                  record_clock=FIXED_RECORD_CLOCK_FOR_TESTS):
+                  record_clock=FIXED_RECORD_CLOCK_FOR_TESTS, agent_session_id=None):
     """The read as a subprocess, with the stub agy first on PATH.
 
     `expected_report` is where the stub writes -- the path the case expects
@@ -254,11 +255,21 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     environment[RECORD_SHIP_DESTINATION_VARIABLE] = (
         ship_destination or str(repository / SCRATCH_LOG_STORE_RELATIVE))
     environment[RECORD_CLOCK_OVERRIDE_VARIABLE] = record_clock
+    # This suite itself often runs inside an agent-session, whose ID must not leak into a case.
+    environment.pop(AGENT_SESSION_ID_VARIABLE, None)
+    if agent_session_id is not None:
+        environment[AGENT_SESSION_ID_VARIABLE] = agent_session_id
     return subprocess.run(
         [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"),
          "--target", str(target_argument)],
         capture_output=True, text=True, check=False, env=environment,
     )
+
+
+def agent_session_written_beside(report):
+    """The JSON the read wrote beside report naming its agent-session, or None when there is none."""
+    written = report.with_name(report.name + ".agent-session.json")
+    return json.loads(written.read_text(encoding="utf-8")) if written.is_file() else None
 
 
 def launches_counted(counter_path):
@@ -354,6 +365,26 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(provenance_stamp_of(suggestions)))
     check("the read's own stdout is exactly the one line",
           len(result.stdout.splitlines()) == 1, repr(result.stdout))
+    check("a read run without an agent-session ID writes no agent-session file",
+          agent_session_written_beside(suggestions) is None,
+          repr(agent_session_written_beside(suggestions)))
+
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the walk item\n"}},
+        suggestions, walk_draft_relative, counter, agent_session_id="session-of-the-test",
+    )
+    check("a walk draft's read names its agent-session and the resolved draft beside the suggestions file",
+          result.returncode == 0 and agent_session_written_beside(suggestions) == {
+              "agent_session_id": "session-of-the-test",
+              "target": str((repository / walk_draft_relative).resolve())},
+          f"exit {result.returncode}; written={agent_session_written_beside(suggestions)!r}")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the walk item\n"}},
+        suggestions, walk_draft_relative, counter,
+    )
+    check("a later read without an agent-session ID removes the earlier read's agent-session file",
+          result.returncode == 0 and agent_session_written_beside(suggestions) is None,
+          f"exit {result.returncode}; written={agent_session_written_beside(suggestions)!r}")
 
     # --- The report-path rule: anything else -----------------------------
     repository = build_scratch_repository(scratch)
@@ -368,6 +399,19 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and result.stdout.strip() == str(records_report)
           and records_report.is_file(),
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch)
+    records_report = (repository / "cold-read-records" / f"a-design-{record_stamp}"
+                      / "fast-read.md")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
+        records_report, other_relative, counter, agent_session_id="session-of-the-test",
+    )
+    check("a record's read names its agent-session and the resolved target beside fast-read.md",
+          result.returncode == 0 and agent_session_written_beside(records_report) == {
+              "agent_session_id": "session-of-the-test",
+              "target": str((repository / other_relative).resolve())},
+          f"exit {result.returncode}; written={agent_session_written_beside(records_report)!r}")
 
     # A file outside the checkout entirely takes the same route, under its
     # own name, and the walk rule does not fire on a `-draft.md` name that
@@ -410,7 +454,7 @@ with tempfile.TemporaryDirectory() as scratch:
     result = run_fast_read(
         repository, stubs,
         {"*": {"fail_first_attempts": 99, "report": "STUB FAST READ: never\n"}},
-        suggestions, walk_draft_relative, counter,
+        suggestions, walk_draft_relative, counter, agent_session_id="session-of-the-test",
     )
     check("a cell that fails twice fails the read with exit 1",
           result.returncode == 1, f"exit {result.returncode}; stderr={result.stderr!r}")
@@ -421,6 +465,9 @@ with tempfile.TemporaryDirectory() as scratch:
           launches_counted(counter) == 2, f"launches={launches_counted(counter)}")
     check("no report is left behind by a failed read",
           not suggestions.exists(), f"{suggestions} exists")
+    check("a failed read writes no agent-session file",
+          agent_session_written_beside(suggestions) is None,
+          repr(agent_session_written_beside(suggestions)))
 
     # --- Chat instead of file, through the read ---------------------------
     repository = build_scratch_repository(scratch)
@@ -903,14 +950,34 @@ with tempfile.TemporaryDirectory() as worktree_scratch:
     loose_brief = worktree_scratch / "no-repository/docs/agents/a-seat-instructions.md"
     loose_brief.parent.mkdir(parents=True)
     loose_brief.write_text("# A seat\n", encoding="utf-8")
+    walk_draft_in_second = second_worktree / "docs/walk/a-walk-item-draft.md"
+    walk_draft_in_second.parent.mkdir(parents=True)
+    walk_draft_in_second.write_text("## Item 1 of 1\n", encoding="utf-8")
+    loose_walk_draft = worktree_scratch / "no-repository/docs/walk/a-walk-item-draft.md"
+    loose_walk_draft.parent.mkdir(parents=True)
+    loose_walk_draft.write_text("## Item 1 of 1\n", encoding="utf-8")
 
     real_checkout = warning_module.REPO_ROOT
+    real_records = warning_module.RECORDS_DIR
     warning_module.REPO_ROOT = first_checkout.resolve()
+    warning_module.RECORDS_DIR = worktree_scratch / "records"
     try:
         in_second = class_of(brief_in_second.resolve())
         in_no_repository = class_of(loose_brief.resolve())
+        walk_report_in_second = warning_module.fast_read_report_path_for_target(
+            walk_draft_in_second.resolve(), datetime.datetime(2026, 10, 13, 12, 0))
+        loose_walk_report = warning_module.fast_read_report_path_for_target(
+            loose_walk_draft.resolve(), datetime.datetime(2026, 10, 13, 12, 0))
     finally:
         warning_module.REPO_ROOT = real_checkout
+        warning_module.RECORDS_DIR = real_records
+    check("a walk draft in another worktree gets its suggestions file beside it",
+          walk_report_in_second
+          == second_worktree.resolve() / "docs/walk/a-walk-item-suggestions.md",
+          str(walk_report_in_second))
+    check("a walk draft in no repository at all takes the records route",
+          (worktree_scratch / "records") in loose_walk_report.parents,
+          str(loose_walk_report))
     check("a brief in a second worktree of the repository is in the class",
           in_second == "a file under docs/agents/", repr(in_second))
     check("a brief in no repository at all is still not classified",
@@ -1132,6 +1199,51 @@ with tempfile.TemporaryDirectory() as bare_scratch:
           and "line 5: #418" in result.stderr
           and "line 5: #419" in result.stderr,
           repr(result.stderr))
+
+# A git failure other than finding no worktree is reported, not taken to mean
+# "no worktree", which would send a walk draft to the records route unsaid.
+with tempfile.TemporaryDirectory() as git_failure_scratch:
+    git_failure_scratch = Path(git_failure_scratch).resolve()
+    failing_git_directory = git_failure_scratch / "failing-git-bin"
+    failing_git_directory.mkdir()
+    failing_git = failing_git_directory / "git"
+    failing_git.write_text(
+        "#!/bin/sh\necho \"fatal: detected dubious ownership in repository\" >&2\nexit 128\n",
+        encoding="utf-8")
+    failing_git.chmod(0o755)
+    # Should the read get past git, as under a mutant, it must reach no model
+    # and ship nothing to the real log-store.
+    failing_agy = failing_git_directory / "agy"
+    failing_agy.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    failing_agy.chmod(0o755)
+    draft_git_cannot_place = git_failure_scratch / "docs/walk/a-walk-item-draft.md"
+    draft_git_cannot_place.parent.mkdir(parents=True)
+    draft_git_cannot_place.write_text("## Item 1 of 1\n", encoding="utf-8")
+    path_before = os.environ["PATH"]
+    os.environ["PATH"] = f"{failing_git_directory}{os.pathsep}{path_before}"
+    try:
+        try:
+            warning_module.checkout_root_holding(draft_git_cannot_place)
+            git_failure_raised = ""
+        except warning_module.CheckoutRootUnreadable as error:
+            git_failure_raised = str(error)
+        git_failure_environment = dict(os.environ)
+        git_failure_environment["HOME"] = str(git_failure_scratch)
+        git_failure_environment[RECORD_SHIP_DESTINATION_VARIABLE] = str(
+            git_failure_scratch / "log-store")
+        git_failure_run = subprocess.run(
+            [sys.executable, str(SYSTEM_DIRECTORY / "cold-read-fast-read.py"),
+             "--target", str(draft_git_cannot_place)],
+            capture_output=True, text=True, check=False, env=git_failure_environment)
+    finally:
+        os.environ["PATH"] = path_before
+    check("a git failure other than finding no worktree is raised, not read as no worktree",
+          "dubious ownership" in git_failure_raised, repr(git_failure_raised))
+    check("the read fails and says why when git cannot place the target",
+          git_failure_run.returncode == 1
+          and "FAILED (could not tell which checkout holds" in git_failure_run.stdout
+          and "dubious ownership" in git_failure_run.stderr,
+          f"exit {git_failure_run.returncode}; {git_failure_run.stdout!r}; {git_failure_run.stderr!r}")
 
 print()
 if failures:

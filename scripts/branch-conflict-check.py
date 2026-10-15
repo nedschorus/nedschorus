@@ -6,10 +6,11 @@ CONFLICTING verdict takes precedence. UNKNOWN is not evidence of a clean merge."
 
 import argparse
 import importlib.util
+import re
 import subprocess
 import sys
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
@@ -142,6 +143,126 @@ def deleting_commit(path, base_hash, head_hash, runner=run):
     return out if status == 0 and out else None
 
 
+# git pairs a deleted and an added file as a rename only when they are at
+# least 50% alike, so a small file renamed and edited in one commit reaches
+# merge-tree as a deletion. A lower threshold, and a name that differs only by
+# leading or trailing words, find such a rename for the agent to confirm.
+RENAME_SIMILARITY_THRESHOLD = "-M10%"
+NAME_WORD_SEPARATORS = re.compile(r"[-_.]")
+
+
+def name_words(path):
+    """Return (extension, words of the file name before the extension)."""
+    stem, dot, extension = PurePosixPath(path).name.rpartition(".")
+    if not dot or not stem:
+        stem, extension = PurePosixPath(path).name, ""
+    return extension, [word for word in NAME_WORD_SEPARATORS.split(stem) if word]
+
+
+def names_differ_by_end_words(old, new):
+    """Return whether one file name is the other with words removed from its start or end."""
+    old_extension, old_words = name_words(old)
+    new_extension, new_words = name_words(new)
+    if old_extension != new_extension:
+        return False
+    shorter, longer = sorted((old_words, new_words), key=len)
+    # One shared word, such as "test" or "README", says nothing about a
+    # rename, even when the whole name is that word.
+    if len(shorter) < 2:
+        return False
+    return any(longer[start:start + len(shorter)] == shorter
+               for start in range(len(longer) - len(shorter) + 1))
+
+
+def renamed_to_candidates(path, commit, runner=run):
+    """Return the files commit added that may be path renamed, or None if git fails."""
+    status, out = runner(["git", "diff-tree", "-r", "-z", "--name-status",
+                          RENAME_SIMILARITY_THRESHOLD, commit + "^", commit])
+    if status != 0:
+        return None
+    fields = out.split("\0")
+    paired, added = [], []
+    index = 0
+    while index < len(fields) and fields[index]:
+        kind = fields[index]
+        if kind.startswith("R"):
+            if fields[index + 1] == path:
+                paired.append(fields[index + 2])
+            index += 3
+            continue
+        if kind == "A":
+            added.append(fields[index + 1])
+        index += 2
+    return paired + [new for new in added
+                     if new not in paired and names_differ_by_end_words(path, new)]
+
+
+def path_exists_at(commit, path, runner=run):
+    """Return whether path names a file in commit's tree, or None when git
+    could not tell."""
+    # git cat-file -e exits 128 both for a missing path and for a failure;
+    # ls-tree exits 0 with no output for a missing path.
+    status, out = runner(["git", "ls-tree", "-z", "--full-tree", "--name-only",
+                          commit, "--", path])
+    if status != 0:
+        return None
+    return bool(out)
+
+
+def later_deleting_commit(path, after, base_hash, runner=run):
+    """Return (whether git listed the commits, the first commit after `after`
+    on the base that deleted path, or None)."""
+    # A rename made on a side branch and merged leaves the path unchanged
+    # between the merge and its first parent, and git log's default history
+    # simplification then never visits the side branch.
+    status, out = runner(["git", "log", "--full-history", "--reverse",
+                          "--format=%H", "--diff-filter=D",
+                          "%s..%s" % (after, base_hash), "--", path])
+    if status != 0:
+        return False, None
+    hashes = out.split()
+    return True, (hashes[0] if hashes else None)
+
+
+def candidates_at_base(path, commit, base_hash, runner=run):
+    """Return ((name at the base, commit that gave that name) pairs, commits
+    git could not list, (candidate, commit) pairs whose later deletions git
+    could not list, candidates git could not look up at the base).
+
+    A file the deleting commit renamed may have been renamed or deleted again
+    later on the base, so each candidate is kept only under a name the base
+    holds: one it has, or the one a later rename gave it.
+    """
+    found, unlisted, unfollowed, unchecked, seen = [], [], [], [], set()
+    pending = [(path, commit)]
+    while pending:
+        old, deleting = pending.pop(0)
+        candidates = renamed_to_candidates(old, deleting, runner)
+        if candidates is None:
+            unlisted.append(deleting)
+            continue
+        for candidate in candidates:
+            # A name can come back after a later rename, so the same name
+            # reached through a different commit is followed again.
+            if (candidate, deleting) in seen:
+                continue
+            seen.add((candidate, deleting))
+            exists = path_exists_at(base_hash, candidate, runner)
+            if exists is None:
+                unchecked.append(candidate)
+                continue
+            if exists:
+                found.append((candidate, deleting))
+                continue
+            listed, later = later_deleting_commit(candidate, deleting,
+                                                  base_hash, runner)
+            if not listed:
+                unfollowed.append((candidate, deleting))
+            elif later is not None:
+                pending.append((candidate, later))
+    return found, unlisted, unfollowed, unchecked
+
+
 def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
                           messages=None, runner=run):
     """Return the VERDICT lines for a conflict where the base deleted files the branch changes."""
@@ -152,6 +273,8 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
                                  len(deleted)),
     ]
     unnamed = False
+    renamed = 0
+    checks = []
     for staged in deleted:
         path = own_path(staged, messages, RENAMES_FOR_A_FILE_THE_BASE_DELETED)
         commit = deleting_commit(path, base_hash, head_hash, runner)
@@ -159,13 +282,89 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
             unnamed = True
             lines.append("DELETED ON %s: %s, by a commit this run could not find"
                          % (base, path))
+            continue
+        found, unlisted, unfollowed, unchecked = candidates_at_base(
+            path, commit, base_hash, runner)
+        if found:
+            renamed += 1
+            # A name a later commit gave says which commit holds it, so a
+            # reader does not look for it in the deleting commit.
+            named = [candidate if naming == commit
+                     else "%s (the name %s gave it)"
+                     % (candidate, commit_label(naming, runner))
+                     for candidate, naming in found]
+            lines.append("DELETED OR RENAMED ON %s: %s, deleted by %s -> "
+                         "possibly %s" % (base, path, commit_label(commit, runner),
+                                          " or ".join(named)))
         else:
             lines.append("DELETED ON %s: %s, by %s"
                          % (base, path, commit_label(commit, runner)))
+        checks += [
+            "RENAME CHECK: git could not list the files %s added, so %s may "
+            "have been renamed to a name this run could not find; check that "
+            "commit with git show --stat %s."
+            % (commit_label(unlisted_commit, runner), path, unlisted_commit[:12])
+            for unlisted_commit in dict.fromkeys(unlisted)]
+        checks += [
+            "RENAME CHECK: git could not list the commits on %s after %s that "
+            "deleted %s, so %s may have been renamed again, to a name this run "
+            "could not find; check with git log --full-history --diff-filter=D "
+            "%s..%s -- %s." % (base, commit_label(after, runner), candidate, path,
+                               after[:12], base_hash[:12], candidate)
+            for candidate, after in dict.fromkeys(unfollowed)]
+        checks += [
+            "RENAME CHECK: git could not tell whether %s holds %s, so %s may "
+            "have been renamed to it; check with git ls-tree --full-tree "
+            "--name-only %s -- %s." % (base, candidate, path, base_hash[:12],
+                                       candidate)
+            for candidate in dict.fromkeys(unchecked)]
     others = [path for path in stages if path not in deleted]
     for path in others:
         lines.append("ALSO CONFLICTS: %s"
                      % own_path(path, messages, RENAMES_FOR_ANY_OTHER_CONFLICT))
+    lines += checks
+    if renamed or checks:
+        # One instruction for every file, so no line about one file can be
+        # read against a line about another.
+        marked = "each file marked DELETED ON or DELETED OR RENAMED"
+        lines.append(
+            "git paired none of the files marked DELETED ON or DELETED OR RENAMED "
+            "with a new name, but %s may have renamed one and changed it in the "
+            "same commit, so much that git saw a deletion." % base)
+        lines.append(
+            "Before you merge or close, find out for %s whether %s renamed it "
+            "or deleted it: compare the branch's version of it with %s's version "
+            "of each file named after \"possibly\" on its line, and do each "
+            "RENAME CHECK that names it. A file with no \"possibly\" on its line and "
+            "no RENAME CHECK naming it was deleted."
+            % (marked, base, base))
+        if unnamed:
+            lines.append(
+                "If a deleting commit is not named above, find it with git log "
+                "--diff-filter=D %s -- <file>." % base)
+        lines += [
+            "If every file marked DELETED ON or DELETED OR RENAMED was renamed, "
+            "merge %s into the branch by hand, with the frozen head as first "
+            "parent, and carry the branch's change to each file onto its new "
+            "name." % base,
+            "In that hand-merge, resolve any ALSO CONFLICTS file too, change "
+            "nothing else, put any edit the resolution forces beyond the "
+            "conflicting lines in one ordinary commit after the merge, rerun the "
+            "test suites for what the merge touched, and push the merge and that "
+            "commit once, naming the files you resolved in the merge's commit "
+            "message and in the pull request's description.",
+            "If any file marked DELETED ON or DELETED OR RENAMED was deleted, do "
+            "not merge: close the pull request with a comment naming the commit "
+            "that deleted it, and carry what %s still lacks on a new topic "
+            "branch cut from current %s, in a new pull request that names the "
+            "closed one; on that branch, carry the branch's change to each "
+            "renamed file onto its new name%s."
+            % (base, base,
+               ", and start each ALSO CONFLICTS file from %s's version and "
+               "reapply the branch's change to it by hand" % base
+               if others else ""),
+        ]
+        return lines
     lines.append(
         "Do not merge %s into the branch: %s removed the file(s) above, so a "
         "hand-merge would either bring a removed file back or drop the "
@@ -394,10 +593,17 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
             "First see what the conflict is with: if main has already replaced "
             "this branch's work, do not merge; close the pull request and carry "
             "what main still lacks on a new topic branch cut from current main.",
+            "When you close the pull request, name in its closing comment the "
+            "commit or pull request on main that replaced the work.",
             "Merge %s into the branch by hand, with the frozen head as first "
             "parent." % base,
             "Resolve the conflict and change nothing else in the merge.",
+            "If the resolution forces an edit beyond the conflicting lines, put "
+            "that edit in one ordinary commit after the merge.",
             "Before pushing, rerun the test suites for what the merge touched.",
+            "Push the merge and that commit once, and name the files you "
+            "resolved in the merge's commit message and in the pull request's "
+            "description.",
         ]
         return EXIT_CONFLICT, lines
 

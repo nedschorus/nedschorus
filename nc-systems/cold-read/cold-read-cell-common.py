@@ -271,14 +271,18 @@ def target_origin_paragraph(target: pathlib.Path, target_origin: pathlib.Path) -
     )
 
 
-def compose_prompt(
-    cell: str, target: pathlib.Path, report: pathlib.Path, prompt_file=None,
-    target_origin=None,
-) -> str:
+def prompt_template_path(cell: str, prompt_file=None) -> pathlib.Path:
     template_path = (prompt_file if prompt_file is not None
                      else PROMPTS_DIR / f"{cell}.md")
     if not template_path.is_file():
         raise CellRefusal(f"prompt template missing: {template_path}")
+    return template_path
+
+
+def compose_prompt(
+    template_path: pathlib.Path, target: pathlib.Path, report: pathlib.Path,
+    target_origin=None,
+) -> str:
     prompt = (
         template_path.read_text(encoding="utf-8")
         .replace("{TARGET_PATH}", str(target))
@@ -717,7 +721,6 @@ def run_cell(
               "stray writes will not be checked for this run.", file=sys.stderr)
 
     report = None
-    staging_root = staging_directory = None
     try:
         validate_cell(args.cell, args.prompt_file)
         target = resolve_target(args.target)
@@ -725,26 +728,28 @@ def run_cell(
         prompt_file = (
             resolve_prompt_file(args.prompt_file) if args.prompt_file else None)
         target_origin = resolve_target_origin(args.target_origin)
-        # A sandboxed reviewer writes only inside the checkout and the temporary
-        # directories; granting a report's own directory elsewhere would also make
-        # the documents beside it writable, where git status does not look.
-        # The near-miss recovery searches the report directory's parent, so the
-        # report directory sits inside a fresh root rather than in the temporary
-        # directory itself.
-        if stage_report_outside_checkout and REPO_ROOT not in report.resolve().parents:
-            staging_root = pathlib.Path(tempfile.mkdtemp(prefix="cold-read-report-"))
-            staging_directory = staging_root / "report"
-            staging_directory.mkdir()
-        reviewer_report = (
-            staging_directory / report.name if staging_directory else report)
-        prompt = compose_prompt(args.cell, target, reviewer_report, prompt_file,
-                                target_origin)
+        template_path = prompt_template_path(args.cell, prompt_file)
     except CellRefusal as refusal:
         print(f"{program}: {refusal}", file=sys.stderr)
         report_stray_writes(program, baseline, report)
-        if staging_root is not None:
-            shutil.rmtree(staging_root, ignore_errors=True)
         return refusal.exit_code
+
+    # The staging directory is made after every refusal, so no refusal leaves one behind.
+    # The Codex reviewer can write only inside the checkout, the temporary directories on
+    # macOS, and a directory added with --add-dir, which stays writable under the profile's
+    # read-only /tmp on Linux; granting a report's own directory elsewhere would also make
+    # the documents beside it writable, where git status does not look.
+    # The near-miss recovery searches the report directory's parent, so the
+    # report directory sits inside a fresh root rather than in the temporary
+    # directory itself.
+    staging_root = staging_directory = None
+    if stage_report_outside_checkout and REPO_ROOT not in report.resolve().parents:
+        staging_root = pathlib.Path(tempfile.mkdtemp(prefix="cold-read-report-"))
+        staging_directory = staging_root / "report"
+        staging_directory.mkdir()
+    reviewer_report = (
+        staging_directory / report.name if staging_directory else report)
+    prompt = compose_prompt(template_path, target, reviewer_report, target_origin)
 
     # An explicit model must not silently fall back to a different model.
     chain = (args.model,) if args.model else tier_to_model_chain[args.tier]

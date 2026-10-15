@@ -184,6 +184,130 @@ try:
     check("the search-alone suggestion keeps the search's redirections",
           (refusal or "").endswith("run: grep -l needle -- */*.jsonl 2>/dev/null"), refusal)
 
+    # The search alone would run in another folder without its cd, or print more without its
+    # pipe, so with other commands around the search the refusal gives no command at all.
+    without_command_ending = ("Put -- after the last option and before the file names, "
+                              "then run the command again.")
+    guard.command_with_double_dash_before_word = lambda *arguments: None
+    try:
+        for command, cwd in [
+                (f"cd {scratch} && grep -l needle */*.jsonl 2>/dev/null", scratch / "plain"),
+                ("grep -l needle */*.jsonl | head -5", scratch),
+                ("{ grep -l needle */*.jsonl; } > out", scratch),
+                ("grep -l needle */*.jsonl &", scratch),
+                ("for x in a; do grep -l needle */*.jsonl; done", scratch),
+                # shlex cannot read bash's $'...' quoting, so the command is not known to be
+                # the search alone.
+                ("grep -l needle */*.jsonl $'it\\'s'", scratch)]:
+            refusal = run_main(command, cwd)
+            check(f"with no place found for --, {command!r} is refused with no command given",
+                  (refusal or "").endswith(without_command_ending)
+                  and "run:" not in (refusal or ""), refusal)
+    finally:
+        guard.command_with_double_dash_before_word = real_whole_command
+
+    # A cwd whose name holds a glob character is escaped in the pattern; the matches start
+    # with the name as written, so the name a match is checked by is cut at the right place.
+    for folder_name, file_name, refused_expected in [
+            ("ab[c]", "xy-foo/a.jsonl", False),
+            ("proj[1]", "-d/a.jsonl", True)]:
+        glob_named = scratch / "glob-named" / folder_name
+        (glob_named / file_name).parent.mkdir(parents=True)
+        (glob_named / file_name).write_text('{"text": "needle"}\n')
+        refusal = run_main("grep -l needle */*.jsonl", glob_named)
+        check(f"in a folder named {folder_name} holding {file_name}, the search is "
+              + ("refused" if refused_expected else "passed"),
+              (refusal is not None) == refused_expected, repr(refusal))
+    shutil.rmtree(scratch / "glob-named")
+
+    # The word after an option that takes a value, such as grep -f's pattern file, is that
+    # option's value, not a file to search, even when it expands to a name beginning with -.
+    option_values = scratch / "option-values"
+    option_values.mkdir()
+    (option_values / "-n").write_text("needle\n")
+    (option_values / "notes.txt").write_text("needle\n")
+    for command in ["grep -f -? notes.txt", "grep -lf -? notes.txt",
+                    "grep --file -? notes.txt", "rg -g -? needle notes.txt"]:
+        check(f"passes: {command}, whose -? is an option's value",
+              run_main(command, option_values) is None)
+    for command in ["grep -e needle -?", "grep -fpatterns -?", "grep -fl needle -?"]:
+        check(f"refused: {command}, whose -? is a file to search",
+              run_main(command, option_values) is not None)
+    (option_values / "notes2.txt").write_text("needle\n")
+    check("passes: grep -f notes* x, whose value expands to two names, none beginning with -",
+          run_main("grep -f notes* x", option_values) is None)
+    check("passes: grep -f -z* notes.txt, whose value expands to no name",
+          run_main("grep -f -z* notes.txt", option_values) is None)
+    # Expanded to two names, an option's value is only the first; the shell passes the
+    # second as a word of its own, and a second name beginning with - is read as an option.
+    (option_values / "-a").write_text("needle\n")
+    if shutil.which("grep"):
+        two_names = run_in_shell("grep -f -? notes.txt", option_values)
+        check("REPRODUCTION: real grep -f -? with -a and -n present reads -n as an option",
+              two_names.stdout.startswith("1:"),
+              f"stdout {two_names.stdout!r}, stderr {two_names.stderr!r}")
+    refusal = run_main("grep -f -? notes.txt", option_values)
+    check("refused: grep -f -? notes.txt, whose value expands to -a and -n, naming -n, "
+          "the one grep reads as an option",
+          refusal == (
+              "Refused: -?, the value of -f, expands to two or more names. The shell passes "
+              "only the first of them as -f's value, and grep reads each of the others as one "
+              "more word, and a name beginning with - as an option, such as -n. "
+              "-- cannot fix this.\n"
+              "If you meant one of the names, write that name in place of -?.\n"
+              "If you meant every name -? matches, give -f once before each name.\n"
+              "If you meant a file named -? itself, quote -?.\n"
+              "Then run the command again."),
+          repr(refusal))
+    # The name reported does not depend on the order the directory lists its entries in.
+    real_iglob = guard.glob.iglob
+    for listing in (["/d/-a", "/d/-n"], ["/d/-n", "/d/-a"]):
+        guard.glob.iglob = lambda pattern, recursive=False, listing=listing: iter(listing)
+        try:
+            name = guard.dash_name_among_two_or_more_expansions(
+                guard.GLOB_CHARACTER_MARKERS["*"], "/d", float("inf"), lambda: 0.0)
+        finally:
+            guard.glob.iglob = real_iglob
+        check(f"listed as {listing}, the name reported is -n, not the first in byte order",
+              name == "-n", repr(name))
+    guard.glob.iglob = lambda pattern, recursive=False: iter(["/d/a", "/d/-z"])
+    try:
+        name = guard.dash_name_among_two_or_more_expansions(
+            guard.GLOB_CHARACTER_MARKERS["*"], "/d", float("inf"), lambda: 0.0)
+    finally:
+        guard.glob.iglob = real_iglob
+    check("with -z and a, the one dash name -z is reported though it is first in byte order",
+          name == "-z", repr(name))
+    # A later search that -- cannot fix leaves no command to suggest for the earlier one.
+    refusal = run_main("grep needle *; grep -f -? notes.txt", option_values) or ""
+    check("refused with no command: grep needle *; grep -f -? notes.txt, whose second "
+          "search -- cannot fix",
+          refusal.startswith("Refused: * expands to names beginning with -")
+          and "run:" not in refusal, repr(refusal))
+    for command in ["grep -lf -? notes.txt", "grep --file -? notes.txt",
+                    "rg -g -? needle notes.txt"]:
+        check(f"refused: {command}, whose value expands to two names beginning with -",
+              run_main(command, option_values) is not None)
+    shutil.rmtree(option_values)
+    # A recursive ** also lists the folder itself; the shell does not expand to it, so a
+    # folder holding only -n gives ** one name, the option's value.
+    only_dash = scratch / "only-dash"
+    only_dash.mkdir()
+    (only_dash / "-n").write_text("needle\n")
+    check("passes: grep -f ** /dev/null in a folder holding only -n",
+          run_main("grep -f ** /dev/null", only_dash) is None)
+    shutil.rmtree(only_dash)
+
+    # At a cwd of /, the matches' prefix is / itself, so a name is cut after it, not after //.
+    real_iglob = guard.glob.iglob
+    guard.glob.iglob = lambda pattern, recursive=False: iter(["/-x"])
+    try:
+        name = guard.first_expansion_beginning_with_dash(
+            guard.GLOB_CHARACTER_MARKERS["*"], "/", float("inf"), lambda: 0.0)
+    finally:
+        guard.glob.iglob = real_iglob
+    check("at a cwd of /, the entry /-x is read as -x", name == "-x", repr(name))
+
     elsewhere = scratch / "plain"
     check("refused after a literal cd into the folder from elsewhere",
           run_main(f"cd {scratch} && grep -l needle */*.jsonl", elsewhere) is not None)
@@ -326,11 +450,16 @@ try:
     # Out of budget before the place for -- is found, the refusal falls back
     # to the search's own words: the first two readings of the clock are the
     # start and the check before the glob is expanded.
-    readings = iter([0.0, 0.0])
-    given = command_given("for x in a; do grep -l needle */*.jsonl; done", scratch,
-                          clock=lambda: next(readings, 1000.0))
-    check("out of budget for the place, the search alone is given, without the keyword",
-          given == "grep -l needle -- */*.jsonl", repr(given))
+    for command, expected in [
+            ("grep -l needle */*.jsonl 2>/dev/null",
+             "grep -l needle -- */*.jsonl 2>/dev/null"),
+            ("time grep -l needle */*.jsonl", "time grep -l needle -- */*.jsonl"),
+            ("for x in a; do grep -l needle */*.jsonl; done", None)]:
+        readings = iter([0.0, 0.0])
+        given = command_given(command, scratch, clock=lambda: next(readings, 1000.0))
+        check(f"out of budget for the place, {command!r} gives "
+              + ("the search alone" if expected else "no command"),
+              given == expected, repr(given))
 
     # -----------------------------------------------------------------------
     # Passed.

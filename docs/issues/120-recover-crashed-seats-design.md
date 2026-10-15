@@ -1,4 +1,5 @@
 ---
+issue: "[Crash recovery for seats that died without a handoff: find the last live transcript, resume it supervised](https://github.com/nedschorus/nedschorus/issues/120)"
 status: overview of the tool as built; six changes ruled 2026-09-02, change 6 built 2026-09-11 — listed in § What this document proposes
 design-as-of: 2026-09-02
 ---
@@ -470,3 +471,7 @@ supervision and the launchers.
 issue [Claude auto-update purges the running version under live fleet sessions — updates need a drain-or-retain policy](https://github.com/nedschorus/nedschorus/issues/62) owns the blast radius
 of one tmux server per machine — this tool makes that blast recoverable rather
 than smaller.
+
+## Outcome
+
+Closed as completed on 2026-09-03. The pull request [Crash recovery: resume a dead seat's last real transcript under a supervisor (#120)](https://github.com/nedschorus/nedschorus/pull/131) built `scripts/recover-crashed-seats.py` and merged on 2026-08-22. The six changes the user ruled on 2026-09-02 went to an issue of their own, GHI [recover-crashed-seats.py: the six changes ruled 2026-09-02 — exit record, process-identity liveness, parking marker, verified restart, by-hand resume, window](https://github.com/nedschorus/nedschorus/issues/242), with its GHI-MD `docs/issues/242-recover-crashed-seats-py-the-six-changes-ruled.md`; this issue closed when that one was filed. This file stays as the overview of the tool, as the pull requests [Crash-recovery overview: pair document for #120, with the 2026-09-02 rulings](https://github.com/nedschorus/nedschorus/pull/241) and [Recovery overview: pair document for #242, its origin #120 closed](https://github.com/nedschorus/nedschorus/pull/243) set it up.

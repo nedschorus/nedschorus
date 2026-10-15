@@ -271,10 +271,22 @@ class LaunchHarness:
         return len(path.read_text(encoding="utf-8").splitlines()) if path.is_file() else 0
 
     def prepare_ran(self) -> bool:
-        """The prepare step's trust mark is a python3 -c call naming
-        hasTrustDialogAccepted; the supervisor call never does."""
+        """The prepare step's presets write is a python3 call naming
+        claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py;
+        the supervisor call never does."""
         calls = self.captures / "python3-calls.txt"
-        return calls.is_file() and "hasTrustDialogAccepted" in calls.read_text(encoding="utf-8")
+        return calls.is_file() and (
+            "claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py"
+            in calls.read_text(encoding="utf-8"))
+
+    def python3_script_order(self) -> list:
+        """The scripts the box-side command ran through python3, in order."""
+        calls = self.captures / "python3-calls.txt"
+        if not calls.is_file():
+            return []
+        return [Path(block.split("\n", 1)[0]).name
+                for block in calls.read_text(encoding="utf-8").split(
+                    "=== call boundary ===\n") if block.strip()]
 
     def write_seat_token(self, account: str, token: str,
                          trailing_newline: bool = True) -> Path:
@@ -504,6 +516,16 @@ def main() -> int:
         check("default root: the seat directory was created at P1",
               (harness.home / "agents" / "seat-a").is_dir(),
               str(harness.home / "agents"))
+        # The presets script runs from the box's checkout, so the box's
+        # checkout must be fast-forwarded first, or a box checkout older than
+        # the script stops every launch on a file it does not have yet.
+        scripts_run = harness.python3_script_order()
+        freshness = "checkout-freshness-catch-up.py"
+        presets = "claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py"
+        check("prepare: the box checkout is fast-forwarded before the presets script runs",
+              freshness in scripts_run and presets in scripts_run
+              and scripts_run.index(freshness) < scripts_run.index(presets),
+              scripts_run)
 
         # --- 1b. the launcher itself must have reached ssh — without this,
         # a launcher that exits before the transport leaves an empty remote
@@ -1102,6 +1124,38 @@ def main() -> int:
                   (result["launched"].returncode,
                    repr(result["launched"].stdout[-300:]),
                    result["launched"].stderr[:300]))
+
+        # --- 18. a detached launch whose prepare step fails reports the
+        # failure and exits nonzero; only a seat that really exists gets the
+        # "already exists" line. A regular file where the box's agents
+        # directory belongs makes the prepare step's mkdir fail.
+        harness = LaunchHarness(root / "detached-prepare-fails")
+        (harness.home / "agents").write_text("not a directory\n",
+                                             encoding="utf-8")
+        result = harness.run(["seat-w", "--no-attach"])
+        check("detached, prepare fails: the remote side exits nonzero",
+              result["replay"].returncode != 0,
+              (result["replay"].returncode, result["replay"].stdout[:200]))
+        check("detached, prepare fails: no 'already exists' line, and the "
+              "failure is named on stderr",
+              "already exists" not in result["replay"].stdout
+              and "preparing or starting seat-w on the box failed"
+              in result["replay"].stderr,
+              (result["replay"].stdout[:200], result["replay"].stderr[:400]))
+        check("detached, prepare fails: no tmux session is started",
+              result["tmux_argv"] == "", result["tmux_argv"][:200])
+
+        harness = LaunchHarness(root / "detached-seat-exists")
+        harness.seat_exists_on_the_box()
+        result = harness.run(["seat-x", "--no-attach"])
+        check("detached onto a live seat: 'already exists', exit 0, and the "
+              "prepare step does not run",
+              result["replay"].returncode == 0
+              and "a tmux session named seat-x already exists"
+              in result["replay"].stdout
+              and not harness.prepare_ran() and result["tmux_argv"] == "",
+              (result["replay"].returncode, result["replay"].stdout[:200],
+               harness.prepare_ran()))
 
     print()
     if failures:

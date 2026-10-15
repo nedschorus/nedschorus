@@ -312,8 +312,11 @@ with tempfile.TemporaryDirectory(prefix="pre-reboot-saver-test-") as scratch_nam
           result.returncode == 2 and "could not list the worktrees" in result.stdout, result.stdout)
     help_text = subprocess.run([sys.executable, str(SAVER), "--help"], capture_output=True,
                                text=True).stdout
-    check("--help carries the restart procedure",
-          "THE RESTART PROCEDURE" in help_text and "pgrep -fl 'git push|codex exec'" in help_text
+    check("--help carries the restart procedure, with each pgrep in the form that prints "
+          "command lines on its machine: -af on ned-box's Linux, -lf on the Mac",
+          "THE RESTART PROCEDURE" in help_text
+          and "pgrep -af 'git push|codex exec'" in help_text
+          and "pgrep -fl 'git push|codex exec'" not in help_text
           and "scripts/restart-live-seats-at-login.py" in help_text
           and "-supervisor-state.json" in help_text, help_text[:300])
     check("the restart program --help names exists",

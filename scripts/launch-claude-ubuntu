@@ -5,7 +5,7 @@
 # two are otherwise indistinguishable at the call site, and picking the wrong
 # one is a real mistake to make.
 #
-# Fully dynamic, no roster (user-ruled 2026-08-07, nedschorus#45): the name you
+# Fully dynamic, no roster: the name you
 # type is the whole configuration. The agent's directory is ~/agents/<name>
 # on the box, always, created on first use (see the NO AGENTS ROOT note
 # below: no variable moves it). A CLAUDE.local.md in that directory supplies the agent's
@@ -21,14 +21,12 @@
 # stops without handing off. On an ATTACHED launch the pane then drops into
 # an interactive shell in the agent's directory (surviving a Ctrl-C aimed at
 # the supervisor), so the seat can be resumed in place with
-# `claude --continue` and no hunting for the right cd (user-ruled 2026-08-17)
+# `claude --continue` and no hunting for the right cd
 # — the tmux session closes when that shell exits. That shell offers the
 # SUPERVISED relaunch first and states what `claude --continue` costs: it
-# resumes the dialog with no supervisor, so the seat can never reincarnate. The
-# old ordering advertised --continue first, and on 2026-08-18 two seats ran
-# unsupervised for about 25 hours because it was the only listed option that
-# worked (nedschorus#45). A seat born with
-# --no-attach keeps the old close-on-exit behavior instead, even if attached
+# resumes the dialog with no supervisor, so the seat can never reincarnate,
+# and an operator picks the first listed option that works. A seat born with
+# --no-attach keeps the close-on-exit behavior instead, even if attached
 # later: its pane command is fixed at creation. A second launch of a running
 # name attaches instead of duplicating, and the supervisor's own lock
 # refuses a duplicate even if tmux is bypassed.
@@ -39,10 +37,9 @@
 #
 # Every seat runs on its OWN tmux server on the box (`tmux -L <name>`, one
 # socket per seat under /tmp/tmux-<uid>/), so one server crash cannot take
-# the whole per-machine fleet down: on 2026-08-21 the Mac's single default
-# tmux server died and killed all three Mac seats at once. Seats launched
-# before that change still live on the box's default server; the socket
-# selection below reaches them there instead of starting a duplicate.
+# the whole per-machine fleet down. Seats launched before per-seat servers
+# may still live on the box's default server; the socket selection below
+# reaches them there instead of starting a duplicate.
 #
 # --no-attach creates the session without attaching this terminal (for
 # scripts and checks); attach later by running the plain form. An attached
@@ -68,25 +65,18 @@ if [ $# -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
     exit 0
 fi
 
-# NO AGENTS ROOT IS READ HERE (user-ruled 2026-09-22, in merge-lane-2's walk
-# merge-lane-2-questions-concerns-and-suggestions-2026-09-22, carried to PR
-# [The ubuntu launcher reads its own box-side agents root](https://github.com/nedschorus/nedschorus/pull/619)
-# as merge-lane-2's review). The box seat's directory is ~/agents/<name> on
+# NO AGENTS ROOT IS READ HERE. The box seat's directory is ~/agents/<name> on
 # the box, always: this Mac sends only the seat name, and the box expands its
-# own $HOME. This launcher used to read NEDSCHORUS_AGENTS_ROOT, a variable
-# naming a path on the machine that reads it, and carry that MAC-side value to
-# the box. It leaked: recover-crashed-seats.py exports the Mac default into
-# launch-claude-mac's environment, every Mac seat inherits it, and a Mac seat
-# that ran this launcher sent /Users/... to a box where it names nothing. The
-# cross-machine override is therefore blocked outright rather than warned
-# about and defaulted, because a warn-and-carry-on launch is the half-working
-# case the 2026-08-22 ruling forbids ("overrides either work or are blocked",
-# review P3 on PR [launch-claude-ubuntu: per-parse-layer escaping of operator
-# values](https://github.com/nedschorus/nedschorus/pull/137)). There is no
-# box-side override either: shells started over ssh do not source
-# ~/.bashrc, so a box-side variable would steer an interactive run and not
-# an ssh-launched seat, which is the split-seat failure that ruling exists
-# to prevent. If a movable box root is ever
+# own $HOME. NEDSCHORUS_AGENTS_ROOT names a path on the machine that reads it,
+# and a MAC-side value carried to the box names nothing there:
+# recover-crashed-seats.py exports the Mac default into launch-claude-mac's
+# environment, and every Mac seat inherits it. The cross-machine override is
+# therefore blocked outright rather than warned about and defaulted, because
+# an override either works or is blocked; a warn-and-carry-on launch is the
+# half-working case between. There is no box-side override either: shells
+# started over ssh do not source ~/.bashrc, so a box-side variable would
+# steer an interactive run and not an ssh-launched seat, which is the
+# split-seat failure that rule exists to prevent. If a movable box root is ever
 # needed, it goes in a box-side FILE that both paths read; nothing needs one
 # today, and every box seat lives in /home/nedlern/agents. Agent names stay
 # charset-checked: they ride in more places than paths do.
@@ -110,7 +100,7 @@ usage() {
     echo >&2
     # Per-seat tmux servers: one list-sessions cannot see every seat, so walk
     # every socket in the box's tmux socket directory — per-seat servers and
-    # the default server (where pre-2026-08-21 seats still live) alike.
+    # the default server (where seats from before per-seat servers may live) alike.
     # Single-quoted so the loop expands on the box, not on this Mac.
     running=$(ssh -o ConnectTimeout=5 "$AGENT_BOX" \
         'for seat_socket_path in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/*; do
@@ -158,12 +148,12 @@ case "$AGENT_NAME" in
 esac
 
 # Which GitHub account a box seat acts as — the twin of the same block in
-# scripts/launch-claude-mac, where the ruling it applies (credential ruling
+# scripts/launch-claude-mac, where the rule it applies (credential ruling
 # C4 in nc-systems/main-gatekeeper/main-gatekeeper-design.md: each agent host
 # holds a fine-grained token for this repository only, never a classic
 # all-repository token and never the `workflow` scope) and the measured
 # defect it closes are written out in full. The default here is the BOX's
-# account. Measured on the box 2026-09-22: `gh` is logged in as
+# account. Measured on the box: `gh` is logged in as
 # `ubuntu-claude` — the right identity already — but with a CLASSIC token
 # carrying read:org, repo and workflow, and there is no
 # `ubuntu-claude.token` file on the box at all, only copies of
@@ -173,7 +163,7 @@ esac
 # Charset-checked for the same two reasons as the Mac twin: the value is
 # spliced into a command that crosses BOTH parses, and letters, digits, -
 # and _ need no escaping at either; and an override either works or is
-# blocked, never a third state (user-ruled 2026-08-22).
+# blocked, never a third state.
 SEAT_GITHUB_ACCOUNT="${NEDSCHORUS_SEAT_GITHUB_ACCOUNT:-ubuntu-claude}"
 case "$SEAT_GITHUB_ACCOUNT" in
     (*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*|"") echo "launch-claude-ubuntu: NEDSCHORUS_SEAT_GITHUB_ACCOUNT is a GitHub account name — letters, digits, - and _" >&2; exit 2 ;;
@@ -181,9 +171,9 @@ esac
 SEAT_GITHUB_TOKEN_FILE_UNDER_HOME=".config/nedschorus/$SEAT_GITHUB_ACCOUNT.token"
 
 # Every operator value spliced into the remote command is escaped for the
-# parses it actually crosses (PR #134's review arc: hand-written quotes here
-# broke on an apostrophe, and the ssh command's double-quote wrapper expanded
-# $ inside values box-side). The layers: the box's login shell parses the
+# parses it actually crosses: hand-written quotes break on an apostrophe, and
+# the ssh command's double-quote wrapper expands $ inside values box-side. The
+# layers: the box's login shell parses the
 # whole ssh command once (P1), and tmux's shell parses the pane command
 # again (P2). escape_single_quotes prepares a value for one single-quoted
 # parse; escape_remote_double_quote_context makes it inert through one
@@ -235,7 +225,7 @@ AGENT_DIRECTORY_SUPERVISOR="~/agents/$AGENT_NAME"
 # P2, exactly as --agent does on the next line.
 # The one-time store migration and the prefixed id, box-side, both inside
 # the pane command because $HOME here is the BOX's home at P2 — same rename
-# and same never-overwrite rule as the Mac twin (user-ruled 2026-08-29).
+# and same never-overwrite rule as the Mac twin.
 #
 # The seat's own GitHub credential, box-side — the twin of the same block
 # in scripts/launch-claude-mac, where the mechanism is written out in full.
@@ -244,7 +234,7 @@ AGENT_DIRECTORY_SUPERVISOR="~/agents/$AGENT_NAME"
 # TWO parses, and a `$(...)` reaching the box's login shell at P1 is run
 # THERE — the box would substitute the token into the string it then hands
 # tmux, which is a `ps` listing on the box carrying the credential for as
-# long as the seat lives. Measured 2026-09-22 against this suite's
+# long as the seat lives. Measured against this suite's
 # tmux-argv capture, which is the post-P1 text: with `$(cat ...)` the token
 # stands in it; with the read below it does not, and the value is present
 # only in the supervisor's environment. A redirection has no such
@@ -274,8 +264,8 @@ AGENT_DIRECTORY_SUPERVISOR="~/agents/$AGENT_NAME"
 # pin, and for the same reason: the `claude --continue` it offers is the
 # same seat, and a `gh` typed there is the seat acting.
 # The seat's own git identity, box-side — the twin of the same block in
-# scripts/launch-claude-mac, where the defect, the ruling and the design are
-# written out in full. The exports ride inside the pane command because ssh
+# scripts/launch-claude-mac, where the defect and the design are written out
+# in full. The exports ride inside the pane command because ssh
 # forwards no environment: they must be set in the seat's own shell at P2.
 # The single-quoted values ride through P1's double-quote context untouched,
 # exactly as the task-list id beside them does, and AGENT_NAME needs no
@@ -311,13 +301,13 @@ if [ -n "${LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS:-}" ]; then
 fi
 
 # Update Claude Code on the box before starting the seat, so a fresh agent
-# starts current. Launch is no longer the fleet's ONLY update moment: since
-# 2026-09-22 handoff-supervisor.py updates before every session it launches,
+# starts current. Launch is not the fleet's ONLY update moment:
+# handoff-supervisor.py updates before every session it launches,
 # which covers the handoff restart, crash recovery and the login restart
 # (see update_agent_binary there). Background
 # auto-update is off via DISABLE_AUTOUPDATER in the checked-in
-# .claude/settings.json (user-ruled 2026-08-22: with launch-time updates,
-# the mid-session update banner is clutter); that switch leaves this
+# .claude/settings.json (with launch-time updates, the mid-session update
+# banner is clutter); that switch leaves this
 # explicit `claude update` working. Running sessions are unaffected by an
 # update (user-established across many updates: installed versions are
 # retained on disk). A failed or slow update proceeds anyway, because an
@@ -332,9 +322,8 @@ fi
 # supervisors take the same lock through the same helper.
 #
 # The launcher writes no warning of its own: `claude update` prints its own
-# diagnosis whenever it runs to completion, and the warning removed on
-# 2026-08-31 could not see the failure that actually happened. The twin
-# carries that case in full. A slow but working update killed at the
+# diagnosis whenever it runs to completion, and a launcher warning cannot see
+# the failure that matters. The twin carries that case in full. A slow but working update killed at the
 # limit leaves the box silently on its old version; the limit bounds a hung update rather
 # than racing a real download. A limit of 0 skips the update.
 #
@@ -348,49 +337,14 @@ echo 'launch-claude-ubuntu: checking for a Claude Code update'; \
 --timeout-seconds \${LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS:-120} \
 -- claude update || true; }"
 
-# Pre-trust the agent directory on the box: a fresh directory otherwise stops
-# at Claude's one-time folder-trust dialog, which a detached launch can never
-# answer and an attached one should not have to.
-#
-# The flag is written through a temporary sibling that REPLACES the box's
-# ~/.claude.json, never by truncating it (as this step did until 2026-09-08):
-# that file is the harness's own live state file, written by every running
-# session, so a truncate-and-stream is a file the harness can read torn. The
-# reasoning in full, its precedent (write_atomically in
-# nc-systems/main-gatekeeper/main-gatekeeper.py), the two places it departs from that
-# precedent, and what it deliberately does not fix — the read-modify-write,
-# and why no lock — are at the Mac twin, scripts/launch-claude-mac. Two
-# things here are the BOX's:
-#   - the program crosses P1 between SINGLE quotes, so it may contain no
-#     single quote of its own: every string in it is double-quoted, and the
-#     \" pairs below are this Mac's escaping of that double quote, which
-#     reaches the box as a plain " inside the single-quoted program;
-#   - the temporary file is created with dir= the target's OWN directory,
-#     which os.path.dirname resolves from the box-side ~ this program
-#     expands there. The rename is then within one filesystem — the box's
-#     $HOME — which is what makes it atomic. A temporary left to TMPDIR
-#     would not be: os.replace across filesystems raises rather than
-#     renaming, and a machine whose /tmp is its own filesystem is the
-#     ordinary case, not the exotic one.
-PREPARE_COMMAND="$UPDATE_COMMAND && mkdir -p \"$AGENT_DIRECTORY_REMOTE\" && python3 -c 'import json,os,pathlib,sys,tempfile; \
-p=os.path.expanduser(\"~/.claude.json\"); \
-d=json.load(open(p)) if os.path.exists(p) else {}; \
-t=os.path.abspath(os.path.expanduser(sys.argv[1])); \
-d.setdefault(\"projects\",{}).setdefault(t,{})[\"hasTrustDialogAccepted\"]=True; \
-m=os.stat(p).st_mode & 0o777 if os.path.exists(p) else 0o600; \
-h,w=tempfile.mkstemp(dir=os.path.dirname(p),prefix=\".claude.json.\",suffix=\".launch-claude-writing\"); \
-os.close(h); \
-pathlib.Path(w).write_text(json.dumps(d,indent=2),encoding=\"utf-8\"); \
-os.chmod(w,m); \
-os.replace(w,p)' \"$AGENT_DIRECTORY_REMOTE\""
+PREPARE_COMMAND="$UPDATE_COMMAND && mkdir -p \"$AGENT_DIRECTORY_REMOTE\""
 
 # The agent's home must be a CHECKOUT before the session starts, not after.
 # Project settings — the status line, the reincarnation Stop hook, the
 # instruction-file guard — are read from .claude/ inside the working
 # directory at session start, so an agent booted into a bare directory runs
 # with none of them, and fixing its own home later cannot retrofit the
-# session it is already in (observed 2026-08-14: a seat launched into an
-# empty ~/agents/gatekeeper had no status line and no hooks). Skipped when
+# session it is already in. Skipped when
 # the home is already a checkout, so relaunches are untouched; a branch that
 # already exists is reused rather than recreated, since git allows a branch
 # in only one worktree at a time.
@@ -413,8 +367,20 @@ PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/script
 # checkout that carries its replacement, so the next launch runs current.
 PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/scripts/checkout-freshness-catch-up.py --reference-pull --repo \$HOME/Projects/nedschorus 2>/dev/null || true; }"
 
-# A missing token file WARNS and launches anyway, rather than refusing
-# (user-ruled 2026-09-22): the box holds no `ubuntu-claude.token` today, and
+# Pre-answer, on the box, the screens that would stop the session at start:
+# Claude's one-time folder-trust dialog for the agent directory, and its
+# onboarding screens. A detached launch can never answer them, and an attached
+# one should not have to. The script runs from the box's own checkout, so it
+# comes after the fast-forward above: a box checkout older than the script
+# would otherwise fail on a file it does not have yet. It writes the box's
+# ~/.claude.json only when a preset is missing, and exits nonzero without
+# touching a file it cannot parse, which stops the launch here.
+# The twin does the same locally, at scripts/launch-claude-mac.
+PREPARE_COMMAND="$PREPARE_COMMAND && \
+python3 \$HOME/Projects/nedschorus/scripts/claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py \"$AGENT_DIRECTORY_REMOTE\""
+
+# A missing token file WARNS and launches anyway, rather than refusing: the
+# box holds no `ubuntu-claude.token` today, and
 # a launcher that refused would take every box seat down at once over a
 # credential that is an improvement, not a prerequisite. The warning is loud
 # because the fallback is the defect this change exists to close.
@@ -433,10 +399,7 @@ PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/script
 # Brace-grouped and always 0: the `&&` chain above joins the update, the
 # trust mark and the checkout, and an un-grouped step that reported a
 # missing file as a failure would abort the launch — the failure mode the
-# SEAT_SOCKET_SELECTION_COMMAND comment below records, from PR [Per-seat
-# tmux servers: one server per seat, so one crash cannot kill a machine's
-# whole fleet](https://github.com/nedschorus/nedschorus/pull/122) review
-# P2-3.
+# SEAT_SOCKET_SELECTION_COMMAND comment below records.
 PREPARE_COMMAND="$PREPARE_COMMAND && { [ -s \"\$HOME/$SEAT_GITHUB_TOKEN_FILE_UNDER_HOME\" ] || { \
 echo \"launch-claude-ubuntu: ============================================================\" >&2; \
 echo \"launch-claude-ubuntu: NO SEAT TOKEN — $AGENT_NAME will NOT act as $SEAT_GITHUB_ACCOUNT\" >&2; \
@@ -447,11 +410,10 @@ echo \"launch-claude-ubuntu:   write the fine-grained token for that account to 
 echo \"launch-claude-ubuntu:   or export NEDSCHORUS_SEAT_GITHUB_ACCOUNT naming an account whose token file is there\" >&2; \
 echo \"launch-claude-ubuntu: ============================================================\" >&2; }; }"
 
-# Per-seat tmux servers on the box (2026-08-21): every seat runs on its OWN
+# Per-seat tmux servers on the box: every seat runs on its OWN
 # tmux server, socket `-L <name>`, because a machine's single shared server
-# dying takes every seat down at once — the Mac's did exactly that on
-# 2026-08-21, killing all three Mac seats. Transition rule: seats launched
-# before this change still live on the box's DEFAULT server, so when the
+# dying takes every seat down at once. Transition rule: seats launched
+# before per-seat servers may still live on the box's DEFAULT server, so when the
 # seat's own server does not hold its session but the default one does, this
 # launch reaches it there — otherwise attach-or-create would start a
 # duplicate seat beside the running one. Runs on the box: \$SEAT_TMUX_SOCKET
@@ -459,29 +421,28 @@ echo \"launch-claude-ubuntu: ===================================================
 # so one variable serves both cases. The twin does the same locally, at
 # scripts/launch-claude-mac.
 # Brace-grouped: the assignments and `if` end with `;`, and un-grouped those
-# semicolons END the && list on the box — a failed PREPARE_COMMAND no longer
-# aborted the launch, and tmux ran with an empty -L socket name (PR #122
-# review P2-3). The group keeps the whole selection one && operand.
+# semicolons END the && list on the box — a failed PREPARE_COMMAND would no
+# longer abort the launch, and tmux would run with an empty -L socket name.
+# The group keeps the whole selection one && operand.
 SEAT_SOCKET_SELECTION_COMMAND="{ SEAT_TMUX_SOCKET='$AGENT_NAME'; \
 if ! tmux -L '$AGENT_NAME' has-session -t '=$AGENT_NAME' 2>/dev/null \
 && tmux -L default has-session -t '=$AGENT_NAME' 2>/dev/null; then SEAT_TMUX_SOCKET=default; fi; }"
 
 # When the supervisor exits, the pane becomes an interactive shell in the
-# agent's directory rather than closing (user-ruled 2026-08-17): a stopped
+# agent's directory rather than closing: a stopped
 # seat is relaunched in place, with no hunt for the right cd. The options are
 # printed supervised-first, because `claude --continue` starts no supervisor
-# and its seat can never reincarnate (nedschorus#45). The tmux session now outlives the supervisor and closes when
+# and its seat can never reincarnate. The tmux session outlives the supervisor and closes when
 # that shell exits. Re-running the launcher on such a session ATTACHES to
 # that shell (new-session -A ignores the command for an existing name); the
 # printed options cover it. The leading trap lets the wrapper survive a
 # Ctrl-C aimed at the supervisor — the tty signals the whole foreground
-# group, and an untrapped wrapper died before reaching the shell (review
-# finding, 2026-08-17); a handled trap, unlike an ignore, is not inherited,
-# so the supervisor's own Ctrl-C handling is untouched. Attached launches
-# only: a --no-attach seat keeps the old close-on-exit behavior, because a
-# shell nobody is watching in a detached session would leak, and would turn
-# the "already running" refusal below into a lie automation acts on (review
-# finding, 2026-08-17). The cd target is double-quoted at the PANE shell's
+# group, and an untrapped wrapper dies before reaching the shell; a handled
+# trap, unlike an ignore, is not inherited, so the supervisor's own Ctrl-C
+# handling is untouched. Attached launches only: a --no-attach seat keeps the
+# close-on-exit behavior, because a shell nobody is watching in a detached
+# session would leak, and would turn the "already running" refusal below
+# into a lie automation acts on. The cd target is double-quoted at the PANE shell's
 # parse (P2), one layer deeper than the P1 form: its $HOME is escaped once
 # more so P1 passes it through and the pane shell expands it to the box's
 # home. \${SHELL} is escaped so the box, not this Mac, names the shell.
@@ -503,9 +464,8 @@ cd \\\"\\\$HOME/agents/$AGENT_NAME\\\"; exec \${SHELL:-sh}"
 # on an attach is harmless. \\; reaches the box as \;, a tmux command
 # separator rather than a shell one.
 # An attached window is the user's only view of a box seat, and iTerm2 closes
-# the window when its process ends. So the attach is a loop, not an exec
-# (nedschorus#116 window role, user-ruled 2026-09-14: box seats are not
-# reconnected by hand). ssh exits 255 for a connection-level failure — the box
+# the window when its process ends, and box seats are not reconnected by
+# hand. So the attach is a loop, not an exec. ssh exits 255 for a connection-level failure — the box
 # rebooting, the connection dropped, the box not up yet — and for nothing
 # else; on 255 the launcher waits and tries again, doubling the wait up to
 # 30s, one line per attempt. Any other exit is the remote command's own
@@ -524,8 +484,7 @@ cd \\\"\\\$HOME/agents/$AGENT_NAME\\\"; exec \${SHELL:-sh}"
 # nothing. Second, the prepare step — the Claude update, the trust mark, the
 # checkout — runs only when the seat does NOT already exist: an attach onto a
 # live seat has nothing to prepare, and N windows reconnecting after a boot
-# would otherwise each run `claude update` at once under live sessions
-# (nedschorus#62).
+# would otherwise each run `claude update` at once under live sessions.
 SEAT_EXISTS_COMMAND="{ tmux -L '$AGENT_NAME' has-session -t '=$AGENT_NAME' 2>/dev/null || tmux -L default has-session -t '=$AGENT_NAME' 2>/dev/null; }"
 SEAT_RESTART_WAIT_COMMAND="{ SEAT_WAITED=0; \
 while ! $SEAT_EXISTS_COMMAND && [ \"\$(systemctl --user is-active restart-live-seats-at-login.service 2>/dev/null)\" = activating ] && [ \$SEAT_WAITED -lt 180 ]; do \
@@ -560,7 +519,7 @@ if [ "$ATTACH" = yes ]; then
     # actually run: an ssh that lasted longer than RECONNECT_SESSION_SECONDS
     # was a live attach that dropped, not a failed retry, so the next
     # reconnect starts from 2s again rather than from wherever a boot's worth
-    # of retries left it (PR #365 review).
+    # of retries left it.
     RECONNECT_WAIT_SECONDS=2
     RECONNECT_SESSION_SECONDS=60
     while :; do
@@ -576,5 +535,10 @@ if [ "$ATTACH" = yes ]; then
         [ "$RECONNECT_WAIT_SECONDS" -ge 30 ] || RECONNECT_WAIT_SECONDS=$((RECONNECT_WAIT_SECONDS * 2))
     done
 fi
+# The existing-seat case is checked before anything runs, so that a failed
+# prepare step or tmux start is reported as itself and exits nonzero, never
+# as "already exists"; like the attach path, a live seat is not re-prepared.
 exec ssh "$AGENT_BOX" \
-    "$PREPARE_COMMAND && $SEAT_SOCKET_SELECTION_COMMAND && tmux -L \"\$SEAT_TMUX_SOCKET\" new-session -d -s '$AGENT_NAME' -c \"$AGENT_DIRECTORY_REMOTE\" \"$SUPERVISOR_COMMAND\" $SEAT_TMUX_OPTIONS_CHAIN 2>/dev/null || echo 'launch-claude-ubuntu: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-ubuntu $AGENT_NAME)'"
+    "if $SEAT_EXISTS_COMMAND; then echo 'launch-claude-ubuntu: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-ubuntu $AGENT_NAME)'; \
+else $PREPARE_COMMAND && $SEAT_SOCKET_SELECTION_COMMAND && tmux -L \"\$SEAT_TMUX_SOCKET\" new-session -d -s '$AGENT_NAME' -c \"$AGENT_DIRECTORY_REMOTE\" \"$SUPERVISOR_COMMAND\" $SEAT_TMUX_OPTIONS_CHAIN \
+|| { LAUNCH_STATUS=\$?; echo \"launch-claude-ubuntu: preparing or starting $AGENT_NAME on the box failed (exit \$LAUNCH_STATUS); the failing step's own message is above\" >&2; exit \$LAUNCH_STATUS; }; fi"

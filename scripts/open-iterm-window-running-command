@@ -4,11 +4,11 @@
 #
 # The command is passed as the new session's own process (iTerm's AppleScript
 # `command` parameter), never typed as keystrokes: AppleScript `write text`
-# races the user's real cursor and spliced a command on 2026-08-17 — the rule
-# and both incidents are recorded on nedschorus#27, and the project's
-# synthetic-keystroke guard hook blocks the `write text` form outright.
+# races the user's real cursor and can splice a command into what he types,
+# and the project's synthetic-keystroke guard hook blocks the `write text`
+# form outright.
 #
-# Argument handling (PR #82 review, F11): one argument is the command string,
+# Argument handling: one argument is the command string,
 # handed over whole. Several arguments are joined with single spaces, which
 # only preserves meaning while no argument itself contains whitespace or
 # quotes — `open-iterm-window-running-command ssh -t ned tmux attach` joins
@@ -17,25 +17,23 @@
 # refused with guidance instead of guessed at.
 #
 # THE COMMAND RUNS UNDER A LOGIN SHELL, and must, because iTerm2 gives a
-# custom command a bare PATH — measured on this Mac 2026-09-02:
+# custom command a bare PATH — measured on this Mac:
 #
 #   PATH=/usr/bin:/bin:/usr/sbin:/sbin:/Applications/iTerm.app/Contents/Resources/utilities
 #
 # Neither Homebrew (/opt/homebrew/bin) nor ~/.local/bin is on it, so `tmux`
-# and `claude` are both NOT FOUND, and the working directory is /. That is
-# not a theoretical gap: it is how this script failed on 2026-09-02 while
-# reopening the seat windows after the machine's first reboot in months.
-# launch-claude-mac opens with `command -v tmux || exit 1`, so each window
-# died before printing a line and iTerm reported only "A session ended very
-# soon after starting" — the caller is told nothing about PATH, and the
-# evidence closes with the window. Three windows were lost that way.
+# and `claude` are both NOT FOUND, and the working directory is /.
+# launch-claude-mac opens with `command -v tmux || exit 1`, so without a
+# login shell each window dies before printing a line and iTerm reports only
+# "A session ended very soon after starting" — the caller is told nothing
+# about PATH, and the evidence closes with the window.
 #
 # The wrapper is `/bin/zsh -l -c 'exec "$@"' <this script's name> <command...>`.
 # The point of the `exec "$@"` form, rather than handing the command to the
 # shell as a string to parse, is that IT CHANGES NOTHING ABOUT THE COMMAND.
 # The shell reads the login files (which is the whole purpose), then execs
-# the argument vector iTerm already built, verbatim. Measured the same day,
-# through the real iTerm2:
+# the argument vector iTerm already built, verbatim. Measured through the
+# real iTerm2:
 #
 #   - `-t 'seat a'` still arrives as ONE argument, as it did before;
 #   - `lit$HOME` still arrives LITERAL — no expansion layer is added;
@@ -51,8 +49,7 @@
 # WHAT IS NOT A SHELL LINE. iTerm2 splits the command string into an argument
 # vector and execs it; it does not run it through a shell. So `;` is not a
 # separator and `$HOME` is not expanded — both arrive as literal words (also
-# measured 2026-09-02; this comment previously advised `;` as a separator,
-# which never worked). To run several commands, pass a shell explicitly and
+# measured). To run several commands, pass a shell explicitly and
 # quote its script: `open-iterm-window-running-command "sh -c 'a; b'"`.
 #
 # OPEN_ITERM_WINDOW_DRY_RUN=1 prints the generated AppleScript instead of
@@ -124,11 +121,8 @@ ESCAPED=$(printf '%s' "$WRAPPED_COMMAND" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')
 
 # `activate` BRINGS ITERM TO THE FRONT, and is not decoration. AppleScript's
 # `tell application` launches an app that is not running, but launches it in
-# the BACKGROUND: the window is created and the app never comes forward. After
-# the 2026-09-18 Mac reboot every seat was restarted into its own window --
-# the run log names their window ids -- and the user saw nothing until he
-# clicked iTerm's Dock icon: "I thought after recovery iterm2 was running but
-# closed. I had to click on its icon to 'see' it." A restart whose windows are
+# the BACKGROUND: the window is created and the app never comes forward, so
+# the user sees nothing until he clicks iTerm's Dock icon. A restart whose windows are
 # invisible is a restart the user cannot act on. `activate` before the window
 # is created rather than after, so the app is frontmost when the window
 # arrives instead of the window appearing behind whatever is in front.
