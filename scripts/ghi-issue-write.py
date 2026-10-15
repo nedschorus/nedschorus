@@ -348,6 +348,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -361,6 +362,24 @@ _git_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
+
+
+def _load_sibling_script(module_name, file_name):
+    spec = importlib.util.spec_from_file_location(
+        module_name, Path(__file__).resolve().parent / file_name)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# The pre-push hook runs these two before git sends anything, so a push must
+# be given at least their time; see push_time_limit_seconds.
+pre_push_conflict_check = _load_sibling_script(
+    "git_client_side_hooks_pre_push_conflict_check",
+    "git-client-side-hooks-pre-push-conflict-check.py")
+pre_push_selective_test_run = _load_sibling_script(
+    "git_client_side_hooks_pre_push_selective_test_run",
+    "git-client-side-hooks-pre-push-selective-test-run.py")
 
 DEFAULT_REPO = "nedschorus/nedschorus"
 GHI_MD_DIRECTORY = "docs/issues"
@@ -377,6 +396,10 @@ RECONSIDERED_MARKER_NAME = ".ghi-issue-write-reconsidered"
 GH_NO_SUCH_ISSUE_STDERR_FRAGMENT = "could not resolve to an issue"
 SLUG_WORD_LIMIT = 8
 GH_TIMEOUT_SECONDS = 120
+# Beyond the pre-push hook's own limit: the hook's mutation-testing-worktree
+# check, the selective run's search for leftover processes after its budget,
+# and git sending the branch.
+PUSH_TIME_MARGIN_SECONDS = 120
 ADJUDICATION_TIMEOUT_SECONDS = 420
 # scripts/ghi-info-ask.py's EXIT_NOT_ABOUT_ISSUES and EXIT_RULING_QUESTION:
 # ghi-info answered, but with an `out-of-scope` or `escalate:` reply rather
@@ -464,6 +487,63 @@ def run(arguments, timeout=GH_TIMEOUT_SECONDS, cwd=None, check=True):
             f"{' '.join(arguments[:3])} failed: "
             f"{(completed.stderr or completed.stdout).strip()}", 1)
     return completed
+
+
+def push_time_limit_seconds(environment):
+    """How long a push may take: the pre-push hook's conflict check and
+    selective test run, each with its budget as the hook reads it from the
+    same environment, its grace period for stopping, and a margin."""
+    return (pre_push_conflict_check.time_budget_seconds(environment)
+            + pre_push_conflict_check.TERMINATE_GRACE_SECONDS
+            + pre_push_selective_test_run.time_budget_seconds(environment)
+            + pre_push_selective_test_run.TERMINATE_GRACE_SECONDS
+            + PUSH_TIME_MARGIN_SECONDS)
+
+
+def push_branch(worktree, branch, runner, environment=None):
+    """Push the landing branch, refusing with what to do when the push is
+    stopped by its time limit. Whether anything reached origin is read back,
+    so the message says which of the two it is."""
+    environment = os.environ if environment is None else environment
+    seconds = push_time_limit_seconds(environment)
+    try:
+        runner(["git", "push", "--quiet", "origin",
+                f"HEAD:refs/heads/{branch}"], timeout=seconds, cwd=str(worktree))
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        listed = runner(["git", "ls-remote", "--heads", "origin",
+                         f"refs/heads/{branch}"],
+                        timeout=GH_TIMEOUT_SECONDS, cwd=str(worktree),
+                        check=False)
+        reached = (listed.stdout.strip() != "" if listed.returncode == 0
+                   else None)
+    except subprocess.TimeoutExpired:
+        reached = None
+    stopped = (f"git push of branch {branch} was stopped after "
+               f"{seconds:.0f} seconds, longer than the pre-push hook's own "
+               "limit, so the push itself hung.")
+    if reached is False:
+        raise Refused(
+            f"{stopped}\nNothing was pushed: origin has no branch {branch}.\n"
+            "Rerun the same command; a rerun is safe.\n"
+            "If it stops the same way again, tell the user the push hangs, "
+            "with this message.", 1)
+    if reached:
+        raise Refused(
+            f"{stopped}\nBranch {branch} reached origin anyway, so the pull "
+            "request was not opened.\n"
+            "Do not rerun this command: it would push the same branch again.\n"
+            f"Tell the user branch {branch} is on origin without its pull "
+            "request, with this message.", 1)
+    raise Refused(
+        f"{stopped}\nWhether branch {branch} reached origin could not be "
+        "read.\n"
+        f"Run: git ls-remote --heads origin refs/heads/{branch}\n"
+        "If it prints nothing, nothing was pushed: rerun the same command.\n"
+        "If it prints a line, do not rerun; tell the user the branch is on "
+        "origin without its pull request, with this message.", 1)
 
 
 def pairing_key(file_text: str) -> str:
@@ -1366,8 +1446,7 @@ def land_file(repo: str, number: int, title: str, source: Path,
                    "frontmatter line is written by the tool, not by its "
                    "author, who had no issue number when they wrote it.\n")
         runner(["git", "commit", "--quiet", "-m", message], cwd=str(worktree))
-        runner(["git", "push", "--quiet", "origin",
-                f"HEAD:refs/heads/{branch}"], cwd=str(worktree))
+        push_branch(worktree, branch, runner)
         create_pull_request_for_branch(repo, branch, number, title, worktree,
                                        runner, report)
     finally:
@@ -2106,8 +2185,7 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
                    "file's `issue:` frontmatter line is written by the "
                    "tool, not by its author.\n")
         runner(["git", "commit", "--quiet", "-m", message], cwd=str(worktree))
-        runner(["git", "push", "--quiet", "origin",
-                f"HEAD:refs/heads/{branch}"], cwd=str(worktree))
+        push_branch(worktree, branch, runner)
         create_pull_request_for_edit_branch(repo, branch, number, title,
                                             worktree, runner, report)
     finally:
