@@ -180,6 +180,75 @@ with tempfile.TemporaryDirectory() as scratch:
           finding.returncode == 0 and "USER: heron words of the user" in finding.stdout
           and "of the agent" not in finding.stdout, finding.stdout + finding.stderr)
 
+    escaped = root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s11.jsonl"
+    write(escaped, transcript_records(typed("merge it\nplease now", "2026-10-03T00:02:00Z"),
+                                      typed('say "hi" to the\tgatekeeper', "2026-10-03T00:03:00Z"),
+                                      typed("path C:\\logs here", "2026-10-03T00:04:00Z")))
+    for pattern, expected in ((r"merge it\s+please", "merge it please now"),
+                              ('say "hi', 'say "hi" to the gatekeeper'),
+                              (r"the.gatekeeper", 'say "hi" to the gatekeeper'),
+                              (r"C:\\logs", "path C:\\logs here")):
+        finding = run(root, pattern, "--kind", "user-messages")
+        check(f"a pattern that matches what JSON escapes finds the message, {pattern}",
+              finding.returncode == 0 and f"USER: {expected}" in finding.stdout, finding.stdout + finding.stderr)
+    escaped.unlink()
+
+    for locked_directory in (root / "transcripts" / "mac" / "projects",
+                             root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-prime-intellect"):
+        locked_directory.chmod(0)
+        finding = run(root, r"heron\s+plan", "--kind", "user-messages")
+        locked_directory.chmod(0o755)
+        check(f"a transcript directory that cannot be listed is a failure, {locked_directory.name}",
+              finding.returncode == 2 and f"could not list the transcripts in {locked_directory}" in finding.stderr,
+              finding.stderr)
+
+    late = root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s12.jsonl"
+    write(late, transcript_records(typed("heron from the future", "2026-10-09T00:00:00Z")), mtime=epoch("2026-10-02"))
+    finding = run(root, "heron from the future", "--kind", "user-messages", "--since", "2026-10-01")
+    late.unlink()
+    check("a message dated after its transcript's modification time is reported when --since relies on it",
+          finding.returncode == 2 and "after its modification time" in finding.stderr, finding.stderr)
+
+    hidden = root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-prime-intellect" / "s1-dialog-complete.md"
+    hidden_transcript = root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-prime-intellect" / "s1.jsonl"
+    hidden_transcript.chmod(0)
+    finding = run(root, "start the heron plan", "--kind", "session-dialogs")
+    hidden_transcript.chmod(0o644)
+    check("a session dialog whose transcript cannot be read is a failure, not an undated hit",
+          finding.returncode == 2 and "to date the session dialog" in finding.stderr
+          and str(hidden) in finding.stderr, finding.stderr)
+
+    walk_file = root / "walk" / "heron-walk-2026-10-01-minutes.md"
+    header_match = json.dumps({"type": "match", "data": {
+        "path": {"text": str(walk_file)}, "lines": {"text": "heron\n"}, "line_number": 5,
+        "submatches": [{"start": 0}]}})
+    header_reporter = stub(scratch, "rg-reports-locked-walk", f"printf '%s\\n' '{header_match}'\n")
+    walk_file.chmod(0)
+    finding = run(root, "heron", "--kind", "walk", environment={PREFIX + "RIPGREP_PROGRAM_OVERRIDE": header_reporter})
+    walk_file.chmod(0o644)
+    check("a walk file whose header cannot be read for its agent-seat is a failure",
+          finding.returncode == 2 and "for its agent-seat" in finding.stderr, finding.stderr)
+
+    probe = subprocess.run([sys.executable, "-c", f"""
+import importlib.util, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("search", {str(PROGRAM)!r})
+search = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(search)
+def unreadable(transcript):
+    raise PermissionError(13, "Permission denied")
+search.session_start = unreadable
+search.session_last_activity = lambda transcript: "2026-10-05T10:00:00Z"
+dialog = {str(root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-prime-intellect" / "s1-dialog-complete.md")!r}
+hit = {{"kind": "session-dialogs", "path": dialog, "machine": "ned-box",
+        "project_key": "-home-nedlern-agents-prime-intellect", "line": 5}}
+failures = []
+search.dated_file_hits([hit], Path({str(root)!r}), "", "", None, "2026-09-30", failures)
+print(failures)
+"""], capture_output=True, text=True)
+    check("a session dialog's transcript that cannot be read for the session's start is a failure",
+          "for the start of the session dialog" in probe.stdout, probe.stdout + probe.stderr)
+
     wide = write(root / "walk" / "wide-2026-10-02.md", "é" * 400 + " heron tail\n")
     result = run(root, "heron tail", "--kind", "walk")
     wide.unlink()

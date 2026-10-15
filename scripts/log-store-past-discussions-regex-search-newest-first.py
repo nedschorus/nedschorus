@@ -28,9 +28,10 @@ it in every kind; the user's messages are then read with the handoff
 extractor's reader (scripts/handoff-extract-conversation.py) and matched again
 with Python's re module, so the pattern must be one both read. ripgrep picks
 the transcripts to read from their raw JSON, with the pattern's anchors (^, $,
-\\A, \\z) removed, since there a message is one string inside a longer line. A
-quote mark or a backslash is escaped in that JSON, so a pattern holding either
-can miss a user's message, though not the same words in the session dialogs.
+\\A, \\z) removed, since there a message is one string inside a longer line.
+JSON writes a line break, a tab, a quote mark and a backslash as escapes, so a
+pattern that could match one of them (., a [class], \\s, \\W, \\b, a quote mark,
+a backslash and the like) skips that step and every transcript is read.
 
 WHAT EACH HIT SAYS. Its kind, date, machine and agent-seat where the record
 shows them, its file and line, and the matching line with --context lines
@@ -94,7 +95,6 @@ import heapq
 import importlib.util
 import itertools
 import json
-import multiprocessing
 import os
 import re
 import shlex
@@ -219,22 +219,25 @@ def timestamp_of(line):
 
 
 def session_start(transcript):
-    """The first timestamp in a transcript, or "" when there is none or it cannot be read."""
+    """The first timestamp in a transcript, or "" when it has none or there is no transcript.
+
+    Raises OSError when the transcript is there but cannot be read.
+    """
     try:
         with transcript.open("rb") as handle:
             for line in handle:
                 stamp = timestamp_of(line)
                 if stamp:
                     return stamp
-    except OSError:
+    except FileNotFoundError:
         pass
     return ""
 
 
 def session_last_activity(transcript):
-    """The last timestamp in a transcript, or "" when there is none or it cannot be read.
+    """The last timestamp in a transcript, or "" when it has none or there is no transcript.
 
-    Reads backwards from the end in growing blocks, since a transcript can be hundreds of megabytes.
+    Raises OSError when the transcript is there but cannot be read. Reads backwards from the end in growing blocks, since a transcript can be hundreds of megabytes.
     """
     try:
         with transcript.open("rb") as handle:
@@ -253,15 +256,16 @@ def session_last_activity(transcript):
                 if start == 0:
                     return ""
                 block *= 4
-    except OSError:
+    except FileNotFoundError:
         return ""
 
 
-def walk_seat(path):
+def walk_seat(path, failures):
     try:
         with path.open(errors="replace") as handle:
             header = "".join(handle.readline() for _ in range(WALK_HEADER_LINES))
-    except OSError:
+    except OSError as error:
+        failures.append(f"could not read the header of {path} for its agent-seat: {error}")
         return ""
     match = WALK_HEADER_SEAT.search(header)
     return match.group(1) if match else ""
@@ -298,7 +302,7 @@ class RipgrepMissing(Exception):
     pass
 
 
-def file_facts(path, root):
+def file_facts(path, root, failures):
     """The kind, machine, agent-seat and, where its name holds one, the date of one file's hits.
 
     None for a file in session-dialogs/ that is not a session dialog.
@@ -317,7 +321,7 @@ def file_facts(path, root):
         named = DATE_IN_NAME.search(str(path.relative_to(root / kind)))
         facts["date"] = named.group(0) if named else None
         if kind == "walk":
-            facts["seat"] = walk_seat(path)
+            facts["seat"] = walk_seat(path, failures)
     return facts
 
 
@@ -366,7 +370,7 @@ def file_hits(root, kinds, pattern, context, failures):
     facts_by_file = {}
     for path_text, number, shown in matches:
         if path_text not in facts_by_file:
-            facts_by_file[path_text] = file_facts(Path(path_text), root)
+            facts_by_file[path_text] = file_facts(Path(path_text), root, failures)
         if facts_by_file[path_text] is None:
             continue
         nearby = lines_by_file[path_text]
@@ -400,7 +404,13 @@ def dated_file_hits(hits, root, seat, machine, since, until, failures):
                 continue
         if hit["kind"] == SESSION_DIALOGS:
             if hit["path"] not in last_activities:
-                last_activities[hit["path"]] = session_last_activity(session_transcript(root, hit))
+                transcript = session_transcript(root, hit)
+                try:
+                    last_activities[hit["path"]] = session_last_activity(transcript)
+                except OSError as error:
+                    failures.append(f"could not read the transcript {transcript} to date the session "
+                                    f"dialog {path}: {error}")
+                    last_activities[hit["path"]] = ""
             hit["date"] = last_activities[hit["path"]]
         elif hit.get("date") is None:
             if hit["path"] not in modification_dates:
@@ -418,7 +428,13 @@ def dated_file_hits(hits, root, seat, machine, since, until, failures):
                 continue
             if until and last and last > until:
                 if hit["path"] not in starts:
-                    starts[hit["path"]] = session_start(session_transcript(root, hit))
+                    transcript = session_transcript(root, hit)
+                    try:
+                        starts[hit["path"]] = session_start(transcript)
+                    except OSError as error:
+                        failures.append(f"could not read the transcript {transcript} for the start of the "
+                                        f"session dialog {path}: {error}")
+                        starts[hit["path"]] = ""
                 start = starts[hit["path"]][:10]
                 if start and start > until:
                     continue
@@ -471,6 +487,51 @@ def pattern_without_anchors(pattern):
     return "".join(kept)
 
 
+def raw_json_prefilter(pattern):
+    """The pattern for ripgrep to pick transcripts by, or None when every transcript must be read.
+
+    ripgrep reads a transcript's raw JSON, where a line break, a tab, a quote mark, a backslash
+    and other control characters are each written as an escape of two or more characters. A
+    pattern that could match one of those characters in a message could fail to match its
+    escape, so it gets no prefilter. Anchors are dropped first, since in the JSON a message is
+    one string inside a longer line.
+    """
+    pattern = pattern_without_anchors(pattern)
+    index = 0
+    while index < len(pattern):
+        character = pattern[index]
+        if character == "\\":
+            following = pattern[index + 1:index + 2]
+            # \w and \d match only characters JSON writes as themselves; every other escaped
+            # letter or digit (\s, \S, \W, \D, \b, \n, \t, \x, \u, \p, back-references) may not.
+            if following in ("\\", '"') or (following.isalnum() and following not in "wd"):
+                return None
+            index += 2
+            continue
+        if character in '.["' or ord(character) < 0x20:
+            return None
+        index += 1
+    return pattern
+
+
+def every_transcript(directories, failures):
+    """Every <project-key>/<session>.jsonl under the given projects directories."""
+    paths = []
+    for directory in directories:
+        try:
+            keys = sorted(entry.path for entry in os.scandir(directory) if entry.is_dir())
+        except OSError as error:
+            failures.append(f"could not list the transcripts in {directory}: {error}")
+            continue
+        for key in keys:
+            try:
+                paths += [entry.path for entry in os.scandir(key)
+                          if entry.name.endswith(".jsonl") and entry.is_file()]
+            except OSError as error:
+                failures.append(f"could not list the transcripts in {key}: {error}")
+    return paths
+
+
 def transcript_candidates(root, pattern, seat, machine, since, failures):
     """The transcripts ripgrep finds the pattern in, as (path, modification time), in path order.
 
@@ -492,10 +553,15 @@ def transcript_candidates(root, pattern, seat, machine, since, failures):
             failures.append(f"the log-store has no {directory}, so {each}'s transcripts were not searched")
     if not directories:
         return []
-    output = run_ripgrep(ripgrep_command(["--files-with-matches", "--max-depth", "2", "--glob", "*.jsonl"],
-                                         pattern_without_anchors(pattern), directories), failures)
+    prefilter = raw_json_prefilter(pattern)
+    if prefilter is None:
+        paths = every_transcript(directories, failures)
+    else:
+        output = run_ripgrep(ripgrep_command(["--files-with-matches", "--max-depth", "2", "--glob", "*.jsonl"],
+                                             prefilter, directories), failures)
+        paths = output.splitlines()
     candidates = []
-    for line in sorted(output.splitlines()):
+    for line in sorted(paths):
         path = Path(line)
         if seat and seat not in session_parts(path, root)[1]:
             continue
@@ -546,9 +612,7 @@ def newest_first_results(paths, pattern, since, until, jobs):
         for each in arguments:
             yield matching_user_messages(*each)
         return
-    # spawn, not fork: the ripgrep thread may still be running when the pool starts.
-    executor = concurrent.futures.ProcessPoolExecutor(
-        max_workers=min(jobs, len(arguments)), mp_context=multiprocessing.get_context("spawn"))
+    executor = concurrent.futures.ProcessPoolExecutor(max_workers=min(jobs, len(arguments)))
     try:
         in_flight = collections.deque()
         upcoming = iter(arguments)
@@ -589,8 +653,10 @@ def user_message_hits(root, candidates, pattern, since, until, jobs, page_size, 
                     elif (date or "") > page[0]:
                         heapq.heapreplace(page, date or "")
             if page_size and len(page) == page_size and index + 1 < len(readable):
-                # A message is written before its transcript's modification time, which the Mac
-                # mirror keeps only to the whole second; MODIFICATION_TIME_MARGIN_SECONDS covers that.
+                # Relies on no message being dated after its transcript's modification time: the
+                # mirror copies each transcript with its source's modification time, the time of its
+                # last write, kept only to the whole second, which MODIFICATION_TIME_MARGIN_SECONDS
+                # covers. The loop below reports a transcript that breaks this.
                 newest_unread = utc_iso(readable[index + 1][1] + MODIFICATION_TIME_MARGIN_SECONDS)
                 if newest_unread < page[0]:
                     stopped_early = True
@@ -598,7 +664,7 @@ def user_message_hits(root, candidates, pattern, since, until, jobs, page_size, 
     finally:
         reader.close()
     hits = []
-    for path, _, stat_error in candidates:
+    for path, modified, stat_error in candidates:
         if stat_error:
             failures.append(stat_error)
             continue
@@ -609,6 +675,11 @@ def user_message_hits(root, candidates, pattern, since, until, jobs, page_size, 
             failures.append(error)
             continue
         transcript_machine, key = session_parts(path, root)
+        latest = max((date for date, _ in found_messages), default="")
+        if latest > utc_iso(modified + MODIFICATION_TIME_MARGIN_SECONDS) and (stopped_early or since):
+            failures.append(f"the transcript {path} holds a message dated {latest}, after its modification "
+                            f"time {utc_iso(modified)}, so --since or the early stop may have left out "
+                            f"other transcripts' hits; rerun with --limit 0 and without --since")
         for date, shown in found_messages:
             hits.append({"kind": USER_MESSAGES, "path": str(path), "line": None,
                          "shown": shown, "before": [], "after": [],
