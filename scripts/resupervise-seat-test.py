@@ -41,8 +41,9 @@ UNKNOWN_KILL_CHECK_ANSWER_LINES = (
     "If the check exits 0, the session still exists: start no agent, and report to the user. "
     "If it prints \"can't find session\" or \"can't find window\" or \"can't find pane\" or "
     "\"no current target\" or \"no server running\" or "
-    "\"error connecting to ... (No such file or directory)\", the session is gone: run "
-    "again the command that printed this message. Any other output, or a check that does not return, leaves the "
+    "\"error connecting to <socket path> (No such file or directory)\", the session is gone: run "
+    "again, for this agent-seat only, the command that printed this message. Any other output, or a "
+    "check that does not return within 30 seconds, leaves the "
     "outcome unknown: start no agent, and report the output to the user.\n")
 
 # Variables Claude Code sets for an agent-session's commands, and one supervisor variable naming
