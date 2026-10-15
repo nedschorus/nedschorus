@@ -4648,9 +4648,15 @@ with tempfile.TemporaryDirectory() as temporary:
           (retired, workspace.launches, report_failed))
     workspace = a_seat_behind_a_leftover_shell("leftover-shell-kill-outcome-unknown")
     retired = []
-    check_instruction = ("To check, run the command on the next line on ned-box: exit 0 means "
-                         "the session still exists; "
-                         "\"can't find session\", \"no server running\", \"server exited unexpectedly\" or \"error connecting\" means it is gone"
+    check_instruction = ("If the check exits 0, the session still exists: start no agent, and "
+                         "report to the user. If it prints \"can't find session\" or \"can't find "
+                         "window\" or \"can't find pane\" or \"no current target\" or \"no server "
+                         "running\" or \"error connecting to ... (No such file or directory)\", the "
+                         "session is gone: run again the command that printed this message. Any other "
+                         "output, or a check "
+                         "that does not return, leaves the outcome unknown: start no agent, and "
+                         "report the output to the user.\n"
+                         "To check, run the command on the next line on ned-box:"
                          "\ntmux -L seat-a has-session -t '=seat-a'")
     capture_retires(retired, killed_sockets=(),
                     failure="it is unknown whether the stale tmux session seat-a (tmux socket "
@@ -4665,6 +4671,30 @@ with tempfile.TemporaryDirectory() as temporary:
                                  "seat-a (tmux socket name seat-a) was killed: tmux could not be "
                                  "run, or did not answer within 30 seconds. " + check_instruction),
           (retired, workspace.launches, report_unknown))
+    # The real retire step's text, not a stub's, reaches the REFUSED line: it is shared with
+    # resupervise-seat, so it must name no program but the one the operator just ran.
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-kill-outcome-unknown-real-text")
+    recovery.resupervise.retire_seat_tmux_session = real_retire_seat_tmux_session
+
+    def tmux_holds_the_seat_and_the_kill_gets_no_answer(*arguments, socket_name=None):
+        if arguments[0] == "has-session" and socket_name == "seat-a":
+            return subprocess.CompletedProcess(["tmux"], 0, "", "")
+        if arguments[0] == "has-session":
+            return subprocess.CompletedProcess(["tmux"], 1, "", "can't find session: seat-a\n")
+        return None
+    recovery.resupervise.run_tmux = tmux_holds_the_seat_and_the_kill_gets_no_answer
+    try:
+        report_real, seen = recover_with_an_operator_typing(workspace, "y")
+    finally:
+        recovery.resupervise.run_tmux = real_resupervise_run_tmux
+    check("LEFTOVER SHELL: the real unknown-kill text reaches the REFUSED line, names no other "
+          "program to run, and ends with the check command after the line pointing at it",
+          workspace.launches == []
+          and "run again the command that printed this message" in report_real
+          and "resupervise-seat" not in report_real
+          and report_real.splitlines()[-2].startswith("To check, run the command on the next line")
+          and report_real.splitlines()[-1] == "tmux -L seat-a has-session -t '=seat-a'",
+          report_real)
     workspace = a_seat_behind_a_leftover_shell("leftover-shell-survives-the-retire")
     retired = []
     capture_retires(retired, the_session_then_dies=False)

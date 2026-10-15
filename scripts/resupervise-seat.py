@@ -105,6 +105,8 @@ _tmux_error_pattern_spec = importlib.util.spec_from_file_location(
 )
 tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
 _tmux_error_pattern_spec.loader.exec_module(tmux_error_pattern)
+TMUX_GONE_ANSWERS = " or ".join(
+    f'"{wording}"' for wording, _ in tmux_error_pattern.TMUX_TARGET_OR_SERVER_DOES_NOT_EXIST_ERROR_WORDINGS)
 
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 
@@ -282,10 +284,11 @@ def retire_seat_tmux_session(name: str, check_ssh_alias=None):
             return killed_sockets, (
                 f"it is unknown whether the stale tmux session {name} (tmux socket name "
                 f"{socket_name}) was killed: {TMUX_GAVE_NO_ANSWER}{before}"), (
-                f"To check, run the command on the next line{where}: "
-                f"exit 0 means the session still exists; \"can't find session\", "
-                f"\"no server running\", \"server exited unexpectedly\" or "
-                f"\"error connecting\" means it is gone\n{command}")
+                f"If the check exits 0, the session still exists: start no agent, and report "
+                f"to the user. If it prints {TMUX_GONE_ANSWERS}, the session is gone: run "
+                f"again the command that printed this message. Any other output, or a check that does not return, "
+                f"leaves the outcome unknown: start no agent, and report the output to the user.\n"
+                f"To check, run the command on the next line{where}:\n{command}")
         if killed.returncode != 0:
             return killed_sockets, (
                 f"could not kill the stale tmux session {name} (tmux socket name "

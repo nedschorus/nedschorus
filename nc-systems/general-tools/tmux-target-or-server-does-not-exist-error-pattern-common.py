@@ -17,10 +17,19 @@ import re
 # server ("can't find session", "can't find window", "can't find pane"), the server holds
 # none ("no current target", from has-session; display-message -p exits 0 and prints
 # nothing there), the socket refuses ("no server running"), or no socket file.
+# Each pair is the wording an agent is shown and the regex that matches it; messages that
+# list these answers take them from here, so the list and the pattern cannot drift.
+TMUX_TARGET_OR_SERVER_DOES_NOT_EXIST_ERROR_WORDINGS = (
+    ("can't find session", r"can't find session"),
+    ("can't find window", r"can't find window"),
+    ("can't find pane", r"can't find pane"),
+    ("no current target", r"no current target"),
+    ("no server running", r"no server running"),
+    ("error connecting to ... (No such file or directory)",
+     r"error connecting to .*\(No such file or directory\)"),
+)
 TMUX_TARGET_OR_SERVER_DOES_NOT_EXIST_ERROR_PATTERN = re.compile(
-    r"can't find (?:session|window|pane)|no current target|no server running"
-    r"|error connecting to .*\(No such file or directory\)")
-
+    "|".join(regex for _, regex in TMUX_TARGET_OR_SERVER_DOES_NOT_EXIST_ERROR_WORDINGS))
 
 def tmux_error_text_says_target_or_server_does_not_exist(tmux_error_text):
     """Return True when tmux's error text says the target or its server does not exist."""
