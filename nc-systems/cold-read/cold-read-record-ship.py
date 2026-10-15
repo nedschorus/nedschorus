@@ -271,6 +271,8 @@ in the nedschorus repository, which this machine also clones:
 - `transcripts/` -- each machine's session transcripts, handoffs, task
   lists, seat-briefs and global CLAUDE.md, mirrored by
   `scripts/transcript-mirror-to-log-store.py`
+- `session-dialogs/` -- each mirrored session's complete filtered dialog,
+  kept current by `scripts/log-store-session-dialogs-refresh-nbd.py`
 - `seats/` -- a seat's shared files, shipped by
   `scripts/seat-shared-file-ship.py`
 - `analysis/` -- analyses, placed by hand
@@ -283,6 +285,14 @@ in the nedschorus repository, which this machine also clones:
 - `handoff-agent-seat-died-without-session-handoff-restart-watcher/` -- each decision of ned-box's
   crash watcher and the notices it showed the user, written by
   `nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py`
+- `uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-checks/` -- each
+  machine's weekly check that the work-snapshot hook finds a real claude
+  session, written by
+  `nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py`
+- `guarded-file-versions-and-approvals/` -- each machine's copies of every
+  version of a guarded file and the record of which versions the user
+  approved, written by
+  `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file

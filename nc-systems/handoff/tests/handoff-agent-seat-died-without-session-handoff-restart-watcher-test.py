@@ -63,19 +63,28 @@ class Harness:
     """A Watcher's outside world: verdicts to hand out, and every call recorded."""
 
     def __init__(self, log_directory, recovery_result=(0, "merge-lane-2: relaunched resuming x"),
-                 window_exit_codes=None):
+                 window_exit_codes=None, seat_window_results=None, seat_session_alive=True):
         self.log_directory = log_directory
         self.state = watcher_module.read_state(log_directory / "no-state-yet.json")
         self.verdicts = {}
         self.assessment_errors = {}
         self.recovery_result = recovery_result
         self.window_exit_codes = list(window_exit_codes or [])
+        self.seat_window_results = list(seat_window_results or [])
+        self.seat_windows = []
+        # What tmux says of the seat's session: True, False (gone) or None (tmux cannot answer).
+        self.seat_session_alive = seat_session_alive
+        self.seat_session_check = None
         self.recoveries = []
         self.windows = []
         self.died_at = DIED_AT
         # A launch that does not come up polls before it dies: its heartbeat moves.
         self.died_at_after_recovery = None
         self.on_purpose = False
+        # recovery's assessment as though a leftover shell were closed; None: not wired.
+        self.assess_as_though_leftover_shell_closed = None
+        # Whether the seat's records say it stopped on purpose; a callable to raise instead.
+        self.recorded_stop_on_purpose = False
 
     def assess(self, seat):
         if seat in self.assessment_errors:
@@ -93,6 +102,20 @@ class Harness:
         exit_code = self.window_exit_codes.pop(0) if self.window_exit_codes else 0
         return exit_code, "" if exit_code == 0 else "the Mac cannot be reached"
 
+    def open_page(self, path):
+        # Recorded beside the windows, so one list gives the order of everything shown.
+        self.windows.append(["page", path])
+        exit_code = self.window_exit_codes.pop(0) if self.window_exit_codes else 0
+        return exit_code, ("" if exit_code == 0 else
+                           "the Mac refused the request" if exit_code == 2
+                           else "the Mac cannot be reached")
+
+    def open_seat_window(self, seat):
+        self.seat_windows.append(seat)
+        opened = self.seat_window_results.pop(0) if self.seat_window_results else True
+        return opened, ("a window onto it opened on the Mac" if opened
+                        else "open-mac-window-from-ned-box.py exited 1: the Mac cannot be reached")
+
     def run(self, now, seats=("merge-lane-2",)):
         watcher = watcher_module.Watcher(
             state=self.state, now=now, boot_at=BOOT, log_directory=self.log_directory,
@@ -101,8 +124,16 @@ class Harness:
             recover=self.recover, open_window=self.open_window,
             show_notice_words=lambda path: ["/usr/bin/python3", str(SCRIPT_PATH),
                                             "--show-notice", path],
+            open_page=self.open_page,
             stopped_on_purpose=lambda seat, detail: self.on_purpose,
-            recorded_exit_question=recovery_module.restart_question_for_a_seat_with_a_recorded_exit)
+            recorded_exit_question=recovery_module.restart_question_for_a_seat_with_a_recorded_exit,
+            open_seat_window=self.open_seat_window,
+            seat_session_alive=(self.seat_session_check or
+                                (lambda seat: (self.seat_session_alive, "tmux's answer"))),
+            assess_as_though_leftover_shell_closed=self.assess_as_though_leftover_shell_closed,
+            down_agent_seat_records_stopped_on_purpose=(
+                self.recorded_stop_on_purpose if callable(self.recorded_stop_on_purpose)
+                else lambda seat: self.recorded_stop_on_purpose))
         watcher.run(list(seats))
 
     def decisions(self):
@@ -134,9 +165,11 @@ def run_decision_cases(root: Path):
           harness.recoveries == ["merge-lane-2"], repr(harness.recoveries))
     check("a restart the watcher carried out shows the user no notice",
           harness.notices() == [], repr(harness.notices()))
-    check("a restart opens a window on the Mac attached straight to the seat's session",
-          harness.windows == [["tmux", "-L", "merge-lane-2", "attach", "-t", "merge-lane-2"]],
-          repr(harness.windows))
+    check("a restart recovery reports with exit 0 opens no window of the watcher's own: "
+          "recovery opened it",
+          harness.windows == [] and harness.seat_windows == []
+          and harness.state["pending_notices"] == [],
+          repr((harness.windows, harness.seat_windows, harness.state["pending_notices"])))
     check("the restart is logged with the recovery's output",
           any(entry["decision"] == "restarted" and "relaunched" in entry["recovery_output"]
               for entry in harness.decisions()), repr(harness.decisions()))
@@ -163,8 +196,7 @@ def run_decision_cases(root: Path):
     check("a seat seen running again between two crashed sightings starts its confirmation over",
           harness.recoveries == [], repr(harness.recoveries))
 
-    for verdict in ("seat-asked-to-be-consulted", "offer-after-recorded-exit", "refuse",
-                    "ask-to-close-the-leftover-idle-shell"):
+    for verdict in ("seat-asked-to-be-consulted", "offer-after-recorded-exit"):
         harness = Harness(root / f"left-alone-{verdict}")
         harness.on_purpose = True
         harness.verdicts["merge-lane-2"] = ("seat-already-running", "")
@@ -214,9 +246,9 @@ def run_decision_cases(root: Path):
           "scripts/recover-crashed-seats.py merge-lane-2'\n" in text, text)
     check("the second-crash notice names the transcripts by their path on the Mac",
           "/Volumes/nedhome/.claude/projects/-merge-lane-2" in text, text)
-    check("the second-crash window shows the notice and does not attach",
-          harness.windows[-1][-2] == "--show-notice" and "attach" not in harness.windows[-1],
-          repr(harness.windows[-1]))
+    check("the second-crash notice opens as its HTML page in the Mac's browser",
+          harness.windows[-1][0] == "page" and harness.windows[-1][1].endswith(".html")
+          and "/notice-pages/" in harness.windows[-1][1], repr(harness.windows[-1]))
     check("a notice gives the record's path on the Mac and on ned-box",
           f"(on ned-box: {root / 'second-crash' / 'decisions.jsonl'})" in text, text)
 
@@ -270,24 +302,114 @@ def run_decision_cases(root: Path):
           and not harness.state["seats"]["merge-lane-2"].get("recovery_attempts"),
           repr(harness.state))
 
-    harness = Harness(root / "mac-unreachable", window_exit_codes=[1, 1])
+    check("the watcher's window-not-opened exit status is recovery's",
+          watcher_module.RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS
+          == recovery_module.ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS)
+    window_not_opened = (watcher_module.RECOVERY_WINDOW_NOT_OPENED_EXIT_STATUS,
+                         "merge-lane-2: relaunched resuming x; WINDOW NOT OPENED on the Mac")
+    harness = Harness(root / "mac-unreachable", recovery_result=window_not_opened,
+                      seat_window_results=[False, False])
     crash_after_running(harness)
+    check("a restart whose window recovery could not open counts as a restart, not a failure",
+          any(entry["decision"] == "restarted" for entry in harness.decisions())
+          and not any(entry["decision"].startswith("recovery failed")
+                      for entry in harness.decisions())
+          and harness.state["seats"]["merge-lane-2"]["recovery_attempts"][-1]["outcome"]
+          == "restarted", repr(harness.decisions()))
     check("a restarted seat's window the Mac cannot be reached for stays pending, "
           "and is not turned into a notice",
           harness.state["pending_notices"] == [{"attach_seat": "merge-lane-2"}]
-          and harness.notices() == [], repr(harness.state["pending_notices"]))
+          and harness.notices() == [] and harness.seat_windows == ["merge-lane-2"],
+          repr(harness.state["pending_notices"]))
     harness.verdicts["merge-lane-2"] = ("seat-already-running", "restarted")
     harness.run(SEEN_RUNNING + timedelta(minutes=17))
     unopened = [entry for entry in harness.decisions()
                 if entry["decision"].startswith("window not opened")]
     check("the unreachable Mac is logged once, not on every retry",
-          len(unopened) == 1 and len(harness.windows) == 2, repr(harness.decisions()))
+          len(unopened) == 1 and len(harness.seat_windows) == 2, repr(harness.decisions()))
     harness.run(SEEN_RUNNING + timedelta(minutes=18))
-    check("a pending window is opened once the Mac answers, and leaves the pending list",
-          harness.state["pending_notices"] == [] and len(harness.windows) == 3
-          and harness.windows[-1][:2] == ["tmux", "-L"]
+    check("a pending window is opened through recovery's opener once the Mac answers, "
+          "and leaves the pending list",
+          harness.state["pending_notices"] == [] and harness.seat_windows == ["merge-lane-2"] * 3
+          and harness.windows == []
           and any(entry["decision"] == "pending window shown" for entry in harness.decisions()),
           repr(harness.state["pending_notices"]))
+
+    harness = Harness(root / "window-already-attached", recovery_result=window_not_opened,
+                      seat_window_results=[False, None])
+    crash_after_running(harness)
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "restarted")
+    harness.run(SEEN_RUNNING + timedelta(minutes=17))
+    check("a pending window leaves the list when a window is found already attached",
+          harness.state["pending_notices"] == [], repr(harness.state["pending_notices"]))
+
+    harness = Harness(root / "seat-session-gone", recovery_result=window_not_opened,
+                      seat_window_results=[False, False, False])
+    crash_after_running(harness)
+    # The restart path's own handling of a dead seat is tested above; this case watches the window.
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "restarted")
+    harness.seat_session_alive = False
+    harness.run(SEEN_RUNNING + timedelta(minutes=17))
+    harness.run(SEEN_RUNNING + timedelta(minutes=18))
+    check("a pending window whose seat's tmux session is gone is dropped, logged, and not retried",
+          harness.state["pending_notices"] == [] and len(harness.seat_windows) == 2
+          and harness.notices() == []
+          and any(entry["decision"] == "pending window dropped: the seat's tmux session is gone"
+                  for entry in harness.decisions()),
+          repr((harness.state["pending_notices"], harness.seat_windows, harness.decisions())))
+
+    harness = Harness(root / "seat-session-unknown", recovery_result=window_not_opened,
+                      seat_window_results=[False, False], seat_session_alive=None)
+    crash_after_running(harness)
+    harness.run(SEEN_RUNNING + timedelta(minutes=17))
+    check("a pending window stays pending when tmux cannot say whether the seat's session exists",
+          harness.state["pending_notices"] == [{"attach_seat": "merge-lane-2"}],
+          repr(harness.state["pending_notices"]))
+
+    class TmuxAnswer:
+        def __init__(self, returncode, stderr=""):
+            self.returncode, self.stdout, self.stderr = returncode, "", stderr
+
+    real_run_tmux = recovery_module.run_tmux
+    harness = Harness(root / "seat-session-probe-error", recovery_result=window_not_opened,
+                      seat_window_results=[False, False, False])
+    crash_after_running(harness)
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "restarted")
+    # Through recovery's real check: a tmux that cannot talk to a running server is no answer.
+    recovery_module.run_tmux = lambda *arguments, socket_name=None, environment=None: TmuxAnswer(
+        1, "protocol version mismatch (client 9, server 8)")
+    harness.seat_session_check = recovery_module.tmux_session_alive_anywhere
+    try:
+        harness.run(SEEN_RUNNING + timedelta(minutes=17))
+        harness.run(SEEN_RUNNING + timedelta(minutes=18))
+    finally:
+        recovery_module.run_tmux = real_run_tmux
+    check("a pending window stays pending, with tmux's reason logged, when recovery's tmux check "
+          "fails with an error rather than answering",
+          harness.state["pending_notices"] == [{"attach_seat": "merge-lane-2"}]
+          and [entry["decision"] for entry in harness.decisions()
+               if "protocol version mismatch" in entry["decision"]]
+          == ["pending window kept, retried each run: recovery's tmux check could not say "
+              "whether the session exists, and said: tmux has-session on socket 'merge-lane-2' exited 1: protocol version mismatch "
+              "(client 9, server 8); tmux has-session on socket 'default' exited 1: protocol "
+              "version mismatch (client 9, server 8), so seat liveness cannot be checked — "
+              "refusing rather than guessing"]
+          and not any(entry["decision"].startswith("pending window dropped")
+                      for entry in harness.decisions()),
+          repr((harness.state["pending_notices"], harness.decisions())))
+
+    harness = Harness(root / "no-seat-window-opener", recovery_result=window_not_opened)
+    crash_after_running(harness)
+    watcher = watcher_module.Watcher(
+        state=harness.state, now=SEEN_RUNNING + timedelta(minutes=17), boot_at=BOOT,
+        log_directory=harness.log_directory, assess=None, died_at_about=None,
+        transcripts_directory=None, recover=None, open_window=harness.open_window,
+        show_notice_words=None)
+    shown = watcher.show({"attach_seat": "merge-lane-2"})
+    check("a run with no seat-window opener, such as a failed run's report, leaves the "
+          "restarted seat's window pending",
+          shown is False and harness.state["pending_notices"] == [{"attach_seat": "merge-lane-2"}]
+          and harness.windows == [], repr(harness.state["pending_notices"]))
 
     harness = Harness(root / "mac-unreachable-for-a-notice",
                       recovery_result=(1, "merge-lane-2: REFUSED — the durable checkout is missing"),
@@ -297,9 +419,9 @@ def run_decision_cases(root: Path):
     check("a notice the Mac cannot be reached for stays pending",
           len(pending) == 1 and "recovery-failed" in pending[0].get("path", ""), repr(pending))
     harness.run(SEEN_RUNNING + timedelta(minutes=17))
-    check("a pending notice is shown once the Mac answers",
+    check("a pending notice is shown once the Mac answers, as its page",
           harness.state["pending_notices"] == []
-          and harness.windows[-1][-2] == "--show-notice", repr(harness.windows))
+          and harness.windows[-1][0] == "page", repr(harness.windows))
 
     harness = Harness(root / "assessment-failed")
     harness.assessment_errors["merge-lane-2"] = OSError("Permission denied: '/home/nedlern/agents'")
@@ -475,10 +597,203 @@ def run_down_for_the_user_cases(root: Path):
     check("the recorded-exit notice says what answering n does",
           "Answer n, and it starts nothing and prints the commands to bring merge-lane-2 "
           "back by hand later.\n" in text, text)
-    check("the recorded-exit notice opens the window only after answer y, since the "
-          "launcher starts a seat that is not running",
-          "If you answered y, open its window, also in a Terminal on your Mac, with:\n"
+    check("the recorded-exit notice gives the launcher only for when recovery reports "
+          "WINDOW NOT OPENED, since recovery opens the window of a seat it restarts",
+          "When recovery restarts merge-lane-2, it opens merge-lane-2's window on your Mac "
+          "itself. If instead the last line recovery prints in your Terminal says WINDOW NOT "
+          "OPENED, open the window, also in a Terminal on your Mac, with:\n"
           f"  {watcher_module.MAC_LAUNCHER} merge-lane-2\n" in text, text)
+
+
+LEFTOVER_SHELL_DETAIL = ("a tmux session named merge-lane-2 is alive, but no live supervisor",
+                         [4242], "one pane, a shell with nothing in the foreground")
+
+
+def refused_after_running(harness, verdict, detail, minutes=(5, 6, 7, 8)):
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "")
+    harness.run(SEEN_RUNNING)
+    harness.verdicts["merge-lane-2"] = (verdict, detail)
+    for minute in minutes:
+        harness.run(SEEN_RUNNING + timedelta(minutes=minute))
+
+
+def run_refused_cases(root: Path):
+    harness = Harness(root / "recovery-refuses")
+    refusal = ("the supervisor lock at /x names a live process, but ps could not confirm it "
+               "is a supervisor of this seat")
+    refused_after_running(harness, "refuse", refusal)
+    notices = [path for path in harness.notices() if "recovery-refuses" in path.name]
+    text = notices[0].read_text(encoding="utf-8") if notices else ""
+    check("a seat recovery refuses, seen running this boot, is not restarted, and the user is "
+          "told once", harness.recoveries == [] and len(harness.notices()) == 1
+          and len(notices) == 1, repr(harness.notices()))
+    check("the recovery-refuses notice quotes the refusal and gives the restart and window "
+          "commands, run on the Mac",
+          "merge-lane-2 is down or cannot be shown to be running" in text
+          and f"  {refusal}\n" in text
+          and "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
+              "scripts/recover-crashed-seats.py merge-lane-2'\n" in text
+          and f"  {watcher_module.MAC_LAUNCHER} merge-lane-2\n" in text, text)
+
+    harness = Harness(root / "leftover-shell")
+    refused_after_running(harness, "ask-to-close-the-leftover-idle-shell", LEFTOVER_SHELL_DETAIL)
+    notices = [path for path in harness.notices() if "leftover-shell" in path.name]
+    text = notices[0].read_text(encoding="utf-8") if notices else ""
+    check("a seat whose tmux session is a leftover shell, seen running this boot, is not "
+          "restarted, and the user is told once",
+          harness.recoveries == [] and len(harness.notices()) == 1 and len(notices) == 1,
+          repr(harness.notices()))
+    check("the leftover-shell notice says the watcher cannot close the shell, and gives the "
+          "command that asks, what y and n do, and the window command",
+          "only the shell its launch left open" in text
+          and "  ssh -t nedlern@ned-box 'cd ~/Projects/nedschorus && python3 "
+              "scripts/recover-crashed-seats.py merge-lane-2'\n" in text
+          and "Answer y, and it closes the shell and restarts merge-lane-2. Answer n, and it "
+              "leaves merge-lane-2 down.\n" in text
+          and f"  {watcher_module.MAC_LAUNCHER} merge-lane-2\n" in text, text)
+
+    for verdict, detail in (("refuse", "a live process is rooted in /home/nedlern/agents/x"),
+                            ("ask-to-close-the-leftover-idle-shell", LEFTOVER_SHELL_DETAIL)):
+        harness = Harness(root / f"{verdict}-over-a-stop-on-purpose")
+        harness.recorded_stop_on_purpose = True
+        refused_after_running(harness, verdict, detail)
+        check(f"a seat whose records say it stopped on purpose stays silent when recovery "
+              f"answers {verdict}", harness.notices() == [] and harness.recoveries == [],
+              repr(harness.notices()))
+
+    # A stopped seat whose directory a passing process occupies: recovery alternates.
+    harness = Harness(root / "stop-on-purpose-alternating-with-occupancy")
+    harness.recorded_stop_on_purpose = True
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "")
+    harness.run(SEEN_RUNNING)
+    for minute in range(5, 25):
+        harness.verdicts["merge-lane-2"] = (
+            ("refuse", "a live process is rooted in /home/nedlern/agents/merge-lane-2")
+            if minute % 3 else
+            ("offer-after-recorded-exit", (0, "2026-10-12T03:05:00+00:00", "s")))
+        harness.run(SEEN_RUNNING + timedelta(minutes=minute))
+    check("a clean exit whose seat directory a passing process keeps occupying stays silent",
+          harness.notices() == [], repr(harness.notices()))
+
+    harness = Harness(root / "refused-stop-on-purpose-unreadable")
+
+    def records_unreadable(seat):
+        raise OSError("the supervisor state cannot be read")
+    harness.recorded_stop_on_purpose = records_unreadable
+    refused_after_running(harness, "refuse", "detail")
+    logged = [entry for entry in harness.decisions()
+              if entry["decision"].startswith("could not read whether it stopped on purpose")]
+    check("when the seat's records cannot be read, the refusal is reported and the failure "
+          "logged", len(harness.notices()) == 1 and logged
+          and "the supervisor state cannot be read" in logged[0]["error"],
+          repr((harness.notices(), harness.decisions())))
+
+    harness = Harness(root / "leftover-shell-over-a-crash")
+    asked = []
+    harness.assess_as_though_leftover_shell_closed = (
+        lambda seat, pane_process_ids: asked.append((seat, pane_process_ids))
+        or ("resume", ("session-id", "found")))
+    refused_after_running(harness, "ask-to-close-the-leftover-idle-shell", LEFTOVER_SHELL_DETAIL)
+    check("a leftover shell over a crash is reported with the question recovery asks, judged "
+          "with the shell's own pane process ids",
+          harness.recoveries == [] and asked and asked[0] == ("merge-lane-2", [4242])
+          and [path.name for path in harness.notices() if "leftover-shell" in path.name],
+          repr((harness.notices(), asked)))
+    for minute in range(9, 30):
+        harness.run(SEEN_RUNNING + timedelta(minutes=minute))
+    check("after its notice, a lasting leftover shell is not assessed again on later runs",
+          len(asked) == 1, repr(asked))
+
+    for predicted, what in (
+            (("refuse", "a live process is rooted in /home/nedlern/agents/merge-lane-2"),
+             "recovery would still refuse"),
+            (("seat-already-running", "a supervisor is watching this seat"),
+             "recovery would find it running")):
+        harness = Harness(root / f"leftover-shell-predicted-{predicted[0]}")
+        harness.assess_as_though_leftover_shell_closed = (
+            lambda seat, pane_process_ids, answer=predicted: answer)
+        refused_after_running(harness, "ask-to-close-the-leftover-idle-shell",
+                              LEFTOVER_SHELL_DETAIL)
+        names = [path.name for path in harness.notices()]
+        text = harness.notices()[0].read_text(encoding="utf-8") if names else ""
+        check(f"a leftover shell where, with the shell closed, {what}, gets the "
+              "recovery-refuses notice quoting what recovery would say, not a promise of a "
+              "y/n question", len(names) == 1 and "recovery-refuses" in names[0]
+              and predicted[1] in text and "Answer y" not in text, repr((names, text)))
+
+    harness = Harness(root / "leftover-shell-prediction-fails")
+
+    def prediction_fails(seat, pane_process_ids):
+        raise OSError("the handoff directory cannot be read")
+    harness.assess_as_though_leftover_shell_closed = prediction_fails
+    refused_after_running(harness, "ask-to-close-the-leftover-idle-shell", LEFTOVER_SHELL_DETAIL)
+    logged = [entry for entry in harness.decisions()
+              if entry["decision"].startswith("could not assess as though")]
+    names = [path.name for path in harness.notices()]
+    text = harness.notices()[0].read_text(encoding="utf-8") if names else ""
+    check("when the assessment as though the shell were closed fails, the recovery-refuses "
+          "notice quotes the error instead of promising a question, and the failure is logged",
+          len(names) == 1 and "recovery-refuses" in names[0]
+          and "the handoff directory cannot be read" in text and "Answer y" not in text
+          and logged and "the handoff directory cannot be read" in logged[0]["error"],
+          repr((names, text, harness.decisions())))
+
+    # The user closes the leftover shell by hand: the crash beneath it is the watcher's job.
+    harness = Harness(root / "leftover-shell-closed-by-hand")
+    harness.assess_as_though_leftover_shell_closed = (
+        lambda seat, pane_process_ids: ("resume", ("session-id", "found")))
+    refused_after_running(harness, "ask-to-close-the-leftover-idle-shell", LEFTOVER_SHELL_DETAIL)
+    harness.verdicts["merge-lane-2"] = ("resume", ("session-id", "found"))
+    harness.run(SEEN_RUNNING + timedelta(minutes=12))
+    restarted_at_once = list(harness.recoveries)
+    harness.run(SEEN_RUNNING + timedelta(minutes=13))
+    check("a crash whose leftover shell the user closed by hand is restarted, after two "
+          "sightings of its own", restarted_at_once == []
+          and harness.recoveries == ["merge-lane-2"], repr((restarted_at_once, harness.recoveries)))
+
+    # Restarted by the watcher, then down again before any run sees it running, then refused.
+    harness = Harness(root / "refused-again-after-a-restart")
+    refused_after_running(harness, "refuse", "the first refusal")
+    harness.verdicts["merge-lane-2"] = ("resume", ("session-id", "found"))
+    harness.run(SEEN_RUNNING + timedelta(minutes=12))
+    harness.run(SEEN_RUNNING + timedelta(minutes=13))
+    harness.died_at = SEEN_RUNNING + timedelta(minutes=14)
+    harness.verdicts["merge-lane-2"] = ("refuse", "the second refusal")
+    for minute in (15, 16, 17):
+        harness.run(SEEN_RUNNING + timedelta(minutes=minute))
+    refuses = [path for path in harness.notices() if "recovery-refuses" in path.name]
+    check("a refusal after the watcher restarted the seat is told again, though no run saw "
+          "the seat running in between", harness.recoveries == ["merge-lane-2"]
+          and len(refuses) == 2
+          and "the second refusal" in refuses[-1].read_text(encoding="utf-8"),
+          repr((harness.recoveries, refuses)))
+
+    # A refusal whose supervisor still polls: every poll would make a new death.
+    harness = Harness(root / "refusal-repeats")
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "")
+    harness.run(SEEN_RUNNING)
+    harness.verdicts["merge-lane-2"] = ("refuse", "a supervisor may be watching this seat")
+    for minute in range(5, 40):
+        harness.died_at = SEEN_RUNNING + timedelta(minutes=minute, seconds=-10)
+        harness.run(SEEN_RUNNING + timedelta(minutes=minute))
+    first_episode = list(harness.notices())
+    check("a refusal that lasts, its supervisor still polling, is told once, not every few "
+          "minutes", len(first_episode) == 1, repr(first_episode))
+    harness.verdicts["merge-lane-2"] = ("seat-already-running", "")
+    harness.run(SEEN_RUNNING + timedelta(minutes=41))
+    harness.verdicts["merge-lane-2"] = ("refuse", "a supervisor may be watching this seat")
+    harness.died_at = SEEN_RUNNING + timedelta(minutes=41)
+    for minute in (45, 46, 47):
+        harness.run(SEEN_RUNNING + timedelta(minutes=minute))
+    check("a refusal after the seat is seen running again is told again",
+          len(harness.notices()) == 2, repr(harness.notices()))
+
+    harness = Harness(root / "refused-not-seen-since-boot")
+    harness.verdicts["merge-lane-2"] = ("refuse", "detail")
+    for minute in (5, 6, 7):
+        harness.run(BOOT + timedelta(minutes=minute))
+    check("a refused seat not seen running since the machine booted stays silent",
+          harness.notices() == [], repr(harness.notices()))
 
 
 def run_stopped_on_purpose_cases(root: Path):
@@ -509,6 +824,35 @@ def run_stopped_on_purpose_cases(root: Path):
     check("a later failure of the successor of a dont-restart handoff answered y is not a "
           "stop on purpose, though the consumed handoff is still on disk",
           not predicate("seat-a", (-15, "t", None)))
+
+    # The records test a refused seat gets, which reads the records itself.
+    records = watcher_module.handoff_down_agent_seat_records_stopped_on_purpose_predicate_factory(
+        supervisor, recovery_module.records_reader, handoff_directory)
+
+    def seat_with(name, exit_code=None, handoff=None, consumed=None):
+        (agents_root / name).mkdir(parents=True, exist_ok=True)
+        if handoff is not None:
+            supervisor.handoff_file_path(handoff_directory, name).write_text(
+                handoff, encoding="utf-8")
+        if exit_code is not None:
+            supervisor.record_agent_exit_in_supervisor_state(
+                supervisor.supervisor_state_path(handoff_directory, name),
+                {} if consumed is None else {"consumed_counter": consumed}, exit_code)
+        return name
+
+    check("a refused seat with a recorded clean exit stopped on purpose",
+          records(seat_with("records-clean-exit", exit_code=0)))
+    check("a refused seat with a recorded exit that is not a stop on purpose did not stop on "
+          "purpose", not records(seat_with("records-error-exit", exit_code=1)))
+    check("a refused seat with no exit record and no handoff did not stop on purpose",
+          not records(seat_with("records-none")))
+    check("a refused seat with a dont-restart handoff waiting stopped on purpose",
+          records(seat_with("records-dont-restart",
+                            handoff="restart-counter: 3\ndont-restart: consult the user\n")))
+    check("a refused seat with an ordinary handoff waiting did not stop on purpose, though an "
+          "older clean exit is recorded",
+          not records(seat_with("records-waiting-handoff", exit_code=0,
+                                handoff="restart-counter: 3\nnext-step: go on\n", consumed=2)))
 
 
 def run_path_on_the_mac_cases():
@@ -560,16 +904,14 @@ def run_window_words_cases(root: Path):
     check("the notice window's words are the interpreter, this program, --show-notice and the notice",
           built_words[2:] == notice_words[2:] and len(built_words) == len(notice_words),
           repr(built_words))
-    attach_words = [word.format(seat="merge-lane-2") for word in watcher_module.ATTACH_COMMAND]
-    for name, words in (("a notice window", notice_words), ("a restarted seat's window", attach_words)):
-        request = " ".join([forced_command.REQUEST_VERB, *words])
-        try:
-            received = forced_command.window_command_words(request)
-            refused = None
-        except forced_command.RequestRefused as error:
-            received, refused = None, str(error)
-        check(f"the Mac's forced command accepts the words of {name}",
-              received == words, refused or repr(received))
+    request = " ".join([forced_command.REQUEST_VERB, *notice_words])
+    try:
+        received = forced_command.window_command_words(request)
+        refused = None
+    except forced_command.RequestRefused as error:
+        received, refused = None, str(error)
+    check("the Mac's forced command accepts the words of a notice window",
+          received == notice_words, refused or repr(received))
 
 
 def run_command_line_cases(root: Path):
@@ -625,10 +967,12 @@ def run_run_failure_cases(root: Path):
     windows = []
     window_exit_codes = [1]
     real_program, real_opener = watcher_module.LOGIN_RESTART_PROGRAM, watcher_module.open_mac_window
+    real_page_opener = watcher_module.open_mac_browser_page
     watcher_module.LOGIN_RESTART_PROGRAM = root / "no-such-login-restart.py"
     watcher_module.open_mac_window = lambda words: (
         windows.append(words) or ((window_exit_codes.pop(0), "unreachable") if window_exit_codes
                                   else (0, "")))
+    watcher_module.open_mac_browser_page = lambda path: watcher_module.open_mac_window(["page", path])
     raised = []
     try:
         for _ in range(3):
@@ -638,6 +982,7 @@ def run_run_failure_cases(root: Path):
                 raised.append(error)
     finally:
         watcher_module.LOGIN_RESTART_PROGRAM, watcher_module.open_mac_window = real_program, real_opener
+        watcher_module.open_mac_browser_page = real_page_opener
     notices = sorted((root / "failed-log" / "notices").glob("*run-failed.txt"))
     text = notices[-1].read_text(encoding="utf-8") if notices else ""
     check("a failed run still fails, so cron's log keeps the traceback",
@@ -646,6 +991,9 @@ def run_run_failure_cases(root: Path):
           "watching no agent-seat" in text and "no-such-login-restart.py" in text, text)
     check("a failed run's notice is retried while the Mac cannot be reached, then shown once",
           len(windows) == 2, repr(windows))
+    check("a failed run's notice opens as its HTML page",
+          all(window[0] == "page" and window[1].endswith("run-failed.html") for window in windows),
+          repr(windows))
 
     environment = {watcher_module.STATE_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "healed-state"),
                    watcher_module.LOG_DIRECTORY_ENVIRONMENT_VARIABLE: str(root / "healed-log")}
@@ -655,13 +1003,18 @@ def run_run_failure_cases(root: Path):
     watcher_module.open_mac_window = lambda words: (
         windows.append(words) or ((window_exit_codes.pop(0), "unreachable") if window_exit_codes
                                   else (0, "")))
+    watcher_module.open_mac_browser_page = lambda path: watcher_module.open_mac_window(["page", path])
+    setup_raised = []
     try:
         try:
             watcher_module.run_once(environment)
-        except Exception:  # noqa: BLE001 - the failing run is the setup
-            pass
+        except Exception as error:  # noqa: BLE001 - the failing run is the setup
+            setup_raised.append(error)
     finally:
         watcher_module.LOGIN_RESTART_PROGRAM, watcher_module.open_mac_window = real_program, real_opener
+        watcher_module.open_mac_browser_page = real_page_opener
+    check("the setup run for the healed case fails, leaving a notice to show",
+          len(setup_raised) == 1, repr(setup_raised))
     state_path = root / "healed-state" / f"{watcher_module.PROGRAM}-state.json"
     saved = watcher_module.read_state(state_path)
     check("a failed run's notice the Mac missed waits in the state every run reads",
@@ -680,9 +1033,10 @@ def run_run_failure_cases(root: Path):
 
 def run_report_run_failure_state_cases(root: Path):
     """report_run_failure when the state it would queue a notice in cannot be read or saved."""
-    real_opener = watcher_module.open_mac_window
+    real_opener, real_page_opener = watcher_module.open_mac_window, watcher_module.open_mac_browser_page
     windows = []
     watcher_module.open_mac_window = lambda words: windows.append(words) or (1, "unreachable")
+    watcher_module.open_mac_browser_page = lambda path: windows.append(["page", path]) or (1, "unreachable")
     try:
         corrupt = root / "corrupt-state"
         corrupt.mkdir()
@@ -718,6 +1072,106 @@ def run_report_run_failure_state_cases(root: Path):
               repr(raised))
     finally:
         watcher_module.open_mac_window = real_opener
+        watcher_module.open_mac_browser_page = real_page_opener
+
+
+def run_notice_page_cases(root: Path):
+    """A notice's HTML page: what it shows, and what happens when it cannot be written."""
+    harness = Harness(root / "page-contents",
+                      recovery_result=(1, "merge-lane-2: REFUSED <the durable checkout> & more"))
+    crash_after_running(harness)
+    pages = sorted((root / "page-contents" / "notice-pages").glob("*recovery-failed.html"))
+    page = pages[0].read_text(encoding="utf-8") if pages else ""
+    check("a notice is written as an HTML page whose title names the seat",
+          len(pages) == 1 and "<title>merge-lane-2: the crash watcher needs you</title>" in page,
+          repr(pages))
+    check("the page escapes every inserted text, so recovery's output cannot break the page",
+          "REFUSED &lt;the durable checkout&gt; &amp; more" in page and "<the durable" not in page,
+          page)
+    check("the page shows each command in a block that says it runs on the Mac, with a Copy button",
+          page.count("Run in a Terminal on your Mac") == 2 and page.count('data-copy="') == 2
+          and "ssh -t nedlern@ned-box &#x27;cd ~/Projects/nedschorus &amp;&amp; python3 "
+              "scripts/recover-crashed-seats.py merge-lane-2&#x27;" in page, page)
+    check("the page shows recovery's quoted line as output, with no Copy button",
+          "Output, quoted" in page, page)
+    check("the page carries both light and dark colours",
+          "prefers-color-scheme: dark" in page and "--background" in page, page)
+    check("the notice's text is still kept, beside the page",
+          len([path for path in harness.notices() if "recovery-failed" in path.name]) == 1,
+          repr(harness.notices()))
+    check("the page, not a terminal window, is what opens on the Mac",
+          harness.windows == [["page", str(pages[0])]] if pages else False, repr(harness.windows))
+
+    log_directory = root / "page-unwritable"
+    (log_directory).mkdir()
+    # A file where the pages' directory belongs, so the page cannot be written.
+    (log_directory / "notice-pages").write_text("not a directory\n", encoding="utf-8")
+    harness = Harness(log_directory, recovery_result=(1, "merge-lane-2: REFUSED"))
+    crash_after_running(harness)
+    check("a page that cannot be written leaves the notice to open in a terminal window",
+          len(harness.windows) == 1 and harness.windows[0][-2] == "--show-notice"
+          and harness.windows[0][-1].endswith("recovery-failed.txt"), repr(harness.windows))
+    check("a page that cannot be written is logged",
+          any(entry["decision"].startswith("notice page not written")
+              for entry in harness.decisions()), repr(harness.decisions()))
+
+    harness = Harness(root / "page-mac-unreachable",
+                      recovery_result=(1, "merge-lane-2: REFUSED"), window_exit_codes=[1])
+    crash_after_running(harness)
+    pending = harness.state["pending_notices"]
+    check("a page the Mac cannot be reached for stays pending, with its page",
+          len(pending) == 1 and pending[0].get("page", "").endswith("recovery-failed.html"),
+          repr(pending))
+    harness.run(SEEN_RUNNING + timedelta(minutes=17))
+    check("a pending page is opened once the Mac answers",
+          harness.state["pending_notices"] == [] and harness.windows[-1][0] == "page"
+          and len(harness.windows) == 2, repr(harness.windows))
+
+    harness = Harness(root / "page-refused-by-the-mac",
+                      recovery_result=(1, "merge-lane-2: REFUSED"), window_exit_codes=[2, 0])
+    crash_after_running(harness)
+    check("a page the Mac refuses opens the notice in a terminal window instead, at once",
+          len(harness.windows) == 2 and harness.windows[0][0] == "page"
+          and harness.windows[1][-2] == "--show-notice"
+          and harness.windows[1][-1].endswith("recovery-failed.txt")
+          and harness.state["pending_notices"] == [], repr(harness.windows))
+    check("a page the Mac refuses is logged",
+          any(entry["decision"].startswith("page refused by the Mac")
+              for entry in harness.decisions()), repr(harness.decisions()))
+
+    harness = Harness(root / "page-refused-window-unreachable",
+                      recovery_result=(1, "merge-lane-2: REFUSED"), window_exit_codes=[2, 1])
+    crash_after_running(harness)
+    check("a refused page whose terminal window the Mac also misses stays pending",
+          len(harness.state["pending_notices"]) == 1, repr(harness.state["pending_notices"]))
+    harness.window_exit_codes = [1]
+    harness.run(SEEN_RUNNING + timedelta(minutes=17))
+    check("a notice whose page was refused retries only its terminal window, and the refusal "
+          "is logged once",
+          [window[0] == "page" for window in harness.windows] == [True, False, False]
+          and len(harness.state["pending_notices"]) == 1
+          and sum(entry["decision"].startswith("page refused by the Mac")
+                  for entry in harness.decisions()) == 1,
+          repr((harness.windows, harness.decisions())))
+
+    page = watcher_module.failed_restart_notice_html_page_build("seat<b>&x", "seat<b>&x is down.", "now")
+    check("the page escapes the seat's name in its title",
+          "<title>seat&lt;b&gt;&amp;x: the crash watcher needs you</title>" in page
+          and "<title>seat<b>" not in page, page[:600])
+
+    state = {"seats": {}, "pending_notices": [{"path": str(root / "old-notice.txt")}],
+             "reported_errors": []}
+    windows = []
+    watcher = watcher_module.Watcher(
+        state=state, now=SEEN_RUNNING, boot_at=BOOT, log_directory=root / "old-pending",
+        assess=None, died_at_about=lambda seat: None, transcripts_directory=None, recover=None,
+        open_window=lambda words: windows.append(words) or (0, ""),
+        show_notice_words=lambda path: ["--show-notice", path],
+        open_page=lambda path: windows.append(["page", path]) or (0, ""))
+    watcher.run([])
+    check("a notice left pending before pages existed still opens, in a terminal window",
+          windows == [["--show-notice", str(root / "old-notice.txt")]] and state["pending_notices"] == [],
+          repr(windows))
 
 
 def run_state_cases(root: Path):
@@ -729,11 +1183,105 @@ def run_state_cases(root: Path):
           watcher_module.read_state(state_path) == state, state_path.read_text(encoding="utf-8"))
 
 
+def run_watch_wiring_cases(root: Path):
+    """watch() hands the Watcher recovery's seat-window opener, so exit-3 windows are retried."""
+    class FakeRecovery:
+        @staticmethod
+        def default_agents_root():
+            return root / "agents"
+
+        @staticmethod
+        def default_handoff_directory():
+            return root / "handoffs"
+
+        @staticmethod
+        def restart_question_for_a_seat_with_a_recorded_exit(*arguments):
+            return None
+
+        @staticmethod
+        def agent_seat_mac_window_open_unless_tmux_client_already_attached(name):
+            return True, "opened"
+
+        @staticmethod
+        def tmux_session_alive_anywhere(name):
+            return True, "alive"
+
+        @staticmethod
+        def list_agent_seat_names_with_agent_session_records(agents_root, handoff_directory):
+            return []
+
+        @staticmethod
+        def predicted_assessment_once_the_leftover_idle_shell_is_closed(*arguments):
+            return ("predicted", arguments)
+
+        class records_reader:  # noqa: N801 - stands in for recovery's module of that name
+            @staticmethod
+            def waiting_handoff_verdict(handoff_directory, name, state_path):
+                return ("seat-asked-to-be-consulted", (handoff_directory, name, state_path))
+
+    class FakeSupervisor:
+        @staticmethod
+        def supervisor_state_path(handoff_directory, name):
+            return handoff_directory / f"{name}.state"
+
+    class FakeLoginRestart:
+        recovery = FakeRecovery
+        supervisor = FakeSupervisor
+
+        @staticmethod
+        def machine_boot_time():
+            return datetime(2026, 10, 12, tzinfo=timezone.utc)
+
+    built = []
+
+    class RecordingWatcher:
+        def __init__(self, **keyword_arguments):
+            built.append(keyword_arguments)
+
+        def run(self, seat_names):
+            pass
+
+    real_load_module, real_watcher = watcher_module.load_module, watcher_module.Watcher
+    # Stand-ins, so this case reaches no real agent-seat and no window on the Mac.
+    watcher_module.load_module = lambda name, path: FakeLoginRestart
+    watcher_module.Watcher = RecordingWatcher
+    try:
+        (root / "watch-wiring-state").mkdir()
+        watcher_module.watch({}, root / "watch-wiring-state", root / "watch-wiring-log")
+    finally:
+        watcher_module.load_module, watcher_module.Watcher = real_load_module, real_watcher
+    check("watch() passes recovery's seat-window opener to the Watcher as open_seat_window",
+          len(built) == 1 and built[0].get("open_seat_window")
+          is FakeRecovery.agent_seat_mac_window_open_unless_tmux_client_already_attached,
+          repr(built))
+    check("watch() passes the browser page opener to the Watcher as open_page",
+          len(built) == 1 and built[0].get("open_page") is watcher_module.open_mac_browser_page,
+          repr(built))
+    check("watch() passes recovery's tmux session check to the Watcher as seat_session_alive",
+          len(built) == 1
+          and built[0].get("seat_session_alive") is FakeRecovery.tmux_session_alive_anywhere,
+          repr(built))
+    predict = built[0].get("assess_as_though_leftover_shell_closed") if len(built) == 1 else None
+    predicted = predict("seat-a", [4242]) if predict else None
+    check("watch() passes the Watcher recovery's assessment as though the leftover shell were "
+          "closed, with the agents root, handoff directory and pane process ids",
+          predicted is not None and predicted[0] == "predicted"
+          and predicted[1][0] == "seat-a" and predicted[1][1] == root / "agents"
+          and predicted[1][2] == root / "handoffs" and predicted[1][4] == [4242],
+          repr(predicted))
+    records = built[0].get("down_agent_seat_records_stopped_on_purpose") if len(built) == 1 else None
+    check("watch() passes the Watcher a test of a refused seat's records that reads recovery's "
+          "waiting handoff from the handoff directory",
+          records is not None and records("seat-a") is True, repr(built))
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
+    run_watch_wiring_cases(Path(temporary_directory))
     run_decision_cases(Path(temporary_directory))
     run_handled_crash_cases(Path(temporary_directory))
     run_handled_death_key_cases(Path(temporary_directory))
     run_down_for_the_user_cases(Path(temporary_directory))
+    run_refused_cases(Path(temporary_directory))
     run_stopped_on_purpose_cases(Path(temporary_directory))
     run_path_on_the_mac_cases()
     run_environment_cases()
@@ -741,6 +1289,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_command_line_cases(Path(temporary_directory))
     run_report_run_failure_state_cases(Path(temporary_directory))
     run_state_cases(Path(temporary_directory))
+    run_notice_page_cases(Path(temporary_directory))
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

@@ -44,9 +44,13 @@ in — the one caveat the PR #137/#139 reviews carried (user-directed
   ssh ned 'cd /tmp/x && chmod +x launch-claude-ubuntu && python3 launch-claude-ubuntu-test.py'
 """
 
+import errno
 import fcntl
 import os
+import pty
+import selectors
 import shlex
+import signal
 import shutil
 import subprocess
 import sys
@@ -57,6 +61,9 @@ from pathlib import Path
 LAUNCHER = Path(__file__).with_name("launch-claude-ubuntu")
 UPDATE_LOCK_HELPER_NAME = "agent-binary-update-under-lock.py"
 UPDATE_LOCK_HELPER = Path(__file__).with_name(UPDATE_LOCK_HELPER_NAME)
+# The bytes launch-claude-ubuntu writes to switch an iTerm2 session back to
+# the user's own profile: iTerm2's SetProfile sequence, OSC 1337 ... BEL.
+ITERM2_DEFAULT_PROFILE_SEQUENCE = "\x1b]1337;SetProfile=Default\x07"
 
 failures = []
 
@@ -264,10 +271,22 @@ class LaunchHarness:
         return len(path.read_text(encoding="utf-8").splitlines()) if path.is_file() else 0
 
     def prepare_ran(self) -> bool:
-        """The prepare step's trust mark is a python3 -c call naming
-        hasTrustDialogAccepted; the supervisor call never does."""
+        """The prepare step's presets write is a python3 call naming
+        claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py;
+        the supervisor call never does."""
         calls = self.captures / "python3-calls.txt"
-        return calls.is_file() and "hasTrustDialogAccepted" in calls.read_text(encoding="utf-8")
+        return calls.is_file() and (
+            "claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py"
+            in calls.read_text(encoding="utf-8"))
+
+    def python3_script_order(self) -> list:
+        """The scripts the box-side command ran through python3, in order."""
+        calls = self.captures / "python3-calls.txt"
+        if not calls.is_file():
+            return []
+        return [Path(block.split("\n", 1)[0]).name
+                for block in calls.read_text(encoding="utf-8").split(
+                    "=== call boundary ===\n") if block.strip()]
 
     def write_seat_token(self, account: str, token: str,
                          trailing_newline: bool = True) -> Path:
@@ -284,17 +303,26 @@ class LaunchHarness:
         return token_file
 
     def run(self, launcher_arguments, mac_environment_agents_root=None,
-            extra_arguments=None, seat_github_account=None):
+            extra_arguments=None, seat_github_account=None,
+            term_program=None, stdout_on_terminal=False):
         """Launcher -> captured remote string -> P1 replay (-> P2 inside the
         tmux stub). Returns a dict of everything observable.
 
         mac_environment_agents_root sets NEDSCHORUS_AGENTS_ROOT in the
         launcher's own (Mac-side) environment, the way a Mac seat inherits
-        it, so a case can show the launcher ignores it."""
+        it, so a case can show the launcher ignores it.
+
+        term_program sets TERM_PROGRAM, which is otherwise stripped so the
+        terminal the suite runs in cannot decide a case. stdout_on_terminal
+        gives the launcher a pseudo-terminal as stdout in place of a pipe,
+        and puts what it wrote there in the launched result's stdout."""
         for leftover in self.captures.iterdir():
             leftover.unlink()
         environment = {key: value for key, value in os.environ.items()
-                       if not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_"))}
+                       if key != "TERM_PROGRAM"
+                       and not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_"))}
+        if term_program is not None:
+            environment["TERM_PROGRAM"] = term_program
         environment["PATH"] = f"{self.stubs}:{environment.get('PATH', '')}"
         environment["LCU_TEST_DIR"] = str(self.captures)
         environment["NEDSCHORUS_AGENT_BOX"] = "stub-box"
@@ -304,10 +332,15 @@ class LaunchHarness:
             environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = extra_arguments
         if seat_github_account is not None:
             environment["NEDSCHORUS_SEAT_GITHUB_ACCOUNT"] = seat_github_account
-        launched = subprocess.run(
-            [str(LAUNCHER), *launcher_arguments],
-            capture_output=True, text=True, check=False, env=environment,
-            cwd=str(self.workdir))
+        if stdout_on_terminal:
+            launched = run_with_stdout_on_terminal(
+                [str(LAUNCHER), *launcher_arguments], str(self.workdir),
+                environment)
+        else:
+            launched = subprocess.run(
+                [str(LAUNCHER), *launcher_arguments],
+                capture_output=True, text=True, check=False, env=environment,
+                cwd=str(self.workdir))
         ssh_capture = self.captures / "ssh-argv.txt"
         remote = (ssh_capture.read_text(encoding="utf-8").splitlines()[-1]
                   if ssh_capture.is_file() else "")
@@ -380,6 +413,75 @@ class AnotherUpdateHoldsTheLock:
         self.lock_file.close()
 
 
+def run_with_stdout_on_terminal(command, working_directory, environment,
+                                timeout_seconds=60):
+    """Run command with a pseudo-terminal as its stdout, so `[ -t 1 ]` holds
+    in it, and return a CompletedProcess whose stdout is what it wrote
+    there.
+
+    The terminal and the stderr pipe are read together while the command
+    runs: a command blocked on either full buffer never closes the other,
+    so reading one to its end before the other can wait forever.
+    timeout_seconds bounds the whole read. When it runs out, the command's
+    process group is killed and subprocess.TimeoutExpired is raised, so a
+    hung case fails the suite instead of holding the machine's test lock.
+    The same helper is in scripts/launch-claude-mac-test.py; this suite
+    keeps its own copy because it must run on its own, copied to the box."""
+    controller, terminal = pty.openpty()
+    process = subprocess.Popen(
+        command, stdin=subprocess.DEVNULL, stdout=terminal,
+        stderr=subprocess.PIPE, cwd=working_directory, env=environment,
+        start_new_session=True)
+    os.close(terminal)
+    stderr_descriptor = process.stderr.fileno()
+    written = {controller: bytearray(), stderr_descriptor: bytearray()}
+    deadline = time.monotonic() + timeout_seconds
+
+    def stop_command_and_raise_timeout():
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        raise subprocess.TimeoutExpired(
+            command, timeout_seconds,
+            output=bytes(written[controller]),
+            stderr=bytes(written[stderr_descriptor]))
+
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(controller, selectors.EVENT_READ)
+            selector.register(stderr_descriptor, selectors.EVENT_READ)
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    stop_command_and_raise_timeout()
+                for key, _ in selector.select(remaining):
+                    try:
+                        chunk = os.read(key.fd, 65536)
+                    except OSError as error:
+                        # Linux reports the last writer closing the
+                        # terminal as EIO.
+                        if error.errno != errno.EIO:
+                            raise
+                        chunk = b""
+                    if chunk:
+                        written[key.fd].extend(chunk)
+                    else:
+                        selector.unregister(key.fd)
+        # A command can close both streams and keep running, so the wait
+        # is bounded by the same deadline and stopped the same way.
+        try:
+            returncode = process.wait(
+                timeout=max(deadline - time.monotonic(), 0.1))
+        except subprocess.TimeoutExpired:
+            stop_command_and_raise_timeout()
+    finally:
+        os.close(controller)
+        process.stderr.close()
+    return subprocess.CompletedProcess(
+        command, returncode,
+        written[controller].decode("utf-8", errors="replace"),
+        written[stderr_descriptor].decode("utf-8", errors="replace"))
+
+
 def tmux_argv_sets_mouse_mode_on(tmux_argv_text):
     """True when the tmux argv, one argument per line, sets mouse mode on as
     its own set-option command."""
@@ -414,6 +516,16 @@ def main() -> int:
         check("default root: the seat directory was created at P1",
               (harness.home / "agents" / "seat-a").is_dir(),
               str(harness.home / "agents"))
+        # The presets script runs from the box's checkout, so the box's
+        # checkout must be fast-forwarded first, or a box checkout older than
+        # the script stops every launch on a file it does not have yet.
+        scripts_run = harness.python3_script_order()
+        freshness = "checkout-freshness-catch-up.py"
+        presets = "claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py"
+        check("prepare: the box checkout is fast-forwarded before the presets script runs",
+              freshness in scripts_run and presets in scripts_run
+              and scripts_run.index(freshness) < scripts_run.index(presets),
+              scripts_run)
 
         # --- 1b. the launcher itself must have reached ssh — without this,
         # a launcher that exits before the transport leaves an empty remote
@@ -850,10 +962,22 @@ def main() -> int:
         check("bad override: nothing was sent to the box",
               result["remote"] == "", result["remote"][:200])
 
+        # --help alone prints the usage and exits 0 before any side effect.
+        harness = LaunchHarness(root / "help-option-alone")
+        result = harness.run(["--help"])
+        check("--help alone: exit 0, printing the usage line on stdout",
+              result["launched"].returncode == 0
+              and "usage: launch-claude-ubuntu <name>" in result["launched"].stdout,
+              (result["launched"].returncode, result["launched"].stdout[:300],
+               result["launched"].stderr[:300]))
+        check("--help alone: nothing was sent to the box",
+              result["remote"] == "", result["remote"][:200])
+
         # A first argument starting with - is refused as a seat name: the
         # first argument is always the name, so the launcher would otherwise
         # launch a seat named after the option.
-        for label, arguments in (("--help typed first", ["--help"]),
+        for label, arguments in (("--help typed first, with another argument",
+                                  ["--help", "seat-x"]),
                                  ("an option typed before the name",
                                   ["--no-attach", "seat-x"])):
             harness = LaunchHarness(root / f"dash-seat-name-{arguments[0]}")
@@ -932,6 +1056,106 @@ def main() -> int:
               and elapsed < 15,
               (result["replay"].returncode, f"{elapsed:.1f}s",
                result["replay"].stderr[:300]))
+
+        # --- the pseudo-terminal helper: a command that closes its terminal
+        # and its stderr and then keeps running is stopped at the timeout
+        # too, and does not outlive the helper.
+        pid_file = root / "helper-closed-streams-command.pid"
+        started = time.monotonic()
+        try:
+            run_with_stdout_on_terminal(
+                [sys.executable, "-c",
+                 "import os, sys, time; "
+                 f"open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
+                 "os.close(1); os.close(2); time.sleep(600)"],
+                str(root), dict(os.environ), timeout_seconds=2)
+            closed_streams_timed_out = False
+        except subprocess.TimeoutExpired:
+            closed_streams_timed_out = True
+        elapsed = time.monotonic() - started
+        closed_streams_command_survived = False
+        if pid_file.is_file():
+            closed_streams_pid = int(pid_file.read_text(encoding="utf-8"))
+            try:
+                os.kill(closed_streams_pid, 0)
+                closed_streams_command_survived = True
+                os.kill(closed_streams_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        check("pseudo-terminal helper: a command that closes both streams "
+              "and keeps running is stopped at the timeout and does not "
+              "survive",
+              closed_streams_timed_out and elapsed < 15
+              and pid_file.is_file() and not closed_streams_command_survived,
+              (closed_streams_timed_out, f"{elapsed:.1f}s",
+               pid_file.is_file(), closed_streams_command_survived))
+
+        # --- the iTerm2 profile: an attached launch from an iTerm2 terminal
+        # switches the tab back to the user's own profile before ssh
+        # connects, so a tab a Mac seat coloured does not keep that colour.
+        # A pipe, another terminal program or a --no-attach launch must
+        # receive no escape bytes, and each must still reach ssh.
+        harness = LaunchHarness(root / "iterm2-profile-written")
+        result = harness.run(["seat-w"], term_program="iTerm.app",
+                             stdout_on_terminal=True)
+        check("iTerm2 profile: an attached launch in iTerm2 on a terminal "
+              "writes the SetProfile sequence for Default",
+              result["launched"].returncode == 0
+              and ITERM2_DEFAULT_PROFILE_SEQUENCE in result["launched"].stdout
+              and result["remote"],
+              (result["launched"].returncode,
+               repr(result["launched"].stdout[-300:]),
+               result["launched"].stderr[:300]))
+        for label, slug, term_program, stdout_on_terminal, arguments in (
+                ("TERM_PROGRAM is another terminal", "other-terminal",
+                 "Apple_Terminal", True, ["seat-w"]),
+                ("stdout is not a terminal", "stdout-pipe",
+                 "iTerm.app", False, ["seat-w"]),
+                ("--no-attach", "no-attach", "iTerm.app", True,
+                 ["seat-w", "--no-attach"])):
+            harness = LaunchHarness(root / f"iterm2-profile-not-written-{slug}")
+            result = harness.run(arguments, term_program=term_program,
+                                 stdout_on_terminal=stdout_on_terminal)
+            check(f"iTerm2 profile: no escape sequence when {label}, and the "
+                  "launch still reaches ssh",
+                  result["launched"].returncode == 0
+                  and "\x1b]1337;" not in result["launched"].stdout
+                  and result["remote"],
+                  (result["launched"].returncode,
+                   repr(result["launched"].stdout[-300:]),
+                   result["launched"].stderr[:300]))
+
+        # --- 18. a detached launch whose prepare step fails reports the
+        # failure and exits nonzero; only a seat that really exists gets the
+        # "already exists" line. A regular file where the box's agents
+        # directory belongs makes the prepare step's mkdir fail.
+        harness = LaunchHarness(root / "detached-prepare-fails")
+        (harness.home / "agents").write_text("not a directory\n",
+                                             encoding="utf-8")
+        result = harness.run(["seat-w", "--no-attach"])
+        check("detached, prepare fails: the remote side exits nonzero",
+              result["replay"].returncode != 0,
+              (result["replay"].returncode, result["replay"].stdout[:200]))
+        check("detached, prepare fails: no 'already exists' line, and the "
+              "failure is named on stderr",
+              "already exists" not in result["replay"].stdout
+              and "preparing or starting seat-w on the box failed"
+              in result["replay"].stderr,
+              (result["replay"].stdout[:200], result["replay"].stderr[:400]))
+        check("detached, prepare fails: no tmux session is started",
+              result["tmux_argv"] == "", result["tmux_argv"][:200])
+
+        harness = LaunchHarness(root / "detached-seat-exists")
+        harness.seat_exists_on_the_box()
+        result = harness.run(["seat-x", "--no-attach"])
+        check("detached onto a live seat: 'already exists', exit 0, and the "
+              "prepare step does not run",
+              result["replay"].returncode == 0
+              and "a tmux session named seat-x already exists"
+              in result["replay"].stdout
+              and not harness.prepare_ran() and result["tmux_argv"] == "",
+              (result["replay"].returncode, result["replay"].stdout[:200],
+               harness.prepare_ran()))
 
     print()
     if failures:

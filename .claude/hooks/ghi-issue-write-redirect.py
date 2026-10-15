@@ -29,7 +29,7 @@ THE RULINGS IT CARRIES.
 - Issues are never deleted; the record is append-forward (the design,
   § The GHI write path, "Delete is denied — close instead").
 
-THE BEHAVIOUR IT DEFENDS AGAINST, named per CLAUDE.md's reviewer rule: agents
+THE BEHAVIOUR IT DEFENDS AGAINST, named per CLAUDE.md's rule on guards: agents
 posting issue comments by hand. The /ghi-write skill tells them to do exactly
 that today — "until #46 builds the tool, plain `gh issue comment` naming the
 event kind is the interim path" — and the ghi seat's brief, since deleted,
@@ -95,14 +95,15 @@ WHAT IT CANNOT SEE, so nobody mistakes a choice for an oversight:
 - ghi-info's headless sessions run with `--setting-sources user`
   (`scripts/ghi-info-ask.py`), so this project's hooks do not load there, and
   its link-repair edits are untouched.
-- A `gh` behind `ssh`, `sh -c`, `eval`, `timeout`, `command`, or in a heredoc
-  body is not recognised; `env` in front is. The same limits as the
-  force-push guard, whose reading this shares.
+- A `gh` behind `ssh`, `sh -c`, `eval`, or in a heredoc body is not
+  recognised; one behind a wrapper the shared shell module knows, such as
+  `env`, `timeout` or `command`, is. The same limits as the force-push
+  guard, whose reading this shares.
 - A gh alias the user defined is not expanded.
 
-The tokenizer, the heredoc split and `is_program` are imported from
-scripts/synthetic-keystroke-guard-hook.py, the project's shared shell reader,
-as the force-push guard does: one reader, reviewed once.
+Commands are read with nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py,
+the project's shared shell module on tree-sitter-bash, as the force-push guard
+does: one reader, reviewed once.
 """
 
 import importlib.util
@@ -113,20 +114,16 @@ import sys
 from pathlib import Path
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-_shell_reader_path = _REPOSITORY_ROOT / "scripts" / "synthetic-keystroke-guard-hook.py"
 _shell_reader_spec = importlib.util.spec_from_file_location(
-    "synthetic_keystroke_guard_hook", _shell_reader_path)
+    "shell_command_tree_sitter_bash_reader_common",
+    _REPOSITORY_ROOT / "nc-systems" / "general-tools" / "shell-command-tree-sitter-bash-reader-common.py")
 shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
 _shell_reader_spec.loader.exec_module(shell_reader)
-
-split_out_heredocs = shell_reader.split_out_heredocs
-tokenize_simple_commands = shell_reader.tokenize_simple_commands
 is_program = shell_reader.is_program
 
 PROJECT_REPOSITORY = "nedschorus/nedschorus"
 
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-ENV_COMMAND_VALUE_OPTIONS = {"-u", "--unset"}
 ISSUE_URL_PATTERN = re.compile(
     r"^(?:https?://)?(?:www\.)?github\.com/([^/]+/[^/#?]+)/issues/", re.IGNORECASE)
 
@@ -299,32 +296,15 @@ def find_gh_issue_invocation(words):
     """Given one simple command's words, return (subcommand, arguments,
     repository_from_environment) for an invoked `gh issue <subcommand>`, or
     None. Quoted prose naming it arrives as one data word and never matches.
-    Leading assignments and an `env` in front are read through, and a
+    Leading assignments and wrappers in front are read through, and a
     repository flag before the subcommand is carried into the arguments."""
-    index = 0
-    repository_from_environment = None
-    while index < len(words) and ENVIRONMENT_ASSIGNMENT_PATTERN.match(words[index]):
-        if words[index].startswith("GH_REPO="):
-            repository_from_environment = words[index][len("GH_REPO="):]
-        index += 1
-    if index < len(words) and is_program(words[index], "env"):
-        index += 1
-        while index < len(words):
-            word = words[index]
-            if ENVIRONMENT_ASSIGNMENT_PATTERN.match(word):
-                if word.startswith("GH_REPO="):
-                    repository_from_environment = word[len("GH_REPO="):]
-                index += 1
-                continue
-            if word in ENV_COMMAND_VALUE_OPTIONS:
-                index += 2
-                continue
-            if word.startswith("-"):
-                index += 1
-                continue
-            break
-    if index >= len(words) or not is_program(words[index], "gh"):
+    index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
+    if index is None or not is_program(words[index], "gh"):
         return None
+    repository_from_environment = None
+    for word in words[:index]:
+        if word.startswith("GH_REPO="):
+            repository_from_environment = word[len("GH_REPO="):]
     repository_flag_values = []
     index = skip_repository_flags(words, index + 1, repository_flag_values)
     if index >= len(words) or words[index] != "issue":
@@ -504,6 +484,8 @@ def refusal_for(subcommand, arguments, repository_from_environment,
     if subcommand not in VALUE_FLAGS:
         return None
     flags, positionals = parse_arguments(subcommand, arguments)
+    if "--help" in flags or "-h" in flags:
+        return None  # gh prints the subcommand's help and writes nothing.
     if names_another_repository(flags, positionals, repository_from_environment):
         return None
     if subcommand == "comment":
@@ -543,11 +525,8 @@ def refusal_for(subcommand, arguments, repository_from_environment,
 
 def analyze_command_text(command, working_directory=None):
     """The refusal for the first refused `gh issue` write in the command, or
-    None. Heredoc bodies are data and are dropped before reading."""
-    shell_view, _heredoc_bodies = split_out_heredocs(command)
-    for words in tokenize_simple_commands(shell_view):
-        if not words:
-            continue
+    None. Heredoc bodies are data."""
+    for words in shell_reader.simple_commands(command):
         invocation = find_gh_issue_invocation(words)
         if invocation is None:
             continue
@@ -578,7 +557,12 @@ def main(stdin=sys.stdin):
     working_directory = payload.get("cwd")
     if not isinstance(working_directory, str):
         working_directory = None
-    refusal = analyze_command_text(command, working_directory)
+    try:
+        refusal = analyze_command_text(command, working_directory)
+    except shell_reader.ShellParserUnavailable as error:
+        print(shell_reader.parser_unavailable_hook_output(
+            "The GHI write redirect guard", error))
+        return 0
     if refusal:
         deny(refusal)
     return 0

@@ -39,6 +39,9 @@ def load_window_sender_module():
 
 
 def main(arguments):
+    if arguments in (["--help"], ["-h"]):
+        print(__doc__)
+        return 0
     window_sender = load_window_sender_module()
     forced_command = window_sender.load_forced_command_module()
     if len(arguments) != 1:

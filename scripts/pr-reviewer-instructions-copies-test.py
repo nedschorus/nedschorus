@@ -4,10 +4,11 @@ them identical.
 
 `docs/agents/pr-reviewer-instructions.md` is the rule's home: its text is
 pasted whole into every Claude reviewer's prompt. CLAUDE.md carries the
-rule's "Review scope" section a second time, because the Codex reviewer
-(scripts/code-review-codex-cell.py, Codex's built-in review) takes no custom
-prompt and reads the repository's rules through AGENTS.md -> CLAUDE.md, so
-CLAUDE.md is the only channel by which it receives the rule (user-ruled
+rule's "Review scope" section a second time. The Codex reviewer
+(scripts/code-review-codex-cell.py, Codex's built-in review) now receives
+main's file as developer_instructions, but it still reads the checkout's
+rules through AGENTS.md -> CLAUDE.md too, so the two copies must agree until
+CLAUDE.md's copy is removed. CLAUDE.md was once its only channel (user-ruled
 2026-09-19, walk on nedschorus#210). Two copies drift: by 2026-09-18 the
 CLAUDE.md paragraph and the file no longer said the same thing, and nothing
 noticed for weeks. This test is what notices.
@@ -123,9 +124,9 @@ def differences(instructions: str, claude_md: str) -> list:
         return [f"the instructions file has no {SECTION_HEADING!r} section"]
 
     paragraphs = section_paragraphs(review_scope_section(instructions))
-    if len(paragraphs) != 3:
+    if len(paragraphs) < 2:
         return [f"the section holds {len(paragraphs)} paragraph(s), expected an "
-                f"intro and two bullets: {paragraphs}"]
+                f"intro and at least one bullet: {paragraphs}"]
     file_intro, file_bullets = paragraphs[0], paragraphs[1:]
 
     claude_intro, claude_bullets = claude_md_copy(claude_md)

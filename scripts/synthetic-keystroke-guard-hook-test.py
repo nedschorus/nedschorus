@@ -272,6 +272,202 @@ reason = decide("ssh ned 'tmux send-keys -t gatekeeper Enter'", StubRunner(stdou
 check("ssh-wrapped injection to an attached box session is denied",
       reason is not None and "attached client" in reason, reason)
 
+# ssh with no remote command runs its standard input in the remote shell: the
+# ordinary form from the Mac feeds the box a heredoc.
+runner = StubRunner(stdout="1\n")
+reason = decide("ssh ned-box <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF", runner)
+check("send-keys in a heredoc fed to ssh with no remote command is denied",
+      reason is not None and "attached client" in reason, reason)
+check("the heredoc's probe runs over ssh to that host",
+      runner.calls and runner.calls[0][0] == "ssh" and "ned-box" in runner.calls[0],
+      runner.calls)
+runner = StubRunner(stdout="1\n")
+check("a heredoc fed to ssh that has a remote command of its own is that command's data",
+      decide("ssh ned-box 'cat > notes.md' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF",
+             runner) is None and not runner.calls, runner.calls)
+
+# A remote shell reading its standard input, as `bash -s` does, runs the heredoc
+# too. The command below is a real Mac agent's (cold-read-research, 2026-09), whose
+# body has lines that only start with its delimiter, with a send-keys line added.
+REAL_MAC_SSH_BASH_S = (
+    "ssh -o BatchMode=yes nedlern@ned-box 'bash -s' <<'EOF'\n"
+    "S=$(mktemp -d /tmp/cold-read-heredoc-probe-XXXXXX); echo \"S=$S\"\n"
+    "for shell in bash sh; do\n"
+    "  small=$($shell -c 'cat <<EOF\nSMALL_OK\nEOF' 2>&1)\n"
+    "  big=$($shell -c \"cat <<'EOF' | wc -c\n$(head -c 100000 /dev/zero | tr '\\0' 'x')\nEOF\" 2>&1)\n"
+    "  echo \"$shell outside any sandbox: small=[$small] big=[$big]\"\n"
+    "done\n"
+    "cd /; rm -rf $S\n"
+    "tmux send-keys -t gatekeeper Enter\n"
+    "EOF")
+for case_name, command in [
+    ("send-keys in a real Mac ssh 'bash -s' heredoc with nested heredocs is denied",
+     REAL_MAC_SSH_BASH_S),
+    ("send-keys in a heredoc fed to ssh host bash is denied",
+     "ssh ned-box bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    reason = decide(command, runner)
+    check(case_name, reason is not None and "attached client" in reason, reason)
+    check(f"and the probe runs over ssh: {case_name}",
+          runner.calls and runner.calls[0][0] == "ssh" and "ned-box" in " ".join(runner.calls[0]),
+          runner.calls)
+for case_name, command in [
+    ("send-keys in a heredoc fed to ssh host sudo bash is denied",
+     "ssh ned-box sudo bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host env A=1 bash is denied",
+     "ssh ned-box env A=1 bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host timeout 60 bash is denied",
+     "ssh ned-box timeout 60 bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    reason = decide(command, runner)
+    check(case_name, reason is not None and "attached client" in reason, reason)
+    check(f"and the probe runs over ssh: {case_name}",
+          runner.calls and runner.calls[0][0] == "ssh" and "ned-box" in " ".join(runner.calls[0]),
+          runner.calls)
+for case_name, command in [
+    ("send-keys in a heredoc fed to a local bash -s given the word ssh is denied",
+     "bash -s ssh <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to a local bash -s -- ssh is denied",
+     "bash -s -- ssh <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    reason = decide(command, runner)
+    check(case_name, reason is not None and "attached client" in reason, reason)
+    check(f"and the probe runs locally: {case_name}",
+          runner.calls and runner.calls[0][0] != "ssh", runner.calls)
+for case_name, command in [
+    ("send-keys in a heredoc fed to bash - is denied: a lone - ends bash's options",
+     "bash - <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host 'bash -' is denied",
+     "ssh ned-box 'bash -' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to a remote bash -eo pipefail is denied: -o takes pipefail",
+     "ssh ned-box bash -eo pipefail <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to a remote bash --rcfile with a quoted path is denied",
+     "ssh ned-box \"bash --rcfile '/tmp/guard rc'\" <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host 'cd /x && bash -s' is denied",
+     "ssh ned-box 'cd /x && bash -s' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to the second remote shell of 'bash setup.sh && bash -s' is denied",
+     "ssh ned-box 'bash setup.sh && bash -s' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to a remote bash in a substitution is denied: it inherits the input",
+     "ssh ned-box 'echo $(bash)' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host sudo -n bash is denied",
+     "ssh ned-box sudo -n bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host sudo -u nedlern bash is denied",
+     "ssh ned-box sudo -u nedlern bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to cat 2>/dev/null and piped to bash is denied",
+     "cat <<'EOF' 2>/dev/null | bash\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host timeout --signal=KILL 60 bash is denied",
+     "ssh ned-box timeout --signal=KILL 60 bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host timeout --kill-after 5 60 bash is denied",
+     "ssh ned-box timeout --kill-after 5 60 bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host sudo --user nedlern bash is denied",
+     "ssh ned-box sudo --user nedlern bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to flock with a lock file and then bash -s is denied",
+     "flock -w 5 /tmp/guard.lock bash -s <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to caffeinate -i bash is denied",
+     "caffeinate -i bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),    ("send-keys in a heredoc fed to ssh host 'cat | bash' is denied: cat passes the heredoc on",
+     "ssh ned-box 'cat | bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host 'cat - | bash -s' is denied",
+     "ssh ned-box 'cat - | bash -s' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host 'tee /dev/null | bash' is denied",
+     "ssh ned-box 'tee /dev/null | bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host 'sed s/x/y/ | bash' is denied",
+     "ssh ned-box 'sed s/x/y/ | bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host 'base64 | base64 -d | bash' is denied",
+     "ssh ned-box 'base64 | base64 -d | bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host 'timeout 60 cat | bash' is denied",
+     "ssh ned-box 'timeout 60 cat | bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host '{ cat; } | bash' is denied",
+     "ssh ned-box '{ cat; } | bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host 'echo x | bash' is denied: the first stage receives the heredoc",
+     "ssh ned-box 'echo x | bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host 'bash -s | tee log' is denied: the shell is the first stage",
+     "ssh ned-box 'bash -s | tee log' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host 'bash -s <&0' is denied: <&0 keeps the heredoc as input",
+     "ssh ned-box 'bash -s <&0' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to ssh host 'bash -s </dev/stdin' is denied",
+     "ssh ned-box 'bash -s </dev/stdin' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys after an invalid UTF-8 byte in an ANSI-C quoted sh -c command is denied",
+     r"sh -c $'\xe9; tmux send-keys -t gatekeeper Enter'"),
+    ("send-keys after a newline in an ANSI-C quoted remote command is denied",
+     "ssh ned-box $'true\\ntmux send-keys -t gatekeeper Enter'"),
+    ("send-keys in a heredoc fed to ssh host timeout 60 --signal=KILL bash -s is denied",
+     "ssh ned-box timeout 60 --signal=KILL bash -s <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("send-keys in a heredoc fed to a remote bash -s that is a pipeline's first stage inside a body's substitution is denied",
+     "ssh ned-box 'cat <<X\n$(bash -s | cat)\nX' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    reason = decide(command, runner)
+    check(case_name, reason is not None and "attached client" in reason, reason)
+# A reader that reads each command in a new process hands back each child shell whole.
+guard.shell_reader._read_in_a_new_process = True
+try:
+    reason = decide("ssh ned-box 'bash -s | tee log' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF",
+                    StubRunner(stdout="1\n"))
+finally:
+    guard.shell_reader._read_in_a_new_process = False
+check("read in a new process, send-keys in a heredoc fed to ssh host 'bash -s | tee log' is denied",
+      reason is not None and "attached client" in reason, reason)
+for case_name, command in [
+    ("a heredoc fed to tee /tmp/bash over ssh is data: the file's name is not a program",
+     "ssh ned-box 'tee /tmp/bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to bash +sc is the +c command's standard input: bash reads +c as -c",
+     "bash +sc 'cat >f' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to bash -- consumer.sh is that script's standard input",
+     "bash -- consumer.sh <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to bash - consumer.sh is that script's standard input",
+     "bash - consumer.sh <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to xargs bash gives bash file names, not a script on its standard input",
+     "xargs bash <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to ssh host 'xargs bash' gives the remote bash file names",
+     "ssh ned-box 'xargs bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to ssh host '<f | bash' reaches no command: the first stage is only a redirection",
+     "ssh ned-box '<f | bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to ssh host 'cat | x; cat <f | bash' is not read: bash's own first stage reads f",
+     "ssh ned-box 'cat | x; cat <f | bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to ssh host 'bash 0<s.sh' is not read: the remote bash reads s.sh",
+     "ssh ned-box 'bash 0<s.sh' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to ssh host 'cat < f | bash' reaches no command: the first stage reads f",
+     "ssh ned-box 'cat < f | bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to ssh host 'bash -s < setup.sh' is not read: bash reads setup.sh",
+     "ssh ned-box 'bash -s < setup.sh' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    check(case_name, decide(command, runner) is None and not runner.calls, runner.calls)
+for case_name, command in [
+    ("a heredoc fed to a remote bash -lc is the -c command's standard input, not a script",
+     "ssh ned-box bash -lc 'cat >f' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to a remote bash -sc is the -c command's standard input, though -s is given",
+     "ssh ned-box bash -sc 'cat >f' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to a remote bash running a script file is that script's standard input",
+     "ssh ned-box 'bash consumer.sh' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to a local bash running a script file is that script's standard input",
+     "bash consumer.sh <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+]:
+    runner = StubRunner(stdout="1\n")
+    check(case_name, decide(command, runner) is None and not runner.calls, runner.calls)
+nested_heredocs_fed_to_bash = ("bash <<'EOF'\ncat <<'EOF2' >a\nx\nEOF2\ncat <<'EOF3' >b\ny\nEOF3\n"
+                               "tmux send-keys -t gatekeeper Enter\nEOF")
+reason = decide(nested_heredocs_fed_to_bash, StubRunner(stdout="1\n"))
+check("send-keys after two heredocs in a body with a line starting with its delimiter is denied",
+      reason is not None and "attached client" in reason, reason)
+
+# tmux runs each command after a \; word as a command of its own.
+for case_name, command in [
+    ("send-keys after a tmux \\; separator is denied",
+     "tmux select-window -t gatekeeper \\; send-keys -t gatekeeper Enter"),
+    ("send-keys after a separator ending the previous command's last word is denied",
+     "tmux select-window -t gatekeeper\\; send-keys -t gatekeeper Enter"),
+]:
+    reason = decide(command, StubRunner(stdout="1\n"))
+    check(case_name, reason is not None and "attached client" in reason, reason)
+runner = StubRunner(stdout="1\n")
+check("a tmux command sequence with no keystroke verb is allowed without a probe",
+      decide("tmux select-window -t gatekeeper \\; list-panes", runner) is None
+      and not runner.calls, runner.calls)
+
 check("a target tmux does not know is allowed (keystrokes land nowhere)",
       decide("tmux send-keys -t no-such-seat Enter",
              StubRunner(stderr="can't find pane: no-such-seat", returncode=1)) is None)
@@ -454,6 +650,23 @@ check("P2-2: absent socket file then per-seat-detached allows (no false deny)",
       decide("tmux send-keys -t seat-a x", runner) is None and len(runner.calls) == 2,
       runner.calls)
 
+# A live tmux 3.6 server that holds no session at all answers display-message -p
+# with rc 0 and empty stdout, the same as a server that does not know the session;
+# only has-session prints "no current target" there.
+empty_server_answer = ("", "", 0)
+runner = ScriptedProbeRunner([empty_server_answer, ("1\n", "", 0)])
+reason = decide("tmux send-keys -t seat-a x", runner)
+check("an empty default server is unknown, not unverifiable — fallback runs and denies",
+      reason is not None and "attached client" in reason and len(runner.calls) == 2,
+      (reason, runner.calls))
+
+permission_denied_answer = (
+    "", "error connecting to /private/tmp/tmux-501/default (Permission denied)", 1)
+runner = ScriptedProbeRunner([permission_denied_answer, ("0\n", "", 0)])
+reason = decide("tmux send-keys -t seat-a x", runner)
+check("a socket that answers with an error is unverifiable, not unknown — no fallback allow",
+      reason is not None and len(runner.calls) == 1, (reason, runner.calls))
+
 runner = ScriptedProbeRunner([("", "", 0)])
 check("P2-1: with the command's own -L flag, rc0+empty-stdout stays a single-probe allow",
       decide("tmux -L seat-b send-keys -t seat-b x", runner) is None
@@ -629,24 +842,6 @@ reason = decide('echo "$(tmux send-keys -t seat-a x', runner)
 check("an unterminated \"$( is read as commands to the end of the text",
       reason is not None and "attached client" in reason, reason)
 
-words = guard.tokenize_simple_commands('echo "at $(date +%H) today" done')
-check("the substitution's commands come first and the word keeps its text unexpanded",
-      words == [["date", "+%H"], ["echo", "at $(date +%H) today", "done"]], words)
-
-words = guard.tokenize_simple_commands('cd "$(dirname "$(git rev-parse --git-dir)")" && ls')
-check("a substitution nested in another, both double-quoted, is read innermost first",
-      words == [["git", "rev-parse", "--git-dir"],
-                ["dirname", "$(git rev-parse --git-dir)"],
-                ["cd", '$(dirname "$(git rev-parse --git-dir)")'], ["ls"]], words)
-
-words = guard.tokenize_simple_commands(
-    'echo "$(printf \')\'; printf "%s)" x; (cd /tmp; ls); tmux send-keys -t seat-a x) end"')
-check("a ) in quotes or closing a subshell does not close the substitution",
-      words[:5] == [["printf", ")"], ["printf", "%s)", "x"], ["cd", "/tmp"], ["ls"],
-                    ["tmux", "send-keys", "-t", "seat-a", "x"]]
-      and len(words) == 6 and words[5][0] == "echo" and words[5][1].endswith(" end"),
-      words)
-
 # Controls: forms the fix must leave as they were.
 runner = StubRunner(stdout="1\n")
 check("an escaped \\$( in double quotes is not a substitution (stays data, no probes)",
@@ -664,12 +859,6 @@ reason = decide('echo "$((1<<20))"\ntmux send-keys -t seat-a x', runner)
 check("double-quoted arithmetic 1<<20 opens no heredoc; the next line is still guarded",
       reason is not None and "attached client" in reason, reason)
 
-shell_view, heredocs = guard.split_out_heredocs(commit_message_quoting_a_backticked_command)
-check("the heredoc inside the double-quoted substitution is split out, body and all",
-      shell_view == "git commit -m \"$(cat <<'EOF'\n)\""
-      and [body.splitlines()[0] for _line, body in heredocs] == ["Document the rule"],
-      (shell_view, heredocs))
-
 # --- a quoted substitution must never hide a command the shell runs ---
 # In each command below the shell runs the tmux command. The reader that read
 # a double-quoted string as one word listed that command, by reading on past
@@ -683,23 +872,15 @@ for case_name, command in [
      "NOTE=\"$(a $'it\\'s')\"; tmux send-keys -t seat-a x"),
     ("a heredoc in quoted arithmetic with a lone ' in its body: the command after it is read",
      "N=\"$(( $(cat <<'EOF'\nit's 1\nEOF\n) + 1 ))\"; tmux send-keys -t seat-a x"),
-    # The shell rejects this one. It stands for every reading of a
-    # substitution that loses its place and never finds the closing ).
-    ("a substitution the reader cannot close: the command after the string is still read",
-     'echo "$(a \'unclosed)"; tmux send-keys -t seat-a x'),
 ]:
     reason = decide(command, StubRunner(stdout="1\n"))
     check(case_name, reason is not None and "attached client" in reason, reason)
 
-words = guard.tokenize_simple_commands('echo "$(a ${x%(*}; b ${y:-$(c)})" && d')
-check("inside ${...} a parenthesis is a word character, and a $( there is still read",
-      words == [["a", "${x%(*}"], ["b", "${y:-$"], ["c"], ["}"],
-                ["echo", "$(a ${x%(*}; b ${y:-$(c)})"], ["d"]], words)
-
-words = guard.tokenize_simple_commands("a $'it\\'s' b; echo $'x'; c 'it\\'s'")
-check("$'...' ends at its first unescaped quote, and a plain '...' at its first quote",
-      words[0] == ["a", "$it\\'s", "b"] and words[1] == ["echo", "$x"]
-      and words[2][0] == "c", words)
+# bash rejects a line whose quote never closes and runs none of it, the tmux command included.
+runner = StubRunner(stdout="1\n")
+check("a line bash rejects for an unclosed quote runs nothing and is not refused",
+      decide('echo "$(a \'unclosed)"; tmux send-keys -t seat-a x', runner) is None
+      and not runner.calls, runner.calls)
 
 # The bare form, $( ... ) outside quotes, read the $'...' string the same
 # wrong way before this change, so the command after it passed there too.
@@ -734,33 +915,6 @@ check("escaped \\` and \\$( in an unquoted-delimiter heredoc stay data (no probe
       decide("cat > notes.md <<EOF\nnever \\`tmux send-keys -t seat-a x\\` "
              "or \\$(tmux send-keys -t seat-b y) here\nEOF", runner) is None
       and not runner.calls, runner.calls)
-
-shell_view, heredocs = guard.split_out_heredocs(
-    "cat <<EOF\nnever `tmux send-keys -t seat-a x` or $(date +%H) here\nEOF\nls")
-mark = guard.EXPANDED_BODY_COMMANDS_MARK
-check("an unquoted-delimiter heredoc leaves its substitutions in the shell view, marked, at its <<",
-      shell_view == (f"cat {mark}{'tmux send-keys -t seat-a x'.encode().hex()}{mark}"
-                     f"{mark}{'date +%H'.encode().hex()}{mark}<<EOF\nls")
-      and heredocs == [("cat <<EOF",
-                        "never `tmux send-keys -t seat-a x` or $(date +%H) here")],
-      (shell_view, heredocs))
-# A guard that scans the shell view's text itself, as the leading-dash guard
-# marks unquoted glob characters, must not see a body's quotes or globs: a
-# lone ' there would hide every glob after the heredoc.
-shell_view_with_quotes, _heredocs = guard.split_out_heredocs(
-    "cat <<EOF\nuse the `don't \"*\" #` form\nEOF\ngrep phrase *.txt")
-check("a marked command list holds no quote, glob character or # in the shell view",
-      shell_view_with_quotes.endswith("<<EOF\ngrep phrase *.txt")
-      and not any(c in shell_view_with_quotes[:-len("<<EOF\ngrep phrase *.txt")]
-                  for c in "'\"`*#"),
-      shell_view_with_quotes)
-words = guard.tokenize_simple_commands(shell_view)
-check("each marked command list is read as a substitution, ahead of the heredoc's command",
-      words == [["tmux", "send-keys", "-t", "seat-a", "x"], ["date", "+%H"],
-                ["cat", "<<EOF"], ["ls"]]
-      and [type(w).__name__ for w in words] == ["SubstitutionCommand", "SubstitutionCommand",
-                                                 "list", "list"],
-      words)
 
 # The heredoc scan keeps its place past the same two forms: a heredoc opened
 # on the line after either is still split out, and its body is data.
@@ -939,13 +1093,6 @@ for case_name, command in [
     runner = StubRunner(stdout="1\n")
     check(case_name, decide(command, runner) is None and not runner.calls, runner.calls)
 
-words = guard.tokenize_simple_commands('X="$(case $v in (a|b) c;; *) d;;& e) f;& esac)" && g')
-check("inside a quoted substitution a case's patterns and branches are read as commands",
-      words[:-2] == [["case", "$v", "in"], ["a"], ["b"], ["c"], ["*"], ["d"], ["e"],
-                     ["f"], ["esac"]]
-      and words[-2][0].startswith("X=$(case") and words[-1] == ["g"], words)
-
-
 # --- the ssh invocation parser ---
 
 host, carried, remote = guard.parse_ssh_invocation(
@@ -1012,7 +1159,7 @@ check("check mode: an empty answer is not read as 0 attached clients",
       status == 2 and printed.startswith("could not verify: "), (status, printed))
 status, printed = run_check(["seat-a"], ScriptedProbeRunner([
     ("", "no server running on /tmp/tmux-501/default", 1),
-    ("", "error connecting to /tmp/tmux-501/seat-a", 1)]))
+    ("", "error connecting to /tmp/tmux-501/seat-a (No such file or directory)", 1)]))
 check("check mode: no server knowing the session prints could not verify, not detached",
       status == 2 and printed.startswith("could not verify: "), (status, printed))
 

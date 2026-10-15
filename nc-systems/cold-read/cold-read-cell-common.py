@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import typing
 
@@ -22,6 +23,13 @@ _record_names_spec = importlib.util.spec_from_file_location(
     pathlib.Path(__file__).with_name("cold-read-record-names.py"))
 record_names = importlib.util.module_from_spec(_record_names_spec)
 _record_names_spec.loader.exec_module(record_names)
+
+_git_machine_readable_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    pathlib.Path(__file__).resolve().parents[1] / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
+_git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
@@ -263,14 +271,18 @@ def target_origin_paragraph(target: pathlib.Path, target_origin: pathlib.Path) -
     )
 
 
-def compose_prompt(
-    cell: str, target: pathlib.Path, report: pathlib.Path, prompt_file=None,
-    target_origin=None,
-) -> str:
+def prompt_template_path(cell: str, prompt_file=None) -> pathlib.Path:
     template_path = (prompt_file if prompt_file is not None
                      else PROMPTS_DIR / f"{cell}.md")
     if not template_path.is_file():
         raise CellRefusal(f"prompt template missing: {template_path}")
+    return template_path
+
+
+def compose_prompt(
+    template_path: pathlib.Path, target: pathlib.Path, report: pathlib.Path,
+    target_origin=None,
+) -> str:
     prompt = (
         template_path.read_text(encoding="utf-8")
         .replace("{TARGET_PATH}", str(target))
@@ -330,7 +342,12 @@ def classify_failed_attempt(
     if start_error:
         return "agent-binary-missing", start_error
     if exit_code == 0:
-        return "no-report", "no report written"
+        # The reviewer's closing words usually say why it wrote nothing, such as a refused write.
+        closing = [line.strip() for line in stdout.splitlines() if line.strip()]
+        if not closing:
+            return "no-report", "no report written"
+        return ("no-report", "no report written; the reviewer's last line: "
+                + closing[-1][:CAUSE_DETAIL_MAX_CHARACTERS])
     last_lines = [line.strip() for line in (stderr if stderr.strip() else stdout).splitlines()
                   if line.strip()]
     detail = last_lines[-1][:CAUSE_DETAIL_MAX_CHARACTERS] if last_lines else "no output"
@@ -368,17 +385,18 @@ def working_tree_state() -> set:
     """Return changed paths and content fingerprints, including untracked files."""
     # Fingerprints detect edits to already-dirty files; --untracked-files=all exposes files
     # inside already-untracked directories.
-    completed = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all"],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=False,
-    )
-    if completed.returncode != 0:
-        raise WriteDetectorUnavailable(completed.stderr.strip() or "no detail")
-    return {
-        (name, path_content_fingerprint(REPO_ROOT / name))
-        for name in (line[3:] for line in completed.stdout.splitlines())
-        if name
-    }
+    # A rename contributes both names, so a renamed tracked file is caught under either.
+    try:
+        output = git_machine_readable_output.run_git(
+            REPO_ROOT, ["status", "--porcelain", "-z", "--untracked-files=all"])
+    except git_machine_readable_output.GitCommandFailed as failure:
+        raise WriteDetectorUnavailable(failure.stderr.strip() or "no detail") from None
+    names = set()
+    for entry in git_machine_readable_output.status_entries(output):
+        names.add(entry.path)
+        if entry.origin_path:
+            names.add(entry.origin_path)
+    return {(name, path_content_fingerprint(REPO_ROOT / name)) for name in names}
 
 
 def repo_relative_name(path) -> str:
@@ -686,6 +704,7 @@ def run_cell(
     *, program: str, runtime: str, description: str, model_help: str,
     tier_to_model_chain: dict, tier_to_effort: dict, invocation_builder,
     recover_report_from_stdout=None, recognised_failure_texts_for_model=None,
+    stage_report_outside_checkout: bool = False,
 ) -> int:
     # Include failed attempts in the cell's total cost.
     cell_started_at = time.time()
@@ -708,27 +727,66 @@ def run_cell(
         report = resolve_report_path(args.report)
         prompt_file = (
             resolve_prompt_file(args.prompt_file) if args.prompt_file else None)
-        prompt = compose_prompt(args.cell, target, report, prompt_file,
-                                resolve_target_origin(args.target_origin))
+        target_origin = resolve_target_origin(args.target_origin)
+        template_path = prompt_template_path(args.cell, prompt_file)
     except CellRefusal as refusal:
         print(f"{program}: {refusal}", file=sys.stderr)
         report_stray_writes(program, baseline, report)
         return refusal.exit_code
 
+    # The staging directory is made after every refusal, so no refusal leaves one behind.
+    # The Codex reviewer can write only inside the checkout, the temporary directories on
+    # macOS, and a directory added with --add-dir, which stays writable under the profile's
+    # read-only /tmp on Linux; granting a report's own directory elsewhere would also make
+    # the documents beside it writable, where git status does not look.
+    # The near-miss recovery searches the report directory's parent, so the
+    # report directory sits inside a fresh root rather than in the temporary
+    # directory itself.
+    staging_root = staging_directory = None
+    if stage_report_outside_checkout and REPO_ROOT not in report.resolve().parents:
+        staging_root = pathlib.Path(tempfile.mkdtemp(prefix="cold-read-report-"))
+        staging_directory = staging_root / "report"
+        staging_directory.mkdir()
+    reviewer_report = (
+        staging_directory / report.name if staging_directory else report)
+    prompt = compose_prompt(template_path, target, reviewer_report, target_origin)
+
     # An explicit model must not silently fall back to a different model.
     chain = (args.model,) if args.model else tier_to_model_chain[args.tier]
     effort = args.effort or tier_to_effort[args.tier]
+    build_invocation = (invocation_builder(effort, staging_directory)
+                        if stage_report_outside_checkout else invocation_builder(effort))
 
-    return run_model_chain(
-        program=program, runtime=runtime, chain=chain, effort=effort,
-        build_invocation=invocation_builder(effort), prompt=prompt,
-        report=report, cell=args.cell, tier=args.tier,
-        target_argument=args.target, baseline=baseline,
-        cell_started_at=cell_started_at,
-        prompt_file_argument=args.prompt_file or "",
-        recover_report_from_stdout=recover_report_from_stdout,
-        recognised_failure_texts_for_model=recognised_failure_texts_for_model,
-    )
+    try:
+        exit_code = run_model_chain(
+            program=program, runtime=runtime, chain=chain, effort=effort,
+            build_invocation=build_invocation, prompt=prompt,
+            report=reviewer_report, cell=args.cell, tier=args.tier,
+            target_argument=args.target, baseline=baseline,
+            cell_started_at=cell_started_at,
+            prompt_file_argument=args.prompt_file or "",
+            recover_report_from_stdout=recover_report_from_stdout,
+            recognised_failure_texts_for_model=recognised_failure_texts_for_model,
+        )
+        if exit_code == 0 and staging_directory is not None:
+            exit_code = move_staged_report(program, reviewer_report, report)
+        return exit_code
+    finally:
+        # A report that could not be moved stays where the failure message says it is.
+        if staging_root is not None and not reviewer_report.exists():
+            shutil.rmtree(staging_root, ignore_errors=True)
+
+
+def move_staged_report(program: str, staged: pathlib.Path, report: pathlib.Path) -> int:
+    """Move a report written in a staging directory to its destination; 1 if it cannot be moved."""
+    try:
+        shutil.move(str(staged), str(report))
+    except OSError as error:
+        print(f"{program}: the report could not be moved from {staged} to {report} "
+              f"({error}); it is left at {staged}.", file=sys.stderr)
+        return 1
+    print(f"{program}: report moved to {report}", file=sys.stderr)
+    return 0
 
 
 def report_stray_writes(program: str, baseline, own_report_path=None) -> None:

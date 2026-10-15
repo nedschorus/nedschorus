@@ -6,7 +6,7 @@ Usage:
   scripts/sanity-check-record-ship.py --all
 
 WHY THIS EXISTS (user-ruled 2026-09-15, nedschorus#392). The reports and
-`finding-dispositions.md` that scripts/sanity-check-attacks.py writes under
+`finding-dispositions.md` that scripts/sanity-check-adversarial-prompts.py writes under
 `sanity-check-records/` are logs: the user ruled on 2026-08-25 that review
 records are kept as logs, and CLAUDE.md puts logs in the log-store, never in
 the repository. Cold-read records reach it through
@@ -31,7 +31,7 @@ next run: finish the triage, then ship, or ship the edited record under a `-2`
 name as the record shipper's rule says. Nothing is lost either way -- a refusal
 copies nothing and names every differing file.
 
-WHO CALLS IT. scripts/sanity-check-attacks.py at the end of every run that
+WHO CALLS IT. scripts/sanity-check-adversarial-prompts.py at the end of every run that
 launched a cell, whatever the cells' outcome, a run in which every cell failed
 included, whose record holds its log and no report, printing this program's
 one line as `record:`; and the requesting agent again after writing

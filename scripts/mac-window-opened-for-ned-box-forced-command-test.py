@@ -196,6 +196,118 @@ check("through the real opener's dry run, the AppleScript runs ssh back to ned-b
       result.returncode == 0 and "open-iterm-window-running-command ssh -t -- nedlern@ned-box tmux attach -t merge-lane-2" in result.stdout,
       result.stdout + result.stderr)
 
+result, opened, log = run_program("open-agent-seat-window merge-lane-2")
+check("an open-agent-seat-window request exits 0", result.returncode == 0, result.stderr)
+check("an open-agent-seat-window request hands the opener this checkout's launch-claude-ubuntu and the seat",
+      opened == [str(PROGRAM_PATH.with_name("launch-claude-ubuntu")), "merge-lane-2"], opened)
+check("an open-agent-seat-window request is logged before its window opens",
+      log.index(" accepted 'open-agent-seat-window merge-lane-2'") < log.index(" opened "), log)
+
+for request in ["open-agent-seat-window", "open-agent-seat-window a b", "open-agent-seat-window -v",
+                "open-agent-seat-window .hidden", "open-agent-seat-window a;b", "open-agent-seat-window " + "a" * 65]:
+    result, opened, log = run_program(request)
+    check(f"a refused open-agent-seat-window request opens nothing, exits 2, and names --agent-seat: {request[:40]!r}",
+          opened is None and result.returncode == 2 and "no window was opened, because" in result.stderr
+          and "open-mac-window-from-ned-box.py --agent-seat <seat>, naming one agent-seat" in result.stderr
+          and "Send a request of the form" not in result.stderr,
+          (result.returncode, opened, result.stderr))
+def launcher_accepts_seat_name(name, bash_options=(), locale_environment=None, bash="bash"):
+    """Run the real launch-claude-ubuntu up to its seat-name check, and no further."""
+    # An invalid account name makes the launcher stop at the check right after the seat-name
+    # check, before it reaches ssh, so a name it accepts launches nothing.
+    environment = dict(os.environ, NEDSCHORUS_SEAT_GITHUB_ACCOUNT="not a valid account!",
+                       **(locale_environment or {}))
+    result = subprocess.run([bash, *bash_options, str(PROGRAM_PATH.with_name("launch-claude-ubuntu")), name],
+                            capture_output=True, text=True, env=environment, timeout=30)
+    if "NEDSCHORUS_SEAT_GITHUB_ACCOUNT" in result.stderr:
+        return True
+    if "agent names are" in result.stderr or "cannot start with -" in result.stderr:
+        return False
+    raise AssertionError(f"launch-claude-ubuntu {name!r} stopped at neither check: {result.stderr!r}")
+
+
+for name in ["merge-lane-2", "reboot_test", "_x", "9", "a.b", ".hidden", "-v", "a;b", "a b", "é"]:
+    check(f"the forced command accepts the seat name {name!r} exactly when launch-claude-ubuntu does",
+          bool(forced_command.AGENT_SEAT_NAME_PATTERN.fullmatch(name)) == launcher_accepts_seat_name(name),
+          name)
+
+
+def mac_bash_range_rules(bash="bash", installed_locales=None):
+    """Return (bash options, locale environment) that make bash match ranges as the Mac's bash 3.2 does, or a skip reason."""
+    # The Mac's /bin/bash 3.2 has no globasciiranges, so a bracket range such as a-z follows the
+    # UTF-8 locale's collation there and can match é; bash 5 with globasciiranges off does the same.
+    # Setting the option is the probe: `shopt globasciiranges` exits 1 both when the option is off
+    # and when this bash has no such option.
+    locales = (installed_locales if installed_locales is not None
+               else subprocess.run(["locale", "-a"], capture_output=True, text=True).stdout.split())
+    utf8_locale = next((name for name in locales if name.lower() in ("en_us.utf8", "en_us.utf-8")), None)
+    if utf8_locale is None:
+        return "no en_US UTF-8 locale is installed"
+    probe = subprocess.run([bash, "+O", "globasciiranges", "-c", ":"], capture_output=True, text=True)
+    options = ("+O", "globasciiranges") if probe.returncode == 0 and not probe.stderr else ()
+    return options, {"LC_ALL": utf8_locale}
+
+
+def check_seat_names_under_mac_range_rules(bash="bash", label=""):
+    rules = mac_bash_range_rules(bash)
+    if isinstance(rules, str):
+        print(f"SKIP  seat names under the Mac's bash range rules{label}: {rules}")
+        return
+    options, locale_environment = rules
+    for name in ["merge-lane-2", "a.b", "é", "ß", "Ä"]:
+        check(f"launch-claude-ubuntu accepts {name!r} exactly as the forced command does, under a UTF-8 "
+              f"locale with bracket ranges following its collation, as on the Mac's bash 3.2{label}",
+              bool(forced_command.AGENT_SEAT_NAME_PATTERN.fullmatch(name)) == launcher_accepts_seat_name(
+                  name, options, locale_environment, bash),
+              name)
+
+
+check_seat_names_under_mac_range_rules()
+
+# A bash with no globasciiranges option, as the Mac's 3.2 is: a wrapper refuses the option the way
+# bash 3.2 does, so the probe must fall back to plain bash rather than end the test file.
+with tempfile.TemporaryDirectory() as no_option_directory:
+    no_option_bash = Path(no_option_directory) / "bash"
+    no_option_bash.write_text(
+        "#!/bin/sh\n"
+        "for argument in \"$@\"; do\n"
+        "  if [ \"$argument\" = globasciiranges ]; then\n"
+        "    echo \"bash: globasciiranges: invalid shell option name\" >&2; exit 2\n"
+        "  fi\n"
+        "done\n"
+        f"exec {shutil.which('bash')} -c 'shopt -u globasciiranges; . \"$0\"' \"$@\"\n")
+    no_option_bash.chmod(0o755)
+
+    def check_probe_drops_missing_option(installed_locales=None):
+        rules = mac_bash_range_rules(str(no_option_bash), installed_locales)
+        if isinstance(rules, str):
+            print(f"SKIP  the range-rules probe with a bash that has no globasciiranges: {rules}")
+            return "skipped"
+        check("the range-rules probe drops globasciiranges for a bash that has no such option",
+              rules[0] == (), rules)
+        return "checked"
+
+    check_probe_drops_missing_option()
+    check("with no en_US UTF-8 locale installed, the probe's case skips instead of failing",
+          check_probe_drops_missing_option(installed_locales=[]) == "skipped")
+    check_seat_names_under_mac_range_rules(str(no_option_bash), " (a bash with no globasciiranges)")
+
+
+# launch-claude-mac keeps a twin of launch-claude-ubuntu's name checks; it cannot run past them
+# on this machine, so its patterns are compared with the tested launcher's, character for character.
+def launcher_name_check_patterns(launcher_name):
+    text = PROGRAM_PATH.with_name(launcher_name).read_text(encoding="utf-8")
+    return [line.split(")", 1)[0].strip() + ")" for line in text.splitlines()
+            if line.strip().startswith("(*[!") and line.strip().endswith(";;")]
+
+
+check("launch-claude-mac's seat-name and account-name patterns are launch-claude-ubuntu's",
+      launcher_name_check_patterns("launch-claude-mac") == launcher_name_check_patterns("launch-claude-ubuntu")
+      and len(launcher_name_check_patterns("launch-claude-ubuntu")) == 2,
+      (launcher_name_check_patterns("launch-claude-mac"), launcher_name_check_patterns("launch-claude-ubuntu")))
+check("a refused window request names the --agent-seat form too",
+      "open-mac-window-from-ned-box.py --agent-seat <seat>" in run_program("open-windowx tmux")[0].stderr)
+
 result, opened, log = run_program("open-in-typora tmux")
 check("an open-in-typora request opens no window", opened is None, opened)
 check("a window request that is refused names the open-in-typora form too",
@@ -348,6 +460,85 @@ else:
 
     shutil.rmtree(files)
     shutil.rmtree(not_mounted)
+
+
+def browser_refusal_of(request, ned_box_home="/home/nedlern"):
+    try:
+        forced_command.open_in_browser_request_html_page_path_check(request, ned_box_home)
+    except forced_command.RequestRefused as refusal:
+        return str(refusal)
+    return None
+
+
+for request in ["open-in-browser /home/nedlern/nedschorus-logs/watcher/notices/20261013T000000Z-a-leftover-shell.html",
+                "open-in-browser /home/nedlern/nedschorus-logs/a.html"]:
+    check(f"browser accepted: {request!r}", browser_refusal_of(request) is None, browser_refusal_of(request))
+
+BROWSER_REFUSED = {
+    "another verb": ("open-in-typora /home/nedlern/nedschorus-logs/a.html", "does not start with the verb 'open-in-browser'"),
+    "a page outside the log-store": ("open-in-browser /home/nedlern/a.html", "not under /home/nedlern/nedschorus-logs/"),
+    "a directory that only starts like the log-store": ("open-in-browser /home/nedlern/nedschorus-logsx/a.html", "not under /home/nedlern/nedschorus-logs/"),
+    "a file that is not .html": ("open-in-browser /home/nedlern/nedschorus-logs/a.md", "does not end in .html"),
+    "a '..' out of the log-store": ("open-in-browser /home/nedlern/nedschorus-logs/../.ssh/a.html", "'..' component"),
+    "two paths": ("open-in-browser /home/nedlern/nedschorus-logs/a.html /home/nedlern/nedschorus-logs/b.html", "exactly one path"),
+    "a quote": ("open-in-browser /home/nedlern/nedschorus-logs/a'b.html", "outside letters, digits"),
+    "a path outside the home": ("open-in-browser /etc/a.html", "not under /home/nedlern/"),
+}
+for case_name, (request, expected) in BROWSER_REFUSED.items():
+    reason = browser_refusal_of(request)
+    check(f"browser refused: {case_name}", reason is not None and expected in reason, reason)
+
+result, opened, log = run_program("open-in-browser tmux")
+check("an open-in-browser request opens no window", opened is None, opened)
+check("a window request that is refused names the open-in-browser form too",
+      "scripts/open-html-page-in-mac-browser-from-ned-box.py" in run_program("open-windowx tmux")[0].stderr)
+
+if mount is None or not os.access(mount, os.W_OK):
+    # The log-store must sit at the stand-in mount's top, which the Mac's /System/Volumes/Data does not let the user write.
+    print("SKIP  open-in-browser end-to-end cases: they need a mount point whose top directory this user can write, "
+          "to stand in for the Mac's mount of ned-box's home, and this machine has none; "
+          "/dev/shm is one on Linux")
+else:
+    # The log-store sits inside the stand-in home, a real mount point, so a path maps onto itself.
+    log_store = Path(mount) / "nedschorus-logs"
+    # Shared with the other browser suite, which may run at the same time, so it is
+    # created if missing and never removed: each suite removes only its own directory in it.
+    log_store.mkdir(exist_ok=True)
+    pages = Path(tempfile.mkdtemp(prefix="mac-browser-pages-", dir=log_store))
+    page = pages / "notice.html"
+    page.write_text("<!doctype html><title>notice</title>\n")
+    outside_page = Path(tempfile.mkdtemp(prefix="mac-browser-outside-", dir=writable_inside)) / "elsewhere.html"
+    outside_page.write_text("<!doctype html>\n")
+    (pages / "escape.html").symlink_to(outside_page)
+
+    result, opened, log = run_typora(f"open-in-browser {page}", mount, mount)
+    check("browser: an accepted page exits 0", result.returncode == 0, result.stderr)
+    check("browser: open gets only the mapped page, so the default browser shows it", opened == [str(page)], opened)
+    check("browser: an accepted page says what was opened", f"opened {page} in the Mac's browser" in result.stdout, result.stdout)
+    check("browser: an accepted page is logged before it opens",
+          f" accepted 'open-in-browser {page}'" in log and log.index(" accepted ") < log.index(" opened "), log)
+
+    for case_name, request, expected in [
+        ("a missing page", f"open-in-browser {pages / 'absent.html'}", "there is no"),
+        ("a link leading out of the log-store", f"open-in-browser {pages / 'escape.html'}", "leads outside"),
+    ]:
+        result, opened, log = run_typora(request, mount, mount)
+        check(f"browser: {case_name} opens nothing", opened is None, opened)
+        check(f"browser: {case_name} exits 2 and says why", result.returncode == 2 and expected in result.stderr
+              and "the page was not opened, because" in result.stderr, (result.returncode, result.stderr))
+        check(f"browser: {case_name} is logged as refused", " refused " in log, log)
+
+    result, opened, log = run_typora(f"open-in-browser {page}", mount, mount, open_body="echo 'no application' >&2; exit 1\n")
+    check("browser: an open that fails exits 1 with open's own error",
+          result.returncode == 1 and "no application" in result.stderr and "browser may not have opened" in result.stderr, result.stderr)
+    check("browser: an open that fails is logged", "open-failed-1" in log, log)
+
+    result, opened, log = run_typora(f"open-in-browser {page}", mount, mount, log_unwritable=True)
+    check("browser: a request that cannot be logged opens nothing and exits 3",
+          opened is None and result.returncode == 3 and "none opens unlogged" in result.stderr, (result.returncode, result.stderr))
+
+    shutil.rmtree(pages)
+    shutil.rmtree(outside_page.parent)
 
 print()
 if failures:

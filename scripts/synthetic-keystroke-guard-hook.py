@@ -5,12 +5,29 @@ Pass commands as launch arguments; detached tmux injection is permitted.
 Detection is literal, not a complete shell interpreter: generated scripts and
 unsupported ssh option forms can escape analysis."""
 
+import importlib.util
 import json
 import re
 import shlex
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+_shell_reader_spec = importlib.util.spec_from_file_location(
+    "shell_command_tree_sitter_bash_reader_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "shell-command-tree-sitter-bash-reader-common.py")
+shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
+_shell_reader_spec.loader.exec_module(shell_reader)
+is_program = shell_reader.is_program
+
+_tmux_error_pattern_spec = importlib.util.spec_from_file_location(
+    "tmux_target_or_server_does_not_exist_error_pattern_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "tmux-target-or-server-does-not-exist-error-pattern-common.py")
+tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
+_tmux_error_pattern_spec.loader.exec_module(tmux_error_pattern)
 
 OPENER = "scripts/open-iterm-window-running-command"
 
@@ -22,6 +39,9 @@ MAX_ANALYSIS_DEPTH = 4
 
 KEYSTROKE_VERBS = {"send-keys", "send", "paste-buffer", "pasteb"}
 SHELL_CONSUMER_PROGRAMS = {"sh", "bash", "zsh", "dash", "ksh"}
+SHELL_OPTIONS_WITH_A_VALUE = {"--rcfile", "--init-file"}
+# A redirection of standard input, with its descriptor 0 written or left out.
+STANDARD_INPUT_REDIRECT_PATTERN = re.compile(r"0?<")
 
 TMUX_GLOBAL_VALUE_FLAGS = {"-S", "-L", "-f", "-c", "-T"}
 
@@ -39,14 +59,6 @@ APPLESCRIPT_TYPING_PATTERN = re.compile(r"write text|\bkeystroke\b|\bkey code\b"
 
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
-COMMAND_SEPARATOR_CHARS = ";\n&|()`"
-
-# Hex encoding isolates expansion commands from quote and glob scanners.
-# NUL cannot occur in a real shell command, so the marker cannot collide with command text.
-EXPANDED_BODY_COMMANDS_MARK = "\x00"
-
-# Bound recursion because a crashed PreToolUse hook lets the command through.
-MAX_SUBSTITUTION_NESTING = 64
 
 SYNTHETIC_TYPING_REASON = (
     "Blocked: AppleScript synthetic typing (iTerm `write text`, System Events "
@@ -163,443 +175,6 @@ class GuardRun:
         self.deadline = clock() + budget_seconds
         self.probe_cache = {}
         self.depth = 0
-
-
-class HeredocScanState:
-    """Quote, substitution, and parameter-expansion state carried between shell lines."""
-
-    def __init__(self):
-        self.in_single = False
-        self.in_ansi_c = False   # inside $'...', where \' does not end the string
-        self.in_double = False
-        self.substitution_depths = []
-        self.braces = []  # (substitution level, parenthesis count) for each open ${
-
-
-def scan_line_for_heredoc_markers(line, state):
-    """Return (terminator, body_is_expanded, operator_index) triples and update quote state."""
-    # Quoted << is data, <<< is a here-string, and numeric delimiters can be arithmetic shifts.
-    terminators = []
-    depths = state.substitution_depths
-    braces = state.braces
-    i, n = 0, len(line)
-    while i < n:
-        char = line[i]
-        if state.in_single or state.in_ansi_c:
-            if char == "\\" and state.in_ansi_c:
-                i += 2
-                continue
-            if char == "'":
-                state.in_single = state.in_ansi_c = False
-            i += 1
-            continue
-        if state.in_double:
-            if char == "\\" or line[i:i + 2] == "$$":
-                i += 2
-                continue
-            if char == '"':
-                state.in_double = False
-            elif line[i:i + 2] == "$(":
-                depths.append(0)
-                state.in_double = False
-                i += 1
-            i += 1
-            continue
-        if char == "\\" or line[i:i + 2] == "$$":
-            i += 2
-            continue
-        if line[i:i + 2] == "$'":
-            state.in_ansi_c = True
-            i += 2
-            continue
-        if char == "'":
-            state.in_single = True
-            i += 1
-            continue
-        if char == '"':
-            state.in_double = True
-            i += 1
-            continue
-        if depths and line[i:i + 2] == "${":
-            braces.append((len(depths), depths[-1]))
-            i += 2
-            continue
-        in_braces = bool(braces) and braces[-1][0] == len(depths)
-        if char == "}" and in_braces:
-            braces.pop()
-            i += 1
-            continue
-        if char in "()" and depths:
-            if in_braces and depths[-1] <= braces[-1][1] and not (
-                    char == "(" and line[i - 1:i] == "$"):
-                i += 1  # A parenthesis in the expansion pattern does not close the substitution.
-                continue
-            if char == "(":
-                depths[-1] += 1
-            elif depths[-1]:
-                depths[-1] -= 1
-            else:
-                depths.pop()
-                state.in_double = True  # Resume the surrounding string after the substitution closes.
-                while braces and braces[-1][0] > len(depths):
-                    braces.pop()
-            i += 1
-            continue
-        if char == "#" and (i == 0 or line[i - 1] in " \t;&|()`"):
-            break
-        if char == "<" and line[i:i + 2] == "<<" and line[i:i + 3] != "<<<" \
-                and (i == 0 or line[i - 1] != "<"):
-            if inside_shell_arithmetic(line[:i]):
-                i += 2  # Arithmetic << is a shift, not a heredoc.
-                continue
-            j = i + 2
-            if j < n and line[j] == "-":
-                j += 1
-            while j < n and line[j] in " \t":
-                j += 1
-            delimiter = read_heredoc_delimiter(line, j)
-            if delimiter is None:
-                i = j + 1
-                continue
-            terminator, body_is_expanded, end = delimiter
-            if end > j and not (body_is_expanded and terminator.isdigit()):
-                terminators.append((terminator, body_is_expanded, i))
-            i = end
-            continue
-        i += 1
-    return terminators
-
-
-def inside_shell_arithmetic(prefix):
-    """Return whether a shift is inside arithmetic rather than a nested command substitution."""
-    if "$((" not in prefix:
-        return False
-    tail = prefix[prefix.rindex("$((") + 3:]
-    if "))" in tail:
-        return False
-    open_substitutions = 0
-    k = 0
-    while k < len(tail):
-        if tail[k:k + 2] == "$(" and tail[k + 2:k + 3] != "(":
-            open_substitutions += 1
-            k += 2
-            continue
-        if tail[k] == ")" and open_substitutions:
-            open_substitutions -= 1
-        k += 1
-    return open_substitutions == 0
-
-
-def read_heredoc_delimiter(line, start):
-    """Return (terminator, body_is_expanded, end), or None for an unclosed quote."""
-    # Any quoting in a delimiter suppresses expansion; all quoting is removed from the terminator.
-    terminator = []
-    quoted = False
-    i, n = start, len(line)
-    while i < n and line[i] not in " \t<>|&;()`":
-        if line[i] == "\\":
-            terminator.append(line[i + 1:i + 2])
-            quoted = True
-            i += 2
-        elif line[i] in "'\"":
-            closing = line.find(line[i], i + 1)
-            if closing == -1:
-                return None
-            terminator.append(line[i + 1:closing])
-            quoted = True
-            i = closing + 1
-        else:
-            terminator.append(line[i])
-            i += 1
-    return "".join(terminator), not quoted, i
-
-
-def substitutions_in_expanded_text(text):
-    """Return command lists executed while expanding an unquoted-delimiter heredoc."""
-    # An unclosed substitution runs nothing; the shell rejects it and stops expansion.
-    found = []
-    i, n = 0, len(text)
-    while i < n:
-        if text[i] == "\\" or text[i:i + 2] == "$$":
-            i += 2
-        elif text[i:i + 2] == "$(":
-            _commands, closing = tokenize_command_list(text, i + 2, (i,))
-            if closing >= n:
-                break
-            found.append(text[i + 2:closing])
-            i = closing + 1
-        elif text[i] == "`":
-            closing = i + 1
-            while closing < n and text[closing] != "`":
-                closing += 2 if text[closing] == "\\" else 1
-            if closing >= n:
-                break
-            found.append(text[i + 1:closing])
-            i = closing + 1
-        else:
-            i += 1
-    return found
-
-
-def split_out_heredocs(command):
-    """Return (shell_view, heredocs), retaining consumers and encoded expansion commands."""
-    # A body is data unless its consumer executes it; unquoted delimiters also execute substitutions.
-    # Lax terminator matching exposes extra text to analysis rather than hiding commands.
-    shell_lines, heredocs = [], []
-    lines = command.replace(EXPANDED_BODY_COMMANDS_MARK, "").split("\n")
-    index = 0
-    state = HeredocScanState()
-    while index < len(lines):
-        line = lines[index]
-        terminators = scan_line_for_heredoc_markers(line, state)
-        index += 1
-        expanded_bodies = []  # (operator_index, marked command lists)
-        for terminator, body_is_expanded, operator_index in terminators:
-            body_lines = []
-            while index < len(lines):
-                candidate = lines[index].strip()
-                if candidate == terminator:
-                    index += 1
-                    break
-                if candidate.startswith(terminator + ")"):
-                    lines[index] = lines[index].lstrip()[len(terminator):]
-                    break  # The suffix beginning at ) resumes shell syntax.
-                body_lines.append(lines[index])
-                index += 1
-            body = "\n".join(body_lines)
-            heredocs.append((line, body))
-            if body_is_expanded:
-                expanded_bodies.append((operator_index, "".join(
-                    EXPANDED_BODY_COMMANDS_MARK
-                    + text.encode("utf-8", "surrogatepass").hex()
-                    + EXPANDED_BODY_COMMANDS_MARK
-                    for text in substitutions_in_expanded_text(body))))
-        for operator_index, marked in reversed(expanded_bodies):
-            line = line[:operator_index] + marked + line[operator_index:]
-        shell_lines.append(line)
-    return "\n".join(shell_lines), heredocs
-
-
-def tokenize_simple_commands(shell_text, glob_markers=None):
-    """Return simple commands with quoting resolved and substitutions preceding their consumers."""
-    # This is not a full shell grammar: redirects remain words and expansions are not performed.
-    # Glob markers preserve which characters were unquoted and unescaped.
-    commands, _end = tokenize_command_list(shell_text, 0, (), glob_markers)
-    return commands
-
-
-class SubstitutionCommand(list):
-    """Words tagged with enclosing substitutions so callers keep subshell state isolated."""
-
-    def __init__(self, words, substitution):
-        super().__init__(words)
-        self.substitution = substitution
-
-
-def read_whole_command_list(text, substitution, glob_markers):
-    """Read all commands, including those after an unmatched closing parenthesis."""
-    commands, start = [], 0
-    while start < len(text):
-        found, end = tokenize_command_list(text, start, substitution, glob_markers)
-        commands.extend(found)
-        start = end + 1
-    return commands
-
-
-def tokenize_command_list(shell_text, start, substitution, glob_markers=None):
-    """Return (commands, end), where end is the closing substitution index or text length."""
-    commands, current = [], []
-    word = None
-    open_parentheses = 0
-    brace_depths = []   # Parenthesis depth at each open ${
-    last_dollar = None  # Index of the last unquoted, unescaped $
-    # Each case carries its parenthesis depth and phase: header before in,
-    # pattern before ), then body until ;;, ;& or ;;&.
-    open_cases = []
-
-    def end_word():
-        nonlocal word
-        if word is not None:
-            text = "".join(word)
-            current.append(text)
-            word = None
-            if text == "case" and len(current) == 1:
-                open_cases.append([open_parentheses, "header"])
-            elif (open_cases and open_cases[-1][1] == "header"
-                    and len(current) == 3 and current[0] == "case" and text == "in"):
-                open_cases[-1][1] = "pattern"
-                end_command()
-            elif open_cases and text == "esac" and len(current) == 1:
-                open_cases.pop()
-
-    def end_command():
-        nonlocal current
-        end_word()
-        if current:
-            commands.append(
-                SubstitutionCommand(current, substitution) if substitution else current)
-            current = []
-
-    i, n = start, len(shell_text)
-    while i < n:
-        char = shell_text[i]
-        if char == "\\":
-            if i + 1 < n and shell_text[i + 1] == "\n":
-                i += 2
-                continue
-            if word is None:
-                word = []
-            if i + 1 < n:
-                word.append(shell_text[i + 1])
-            i += 2
-            continue
-        if char == "'":
-            if word is None:
-                word = []
-            closing = i + 1
-            if last_dollar == i - 1:
-                # $'...' permits escaped quotes, so \' does not end the string.
-                while closing < n and shell_text[closing] != "'":
-                    closing += 2 if shell_text[closing] == "\\" else 1
-            else:
-                closing = shell_text.find("'", i + 1)
-                if closing == -1:
-                    closing = n
-            word.append(shell_text[i + 1:closing])
-            i = min(closing + 1, n)
-            continue
-        if char == '"':
-            if word is None:
-                word = []
-            piece = []
-            lost_its_place = False
-            j = i + 1
-            while j < n and shell_text[j] != '"':
-                if shell_text[j] == "\\" and j + 1 < n and shell_text[j + 1] in '"\\$`':
-                    piece.append(shell_text[j + 1])
-                    j += 2
-                elif shell_text[j:j + 2] == "$$":
-                    piece.append("$$")
-                    j += 2
-                elif (shell_text[j] == "`" and not lost_its_place
-                      and len(substitution) < MAX_SUBSTITUTION_NESTING):
-                    closing = j + 1
-                    while closing < n and shell_text[closing] != "`":
-                        closing += 2 if shell_text[closing] == "\\" else 1
-                    if closing >= n:
-                        # An unmatched backtick is rejected by the shell and runs nothing.
-                        piece.append(shell_text[j])
-                        j += 1
-                        continue
-                    inner = re.sub(r'\\([$`\\"])', r"\1", shell_text[j + 1:closing])
-                    commands.extend(read_whole_command_list(
-                        inner, substitution + (j,), glob_markers))
-                    piece.append(shell_text[j:closing + 1])
-                    j = closing + 1
-                elif (shell_text[j:j + 2] == "$(" and not lost_its_place
-                      and len(substitution) < MAX_SUBSTITUTION_NESTING):
-                    substituted, closing = tokenize_command_list(
-                        shell_text, j + 2, substitution + (j,), glob_markers)
-                    commands.extend(substituted)
-                    if closing < n:
-                        piece.append(shell_text[j:closing + 1])
-                        j = closing + 1
-                    else:
-                        # An unclosed substitution must not swallow commands after the string.
-                        lost_its_place = True
-                        piece.append("$(")
-                        j += 2
-                else:
-                    piece.append(shell_text[j])
-                    j += 1
-            word.append("".join(piece))
-            i = j + 1 if j < n else n
-            continue
-        if char in " \t":
-            end_word()
-            i += 1
-            continue
-        if char == EXPANDED_BODY_COMMANDS_MARK:
-            closing = shell_text.find(EXPANDED_BODY_COMMANDS_MARK, i + 1)
-            if closing == -1:
-                closing = n
-            encoded = shell_text[i + 1:closing]
-            try:
-                body_text = bytes.fromhex(encoded).decode("utf-8", "surrogatepass")
-            except ValueError:
-                body_text = encoded  # An input NUL rather than an encoded expansion marker.
-            # Substitutions can contain heredocs whose bodies also need classification.
-            body_shell_view, _nested_heredocs = split_out_heredocs(body_text)
-            commands.extend(read_whole_command_list(
-                body_shell_view, substitution + (i,), glob_markers))
-            i = closing + 1
-            continue
-        if char in COMMAND_SEPARATOR_CHARS:
-            if (brace_depths and char in "()"
-                    and open_parentheses <= brace_depths[-1]
-                    and not (char == "(" and shell_text[i - 1] in "$<>")):
-                # Parentheses in ${...} patterns are data unless a nested substitution opened them.
-                if word is None:
-                    word = []
-                word.append(char)
-                i += 1
-                continue
-            end_word()  # Finish esac before interpreting its following parenthesis.
-            if open_cases and open_cases[-1][0] == open_parentheses:
-                expected = open_cases[-1][1]
-                if char == ")" and expected == "pattern":
-                    end_command()
-                    open_cases[-1][1] = "body"
-                    i += 1
-                    continue
-                if char == "(" and expected == "pattern" and not current:
-                    i += 1  # Optional opening parenthesis in a case pattern.
-                    continue
-                if (char == ";" and expected == "body"
-                        and shell_text[i + 1:i + 2] in (";", "&")):
-                    end_command()
-                    open_cases[-1][1] = "pattern"
-                    i += 3 if shell_text[i + 1:i + 3] == ";&" else 2
-                    continue
-            end_command()
-            if char == "(":
-                open_parentheses += 1
-            elif char == ")":
-                if open_parentheses:
-                    open_parentheses -= 1
-                elif substitution:
-                    return commands, i
-            i += 1
-            continue
-        if char == "#" and word is None:
-            # Only a word-initial unquoted # opens a shell comment; foo#bar stays one word.
-            while i < n and shell_text[i] != "\n":
-                i += 1
-            continue
-        if word is None:
-            word = []
-        if shell_text[i:i + 2] == "$$":
-            # $$ is the process ID; neither dollar starts an expansion.
-            word.append("$$")
-            i += 2
-            continue
-        if char == "$":
-            last_dollar = i
-            if shell_text[i + 1:i + 2] == "{":
-                brace_depths.append(open_parentheses)
-                word.append("${")
-                i += 2
-                continue
-        elif char == "}" and brace_depths:
-            brace_depths.pop()
-        word.append(glob_markers.get(char, char) if glob_markers else char)
-        i += 1
-    end_command()
-    return commands, n
-
-
-def is_program(word, name):
-    return word == name or word.endswith("/" + name)
 
 
 def parse_ssh_invocation(words):
@@ -725,8 +300,7 @@ def run_attachment_probe(target, server_flags, ssh_context, guard):
     if completed.returncode != 0:
         error_text = (completed.stderr or "").strip()
         # An unknown session or unavailable socket may exist on the next candidate server.
-        if ("can't find" in error_text or "no server running" in error_text
-                or "error connecting" in error_text):
+        if tmux_error_pattern.tmux_error_text_says_target_or_server_does_not_exist(error_text):
             return ("unknown", error_text)
         return ("unverifiable",
                 error_text or "probe exited %d" % completed.returncode)
@@ -826,10 +400,40 @@ def analyze_simple_command(words, ssh_context, verified, guard):
         return analyze_command_text(" ".join(remote_words), remote_context,
                                     verified, guard)
 
+    if verified:
+        return None
+    # tmux runs each command after a `\;` word as its own command, with the same global flags.
+    global_flags, tmux_commands = split_tmux_command_sequence(after)
+    for tmux_command in tmux_commands:
+        reason = analyze_tmux_command(global_flags + tmux_command, ssh_context, guard)
+        if reason:
+            return reason
+    return None
+
+
+def split_tmux_command_sequence(after):
+    """Return (global flags, [each tmux command's words]) for the words after `tmux`."""
+    index = 0
+    while index < len(after) and after[index].startswith("-"):
+        index += 2 if after[index] in TMUX_GLOBAL_VALUE_FLAGS else 1
+    commands, current = [], []
+    for word in after[index:]:
+        if word.endswith(";"):
+            # tmux also ends a command at a word whose last character is the separator.
+            if word != ";":
+                current.append(word[:-1])
+            commands.append(current)
+            current = []
+        else:
+            current.append(word)
+    commands.append(current)
+    return after[:index], commands
+
+
+def analyze_tmux_command(after, ssh_context, guard):
+    """Return a denial reason for one tmux command that types keystrokes into a target, or None."""
     verb_index = find_tmux_keystroke_verb(after)
     if verb_index is None:
-        return None
-    if verified:
         return None
     # An explicit socket names the only server these keystrokes can reach.
     server_flags = extract_tmux_server_flags(after[:verb_index])
@@ -860,25 +464,122 @@ def analyze_command_text(text, ssh_context, verified, guard):
         return None
     guard.depth += 1
     try:
-        shell_view, heredocs = split_out_heredocs(text)
-        for words in tokenize_simple_commands(shell_view):
+        for words in shell_reader.simple_commands(text):
             reason = analyze_simple_command(words, ssh_context, verified, guard)
             if reason:
                 return reason
-        for consumer_line, body in heredocs:
-            for words in tokenize_simple_commands(consumer_line):
-                if any(is_program(word, "osascript") for word in words):
-                    if APPLESCRIPT_TYPING_PATTERN.search(body):
-                        return SYNTHETIC_TYPING_REASON
-                if any(is_program(word, name) for word in words
-                       for name in SHELL_CONSUMER_PROGRAMS):
-                    reason = analyze_command_text(body, ssh_context,
-                                                  verified, guard)
-                    if reason:
-                        return reason
+            for heredoc in words.heredocs:
+                reason = analyze_heredoc(words, heredoc.body, ssh_context, verified, guard)
+                if reason:
+                    return reason
         return None
     finally:
         guard.depth -= 1
+
+
+def analyze_heredoc(words, body, ssh_context, verified, guard):
+    """Return a denial reason when the command fed this heredoc runs it as a script, or None."""
+    if any(is_program(word, "osascript") for word in words):
+        if APPLESCRIPT_TYPING_PATTERN.search(body):
+            return SYNTHETIC_TYPING_REASON
+    index, kind, receives_standard_input = ssh_or_shell_program(words)
+    if not receives_standard_input:
+        return None
+    if kind == "ssh":
+        host, carried, remote_words = parse_ssh_invocation(words[index + 1:])
+        # ssh joins its remote words, and the remote shell reads them again as a command line.
+        # The remote shell runs the heredoc when ssh has no remote command, or when a command
+        # of the remote line is a shell reading its standard input, such as bash -s; a command
+        # in a substitution there inherits that standard input too.
+        remote = shell_reader.simple_commands(" ".join(remote_words))
+        if host is not None and (not remote or any(
+                shell_reads_the_heredoc(command, remote) for command in remote)):
+            remote_context = ((NESTED_SSH_HOST, ()) if ssh_context is not None
+                              else (host, tuple(carried)))
+            return analyze_command_text(body, remote_context, verified, guard)
+        return None
+    if kind == "shell" and shell_reads_standard_input(words[index + 1:]):
+        return analyze_command_text(body, ssh_context, verified, guard)
+    return None
+
+
+def shell_reads_the_heredoc(command, remote):
+    """Return whether a command of ssh's remote line is a shell that reads the heredoc.
+
+    The heredoc is ssh's standard input. A command that replaces its standard input,
+    as with < file, reads that instead. A later stage of a pipeline reads what the
+    pipeline's first stage passes on, so it receives the heredoc unless every command
+    of that first stage replaces its standard input.
+    """
+    if replaces_standard_input(command):
+        return False
+    for shell in command.child_shell:
+        if shell.kind == shell_reader.PIPELINE_STAGE:
+            first = shell_reader.ChildShell(shell.shell_pipeline_first_stage_byte_offset,
+                                            shell_reader.PIPELINE_STAGE,
+                                            shell.shell_pipeline_first_stage_byte_offset)
+            if all(replaces_standard_input(other)
+                   for other in remote if first in other.child_shell):
+                return False
+    index, kind, receives_standard_input = ssh_or_shell_program(command)
+    return (kind == "shell" and receives_standard_input
+            and shell_reads_standard_input(command[index + 1:]))
+
+
+def replaces_standard_input(command):
+    """Return whether a command reads its standard input from a redirection of its own."""
+    return any(STANDARD_INPUT_REDIRECT_PATTERN.match(operator)
+               and (operator.lstrip("0"), target) not in (("<&", "0"), ("<", "/dev/stdin"))
+               for operator, target in command.redirects)
+
+
+def ssh_or_shell_program(words):
+    """Return (index, kind, receives_standard_input) for a command whose program is ssh or a shell.
+
+    kind is "ssh" or "shell"; for any other program the result is (None, None, False).
+    receives_standard_input is false when a wrapper, such as xargs, keeps the command's
+    standard input from the program.
+    """
+    index, receives_standard_input = shell_reader.simple_command_program_index_skipping_wrappers(words)
+    if index is None:
+        return None, None, False
+    if is_program(words[index], "ssh"):
+        return index, "ssh", receives_standard_input
+    if any(is_program(words[index], name) for name in SHELL_CONSUMER_PROGRAMS):
+        return index, "shell", receives_standard_input
+    return None, None, False
+
+
+def shell_reads_standard_input(arguments):
+    """Return whether a shell given these arguments runs the script on its standard input.
+
+    With -c the shell runs its argument; with a script file it runs the file and
+    leaves standard input to that script; -s, or no file at all, makes it read
+    standard input.
+    """
+    reads_standard_input = False
+    index = 0
+    while index < len(arguments):
+        word = arguments[index]
+        # A lone - ends a shell's options as -- does.
+        if word in ("--", "-"):
+            return reads_standard_input or index + 1 >= len(arguments)
+        if word in SHELL_OPTIONS_WITH_A_VALUE:
+            index += 2
+            continue
+        if word.startswith("--"):
+            index += 1
+            continue
+        if word[:1] in ("-", "+") and len(word) > 1 and word[1:].isalpha():
+            # bash reads +c as it reads -c.
+            if "c" in word[1:]:
+                return False
+            reads_standard_input = reads_standard_input or "s" in word[1:]
+            # -o and -O take the next word as their value, as in bash -eo pipefail.
+            index += 2 if word[-1] in "oO" else 1
+            continue
+        return reads_standard_input
+    return True
 
 
 def deny(reason):
@@ -954,7 +655,12 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
     if not command:
         return 0
     guard = GuardRun(runner, clock)
-    reason = analyze_command_text(command, None, False, guard)
+    try:
+        reason = analyze_command_text(command, None, False, guard)
+    except shell_reader.ShellParserUnavailable as error:
+        print(shell_reader.parser_unavailable_hook_output(
+            "The synthetic keystroke guard", error))
+        return 0
     if reason:
         deny(reason)
     return 0

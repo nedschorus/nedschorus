@@ -2,13 +2,15 @@
 """Deny force pushes that would replace a pull request head under review.
 
 Reviewers work against the pushed head; rewriting it invalidates their work.
-Detection is literal: shell wrappers other than env, ssh commands, heredoc
-bodies, and pushes of multiple branches are outside this guard's scope.
+Detection is literal: a push behind the wrappers the shared shell module
+knows, such as env, sudo and timeout, is read; ssh commands, heredoc bodies,
+and pushes of multiple branches are outside this guard's scope.
 The checkout determines the GitHub repository, regardless of the named remote;
 a push with no refspec is assumed to use push.default=simple.
 
-The shared tokenizer cuts at &, so a refspec after 2>&1 is lost and the push
-is judged as bare. Quoted prose is data, not an invocation.
+Commands are read with the shared shell module on tree-sitter-bash, which
+leaves redirections out of a command's words. Quoted prose is data, not an
+invocation.
 """
 
 import importlib.util
@@ -20,15 +22,13 @@ import sys
 import time
 from pathlib import Path
 
-_keystroke_guard_path = Path(__file__).with_name("synthetic-keystroke-guard-hook.py")
-_keystroke_guard_spec = importlib.util.spec_from_file_location(
-    "synthetic_keystroke_guard_hook", _keystroke_guard_path)
-keystroke_guard = importlib.util.module_from_spec(_keystroke_guard_spec)
-_keystroke_guard_spec.loader.exec_module(keystroke_guard)
-
-split_out_heredocs = keystroke_guard.split_out_heredocs
-tokenize_simple_commands = keystroke_guard.tokenize_simple_commands
-is_program = keystroke_guard.is_program
+_shell_reader_spec = importlib.util.spec_from_file_location(
+    "shell_command_tree_sitter_bash_reader_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "shell-command-tree-sitter-bash-reader-common.py")
+shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
+_shell_reader_spec.loader.exec_module(shell_reader)
+is_program = shell_reader.is_program
 
 # Stay below the hook timeout: overrunning it fails open silently.
 # Cap individual probes so one slow answer cannot consume the whole budget.
@@ -54,11 +54,8 @@ SHORT_VALUE_LETTERS = "o"
 
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
-# An env option's value must not be mistaken for the program name.
-ENV_COMMAND_VALUE_OPTIONS = {"-u", "--unset"}
-
-# Redirection targets may share a word with the operator or occupy the next word.
-REDIRECTION_WORD_PATTERN = re.compile(r"^[0-9]*(?:>>|>|<<<|<>|<)")
+# A wrapper option that runs the program in another directory.
+WRAPPER_DIRECTORY_OPTIONS = {("env", "-C"), ("env", "--chdir"), ("sudo", "-D"), ("sudo", "--chdir")}
 
 UNEXPANDED_PATTERN = re.compile(r"[$`*?]|\{\}")
 
@@ -66,8 +63,8 @@ DENY_REASON_TEMPLATE = (
     "Refused: branch {branch} has an open pull request, \"{title}\" ({url}). "
     "A force push would replace the commits under review.\n"
     "If you are force-pushing to restore what an earlier force push replaced, "
-    "stop: leave the branch as it is and message merge-lane (find its current "
-    "name with ListAgents).\n"
+    "stop: leave the branch as it is and message merge-lane-2 with SendMessage "
+    "(ListAgents lists its address).\n"
     "Otherwise, put your change in a new commit on top of the pushed branch, "
     "and push without --force.\n"
     "If the branch conflicts with main, clear the conflict with the hand-merge "
@@ -76,7 +73,7 @@ DENY_REASON_TEMPLATE = (
     "branch (git branch {branch}-rewritten), go back to the pushed head (git "
     "switch -C {branch} origin/{branch}), and redo your change as a new "
     "commit.\n"
-    "If merge-lane asked you for this force push, run it again with {escape} "
+    "If merge-lane-2 asked you for this force push, run it again with {escape} "
     "directly in front of the git push command."
 )
 
@@ -86,7 +83,7 @@ UNRESOLVED_REASON_TEMPLATE = (
     "Run the push again with the checkout path and the branch name written "
     "out, so this guard can check it: git -C <checkout path> push --force "
     "origin <branch>\n"
-    "If merge-lane asked you for this force push, run it again with {escape} "
+    "If merge-lane-2 asked you for this force push, run it again with {escape} "
     "directly in front of the git push command."
 )
 
@@ -97,15 +94,16 @@ UNCHECKED_NOTE_FIRST_LINE = (
 # A timeout or unreadable answer may succeed on retry.
 UNCHECKED_NOTE_RETRY_TEMPLATE = UNCHECKED_NOTE_FIRST_LINE + (
     "Run: gh pr list --state open --head {head_argument}\n"
-    "If that lists a pull request, or fails, message merge-lane (find its "
-    "current name with ListAgents) which branch you force-pushed, and do not "
+    "If that lists a pull request, or fails, message merge-lane-2 with SendMessage "
+    "(ListAgents lists its address) which branch you force-pushed, and do not "
     "force push again to undo it.\n"
     "If it lists nothing, no pull request was affected."
 )
 
 # A tool that cannot run needs intervention rather than another identical probe.
 UNCHECKED_NOTE_NO_RETRY_TEMPLATE = UNCHECKED_NOTE_FIRST_LINE + (
-    "Message merge-lane (find its current name with ListAgents) which branch "
+    "Message merge-lane-2 with SendMessage (ListAgents lists its address) "
+    "which branch "
     "you force-pushed, so it can check for an open pull request, and do not "
     "force push again to undo it."
 )
@@ -147,30 +145,11 @@ BUDGET_SPENT_DETAIL = (
 
 def find_git_push_invocation(words):
     """Return sanctioned status, push words and directory override, or None for a non-push."""
-    index = 0
-    sanctioned = False
-    while index < len(words) and ENVIRONMENT_ASSIGNMENT_PATTERN.match(words[index]):
-        if words[index] == ESCAPE_HATCH_ASSIGNMENT:
-            sanctioned = True
-        index += 1
-    if index < len(words) and is_program(words[index], "env"):
-        index += 1
-        while index < len(words):
-            word = words[index]
-            if ENVIRONMENT_ASSIGNMENT_PATTERN.match(word):
-                if word == ESCAPE_HATCH_ASSIGNMENT:
-                    sanctioned = True
-                index += 1
-                continue
-            if word in ENV_COMMAND_VALUE_OPTIONS:
-                index += 2
-                continue
-            if word.startswith("-"):
-                index += 1
-                continue
-            break
-    if index >= len(words) or not is_program(words[index], "git"):
+    index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
+    if index is None or not is_program(words[index], "git"):
         return None
+    sanctioned = ESCAPE_HATCH_ASSIGNMENT in words[:index]
+    wrapper_directory = directory_a_wrapper_sets(words)
     index += 1
     directory_override = None
     while index < len(words):
@@ -192,30 +171,38 @@ def find_git_push_invocation(words):
         break
     if index >= len(words) or words[index] != "push":
         return None
+    if wrapper_directory is not None:
+        directory_override = (wrapper_directory if directory_override is None
+                              else directory_joined(wrapper_directory, directory_override))
     return {"sanctioned": sanctioned,
             "push_words": words[index + 1:],
             "directory_override": directory_override}
 
 
-def words_without_redirections(words):
-    # The shell removes redirections even after --; their words must never become refspecs.
-    kept = []
-    index = 0
-    while index < len(words):
-        match = REDIRECTION_WORD_PATTERN.match(words[index])
-        if match is None:
-            kept.append(words[index])
-            index += 1
-            continue
-        target_is_next_word = match.end() == len(words[index])
-        index += 2 if target_is_next_word else 1
-    return kept
+def directory_a_wrapper_sets(words):
+    """Return the directory the wrappers in front of the program run it in, or None.
+
+    A wrapper given more than one directory option uses its last, as env does; a
+    wrapper inside another runs in a directory taken relative to the outer one's.
+    """
+    directory = None
+    wrappers = shell_reader.simple_command_wrapper_options_and_values_parsed_from_words(words)
+    for wrapper, options in wrappers:
+        own = [value for option, value in options if (wrapper, option) in WRAPPER_DIRECTORY_OPTIONS]
+        if own:
+            directory = directory_joined(directory, own[-1])
+    return directory
+
+
+def directory_joined(base, target):
+    """Return target with a ~ bash expands expanded, taken relative to base when base is given."""
+    target = shell_reader.shell_word_tilde_prefix_expand_as_bash_would(target)
+    return target if base is None else os.path.join(base, target)
 
 
 def parse_push_arguments(push_words):
     """Return (forced, refspecs) for the words after git push."""
     # Deletion is not a head rewrite; the guard's commit-on-top remedy would be wrong.
-    push_words = words_without_redirections(push_words)
     forced = False
     deletes = False
     positionals = []
@@ -277,7 +264,7 @@ def destination_branch(refspec):
 
 
 def resolve_directory(base, target):
-    expanded = os.path.expanduser(target)
+    expanded = shell_reader.shell_word_tilde_prefix_expand_as_bash_would(target)
     if os.path.isabs(expanded):
         return os.path.normpath(expanded)
     return os.path.normpath(os.path.join(base, expanded))
@@ -419,13 +406,11 @@ def analyze_push(invocation, effective_directory, directory_is_unresolved, guard
 
 def analyze_command_text(command, payload_cwd, guard):
     """Return the first force-push decision while tracking literal directory changes."""
-    # A command substitution inherits its parent directory; its cd must not affect the parent.
-    shell_view, _heredoc_bodies = split_out_heredocs(command)
-    directories = {(): (payload_cwd, None)}  # Per substitution: (directory, unresolved cd target).
-    for words in tokenize_simple_commands(shell_view):
-        if not words:
-            continue
-        substitution = getattr(words, "substitution", ())
+    # A child shell, such as a command substitution or ( ... ), inherits its parent's
+    # directory; its cd must not affect the parent.
+    directories = {(): (payload_cwd, None)}  # Per child shell: (directory, unresolved cd target).
+    for words in shell_reader.simple_commands(command):
+        substitution = words.child_shell
         enclosing = substitution
         while enclosing not in directories:
             enclosing = enclosing[:-1]
@@ -485,7 +470,12 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
         return 0
     payload_cwd = payload.get("cwd") or os.getcwd()
     guard = GuardRun(runner, clock)
-    decision, reason = analyze_command_text(command, payload_cwd, guard)
+    try:
+        decision, reason = analyze_command_text(command, payload_cwd, guard)
+    except shell_reader.ShellParserUnavailable as error:
+        print(shell_reader.parser_unavailable_hook_output(
+            "The force-push guard", error))
+        return 0
     if decision == "deny":
         deny(reason)
     elif decision == "unchecked":

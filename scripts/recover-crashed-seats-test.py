@@ -21,6 +21,7 @@ import io
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -52,6 +53,26 @@ recovery.agents_root_is_movable_on_this_machine = lambda: True
 # one through --checkout.
 recovery.durable_checkout = SCRIPT_PATH.resolve().parent.parent
 
+# Off macOS, launch_seat writes the folder-trust and onboarding presets into
+# ~/.claude.json before it starts a supervisor. No case may write the real one:
+# every case writes this scratch file instead, and the "CLAUDE.JSON PRESETS:"
+# cases read it.
+CLAUDE_JSON_SCRATCH_DIRECTORY = Path(tempfile.mkdtemp(prefix="recover-crashed-seats-claude-json-"))
+atexit.register(shutil.rmtree, CLAUDE_JSON_SCRATCH_DIRECTORY, True)
+CLAUDE_JSON_SCRATCH_PATH = CLAUDE_JSON_SCRATCH_DIRECTORY / ".claude.json"
+recovery.claude_json_presets.claude_json_path = lambda: CLAUDE_JSON_SCRATCH_PATH
+
+# A real run on ned-box opens a window on the user's Mac after each seat it brings
+# up. No case may reach the Mac: every case records its window requests here, the
+# "MAC WINDOW:" cases put the real opener back on purpose behind a stub opener, and
+# an ssh that reaches the real opener anyway is a program that always fails.
+real_agent_seat_mac_window_open_unless_tmux_client_already_attached = (
+    recovery.agent_seat_mac_window_open_unless_tmux_client_already_attached)
+mac_window_requests = []
+recovery.agent_seat_mac_window_open_unless_tmux_client_already_attached = (
+    lambda name: mac_window_requests.append(name) or (True, "a window onto it opened on the Mac"))
+os.environ["NEDSCHORUS_SSH_PROGRAM"] = "false"
+
 failures = []
 
 # What Claude Code 2.1.296 sets for an agent-session's commands, plus the tmux and supervisor
@@ -68,6 +89,7 @@ CALLING_AGENT_SESSION_TEST_VARIABLES = {
     "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "calling-program",
     "TMUX": "/tmp/tmux-1000/calling-seat,1,0",
     "TMUX_PANE": "%0",
+    "IS_DEMO": "1",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "calling-seat",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "/calling/seat/directory",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": "calling-supervisor-session",
@@ -193,6 +215,15 @@ def patch(monkey_target, value):
     setattr(recovery, monkey_target, value)
 
 
+def as_main_reports_it(line: str, name: str = "seat-a") -> str:
+    """A line recover_seat returns, as main reports it: on ned-box main puts the window
+    clause from the suite's stub opener before the reach clause."""
+    reach = recovery.reach_clause_for_a_running_seat(name)
+    if recovery.launcher_path() is not None or not line.endswith(reach):
+        return line
+    return line[:-len(reach)] + "; a window onto it opened on the Mac" + reach
+
+
 def all_dead():
     """Monkeypatch the world to 'seat is fully dead, directory vacant'."""
     patch("tmux_session_alive_anywhere", lambda name: (False, ""))
@@ -242,7 +273,7 @@ def an_operator_terminal():
 
 
 def capture_retires(retired, killed_sockets=("seat-a",), failure=None,
-                    the_session_then_dies=True):
+                    the_session_then_dies=True, check=None):
     """Stand in for resupervise-seat.py's retire step, recording each call.
     With the_session_then_dies the tmux probe flips to dead afterwards, as a
     real kill leaves it."""
@@ -250,7 +281,7 @@ def capture_retires(retired, killed_sockets=("seat-a",), failure=None,
         retired.append(name)
         if failure is None and the_session_then_dies:
             patch("tmux_session_alive_anywhere", lambda name: (False, ""))
-        return list(killed_sockets), failure
+        return list(killed_sockets), failure, check
     recovery.resupervise.retire_seat_tmux_session = fake_retire
 
 
@@ -274,14 +305,16 @@ def tmux_server_answers(panes_by_socket, tmux_cannot_be_run=False,
     """run_tmux for the real proof: which sockets hold the seat's session, and
     what `list-panes` prints for each (one "<pane pid>\\t<command>" per line)."""
     class Answer:
-        def __init__(self, returncode, stdout=""):
-            self.returncode, self.stdout, self.stderr = returncode, stdout, ""
+        def __init__(self, returncode, stdout="", stderr=""):
+            self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
 
     def fake_run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
         if tmux_cannot_be_run:
             return None
         if arguments_after_tmux[0] == "has-session":
-            return Answer(0 if socket_name in panes_by_socket else 1)
+            if socket_name in panes_by_socket:
+                return Answer(0)
+            return Answer(1, stderr=f"can't find session: {arguments_after_tmux[2][1:]}")
         if arguments_after_tmux[0] == "list-panes":
             if list_panes_exit_code:
                 return Answer(list_panes_exit_code)
@@ -525,8 +558,8 @@ def run_reach_clause_cases(root: Path):
     machines = [
         ("the Mac", lambda: mac_launcher, "; reach it with: launch-claude-mac seat-a"),
         ("ned-box", lambda: None,
-         "; reach it with: launch-claude-ubuntu seat-a from the Mac, "
-         "or tmux -L seat-a attach -t seat-a here"),
+         "; reach it with: /Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a "
+         "from the Mac, or tmux -L seat-a attach -t seat-a here"),
     ]
     try:
         for machine, launcher, expected_clause in machines:
@@ -587,13 +620,13 @@ def run_reach_clause_cases(root: Path):
 
 
 def run_seat_listing_cases(root: Path):
-    """--all and the crash watcher list only directories that ever held a seat."""
+    """--all and the crash watcher list only directories with a supervisor state or a handoff."""
     agents_root = root / "listing-agents"
     handoff_directory = root / "listing-handoffs"
     projects_root = root / "listing-projects"
     for directory in (agents_root / "never-ran", agents_root / "had-a-supervisor",
                       agents_root / "had-a-handoff", agents_root / "had-transcripts",
-                      handoff_directory, projects_root):
+                      agents_root / "topic-worktree", handoff_directory, projects_root):
         directory.mkdir(parents=True, exist_ok=True)
     recovery.supervisor.supervisor_state_path(handoff_directory, "had-a-supervisor").write_text(
         "{}", encoding="utf-8")
@@ -601,11 +634,380 @@ def run_seat_listing_cases(root: Path):
         "restart-counter: 1\n", encoding="utf-8")
     recovery.harness_project_directory(agents_root / "had-transcripts", projects_root).mkdir(
         parents=True)
+    (agents_root / "topic-worktree" / ".git").write_text(
+        "gitdir: /elsewhere/.git/worktrees/topic-worktree\n", encoding="utf-8")
+    write_transcript(recovery.harness_project_directory(
+        agents_root / "topic-worktree", projects_root),
+        "reviewer-session", "Read the target in full", records=4)
     listed = recovery.list_agent_seat_names_with_agent_session_records(
-        agents_root, handoff_directory, projects_root)
-    check("the seat listing leaves out a directory that never held a seat, and keeps one with a "
-          "supervisor state, a handoff or transcripts",
-          listed == ["had-a-handoff", "had-a-supervisor", "had-transcripts"], repr(listed))
+        agents_root, handoff_directory)
+    check("the seat listing keeps a directory with a supervisor state or a handoff, and leaves "
+          "out one that never held a seat, one with transcripts only, and a topic worktree "
+          "where a Claude session ran",
+          listed == ["had-a-handoff", "had-a-supervisor"], repr(listed))
+
+
+def run_tmux_has_session_answer_cases(root: Path):
+    """has-session's exit 1 is an answer only when tmux says the session or server is absent."""
+    class Answer:
+        def __init__(self, returncode, stderr=""):
+            self.returncode, self.stdout, self.stderr = returncode, "", stderr
+
+    def tmux_prints(returncode, stderr):
+        patch("run_tmux", lambda *arguments, socket_name=None, environment=None:
+              Answer(returncode, stderr))
+
+    patch("tmux_session_alive_anywhere", real_tmux_session_alive_anywhere)
+    patch("tmux_session_is_a_leftover_idle_shell", real_tmux_session_is_a_leftover_idle_shell)
+    # Each is what tmux 3.6 prints: another session only, a server with no sessions,
+    # a socket nobody listens on, and no socket file.
+    for absent in ("can't find session: seat-a", "no current target",
+                   "no server running on /tmp/tmux-1000/seat-a",
+                   "error connecting to /tmp/tmux-1000/seat-a (No such file or directory)"):
+        tmux_prints(1, absent)
+        alive, detail = recovery.tmux_session_alive_anywhere("seat-a")
+        check(f"tmux's {absent!r} answers that the session does not exist",
+              alive is False, repr((alive, detail)))
+    tmux_prints(1, "protocol version mismatch (client 9, server 8)")
+    alive, detail = recovery.tmux_session_alive_anywhere("seat-a")
+    check("a has-session that fails with any other message is no answer, and says tmux's reason",
+          alive is None and "exited 1: protocol version mismatch (client 9, server 8)" in detail
+          and detail.endswith("so seat liveness cannot be checked — refusing rather than guessing"),
+          repr((alive, detail)))
+    def named_socket_errs_and_default_socket_answers(default_answer):
+        def answer(*arguments, socket_name=None, environment=None):
+            if socket_name == "seat-a":
+                return Answer(1, "protocol version mismatch (client 9, server 8)")
+            return default_answer
+        patch("run_tmux", answer)
+
+    named_socket_errs_and_default_socket_answers(Answer(0))
+    alive, detail = recovery.tmux_session_alive_anywhere("seat-a")
+    check("a session on the legacy default socket is found when the seat's own socket errs",
+          alive is True and "socket 'default'" in detail, repr((alive, detail)))
+    named_socket_errs_and_default_socket_answers(Answer(1, "can't find session: seat-a"))
+    alive, detail = recovery.tmux_session_alive_anywhere("seat-a")
+    check("an error on the seat's own socket is still no answer when the default socket "
+          "has no such session",
+          alive is None and "protocol version mismatch" in detail, repr((alive, detail)))
+    tmux_prints(1, "protocol version mismatch (client 9, server 8)")
+    proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(
+        "seat-a", root / "has-session-error-seat")
+    check("the leftover-shell proof fails, with tmux's reason, when has-session fails with an "
+          "error rather than answering",
+          proven is False and panes == [] and "protocol version mismatch" in detail,
+          repr((proven, panes, detail)))
+    patch("run_tmux", real_run_tmux)
+
+
+def run_mac_window_cases(root: Path):
+    """On ned-box, a seat a run brings up gets a window on the user's Mac attached to it."""
+    real_launcher_path = recovery.launcher_path
+    real_run_tmux = recovery.run_tmux
+    real_subprocess_run = recovery.subprocess.run
+    real_seat_supervisor_confirmed_by_ps = recovery.seat_supervisor_confirmed_by_ps
+    reach = ("; reach it with: /Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a "
+             "from the Mac, or tmux -L seat-a attach -t seat-a here")
+    opener_commands = []
+
+    def tmux_reports_clients(client_lines, returncode=0, error_text="", cannot_answer=False):
+        def fake_run_tmux(*arguments, socket_name=None, environment=None):
+            if arguments[:1] == ("list-clients",):
+                if cannot_answer:
+                    return None
+                return subprocess.CompletedProcess(["tmux"], returncode, stdout=client_lines,
+                                                   stderr=error_text)
+            return real_run_tmux(*arguments, socket_name=socket_name, environment=environment)
+        return fake_run_tmux
+
+    def opener_answers(returncode, output="", error=None, error_output=""):
+        def fake_run(command, **_):
+            opener_commands.append(command)
+            if error is not None:
+                raise error
+            return subprocess.CompletedProcess(command, returncode, stdout=output,
+                                               stderr=error_output)
+        return fake_run
+
+    def recover_through_main(workspace, *extra):
+        output = io.StringIO()
+        with redirect_stdout(output), redirect_stderr(io.StringIO()):
+            exit_code = recovery.main([workspace.name, *extra,
+                                       "--agents-root", str(workspace.agents_root),
+                                       "--handoff-dir", str(workspace.handoffs),
+                                       "--projects-root", str(workspace.projects)])
+        return exit_code, output.getvalue()
+
+    try:
+        recovery.launcher_path = lambda: None
+        patch("agent_seat_mac_window_open_unless_tmux_client_already_attached",
+              real_agent_seat_mac_window_open_unless_tmux_client_already_attached)
+
+        # A restart that came up: the window opens, the report says so, the reach
+        # clause stays last, and the run exits 0.
+        workspace = Workspace(root / "mac-window-opened")
+        all_dead()
+        capture_launches(workspace)
+        write_transcript(workspace.project_directory(), "crashed-session", "real work", records=6)
+        patch("run_tmux", tmux_reports_clients(""))
+        recovery.subprocess.run = opener_answers(0)
+        opener_commands.clear()
+        exit_code, output = recover_through_main(workspace)
+        recovery.subprocess.run = real_subprocess_run
+        check("MAC WINDOW: after a restart that came up, the opener is asked for the seat's "
+              "reconnecting launch-claude-ubuntu window",
+              len(opener_commands) == 1
+              and opener_commands[0][1] == str(recovery.WINDOW_SENDER_PATH)
+              and opener_commands[0][2:] == ["--agent-seat", "seat-a"],
+              opener_commands)
+        check("MAC WINDOW: the report says the window opened, keeps the reach clause last, "
+              "and the run exits 0",
+              exit_code == 0 and "; a window onto it opened on the Mac" + reach in output
+              and output.rstrip().endswith(reach), (exit_code, output))
+
+        # The opener fails: the restart still counts, the report names the failure,
+        # the opener's last line and the by-hand command, and the run exits 3.
+        workspace = Workspace(root / "mac-window-not-opened")
+        all_dead()
+        capture_launches(workspace)
+        write_transcript(workspace.project_directory(), "crashed-session", "real work", records=6)
+        patch("run_tmux", tmux_reports_clients(""))
+        recovery.subprocess.run = opener_answers(
+            1, "open-mac-window-from-ned-box: could not reach the Mac at el@mac, so no window "
+               "was opened: ssh: connect to host mac port 22: Operation timed out.\n"
+               "Tell the user what this says, and the command you wanted shown, so he can "
+               "run it himself.\n")
+        exit_code, output = recover_through_main(workspace)
+        recovery.subprocess.run = real_subprocess_run
+        log_text = (workspace.handoffs / "recover-crashed-seats-log.txt").read_text(
+            encoding="utf-8") if (workspace.handoffs / "recover-crashed-seats-log.txt").exists() else ""
+        check("MAC WINDOW: an opener failure leaves the restart counted, names WINDOW NOT "
+              "OPENED, the opener's cause line and the Mac command, and exits 3",
+              exit_code == recovery.ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS == 3
+              and "relaunched resuming crashed-session" in output
+              and "WINDOW NOT OPENED on the Mac" in output
+              and ("exited 1: open-mac-window-from-ned-box: could not reach the Mac at el@mac, "
+                   "so no window was opened: ssh: connect to host mac port 22: Operation timed "
+                   "out. The seat is running") in output
+              and "Tell the user what this says" not in output
+              and "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a" in output
+              and output.count("/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu seat-a") == 1
+              and (f"open the seat's window by running on ned-box `python3 "
+                   f"{recovery.WINDOW_SENDER_PATH} --agent-seat seat-a`"
+                   in output)
+              and output.rstrip().endswith(reach)
+              and "WINDOW NOT OPENED" in log_text,
+              (exit_code, output, log_text))
+        check("MAC WINDOW: a window failure is not counted as a seat left down",
+              not any(marker in output for marker in recovery.SEAT_NOT_RECOVERED_REPORT_MARKERS),
+              output)
+
+        # The opener cannot be run at all: reported the same way.
+        workspace = Workspace(root / "mac-window-opener-missing")
+        all_dead()
+        capture_launches(workspace)
+        patch("run_tmux", tmux_reports_clients(""))
+        recovery.subprocess.run = opener_answers(0, error=OSError("no such file"))
+        exit_code, output = recover_through_main(workspace)
+        recovery.subprocess.run = real_subprocess_run
+        check("MAC WINDOW: an opener that cannot run is reported, and the run exits 3",
+              exit_code == 3 and "WINDOW NOT OPENED" in output and "no such file" in output,
+              (exit_code, output))
+
+        # The Mac opened the window but warned on stderr: the warning stays in the report.
+        workspace = Workspace(root / "mac-window-opened-with-warning")
+        all_dead()
+        capture_launches(workspace)
+        patch("run_tmux", tmux_reports_clients(""))
+        recovery.subprocess.run = opener_answers(
+            0, "opened\n", error_output="mac-window-opened-for-ned-box-forced-command: the window "
+            "opened, but its outcome could not be added to the request log: disk full\n")
+        exit_code, output = recover_through_main(workspace)
+        recovery.subprocess.run = real_subprocess_run
+        check("MAC WINDOW: a window the Mac opened with a warning keeps the warning in the "
+              "report, and the run exits 0",
+              exit_code == 0 and "a window onto it opened on the Mac, which also reported: "
+              "mac-window-opened-for-ned-box-forced-command: the window opened, but its outcome "
+              "could not be added to the request log: disk full" + reach in output,
+              (exit_code, output))
+
+        # tmux cannot say whether a window is attached: no window, reported, exit 3.
+        for case_name, fake in (
+                ("tmux cannot answer", tmux_reports_clients("", cannot_answer=True)),
+                ("list-clients fails", tmux_reports_clients("", returncode=1,
+                                                            error_text="no server running"))):
+            workspace = Workspace(root / f"mac-window-probe-failed-{case_name.split()[0]}")
+            all_dead()
+            capture_launches(workspace)
+            patch("run_tmux", fake)
+            recovery.subprocess.run = opener_answers(0)
+            opener_commands.clear()
+            exit_code, output = recover_through_main(workspace)
+            recovery.subprocess.run = real_subprocess_run
+            check(f"MAC WINDOW: when {case_name}, no window is opened, the report says why, "
+                  "and the run exits 3",
+                  exit_code == 3 and not opener_commands
+                  and "WINDOW NOT OPENED on the Mac — no window was opened, because whether one "
+                      "is already attached is unknown" in output
+                  and (case_name != "list-clients fails" or "no server running" in output),
+                  (exit_code, opener_commands, output))
+
+        # A window already attached: no second window.
+        workspace = Workspace(root / "mac-window-already-attached")
+        all_dead()
+        capture_launches(workspace)
+        patch("run_tmux", tmux_reports_clients("/dev/pts/7\n"))
+        recovery.subprocess.run = opener_answers(0)
+        opener_commands.clear()
+        exit_code, output = recover_through_main(workspace)
+        recovery.subprocess.run = real_subprocess_run
+        check("MAC WINDOW: a seat with a window already attached gets no second window",
+              exit_code == 0 and not opener_commands
+              and "a window was already attached to it, so no other was opened" in output,
+              (exit_code, opener_commands, output))
+
+        # A seat that did not come up, a seat already running, a dry run, and the Mac:
+        # no window is asked for.
+        patch("agent_seat_mac_window_open_unless_tmux_client_already_attached",
+              lambda name: mac_window_requests.append(name) or (True, "a window onto it opened on the Mac"))
+        workspace = Workspace(root / "mac-window-did-not-come-up")
+        all_dead()
+        capture_launches(workspace)
+        seat_comes_up(False, "a supervisor started and stopped again within 6s")
+        mac_window_requests.clear()
+        exit_code, output = recover_through_main(workspace)
+        check("MAC WINDOW: a seat that did not come up gets no window",
+              exit_code == 1 and not mac_window_requests
+              and "LAUNCHED BUT DID NOT COME UP" in output, (exit_code, output))
+
+        workspace = Workspace(root / "mac-window-already-running")
+        patch("tmux_session_alive_anywhere", lambda name: (True, "tmux session 'seat-a' is alive"))
+        patch("seat_supervisor_confirmed_by_ps",
+              lambda name, lock_path: (recovery.SUPERVISOR_CONFIRMED_BY_PS, "it is the supervisor"))
+        capture_launches(workspace)
+        mac_window_requests.clear()
+        exit_code, output = recover_through_main(workspace)
+        check("MAC WINDOW: a seat already running gets no window from recovery",
+              not mac_window_requests and "relaunched" not in output, (exit_code, output))
+
+        patch("seat_supervisor_confirmed_by_ps", real_seat_supervisor_confirmed_by_ps)
+        workspace = Workspace(root / "mac-window-dry-run")
+        all_dead()
+        capture_launches(workspace)
+        mac_window_requests.clear()
+        exit_code, output = recover_through_main(workspace, "--dry-run")
+        check("MAC WINDOW: a dry run asks for no window",
+              not mac_window_requests and ": would " in output, (exit_code, output))
+
+        recovery.launcher_path = lambda: Path("/fake/scripts/launch-claude-mac")
+        workspace = Workspace(root / "mac-window-on-the-mac")
+        all_dead()
+        capture_launches(workspace)
+        mac_window_requests.clear()
+        exit_code, output = recover_through_main(workspace)
+        check("MAC WINDOW: on the Mac recovery asks ned-box's opener for nothing",
+              exit_code == 0 and not mac_window_requests, (exit_code, output))
+    finally:
+        recovery.launcher_path = real_launcher_path
+        recovery.subprocess.run = real_subprocess_run
+        patch("run_tmux", real_run_tmux)
+        patch("seat_supervisor_confirmed_by_ps", real_seat_supervisor_confirmed_by_ps)
+        all_dead()
+        patch("agent_seat_mac_window_open_unless_tmux_client_already_attached",
+              lambda name: mac_window_requests.append(name) or (True, "a window onto it opened on the Mac"))
+        seat_comes_up()
+
+
+def run_claude_json_presets_cases(root: Path):
+    """Off macOS, launch_seat starts the supervisor in tmux itself, without a
+    launcher, so it writes the launchers' presets: the supervisor starts
+    agent-sessions with IS_DEMO=1, which skips the folder-trust dialog."""
+    real_launcher_path = recovery.launcher_path
+    real_run_tmux = recovery.run_tmux
+    launch_seat_before_these_cases = recovery.launch_seat
+    patch("launch_seat", real_launch_seat)
+    workspace = Workspace(root / "claude-json-presets")
+    tmux_calls = []
+
+    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None):
+        # What the file held when tmux was asked to start the supervisor.
+        tmux_calls.append(CLAUDE_JSON_SCRATCH_PATH.read_text(encoding="utf-8")
+                          if CLAUDE_JSON_SCRATCH_PATH.exists() else None)
+
+        class Done:
+            returncode = 0
+        return Done()
+
+    recovery.launcher_path = lambda: None
+    recovery.run_tmux = capture_tmux
+    try:
+        CLAUDE_JSON_SCRATCH_PATH.unlink(missing_ok=True)
+        exit_code = real_launch_seat(workspace.name, workspace.seat_directory,
+                                     workspace.handoffs, "")
+        held = json.loads(tmux_calls[0]) if tmux_calls and tmux_calls[0] else {}
+        check("CLAUDE.JSON PRESETS: the box branch trusts the seat's folder before tmux "
+              "starts its supervisor",
+              exit_code == 0 and held.get("projects", {}).get(
+                  str(workspace.seat_directory), {}).get("hasTrustDialogAccepted") is True,
+              (exit_code, held))
+        check("CLAUDE.JSON PRESETS: and records onboarding done, with a theme",
+              held.get("hasCompletedOnboarding") is True and held.get("theme") == "light",
+              held)
+
+        unparseable = '{"oauthAccount": {"accountUuid": "not-a-real'
+        CLAUDE_JSON_SCRATCH_PATH.write_text(unparseable, encoding="utf-8")
+        tmux_calls.clear()
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            exit_code = real_launch_seat(workspace.name, workspace.seat_directory,
+                                         workspace.handoffs, "")
+        check("CLAUDE.JSON PRESETS: a ~/.claude.json that is not valid JSON stops the launch "
+              "with exit 1, before tmux, and names the file",
+              exit_code == 1 and tmux_calls == []
+              and str(CLAUDE_JSON_SCRATCH_PATH) in stderr.getvalue()
+              and "not launched" in stderr.getvalue(),
+              (exit_code, tmux_calls, stderr.getvalue()))
+        check("CLAUDE.JSON PRESETS: and leaves that file as it was",
+              CLAUDE_JSON_SCRATCH_PATH.read_text(encoding="utf-8") == unparseable,
+              CLAUDE_JSON_SCRATCH_PATH.read_text(encoding="utf-8"))
+
+        # A file that is not UTF-8 is reported the same way, not raised past recovery.
+        not_utf_8 = b'{"oauthAccount": \xff\xfe}'
+        CLAUDE_JSON_SCRATCH_PATH.write_bytes(not_utf_8)
+        tmux_calls.clear()
+        stderr = io.StringIO()
+        try:
+            with redirect_stderr(stderr):
+                exit_code = real_launch_seat(workspace.name, workspace.seat_directory,
+                                             workspace.handoffs, "")
+        except Exception as error:
+            exit_code = f"raised {error!r}"
+        check("CLAUDE.JSON PRESETS: a ~/.claude.json that is not valid UTF-8 stops the launch "
+              "with exit 1, before tmux, and gives the not-valid-JSON remedy, which the user "
+              "carries out",
+              exit_code == 1 and tmux_calls == []
+              and "not launched" in stderr.getvalue()
+              and "that is valid JSON; after that, run this recovery again." in stderr.getvalue()
+              and "so the user restores or moves it; an agent that reads this tells the user "
+                  "and does not replace the file." in stderr.getvalue(),
+              (exit_code, tmux_calls, stderr.getvalue()))
+        check("CLAUDE.JSON PRESETS: and leaves that file as it was",
+              CLAUDE_JSON_SCRATCH_PATH.read_bytes() == not_utf_8,
+              CLAUDE_JSON_SCRATCH_PATH.read_bytes())
+
+        # The report a failed launch_seat gives: the seat is still down.
+        CLAUDE_JSON_SCRATCH_PATH.write_text(unparseable, encoding="utf-8")
+        all_dead()
+        seat_comes_up(True, "")
+        with redirect_stderr(io.StringIO()):
+            report = workspace.recover()
+        check("CLAUDE.JSON PRESETS: recovery reports that launch as LAUNCH FAILED",
+              "LAUNCH FAILED" in report, report)
+    finally:
+        recovery.launcher_path = real_launcher_path
+        recovery.run_tmux = real_run_tmux
+        patch("launch_seat", launch_seat_before_these_cases)
+        CLAUDE_JSON_SCRATCH_PATH.unlink(missing_ok=True)
 
 
 def run_came_up_cases(root: Path):
@@ -979,6 +1381,8 @@ with tempfile.TemporaryDirectory() as temporary:
         "handoff_supervisor_under_test", SUPERVISOR_SCRIPT)
     supervisor_module = importlib.util.module_from_spec(supervisor_spec)
     supervisor_spec.loader.exec_module(supervisor_module)
+    # Every launch writes the onboarding presets; this copy of the supervisor writes the scratch file.
+    supervisor_module.claude_json_presets.claude_json_path = lambda: CLAUDE_JSON_SCRATCH_PATH
 
     launched = []
     class FakeProcess:
@@ -1044,7 +1448,8 @@ with tempfile.TemporaryDirectory() as temporary:
             else:
                 os.environ[name] = value
     started = started_environments[0] if started_environments else {}
-    seat_owned = ("TMUX", "TMUX_PANE", "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
+    # IS_DEMO is the supervisor's own: launch_agent_session sets it for every agent-session.
+    seat_owned = ("TMUX", "TMUX_PANE", "IS_DEMO", "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
                   "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
                   "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID")
     leaked = sorted(name for name in CALLING_AGENT_SESSION_TEST_VARIABLES
@@ -1061,7 +1466,8 @@ with tempfile.TemporaryDirectory() as temporary:
     # F1: an unanswerable tmux axis refuses (fail closed, like lsof).
     workspace = Workspace(root / "r1")
     patch("tmux_session_alive_anywhere",
-          lambda name: (None, "tmux cannot be run here, so seat liveness cannot be "
+          lambda name: (None, "tmux could not be run, or did not answer within 30 seconds, "
+                              "so seat liveness cannot be "
                               "checked — refusing rather than guessing"))
     patch("seat_directory_occupied",
           lambda directory, apart_from_process_ids=(): (False, ""))
@@ -1326,7 +1732,7 @@ with tempfile.TemporaryDirectory() as temporary:
 
     # Round 3 P1: an underscore-named seat's transcripts are FOUND — the
     # mangling is the harness's (every non-alphanumeric becomes a dash),
-    # delegated to watch-agent-dialogs' probe-verified rule.
+    # delegated to the shared project-directory module's probe-verified rule.
     workspace = Workspace(root / "r10", name="under_score_seat")
     all_dead()
     mangled = recovery.harness_project_directory(workspace.seat_directory,
@@ -1779,11 +2185,17 @@ with tempfile.TemporaryDirectory() as temporary:
               and window_launches[-1][1] == "--resume-session-id main-window",
               window_launches[-1])
 
-        # The Ubuntu box is headless and has no iTerm2 or launch-claude-mac:
-        # refused with the reason, never silently downgraded to detached.
+        # On ned-box every seat a run brings up gets a window on the Mac, so the
+        # flag is accepted there and changes nothing: the seat launches detached
+        # and its window on the Mac is requested after it comes up.
         recovery.launcher_path = lambda: None
-        errors = io.StringIO()
-        with redirect_stderr(errors):
+        workspace = Workspace(root / "window-main-ned-box")
+        all_dead()
+        write_transcript(workspace.project_directory(), "main-window-box",
+                         "real work", records=5)
+        detached_before, windows_before = len(detached_launches), len(window_launches)
+        mac_window_requests.clear()
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             try:
                 exit_code = recovery.main([workspace.name, "--open-iterm-window-per-seat",
                                            "--agents-root", str(workspace.agents_root),
@@ -1791,9 +2203,13 @@ with tempfile.TemporaryDirectory() as temporary:
                                            "--projects-root", str(workspace.projects)])
             except SystemExit as stop_request:
                 exit_code = stop_request.code
-        check("WINDOW: refused off macOS, with the reason",
-              exit_code == 2 and "macOS" in errors.getvalue(),
-              (exit_code, errors.getvalue()))
+        check("WINDOW: on ned-box the flag is accepted, the seat launches detached and "
+              "its window on the Mac is requested",
+              exit_code == 0 and len(detached_launches) == detached_before + 1
+              and len(window_launches) == windows_before
+              and mac_window_requests == [workspace.name],
+              (exit_code, detached_launches[detached_before:],
+               window_launches[windows_before:], mac_window_requests))
 
         # iTerm2's parser takes one level of quoting and has no POSIX '\''
         # escape (measured 2026-09-02, open-iterm-window-running-command), so
@@ -2262,7 +2678,7 @@ with tempfile.TemporaryDirectory() as temporary:
     (stub_directory / "tmux").write_text(
         '#!/bin/sh\n'
         'for argument in "$@"; do\n'
-        '  case "$argument" in (has-session) exit 1;; esac\n'
+        '  case "$argument" in (has-session) echo "can\'t find session" >&2; exit 1;; esac\n'
         'done\n'
         f'printf \'%s\\n\' "$@" >> "{capture_path}"\n'
         'exit 0\n', encoding="utf-8")
@@ -2570,7 +2986,8 @@ with tempfile.TemporaryDirectory() as temporary:
     # RUNNING (below), so the refusal here is one that means something is wrong
     # whatever the lock says: tmux could not be asked.
     patch("tmux_session_alive_anywhere",
-          lambda name: (None, "tmux cannot be run here, so seat liveness cannot be "
+          lambda name: (None, "tmux could not be run, or did not answer within 30 seconds, "
+                              "so seat liveness cannot be "
                               "checked — refusing rather than guessing"))
     exit_code = recovery.main(["seat-a",
                                "--agents-root", str(workspace.agents_root),
@@ -2579,7 +2996,7 @@ with tempfile.TemporaryDirectory() as temporary:
     after_refusal = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
     check("LOG: a refusal is a decision too — logged, run exits 1",
           exit_code == 1 and after_refusal.startswith(log_text)
-          and "seat-a: REFUSED — tmux cannot be run here" in after_refusal[len(log_text):],
+          and "seat-a: REFUSED — tmux could not be run, or did not answer within 30 seconds" in after_refusal[len(log_text):],
           (exit_code, after_refusal))
     patch("tmux_session_alive_anywhere",
           lambda name: (True, f"tmux session '{name}' is alive on socket '{name}'"))
@@ -2613,9 +3030,12 @@ with tempfile.TemporaryDirectory() as temporary:
           completed.returncode != 0 and "different recoveries" in completed.stderr,
           completed.stderr)
 
+    run_claude_json_presets_cases(root)
     run_came_up_cases(root)
     run_reach_clause_cases(root)
     run_seat_listing_cases(root)
+    run_tmux_has_session_answer_cases(root)
+    run_mac_window_cases(root)
 
     # The same thing through recover_seat, on each path that can offer the
     # degraded restart and on one that cannot.
@@ -2757,7 +3177,8 @@ with tempfile.TemporaryDirectory() as temporary:
 
     def refused_for_tmux_that_cannot_be_asked(workspace):
         patch("tmux_session_alive_anywhere",
-              lambda name: (None, "tmux cannot be run here, so seat liveness cannot be "
+              lambda name: (None, "tmux could not be run, or did not answer within 30 seconds, "
+                                  "so seat liveness cannot be "
                                   "checked — refusing rather than guessing"))
 
     def refused_for_an_occupied_seat_directory(workspace):
@@ -2980,14 +3401,27 @@ with tempfile.TemporaryDirectory() as temporary:
     # supervisor of it confirmed by ps — its lock names process 5000 plus the
     # seat's position — so it is ALREADY RUNNING (user-ruled 2026-09-16);
     # selection is what main is given in place of the names, so --all and
-    # --dry-run can be driven too.
-    def main_on_seats(case_directory, names, failing, running=frozenset(), selection=None):
+    # --dry-run can be driven too. topic_worktrees are directories beside the
+    # seats that hold transcripts but no supervisor state, as a topic worktree
+    # where a cold-read reviewer ran does.
+    def main_on_seats(case_directory, names, failing, running=frozenset(), selection=None,
+                      topic_worktrees=()):
         workspace = Workspace(case_directory, name=names[0])
         for name in names:
             (workspace.agents_root / name).mkdir(parents=True, exist_ok=True)
             write_transcript(recovery.harness_project_directory(
                 workspace.agents_root / name, workspace.projects),
                 f"resume-{name}", "real work", records=4)
+            # A state with no agent-exit record: --all lists the seat, and the verdict stays resume.
+            recovery.supervisor.supervisor_state_path(workspace.handoffs, name).write_text(
+                "{}", encoding="utf-8")
+        for name in topic_worktrees:
+            (workspace.agents_root / name).mkdir(parents=True, exist_ok=True)
+            (workspace.agents_root / name / ".git").write_text(
+                f"gitdir: /elsewhere/.git/worktrees/{name}\n", encoding="utf-8")
+            write_transcript(recovery.harness_project_directory(
+                workspace.agents_root / name, workspace.projects),
+                f"reviewer-{name}", "Read the target in full", records=4)
         all_dead()
         patch("tmux_session_alive_anywhere",
               lambda name: ((True, f"tmux session '{name}' is alive on socket '{name}'")
@@ -3088,7 +3522,7 @@ with tempfile.TemporaryDirectory() as temporary:
           and every_seat_reported(names, failing, printed, logged, launches, running),
           (exit_code, printed, logged, launches))
 
-    # The reviewer's own probe: --all lists every seat that ever ran, live ones
+    # The reviewer's own probe: --all lists every seat a supervisor ran, live ones
     # included, so one live seat used to fail the whole run, dry run and all.
     names = ("all-seat-already-running", "all-seat-crashed")
     running = {"all-seat-already-running"}
@@ -3109,6 +3543,17 @@ with tempfile.TemporaryDirectory() as temporary:
               "'all-seat-already-running', and process 5000 is the supervisor of "
               "all-seat-already-running — this tool recovers crashes, it never touches "
               "live seats",
+              "recover-crashed-seats: all-seat-crashed: would resume session "
+              "resume-all-seat-crashed (0KB transcript) under a supervisor"],
+          (exit_code, printed, logged, launches))
+    exit_code, printed, logged, launches = main_on_seats(
+        root / "exit-all-dry-run-topic-worktree-beside-a-crashed-seat", ("all-seat-crashed",),
+        set(), selection=["--all", "--dry-run"],
+        topic_worktrees=("wt-topic-worktree-with-reviewer-transcripts",))
+    check("--all --dry-run prints no line for a topic worktree that holds transcripts but no "
+          "supervisor state or handoff",
+          exit_code == 0 and launches == []
+          and printed.splitlines() == [
               "recover-crashed-seats: all-seat-crashed: would resume session "
               "resume-all-seat-crashed (0KB transcript) under a supervisor"],
           (exit_code, printed, logged, launches))
@@ -3320,6 +3765,8 @@ with tempfile.TemporaryDirectory() as temporary:
         write_transcript(recovery.harness_project_directory(
             workspace.agents_root / name, workspace.projects),
             f"resume-{name}", "real work", records=4)
+    recovery.supervisor.supervisor_state_path(workspace.handoffs, "all-seat-crashed").write_text(
+        "{}", encoding="utf-8")
     all_dead()
     capture_launches(workspace)
     record_an_agent_exit(workspace, 0)
@@ -3626,7 +4073,7 @@ with tempfile.TemporaryDirectory() as temporary:
               ("two-seats-second", "--resume-session-id resume-two-seats-second")]
           and exit_code == 1 and len(logged_lines) == 2
           and "two-seats-first: NOT RELAUNCHED AFTER A RECORDED EXIT" in logged_lines[0]
-          and logged_lines[1].endswith(
+          and logged_lines[1].endswith(as_main_reports_it(
               "two-seats-second: relaunched resuming resume-two-seats-second after its "
               "supervisor recorded at "
               + recovery.supervisor.read_supervisor_state(
@@ -3634,7 +4081,8 @@ with tempfile.TemporaryDirectory() as temporary:
                   recovery.supervisor.AGENT_EXIT_RECORDED_AT_STATE_KEY]
               + " that its agent exited with exit code 1"
               + the_operator_said_to_restart_it_and_nothing_was_closed
-              + recovery.reach_clause_for_a_running_seat("two-seats-second")),
+              + recovery.reach_clause_for_a_running_seat("two-seats-second"),
+              "two-seats-second")),
           (workspace.launches, exit_code, logged_lines))
 
     # --- the leftover idle shell is a question, not a refusal ---------------
@@ -4198,6 +4646,61 @@ with tempfile.TemporaryDirectory() as temporary:
           and report_failed == ("seat-a: REFUSED — could not kill the stale tmux session "
                                 "seat-a (server socket seat-a): server exited"),
           (retired, workspace.launches, report_failed))
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-kill-outcome-unknown")
+    retired = []
+    check_instruction = ("If the check exits 0, the session still exists: start no agent, and "
+                         "report to the user. If it prints \"can't find session\" or \"can't find "
+                         "window\" or \"can't find pane\" or \"no current target\" or \"no server "
+                         "running\" or \"error connecting to <socket path> (No such file or directory)\", "
+                         "the session is gone: run again, for this agent-seat only, the command "
+                         "that printed this message. Any other output, or a check that does not "
+                         "return within 30 seconds, leaves the outcome unknown: start no agent, and "
+                         "report the output to the user.\n"
+                         "To check, run the command on the next line on ned-box:"
+                         "\ntmux -L seat-a has-session -t '=seat-a'")
+    capture_retires(retired, killed_sockets=(),
+                    failure="it is unknown whether the stale tmux session seat-a (tmux socket "
+                            "name seat-a) was killed: tmux could not be run, or did not answer "
+                            "within 30 seconds",
+                    check=check_instruction)
+    report_unknown, seen = recover_with_an_operator_typing(workspace, "y")
+    check("LEFTOVER SHELL: a kill whose outcome is unknown refuses, naming the machine to check "
+          "on, with the check command alone on the last line",
+          retired == ["seat-a"] and workspace.launches == []
+          and report_unknown == ("seat-a: REFUSED — it is unknown whether the stale tmux session "
+                                 "seat-a (tmux socket name seat-a) was killed: tmux could not be "
+                                 "run, or did not answer within 30 seconds. " + check_instruction),
+          (retired, workspace.launches, report_unknown))
+    # The real retire step's text, not a stub's, reaches the REFUSED line: it is shared with
+    # resupervise-seat, so it must name no program but the one the operator just ran.
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-kill-outcome-unknown-real-text")
+    recovery.resupervise.retire_seat_tmux_session = real_retire_seat_tmux_session
+
+    def tmux_holds_the_seat_and_the_kill_gets_no_answer(*arguments, socket_name=None):
+        if arguments[0] == "has-session" and socket_name == "seat-a":
+            return subprocess.CompletedProcess(["tmux"], 0, "", "")
+        if arguments[0] == "has-session":
+            return subprocess.CompletedProcess(["tmux"], 1, "", "can't find session: seat-a\n")
+        return None
+    recovery.resupervise.run_tmux = tmux_holds_the_seat_and_the_kill_gets_no_answer
+    try:
+        report_real, seen = recover_with_an_operator_typing(workspace, "y")
+    finally:
+        recovery.resupervise.run_tmux = real_resupervise_run_tmux
+    check("LEFTOVER SHELL: the real unknown-kill text reaches the REFUSED line, names no other "
+          "program to run, scopes the rerun to this agent-seat, gives the check's time limit, "
+          "names the socket path placeholder, and ends with the check command after the line "
+          "pointing at it",
+          workspace.launches == []
+          and "run again, for this agent-seat only, the command that printed this message"
+          in report_real
+          and "a check that does not return within 30 seconds" in report_real
+          and "error connecting to <socket path> (No such file or directory)" in report_real
+          and "..." not in report_real
+          and "resupervise-seat" not in report_real
+          and report_real.splitlines()[-2].startswith("To check, run the command on the next line")
+          and report_real.splitlines()[-1] == "tmux -L seat-a has-session -t '=seat-a'",
+          report_real)
     workspace = a_seat_behind_a_leftover_shell("leftover-shell-survives-the-retire")
     retired = []
     capture_retires(retired, the_session_then_dies=False)
@@ -4243,7 +4746,7 @@ with tempfile.TemporaryDirectory() as temporary:
         def fake_retire(name):
             events.append("retire")
             patch("tmux_session_alive_anywhere", lambda name: (False, ""))
-            return ["seat-a"], None
+            return ["seat-a"], None, None
 
         patch("tmux_session_is_a_leftover_idle_shell", the_proof)
         if rooted_before_and_after_the_question is not None:
@@ -4307,8 +4810,9 @@ with tempfile.TemporaryDirectory() as temporary:
           and [launch[:2] for launch in workspace.launches] == [
               ("seat-a", "--resume-session-id resume-me")]
           and printed[-1:] == [
-              "recover-crashed-seats: seat-a: relaunched resuming resume-me (0KB transcript) "
-              + the_operator_said_to_restart_it]
+              "recover-crashed-seats: " + as_main_reports_it(
+                  "seat-a: relaunched resuming resume-me (0KB transcript) "
+                  + the_operator_said_to_restart_it)]
           and exit_code == 0,
           (events, workspace.launches, printed, exit_code))
 
@@ -4327,8 +4831,9 @@ with tempfile.TemporaryDirectory() as temporary:
           and [launch[:2] for launch in workspace.launches] == [
               ("seat-a", "--resume-session-id resume-me")]
           and printed[-1:] == [
-              "recover-crashed-seats: seat-a: relaunched resuming resume-me (0KB transcript) "
-              + the_operator_said_to_restart_it]
+              "recover-crashed-seats: " + as_main_reports_it(
+                  "seat-a: relaunched resuming resume-me (0KB transcript) "
+                  + the_operator_said_to_restart_it)]
           and exit_code == 0,
           (events, workspace.launches, printed, exit_code))
 
@@ -4351,8 +4856,8 @@ with tempfile.TemporaryDirectory() as temporary:
         retire is appended to events. Returns (exit code, every printed line,
         every logged line)."""
         class Answer:
-            def __init__(self, returncode, stdout=""):
-                self.returncode, self.stdout, self.stderr = returncode, stdout, ""
+            def __init__(self, returncode, stdout="", stderr=""):
+                self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
 
         def fake_run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
             asked = "question" in events
@@ -4360,7 +4865,8 @@ with tempfile.TemporaryDirectory() as temporary:
                 return None
             held = socket_name == "seat-a" and not (asked and after_the_question == "gone")
             if arguments_after_tmux[0] == "has-session":
-                return Answer(0 if held else 1)
+                return (Answer(0) if held else
+                        Answer(1, stderr=f"can't find session: {arguments_after_tmux[2][1:]}"))
             if arguments_after_tmux[0] == "list-panes" and held:
                 return Answer(0, "4242\tvim\n" if asked else "4242\tzsh\n")
             return Answer(1)
@@ -4409,6 +4915,8 @@ with tempfile.TemporaryDirectory() as temporary:
         "seat-a: relaunched resuming resume-me (0KB transcript) (the operator said to restart "
         "it, so the leftover shell was closed first: the leftover shell was already gone when "
         "it was retired)" + recovery.reach_clause_for_a_running_seat("seat-a"))
+    relaunched_after_the_session_was_gone = as_main_reports_it(
+        relaunched_after_the_session_was_gone)
     check("LEFTOVER SHELL: a session gone while the question waited is not refused: the retire "
           "finds nothing, and the seat is relaunched, its line byte for byte",
           events == ["proof", "question", "proof", "retire"]
@@ -4428,7 +4936,7 @@ with tempfile.TemporaryDirectory() as temporary:
     exit_code, printed, logged = main_at_a_terminal_answering_yes_over_a_tmux_server(
         workspace, events, "unanswerable")
     refused_as_tmux_cannot_be_run = (
-        "seat-a: REFUSED — tmux cannot be run here, so seat liveness cannot be checked — "
+        "seat-a: REFUSED — tmux could not be run, or did not answer within 30 seconds, so seat liveness cannot be checked — "
         "refusing rather than guessing")
     check("LEFTOVER SHELL: when tmux cannot answer at the recheck, nothing is closed and the "
           "seat is REFUSED in the liveness check's words, byte for byte",
@@ -4584,7 +5092,7 @@ with tempfile.TemporaryDirectory() as temporary:
     proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(
         "seat-a", workspace.seat_directory)
     check("IDLE SHELL PROOF: tmux that cannot answer proves nothing",
-          proven is False and "tmux cannot be run here" in detail, (proven, panes, detail))
+          proven is False and "tmux could not be run, or did not answer within 30 seconds" in detail, (proven, panes, detail))
 
     tmux_server_answers({"seat-a": "27178\tzsh\n"}, list_panes_exit_code=1)
     proven, panes, detail = recovery.tmux_session_is_a_leftover_idle_shell(

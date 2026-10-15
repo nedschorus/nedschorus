@@ -25,4 +25,4 @@ Write your report in plain words; outside quotation marks, avoid the terms you f
 
 HOW TO DELIVER YOUR ANSWER. Write your answer to {REPORT_PATH}, with whatever file-writing tool you have. That file is your entire deliverable: this cold-read-cell discards what you say in conversation, so an answer given only in chat is a lost answer. Write it once, when your analysis is complete, rather than building it up across several writes.
 
-Write {REPORT_PATH} even when you found nothing: say so in a sentence and name what you examined. A missing or empty report is read as a run that did not happen, and it is discarded and rerun. {REPORT_PATH} is the only file to create; write nothing anywhere else.
+Write {REPORT_PATH} even when you found nothing: its first line is `Report complete: no findings.`, and the next names what you examined. A missing or empty report is read as a run that did not happen: it is relaunched once, and counted absent if the relaunch also leaves none. {REPORT_PATH} is the only file to create; write nothing anywhere else.

@@ -30,7 +30,7 @@ prompts it copies differ suite by suite, and the ruling says each suite
 keeps its own.
 """
 
-import os
+import importlib.util
 import shutil
 import subprocess
 from pathlib import Path
@@ -38,6 +38,8 @@ from pathlib import Path
 # This fixture sits in nc-systems/cold-read/tests/; the system it copies is
 # one directory up.
 SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
+GIT_OUTPUT_MODULE = (SYSTEM_DIRECTORY.parent / "general-tools"
+                     / "git-machine-readable-output-runner-and-parser-common.py")
 
 # The seed commit's author. One fixed name rather than a parameter: nothing
 # reads it, and it points a scratch checkout left behind by a crashed run
@@ -45,25 +47,23 @@ SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
 SEED_COMMIT_AUTHOR_NAME = "cold-read scratch repository test fixture"
 SEED_COMMIT_AUTHOR_EMAIL = "test@test.invalid"
 
-# Stripped from the environment git runs with, so a suite run directly with
-# one of them set still builds its scratch repository here rather than in the
-# repository the variable names, as a GIT_DIR run did to ned-box's shared
-# clone on 2026-09-24. The list is scripts/run-all-test-suites.py's, which is
-# the source; its docstring says what each one was measured to do.
-GIT_REDIRECTING_ENVIRONMENT_VARIABLES = (
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_COMMON_DIR",
-)
+# The variables that redirect git, stripped from the environment git runs
+# with, so a suite run directly with one of them set still builds its scratch
+# repository here rather than in the repository the variable names. The
+# cold-read cells load the same module from their copy of the system, so it is
+# copied into every scratch repository too.
+GIT_REDIRECTING_REMOVAL_MODULE = (
+    SYSTEM_DIRECTORY.parent / "general-tools"
+    / "git-redirecting-environment-variables-removal-common.py")
+_git_redirecting_removal_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_variables_removal_common", GIT_REDIRECTING_REMOVAL_MODULE)
+git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
+_git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
+GIT_REDIRECTING_ENVIRONMENT_VARIABLES = git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
 
 
 def git(repository, *arguments):
-    environment = dict(os.environ)
-    for variable in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:
-        environment.pop(variable, None)
+    environment = git_redirecting_removal.environment_without_git_redirecting_variables()
     completed = subprocess.run(
         ["git", "-C", str(repository), *arguments],
         capture_output=True, text=True, check=False, env=environment,
@@ -85,6 +85,12 @@ def commit_seeded_cold_read_scratch_repository(repository):
     # md-skills-seat-open-decisions-2026-09-20 item 3).
     shutil.copytree(SYSTEM_DIRECTORY, repository / "nc-systems" / "cold-read",
                     ignore=shutil.ignore_patterns("__pycache__"))
+    # The cell reads git status through the shared git-output module, and
+    # cold-read-fast-read.py strips the variables that redirect git through
+    # the shared removal module.
+    (repository / "nc-systems" / "general-tools").mkdir(parents=True)
+    shutil.copy2(GIT_OUTPUT_MODULE, repository / "nc-systems" / "general-tools")
+    shutil.copy2(GIT_REDIRECTING_REMOVAL_MODULE, repository / "nc-systems" / "general-tools")
     # The records tree is gitignored in the real repository, which is what
     # keeps a reviewer's own report out of the detector's sight.
     (repository / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")

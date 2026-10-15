@@ -15,7 +15,7 @@
 # Where a page of JSON must be combined, the capture and the jq run are separate
 # statements over a here-string, never a pipe.
 #
-# THE PIN (user-ruled 2026-08-29). The gate derives the commit to merge from the
+# THE PIN. The gate derives the commit to merge from the
 # LATEST APPROVING REVIEW's recorded commit_id, not from the head it happens to
 # observe, and prints a merge command pinned to it with --match-head-commit. An
 # approval then only ever merges the exact code that approval covered: GitHub
@@ -23,13 +23,11 @@
 # window between this gate passing and `gh pr merge` running. dismiss_stale_reviews
 # stays OFF; the no-approval case still refuses here.
 #
-# MEASURED before relying on it (2026-08-29, PR #156): a review's commit_id is
-# STABLE when the head moves. #156's head was 560936804 while its 2026-08-24
-# reviews still recorded 8d4305f55. This is NOT true of comments -- see the note
+# MEASURED before relying on it: a review's commit_id is STABLE when the head
+# moves. This is NOT true of comments -- see the note
 # on the comment channels below -- so the two are read differently on purpose.
 #
-# WHY EVERY CHANNEL READ PAGINATES (F1, the worst of seven false passes an
-# independent review demonstrated 2026-09-22 against the pre-repository copy).
+# WHY EVERY CHANNEL READ PAGINATES (F1).
 # GitHub returns 30 items per page, OLDEST FIRST, on all three channels. Without
 # --paginate everything newer than the 30th item is invisible, so a "nothing new
 # since" check counts zero on exactly the pull requests that have the most
@@ -48,11 +46,9 @@
 # The second half exists for pull requests the merge account itself opened.
 # GitHub refuses an approval from a pull request's author, so there mac-claude
 # approves (the pin) and the merge account then posts its required review as
-# COMMENTED. Bounded by the pin alone, that flow was refused at every SINCE: at
-# or before the approval its own review counted as new activity, after the
-# approval SINCE was out of bounds. The last nine pull requests the merge
-# account opened before 2026-09-23T23:45Z, 616 to 687, all have this shape (PR
-# 687 is the case in the suite). What this allows: a SINCE at the merge account's own latest review,
+# COMMENTED. Bounded by the pin alone, that flow would be refused at every
+# SINCE: at or before the approval its own review would count as new activity,
+# after the approval SINCE would be out of bounds. What this allows: a SINCE at the merge account's own latest review,
 # so activity by any account between the pin and that review is not counted --
 # the same trust the ordinary flow already places in SINCE, which is the merge
 # account's own approval there. A review with findings from any account still
@@ -66,12 +62,10 @@
 # A different-but-valid RFC 3339 spelling is refused with its reason, which is a
 # false refusal by design and cheap to correct at the call site.
 #
-# WHY ANY ACCOUNT'S APPROVAL MAY BE THE PIN. The 2026-09-22 cleanup added a
-# filter refusing an approval by the merge account, on the belief that the
-# approval must come from the commissioned independent reviewer. The merge
-# account approves every pull request it merges, and on 13 of the 20 merges
-# before 2026-09-23T22:44Z its approval was the only one at the head, so the
-# filter refused most real merges. The user ruled it out 2026-09-23. GitHub's
+# WHY ANY ACCOUNT'S APPROVAL MAY BE THE PIN. The merge account approves every
+# pull request it merges, and its approval is often the only one at the head,
+# so a filter refusing an approval by the merge account would refuse most real
+# merges; the user decided against such a filter. GitHub's
 # required review already refuses an approval from the pull request's author.
 #
 # WHY THE REVIEW CHANNEL NO LONGER EXCLUDES AN ACCOUNT (F5). It excluded every
@@ -144,6 +138,16 @@ RERUN_ONCE_JQ="Run the gate again once; if it fails the same way, tell the user 
 TOKEN_ONLY_MERGE_ACCOUNT="The gate reads GitHub only as the merge account, $MERGE_ACCOUNT, and stops rather than read as gh's stored account."
 TOKEN_TELL_THE_USER="Tell the user this message: only the user can restore the token."
 
+if [ $# -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
+  echo "usage: scripts/merge-gate.sh <pull request number> <the head commit, all 40 characters> <reviewed-since: ISO 8601 time>"
+  echo
+  echo "Decides whether a pull request may merge: reads it from GitHub as the merge account"
+  echo "$MERGE_ACCOUNT and exits 0 only when every requirement is met, printing a merge"
+  echo "command pinned to the commit the latest approving review covered."
+  echo "Exit codes: 0 the merge may proceed; 1 the gate refuses, with the reason on stderr;"
+  echo "2 the gate could not run: bad invocation, missing jq or gh, unreadable token, or a failed read."
+  exit 0
+fi
 [ $# -eq 3 ] || cannot "merge-gate.sh takes exactly three arguments and was given $#." \
   "Call it as: scripts/merge-gate.sh <pull request number> <the head commit, all 40 characters> <reviewed-since: the submitted_at of your latest review as the merge account, or of the pin if that is later>"
 PR=$1; EXPECTED=$2; SINCE=$3
@@ -313,6 +317,18 @@ NEW_ACTIVITY_RECORD="When nothing is left open, post a review as the merge accou
   "$NEW_ACTIVITY_READ" "$NEW_ACTIVITY_FINDING" "$NEW_ACTIVITY_RECORD"
 [ "$reviews" -eq 0 ] || fail "$reviews review(s) posted or edited since $SINCE -- read them before merging" \
   "$NEW_ACTIVITY_READ" "$NEW_ACTIVITY_FINDING" "$NEW_ACTIVITY_RECORD"
+
+# The gate checks only that a labelled line is there. Whether the line is true
+# is a reviewer's judgement, not the gate's.
+body_read=$(gh pr view "$PR" --repo "$REPO" --json body)
+[ $? -eq 0 ] || cannot "could not read pull request $PR's description; any error gh printed is just above this line." "$RERUN_ONCE_GH"
+has_defect_line=$(jq -r '.body
+  | split("\n")
+  | any(test("^\\s*(?:[-*+]\\s+)?(?:\\*\\*|__)?(?:Root cause(?: not fixed)?(?:\\*\\*|__)?:|No defect fixed(?:\\*\\*|__)?\\.)"))' <<<"$body_read")
+[ $? -eq 0 ] || cannot "could not parse pull request $PR's description" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+[ "$has_defect_line" = "true" ] || fail "the pull request's description has no line beginning \"Root cause:\", \"Root cause not fixed:\" or \"No defect fixed.\", so it does not say whether the pull request fixes a defect and, if it does, whether the change removes the defect's root cause." \
+  "Have the pull request's author add one of these lines to the description, starting the line with the label, which may follow a bullet and may be in bold type: \"Root cause:\" and the root cause the change removes; \"Root cause not fixed:\" and the root cause that stays, or that none was found, with the reason; or \"No defect fixed.\" when the pull request fixes no defect." \
+  "Editing the description needs no new commit. Once the description has the line, run the gate again."
 
 echo "gate passed (#$PR): approved commit $approved_sha by $approver at $approval_at, $decision, $merge_state, no new channel activity since $SINCE"
 # The pin (--match-head-commit) is what makes the approval binding: GitHub

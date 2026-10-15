@@ -6,6 +6,7 @@ the worktree is on, so a later agent-session of the same agent-seat is not told 
 that branch, a new branch that adds the same name is told it, and each other worktree keeps its
 own record. Entries for branches that no longer exist are dropped when the record is written.
 The content cache and the once-per-session failure reports stay per agent-session.
+A branch whose name no agent chose is not reported: see branch_named_by_no_agent().
 """
 # The hook never blocks: any failure leaves the agent's turn as it was, apart from one line saying the check failed.
 
@@ -15,7 +16,6 @@ import importlib.util
 import json
 import os
 import re
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -29,6 +29,8 @@ FILE_WRITING_TOOL_NAMES = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit
 SHELL_TOOL_NAME = "Bash"
 STATE_DIRECTORY = Path(tempfile.gettempdir()) / "new-shared-names-reminder-hook-state"
 SESSION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+# Claude Code names an isolated subagent's worktree branch worktree-agent-<17 hex digits>.
+HARNESS_SUBAGENT_WORKTREE_BRANCH_PATTERN = re.compile(r"^worktree-agent-[0-9a-f]{17}$")
 LISTER_PATH = Path(__file__).resolve().parent / "new-shared-names-in-changed-files-list.py"
 
 _git_machine_readable_output_spec = importlib.util.spec_from_file_location(
@@ -46,18 +48,19 @@ REMINDER_TEMPLATE = (
     "or agents will meet:\n{names}\n"
     "Send them, with one sentence on what each names, to the {agent} subagent, run in the "
     "background, and keep working.\n"
-    "If you are a subagent and cannot start one, run the same check through Codex instead, in "
-    "the background, and act on its report the same way.\n"
-    "First run `git fetch` yourself; Codex's sandbox cannot write the git directory.\n"
-    "Then run: `codex exec -m gpt-6.1-sol -c model_reasoning_effort=medium --disable memories "
-    "--sandbox workspace-write -c sandbox_workspace_write.network_access=true -c {writable_roots} "
-    "-C {checkout} \"git fetch has already been run; skip that step and use origin/main as it is. "
-    "Read .claude/agents/{agent}.md and do exactly what it says, for these entries, one per line: "
-    "<name>: <one sentence saying what it names>\" < /dev/null`\n"
-    "Keep the `< /dev/null`: Codex hangs when stdin is left open.\n"
-    "When it flags a name, rename it everywhere your branch uses it, in one commit.\n"
-    "If it flags a new project-term or system-term, put the new term to the user before you "
-    "use it.\n"
+    "If you are a subagent and cannot start one, do not run the check yourself. In your final "
+    "report, put a heading `New shared names: send these to the {agent} subagent` and under it "
+    "one line per name: <name>: <one sentence saying what it names and which file it is in>, "
+    "leaving out the parentheses that follow each name above. The agent that dispatched you "
+    "runs the check and makes any renames.\n"
+    "If you sent the names to the {agent} subagent yourself:\n"
+    "- When its report lists a name under its Rename: heading, rename that name everywhere "
+    "your branch uses it.\n"
+    "- Check each name it lists under Not checked: by hand against the naming page named on "
+    "this reminder's last line, and rename any name that breaks the page.\n"
+    "- Make every rename, from its report and from your own check, in one single commit.\n"
+    "If a suggested name under Rename: is a new project-term or system-term, put the new term "
+    "to the user before you use it.\n"
     "If a listed name is not one you chose, such as quoted text or an existing name written "
     "differently, do not send it and do not rename it.\n"
     "How names are chosen: {page}."
@@ -69,6 +72,12 @@ FAILURE_TEMPLATE = (
     "If the error names origin/main, run `git fetch`; the check runs again after your next "
     "edit.\n"
     "Until it works, check new names by hand against {page}."
+)
+BRANCH_CHECK_FAILURE_TEMPLATE = (
+    "new-shared-names-reminder: the check of whether this branch's name is new failed, so "
+    "the branch's name is not being listed; new names in changed files are still listed: {error}\n"
+    "The check runs again after your next edit.\n"
+    "Until it works, if you chose this branch's name, check it by hand against {page}."
 )
 
 
@@ -286,8 +295,27 @@ class BranchCheckFailure(Exception):
     pass
 
 
+def branch_named_by_no_agent(checkout: Path, branch: str) -> bool:
+    """Whether the branch is one whose name no agent chose: the branch Claude Code makes for an
+    isolated subagent's worktree, or an agent-seat's own branch in its agent-home.
+
+    An agent-home is ~/agents/<seat>, on the branch <seat>, a name the user approved when he made
+    the agent-seat. The location matters: a topic worktree is often named after its branch, so a
+    branch equal to its directory's name anywhere else is still reported.
+    """
+    if HARNESS_SUBAGENT_WORKTREE_BRANCH_PATTERN.match(branch):
+        return True
+    try:
+        agent_homes = (Path.home() / "agents").resolve()
+        top_level = checkout.resolve()
+    except (OSError, RuntimeError) as error:
+        raise BranchCheckFailure(f"could not resolve the home directory's agents directory or this checkout: {error}") from error
+    return top_level.parent == agent_homes and top_level.name == branch
+
+
 def unreported_new_branch(checkout: Path, reported) -> str:
-    """Return this worktree's branch when origin lacks it and it is not yet reported, else "".
+    """Return this worktree's branch when origin lacks it, it is not yet reported and an agent
+    chose its name, else "".
 
     Only this worktree's own branch is considered: other worktrees of the same clone share
     refs/heads, and their branches belong to other agents.
@@ -306,7 +334,7 @@ def unreported_new_branch(checkout: Path, reported) -> str:
         first_line = (finished.stderr.strip().splitlines() or [""])[0][:200]
         raise BranchCheckFailure(f"git symbolic-ref exited {finished.returncode}: {first_line}")
     branch = finished.stdout.strip()
-    if not branch or f"branch\t{branch}" in reported:
+    if not branch or f"branch\t{branch}" in reported or branch_named_by_no_agent(checkout, branch):
         return ""
     try:
         lookup = subprocess.run(["git", "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{branch}"],
@@ -324,30 +352,23 @@ def unreported_new_branch(checkout: Path, reported) -> str:
     return branch
 
 
-def failure_report_once(state: dict, error: str):
+def failure_report_once(state: dict, error: str, template: str = FAILURE_TEMPLATE):
     """Return the failure text the first time this error is seen in the agent-session, else None."""
     failures = set(state.get("reported_failures", []))
     if error in failures:
         return None
     state["reported_failures"] = sorted(failures | {error})
-    return FAILURE_TEMPLATE.format(error=error, page=NAMING_PAGE_PATH)
+    return template.format(error=error, page=NAMING_PAGE_PATH)
 
 
-def codex_writable_roots_argument() -> str:
-    # The fresh-agent's blind guess runs agy, which must write under ~/.gemini inside Codex's sandbox.
-    gemini_directory = str(Path.home() / ".gemini")
-    return shlex.quote("sandbox_workspace_write.writable_roots=" + json.dumps([gemini_directory]))
-
-
-def reminder_text(new_names, checkout: Path) -> str:
+def reminder_text(new_names) -> str:
     lines = [f"  {name} ({kind}{', in ' + path if path and path != name else ''})"
              for path, kind, name in new_names[:REMINDER_NAME_LIMIT]]
     if len(new_names) > REMINDER_NAME_LIMIT:
         lines.append(MORE_NAMES_LINE.format(count=len(new_names) - REMINDER_NAME_LIMIT,
                                             command=LISTER_COMMAND))
     return REMINDER_TEMPLATE.format(names="\n".join(lines), agent=NAMING_FRESH_AGENT_NAME,
-                                    page=NAMING_PAGE_PATH, checkout=shlex.quote(str(checkout)),
-                                    writable_roots=codex_writable_roots_argument())
+                                    page=NAMING_PAGE_PATH)
 
 
 def emit(text: str) -> None:
@@ -427,15 +448,16 @@ def main() -> int:
     reported = record.get(record_key, set())
     # Pruned on every run, so a branch deleted and later recreated under the same name starts fresh.
     record_merge_prune_and_write_telling_failures(set())
+    branch_check_error = None
     try:
         new_branch = unreported_new_branch(checkout, reported)
     except BranchCheckFailure as failure:
         new_branch = ""
-        failure_text = failure_report_once(state, str(failure))
-        if failure_text:
-            messages.append(failure_text)
+        branch_check_error = str(failure)
+    branch_check_error_untold = (branch_check_error is not None
+                                 and branch_check_error not in state.get("reported_failures", []))
     # A shell command that changed no file and left no new branch has nothing new to list.
-    if (tool_name == SHELL_TOOL_NAME and not new_branch and not messages
+    if (tool_name == SHELL_TOOL_NAME and not new_branch and not messages and not branch_check_error_untold
             and fingerprint == state.get("worktree_fingerprint")):
         return 0
     state["worktree_fingerprint"] = fingerprint
@@ -450,6 +472,13 @@ def main() -> int:
         failure_text = failure_report_once(state, str(failure) or type(failure).__name__)
         if failure_text:
             messages.append(failure_text)
+    else:
+        # Told only when the lister worked, because the branch-check text says names in changed files are
+        # still listed; left unmarked otherwise, so a later run where only the branch check fails tells it.
+        if branch_check_error is not None:
+            failure_text = failure_report_once(state, branch_check_error, BRANCH_CHECK_FAILURE_TEMPLATE)
+            if failure_text:
+                messages.append(failure_text)
 
     state["file_cache"] = file_cache
     # Only the names the reminder shows count as reported; the rest are shown by a later reminder.
@@ -459,7 +488,7 @@ def main() -> int:
         record_merge_prune_and_write_telling_failures(newly_reported)
     write_state(session_id, state)
     if names:
-        messages.append(reminder_text(names, checkout))
+        messages.append(reminder_text(names))
     if messages:
         emit("\n\n".join(messages))
     return 0

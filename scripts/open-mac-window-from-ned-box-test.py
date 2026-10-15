@@ -63,7 +63,7 @@ check("no arguments is a usage error, and nothing is sent", result.returncode ==
 
 result, sent, _ = run_caller(["tmux", "attach", "-t", "merge-lane-2"], ssh_body="echo opened; exit 0")
 check("the request travels as one remote-command argument, after '--' and the destination",
-      sent is not None and sent[-3:] == ["--", "el@10.0.1.23", "open-window tmux attach -t merge-lane-2"], sent)
+      sent is not None and sent[-3:] == ["--", "el@edwards-macbook-air.local", "open-window tmux attach -t merge-lane-2"], sent)
 check("ssh uses only the Mac-side-action key, never prompts, and gives up on a dead link",
       sent is not None and sent[0] == "-i" and sent[1].endswith("/.ssh/id_ed25519_mac_side_action")
       and "IdentitiesOnly=yes" in sent and "BatchMode=yes" in sent and "ConnectTimeout=10" in sent, sent)
@@ -77,15 +77,15 @@ for words in (["tmux;", "rm"], ["echo", "$HOME"], ["it's"], [""], ["-oProxyComma
     check(f"words the Mac would refuse are refused here, and nothing is sent: {words!r}",
           result.returncode == 2 and sent is None and "no request was sent, because" in result.stderr, (result.returncode, sent, result.stderr))
 
-result, sent, _ = run_caller(["tmux"], ssh_body="echo 'el@10.0.1.23: Permission denied (publickey).' >&2; exit 255")
+result, sent, _ = run_caller(["tmux"], ssh_body="echo 'el@edwards-macbook-air.local: Permission denied (publickey).' >&2; exit 255")
 check("a refused key says the Mac does not admit it yet, and to tell the user",
       result.returncode == 1 and "does not admit this key yet" in result.stderr, result.stderr)
 
 result, sent, _ = run_caller(["tmux"], ssh_body="echo 'Host key verification failed.' >&2; exit 255")
-check("an unknown host key names the one-time ssh-keyscan step",
-      result.returncode == 1 and "ssh-keyscan -t ed25519 10.0.1.23 >> ~/.ssh/known_hosts" in result.stderr, result.stderr)
+check("an unknown host key names the one-time accept-new ssh step",
+      result.returncode == 1 and "ssh -o StrictHostKeyChecking=accept-new el@edwards-macbook-air.local true" in result.stderr, result.stderr)
 
-result, sent, _ = run_caller(["tmux"], ssh_body="echo 'ssh: connect to host 10.0.1.23 port 22: Operation timed out' >&2; exit 255")
+result, sent, _ = run_caller(["tmux"], ssh_body="echo 'ssh: connect to host edwards-macbook-air.local port 22: Operation timed out' >&2; exit 255")
 check("an unreachable Mac says so, with ssh's own error",
       result.returncode == 1 and "could not reach the Mac" in result.stderr and "Operation timed out" in result.stderr, result.stderr)
 
@@ -108,6 +108,25 @@ for words in (["tmux", "attach", "-t", "merge-lane-2"],
     result, sent, opened = run_caller(words, play_sshd=True)
     check(f"round trip: the Mac opens a window running exactly these words on ned-box: {words!r}",
           result.returncode == 0 and opened == ["ssh", "-t", "--", "nedlern@ned-box", *words], (result.returncode, opened, result.stderr))
+
+result, sent, opened = run_caller(["--agent-seat", "merge-lane-2"], play_sshd=True)
+check("round trip: --agent-seat opens the Mac's own launch-claude-ubuntu window onto the seat, which reconnects",
+      result.returncode == 0 and opened is not None and len(opened) == 2
+      and opened[0].endswith("/launch-claude-ubuntu") and opened[1] == "merge-lane-2",
+      (result.returncode, opened, result.stderr))
+check("--agent-seat sends the open-agent-seat-window request",
+      sent is not None and sent[-1] == "open-agent-seat-window merge-lane-2", sent)
+
+for arguments in (["--agent-seat"], ["--agent-seat", "a", "b"], ["--agent-seat", "-v"], ["--agent-seat", "a;b"]):
+    result, sent, _ = run_caller(arguments)
+    check(f"--agent-seat with a name the Mac would refuse sends nothing: {arguments!r}",
+          result.returncode == 2 and sent is None, (result.returncode, sent, result.stderr))
+
+result, sent, _ = run_caller(["--agent-seat", "merge-lane-2"],
+                             ssh_body="echo 'ssh: connect to host edwards-macbook-air.local port 22: Operation timed out' >&2; exit 255")
+check("--agent-seat on an unreachable Mac names the cause first and the by-hand launcher",
+      result.returncode == 1 and result.stderr.splitlines()[0].startswith("open-mac-window-from-ned-box: could not reach the Mac")
+      and "scripts/launch-claude-ubuntu merge-lane-2" in result.stderr, result.stderr)
 
 print()
 if failures:

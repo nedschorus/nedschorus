@@ -142,10 +142,17 @@ Usage:
                            [--open-iterm-window-per-seat] [--checkout DIR]
 
 --all assesses every seat with a home under the agents root. --dry-run
-reports every decision and launches nothing. --open-iterm-window-per-seat
-(macOS only) launches each recovered seat attached, in its own iTerm window,
-instead of detached; with --dry-run it prints the command each window would
-run.
+reports every decision and launches nothing. On the Mac,
+--open-iterm-window-per-seat launches each recovered seat attached, in its own
+iTerm window, instead of detached; with --dry-run it prints the command each
+window would run. On ned-box, after each seat a run brings up, it opens a
+window on the Mac attached to the seat, through open-mac-window-from-ned-box.py,
+unless a window is already attached; the flag is accepted there and changes
+nothing.
+
+Exit status: 0 when every named seat is recovered or already running; 1 when
+any is not; 3 when every seat is recovered but a window on the Mac did not
+open, whose report line says WINDOW NOT OPENED and how to open it by hand.
 """
 
 import argparse
@@ -180,11 +187,12 @@ _records_reader_spec = importlib.util.spec_from_file_location(
 records_reader = importlib.util.module_from_spec(_records_reader_spec)
 _records_reader_spec.loader.exec_module(records_reader)
 
-_watcher_spec = importlib.util.spec_from_file_location(
-    "watch_agent_dialogs", Path(__file__).with_name("watch-agent-dialogs.py")
+_project_directory_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_project_directory_for_agent_seat_common",
+    Path(__file__).with_name("claude-code-session-transcript-project-directory-for-agent-seat-common.py")
 )
-watcher = importlib.util.module_from_spec(_watcher_spec)
-_watcher_spec.loader.exec_module(watcher)
+project_directory_module = importlib.util.module_from_spec(_project_directory_spec)
+_project_directory_spec.loader.exec_module(project_directory_module)
 
 # Reuse retirement rules so every socket holding the seat’s name is cleared consistently.
 _resupervise_spec = importlib.util.spec_from_file_location(
@@ -192,6 +200,12 @@ _resupervise_spec = importlib.util.spec_from_file_location(
 )
 resupervise = importlib.util.module_from_spec(_resupervise_spec)
 _resupervise_spec.loader.exec_module(resupervise)
+
+_claude_json_presets_spec = importlib.util.spec_from_file_location(
+    "claude_json_agent_seat_folder_trust_and_onboarding_presets_write",
+    Path(__file__).with_name("claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py"))
+claude_json_presets = importlib.util.module_from_spec(_claude_json_presets_spec)
+_claude_json_presets_spec.loader.exec_module(claude_json_presets)
 
 # A shared module avoids circular loading between recovery and the supervisor.
 # Re-export the names for callers that reach them through this module.
@@ -233,7 +247,7 @@ def default_handoff_directory() -> Path:
 
 def harness_project_directory(seat_directory: Path, projects_root: Path) -> Path:
     # The harness replaces every non-ASCII-alphanumeric character, including underscores.
-    return watcher.project_directory_for_seat(seat_directory, projects_root)
+    return project_directory_module.project_directory_for_seat(seat_directory, projects_root)
 
 
 def run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
@@ -250,15 +264,24 @@ def run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
         return None
 
 
+def tmux_has_session(name: str, socket_name: str):
+    """Return (held, detail), with held None when tmux cannot answer."""
+    # One probe for recovery and retirement; this module's run_tmux is passed so tests can stub it here.
+    return resupervise.tmux_has_session(name, socket_name, run=run_tmux)
+
+
 def tmux_session_alive_anywhere(name: str):
     """Return (alive, detail), with alive None when tmux cannot answer."""
+    errors = []
     for socket_name in dict.fromkeys((name, "default")):
-        completed = run_tmux("has-session", "-t", f"={name}", socket_name=socket_name)
-        if completed is None:
-            return None, ("tmux cannot be run here, so seat liveness cannot be "
-                          "checked — refusing rather than guessing")
-        if completed.returncode == 0:
+        held, detail = tmux_has_session(name, socket_name)
+        if held:
             return True, f"tmux session '{name}' is alive on socket '{socket_name}'"
+        if held is None:
+            errors.append(detail)
+    if errors:
+        return None, (f"{'; '.join(dict.fromkeys(errors))}, so seat liveness cannot be "
+                      "checked — refusing rather than guessing")
     return False, ""
 
 
@@ -328,11 +351,10 @@ def tmux_session_is_a_leftover_idle_shell(name: str, seat_directory: Path):
     pane_process_ids = []
     sockets_holding = []
     for socket_name in dict.fromkeys((name, "default")):
-        held = run_tmux("has-session", "-t", f"={name}", socket_name=socket_name)
+        held, detail = tmux_has_session(name, socket_name)
         if held is None:
-            return False, [], ("tmux cannot be run here, so the session cannot be shown "
-                               "to be an idle shell")
-        if held.returncode != 0:
+            return False, [], f"{detail}, so the session cannot be shown to be an idle shell"
+        if not held:
             continue
         panes = run_tmux("list-panes", "-s", "-t", f"={name}",
                          "-F", "#{pane_pid}\t#{pane_current_command}",
@@ -530,8 +552,77 @@ def reach_clause_for_a_running_seat(name: str) -> str:
     # Recovery launches detached on the seat's own tmux socket, where a plain `tmux attach` finds nothing.
     if launcher_path() is not None:
         return f"; reach it with: launch-claude-mac {name}"
-    return (f"; reach it with: launch-claude-ubuntu {name} from the Mac, "
-            f"or tmux -L {name} attach -t {name} here")
+    return (f"; reach it with: {LAUNCH_CLAUDE_UBUNTU_SCRIPT_PATH_IN_MAC_REPOSITORY_CLONE} {name} "
+            f"from the Mac, or tmux -L {name} attach -t {name} here")
+
+
+WINDOW_SENDER_PATH = Path(__file__).resolve().with_name(
+    "open-mac-window-from-ned-box.py")
+# The Mac's own clone; this path is shown to the user, who runs it in a Mac Terminal.
+LAUNCH_CLAUDE_UBUNTU_SCRIPT_PATH_IN_MAC_REPOSITORY_CLONE = (
+    "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu")
+AGENT_SEAT_MAC_WINDOW_NOT_OPENED_REPORT_TEXT = "WINDOW NOT OPENED"
+ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS = 3
+
+
+def current_recovery_report_confirms_agent_seat_launched_and_running(name: str, report: str) -> bool:
+    """True for a report of a seat this run launched and saw come up."""
+    # Only those reports end with the reach clause; ALREADY RUNNING and every refusal do not.
+    return report.endswith(reach_clause_for_a_running_seat(name))
+
+
+def agent_seat_tmux_session_has_attached_client(name: str):
+    """Return (True or False, ""), or (None, why) when tmux cannot answer."""
+    completed = run_tmux("list-clients", "-t", f"={name}", "-F", "#{client_tty}",
+                         socket_name=name)
+    if completed is None:
+        return None, "tmux could not be run or did not answer within 30s"
+    if completed.returncode != 0:
+        return None, (f"tmux list-clients exited {completed.returncode}: "
+                      f"{completed.stderr.strip() or '(no error text)'}")
+    return bool(completed.stdout.strip()), ""
+
+
+def agent_seat_mac_window_open_unless_tmux_client_already_attached(name: str):
+    """Return (opened, detail): opened is None when a window was already attached."""
+    # A seat this run launched is a new tmux session, so any client on it is a live window.
+    attached, why_unknown = agent_seat_tmux_session_has_attached_client(name)
+    if attached is None:
+        # Opening anyway could give the seat a second window; not opening is reported, and retried.
+        return False, f"no window was opened, because whether one is already attached is unknown: {why_unknown}"
+    if attached:
+        return None, "a window was already attached to it, so no other was opened"
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(WINDOW_SENDER_PATH), "--agent-seat", name],
+            capture_output=True, text=True, check=False)
+    except OSError as error:
+        return False, f"could not run {WINDOW_SENDER_PATH.name}: {error}"
+    output_lines = [line.strip() for line in (completed.stdout + completed.stderr).splitlines()
+                    if line.strip()]
+    if completed.returncode == 0:
+        # The Mac opens the window and only then logs it; a failed log write is reported on stderr.
+        warnings = [line.strip() for line in completed.stderr.splitlines() if line.strip()]
+        if warnings:
+            reported = " ".join(line if line.endswith((".", ":")) else line + "."
+                                for line in warnings).rstrip(".")
+            return True, f"a window onto it opened on the Mac, which also reported: {reported}"
+        return True, "a window onto it opened on the Mac"
+    # The opener prints the failure's cause first and an instruction to its own caller after it.
+    cause_line = output_lines[0].rstrip(".") if output_lines else "(it printed nothing)"
+    return False, (f"{WINDOW_SENDER_PATH.name} exited {completed.returncode}: "
+                   f"{cause_line}")
+
+
+def window_clause_for_a_seat_left_running(name: str):
+    """Return (report clause, window_failed) after opening the seat's window on the Mac."""
+    opened, detail = agent_seat_mac_window_open_unless_tmux_client_already_attached(name)
+    if opened is False:
+        return (f"; {AGENT_SEAT_MAC_WINDOW_NOT_OPENED_REPORT_TEXT} on the Mac — {detail}. The seat is "
+                "running, and rerunning this recovery opens no window for a running seat. "
+                f"Once the cause above is cleared, open the seat's window by running on ned-box "
+                f"`python3 {WINDOW_SENDER_PATH} --agent-seat {name}`"), True
+    return f"; {detail}", False
 
 
 def durable_checkout_file_a_launch_here_runs() -> Path:
@@ -590,7 +681,20 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
             command += ["--first-prompt-file", str(first_prompt_file)]
         return subprocess.run(command, env=environment, check=False).returncode
 
-    # This branch bypasses the launcher: preserve its task-store migration and binding.
+    # This branch bypasses the launcher: preserve its task-store migration and binding,
+    # and its presets. The supervisor starts agent-sessions with IS_DEMO=1, which skips
+    # the folder-trust dialog, so the seat's folder is trusted here on purpose.
+    claude_json = claude_json_presets.claude_json_path()
+    try:
+        claude_json_presets.claude_json_agent_seat_folder_trust_and_onboarding_presets_write(
+            claude_json, str(seat_directory))
+    except (claude_json_presets.ClaudeJsonNotAJsonObjectError, OSError) as error:
+        print(f"recover-crashed-seats: {name}: not launched, because the folder-trust and "
+              f"onboarding presets could not be written to {claude_json}: {error}.\n"
+              + claude_json_presets.claude_json_presets_failure_remedy(
+                  error, claude_json, "run this recovery again"),
+              file=sys.stderr)
+        return 1
     # Export the seat’s own git identity, since tmux otherwise inherits the recovering seat’s identity.
     supervisor_command = (
         'export PATH="$HOME/.local/bin:$PATH"; '
@@ -944,15 +1048,15 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             pane_process_ids = rechecked_pane_process_ids
         else:
             # A failed idle proof does not prove the session exists; a vanished session holds no work.
-            # Ask tmux explicitly, since retirement treats an unanswered socket as empty.
+            # Ask tmux explicitly: a session still there was not proven idle again, so it must not be retired.
             session_still_there, liveness_detail = tmux_session_alive_anywhere(name)
             if session_still_there is None:
                 return f"{name}: REFUSED — {liveness_detail}"
             if session_still_there:
                 return f"{name}: {LEFTOVER_IDLE_SHELL_NOT_PROVEN_AGAIN_REPORT}"
-        killed_sockets, retire_failure = resupervise.retire_seat_tmux_session(name)
+        killed_sockets, retire_failure, check = resupervise.retire_seat_tmux_session(name)
         if retire_failure is not None:
-            return f"{name}: REFUSED — {retire_failure}"
+            return f"{name}: REFUSED — {retire_failure}" + (f". {check}" if check else "")
         if killed_sockets:
             closed = ("closed the leftover shell — retired the tmux session on socket"
                       f"{'s' if len(killed_sockets) > 1 else ''} "
@@ -1134,18 +1238,19 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             f"{reach_clause_for_a_running_seat(name)}")
 
 
-def list_agent_seat_names_with_agent_session_records(agents_root: Path, handoff_directory: Path,
-                             projects_root: Path) -> list:
-    """Return, sorted, the directories under agents_root that ever held a seat."""
-    # A never-run directory is not a crashed seat; explicit names may still recover one.
-    def ever_ran(name: str) -> bool:
+def list_agent_seat_names_with_agent_session_records(agents_root: Path,
+                                                     handoff_directory: Path) -> list:
+    """Return, sorted, the directories under agents_root that hold a supervisor
+    state file or a session-handoff file, the records only an agent-seat leaves."""
+    # Transcripts do not mark an agent-seat: any Claude session run in a topic
+    # worktree under agents_root leaves them. Explicit names may still recover any directory.
+    def supervisor_or_handoff_recorded(name: str) -> bool:
         return (supervisor.supervisor_state_path(handoff_directory, name).is_file()
-                or supervisor.handoff_file_path(handoff_directory, name).is_file()
-                or harness_project_directory(agents_root / name, projects_root).is_dir())
+                or supervisor.handoff_file_path(handoff_directory, name).is_file())
     if not agents_root.is_dir():
         return []
     return sorted(entry.name for entry in agents_root.iterdir()
-                  if entry.is_dir() and ever_ran(entry.name))
+                  if entry.is_dir() and supervisor_or_handoff_recorded(entry.name))
 
 
 def append_to_recovery_log(handoff_directory: Path, report: str):
@@ -1184,8 +1289,9 @@ def main(argv=None) -> int:
     parser.add_argument("--projects-root", default="",
                         help="harness transcript root (default ~/.claude/projects)")
     parser.add_argument("--open-iterm-window-per-seat", action="store_true",
-                        help="launch each recovered seat attached, in its own iTerm "
-                             "window (macOS only; nedschorus#242 change 6)")
+                        help="on the Mac, launch each recovered seat attached, in its "
+                             "own iTerm window; on ned-box every seat a run brings up "
+                             "gets a window on the Mac anyway, so it changes nothing")
     parser.add_argument("--checkout", default="",
                         help="the durable checkout whose launcher and supervisor a "
                              "launched seat runs (default ~/Projects/nedschorus)")
@@ -1207,11 +1313,7 @@ def main(argv=None) -> int:
     projects_root = (Path(arguments.projects_root).expanduser() if arguments.projects_root
                      else Path("~/.claude/projects").expanduser())
 
-    if arguments.open_iterm_window_per_seat:
-        # The Ubuntu box is headless and has neither iTerm2 nor launch-claude-mac.
-        if launcher_path() is None:
-            parser.error("--open-iterm-window-per-seat needs macOS: it opens iTerm2 "
-                         "windows running launch-claude-mac, and neither exists here")
+    if arguments.open_iterm_window_per_seat and launcher_path() is not None:
         # The handoff path is nested in shell-quoted supervisor arguments, which iTerm cannot carry.
         # Reject unsupported quoting before any seat launches; other paths may contain spaces.
         if shlex.quote(str(handoff_directory)) != str(handoff_directory):
@@ -1224,7 +1326,7 @@ def main(argv=None) -> int:
                              f"an apostrophe into an iTerm window: {path}")
 
     if arguments.all:
-        names = list_agent_seat_names_with_agent_session_records(agents_root, handoff_directory, projects_root)
+        names = list_agent_seat_names_with_agent_session_records(agents_root, handoff_directory)
         if not names:
             print(f"recover-crashed-seats: no seat directories under {agents_root}")
             return 1
@@ -1233,17 +1335,30 @@ def main(argv=None) -> int:
     else:
         parser.error("name at least one seat, or pass --all")
 
-    not_recovered = 0
+    # On the Mac --open-iterm-window-per-seat launches each seat inside its own window;
+    # on ned-box every seat a run brings up gets a window on the Mac, with or without it.
+    open_iterm_window = arguments.open_iterm_window_per_seat and launcher_path() is not None
+    not_recovered = windows_not_opened = 0
     for name in names:
         report = recover_seat(name, agents_root, handoff_directory, projects_root,
                               arguments.dry_run, arguments.ignite_fallback,
-                              open_iterm_window=arguments.open_iterm_window_per_seat)
+                              open_iterm_window=open_iterm_window)
+        # A dry run's lines never end with the reach clause, so it asks for no window.
+        if (launcher_path() is None
+                and current_recovery_report_confirms_agent_seat_launched_and_running(name, report)):
+            # The reach clause stays last, as every line that left a seat running ends with it.
+            reach = reach_clause_for_a_running_seat(name)
+            window_clause, window_failed = window_clause_for_a_seat_left_running(name)
+            report = report[:-len(reach)] + window_clause + reach
+            windows_not_opened += window_failed
         print(f"recover-crashed-seats: {report}")
         if not arguments.dry_run:
             append_to_recovery_log(handoff_directory, report)
         if any(marker in report for marker in SEAT_NOT_RECOVERED_REPORT_MARKERS):
             not_recovered += 1
-    return 1 if not_recovered else 0
+    if not_recovered:
+        return 1
+    return ALL_AGENT_SEATS_RECOVERED_BUT_MAC_WINDOW_OPEN_FAILED_EXIT_STATUS if windows_not_opened else 0
 
 
 if __name__ == "__main__":

@@ -107,12 +107,25 @@ _worth_resuming_spec = importlib.util.spec_from_file_location(
 worth_resuming = importlib.util.module_from_spec(_worth_resuming_spec)
 _worth_resuming_spec.loader.exec_module(worth_resuming)
 
+_git_redirecting_removal_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_variables_removal_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "git-redirecting-environment-variables-removal-common.py")
+git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
+_git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
+
 _agent_binary_update_under_lock_spec = importlib.util.spec_from_file_location(
     "agent_binary_update_under_lock",
     SCRIPTS_DIRECTORY / "agent-binary-update-under-lock.py")
 agent_binary_update_under_lock = importlib.util.module_from_spec(
     _agent_binary_update_under_lock_spec)
 _agent_binary_update_under_lock_spec.loader.exec_module(agent_binary_update_under_lock)
+
+_claude_json_presets_spec = importlib.util.spec_from_file_location(
+    "claude_json_agent_seat_folder_trust_and_onboarding_presets_write",
+    SCRIPTS_DIRECTORY / "claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py")
+claude_json_presets = importlib.util.module_from_spec(_claude_json_presets_spec)
+_claude_json_presets_spec.loader.exec_module(claude_json_presets)
 
 _architecture_overview_path_template_and_checked_against_commit_reader_spec = importlib.util.spec_from_file_location(
     "architecture_overview_path_template_and_checked_against_commit_reader",
@@ -170,6 +183,12 @@ SIGKILL_SESSION_EXIT_CODES = (137, -9)
 CONSECUTIVE_RESUMES_WITHOUT_NEW_WORK_BUDGET = 1
 
 PROJECTS_ROOT = Path.home() / ".claude" / "projects"
+
+_transcript_project_directory_spec = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_project_directory_for_agent_seat_common",
+    SCRIPTS_DIRECTORY / "claude-code-session-transcript-project-directory-for-agent-seat-common.py")
+transcript_project_directory = importlib.util.module_from_spec(_transcript_project_directory_spec)
+_transcript_project_directory_spec.loader.exec_module(transcript_project_directory)
 # Live supervisors resolve this path at import; moving the extractor would break those processes.
 EXTRACTOR_PATH = SCRIPTS_DIRECTORY / "handoff-extract-conversation.py"
 CLEAN_WORKTREES_PATH = SCRIPTS_DIRECTORY / "clean-worktrees.py"
@@ -221,8 +240,10 @@ def handoff_supervisor_environment_copy_without_calling_agent_session_variables(
 def agent_seat_launch_environment_without_calling_agent_session_tmux_and_supervisor_variables(environment) -> dict:
     """Return the environment to start an agent-seat's launcher or tmux server with."""
     # A new tmux server copies its starter's environment into every window, the after-exit shell
-    # included, so the caller's tmux and supervisor variables are dropped here too.
-    caller_only = {"TMUX", "TMUX_PANE",
+    # included, so the caller's tmux and supervisor variables are dropped here too. IS_DEMO is
+    # dropped because launch_agent_session sets it for the agent-sessions it starts; a claude
+    # typed in the after-exit shell would otherwise start in Claude Code's demo mode.
+    caller_only = {"TMUX", "TMUX_PANE", "IS_DEMO",
                    HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE,
                    HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE,
                    HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE}
@@ -677,11 +698,7 @@ def pinned_task_list_id() -> str:
 
 def project_directory_for_working_directory(working_directory: Path) -> Path:
     """Return the harness project directory holding the worktree's sessions."""
-    mangled = "".join(
-        character if (character.isalnum() or character in "-_") else "-"
-        for character in str(working_directory)
-    )
-    return PROJECTS_ROOT / mangled
+    return transcript_project_directory.project_directory_for_seat(working_directory, PROJECTS_ROOT)
 
 
 def substantive_turn_count_of_session_transcript(session_id: str, working_directory: Path) -> int:
@@ -937,9 +954,11 @@ def overview_refresh_due_lines(working_directory: Path,
             working_directory, timeout=timeout)
         main_commit = overview_check_git_output(
             ["rev-parse", "--short", main_commit_full], working_directory, timeout=timeout)
-        listed = overview_check_git_output(
+        # Bytes, so a directory name that is not valid UTF-8 is passed over below rather than stopping every system's check.
+        listed = git_machine_readable_output.run_git(
+            working_directory,
             ["ls-tree", "-z", "-d", "--name-only", main_commit_full, "nc-systems/"],
-            working_directory, timeout=timeout)
+            timeout_seconds=timeout)
     except Exception as error:
         print(f"handoff-supervisor: overview check stopped: "
               f"{type(error).__name__}: {error}")
@@ -947,6 +966,13 @@ def overview_refresh_due_lines(working_directory: Path,
     due = []
     for system_directory in git_machine_readable_output.nul_separated_fields(listed):
         system = system_directory.rsplit("/", 1)[-1]
+        # The reminder's commands take the name unquoted, and the mark script refuses any other name.
+        if not re.fullmatch(daily_overview_refresh_reminder_mark.SYSTEM_NAME_PATTERN, system):
+            printable = system.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+            print(f"handoff-supervisor: overview check for {printable} passed over: "
+                  f"the name does not match {daily_overview_refresh_reminder_mark.SYSTEM_NAME_PATTERN}, "
+                  f"the pattern daily-overview-refresh-reminder-mark.py accepts")
+            continue
         try:
             overview_path = SYSTEM_OVERVIEW_PATH_TEMPLATE.format(system=system)
             shown = subprocess.run(
@@ -1129,10 +1155,9 @@ def remove_finished_worktrees_at_handoff(
         working_directory: Path,
         timeout_seconds: int = FINISHED_WORKTREE_REMOVAL_TIMEOUT_SECONDS) -> str:
     """Run worktree cleanup and return a report without blocking the handoff on failure."""
-    # Remove git environment overrides so deletions cannot target another repository.
+    # Remove the variables that redirect git so deletions cannot target another repository.
     # Unbuffered output preserves partial counts; a separate process group lets timeout stop git and lsof too.
-    environment = {name: value for name, value in os.environ.items()
-                   if name not in ("GIT_DIR", "GIT_WORK_TREE")}
+    environment = git_redirecting_removal.environment_without_git_redirecting_variables()
     try:
         cleaner = subprocess.Popen(
             [sys.executable, "-u", str(CLEAN_WORKTREES_PATH), "--remove",
@@ -1293,6 +1318,28 @@ def update_agent_binary(agent_command: str, timeout_seconds: int) -> None:
         [agent_command, "update"], timeout_seconds, "handoff-supervisor")
 
 
+def claude_json_onboarding_presets_write_or_report() -> None:
+    """Record Claude Code's onboarding as done in ~/.claude.json, or print why it could not."""
+    # Written before every launch, relaunches included, because a /logout can clear
+    # hasCompletedOnboarding while this supervisor runs. Folder trust is the launchers'.
+    # A failure is printed, not raised: IS_DEMO may still keep the onboarding screens off,
+    # and an agent-seat that is not launched helps no one.
+    claude_json = claude_json_presets.claude_json_path()
+    try:
+        claude_json_presets.claude_json_onboarding_presets_write(claude_json)
+    except (claude_json_presets.ClaudeJsonNotAJsonObjectError, OSError) as error:
+        print(f"handoff-supervisor: Claude Code's onboarding was not recorded as done in "
+              f"{claude_json}: {error}. The agent-session is launched anyway, and may stop at "
+              "Claude Code's onboarding screens, the theme picker first.\n"
+              + claude_json_presets.claude_json_presets_failure_remedy(error, claude_json)
+              + f"\nA fix to {claude_json} helps only the next launch; an agent-session "
+              "already stopped at an onboarding screen stays there until the screen is answered.\n"
+              "If the agent-session stopped at an onboarding screen: the user answers the "
+              "screen in the terminal window that shows this message; an agent does not type "
+              "into another agent-seat's terminal.",
+              file=sys.stderr)
+
+
 def launch_agent_session(agent_command: str, session_id: str, working_directory: Path,
                          prompt: str, resume: bool = False,
                          remote_control_name: str = "",
@@ -1320,6 +1367,10 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     session_environment[HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE] = handoff_supervisor_agent_name
     session_environment[HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE] = str(working_directory)
     session_environment[HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE] = session_id
+    # Claude Code's demo mode skips its first-run onboarding screens, such as the theme picker,
+    # which would stop the session with no one to answer them.
+    session_environment["IS_DEMO"] = "1"
+    claude_json_onboarding_presets_write_or_report()
     return subprocess.Popen(command, cwd=str(working_directory), env=session_environment)
 
 

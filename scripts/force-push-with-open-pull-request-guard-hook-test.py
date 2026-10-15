@@ -26,6 +26,8 @@ import contextlib
 import importlib.util
 import io
 import json
+import tempfile
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -151,17 +153,16 @@ def run_main(payload, runner=None):
 
 # ---------------------------------------------------------------------------
 # The shared shell reader is really imported, and really splits invocations
-# from prose. A signature change in the keystroke guard fails HERE rather than
+# from prose. A change to the module's interface fails HERE rather than
 # failing open in front of a live push.
 # ---------------------------------------------------------------------------
 
-check("the shared tokenizer is imported from the keystroke guard",
-      callable(guard.tokenize_simple_commands) and callable(guard.split_out_heredocs)
-      and callable(guard.is_program))
-check("the shared tokenizer keeps quoted prose as one data word",
-      guard.tokenize_simple_commands('git commit -m "git push --force"')
+check("the shared shell module is imported",
+      callable(guard.shell_reader.simple_commands) and callable(guard.is_program))
+check("the shared shell module keeps quoted prose as one data word",
+      guard.shell_reader.simple_commands('git commit -m "git push --force"')
       == [["git", "commit", "-m", "git push --force"]],
-      repr(guard.tokenize_simple_commands('git commit -m "git push --force"')))
+      repr(guard.shell_reader.simple_commands('git commit -m "git push --force"')))
 
 # ---------------------------------------------------------------------------
 # The core decision: a force push at a branch with an open pull request.
@@ -182,15 +183,16 @@ check("D5 'stop rather than reverse' is the refusal's SECOND line",
       len(lines) > 1
       and lines[1].startswith(
           "If you are force-pushing to restore what an earlier force push replaced")
-      and "stop" in lines[1] and "message merge-lane" in lines[1]
+      and "stop" in lines[1] and "message merge-lane-2" in lines[1]
       and "ListAgents" in lines[1],
       lines[1] if len(lines) > 1 else reason)
 check("the refusal teaches the remedy: a new commit on top, pushed without --force",
       reason and "new commit on top" in reason and "without --force" in reason,
       reason)
 # A conflict with main cannot be cleared by a commit on top; the refusal sends
-# it to the hand-merge on a line of its own (CLAUDE.md, "How a change reaches
-# main", worded 2026-09-30). Pinned by equality on the line.
+# it to the hand-merge on a line of its own, the hand-merge that the
+# VERDICT: CONFLICT report of scripts/branch-conflict-check.py describes.
+# Pinned by equality on the line.
 check("the refusal sends a conflict with main to the hand-merge, as a line of its own",
       "If the branch conflicts with main, clear the conflict with the hand-merge "
       "that scripts/branch-conflict-check.py describes, and push without --force."
@@ -287,6 +289,33 @@ check("D2 gh ran in the cd'd directory, so it infers the right repository",
       "/elsewhere/wt-fast-read" in runner.probe_directories(),
       str(runner.probe_directories()))
 
+# tree-sitter-bash folds a command bash runs in the parent shell into a pipeline stage
+# in two shapes; the cd before or on the line after the pipeline still moves the probe.
+for case_name, command in [
+    ("a cd before a pipeline in which two stages have a redirection",
+     "cd /elsewhere/wt-fast-read && git log 2>/dev/null | head 2>/dev/null | cat; "
+     "git push -f origin the-pr-branch"),
+    ("a cd and a push in a compound command after || on a heredoc's line",
+     "python3 - <<'PY' || { cd /elsewhere/wt-fast-read; git push -f origin the-pr-branch; }\n"
+     "print(1)\nPY"),
+    ("a cd and a push after ; on a heredoc's line",
+     "cat <<'EOF'; cd /elsewhere/wt-fast-read; git push -f origin the-pr-branch\nx\nEOF"),
+    ("a redirected cd on the line after a pipeline of three stages",
+     "make 2>&1 | tail -1 | sed s/a/b/\ncd /elsewhere/wt-fast-read >/dev/null\n"
+     "git push -f origin the-pr-branch"),
+]:
+    runner = ProbeRunner(branch="the-pr-branch",
+                         open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+    decision, _ = decide(command, runner)
+    check(f"D2 {case_name} moves the probe", decision == "deny"
+          and "/elsewhere/wt-fast-read" in runner.probe_directories(),
+          (decision, runner.probe_directories()))
+runner = ProbeRunner(branch="the-pr-branch",
+                     open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decide("cd /elsewhere/wt-fast-read | cat; git push -f origin the-pr-branch", runner)
+check("D2 a cd that is itself a pipeline stage does not move the probe",
+      "/elsewhere/wt-fast-read" not in runner.probe_directories(), runner.probe_directories())
+
 runner = ProbeRunner()
 decision, reason = decide("cd $WORKTREE && git push --force", runner)
 check("D2 an unexpanded directory is refused as unresolvable",
@@ -333,7 +362,7 @@ decision, reason = decide("git push --force origin the-pr-branch", runner)
 check("D3 the unchecked note tells the agent how to confirm by hand",
       reason and "gh pr list --state open --head the-pr-branch" in reason, reason)
 check("D3 the note's fallback works when gh itself cannot run",
-      reason and "or fails, message merge-lane" in reason
+      reason and "or fails, message merge-lane-2" in reason
       and "ListAgents" in reason, reason)
 # Asking gh again helps after a timeout or an unreadable answer, and fails
 # the same way after gh could not run or failed outright — so only the first
@@ -479,9 +508,9 @@ for command in NOT_FORCING:
     check(f"and probes nothing: {command}", not runner.calls, str(runner.calls))
 
 # ---------------------------------------------------------------------------
-# A redirection is not a refspec. The shared tokenizer keeps redirections as
-# plain words, and read as a refspec one skipped the current-branch lookup, so
-# a bare force push with a trailing `2>&1` passed with no refusal and no note.
+# A redirection is not a refspec. A reader that kept redirections as plain
+# words read one as a refspec and skipped the current-branch lookup, so a bare
+# force push with a trailing `2>&1` passed with no refusal and no note.
 # Most pushes carry one: 35 of the forced pushes in this Mac's transcripts
 # over 14 days did. The first three commands are the reviewer's reproductions,
 # verbatim.
@@ -550,9 +579,96 @@ check("env in front of another git command is not a push",
 
 runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
 decision, reason = decide("timeout 60 git push --force origin the-pr-branch", runner)
-check("the stated limit: a push behind timeout is not recognised",
-      decision is None and not runner.calls,
-      f"{decision}: {reason} {runner.calls}")
+check("a push behind timeout is read through the shared wrapper table",
+      decision == "deny", f"{decision}: {reason} {runner.calls}")
+for command in ["env -C /elsewhere/wt-fast-read git push --force origin",
+                "env --chdir=/elsewhere/wt-fast-read git push --force origin",
+                "sudo -D /elsewhere git -C wt-fast-read push --force origin",
+                "env -u X -C /elsewhere/wt-fast-read git push --force origin",
+                "sudo -u r -D /elsewhere/wt-fast-read git push --force origin",
+                "env -C /elsewhere env -C wt-fast-read git push --force origin",
+                "env -C /nowhere env -C /elsewhere/wt-fast-read git push --force origin",
+                "env -C /nowhere -C /elsewhere/wt-fast-read git push --force origin",
+                "sudo -D /nowhere -D /elsewhere/wt-fast-read git push --force origin"]:
+    runner = ProbeRunner(branch="the-pr-branch",
+                         open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+    decision, _ = decide(command, runner)
+    check(f"a wrapper's directory option moves the checkout the branch is resolved from: {command}",
+          decision == "deny"
+          and ["git", "-C", "/elsewhere/wt-fast-read", "rev-parse", "--abbrev-ref", "HEAD"]
+          in runner.calls, (decision, runner.calls))
+# Within one env, only the last -C counts: env -C /a -C b runs in b, from where it started.
+runner = ProbeRunner(branch="the-pr-branch", open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, _ = decide("env -C /nowhere -C wt-fast-read git push --force origin", runner)
+check("within one env the last -C counts, taken from the directory the command started in",
+      decision == "deny"
+      and ["git", "-C", os.path.join(SESSION_WORKTREE, "wt-fast-read"), "rev-parse", "--abbrev-ref", "HEAD"]
+      in runner.calls, (decision, runner.calls))
+# ~ is expanded before a directory is joined to the one before it.
+saved_home = os.environ.get("HOME")
+os.environ["HOME"] = "/elsewhere"
+try:
+    for command in ["env -C /nowhere env -C ~/wt-fast-read git push --force origin",
+                    "env -C /nowhere git -C ~/wt-fast-read push --force origin"]:
+        runner = ProbeRunner(branch="the-pr-branch",
+                             open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+        decision, _ = decide(command, runner)
+        check(f"a ~ directory is expanded before it is joined: {command}",
+              decision == "deny"
+              and ["git", "-C", "/elsewhere/wt-fast-read", "rev-parse", "--abbrev-ref", "HEAD"]
+              in runner.calls, (decision, runner.calls))
+    # bash leaves a quoted ~, and one after --chdir=, as written: the push runs in a folder named ~.
+    for command, directory in [
+            ("env -C /nowhere env --chdir=~/wt-fast-read git push --force origin", "/nowhere/~/wt-fast-read"),
+            ("env -C '~/wt-fast-read' git push --force origin", f"{SESSION_WORKTREE}/~/wt-fast-read"),
+            ("git -C '~/wt-fast-read' push --force origin", f"{SESSION_WORKTREE}/~/wt-fast-read"),
+            ("cd \\~/wt-fast-read && git push --force origin", f"{SESSION_WORKTREE}/~/wt-fast-read"),
+            ("cd ~/wt-fast-read && git push --force origin", "/elsewhere/wt-fast-read")]:
+        runner = ProbeRunner(branch="the-pr-branch",
+                             open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+        decision, _ = decide(command, runner)
+        check(f"the push is checked where bash runs it: {command}",
+              ["git", "-C", directory, "rev-parse", "--abbrev-ref", "HEAD"] in runner.calls,
+              (decision, runner.calls))
+finally:
+    if saved_home is None:
+        os.environ.pop("HOME", None)
+    else:
+        os.environ["HOME"] = saved_home
+
+# bash and the real env are the oracle for where nested wrappers run a command.
+with tempfile.TemporaryDirectory() as place:
+    place = os.path.realpath(place)
+    for relative in ("a/b", "c", "home/x", "a/~/x"):
+        os.makedirs(os.path.join(place, relative))
+    for wrappers in [f"env -C {place}/a env -C b",
+                     f"env -C {place}/a env -C {place}/c",
+                     f"env -C {place}/a env -C ~/x",
+                     f"env -C {place}/a env --chdir=~/x",
+                     f"env -C {place}/a env -C '~/x'",
+                     f"env -C {place}/a env -C \\~/x",
+                     f"env -C {place}/c -C {place}/a/b"]:
+        # The command text goes through bash and through the reader, so each decides what ~ is.
+        real = subprocess.run(["bash", "-c", f"{wrappers} pwd"], capture_output=True,
+                              text=True, env={**os.environ, "HOME": f"{place}/home"}, cwd=place)
+        if real.returncode != 0:
+            print(f"SKIP  {wrappers}: this env refuses it ({real.stderr.strip()[:80]})")
+            continue
+        saved_home = os.environ.get("HOME")
+        os.environ["HOME"] = f"{place}/home"
+        try:
+            found = guard.directory_a_wrapper_sets(list(guard.shell_reader.simple_commands(f"{wrappers} git push")[0]))
+        finally:
+            if saved_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = saved_home
+        check(f"the guard finds the directory the real env runs in: {wrappers}",
+              os.path.normpath(os.path.join(place, found)) == real.stdout.strip(),
+              (found, real.stdout.strip()))
+runner = ProbeRunner(branch="the-pr-branch", open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, _ = decide(f"env {guard.ESCAPE_HATCH_ASSIGNMENT} git push --force origin", runner)
+check("the escape hatch after env still sanctions the push", decision is None, decision)
 
 # ---------------------------------------------------------------------------
 # Prose is data. The guard's own commit message and pull request body say

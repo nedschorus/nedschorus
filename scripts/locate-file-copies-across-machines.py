@@ -26,12 +26,15 @@ REMOTE_TIMEOUT_SECONDS = 30
 LOCAL_COMMAND_TIMEOUT_SECONDS = 30
 
 # Remove Git redirects so each command answers for the named repository.
-GIT_REDIRECTING_VARIABLES = (
+# A copy of nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py's
+# list, the one copy allowed: this file is sent over ssh alone, so it cannot load the module.
+# Its test fails when the two lists differ.
+GIT_REDIRECTING_ENVIRONMENT_VARIABLES = (
     "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-    "GIT_COMMON_DIR", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR")
 # Printed recovery commands must also remove redirects from the shell where they are pasted.
 PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES = "env %s git" % " ".join(
-    "-u %s" % name for name in GIT_REDIRECTING_VARIABLES)
+    "-u %s" % name for name in GIT_REDIRECTING_ENVIRONMENT_VARIABLES)
 
 PLAN_ENVIRONMENT_VARIABLE = "LOCATE_FILE_COPIES_ACROSS_MACHINES_PLAN"
 THIS_MACHINE_JSON_FLAG = "--this-machine-json"
@@ -293,7 +296,7 @@ def place_of_file(path, layout, spellings, this_git_dirs, cache):
 def environment_without_git_redirecting_variables():
     # Keep this helper local: the complete program is sent over ssh without sibling modules.
     return {key: value for key, value in os.environ.items()
-            if key not in GIT_REDIRECTING_VARIABLES}
+            if key not in GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
 
 
 def tracked_in_checkout(root, relative_paths):
@@ -1003,9 +1006,11 @@ def run_backup_search_after_nothing_found(query, git_search_complete):
     program = (os.environ.get(BACKUP_SEARCH_PROGRAM_VARIABLE)
                or str(pathlib.Path(__file__).resolve().parent
                       / BACKUP_SEARCH_PROGRAM_NAME))
-    command = [sys.executable, program, query]
+    command = [sys.executable, program]
     for surface in BACKUP_SEARCH_SURFACES_ALREADY_SEARCHED:
         command += ["--skip", surface]
+    # Without "--", a query opening with a dash is read as an option.
+    command += ["--", query]
     covered = (", which the git search above covered" if git_search_complete
                else "")
     write_text("\nNo copy was found, so the backup search runs now, without "
@@ -1050,9 +1055,18 @@ def main(argv=None) -> int:
                     "ned-box, newest first: checkouts, the log-store, the "
                     "handoffs, and git history including the reflog.")
     parser.add_argument("query", help="a file name or a path, which may be "
-                        "written in the scp form nedlern@ned-box:<path>; its "
-                        "name's stem is matched, case-insensitively, anywhere "
-                        "in a file's name")
+                        "written in the scp form nedlern@ned-box:<path>. Its "
+                        "name without the extension is matched, case-insensitively, "
+                        "anywhere in a file's name: report.md lists old-report.txt "
+                        "as a candidate. For a name, only a file with the same name, in "
+                        "any case, counts as found; for a path, only a file at the "
+                        "same path, in any case, counts as found, and a file with the same name "
+                        "elsewhere is listed as a candidate. A query with no dot in "
+                        "its name also counts a file whose name without its "
+                        "extension is the same, so report finds report.md; a name "
+                        "with a dot anywhere, such as .gitignore, counts only that "
+                        "name. A name that opens with a "
+                        "dash goes after --, as in -- -nbd-test.py")
     parser.add_argument(THIS_MACHINE_JSON_FLAG, metavar="SURFACES_JSON",
                         help="search only this machine, over these surfaces, "
                              "and print the answer as JSON: what the program "

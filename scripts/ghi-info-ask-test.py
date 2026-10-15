@@ -319,7 +319,7 @@ with tempfile.TemporaryDirectory() as temporary:
     ghi_ask.save_state(seat10 / ghi_ask.STATE_FILE_NAME,
                        {"session_id": "sess-BIG", "closes_since_birth": 0, "recent_matches": []})
     projects_root = root / "projects"
-    project_directory = ghi_ask.watcher.project_directory_for_seat(seat10, projects_root)
+    project_directory = ghi_ask.project_directory_module.project_directory_for_seat(seat10, projects_root)
     project_directory.mkdir(parents=True)
     (project_directory / "sess-BIG.jsonl").write_bytes(
         b"x" * (ghi_ask.TRANSCRIPT_SIZE_THRESHOLD_BYTES + 1))
@@ -338,7 +338,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # hook's notice came back in place of the answer. That hook is silent in
     # these sessions now, so this trigger is what bounds them.
     def transcript_at_context_tokens(seat, session_id, tokens):
-        project_directory = ghi_ask.watcher.project_directory_for_seat(seat, projects_root)
+        project_directory = ghi_ask.project_directory_module.project_directory_for_seat(seat, projects_root)
         project_directory.mkdir(parents=True, exist_ok=True)
         record = {"type": "assistant", "message": {
             "model": "claude-sonnet-5",
@@ -576,8 +576,16 @@ APPROVED_RULING_QUESTION_MESSAGE = (
     "Ask the user whether that ruling still applies, and put the question on your task list.\n"
     "Do not file or edit the issue until he answers.\n")
 
+# Typed out rather than read from the module, like the two messages above, so
+# a change to the hint's text fails this file.
+EXPECTED_OPEN_ISSUES_ONLY_HINT = (
+    "ghi-info-ask: this answer covers open issues only.\n"
+    "To search closed issues as well, such as for precedent or before saying no issue "
+    'covers a subject, ask again with --include-closed: scripts/ghi-info-ask.py '
+    'q --repo x/y --include-closed\n')
 
-def main_with_reply(seat, reply_text):
+
+def main_with_reply(seat, reply_text, extra_arguments=()):
     """main() against an explicit seat whose ghi-info cold-starts and then
     answers reply_text. Returns (exit code, stdout, stderr)."""
     fake_refresh_queue([([1], {"1": issue(1)}, None)])
@@ -587,7 +595,8 @@ def main_with_reply(seat, reply_text):
     ])
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        exit_code = ghi_ask.main(["q", "--seat-dir", str(seat), "--repo", "x/y"])
+        exit_code = ghi_ask.main(["q", "--seat-dir", str(seat), "--repo", "x/y",
+                                  *extra_arguments])
     return exit_code, out.getvalue(), err.getvalue()
 
 
@@ -645,6 +654,28 @@ try:
         exit_code, out, err = main_with_reply(seat_list, "read #1")
         check("a reading list still prints on stdout with exit 0",
               exit_code == 0 and out.strip() == "read #1", (exit_code, out, err))
+        check("a reading list asked without --include-closed ends stderr with "
+              "the hint naming the flag, and leaves stdout the reading list alone",
+              exit_code == 0 and out == "read #1\n"
+              and err.endswith(EXPECTED_OPEN_ISSUES_ONLY_HINT), (exit_code, out, err))
+
+        check("the hint's command quotes a question with spaces and quotes for the shell, "
+              "and leaves out --repo when the repository is the default",
+              ghi_ask.open_issues_only_include_closed_hint_message(
+                  "Which issues cover Bob's hook?", ghi_ask.DEFAULT_REPO).endswith(
+                  "scripts/ghi-info-ask.py 'Which issues cover Bob'\"'\"'s hook?' "
+                  "--include-closed"),
+              ghi_ask.open_issues_only_include_closed_hint_message(
+                  "Which issues cover Bob's hook?", ghi_ask.DEFAULT_REPO))
+
+        seat_closed = root / "seat-reading-list-with-flag"
+        seat_closed.mkdir()
+        exit_code, out, err = main_with_reply(seat_closed, "read #1",
+                                              ("--include-closed",))
+        check("a reading list asked with --include-closed carries no hint",
+              exit_code == 0 and out == "read #1\n"
+              and "--include-closed" not in err and "open issues only" not in err,
+              (exit_code, out, err))
 
     check("any other reply has no caller message",
           ghi_ask.caller_message_for_passthrough_reply("read #1, #2") is None

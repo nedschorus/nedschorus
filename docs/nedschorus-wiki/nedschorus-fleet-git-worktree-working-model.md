@@ -94,33 +94,7 @@ runtimes from the start.
 
 ## The enforcement ladder
 
-A *rule* is a do-or-not-do instruction expressed as text; an *enforcement
-program* is code that enforces one (user-ruled vocabulary, 2026-08-17).
-The ladder orders mechanisms by when they act, earliest first — not by
-resistance to evasion: a block acts before the deed but can be blind to
-some routes; detection acts after and sees routes a block is blind to.
-
-1. **Impossible** — the bad state cannot arise without a deliberate
-   override. Even rung 1 is "impossible by default": `git worktree add
-   --force` and a second clone both defeat git's one-branch-one-worktree
-   refusal.
-2. **Default** — the right thing happens without anyone deciding.
-3. **Block** — an enforcement program refuses at the moment of action
-   (PreToolUse hooks). Known blind spot: a block on file-write tools does
-   not see shell writes (R10 carries the ruling on that gap).
-4. **Detect and reverse** — the unwanted action is noticed after the
-   fact, undone, and the right way taught. Preconditions: an undo must
-   exist, and the damage must not be consumed before detection — both
-   argue for fast detection, not audits.
-5. **Remind** — the program surfaces the rule at the moment it matters
-   and proceeds.
-6. **Text** — no enforcement; prose only. The waiting room: a do-or-not-do
-   rule lives here only until mechanized (user-ruled 2026-08-17);
-   governing principles (R17's, R28's) live here permanently by design.
-
-Anchoring ruling, from the gatekeeper design: **CLAUDE.md is
-documentation, never enforcement** — no program reads it, and different
-machines may carry different copies.
+The rungs that the Index's Rung column names (impossible, default, block, detect and reverse, remind, text) are defined, with an example of each, on [the enforcement ladder](nedschorus-enforcement-ladder.md).
 
 ## Standing rulings and principles
 
@@ -189,7 +163,7 @@ A re-registration was attempted and deliberately reverted (PR [guard and catch-u
 records all three forms and their evidence. The closing ruling: a
 registration line carries no more machinery, because the forked-session
 wrong-copy failure this would guard against has never been observed —
-per the reviewer rule in CLAUDE.md, hardening needs a named behavior.
+per CLAUDE.md's rule on guards, hardening needs a named behavior.
 Reopen trigger: that failure actually observed — a guard demonstrably
 running as another checkout's copy, with effect.
 
@@ -278,7 +252,7 @@ shell-route bypass. A periodic drift sweep was rejected: it
 false-positives on agent-seats legitimately carrying approved-but-unmerged
 changes. Codex's instruction file — `AGENTS.md` at the repository root,
 added 2026-08-20 — is not in this guard's list: a known fact, not a
-decision, and consistent with the reviewer rule that landed alongside it
+decision, and consistent with CLAUDE.md's rule on guards, which landed alongside it
 (no recorded incident, no guard).
 
 **R11. Backup stores are read-only to agents — built-live; lane removed

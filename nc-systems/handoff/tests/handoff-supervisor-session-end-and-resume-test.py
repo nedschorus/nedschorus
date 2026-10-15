@@ -424,10 +424,11 @@ def run_handoff_worktree_cleanup_cases(workspace: Path):
     retiring session's stop and the successor's launch (superwalk item 6,
     2026-09-23), and nothing the cleaner does can stop the launch.
 
-    GIT_DIR and GIT_WORK_TREE are removed for these cases and put back after:
-    either one would send this fixture's git commands, and the cleaner's
-    removals, into another repository (GHI 639's hazard)."""
-    redirecting = {name: os.environ.pop(name) for name in ("GIT_DIR", "GIT_WORK_TREE")
+    The variables that redirect git are removed for these cases and put back
+    after: any one of them would send this fixture's git commands, and the
+    cleaner's removals, into another repository (GHI 639's hazard)."""
+    redirecting = {name: os.environ.pop(name)
+                   for name in _git_environment_fixture.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
                    if name in os.environ}
     try:
         run_handoff_worktree_cleanup_cases_without_git_redirection(workspace)

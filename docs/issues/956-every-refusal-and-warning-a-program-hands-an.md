@@ -531,7 +531,7 @@ Follow-ups the second approval-walk accepted, each its own change after this pul
 
 - a close command in `scripts/ghi-issue-write.py` that opens the outcome edit's pull request and, run again after that pull request merges, finishes the rerun and closes the issue; the issue guard then points a hand-typed `gh issue close` at it, and messages 1 and 2 shrink to one line;
 - the issue guard refuses a command that only quotes the words `gh issue comment` inside data; the fix belongs to the cold-read-research seat's planned replacement of the Bash guards' hand-written shell parser, which carries that command as a required test case;
-- a check that reports, and reverts, a guarded file changed without the user's approval by any means, a shell command included: approved writes record the file's hash and keep a copy, and a quotation of the user in a marker is checked against the transcript;
+- a check that catches a guarded file changed without the user's approval by any means, a shell command included: carried by GHI [Catch a guarded file changed without the user's approval, ask him, and keep every version](https://github.com/nedschorus/nedschorus/issues/1268), which asks the user instead of reverting;
 - the handoff-supervisor's report that it could not read the reminder marks reaches the next agent-seat's handoff prompt (open question 5).
 
 ## Questions the approval-walks settled
@@ -559,3 +559,10 @@ The audit found gaps in four more groups, and left out of its scope three progra
 - the test suites that enforce a repository-wide rule, 20 of 38, each named in the audit;
 - three programs run by hand, `scripts/dangling-path-citation-check.py`, `scripts/stale-code-citation-check.py` and `scripts/md-drift-lint.py`, 19 of 21;
 - the three the audit did not read: the create-GHI and edit-GHI refusals of `scripts/ghi-issue-write.py`, `nc-systems/main-gatekeeper/main-gatekeeper.py`, and the lock and directory refusals of `scripts/run-all-test-suites.py`.
+
+## Provisional additions (not yet vetted by the user)
+
+- MD-skills, 2026-10-14: Add the unwritten-mark message of `daily-memory-review-mark.py` to this document's mark-program messages, beside the daily-overview-refresh-reminder-mark messages (MD-skills task #144).
+- MD-skills, 2026-10-14: Issue guard wording, one small pull request: the shared no-file line prints a literal `<number>` though the guard knows the number; the rerun and record lines do not say that the edit command opens a pull request; the body refusal's "--title alone afterwards" does not say after what (MD-skills task #157, from the review notes on PR [The issue guard's comment, body and title refusals name the issue's file and the rerun](https://github.com/nedschorus/nedschorus/pull/1031)).
+- Agent-seat agent-instructions-editor, 2026-10-14: add the list of the kinds of obvious error, which `CLAUDE.md` lets an agent fix in a guarded file without asking the user, to the refusals of `.claude/hooks/instruction-file-guard.py` (message 14), so that an agent meets the list at the moment the guard stops it.
+- reboot-test, 2026-10-14: a reminder hook that names the wiki page on how to write an agent-facing message, and the command for that message's cold-read-fast-read, whenever an agent edits a message in a Python program, is built on branch `python-edit-changed-agent-facing-message-check-reminder-hook-topic-branch`, pushed with no pull request yet; it waits for that page to merge in PR [Wiki: How to write an agent-facing-message](https://github.com/nedschorus/nedschorus/pull/1363). Then the 105 messages an audit found failing are rewritten, the ones agents meet most often first, each with its fast read.

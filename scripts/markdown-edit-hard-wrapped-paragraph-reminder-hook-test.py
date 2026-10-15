@@ -6,8 +6,9 @@ Prints one line per case and exits non-zero if any case fails.
 
 The detector's cases call markdown_has_hard_wrapped_paragraph directly. The
 detector needs markdown-it-py; without it the suite fails, naming the command that
-installs the package, and one case checks that the hook reports the missing
-package as a non-blocking error when the package fails to import. The hook's
+installs the pinned file. Cases with a test-double importer and installer check
+that a missing markdown-it-py is installed through the shared install module, and
+one case checks that the hook reports a failed install as a non-blocking error. The hook's
 cases run the hook as Claude Code does, as a subprocess reading a PostToolUse
 payload on stdin, against a throwaway repository under a temporary directory
 with a .gitignore that ignores one directory.
@@ -20,6 +21,7 @@ repository at its own path before any case writes to it.
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -37,11 +39,8 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 HOOK_PATH = Path(__file__).with_name("markdown-edit-hard-wrapped-paragraph-reminder-hook.py")
 
-GIT_REDIRECTING_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
-                             "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR",
-                             "GIT_ALTERNATE_OBJECT_DIRECTORIES")
 CLEAN_ENVIRONMENT = {name: value for name, value in os.environ.items()
-                     if name not in GIT_REDIRECTING_VARIABLES}
+                     if name not in _git_environment_fixture.GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
 
 failures = []
 
@@ -150,10 +149,124 @@ try:
     PARSER_AVAILABLE = True
 except ImportError:
     PARSER_AVAILABLE = False
-PARSER_INSTALL_COMMAND = ("python3 -m pip install --user --break-system-packages markdown-it-py, "
+PARSER_INSTALL_COMMAND = ("python3 -m pip install --user --break-system-packages -r "
+                          "nc-systems/general-tools/python-libraries-pinned-requirements.txt, "
                           "run with the python3 that `command -v python3` finds in the shell Claude Code runs hooks from")
 check("markdown-it-py is installed, so the reminder works on this machine",
       PARSER_AVAILABLE, f"install it with: {PARSER_INSTALL_COMMAND}")
+
+# A missing markdown-it-py is installed through the shared install module, in a scratch state
+# directory; the importer and the installer are test doubles, so nothing is installed.
+real_install_state_directory = hook.INSTALL_STATE_DIRECTORY
+with tempfile.TemporaryDirectory() as install_scratch:
+    hook.INSTALL_STATE_DIRECTORY = Path(install_scratch) / "install-state"
+    install_state = {"installs": 0}
+
+    class FakeMarkdownIt:
+        def __init__(self, preset):
+            self.preset = preset
+
+        def enable(self, rule):
+            return (self.preset, rule)
+
+    def importer_after_install():
+        if not install_state["installs"]:
+            raise ImportError("No module named 'markdown_it'")
+        return FakeMarkdownIt
+
+    def counting_installer():
+        install_state["installs"] += 1
+        return "Successfully installed markdown-it-py-3.0.0"
+    parser_built = hook.markdown_parser(importer_after_install, counting_installer, lambda: 1000.0)
+    check("a missing markdown-it-py is installed once, then the parser is built",
+          install_state["installs"] == 1 and parser_built == ("commonmark", "table"),
+          (install_state, parser_built))
+
+    def importer_never():
+        raise ImportError("No module named 'markdown_it'")
+
+    def failing_installer():
+        raise hook.python_libraries_pinned_requirements_install_if_missing_then_import_common().PythonLibrariesPinnedRequirementsInstallOrImportFailed(
+            "pip: network is unreachable")
+    try:
+        hook.markdown_parser(importer_never, failing_installer, lambda: 2000.0)
+        raised = None
+    except hook.MarkdownParserMissing as error:
+        raised = error
+    check("a failed install raises MarkdownParserMissing with what the install printed",
+          raised is not None and "network is unreachable" in raised.install_output, raised)
+    message = hook.parser_missing_message(raised, "Neds-MacBook-Pro") if raised else ""
+    check("the failed-install message names the machine, the by-hand install of the pinned file "
+          "for this interpreter, and what the install printed",
+          "markdown-it-py is missing on Neds-MacBook-Pro and installing it failed" in message
+          and f"{sys.executable} -m pip install --user --break-system-packages -r " in message
+          and "python-libraries-pinned-requirements.txt" in message
+          and message.endswith("quoted as it is: pip: network is unreachable"), message)
+    message = hook.parser_missing_message(hook.MarkdownParserMissing("x"), "ned-box")
+    check("for ned-box, the by-hand command is the ssh form the user runs from the Mac",
+          "run this command in a Terminal on your Mac:" in message
+          and f"\nssh nedlern@ned-box '{sys.executable} -m pip install" in message, message)
+
+    message = hook.parser_missing_message(hook.MarkdownParserMissing("nothing was installed"),
+                                          "Neds-MacBook-Pro", (3, 9, 6))
+    check("below Python 3.11 the message gives no pip command, and says how to put a newer Python "
+          "first on the PATH",
+          "pip" not in message.split("Then pass on")[0] and "Python 3.9.6" in message
+          and "Homebrew" in message and "next run" in message
+          and message.endswith("quoted as it is: nothing was installed"), message)
+
+    def recording_runner(command, **kwargs):
+        recording_runner.kwargs = kwargs
+        return subprocess.CompletedProcess(command, 0, "", "")
+    hook._install_pinned_python_libraries(recording_runner)
+    check("the install gives pip the hook's install timeout",
+          recording_runner.kwargs.get("timeout") == hook.INSTALL_TIMEOUT_SECONDS,
+          recording_runner.kwargs)
+
+    # A newer markdown-it-py whose dependency is missing fails partway through its import and
+    # leaves its submodules, and the newer mdurl it loaded first, loaded; the pinned copies
+    # installed next must not be mixed with them.
+    newer_site = Path(install_scratch) / "newer-site"
+    pinned_site = Path(install_scratch) / "pinned-site"
+    for site_directory, version, init_source in (
+            (newer_site, "newer", "from markdown_it.helper import version\n"
+                                  "import mdurl\n"
+                                  "import mdurl_missing_for_this_test\n"),
+            (pinned_site, "pinned", "from markdown_it.helper import version\n"
+                                    "import mdurl\n"
+                                    "class MarkdownIt:\n"
+                                    "    def __init__(self, preset):\n"
+                                    "        self.preset = preset\n"
+                                    "    def enable(self, rule):\n"
+                                    "        return version + '/' + mdurl.version\n")):
+        (site_directory / "markdown_it").mkdir(parents=True)
+        (site_directory / "mdurl").mkdir(parents=True)
+        (site_directory / "mdurl" / "__init__.py").write_text(f"version = {version!r}\n",
+                                                              encoding="utf-8")
+        (site_directory / "markdown_it" / "__init__.py").write_text(init_source, encoding="utf-8")
+        (site_directory / "markdown_it" / "helper.py").write_text(f"version = {version!r}\n",
+                                                                  encoding="utf-8")
+    half_import_code = (
+        "import importlib.util, sys\n"
+        "from pathlib import Path\n"
+        "hook_path, newer, pinned, state = sys.argv[1:5]\n"
+        "sys.path.insert(0, newer)\n"
+        "spec = importlib.util.spec_from_file_location('hook', hook_path)\n"
+        "hook = importlib.util.module_from_spec(spec); spec.loader.exec_module(hook)\n"
+        "hook.INSTALL_STATE_DIRECTORY = Path(state)\n"
+        "def installer():\n"
+        "    sys.path.remove(newer); sys.path.insert(0, pinned)\n"
+        "    return 'installed'\n"
+        "print(hook.markdown_parser(installer=installer, clock=lambda: 1000.0))\n")
+    half_import = subprocess.run(
+        [sys.executable, "-I", "-c", half_import_code, specification.origin, str(newer_site),
+         str(pinned_site), str(Path(install_scratch) / "half-import-state")],
+        capture_output=True, text=True, timeout=60)
+    check("after a newer markdown-it-py failed partway through its import, the parser is built "
+          "from the installed markdown-it-py and mdurl alone",
+          half_import.returncode == 0 and half_import.stdout.strip() == "pinned/pinned",
+          (half_import.returncode, half_import.stdout, half_import.stderr[-400:]))
+hook.INSTALL_STATE_DIRECTORY = real_install_state_directory
 
 if PARSER_AVAILABLE:
     for case_name, text in BROKEN_CASES:
@@ -316,6 +429,88 @@ if PARSER_AVAILABLE:
 else:
     print("the detector's cases were not run: markdown-it-py is missing")
 
+
+class AddedLineNumbersThatCanOnlyBeLookedUp:
+    """Added line numbers a filter may test lines against but not walk through:
+    walking them for every broken paragraph costs paragraphs times added lines."""
+
+    def __init__(self, numbers):
+        self.numbers = set(numbers)
+
+    def __contains__(self, number):
+        return number in self.numbers
+
+    def __iter__(self):
+        raise AssertionError("the filter walked through the added lines")
+
+
+try:
+    kept = hook.markdown_broken_paragraph_line_ranges_filter_to_ranges_holding_edit_added_lines(
+        [(0, 2), (4, 6), (8, 10)], AddedLineNumbersThatCanOnlyBeLookedUp({5, 10}))
+except AssertionError as error:
+    kept = str(error)
+check("the overlap filter looks each paragraph line up in the added lines, and keeps only "
+      "the paragraphs holding one", kept == [(4, 6)], kept)
+
+
+
+def added_lines_or_fault(original, old, new, after, replace_all=False):
+    response = {"originalFile": original, "oldString": old, "newString": new}
+    if replace_all is not None:
+        response["replaceAll"] = replace_all
+    try:
+        return sorted(hook.edit_added_line_numbers(response, after))
+    except hook.EditedLinesUnknown as error:
+        return f"EditedLinesUnknown: {error}"
+
+
+check("an Edit with an empty oldString, filling an empty file, counts every line of the file as added",
+      added_lines_or_fault("", "", "One.\nTwo.\n", "One.\nTwo.\n") == [0, 1, 2],
+      added_lines_or_fault("", "", "One.\nTwo.\n", "One.\nTwo.\n"))
+missing_replace_all = added_lines_or_fault("a\n", "a", "b", "b\n", replace_all=None)
+check("an Edit payload whose only missing field is replaceAll is a check not made",
+      isinstance(missing_replace_all, str) and "replaceAll" in missing_replace_all, missing_replace_all)
+consumed = added_lines_or_fault("Drop me.\nThe first half\nand the second half.\n", "Drop me.", "",
+                                "The first half\nand the second half.\n")
+check("an Edit with an empty newString that also removed the following newline, as Claude Code "
+      "2.1.222 and later do, is read, and adds no line", consumed == [], consumed)
+kept_newline = added_lines_or_fault("Drop me.\nThe first half\nand the second half.\n", "Drop me.", "",
+                                    "\nThe first half\nand the second half.\n")
+check("an Edit with an empty newString that left the following newline, as Claude Code 2.1.185 did, "
+      "adds only the emptied line", kept_newline == [0], kept_newline)
+adjacent = added_lines_or_fault("Filler.\np\np\np\nThe first half\n", "p\n", "",
+                                "Filler.\nThe first half\n", replace_all=True)
+check("a replace_all Edit deleting adjacent identical lines adds no line, though each deleted "
+      "line's span shares a line with the next", adjacent == [], adjacent)
+adjacent_inserts = added_lines_or_fault("p\np\nq\n", "p\n", "p\nNEW\n", "p\nNEW\np\nNEW\nq\n",
+                                        replace_all=True)
+check("a replace_all Edit whose adjacent replacements each add a line counts both added lines",
+      adjacent_inserts == [1, 3], adjacent_inserts)
+
+_real_sequence_matcher = hook.difflib.SequenceMatcher
+
+
+class SequenceMatcherNotToBeCalled:
+    def __init__(self, *arguments, **keywords):
+        raise AssertionError("the line diff ran on a span past LINE_DIFF_MAXIMUM_LINE_PAIRS")
+
+
+repeated_old = "\n".join(["x"] * 600)
+repeated_new = "\n".join(["x", "z"] * 300)
+hook.difflib.SequenceMatcher = SequenceMatcherNotToBeCalled
+try:
+    bounded = added_lines_or_fault("Top.\n" + repeated_old + "\nEnd.\n", repeated_old, repeated_new,
+                                   "Top.\n" + repeated_new + "\nEnd.\n")
+except AssertionError as error:
+    bounded = str(error)
+finally:
+    hook.difflib.SequenceMatcher = _real_sequence_matcher
+check("a span of 600 repeated lines against 600 is not line-diffed, and its every new line counts "
+      "as added", bounded == list(range(1, 601)), bounded if isinstance(bounded, str) else len(bounded))
+small = added_lines_or_fault("Top.\nx\nx\nEnd.\n", "x\nx", "x\nz", "Top.\nx\nz\nEnd.\n")
+check("a span within LINE_DIFF_MAXIMUM_LINE_PAIRS is line-diffed, so only its changed line counts as added",
+      small == [2], small)
+
 # ---------------------------------------------------------------------------
 # The hook, run as a subprocess against a scratch repository.
 # ---------------------------------------------------------------------------
@@ -347,12 +542,20 @@ def write_then_run(cwd, file_path, content):
     return run_hook(payload_for(cwd, "Write", file_path, {"content": content}))
 
 
+def leading_tabs_as_two_spaces(text):
+    return "\n".join("  " * (len(line) - len(line.lstrip("\t"))) + line.lstrip("\t")
+                     for line in text.split("\n"))
+
+
 def structured_patch(before, after):
-    """A structuredPatch in the shape Claude Code 2.1.296 puts in an Edit's
+    """A structuredPatch in the shape Claude Code 2.1.300 puts in an Edit's
     tool_response: one hunk per changed region with three lines of context,
-    newStart counted from 1, and each line prefixed " ", "-" or "+"."""
+    newStart counted from 1, each line prefixed " ", "-" or "+", and every leading
+    tab turned into two spaces before the diff. The hook does not read it; it is here
+    so that each payload carries what a real one carries."""
     import difflib
-    old_lines, new_lines = before.splitlines(), after.splitlines()
+    old_lines = leading_tabs_as_two_spaces(before).splitlines()
+    new_lines = leading_tabs_as_two_spaces(after).splitlines()
     hunks = []
     for group in difflib.SequenceMatcher(None, old_lines, new_lines).get_grouped_opcodes(3):
         lines = []
@@ -368,12 +571,18 @@ def structured_patch(before, after):
     return hunks
 
 
-def edit_then_run(cwd, file_path, before, old_string, new_string, replace_all=False):
+def edit_then_run(cwd, file_path, before, old_string, new_string, replace_all=False,
+                  written_new_string=None, line_end="\n"):
     """What the Edit tool leaves behind, then the hook that follows it, with the
-    tool_response keys a captured Claude Code 2.1.296 Edit payload carries."""
-    after = before.replace(old_string, new_string) if replace_all else before.replace(old_string, new_string, 1)
+    tool_response keys a captured Claude Code 2.1.300 Edit payload carries.
+    written_new_string stands for what Claude Code wrote when it differs from the
+    new_string the agent typed, as when it writes curly quotes the file used; line_end
+    is the file's line end on disk, while originalFile always holds LF, as Claude Code
+    hands it over."""
+    written = new_string if written_new_string is None else written_new_string
+    after = before.replace(old_string, written) if replace_all else before.replace(old_string, written, 1)
     file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_text(after, encoding="utf-8")
+    file_path.write_bytes(after.replace("\n", line_end).encode("utf-8"))
     payload = payload_for(cwd, "Edit", file_path, {"old_string": old_string, "new_string": new_string,
                                                    "replace_all": replace_all})
     payload["tool_response"] = {"filePath": str(file_path), "oldString": old_string,
@@ -385,6 +594,14 @@ def edit_then_run(cwd, file_path, before, old_string, new_string, replace_all=Fa
 
 def silent(result):
     return result.returncode == 0 and result.stdout.strip() == "" and result.stderr.strip() == ""
+
+
+def reported(result, fault_words):
+    """A fault: exit 1, no reminder on stdout, one stderr line naming the hook and the fault."""
+    lines = result.stderr.splitlines()
+    return (result.returncode == 1 and result.stdout == "" and len(lines) == 1
+            and lines[0].startswith("markdown-edit-hard-wrapped-paragraph-reminder: ")
+            and fault_words in lines[0])
 
 
 def agent_text(result):
@@ -455,36 +672,90 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                                "# Notes\n\n", "")
         check("an Edit that only deleted lines gets no reminder",
               silent(result), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file,
+                               "Filler.\np\np\np\nThe first half\nand the second half.\n", "p\n", "",
+                               replace_all=True)
+        check("a replace_all Edit that only deleted adjacent identical lines above an untouched broken "
+              "paragraph gets no reminder", silent(result), result.stdout + result.stderr)
         far_apart = ("A mark on one line.\n\n" + "".join(f"Filler {n} on one line.\n\n" for n in range(8))
                      + "The first mark\nand the second half.\n")
         result = edit_then_run(checkout, edited_file, far_apart, "mark", "Mark", replace_all=True)
         check("a replace_all Edit whose second hunk wrote into a broken paragraph gets the reminder",
               agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
 
+        result = edit_then_run(checkout, edited_file, "# Notes\n\nThe first paragraph.\n\nThe second one.\n",
+                               "paragraph.\n\nThe second", "paragraph.\nThe second")
+        check("an Edit that only deleted the blank line joining two paragraphs into a broken one "
+              "gets no reminder", silent(result), result.stdout + result.stderr)
+        tab_code_block = "# Notes\n\n\tcode line one\n\tcode line two\n\nOther text.\n"
+        result = edit_then_run(checkout, edited_file, tab_code_block, "\tcode line one\n\tcode line two",
+                               "  code line one\n  code line two")
+        check("an Edit that turned leading tabs into two spaces, making a code block a broken paragraph, "
+              "gets the reminder, though its structuredPatch is empty",
+              agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file, "# Notes\n\nIntro.\n\n\tcode line one\n\tcode line two\n",
+                               "Intro.\n\n\tcode line one\n\tcode line two",
+                               "Intro, longer.\n\n  code line one\n  code line two")
+        check("an Edit whose lines changed only in their leading tabs, beside a line changed in its text, "
+              "gets the reminder, though its structuredPatch shows them as context",
+              agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file, "# Notes\n\nOther text.\n", "# Notes",
+                               "# Notes\n\nA new first half\nand a new second half.")
+        check("an Edit that wrote a broken paragraph below an unchanged line of its old_string gets the reminder",
+              agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file, "# Notes\n\nThe first half\nand the second half.\n\nNext.\n",
+                               "and the second half.\n\nNext.", "and the second half.\n\nNext, changed.")
+        check("an Edit whose new_string repeats an untouched broken paragraph's line as context "
+              "gets no reminder", silent(result), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file, broken_before, "the second part", "the second half",
+                               line_end="\r\n")
+        check("an Edit into a broken paragraph of a CRLF file, whose originalFile holds LF, gets the reminder",
+              agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file, "# Notes\n\nThe first half\nand the second half.\n\nNext.\n",
+                               "and the second half.\n\nNext.", "and the second half.\n\nNext, changed.",
+                               line_end="\r\n")
+        check("an Edit of a CRLF file whose new_string repeats an untouched broken paragraph's line "
+              "as context gets no reminder", silent(result), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file,
+                               "# mark\n\nFiller one.\n\nFiller two.\n\nThe mark\nand the second half.\n",
+                               "mark", "M\n\nAdded.", replace_all=True)
+        check("a replace_all Edit whose replacements add lines, and whose second one wrote into "
+              "a broken paragraph, gets the reminder",
+              agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file,
+                               "# Notes\n\nHe said \u201chi\u201d\nand left.\n\nOther text.\n",
+                               "Other text.", "Other \"text\".", written_new_string="Other \u201ctext\u201d.")
+        check("an Edit Claude Code wrote with curly quotes where new_string had straight ones, "
+              "outside the broken paragraph, gets no reminder", silent(result), result.stdout + result.stderr)
+
         edited_file.write_text(CLEAN_TEXT, encoding="utf-8")
         result = run_hook(payload_for(checkout, "Edit", edited_file,
                                       {"old_string": "x", "new_string": "A whole paragraph",
                                        "replace_all": False}))
-        check("an Edit of a file holding no broken paragraph needs no structuredPatch: silent, exit 0",
+        check("an Edit of a file holding no broken paragraph needs no originalFile: silent, exit 0",
               silent(result), result.stdout + result.stderr)
 
         edited_file.write_text(BROKEN_TEXT, encoding="utf-8")
         result = run_hook(payload_for(checkout, "Edit", edited_file,
                                       {"old_string": "x", "new_string": "the second half",
                                        "replace_all": False}))
-        check("an Edit whose payload has no structuredPatch is reported as a check not made, exit 1",
+        check("an Edit whose payload has no originalFile is reported as a check not made, exit 1",
               result.returncode == 1 and result.stdout == ""
-              and "carries no tool_response.structuredPatch" in result.stderr,
+              and "lacks tool_response's originalFile" in result.stderr
+              and "the Edit itself succeeded." in result.stderr,
               result.stdout + result.stderr)
         payload = payload_for(checkout, "Edit", edited_file, {"old_string": "x", "new_string": "y"})
-        payload["tool_response"] = {"structuredPatch": [{"oldStart": 1, "lines": ["+y"]}]}
+        payload["tool_response"] = {"originalFile": BROKEN_TEXT, "oldString": "absent",
+                                    "newString": "y", "replaceAll": False}
         result = run_hook(payload)
-        check("a structuredPatch hunk without newStart is reported as a check not made, exit 1",
-              result.returncode == 1 and "has no newStart" in result.stderr, result.stdout + result.stderr)
-        payload["tool_response"] = {"structuredPatch": [{"newStart": 1, "lines": [7]}]}
+        check("an Edit whose oldString is not in originalFile is reported as a check not made, exit 1",
+              result.returncode == 1 and "does not occur" in result.stderr, result.stdout + result.stderr)
+        payload["tool_response"] = {"originalFile": BROKEN_TEXT, "oldString": "# Notes",
+                                    "newString": "# Notes\n\nMore", "replaceAll": False}
         result = run_hook(payload)
-        check("a structuredPatch line that is not text is reported as a check not made, exit 1",
-              result.returncode == 1 and "not text" in result.stderr, result.stdout + result.stderr)
+        check("an Edit whose file on disk lacks the line count its replacements give is reported "
+              "as a check not made, exit 1",
+              result.returncode == 1 and "line count" in result.stderr, result.stdout + result.stderr)
 
 
     result = write_then_run(checkout, checkout / "docs" / "clean.md", CLEAN_TEXT)
@@ -498,22 +769,30 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               result.stdout + result.stderr)
 
     # A machine without markdown-it-py: a package of that name that fails to
-    # import stands in for the missing one, and the hook must say so on stderr
-    # with exit 1, a non-blocking error Claude Code shows, and give no reminder.
+    # import stands in for the missing one. A failed install recorded a minute ago
+    # in a scratch home stops the hook from running pip; the hook must report the
+    # failed install on stderr with exit 1, a non-blocking error Claude Code shows,
+    # and give no reminder.
+    blocked_home = tmp / "blocked-home"
+    blocked_state = blocked_home / hook.INSTALL_STATE_DIRECTORY.relative_to(Path.home())
+    blocked_state.mkdir(parents=True)
+    (blocked_state / hook.python_libraries_pinned_requirements_install_if_missing_then_import_common().INSTALL_FAILURE_FILE_NAME
+     ).write_text("pip: blocked by the test", encoding="utf-8")
     blocked_packages = tmp / "blocked-packages"
     (blocked_packages / "markdown_it").mkdir(parents=True)
     (blocked_packages / "markdown_it" / "__init__.py").write_text(
         "raise ImportError('markdown-it-py blocked by the test')\n", encoding="utf-8")
     blocked_file = checkout / "docs" / "blocked.md"
     blocked_file.write_text(BROKEN_TEXT, encoding="utf-8")
-    blocked_environment = {**CLEAN_ENVIRONMENT, "PYTHONPATH": str(blocked_packages)}
+    blocked_environment = {**CLEAN_ENVIRONMENT, "PYTHONPATH": str(blocked_packages), "HOME": str(blocked_home)}
     result = subprocess.run(
         [sys.executable, str(HOOK_PATH)],
         input=json.dumps(payload_for(checkout, "Write", blocked_file, {"content": BROKEN_TEXT})),
         capture_output=True, text=True, check=False, env=blocked_environment)
-    check("without markdown-it-py the hook reports the missing package and exits 1",
+    check("without markdown-it-py, after a failed install, the hook reports the failure and exits 1",
           result.returncode == 1 and result.stdout.strip() == ""
-          and "markdown-it-py is not installed" in result.stderr,
+          and "markdown-it-py is missing on" in result.stderr
+          and "pip: blocked by the test" in result.stderr,
           f"exit {result.returncode}: {result.stdout + result.stderr}")
 
     result = write_then_run(checkout, checkout / "scripts" / "tool.txt",
@@ -532,7 +811,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = write_then_run(broken_checkout, broken_checkout / "notes.md", BROKEN_TEXT)
     check("when git check-ignore exits 128 the hook reports git's failure and exits 1",
           result.returncode == 1 and result.stdout.strip() == ""
-          and "git check-ignore exited 128" in result.stderr,
+          and "git check-ignore -q -- notes.md in" in result.stderr
+          and "failed (exit 128" in result.stderr
+          and "the Write itself succeeded." in result.stderr,
           f"exit {result.returncode}: {result.stdout + result.stderr}")
 
     # git missing from PATH: the hook runs by absolute path, so only git is absent.
@@ -545,7 +826,23 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         env={**CLEAN_ENVIRONMENT, "PATH": str(tmp / "empty-path-directory")})
     check("when git is missing the hook reports it and exits 1",
           result.returncode == 1 and result.stdout.strip() == ""
-          and "git check-ignore could not run" in result.stderr,
+          and "git check-ignore -q -- " in result.stderr
+          and "could not start git" in result.stderr,
+          f"exit {result.returncode}: {result.stdout + result.stderr}")
+
+    # The hook without the shared module it loads its git helpers from.
+    hook_without_shared_module = tmp / "hook-without-its-git-helpers" / "scripts" / HOOK_PATH.name
+    hook_without_shared_module.parent.mkdir(parents=True)
+    shutil.copy(str(HOOK_PATH), str(hook_without_shared_module))
+    lone_file = checkout / "docs" / "lone-hook.md"
+    lone_file.write_text(BROKEN_TEXT, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(hook_without_shared_module)],
+        input=json.dumps(payload_for(checkout, "Write", lone_file, {"content": BROKEN_TEXT})),
+        capture_output=True, text=True, check=False, env=CLEAN_ENVIRONMENT)
+    check("a shared git-helper module that fails to load is reported on stderr, exit 1",
+          reported(result, "FileNotFoundError")
+          and "edited-file-path-within-checkout-root-and-git-check-ignore-common.py" in result.stderr,
           f"exit {result.returncode}: {result.stdout + result.stderr}")
 
     outside_file = tmp / "outside" / "elsewhere.md"
@@ -558,13 +855,20 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook(payload_for(checkout, "Write", undecodable_file, {"content": ""}))
     check("a file that is not UTF-8 is silent", silent(result), result.stdout + result.stderr)
 
-    result = run_hook("{not json")
-    check("a payload that does not parse as JSON is silent", silent(result),
-          result.stdout + result.stderr)
+    for case_name, payload, fault_words in (
+            ("a payload that does not parse as JSON", "{not json", "JSONDecodeError"),
+            ("a payload that is a JSON list", "[1, 2]", "JSON, but not an object"),
+            ("an empty payload", "", "JSONDecodeError")):
+        result = run_hook(payload)
+        check(f"{case_name} is reported on stderr, exit 1",
+              reported(result, fault_words), result.stdout + result.stderr)
 
-    result = run_hook("[1, 2]")
-    check("a payload that is not a JSON object is silent", silent(result),
-          result.stdout + result.stderr)
+    # A Write payload naming a file that is not there: reading it raises
+    # FileNotFoundError, which only the top-level handler catches.
+    vanished_file = checkout / "docs" / "vanished.md"
+    result = run_hook(payload_for(checkout, "Write", vanished_file, {"content": BROKEN_TEXT}))
+    check("a written file that cannot be read is reported on stderr, exit 1",
+          reported(result, "FileNotFoundError"), result.stdout + result.stderr)
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

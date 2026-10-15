@@ -26,11 +26,14 @@ THE RESTART PROCEDURE, for any agent preparing a restart of the Mac or
 ned-box:
 
 1. Check that no agent-seat is busy. Use your ListAgents tool and look for
-   busy sessions. Check ~/.claude/.run-all-test-suites.lock: if a process
-   holds it (`fuser ~/.claude/.run-all-test-suites.lock` on ned-box,
-   `lsof ~/.claude/.run-all-test-suites.lock` on the Mac), a test run is
-   going. Run `pgrep -fl 'git push|codex exec'` for pushes and Codex runs in
-   flight. Tell the user what you found. If anything is busy, wait for it to
+   busy sessions. Run `pgrep -af 'run-all-test-suites|run-suite-in-signal-sandbox|pull-request-mutation-testing-survivors'`
+   on ned-box (`pgrep -lf` with the same pattern on the Mac): a process it
+   lists, by its full command line, is a test run going. On ned-box test
+   runs overlap and take no machine lock, so a free
+   ~/.claude/.run-all-test-suites.lock does not mean no run is going.
+   Run `pgrep -af 'git push|codex exec'` on ned-box (`pgrep -lf` with the
+   same pattern on the Mac) for pushes and Codex runs in flight; Linux's
+   `pgrep -fl` would print only process names, not the command lines. Tell the user what you found. If anything is busy, wait for it to
    finish or let the user decide; do not stop another agent's work yourself.
    Wait for the user's go-ahead before going on.
 2. Make sure no retired agent-seat will come back. A retired agent-seat
@@ -93,10 +96,6 @@ DEFAULT_SCRATCH_ROOTS = ("/tmp", "/private/tmp")
 LOG_STORE_HOSTNAME = "ned-box"
 UNKNOWN_SEAT = "unknown-seat"
 SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
-# The six variables scripts/run-all-test-suites.py strips: each points git at
-# another repository's files.
-GIT_REDIRECTING_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-                             "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR")
 SEAT_COMPONENT = re.compile(r"^-(?:Users|home)-[^-]+-agents-(.+)$")
 _git_output_spec = importlib.util.spec_from_file_location(
     "git_machine_readable_output_runner_and_parser_common",
@@ -104,6 +103,13 @@ _git_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
+# Each variable this module lists points git at another repository's files.
+_git_redirecting_removal_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_variables_removal_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-redirecting-environment-variables-removal-common.py")
+git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
+_git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
 
 DIFF_NAME, TAR_NAME, MANIFEST_NAME = "changes.diff", "untracked.tar", "manifest.json"
 
@@ -113,7 +119,7 @@ class SaveFailed(Exception):
 
 
 def git(arguments, cwd, binary=False):
-    environment = {k: v for k, v in os.environ.items() if k not in GIT_REDIRECTING_VARIABLES}
+    environment = git_redirecting_removal.environment_without_git_redirecting_variables()
     completed = subprocess.run(["git", *arguments], cwd=cwd, capture_output=True,
                                env=environment, check=False)
     if completed.returncode != 0:

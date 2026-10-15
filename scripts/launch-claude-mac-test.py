@@ -53,14 +53,21 @@ Run: python3 scripts/launch-claude-mac-test.py
 import errno
 import fcntl
 import os
+import pty
+import selectors
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
 LAUNCHER = Path(__file__).with_name("launch-claude-mac")
 UPDATE_LOCK_HELPER_NAME = "agent-binary-update-under-lock.py"
+# The bytes launch-claude-mac writes to colour an iTerm2 session's background:
+# iTerm2's SetColors sequence, OSC 1337 ... BEL, with the seat colour.
+ITERM2_PALE_PINK_BACKGROUND_SEQUENCE = "\x1b]1337;SetColors=bg=FFE6EE\x07"
 
 failures = []
 
@@ -220,7 +227,8 @@ class MacLaunchSandbox:
     def run(self, agents_root, seat_name="seat-t", attach=False,
             extra_arguments=None, update_timeout_seconds=None,
             seat_github_account=None, ambient_gh_token=None,
-            ambient_git_identity=None):
+            ambient_git_identity=None, term_program=None,
+            stdout_on_terminal=False):
         """Run the launcher in the sandbox. extra_arguments, when given, is
         placed in LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS the way
         recover-crashed-seats.py's launch_seat places it — after the strip
@@ -229,11 +237,15 @@ class MacLaunchSandbox:
         way, after the strip of ambient NEDSCHORUS_* values.
         ambient_gh_token puts a GH_TOKEN in the launcher's environment after
         the strip, standing in for the shell of a seat that already exports
-        one — which the merge-lane seat does by hand today."""
+        one — which the merge-lane seat does by hand today.
+        term_program sets TERM_PROGRAM, which is otherwise stripped so the
+        terminal the suite runs in cannot decide a case.
+        stdout_on_terminal gives the launcher a pseudo-terminal as stdout in
+        place of a pipe, and returns what it wrote there as result.stdout."""
         arguments = [seat_name] if attach else [seat_name, "--no-attach"]
         environment = {
             **{key: value for key, value in os.environ.items()
-               if key != "GH_TOKEN"
+               if key not in ("GH_TOKEN", "TERM_PROGRAM")
                and key not in GIT_IDENTITY_VARIABLES
                and not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_",
                                        "CLAUDE_CODE_"))},
@@ -252,6 +264,11 @@ class MacLaunchSandbox:
             environment["GH_TOKEN"] = ambient_gh_token
         if ambient_git_identity is not None:
             environment.update(ambient_git_identity)
+        if term_program is not None:
+            environment["TERM_PROGRAM"] = term_program
+        if stdout_on_terminal:
+            return run_with_stdout_on_terminal(
+                [str(LAUNCHER), *arguments], str(self.workdir), environment)
         return subprocess.run(
             [str(LAUNCHER), *arguments],
             capture_output=True, text=True, check=False,
@@ -289,6 +306,73 @@ class MacLaunchSandbox:
         path = self.captures / "after-exit-cwd.txt"
         return (path.read_text(encoding="utf-8").strip()
                 if path.is_file() else "")
+
+
+def run_with_stdout_on_terminal(command, working_directory, environment,
+                                timeout_seconds=60):
+    """Run command with a pseudo-terminal as its stdout, so `[ -t 1 ]` holds
+    in it, and return a CompletedProcess whose stdout is what it wrote
+    there.
+
+    The terminal and the stderr pipe are read together while the command
+    runs: a command blocked on either full buffer never closes the other,
+    so reading one to its end before the other can wait forever.
+    timeout_seconds bounds the whole read. When it runs out, the command's
+    process group is killed and subprocess.TimeoutExpired is raised, so a
+    hung case fails the suite instead of holding the machine's test lock."""
+    controller, terminal = pty.openpty()
+    process = subprocess.Popen(
+        command, stdin=subprocess.DEVNULL, stdout=terminal,
+        stderr=subprocess.PIPE, cwd=working_directory, env=environment,
+        start_new_session=True)
+    os.close(terminal)
+    stderr_descriptor = process.stderr.fileno()
+    written = {controller: bytearray(), stderr_descriptor: bytearray()}
+    deadline = time.monotonic() + timeout_seconds
+
+    def stop_command_and_raise_timeout():
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        raise subprocess.TimeoutExpired(
+            command, timeout_seconds,
+            output=bytes(written[controller]),
+            stderr=bytes(written[stderr_descriptor]))
+
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(controller, selectors.EVENT_READ)
+            selector.register(stderr_descriptor, selectors.EVENT_READ)
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    stop_command_and_raise_timeout()
+                for key, _ in selector.select(remaining):
+                    try:
+                        chunk = os.read(key.fd, 65536)
+                    except OSError as error:
+                        # Linux reports the last writer closing the
+                        # terminal as EIO.
+                        if error.errno != errno.EIO:
+                            raise
+                        chunk = b""
+                    if chunk:
+                        written[key.fd].extend(chunk)
+                    else:
+                        selector.unregister(key.fd)
+        # A command can close both streams and keep running, so the wait
+        # is bounded by the same deadline and stopped the same way.
+        try:
+            returncode = process.wait(
+                timeout=max(deadline - time.monotonic(), 0.1))
+        except subprocess.TimeoutExpired:
+            stop_command_and_raise_timeout()
+    finally:
+        os.close(controller)
+        process.stderr.close()
+    return subprocess.CompletedProcess(
+        command, returncode,
+        written[controller].decode("utf-8", errors="replace"),
+        written[stderr_descriptor].decode("utf-8", errors="replace"))
 
 
 class AnotherUpdateHoldsTheLock:
@@ -810,15 +894,28 @@ def main() -> int:
               (sandbox.invoked_commands()[:200],
                sorted(str(p) for p in sandbox.workdir.iterdir())))
 
+        # --help alone prints the usage and exits 0 before any side effect.
+        sandbox = MacLaunchSandbox(root / "help-option-alone")
+        result = sandbox.run("~/agents", seat_name="--help", attach=True)
+        check("--help alone: exit 0, printing the usage line on stdout",
+              result.returncode == 0
+              and "usage: launch-claude-mac <name>" in result.stdout,
+              (result.returncode, result.stdout[:300], result.stderr[:300]))
+        check("--help alone: no side effect",
+              sandbox.invoked_commands() == ""
+              and not any(sandbox.workdir.iterdir()),
+              (sandbox.invoked_commands()[:200],
+               sorted(str(p) for p in sandbox.workdir.iterdir())))
+
         # A first argument starting with - is refused as a seat name: the
         # first argument is always the name, so the launcher would otherwise
         # launch a seat named after the option.
-        for label, first_argument in (("--help typed first", "--help"),
-                                      ("an option typed before the name",
-                                       "--no-attach")):
+        for label, first_argument, attach in (
+                ("--help typed first, with another argument", "--help", False),
+                ("an option typed before the name", "--no-attach", True)):
             sandbox = MacLaunchSandbox(root / f"dash-seat-name-{first_argument}")
             result = sandbox.run("~/agents", seat_name=first_argument,
-                                 attach=True)
+                                 attach=attach)
             check(f"{label}: refused with exit 2, naming the argument and "
                   "printing the usage line",
                   result.returncode == 2
@@ -847,6 +944,118 @@ def main() -> int:
         check("attached: the after-exit shell keeps the seat's credential",
               sandbox.after_exit_environment().get("GH_TOKEN") == seat_token,
               sandbox.after_exit_environment().get("GH_TOKEN"))
+
+        # --- the pseudo-terminal helper itself. A command that fills the
+        # stderr pipe before it writes to or closes the terminal must not
+        # hang the helper, and a command that never closes the terminal must
+        # be stopped at the helper's timeout. The helper runs in a thread
+        # joined with a time limit, so a helper that hangs fails this case
+        # instead of hanging the suite.
+        stderr_flood_bytes = 200_000
+        flood_outcome = {}
+
+        def run_flood():
+            flood_outcome["result"] = run_with_stdout_on_terminal(
+                [sys.executable, "-c",
+                 f"import sys; sys.stderr.write('e' * {stderr_flood_bytes}); "
+                 "sys.stderr.flush(); print('terminal-done')"],
+                str(root), dict(os.environ), timeout_seconds=20)
+
+        flood_thread = threading.Thread(target=run_flood, daemon=True)
+        flood_thread.start()
+        flood_thread.join(timeout=30)
+        flood_result = flood_outcome.get("result")
+        check("pseudo-terminal helper: more than 64 KiB on stderr before the "
+              "terminal closes is read whole, without hanging",
+              flood_result is not None
+              and flood_result.returncode == 0
+              and len(flood_result.stderr) == stderr_flood_bytes
+              and "terminal-done" in flood_result.stdout,
+              "the helper did not return within 30 seconds"
+              if flood_result is None else
+              (flood_result.returncode, len(flood_result.stderr),
+               repr(flood_result.stdout[-100:])))
+
+        started = time.monotonic()
+        try:
+            run_with_stdout_on_terminal(
+                [sys.executable, "-c", "import time; time.sleep(600)"],
+                str(root), dict(os.environ), timeout_seconds=2)
+            timed_out = False
+        except subprocess.TimeoutExpired:
+            timed_out = True
+        elapsed = time.monotonic() - started
+        check("pseudo-terminal helper: a command that never closes the "
+              "terminal is stopped at the timeout",
+              timed_out and elapsed < 15,
+              (timed_out, f"{elapsed:.1f}s"))
+
+        # --- the pseudo-terminal helper: a command that closes its terminal
+        # and its stderr and then keeps running is stopped at the timeout
+        # too, and does not outlive the helper.
+        pid_file = root / "helper-closed-streams-command.pid"
+        started = time.monotonic()
+        try:
+            run_with_stdout_on_terminal(
+                [sys.executable, "-c",
+                 "import os, sys, time; "
+                 f"open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
+                 "os.close(1); os.close(2); time.sleep(600)"],
+                str(root), dict(os.environ), timeout_seconds=2)
+            closed_streams_timed_out = False
+        except subprocess.TimeoutExpired:
+            closed_streams_timed_out = True
+        elapsed = time.monotonic() - started
+        closed_streams_command_survived = False
+        if pid_file.is_file():
+            closed_streams_pid = int(pid_file.read_text(encoding="utf-8"))
+            try:
+                os.kill(closed_streams_pid, 0)
+                closed_streams_command_survived = True
+                os.kill(closed_streams_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        check("pseudo-terminal helper: a command that closes both streams "
+              "and keeps running is stopped at the timeout and does not "
+              "survive",
+              closed_streams_timed_out and elapsed < 15
+              and pid_file.is_file() and not closed_streams_command_survived,
+              (closed_streams_timed_out, f"{elapsed:.1f}s",
+               pid_file.is_file(), closed_streams_command_survived))
+
+        # --- the iTerm2 background colour: written on an attached launch from
+        # an iTerm2 terminal, before tmux, and nowhere else. A pipe, another
+        # terminal program or a --no-attach launch must receive no escape
+        # bytes, and each must still reach tmux.
+        sandbox = MacLaunchSandbox(root / "iterm2-background-written")
+        result = sandbox.run("~/agents", seat_name="seat-t9", attach=True,
+                             term_program="iTerm.app",
+                             stdout_on_terminal=True)
+        check("iTerm2 background: an attached launch in iTerm2 on a terminal "
+              "writes the pale pink SetColors sequence",
+              result.returncode == 0
+              and ITERM2_PALE_PINK_BACKGROUND_SEQUENCE in result.stdout
+              and sandbox.tmux_argv(),
+              (result.returncode, repr(result.stdout[-300:]),
+               result.stderr[:300]))
+        for label, slug, term_program, stdout_on_terminal, attach in (
+                ("TERM_PROGRAM is another terminal", "other-terminal",
+                 "Apple_Terminal", True, True),
+                ("stdout is not a terminal", "stdout-pipe",
+                 "iTerm.app", False, True),
+                ("--no-attach", "no-attach", "iTerm.app", True, False)):
+            sandbox = MacLaunchSandbox(
+                root / f"iterm2-background-not-written-{slug}")
+            result = sandbox.run("~/agents", seat_name="seat-t10",
+                                 attach=attach, term_program=term_program,
+                                 stdout_on_terminal=stdout_on_terminal)
+            check(f"iTerm2 background: no escape sequence when {label}, "
+                  "and the launch still reaches tmux",
+                  result.returncode == 0
+                  and "\x1b]1337;" not in result.stdout
+                  and sandbox.tmux_argv(),
+                  (result.returncode, repr(result.stdout[-300:]),
+                   result.stderr[:300]))
 
         # --- an inherited GH_TOKEN is DROPPED, not kept. The seat's account
         # is decided by the launcher and never inherited from the shell that

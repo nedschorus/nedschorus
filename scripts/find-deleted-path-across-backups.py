@@ -250,7 +250,9 @@ There is no recovery flag: each FOUND line is followed by the exact command
 that recovers the content, for you to run.
 
 <path> may be repo-relative ("docs/issues/46-x.md"), absolute, or any trailing
-fragment of a path ("dispositions.md"). Fragments match by path suffix. It
+fragment of a path ("dispositions.md"). A fragment matches whole trailing
+path components: "dispositions.md" matches "docs/dispositions.md", not
+"docs/old-dispositions.md". It
 may also be written as it is cited: in the scp form
 ("nedlern@ned-box:/home/nedlern/nedschorus-logs/x.md", or "ned-box:<path>"),
 from the current directory ("../x.md", "./x.md"), or from a home ("~/x.md").
@@ -1761,8 +1763,11 @@ def main(argv=None, runner=run_command):
         description="Find a deleted path across this Mac's local snapshots, git and its reflog, the log-store, "
                     "agent transcripts, Timeshift on the box, and Time Machine.",
     )
-    parser.add_argument("path", help="repo-relative, absolute, or any trailing fragment of the path; "
-                                     "the scp form nedlern@ned-box:<path>, ../<path> and ~/<path> are read too")
+    parser.add_argument("path", help="repo-relative, absolute, or the path's last whole component or components, "
+                                     "such as dispositions.md for docs/dispositions.md but not docs/old-dispositions.md, "
+                                     "matched with case; "
+                                     "the scp form nedlern@ned-box:<path>, ../<path> and ~/<path> are read too; "
+                                     "a path that opens with a dash goes after --")
     parser.add_argument("--repo", default=os.environ.get("FIND_DELETED_PATH_REPO", "."),
                         help="git repository to search (default: current directory)")
     parser.add_argument("--transcripts-dir", default=os.environ.get("FIND_DELETED_PATH_TRANSCRIPTS_DIR", DEFAULT_TRANSCRIPTS_DIR))

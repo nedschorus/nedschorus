@@ -20,6 +20,7 @@ import json
 import os
 import plistlib
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -74,6 +75,10 @@ MAC_DAILY_PLIST = {
     "StandardOutPath": "/Users/el/.claude/daily-full-test-run-of-main.log",
     "StandardErrorPath": "/Users/el/.claude/daily-full-test-run-of-main.log",
 }
+NED_BOX_SESSION_DIALOGS_LINE = (
+    "*/10 * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/scripts/"
+    "log-store-session-dialogs-refresh-nbd.py --failures-only >> "
+    "/home/nedlern/.claude/log-store-session-dialogs-refresh.log 2>&1")
 # The daily worktree cleanup, added to the table after the two jobs above; no
 # machine had it installed by hand.
 NED_BOX_CLEAN_LINE = (
@@ -93,6 +98,26 @@ MAC_CLEAN_PLIST = {
     "StartCalendarInterval": {"Hour": 6, "Minute": 30},
     "StandardOutPath": "/Users/el/.claude/daily-clean-worktrees.log",
     "StandardErrorPath": "/Users/el/.claude/daily-clean-worktrees.log",
+}
+# The weekly owner check of the work-snapshot hook in a real claude session, added after the daily jobs.
+NED_BOX_WEEKLY_LIVE_CHECK_LINE = (
+    "30 4 * * 0 /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
+    "uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py >> "
+    "/home/nedlern/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log "
+    "2>&1")
+MAC_WEEKLY_LIVE_CHECK_PLIST = {
+    "Label": "com.nedschorus.weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check",
+    "ProgramArguments": ["/opt/homebrew/bin/python3",
+                         "/Users/el/Projects/nedschorus/nc-systems/handoff/"
+                         "uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py"],
+    "EnvironmentVariables": {
+        "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
+                "/usr/sbin:/sbin"},
+    "StartCalendarInterval": {"Weekday": 0, "Hour": 4, "Minute": 30},
+    "StandardOutPath":
+        "/Users/el/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log",
+    "StandardErrorPath":
+        "/Users/el/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log",
 }
 DOMAIN = f"gui/{os.getuid()}"
 
@@ -199,14 +224,25 @@ check("the Mac's daily worktree cleanup is a launchd job at 06:30, so a run miss
       clean["on"]["mac"]["scheduler"] == "launchd" and mac_clean_plist == MAC_CLEAN_PLIST
       and list(mac_clean_plist) == list(MAC_CLEAN_PLIST), mac_clean_plist)
 check("the table's jobs are the two typed by hand before this program, the daily worktree "
-      "cleanup and ned-box's crash restart watcher, and no other",
+      "cleanup, ned-box's crash restart watcher, the weekly owner check of the work-snapshot "
+      "hook and the session dialogs refresh, and no other",
       sorted(real_jobs) == ["daily-clean-worktrees", "daily-full-test-run-of-main",
                             "handoff-agent-seat-died-without-session-handoff-restart-watcher",
-                            "transcript-mirror-to-log-store"],
+                            "log-store-session-dialogs-refresh", "transcript-mirror-to-log-store",
+                            "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"],
       sorted(real_jobs))
 watcher = real_jobs["handoff-agent-seat-died-without-session-handoff-restart-watcher"]
 check("the crash restart watcher runs on ned-box only, every minute",
       watcher["on"] == {"ned-box": {"scheduler": "cron", "schedule": "* * * * *"}}, watcher["on"])
+session_dialogs = real_jobs["log-store-session-dialogs-refresh"]
+check("the session dialogs refresh runs on ned-box alone, every 10 minutes, and its program "
+      "documents the table's line",
+      list(session_dialogs["on"]) == ["ned-box"]
+      and installer.cron_line(ned_box, session_dialogs, session_dialogs["on"]["ned-box"])
+      == NED_BOX_SESSION_DIALOGS_LINE
+      and f"  ned-box: {NED_BOX_SESSION_DIALOGS_LINE}\n"
+      in (REPOSITORY_ROOT / session_dialogs["program"]).read_text(encoding="utf-8"),
+      installer.cron_line(ned_box, session_dialogs, session_dialogs["on"]["ned-box"]))
 check("every job's program is a file of this repository",
       all((REPOSITORY_ROOT / job["program"]).is_file() for job in real_table["jobs"]),
       [job["program"] for job in real_table["jobs"]])
@@ -214,29 +250,36 @@ mirror_documentation = (REPOSITORY_ROOT / mirror["program"]).read_text(encoding=
 daily_documentation = (REPOSITORY_ROOT / daily["program"]).read_text(encoding="utf-8")
 clean_documentation = (REPOSITORY_ROOT / clean["program"]).read_text(encoding="utf-8")
 watcher_documentation = (REPOSITORY_ROOT / watcher["program"]).read_text(encoding="utf-8")
+weekly_live_check_documentation = (
+    REPOSITORY_ROOT / real_jobs["weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"]
+    ["program"]).read_text(encoding="utf-8")
 check("the lines each program documents are the table's lines, and each names this installer",
       f"  Mac:     {MAC_MIRROR_LINE}\n" in mirror_documentation
       and f"  ned-box: {NED_BOX_MIRROR_LINE}\n" in mirror_documentation
       and f"    {NED_BOX_DAILY_LINE}\n" in daily_documentation
       and f"    {NED_BOX_CLEAN_LINE}\n" in clean_documentation
       and f"    {NED_BOX_CRASH_RESTART_WATCHER_LINE}\n" in watcher_documentation
+      and f"    {NED_BOX_WEEKLY_LIVE_CHECK_LINE}\n" in weekly_live_check_documentation
       and all("nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py" in text
               for text in (mirror_documentation, daily_documentation, clean_documentation,
-                           watcher_documentation)))
+                           watcher_documentation, weekly_live_check_documentation)))
 
 printed, errors = io.StringIO(), io.StringIO()
 stub = MachineStub()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="linux", home=Path("/home/nedlern"), run=stub)
-check("--print as ned-box prints ned-box's four cron lines from the real table and runs nothing",
+check("--print as ned-box prints ned-box's six cron lines from the real table and runs nothing",
       exit_code == 0 and stub.commands == []
       and printed.getvalue().splitlines() == [
           "machine: ned-box (linux, /home/nedlern)",
           "transcript-mirror-to-log-store — cron line:", NED_BOX_MIRROR_LINE,
+          "log-store-session-dialogs-refresh — cron line:", NED_BOX_SESSION_DIALOGS_LINE,
           "daily-full-test-run-of-main — cron line:", NED_BOX_DAILY_LINE,
           "daily-clean-worktrees — cron line:", NED_BOX_CLEAN_LINE,
           "handoff-agent-seat-died-without-session-handoff-restart-watcher — cron line:",
-          NED_BOX_CRASH_RESTART_WATCHER_LINE],
+          NED_BOX_CRASH_RESTART_WATCHER_LINE,
+          "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — cron line:",
+          NED_BOX_WEEKLY_LIVE_CHECK_LINE],
       (exit_code, printed.getvalue(), errors.getvalue()))
 printed, errors = io.StringIO(), io.StringIO()
 with redirect_stdout(printed), redirect_stderr(errors):
@@ -244,9 +287,13 @@ with redirect_stdout(printed), redirect_stderr(errors):
 mac_printed = printed.getvalue()
 clean_heading = ("daily-clean-worktrees — launchd job, /Users/el/Library/LaunchAgents/"
                  "com.nedschorus.daily-clean-worktrees.plist:\n")
-daily_part, _, clean_part = mac_printed.partition(clean_heading)
-check("--print as the Mac prints the mirror's cron line and the two daily jobs' plists, and runs "
-      "nothing",
+weekly_heading = ("weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — launchd job, "
+                  "/Users/el/Library/LaunchAgents/com.nedschorus.weekly-uncommitted-work-snapshot-"
+                  "hook-real-claude-session-owner-check.plist:\n")
+daily_part, _, clean_and_weekly_part = mac_printed.partition(clean_heading)
+clean_part, _, weekly_part = clean_and_weekly_part.partition(weekly_heading)
+check("--print as the Mac prints the mirror's cron line, the two daily jobs' plists and the weekly "
+      "owner check's plist, and runs nothing",
       exit_code == 0 and stub.commands == [] and clean_part.startswith("<?xml")
       and daily_part.startswith(
           "machine: mac (darwin, /Users/el)\ntranscript-mirror-to-log-store — cron line:\n"
@@ -254,7 +301,9 @@ check("--print as the Mac prints the mirror's cron line and the two daily jobs' 
           "LaunchAgents/com.nedschorus.daily-full-test-run-of-main.plist:\n<?xml")
       and plistlib.loads(daily_part[daily_part.index("<?xml"):].encode("utf-8"))
       == MAC_DAILY_PLIST
-      and plistlib.loads(clean_part.encode("utf-8")) == MAC_CLEAN_PLIST,
+      and plistlib.loads(clean_part.encode("utf-8")) == MAC_CLEAN_PLIST
+      and weekly_part.startswith("<?xml")
+      and plistlib.loads(weekly_part.encode("utf-8")) == MAC_WEEKLY_LIVE_CHECK_PLIST,
       (exit_code, mac_printed, errors.getvalue()))
 
 
@@ -274,7 +323,8 @@ check("--help ends with the docstring's exit-codes paragraph and prints nothing 
           "program began changing the machine, or for --check a job differs or is not in the "
           "table; 2 not run — a bad "
           "invocation, a table this program cannot use, a machine the table does not name, a "
-          "job's program missing, or a crontab that could not be read.")
+          "job's program missing, a crontab that could not be read, or a shell parser that "
+          "could not be installed.")
       and "WHY THIS EXISTS" not in help_text and "THE TABLE is " not in help_text
       and "user-ruled" not in help_text, help_text)
 check("--check's help names both reasons for exit 1",
@@ -1033,15 +1083,15 @@ with tempfile.TemporaryDirectory() as temporary:
     check("the program a crontab line runs is its first word, or an interpreter's first "
           "argument, and nothing for a line that sets a variable or gives an interpreter or "
           "env an option",
-          [installer.program_a_cron_line_runs(line) for line in (
+          [[program for program, _ in installer.programs_a_cron_line_runs(line)] for line in (
               path_setting, reads_the_clone, writes_into_the_clone, runs_directly,
               runs_through_env, runs_at_reboot, BOX_MIRROR, "", "# 0 4 * * * x",
               env_option_takes_a_clone_directory, interpreter_option)]
-          == [None, "/usr/bin/tar", "/usr/local/bin/other-tool",
-              f"{box_clone}/scripts/a-retired-shell-job.sh",
-              f"{box_clone}/scripts/a-retired-env-job.py",
-              f"{box_clone}/scripts/a-retired-reboot-job.py",
-              f"{box_clone}/scripts/transcript-mirror-to-log-store.py", None, None, None, None])
+          == [[], ["/usr/bin/tar"], ["/usr/local/bin/other-tool"],
+              [f"{box_clone}/scripts/a-retired-shell-job.sh"],
+              [f"{box_clone}/scripts/a-retired-env-job.py"],
+              [f"{box_clone}/scripts/a-retired-reboot-job.py"],
+              [f"{box_clone}/scripts/transcript-mirror-to-log-store.py"], [], [], [None], [None]])
     not_runs = [path_setting, reads_the_clone, writes_into_the_clone,
                 env_option_takes_a_clone_directory, interpreter_option]
     runs = [runs_directly, runs_through_env, runs_at_reboot]
@@ -1206,6 +1256,224 @@ with tempfile.TemporaryDirectory() as temporary:
           and plistlib.loads(plist_path.read_bytes()) == expected_plist, (exit_code, printed))
     check("--print shows the plist with this program's line",
           installer.PLIST_WRITTEN_BY_THIS_PROGRAM.decode() in mac_printed, mac_printed)
+
+    # The cron command is read by the shell module, as bash reads it: a
+    # redirection written before the program does not hide the program.
+    redirect_first = (f"0 5 * * * >> /tmp/retired.log 2>&1 "
+                      f"{box_clone}/scripts/a-retired-redirect-first-job.py")
+    check("a crontab line whose redirection comes before its program runs that program, and "
+          "one whose command is only a comment runs nothing",
+          [installer.programs_a_cron_line_runs(line)
+           for line in (redirect_first, "0 5 * * * # paused")]
+          == [[(f"{box_clone}/scripts/a-retired-redirect-first-job.py", False)], []],
+          [installer.programs_a_cron_line_runs(line)
+           for line in (redirect_first, "0 5 * * * # paused")])
+
+    # A command substitution's command runs before the line's own command
+    # but is not it, and a function the line defines may never be called;
+    # reading either as the line's program would keep a retired job or remove
+    # a job that is not the project's. A pipeline's later stage only reads the
+    # job's output, also when written alone in ( ) or { }; a ( ) subshell's command is a job
+    # of the line.
+    substitution_cases = {
+        f"0 5 * * * {box_clone}/scripts/a-retired-dated-log-job.py >> /tmp/x-$(date +\\%F).log 2>&1":
+            [(f"{box_clone}/scripts/a-retired-dated-log-job.py", False)],
+        f"0 5 * * * /usr/bin/foo $({box_clone}/scripts/a-helper.py)": [("/usr/bin/foo", False)],
+        f"0 5 * * * /usr/bin/foo `{box_clone}/scripts/a-helper.py`": [("/usr/bin/foo", False)],
+        f"0 5 * * * /usr/bin/foo <({box_clone}/scripts/a-helper.py)": [("/usr/bin/foo", False)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py; /usr/bin/logger done":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("/usr/bin/logger", False)],
+        f"0 5 * * * f() {{ {box_clone}/scripts/a-helper.py; }}; /usr/bin/other": [(None, False)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-logged-job.py 2>&1 | /usr/bin/logger -t x":
+            [(f"{box_clone}/scripts/a-retired-logged-job.py", False), ("/usr/bin/logger", True)],
+        f"0 5 * * * ({box_clone}/scripts/a-retired-job.py) | (cat; /usr/bin/other-job)":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("cat", False),
+             ("/usr/bin/other-job", False)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py | {{ cat; /usr/bin/other-job; }}":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("cat", False),
+             ("/usr/bin/other-job", False)],
+        f"0 5 * * * (/usr/bin/other-job); {box_clone}/scripts/a-retired-job.py":
+            [("/usr/bin/other-job", False), (f"{box_clone}/scripts/a-retired-job.py", False)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py | (/usr/bin/logger -t x)":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("/usr/bin/logger", True)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py | ( (/usr/bin/logger) )":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("/usr/bin/logger", True)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py | {{ /usr/bin/logger; }}":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("/usr/bin/logger", True)],
+        f"0 5 * * * {box_clone}/scripts/a-retired-job.py | (/usr/bin/logger) | /usr/bin/tee x":
+            [(f"{box_clone}/scripts/a-retired-job.py", False), ("/usr/bin/logger", True),
+             ("/usr/bin/tee", True)],
+    }
+    read_programs = {line: installer.programs_a_cron_line_runs(line) for line in substitution_cases}
+    check("a crontab line runs each command outside a substitution, a later pipeline stage only "
+          "reads a job's output, a ( ) subshell's command is a job, and a line that defines a "
+          "function is not read",
+          read_programs == substitution_cases, read_programs)
+
+    # --remove-not-in-table takes off a retired job piped to logger, and reports
+    # and keeps a line that also runs a job that is not the clone's.
+    piped_to_logger = (f"0 5 * * * {box_clone}/scripts/a-retired-logged-job.py 2>&1 | "
+                       f"/usr/bin/logger -t x")
+    mixed = f"0 6 * * * (/usr/bin/other-job); {box_clone}/scripts/a-retired-mixed-job.py"
+    stub = MachineStub(crontab="".join(
+        line + "\n" for line in [BOX_MIRROR, BOX_DAILY, BOX_ALONE, piped_to_logger, mixed]).encode())
+    exit_code, printed, errors = run_main(["--check"], NED_BOX, stub)
+    check("--check reports a retired job piped to logger, and a line that also runs another job, "
+          "saying --remove-not-in-table leaves that line in place",
+          exit_code == 1 and printed.count("NOT IN THE TABLE: ") == 2
+          and f"NOT IN THE TABLE: the crontab line {mixed} — " in printed
+          and "leaves the line in place" in printed and "take the retired job off that line by hand"
+          in printed, (exit_code, printed))
+    exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+    check("--remove-not-in-table removes the job piped to logger, keeps the line that also runs "
+          "another job, reports it as KEPT, and exits 1",
+          exit_code == 1 and stub.crontab_writes == ["".join(
+              line + "\n" for line in [BOX_MIRROR, BOX_DAILY, BOX_ALONE, mixed]).encode()]
+          and f"KEPT: not in the table — the crontab line {mixed}" in printed,
+          (exit_code, printed, stub.crontab_writes))
+
+    # tree-sitter-bash missing: the module installs it, as on a Mac whose
+    # Python has not run a guard yet; a failed install stops this program,
+    # which changes nothing and says to tell the user.
+    shell_reader = installer.shell_reader
+    real_load_parser, real_importer = shell_reader.load_parser, shell_reader.import_tree_sitter_bash
+    saved_state_directory, saved_parser = shell_reader.STATE_DIRECTORY, shell_reader._parser
+    shell_reader.STATE_DIRECTORY = root / "shell-reader-state"
+    install_calls = []
+
+    def missing_until_installed():
+        if not install_calls:
+            raise ImportError("No module named 'tree_sitter_bash'")
+        return real_importer()
+
+    def recording_install():
+        install_calls.append(True)
+        return ""
+
+    def failing_install():
+        install_calls.append(True)
+        raise shell_reader.ShellParserUnavailable("pip exited 1: no network on this machine")
+
+    try:
+        for install, wanted_exit in ((recording_install, 1), (failing_install, 2)):
+            install_calls.clear()
+            shell_reader._parser = None
+            shutil.rmtree(shell_reader.STATE_DIRECTORY, ignore_errors=True)
+            shell_reader.load_parser = (lambda install=install: real_load_parser(
+                importer=missing_until_installed, installer=install))
+            stub = MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode())
+            with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, None):
+                exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub) \
+                    if wanted_exit == 2 else run_main(["--check"], NED_BOX, stub)
+            if install is recording_install:
+                check("with tree-sitter-bash missing, the installer has the shell module install "
+                      "it, then reads the crontab and reports the retired line",
+                      install_calls == [True] and exit_code == 1
+                      and f"NOT IN THE TABLE: the crontab line {runs_directly} — " in printed,
+                      (install_calls, exit_code, printed, errors))
+            else:
+                check("when that install fails, --remove-not-in-table writes no crontab, exits 2 "
+                      "and says what the install printed and to tell the user",
+                      install_calls == [True] and exit_code == 2 and stub.crontab_writes == []
+                      and "pip exited 1: no network on this machine" in errors
+                      and "Tell the user, or, if you are a subagent, the agent that dispatched "
+                      "you, in these words: \"tree-sitter-bash is missing on " in errors
+                      and shell_reader.REQUIREMENTS_FILE.name in errors,
+                      (install_calls, exit_code, printed, errors, stub.crontab_writes))
+    finally:
+        shell_reader.load_parser, shell_reader.STATE_DIRECTORY = real_load_parser, saved_state_directory
+        shell_reader._parser = saved_parser
+
+    with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, "1"):
+        unattended_lines = installer.shell_parser_refusal(
+            shell_reader.ShellParserUnavailable("pip exited 1: no network"), runs_directly).lines
+    unattended_errors = "\n".join(unattended_lines)
+    check("in an agent-session no user attends, the install-failed refusal tells a subagent to "
+          "report, does not ask to tell the user, and still says how to install by hand",
+          "do not tell the user" in unattended_errors
+          and "If you are a subagent, tell the agent that dispatched you" in unattended_errors
+          and "Tell the user" not in unattended_errors and "pip install" in unattended_errors
+          and "pip exited 1: no network" in unattended_errors
+          and "Leave this run of install-scheduled-jobs-on-this-machine undone; run it again, with "
+          "the same options, only after tree-sitter-bash is installed." in unattended_lines,
+          unattended_errors)
+    # The refusal names the machine it runs on, so the expected command is built for that machine.
+    this_host = socket.gethostname().split(".")[0]
+    words = shell_reader.tree_sitter_bash_install_failure_report_words_build(
+        this_host, "pip exited 1: no network", "install-scheduled-jobs-on-this-machine did not run there")
+    install = words.splitlines()[1]
+    check("the install command stands on a line of its own, with nothing after it to copy by mistake",
+          install in unattended_lines and f"{sys.executable} -m pip install" in install
+          and install.rstrip("'").endswith("requirements.txt"), unattended_lines)
+    check("the install-failed refusal reports the words the Bash guards report, what the install "
+          "printed included",
+          unattended_errors.endswith(words), unattended_errors)
+
+    # "Skip the rest of this message" skips only the report, so each refusal must end with it.
+    real_build = shell_reader.report_to_user_or_dispatching_agent_instruction_build
+    built = []
+
+    def recording_build(words, environment=os.environ):
+        built.append(real_build(words, environment))
+        return built[-1]
+    shell_reader.report_to_user_or_dispatching_agent_instruction_build = recording_build
+    try:
+        for label, failure in (
+                ("the parser is missing", shell_reader.ShellParserUnavailable("pip exited 1")),
+                ("the reader failed", shell_reader.ShellCommandUnreadable("ValueError: injected"))):
+            for session in ((None, None), (None, "1")):
+                built.clear()
+                with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(
+                        *session):
+                    refusal_text = "\n".join(installer.shell_parser_refusal(failure, runs_directly).lines)
+                check(f"when {label}, with the session variables {session}, the refusal ends with "
+                      f"the report", len(built) == 1 and refusal_text.endswith(built[0]),
+                      (built, refusal_text))
+    finally:
+        shell_reader.report_to_user_or_dispatching_agent_instruction_build = real_build
+
+    # A failure inside the shell reader stops this program the same way, naming the failure.
+    real_collect = shell_reader._collect
+
+    def failing_collect(*arguments, **keywords):
+        raise ValueError("injected")
+    shell_reader._collect = failing_collect
+    backticked = runs_directly + " `date`"
+    try:
+        stub = MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode())
+        with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, None):
+            exit_code, printed, errors = run_main(["--remove-not-in-table"], NED_BOX, stub)
+            _, _, backticked_errors = run_main(
+                ["--remove-not-in-table"], NED_BOX,
+                MachineStub(crontab=(BOX_MIRROR + "\n" + backticked + "\n").encode()))
+        with shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test("0", None):
+            unattended_exit, unattended_printed, unattended_errors = run_main(
+                ["--remove-not-in-table"], NED_BOX,
+                MachineStub(crontab=(BOX_MIRROR + "\n" + runs_directly + "\n").encode()))
+    finally:
+        shell_reader._collect = real_collect
+    check("when the shell reader fails on a crontab line, --remove-not-in-table writes no crontab, "
+          "exits 2, and says what to tell the user, quoting the line and the failure",
+          exit_code == 2 and stub.crontab_writes == [] and "ValueError: injected" in errors
+          and f"failed on the crontab line `{runs_directly}` on " in errors.splitlines()[0]
+          and f"failed on the crontab line `{runs_directly}` on " in errors.splitlines()[-1]
+          and "Tell the user" in errors and "in these words" in errors,
+          (exit_code, printed, errors, stub.crontab_writes))
+    for index in (0, -1):
+        check(f"a crontab line holding a backtick is quoted with a longer run of backticks around it, "
+              f"in {'the first' if index == 0 else 'the last'} line of the refusal",
+              f"failed on the crontab line `` {backticked} `` on "
+              in backticked_errors.splitlines()[index], backticked_errors)
+    check("the refusal tells the agent to leave this run undone until the reader is fixed",
+          "Leave this run of install-scheduled-jobs-on-this-machine undone; run it again, with the "
+          "same options, only after the shell command reader is fixed." in errors.splitlines(), errors)
+    check("in an agent-session no user attends, that refusal tells a subagent to report, does not "
+          "ask to tell the user, and gives a top-level agent its next step",
+          unattended_exit == 2 and "do not tell the user" in unattended_errors
+          and "If you are a subagent, tell the agent that dispatched you" in unattended_errors
+          and "go on with your task" in unattended_errors
+          and "Leave this run of install-scheduled-jobs-on-this-machine undone" in unattended_errors
+          and "Tell the user" not in unattended_errors, unattended_errors)
 
 print()
 if failures:

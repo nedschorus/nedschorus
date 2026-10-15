@@ -36,8 +36,9 @@ raised the task for, and does not raise the task again for the same value;
 changing either lets the task be raised again. The Stop hook's
 additionalContext continues the conversation, so a hook that said the same
 thing at every turn boundary would never let the agent stop. The record is
-written atomically BEFORE anything is printed, and nothing is printed if the
-write fails, so a raise whose record was lost cannot happen.
+written atomically BEFORE anything is printed, and no raise is printed if the
+write fails, so a raise whose record was lost cannot happen; the failed write
+is reported as a fault instead, as OUTPUT says.
 
 THE STATE FILE is
 `~/.local/state/claude/agent-seat-due-task-raise-state/<list id>.json`,
@@ -68,9 +69,16 @@ OUTPUT. Something to raise: one JSON object,
 which Claude Code delivers to the model as non-error feedback while the
 conversation continues. No `decision` field and no `systemMessage`: the text
 is for the agent. The text is one instruction per due task, then the
-instruction for a task that cannot be acted on yet. Nothing to raise, or any
-fault: nothing printed, exit 0. The hook never exits nonzero: a fault here
-must not stop a turn ending.
+instruction for a task that cannot be acted on yet. Nothing to raise:
+nothing printed, exit 0. A fault, such as a payload that is not a JSON
+object, a state file that cannot be written or any exception: one line on
+stderr naming the hook and the fault, nothing on stdout, exit 1. The line for
+a failed state write says how many due tasks went unraised, or that none was
+due, and that the first stop after the state file can be written raises them;
+the line for any other fault says no task was checked. Claude Code
+records a Stop hook's exit 1 as a non-blocking error and still ends the turn.
+Exit 2 and additionalContext would both continue the conversation, and a
+fault that recurs at every stop would then never let the agent stop.
 
 ONLY THE AGENT-SEAT'S OWN SESSION IS RAISED, never a headless `claude -p`
 child an agent-seat's program starts. A child inherits the agent-seat's
@@ -91,10 +99,11 @@ signals silence the hook:
 The project's own headless Claude callers run no project hook at all: the
 cold-read Claude cell, and the restater-judge cell through it, pass
 `--settings` with disableAllHooks; scripts/ghi-info-ask.py and
-scripts/sanity-check-attacks.py pass `--setting-sources user`. The two
+scripts/sanity-check-adversarial-prompts.py pass `--setting-sources user`. The two
 signals cover a child started any other way.
 """
 
+import importlib.util
 import json
 import os
 import re
@@ -104,6 +113,14 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Every Stop hook obeys this rule first: see the module's docstring.
+_stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
+    "claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
+_stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
 
 TASK_LIST_ID_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
 REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
@@ -248,8 +265,8 @@ def read_state(path: Path) -> dict:
     }
 
 
-def write_state_atomically(path: Path, state: dict) -> bool:
-    """Replace the state file in one rename; True only when it landed."""
+def write_state_atomically(path: Path, state: dict) -> None:
+    """Replace the state file in one rename; raises OSError when it did not land."""
     temporary_name = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -259,14 +276,13 @@ def write_state_atomically(path: Path, state: dict) -> bool:
             json.dump(state, handle, indent=2, sort_keys=True)
             handle.write("\n")
         os.replace(temporary_name, str(path))
-        return True
     except OSError:
         if temporary_name is not None:
             try:
                 os.unlink(temporary_name)
             except OSError:
                 pass
-        return False
+        raise
 
 
 class GitHubConditionChecker:
@@ -415,10 +431,17 @@ def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> 
     return lines, state_changed or checker.changed
 
 
+class HookFault(Exception):
+    """A fault the hook reports on stderr instead of raising anything."""
+
+
 def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None":
-    """The JSON to print, or None for silence."""
+    """The JSON to print, or None for silence; raises on a fault."""
     payload = json.loads(stdin_text)
     if not isinstance(payload, dict):
+        raise HookFault("the payload Claude Code sent on stdin is JSON, but not an object, "
+                        "so no task was checked")
+    if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
     if environment.get(REINCARNATION_OWNED_BY_CALLER_VARIABLE):
         return None  # a caller's headless child: the raise would replace its answer
@@ -431,8 +454,18 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
     state_path = state_file_path(home, directory.name)
     state = read_state(state_path)
     lines, state_changed = due_task_lines(tasks, directory, state, now)
-    if state_changed and not write_state_atomically(state_path, state):
-        return None
+    if state_changed:
+        try:
+            write_state_atomically(state_path, state)
+        except OSError as error:
+            if lines:
+                outcome = (f"so {len(lines)} due task(s) were not raised at this stop; the "
+                           f"first stop after the state file can be written raises them")
+            else:
+                outcome = "no task was due at this stop, so none went unraised"
+            raise HookFault(f"the state file {state_path} could not be written, and {outcome}. "
+                            f"Make {state_path.parent} a directory this user can write to: "
+                            f"{error}") from error
     if not lines:
         return None
     return json.dumps({
@@ -447,13 +480,16 @@ def main() -> int:
     try:
         output = run(sys.stdin.read(), os.environ, Path.home(),
                      datetime.now(timezone.utc))
-    except Exception:
-        return 0
-    if output is not None:
-        try:
+        if output is not None:
             print(output)
-        except Exception:
-            return 0
+    except HookFault as error:
+        print(f"agent-seat-due-task-raise-hook: {error}", file=sys.stderr)
+        return 1
+    except Exception as error:
+        print(f"agent-seat-due-task-raise-hook: the hook failed, so no task was checked at "
+              f"this stop; the first stop without this fault raises any task that is due: "
+              f"{type(error).__name__}: {error}", file=sys.stderr)
+        return 1
     return 0
 
 

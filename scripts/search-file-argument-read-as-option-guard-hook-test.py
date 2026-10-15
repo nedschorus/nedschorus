@@ -20,6 +20,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -28,7 +29,6 @@ import tempfile
 from pathlib import Path
 
 HOOK_SCRIPT = Path(__file__).with_name("search-file-argument-read-as-option-guard-hook.py")
-KEYSTROKE_GUARD_SCRIPT = Path(__file__).with_name("synthetic-keystroke-guard-hook.py")
 
 _spec = importlib.util.spec_from_file_location("search_guard", HOOK_SCRIPT)
 guard = importlib.util.module_from_spec(_spec)
@@ -58,8 +58,14 @@ def make_scratch_projects_folder():
     return scratch
 
 
+LET_THROUGH_MESSAGES = []
+
+
 def run_main(command, cwd, clock=None):
-    """Drive main() as the harness does; return the refusal text or None."""
+    """Drive main() as the harness does; return the refusal text or None.
+
+    A message that lets the command through is kept in LET_THROUGH_MESSAGES.
+    """
     payload = {"tool_name": "Bash", "cwd": str(cwd),
                "tool_input": {"command": command}}
     stdout = io.StringIO()
@@ -74,6 +80,9 @@ def run_main(command, cwd, clock=None):
     if not text:
         return None
     output = json.loads(text)["hookSpecificOutput"]
+    if "permissionDecision" not in output:
+        LET_THROUGH_MESSAGES.append(output["additionalContext"])
+        return None
     assert output["permissionDecision"] == "deny", output
     return output["permissionDecisionReason"]
 
@@ -87,19 +96,11 @@ def run_in_shell(command, cwd):
 scratch = make_scratch_projects_folder()
 try:
     # -----------------------------------------------------------------------
-    # The shared shell reader is really imported, not copied.
+    # The shared shell module is really imported, not copied.
     # -----------------------------------------------------------------------
-    _keystroke_spec = importlib.util.spec_from_file_location(
-        "keystroke_guard_for_test", KEYSTROKE_GUARD_SCRIPT)
-    keystroke_guard = importlib.util.module_from_spec(_keystroke_spec)
-    _keystroke_spec.loader.exec_module(keystroke_guard)
-    check("the guard uses the keystroke guard's tokenizer and heredoc split",
-          guard.tokenize_simple_commands.__code__.co_code
-          == keystroke_guard.tokenize_simple_commands.__code__.co_code
-          and guard.split_out_heredocs.__code__.co_code
-          == keystroke_guard.split_out_heredocs.__code__.co_code
-          and guard.tokenize_simple_commands.__module__
-          == "synthetic_keystroke_guard_hook")
+    check("the guard reads commands with the shared shell module",
+          guard.shell_reader.__name__ == "shell_command_tree_sitter_bash_reader_common"
+          and guard.read_simple_commands("grep x *")[0][:2] == ["grep", "x"])
 
     # -----------------------------------------------------------------------
     # The misreading, on the real programs, before the guard is tested.
@@ -152,7 +153,14 @@ try:
         "egrep -l needle */*.jsonl",
         "/usr/bin/grep -l needle */*.jsonl",
         "timeout 10 grep -l needle */*.jsonl",
+        "time grep -l needle */*.jsonl",
         "env LC_ALL=C grep -l needle */*.jsonl",
+        "timeout --signal=KILL 10 grep -l needle */*.jsonl",
+        "timeout --kill-after 5 10 grep -l needle */*.jsonl",
+        "sudo -u nedlern grep -l needle */*.jsonl",
+        "flock /tmp/search.lock grep -l needle */*.jsonl",
+        "caffeinate -i grep -l needle */*.jsonl",
+        "echo x | xargs -n 1 grep -l needle */*.jsonl",
         "LC_ALL=C grep -l needle */*.jsonl",
         "echo $(grep -l needle */*.jsonl)",
         "for x in a; do grep -l needle */*.jsonl; done",
@@ -165,11 +173,174 @@ try:
     ]:
         check(f"refused: {command}", run_main(command, scratch) is not None)
 
+    # When the -- cannot be put into the whole command, the suggestion is the search alone,
+    # with its redirections, so that running it does what the agent meant.
+    real_whole_command = guard.command_with_double_dash_before_word
+    guard.command_with_double_dash_before_word = lambda *arguments: None
+    try:
+        refusal = run_main("grep -l needle */*.jsonl 2>/dev/null", scratch)
+    finally:
+        guard.command_with_double_dash_before_word = real_whole_command
+    check("the search-alone suggestion keeps the search's redirections",
+          (refusal or "").endswith("run: grep -l needle -- */*.jsonl 2>/dev/null"), refusal)
+
+    # The search alone would run in another folder without its cd, or print more without its
+    # pipe, so with other commands around the search the refusal gives no command at all.
+    without_command_ending = ("Put -- after the last option and before the file names, "
+                              "then run the command again.")
+    guard.command_with_double_dash_before_word = lambda *arguments: None
+    try:
+        for command, cwd in [
+                (f"cd {scratch} && grep -l needle */*.jsonl 2>/dev/null", scratch / "plain"),
+                ("grep -l needle */*.jsonl | head -5", scratch),
+                ("{ grep -l needle */*.jsonl; } > out", scratch),
+                ("grep -l needle */*.jsonl &", scratch),
+                ("for x in a; do grep -l needle */*.jsonl; done", scratch),
+                # shlex cannot read bash's $'...' quoting, so the command is not known to be
+                # the search alone.
+                ("grep -l needle */*.jsonl $'it\\'s'", scratch)]:
+            refusal = run_main(command, cwd)
+            check(f"with no place found for --, {command!r} is refused with no command given",
+                  (refusal or "").endswith(without_command_ending)
+                  and "run:" not in (refusal or ""), refusal)
+    finally:
+        guard.command_with_double_dash_before_word = real_whole_command
+
+    # A cwd whose name holds a glob character is escaped in the pattern; the matches start
+    # with the name as written, so the name a match is checked by is cut at the right place.
+    for folder_name, file_name, refused_expected in [
+            ("ab[c]", "xy-foo/a.jsonl", False),
+            ("proj[1]", "-d/a.jsonl", True)]:
+        glob_named = scratch / "glob-named" / folder_name
+        (glob_named / file_name).parent.mkdir(parents=True)
+        (glob_named / file_name).write_text('{"text": "needle"}\n')
+        refusal = run_main("grep -l needle */*.jsonl", glob_named)
+        check(f"in a folder named {folder_name} holding {file_name}, the search is "
+              + ("refused" if refused_expected else "passed"),
+              (refusal is not None) == refused_expected, repr(refusal))
+    shutil.rmtree(scratch / "glob-named")
+
+    # The word after an option that takes a value, such as grep -f's pattern file, is that
+    # option's value, not a file to search, even when it expands to a name beginning with -.
+    option_values = scratch / "option-values"
+    option_values.mkdir()
+    (option_values / "-n").write_text("needle\n")
+    (option_values / "notes.txt").write_text("needle\n")
+    for command in ["grep -f -? notes.txt", "grep -lf -? notes.txt",
+                    "grep --file -? notes.txt", "rg -g -? needle notes.txt"]:
+        check(f"passes: {command}, whose -? is an option's value",
+              run_main(command, option_values) is None)
+    for command in ["grep -e needle -?", "grep -fpatterns -?", "grep -fl needle -?"]:
+        check(f"refused: {command}, whose -? is a file to search",
+              run_main(command, option_values) is not None)
+    (option_values / "notes2.txt").write_text("needle\n")
+    check("passes: grep -f notes* x, whose value expands to two names, none beginning with -",
+          run_main("grep -f notes* x", option_values) is None)
+    check("passes: grep -f -z* notes.txt, whose value expands to no name",
+          run_main("grep -f -z* notes.txt", option_values) is None)
+    # Expanded to two names, an option's value is only the first; the shell passes the
+    # second as a word of its own, and a second name beginning with - is read as an option.
+    (option_values / "-a").write_text("needle\n")
+    if shutil.which("grep"):
+        two_names = run_in_shell("grep -f -? notes.txt", option_values)
+        check("REPRODUCTION: real grep -f -? with -a and -n present reads -n as an option",
+              two_names.stdout.startswith("1:"),
+              f"stdout {two_names.stdout!r}, stderr {two_names.stderr!r}")
+    refusal = run_main("grep -f -? notes.txt", option_values)
+    check("refused: grep -f -? notes.txt, whose value expands to -a and -n, naming -n, "
+          "the one grep reads as an option",
+          refusal == (
+              "Refused: -?, the value of -f, expands to two or more names. The shell passes "
+              "only the first of them as -f's value, and grep reads each of the others as one "
+              "more word, and a name beginning with - as an option, such as -n. "
+              "-- cannot fix this.\n"
+              "If you meant one of the names, write that name in place of -?.\n"
+              "If you meant every name -? matches, give -f once before each name.\n"
+              "If you meant a file named -? itself, quote -?.\n"
+              "Then run the command again."),
+          repr(refusal))
+    # The name reported does not depend on the order the directory lists its entries in.
+    real_iglob = guard.glob.iglob
+    for listing in (["/d/-a", "/d/-n"], ["/d/-n", "/d/-a"]):
+        guard.glob.iglob = lambda pattern, recursive=False, listing=listing: iter(listing)
+        try:
+            name = guard.dash_name_among_two_or_more_expansions(
+                guard.GLOB_CHARACTER_MARKERS["*"], "/d", float("inf"), lambda: 0.0)
+        finally:
+            guard.glob.iglob = real_iglob
+        check(f"listed as {listing}, the name reported is -n, not the first in byte order",
+              name == "-n", repr(name))
+    guard.glob.iglob = lambda pattern, recursive=False: iter(["/d/a", "/d/-z"])
+    try:
+        name = guard.dash_name_among_two_or_more_expansions(
+            guard.GLOB_CHARACTER_MARKERS["*"], "/d", float("inf"), lambda: 0.0)
+    finally:
+        guard.glob.iglob = real_iglob
+    check("with -z and a, the one dash name -z is reported though it is first in byte order",
+          name == "-z", repr(name))
+    # A later search that -- cannot fix leaves no command to suggest for the earlier one.
+    refusal = run_main("grep needle *; grep -f -? notes.txt", option_values) or ""
+    check("refused with no command: grep needle *; grep -f -? notes.txt, whose second "
+          "search -- cannot fix",
+          refusal.startswith("Refused: * expands to names beginning with -")
+          and "run:" not in refusal, repr(refusal))
+    for command in ["grep -lf -? notes.txt", "grep --file -? notes.txt",
+                    "rg -g -? needle notes.txt"]:
+        check(f"refused: {command}, whose value expands to two names beginning with -",
+              run_main(command, option_values) is not None)
+    shutil.rmtree(option_values)
+    # A recursive ** also lists the folder itself; the shell does not expand to it, so a
+    # folder holding only -n gives ** one name, the option's value.
+    only_dash = scratch / "only-dash"
+    only_dash.mkdir()
+    (only_dash / "-n").write_text("needle\n")
+    check("passes: grep -f ** /dev/null in a folder holding only -n",
+          run_main("grep -f ** /dev/null", only_dash) is None)
+    shutil.rmtree(only_dash)
+
+    # At a cwd of /, the matches' prefix is / itself, so a name is cut after it, not after //.
+    real_iglob = guard.glob.iglob
+    guard.glob.iglob = lambda pattern, recursive=False: iter(["/-x"])
+    try:
+        name = guard.first_expansion_beginning_with_dash(
+            guard.GLOB_CHARACTER_MARKERS["*"], "/", float("inf"), lambda: 0.0)
+    finally:
+        guard.glob.iglob = real_iglob
+    check("at a cwd of /, the entry /-x is read as -x", name == "-x", repr(name))
+
     elsewhere = scratch / "plain"
     check("refused after a literal cd into the folder from elsewhere",
           run_main(f"cd {scratch} && grep -l needle */*.jsonl", elsewhere) is not None)
     check("refused after cd with a relative path",
           run_main("cd .. && grep -l needle */*.jsonl", elsewhere) is not None)
+    # bash expands only an unquoted leading ~; a quoted one starts a folder named ~.
+    saved_home = os.environ.get("HOME")
+    try:
+        os.environ["HOME"] = str(scratch.parent)
+        check("refused after cd ~/ into the folder",
+              run_main(f"cd ~/{scratch.name} && grep -l needle */*.jsonl", elsewhere) is not None)
+        for quoted in [f"'~/{scratch.name}'", f"\\~/{scratch.name}", f'~"/{scratch.name}"']:
+            check(f"passes: cd {quoted} names a folder called ~ under the current one",
+                  run_main(f"cd {quoted} && grep -l needle */*.jsonl", elsewhere) is None)
+        os.environ["HOME"] = str(scratch)
+        check("refused after a bare cd, which goes to HOME",
+              run_main("cd && grep -l needle */*.jsonl", elsewhere) is not None)
+    finally:
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+
+    # tree-sitter-bash folds a command bash runs in the parent shell into a pipeline
+    # stage in two shapes; the cd before or on the line after the pipeline still counts.
+    check("refused after a cd before a pipeline in which two stages have a redirection",
+          run_main(f"cd {scratch} && ls 2>/dev/null | head 2>/dev/null | cat; "
+                   f"grep -l needle */*.jsonl", elsewhere) is not None)
+    check("refused after a redirected cd on the line after a pipeline of three stages",
+          run_main(f"ls 2>&1 | tail -1 | sed s/a/b/\ncd {scratch} >/dev/null\n"
+                   f"grep -l needle */*.jsonl", elsewhere) is not None)
+    check("passes: a cd that is itself a pipeline stage runs in a child shell",
+          run_main(f"cd {scratch} | cat; grep -l needle */*.jsonl", elsewhere) is None)
 
     # A command substitution runs in a shell of its own: a `cd` inside a
     # double-quoted one, or inside one in a heredoc body, moves that shell
@@ -279,11 +450,16 @@ try:
     # Out of budget before the place for -- is found, the refusal falls back
     # to the search's own words: the first two readings of the clock are the
     # start and the check before the glob is expanded.
-    readings = iter([0.0, 0.0])
-    given = command_given("for x in a; do grep -l needle */*.jsonl; done", scratch,
-                          clock=lambda: next(readings, 1000.0))
-    check("out of budget for the place, the search alone is given, without the keyword",
-          given == "grep -l needle -- */*.jsonl", repr(given))
+    for command, expected in [
+            ("grep -l needle */*.jsonl 2>/dev/null",
+             "grep -l needle -- */*.jsonl 2>/dev/null"),
+            ("time grep -l needle */*.jsonl", "time grep -l needle -- */*.jsonl"),
+            ("for x in a; do grep -l needle */*.jsonl; done", None)]:
+        readings = iter([0.0, 0.0])
+        given = command_given(command, scratch, clock=lambda: next(readings, 1000.0))
+        check(f"out of budget for the place, {command!r} gives "
+              + ("the search alone" if expected else "no command"),
+              given == expected, repr(given))
 
     # -----------------------------------------------------------------------
     # Passed.
@@ -312,7 +488,7 @@ try:
         check(f"passes: {command!r}", run_main(command, scratch) is None)
 
     # -----------------------------------------------------------------------
-    # Fails open, silently.
+    # Lets the command through, and says why it was not checked.
     # -----------------------------------------------------------------------
     check("passes when a cd target cannot be resolved",
           run_main('cd "$SOMEWHERE" && grep -l needle */*.jsonl', scratch) is None)
@@ -320,9 +496,52 @@ try:
           run_main("grep -l needle */*.jsonl", scratch / "no-such-folder") is None)
 
     ticks = iter(range(0, 10_000, 100))
-    check("passes when the expansion budget is spent",
-          run_main("grep -l needle */*.jsonl", scratch,
-                   clock=lambda: float(next(ticks))) is None)
+    LET_THROUGH_MESSAGES.clear()
+    with guard.shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, None):
+        budget_refusal = run_main("grep -l needle */*.jsonl", scratch,
+                                  clock=lambda: float(next(ticks)))
+    check("passes when the expansion budget is spent, and says the limit stopped the check",
+          budget_refusal is None
+          and len(LET_THROUGH_MESSAGES) == 1
+          and "limit is deliberate; nothing failed" in LET_THROUGH_MESSAGES[0]
+          and "Tell the user" not in LET_THROUGH_MESSAGES[0], LET_THROUGH_MESSAGES)
+    real_analyze = guard.analyze_command_text
+    for failure, session, attended in [
+            (OSError("disk unreadable"), (None, None), True),
+            (ValueError("bad value"), (None, None), True),
+            (re.error("bad pattern"), (None, None), True),
+            (OSError("disk unreadable"), ("0", None), False),
+            (OSError("disk unreadable"), (None, "1"), False)]:
+        def failing(*arguments, failure=failure, **keywords):
+            raise failure
+        guard.analyze_command_text = failing
+        LET_THROUGH_MESSAGES.clear()
+        try:
+            with guard.shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(*session):
+                refusal = run_main("grep -l needle */*.jsonl", scratch)
+        finally:
+            guard.analyze_command_text = real_analyze
+        whom = ("Tell the user" in LET_THROUGH_MESSAGES[0] if attended
+                else "do not tell the user" in LET_THROUGH_MESSAGES[0]
+                and "If you are a subagent, tell the agent that dispatched you" in LET_THROUGH_MESSAGES[0]
+                and "Tell the user" not in LET_THROUGH_MESSAGES[0]) if LET_THROUGH_MESSAGES else False
+        check(f"when the guard fails with {type(failure).__name__}, with the session variables "
+              f"{session}, it lets the command through, says it was not checked, quotes the error "
+              f"and says whom to tell",
+              refusal is None and len(LET_THROUGH_MESSAGES) == 1
+              and f"{type(failure).__name__}: {failure}" in LET_THROUGH_MESSAGES[0]
+              and "without checking it" in LET_THROUGH_MESSAGES[0] and whom
+              and guard.shell_reader.COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION in LET_THROUGH_MESSAGES[0],
+              LET_THROUGH_MESSAGES)
+        report = guard.shell_reader.report_to_user_or_dispatching_agent_instruction_build(
+            f"\"The search-file-argument guard failed on a command and let it through unchecked "
+            f"({type(failure).__name__}: {failure}).\" After those words, "
+            f"{guard.shell_reader.COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}.",
+            {"CLAUDE_CODE_SESSION_ATTENDED": "1" if attended else "0"})
+        check(f"when the guard fails with {type(failure).__name__}, with the session variables "
+              f"{session}, the message ends with the report, so skipping the rest skips only it",
+              bool(LET_THROUGH_MESSAGES) and LET_THROUGH_MESSAGES[0].endswith(report),
+              LET_THROUGH_MESSAGES)
 
     many = scratch / "many"
     many.mkdir()
@@ -334,6 +553,7 @@ try:
         readings_taken.append(None)
         return 0.0 if len(readings_taken) < 3 else 1000.0
 
+    LET_THROUGH_MESSAGES.clear()
     check("passes when the budget is spent during a walk over 300 names",
           run_main("grep -l needle *", many,
                    clock=clock_past_the_budget_on_its_third_reading) is None)

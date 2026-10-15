@@ -11,11 +11,6 @@ handoff-supervisor-session-launch-and-seat-lock-test.py and
 handoff-supervisor-session-end-and-resume-test.py, beside this file.
 
 Run: python3 nc-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py
-Add --canary to also run the two live pinned-task-list canaries, which launch
-real headless sessions. Task-list pinning rides undocumented harness state; an
-upgrade breaking it shows up as a successor finding its predecessor's tasks
-missing (the queues are the backstop), and these two cases are the
-diagnosis to run when that fires.
 
 Prints one line per case and exits non-zero if any case fails.
 """
@@ -459,7 +454,9 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
                    if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID",
                                   "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
                                   "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
-                                  "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID")}
+                                  "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID",
+                                  # The writer would prune this task list against this log-store.
+                                  "CLAUDE_CODE_TASK_LIST_ID", "TRANSCRIPT_MIRROR_DESTINATION")}
     environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
     subprocess.run(
         [sys.executable, str(writer_script), "--agent", "roundtrip",
@@ -770,77 +767,6 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     check("queue status reports an empty queue", "docs/nedschorus-wiki/queue: empty" in line, line)
 
 
-def run_preseed_canaries() -> None:
-    """Live canaries: does a fresh session read the seat's pinned task list?
-
-    Canary 1: a fresh session launched with the seat's pinned list id reads
-    task records that were on disk before it booted — the successor half of
-    a reincarnation, which is how the fleet carries tasks since nedschorus#141.
-    Canary 2: a task that session creates allocates above the existing ids,
-    leaving the earlier records untouched.
-
-    Two variables, because either alone proves nothing here.
-    CLAUDE_CODE_ENABLE_TODO_TOOLS=1 is what makes the task tools exist at
-    all from Claude Code 2.1.233 onward; without it the canary would report
-    a failure that is only the tools being absent.
-    CLAUDE_CODE_TASK_LIST_ID is the binding under test.
-
-    The store is a throwaway id, created and removed by this function. No
-    seat's real list is read or written.
-    """
-    session_id = str(uuid.uuid4())
-    pinned_list_id = f"handoff-supervisor-canary-{uuid.uuid4().hex[:8]}-tasks"
-    task_directory = Path.home() / ".claude" / "tasks" / pinned_list_id
-    task_directory.mkdir(parents=True, exist_ok=True)
-    # The record shape is the harness's own, read from live task stores: the
-    # id is a STRING, and blocks/blockedBy are present. A record with an
-    # integer id is silently dropped by TaskList while still counting toward
-    # the next allocated id — measured 2026-08-06, and the reason this
-    # fixture is written out longhand rather than approximated.
-    for task_id, subject in (("1", "carried task alpha"), ("2", "carried task beta")):
-        (task_directory / f"{task_id}.json").write_text(
-            json.dumps(
-                {
-                    "id": task_id,
-                    "subject": subject,
-                    "description": f"seeded by the canary: {subject}",
-                    "status": "pending",
-                    "blocks": [],
-                    "blockedBy": [],
-                }
-            ),
-            encoding="utf-8",
-        )
-
-    try:
-        result = subprocess.run(
-            [
-                "claude", "-p", "--session-id", session_id,
-                "List your current tasks with the TaskList tool, then create one new task "
-                "titled 'canary successor task'. Report the subjects you saw and the new task's id.",
-            ],
-            capture_output=True, text=True, timeout=300, check=False,
-            env={**os.environ,
-                 "CLAUDE_CODE_TASK_LIST_ID": pinned_list_id,
-                 "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"},
-        )
-        transcript = result.stdout
-
-        check("canary 1: successor reads the seat's pinned tasks",
-              "alpha" in transcript and "beta" in transcript, transcript[:400])
-
-        seeded_intact = all((task_directory / f"{n}.json").is_file() for n in (1, 2))
-        new_files = sorted(int(p.stem) for p in task_directory.glob("*.json") if p.stem.isdigit())
-        check("canary 2: seeded records are untouched", seeded_intact, str(new_files))
-        check("canary 2: new task ids allocate above the seeded maximum", max(new_files) >= 3, str(new_files))
-    finally:
-        # The throwaway store goes even when a check above failed, so a red
-        # run does not strand a directory beside the fleet's real lists.
-        shutil.rmtree(task_directory, ignore_errors=True)
-        print(f"(canary store {task_directory} removed: "
-              f"{'gone' if not task_directory.exists() else 'STILL PRESENT'})")
-
-
 def run_branch_sync_cases(workspace: Path):
     """Every branch of sync_working_branch_with_main, against real repositories.
 
@@ -1136,9 +1062,9 @@ def run_overview_check_git_output_cases(workspace: Path):
     repository.mkdir()
     git_in(["init", "--quiet", "--initial-branch=main"], repository)
 
-    def raised_by(arguments, **options):
+    def raised_by(arguments):
         try:
-            return helper(arguments, repository, **options)
+            return helper(arguments, repository)
         except failure as error:
             return error
 
@@ -1167,22 +1093,23 @@ def run_overview_check_git_output_cases(workspace: Path):
     git_in(["add", "-A"], repository_with_main)
     git_in(["commit", "--quiet", "-m", "the widget lands"], repository_with_main)
     git_in(["update-ref", "refs/remotes/origin/main", "HEAD"], repository_with_main)
-    real_run_git_here = supervisor.run_git_here
+    git_output = supervisor.git_machine_readable_output
+    real_run_git = git_output.run_git
 
-    def run_git_here_where_ls_tree_fails(arguments, working_directory, timeout=60):
+    def run_git_where_ls_tree_fails(directory, arguments, **options):
         if arguments[0] == "ls-tree":
-            return subprocess.CompletedProcess(arguments, 128, "", "stub: ls-tree failed")
-        return real_run_git_here(arguments, working_directory, timeout=timeout)
+            raise git_output.GitCommandFailed(arguments, directory, 128, "stub: ls-tree failed")
+        return real_run_git(directory, arguments, **options)
 
-    supervisor.run_git_here = run_git_here_where_ls_tree_fails
+    git_output.run_git = run_git_where_ls_tree_fails
     console = io.StringIO()
     try:
         with contextlib.redirect_stdout(console):
             due = overview_refresh_due_or_missing(repository_with_main)
     finally:
-        supervisor.run_git_here = real_run_git_here
+        git_output.run_git = real_run_git
     check("a failed ls-tree stops the check with a printed line naming it, and no line is due",
-          due == () and "handoff-supervisor: overview check stopped: OverviewCheckGitFailure: "
+          due == () and "handoff-supervisor: overview check stopped: GitCommandFailed: "
           "git ls-tree -z -d --name-only " in console.getvalue()
           and "stub: ls-tree failed" in console.getvalue(),
           f"{due!r}\n{console.getvalue()}")
@@ -1419,10 +1346,13 @@ def run_overview_refresh_due_cases(workspace: Path):
           in console.getvalue(), console.getvalue())
 
 
-def run_overview_refresh_non_ascii_system_case(workspace: Path):
-    """A system directory whose name git would C-quote without -z is listed by
-    its real name, so its moved code still makes its overview due."""
-    repository = workspace / "overview-refresh-non-ascii-system"
+def run_overview_refresh_unusable_system_name_cases(workspace: Path):
+    """A system directory whose name the reminder's commands cannot take is
+    passed over by name on the console, and the systems beside it are still
+    checked: a name the mark script refuses (café), one that would break the
+    unquoted git log command (o'brien), and one that is not valid UTF-8, which
+    the tree holds although no file system on either machine need allow it."""
+    repository = workspace / "overview-refresh-unusable-system-names"
     repository.mkdir()
     git_in(["init", "--quiet", "--initial-branch=main"], repository)
     git_in(["config", "user.name", "fixture"], repository)
@@ -1437,18 +1367,57 @@ def run_overview_refresh_non_ascii_system_case(workspace: Path):
         git_in(["commit", "--quiet", "-m", message], repository)
         return git_in(["rev-parse", "HEAD"], repository).stdout.strip()
 
-    landed = commit({"nc-systems/café/café.py": "print('café')\n"}, "café lands")
-    commit({"docs/nedschorus-wiki/nedschorus-café-architecture-overview.md":
-            "# Café: an overview\n\n**Checked against:** commit "
-            f"[{landed}](https://github.com/nedschorus/nedschorus/commit/{landed})\n"},
-           "café's overview, checked")
-    commit({"nc-systems/café/café.py": "print('café, grown')\n"}, "café grows")
-    git_in(["update-ref", "refs/remotes/origin/main", "HEAD"], repository)
-    due = overview_refresh_due_or_missing(repository)
-    check("a system whose directory name is not ASCII is listed by its real name and made due",
+    def checked_line(sha):
+        return (f"**Checked against:** commit "
+                f"[{sha}](https://github.com/nedschorus/nedschorus/commit/{sha})\n")
+
+    systems = ("café", "o'brien", "widget")
+    landed = commit({f"nc-systems/{system}/main.py": "print(1)\n" for system in systems},
+                    "three systems land")
+    commit({f"docs/nedschorus-wiki/nedschorus-{system}-architecture-overview.md":
+            f"# {system}\n\n" + checked_line(landed) for system in systems},
+           "their overviews, checked")
+    commit({f"nc-systems/{system}/main.py": "print(2)\n" for system in systems},
+           "all three grow")
+    # A tree entry named with the byte 0xff, written without the file system.
+    # Plumbing never decodes: the name stays bytes from mktree to the commit.
+    blob = subprocess.run(["git", "hash-object", "-w", "--stdin"], cwd=str(repository),
+                          input=b"print(3)\n", capture_output=True, check=True).stdout.strip()
+
+    def tree_from(entries: bytes) -> bytes:
+        return subprocess.run(["git", "mktree", "-z"], cwd=str(repository), input=entries,
+                              capture_output=True, check=True).stdout.strip()
+
+    bad_system = tree_from(b"100644 blob " + blob + b"\tmain.py\0")
+    old_nc_systems = subprocess.run(["git", "rev-parse", "HEAD:nc-systems"], cwd=str(repository),
+                                    capture_output=True, check=True).stdout.strip()
+    listed = subprocess.run(["git", "ls-tree", "-z", old_nc_systems], cwd=str(repository),
+                            capture_output=True, check=True).stdout
+    nc_systems = tree_from(listed + b"040000 tree " + bad_system + b"\tbad\xff\0")
+    root_listed = subprocess.run(["git", "ls-tree", "-z", "HEAD"], cwd=str(repository),
+                                 capture_output=True, check=True).stdout
+    root_entries = b"".join(
+        entry + b"\0" for entry in root_listed.split(b"\0")
+        if entry and not entry.endswith(b"\tnc-systems"))
+    root = tree_from(root_entries + b"040000 tree " + nc_systems + b"\tnc-systems\0")
+    head = subprocess.run(["git", "commit-tree", root.decode(), "-p", "HEAD", "-m", "bad name"],
+                          cwd=str(repository), capture_output=True, check=True).stdout.strip()
+    git_in(["update-ref", "refs/remotes/origin/main", head.decode()], repository)
+    console = io.StringIO()
+    with contextlib.redirect_stdout(console):
+        due = overview_refresh_due_or_missing(repository)
+    printed = console.getvalue()
+    check("only the system whose name the reminder's commands take is made due",
           isinstance(due, tuple) and len(due) == 1
-          and due[0].startswith("overview refresh due: café — 1 commit(s) under nc-systems/café/"),
-          repr(due))
+          and due[0].startswith("overview refresh due: widget — "),
+          f"{due!r}\n{printed}")
+    check("a name the mark script refuses is passed over by its real name on the console",
+          "overview check for café passed over: the name does not match" in printed, printed)
+    check("a name holding a quote is passed over by its real name on the console",
+          "overview check for o'brien passed over: the name does not match" in printed, printed)
+    check("a name that is not valid UTF-8 is passed over, printed with its byte escaped",
+          "overview check for bad\\xff passed over: the name does not match" in printed
+          and "overview check stopped" not in printed, printed)
 
 
 def run_overview_refresh_withheld_while_pull_request_open_cases(workspace: Path):
@@ -3049,7 +3018,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
             workspace / "gh-answering-no-open-pull-requests"):
         run_overview_check_git_output_cases(workspace)
         run_overview_refresh_due_cases(workspace)
-        run_overview_refresh_non_ascii_system_case(workspace)
+        run_overview_refresh_unusable_system_name_cases(workspace)
     run_overview_refresh_withheld_while_pull_request_open_cases(workspace)
     run_overview_refresh_once_a_day_cases(workspace)
     run_overview_refresh_due_prompt_cases(workspace)
@@ -3089,11 +3058,5 @@ check("the appended-system-prompt default resolves under docs/agents",
       supervisor.DEFAULT_APPENDED_SYSTEM_PROMPT_PATH.is_file(),
       str(supervisor.DEFAULT_APPENDED_SYSTEM_PROMPT_PATH))
 
-
-if "--canary" in sys.argv:
-    print("\n-- live pinned-task-list canaries (launching real sessions) --")
-    run_preseed_canaries()
-else:
-    print("\n(skipped the live pinned-task-list canaries; pass --canary to run them)")
 
 fixture.print_summary_and_exit_nonzero_if_any_case_failed()

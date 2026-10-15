@@ -25,9 +25,7 @@ wiki page, ran `scripts/ghi-info-ask.py`, and found
 GHI [Candidate skill: write-test-plan — consequence-ranked test plan with observable oracles and traceability (likely FIRST build)](https://github.com/nedschorus/nedschorus/issues/18) already owned the
 subject with a sharper formulation. Nothing was written.
 
-**2. The enforcement, which is the half that matters.** A Stop hook that compares
-the working tree against `origin/main` for protected paths, **sets the change
-aside**, and tells the agent to walk it with the user.
+**2. The enforcement** is carried by GHI [Catch a guarded file changed without the user's approval, ask him, and keep every version](https://github.com/nedschorus/nedschorus/issues/1268), whose hook checks guarded files, the wiki included, after each tool call and asks the user instead of setting the change aside. The sections below on the Stop hook, setting aside and the open question are kept as the reasoning that led there; GHI 1268's GHI-MD settles the open question: the instruction-file guard stays as the check before the write.
 
 ## Why a Stop hook and not a PreToolUse block
 
@@ -70,9 +68,7 @@ git work at every turn end.
 
 ## Next action
 
-Build the Stop hook first: it has value whether or not the skill exists, and it
-is the half that does not depend on an agent remembering anything. Then the
-skill.
+Build the skill. The enforcement is built under GHI 1268.
 
 A new skill gets the full cold-read run of six fresh reviewers before it lands —
 user-ruled the same day: "I'd be very careful with skills."
@@ -95,3 +91,7 @@ unasked.
 Asked at the cold-read-research seat whether a dedicated wiki-update subsystem should let him rule on a change immediately rather than set it aside for a later walk, the user ruled, verbatim: "Normally changes to wiki files will come in batches, so a walk is good at that. If it's only one or two changes, then maybe we don't need a walk, but since the walk comes with all sorts of review stuff, probably a walk is fine. And just because its a walk doesn't mean it's not immediately (except the review delay, which I don't mind)."
 
 So the shape above stands: the hook sets an unwalked page change aside, and the skill walks it, and the walk is run then and there. The same day he ruled the narrower case of a single new glossary term the other way ("I think a walk is overkill for something as simple as this"): a new project term is proposed to the user, and that rule now sits in CLAUDE.md's naming bullet (PR [Glossary: project terms are hyphenated phrases, abbreviations or slash names; the seat model's words become headwords; CLAUDE.md says so](https://github.com/nedschorus/nedschorus/pull/384)). Evidence that the hook is needed, from the same afternoon: two seats wrote or drafted glossary changes in parallel with no mechanism to notice each other, and merge-lane would not have either, since reviewers report nothing about prose under docs/.
+
+## Provisional additions (not yet vetted by the user)
+
+- fleet-restart-at-login, 2026-10-14: Answer the CLAUDE.md question inside this issue when this issue is built, not before (task #17).
