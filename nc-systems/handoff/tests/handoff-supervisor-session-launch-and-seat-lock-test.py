@@ -1082,16 +1082,17 @@ with tempfile.TemporaryDirectory() as onboarding_workspace:
                   printed)
             check(f"a ~/.claude.json that is {case_name}: the one remedy that fits, with what "
                   "to do when no backup fits, and no 'then' clause",
-                  f"Restore {claude_json} from the newest copy in {backups}/ that {wanted}.\n"
+                  f"The user restores {claude_json} from the newest copy in {backups}/ that {wanted}.\n"
                   in printed
-                  and f"If no copy in {backups}/ {wanted}: move {claude_json} aside" in printed
-                  and other_wanted not in printed and ", then " not in printed,
+                  and f"If no copy in {backups}/ {wanted}, the user moves {claude_json} aside"
+                  in printed
+                  and other_wanted not in printed and "after that" not in printed,
                   printed)
             check(f"a ~/.claude.json that is {case_name}: the remedy says the user restores or "
                   "moves the file, because it holds the Claude Code login",
                   f"{claude_json} holds the Claude Code login, so the user restores or moves it; "
                   "an agent that reads this tells the user and does not replace the file.\n"
-                  f"Restore {claude_json}" in printed,
+                  f"The user restores {claude_json}" in printed,
                   printed)
             check(f"a ~/.claude.json that is {case_name}: the message says a fix helps only "
                   "the next launch, and that answering an onboarding screen is the user's step",

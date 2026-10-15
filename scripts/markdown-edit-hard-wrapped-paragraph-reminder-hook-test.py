@@ -857,7 +857,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
     for case_name, payload, fault_words in (
             ("a payload that does not parse as JSON", "{not json", "JSONDecodeError"),
-            ("a payload that is a JSON list", "[1, 2]", "a JSON list, not an object"),
+            ("a payload that is a JSON list", "[1, 2]", "JSON, but not an object"),
             ("an empty payload", "", "JSONDecodeError")):
         result = run_hook(payload)
         check(f"{case_name} is reported on stderr, exit 1",

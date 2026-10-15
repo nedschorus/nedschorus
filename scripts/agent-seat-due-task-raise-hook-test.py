@@ -442,7 +442,7 @@ seat = Seat()
 seat.task("65", metadata={"due_utc": PAST_DUE})
 for name, stdin_text, fault_words in (
         ("not JSON", "not json at all", "no task was checked at this stop"),
-        ("a JSON list", "[1, 2]", "a JSON list, not an object, so no task was checked"),
+        ("a JSON list", "[1, 2]", "JSON, but not an object, so no task was checked"),
         ("empty", "", "JSONDecodeError")):
     result = seat.run(stdin_text=stdin_text)
     check(f"malformed payload ({name}): reported on stderr, exit 1, no raise",

@@ -125,8 +125,7 @@ def word_report(relative_path: str, hits, edit_text=None) -> str:
 def main() -> int:
     payload = json.loads(sys.stdin.read())
     if not isinstance(payload, dict):
-        raise ValueError(f"the payload Claude Code sent on stdin is a JSON "
-                         f"{type(payload).__name__}, not an object")
+        raise ValueError("the payload Claude Code sent on stdin is JSON, but not an object")
     tool_name = payload.get("tool_name")
     tool_input = payload.get("tool_input")
     if tool_name not in ("Edit", "Write") or not isinstance(tool_input, dict):

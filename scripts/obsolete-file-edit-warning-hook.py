@@ -439,7 +439,7 @@ def obsolete_file_warning_line(repository_path: str, commit_count, advice: str,
 def main() -> int:
     payload = json.loads(sys.stdin.read())
     if not isinstance(payload, dict):
-        raise ValueError(f"the input on the hook's stdin is a JSON {type(payload).__name__}, not an object")
+        raise ValueError("the input on the hook's stdin is JSON, but not an object")
     tool_input = payload.get("tool_input")
     file_path = tool_input.get("file_path") if isinstance(tool_input, dict) else None
     if not file_path or not isinstance(file_path, str):

@@ -115,7 +115,7 @@ def pull_request_from_node(node):
     """Return (pull_request, None) or (None, reason) for an invalid node."""
     # Dropping a malformed node would falsely report the pull request as newly opened at the next poll.
     if not isinstance(node, dict):
-        return None, f"a pull request came back as {type(node).__name__}, not an object"
+        return None, "a pull request came back as JSON that is not an object"
     number = node.get("number")
     head_sha = node.get("headRefOid")
     if not isinstance(number, int):

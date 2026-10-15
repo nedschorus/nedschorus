@@ -620,7 +620,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # --- Faults are reported on stderr with exit 1 ------------------------
     for case_name, payload, fault_words in (
             ("malformed JSON", "{not json", "JSONDecodeError"),
-            ("a JSON list", "[1, 2]", "a JSON list, not an object"),
+            ("a JSON list", "[1, 2]", "JSON, but not an object"),
             ("empty input", "", "JSONDecodeError")):
         result = run_hook(payload)
         check(f"{case_name} on stdin is reported on stderr, exit 1",

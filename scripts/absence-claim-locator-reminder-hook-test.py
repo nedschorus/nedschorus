@@ -462,7 +462,7 @@ else:
 
 for case_name, stdin_text, fault_words in (
         ("stdin that is not JSON", "not json", "JSONDecodeError"),
-        ("stdin that is a JSON list", "[1, 2]", "a JSON list, not an object"),
+        ("stdin that is a JSON list", "[1, 2]", "JSON, but not an object"),
         ("empty stdin", "", "JSONDecodeError")):
     case = Case()
     result = case.run(stdin_text=stdin_text)
