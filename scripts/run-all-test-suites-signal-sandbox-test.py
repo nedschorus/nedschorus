@@ -679,6 +679,21 @@ if linux_only_cases_run_here("what a suite's test sandbox shows and hides"):
               "directory, so no read-only directory covers the checkout's writable copy",
               launch_around_checkout == [os.path.realpath(launcher_in_checkout.parent)],
               launch_around_checkout)
+        program_worktree = home_scratch / "program-worktree"
+        program_worktree.mkdir()
+        (program_worktree / ".git").write_text(f"gitdir: {program_checkout / '.git'}\n")
+        launcher_in_worktree = program_worktree / "scripts" / "run-suite-in-signal-sandbox.py"
+        launcher_in_worktree.parent.mkdir()
+        launcher_in_worktree.write_text("")
+        runner.directories_hidden_whole_in_test_sandbox = lambda: home_hidden
+        try:
+            launch_from_worktree = runner.paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(
+                ["/usr/bin/python3"], [launcher_in_worktree], checkout=suite_checkout_elsewhere)
+        finally:
+            runner.directories_hidden_whole_in_test_sandbox = original_hidden
+        check("a program file in a git worktree, whose .git is a file, has that whole worktree "
+              "shown, as for a checkout whose .git is a directory",
+              launch_from_worktree == [os.path.realpath(program_worktree)], launch_from_worktree)
         shown.cache_clear()
     with tempfile.TemporaryDirectory() as path_name:
         on_path = pathlib.Path(path_name) / "bin"
