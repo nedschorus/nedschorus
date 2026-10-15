@@ -75,9 +75,11 @@ FAILURES. A record that could not be searched prints a line opening FAILED,
 naming what failed and what to do, after the hits found elsewhere: a missing
 log-store or kind directory, a file ripgrep could not read, a transcript the
 reader could not read, ripgrep missing, ned-box unreachable from the Mac.
-After the FAILED lines of a search that printed its hits, one closing line says
-the hits are real matches but the page may lack hits from the failed records,
-and what to tell the user.
+After the FAILED lines, one closing line says what the failures mean for the
+page: when hits were printed, that they are real matches but the page may lack
+hits from the failed records; when none were, that a match may be in those
+records. It then says what to tell the user about each FAILED line, what a
+"Permission denied" line means, and which remedies to run.
 
 Exit 0 when hits were found and everything was searched; 1 when nothing
 matched and everything was searched; 2 when anything could not be searched,
@@ -123,12 +125,25 @@ THIS_MACHINE_OVERRIDE = ENVIRONMENT_PREFIX + "THIS_MACHINE_OVERRIDE"
 EXIT_FOUND = 0
 EXIT_NOTHING_FOUND = 1
 EXIT_FAILED = 2
-FAILURES_CLOSING_LINE = (
+FAILURES_CLOSING_HITS_SHOWN = (
     "Each hit printed above is a real match, but the records the FAILED lines name were not searched or "
     "not dated, so the page may lack hits from them, newer ones included, and a hit dated \"date unknown\" "
-    "may be out of order. Tell the user which records failed and why. A \"Permission denied\" line means "
-    "this user cannot read that file: tell the user its path, and do not change its permissions. For any "
-    "other line, do what it says.")
+    "may be out of order.")
+FAILURES_CLOSING_NO_HITS_SHOWN = (
+    "No hit was printed, but the records the FAILED lines name were not searched or not dated, so a match "
+    "may be in them: do not say nothing matched.")
+FAILURES_CLOSING_WHAT_TO_DO = (
+    "Tell the user what each FAILED line names and why: a record not searched, a directory not searched, "
+    "which leaves out everything under it, or a record not dated. A \"Permission denied\" line means the "
+    "account running this search cannot read that path: tell the user the path, and do not change the "
+    "path's permissions. Where a FAILED line names a remedy, run it if it reruns this search, and tell "
+    "the user any other.")
+
+
+def failures_closing_line(hits_shown):
+    """The line printed after the FAILED lines; what it says about the hits depends on whether any printed."""
+    said_about_hits = FAILURES_CLOSING_HITS_SHOWN if hits_shown else FAILURES_CLOSING_NO_HITS_SHOWN
+    return f"{said_about_hits} {FAILURES_CLOSING_WHAT_TO_DO}"
 
 FILE_KIND_DIRECTORIES = {
     "walk": "walk",
@@ -801,7 +816,7 @@ def main(argv=None):
     for failure in failures:
         print(f"FAILED: {failure}", file=sys.stderr)
     if failures:
-        print(FAILURES_CLOSING_LINE, file=sys.stderr)
+        print(failures_closing_line(bool(shown)), file=sys.stderr)
         return EXIT_FAILED
     return EXIT_FOUND if hits else EXIT_NOTHING_FOUND
 
