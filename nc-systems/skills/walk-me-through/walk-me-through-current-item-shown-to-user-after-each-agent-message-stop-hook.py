@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Stop hook: while an approval-walk is open, send the agent back when its
-last message to the user does not end with the current item in full.
+"""Stop hook: while an approval-walk is open, show the user the current item
+in full after each message the agent writes to him, with the answers he can give.
 
-Wired as a Stop hook in .claude/settings.json. The walk-me-through skill tells
-the agent to end every message it writes during an approval-walk with the
-current item in full; this hook is the check on that rule. The skill's other
-half, writing nothing when an automated event gives the user nothing new,
-cannot be checked here: a turn that wrote nothing has nothing to check.
+Wired as a Stop hook in .claude/settings.json. The user answers the item at the
+end of what he reads, so the item is shown there by code rather than left to
+the agent to repeat. A turn that wrote nothing to the user, such as a silent
+turn after a background-task notice, shows nothing.
 
 THE TURN starts at the last user-type record in the transcript that is
 neither only tool results nor an injection inside the turn: the user's
@@ -14,9 +13,8 @@ message, another agent-seat's message, a parent's message to its subagent,
 a background-task notice, or a local command. An injection is a record
 marked isMeta with no such origin, such as a loaded skill's text or a system
 reminder. Claude Code marks another agent-seat's message isMeta too, so the
-origin decides first. The reply checked is the text of the last assistant
-message after the turn's start; a turn whose assistant messages hold no
-text, such as a silent turn after a background-task notice, is not checked.
+origin decides first. The item is shown only when an assistant message after
+the turn's start holds text.
 
 THE OPEN APPROVAL-WALK. The walk-me-through skill keeps one line in each
 walk's docs/walk/<name>-minutes.md reading `Next to present: item N of M.`,
@@ -33,14 +31,12 @@ M` or, for items shown together, `Items 5 and 6 of M`, on a heading line
 inside an item, such as an original and a proposed section, stay in it. A
 heading that names several items is one unit.
 
-THE CHECK matches the rule exactly: the reply must end with the text of the
-units the minutes name, taken from the walk-document, in the walk-document's
-order. Both texts are compared after link targets, heading marks, list
-markers, thematic breaks, emphasis and code marks are removed and whitespace
-is folded, so an item restated with bold and bullets still matches. So the
-item an agent presents in chat is the walk-document's text, word for word;
-an agent that rewords an item edits the walk-document first. Nothing may
-follow the item, not even a question such as "Y, N or D?".
+WHAT IS SHOWN is the text of the units the minutes name, taken from the
+walk-document in the walk-document's order, without heading marks, bold marks
+and separator lines, which Claude Code would show as written, followed by
+ANSWERS_LINE. So an
+agent that rewords an item edits the walk-document first, or the user is shown
+the old text.
 
 SILENT when stop_hook_active is set (the agent is already continuing because
 of a Stop hook), when the agent-session is a headless `claude -p` child (its
@@ -48,9 +44,11 @@ last words are its caller's answer), when the transcript is missing, when the
 turn's last reply is empty, when the cwd is not in a git checkout, and when no
 approval-walk is open.
 
-OUTPUT when the reply falls short, or when the open walk's minutes line or
-walk-document cannot be used: {"decision": "block", "reason": <message>},
-which keeps the agent going with the message as its next instruction. ON A
+OUTPUT: {"systemMessage": <the item and ANSWERS_LINE>}, which Claude Code
+shows the user and which does not keep the agent going. When the open walk's
+minutes line or walk-document cannot be used, there is no item to show, so the
+hook prints {"decision": "block", "reason": <message>} instead, which keeps
+the agent going with the message as its next instruction. ON A
 FAULT, such as input that is not JSON or a file it cannot read, the hook
 prints one line naming it on stderr and exits 1: Claude Code records a Stop
 hook's exit 1 as a non-blocking error and still ends the turn.
@@ -77,21 +75,7 @@ RUNNING_COUNT = r"items?\s+(\d+(?:\.\d+)*(?:\s*(?:,|and|&)\s*\d+(?:\.\d+)*)*)\s+
 # A record from one of these starts a turn even when Claude Code marks it isMeta.
 TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator", "task-notification")
 
-BLOCK_OPENING_TEMPLATE = (
-    "approval-walk current-item check: your message to the user does not end "
-    "with the current item of the open approval-walk {walk}, whose minutes name "
-    "the current item as `Next to present: {value}` ({reason}). The user answers "
-    "the item at the end of your message, and should not have to scroll back to "
-    "find it."
-)
-BLOCK_INSTRUCTIONS = (
-    "If the approval-walk has closed, change that line in {minutes} to `Next to "
-    "present: none, closed.` and end the turn without repeating the item.",
-    "If the line names an item other than the one the user has yet to answer, "
-    "correct the line in {minutes} first, then send the item it names.",
-    "Otherwise, send the user one more message that holds only {items} in full, "
-    "with its recommendation, as the walk-document {document} has it.",
-)
+ANSWERS_LINE = "Answer Y, N, D to defer, or R to repeat the item."
 UNUSABLE_OPENING_TEMPLATE = (
     "approval-walk current-item check: the open approval-walk {walk} could not "
     "be checked: {problem}"
@@ -103,8 +87,7 @@ UNUSABLE_INSTRUCTIONS = (
     "answer by their headings in the walk-document {document}, as `Next to "
     "present: item 3 of 9.`, `item 4.1 of 9.` or `items 5 and 6 of 9.`; change a "
     "heading in the walk-document only when the heading itself is misnumbered.",
-    "Then send the user one more message that holds only the items the line "
-    "names, in full, with their recommendations.",
+    "Then end the turn: this hook shows the user the items the line names.",
 )
 
 
@@ -171,20 +154,6 @@ def checkout_top(directory):
     return Path(os.fsdecode(output).rstrip("\n"))
 
 
-def normalized(text):
-    """Return text without the Markdown that a restatement in chat may change."""
-    text = re.sub(r"\[([^\]\n]*)\]\([^)\n]*\)", r"\1", text)
-    lines = []
-    for line in text.splitlines():
-        if re.fullmatch(r"\s*(?:[-*_]\s*){3,}", line):
-            continue
-        line = re.sub(r"^\s{0,3}#{1,6}\s+", "", line)
-        line = re.sub(r"^\s*(?:[-*+]|\d+[.)])\s+", "", line)
-        lines.append(line)
-    text = re.sub(r"[*_`]", "", "\n".join(lines))
-    return re.sub(r"\s+", " ", text).strip()
-
-
 def next_to_present(minutes_text):
     """Return the value of the minutes' last `Next to present:` line, or None."""
     values = NEXT_LINE.findall(minutes_text)
@@ -228,16 +197,10 @@ def item_units(document_text, total):
     return units
 
 
-def running_count_label(numbers, total):
-    if len(numbers) == 1:
-        return f"Item {numbers[0]} of {total}"
-    return f"Items {', '.join(numbers[:-1])} and {numbers[-1]} of {total}"
-
-
-def ends_with_units(reply, units):
-    """True when the reply ends with the units' walk-document text, in order."""
-    wanted = normalized("\n".join(unit_text for _, unit_text in units))
-    return normalized(reply).endswith(wanted)
+def without_heading_and_bold_marks(text):
+    text = re.sub(r"^[ \t]{0,3}#{1,6}[ \t]+", "", text, flags=re.M)
+    text = re.sub(r"^[ \t]*(?:[-*_][ \t]*){3,}$", "", text, flags=re.M)
+    return text.replace("**", "").strip("\n")
 
 
 def block(opening, instructions, **values):
@@ -287,20 +250,17 @@ def run(stdin_text, environment):
         named = ", ".join(f"`Item {number} of {total}`" for number in missing)
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
             f"its walk-document has no heading {named}, which the minutes name."), **values)
-    if ends_with_units(reply, units):
-        return None
-    items = " and ".join(running_count_label(unit[0], total) for unit in units)
-    reason = f"the message does not end with the walk-document's text of {items}, word for word"
-    return block(BLOCK_OPENING_TEMPLATE, BLOCK_INSTRUCTIONS, reason=reason, items=items, **values)
+    shown = without_heading_and_bold_marks("\n".join(unit_text.strip("\n") for _, unit_text in units))
+    return json.dumps({"systemMessage": shown + "\n\n" + ANSWERS_LINE}, ensure_ascii=False)
 
 
 def main():
     try:
         output = run(sys.stdin.read(), os.environ)
     except Exception as error:
-        print(f"walk-me-through-agent-reply-to-user-must-end-with-full-current-item-stop-hook: the hook "
-              f"failed, so it did not check that the message ends with the approval-walk's "
-              f"current item; the agent need not act: {error!r}", file=sys.stderr)
+        print(f"walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook: the hook "
+              f"failed, so the user was not shown the approval-walk's current item; the agent "
+              f"need not act: {error!r}", file=sys.stderr)
         return 1
     if output is not None:
         print(output)
