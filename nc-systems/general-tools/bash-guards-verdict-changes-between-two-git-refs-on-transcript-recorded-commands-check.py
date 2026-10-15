@@ -552,9 +552,12 @@ def remove_checkouts(repository, checkouts):
     if listed.returncode != 0:
         return [f"{checkout}: git worktree list exited {listed.returncode}: {listed.stderr.strip()}"
                 for checkout in checkouts]
-    registered = {line[len("worktree "):] for line in listed.stdout.splitlines() if line.startswith("worktree ")}
+    # git lists each checkout by its resolved path, so a checkout named through a symlink, such as macOS's
+    # /var for /private/var, is matched by its resolved path; otherwise it would be deleted as unregistered.
+    registered = {os.path.realpath(line[len("worktree "):])
+                  for line in listed.stdout.splitlines() if line.startswith("worktree ")}
     for checkout in checkouts:
-        if str(checkout) not in registered:
+        if os.path.realpath(checkout) not in registered:
             if os.path.exists(checkout):
                 shutil.rmtree(checkout, ignore_errors=True)  # An add stopped before git registered it.
             if os.path.exists(checkout):
