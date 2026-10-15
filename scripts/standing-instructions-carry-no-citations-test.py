@@ -35,6 +35,12 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
+_date_pattern_spec = importlib.util.spec_from_file_location(
+    "citation_and_history_marker_tests_date_pattern_common",
+    Path(__file__).resolve().with_name("citation-and-history-marker-tests-date-pattern-common.py"))
+_date_pattern = importlib.util.module_from_spec(_date_pattern_spec)
+_date_pattern_spec.loader.exec_module(_date_pattern)
+
 REPOSITORY = Path(__file__).resolve().parent.parent
 SUITE = "scripts/standing-instructions-carry-no-citations-test.py"
 
@@ -42,14 +48,8 @@ SUITE = "scripts/standing-instructions-carry-no-citations-test.py"
 STANDING_INSTRUCTION_PATHSPECS = ("CLAUDE.md", "*/CLAUDE.md", "SKILL.md", "*/SKILL.md",
                                   "*-instructions.md", "*-prompt.md")
 
-# A date joined to a path or file name, such as `x-YYYY-MM-DD.md`,
-# `logs/YYYY-MM-DD/` or `YYYY-MM-DD-minutes.md`, is a pointer, so the lookarounds
-# leave it out. The optional group takes a timestamp's time or a range's last day
-# into the date, so the lookahead judges what follows the whole date. The group
-# is atomic: a failed lookahead must not shorten a timestamp to an earlier colon.
 MARKER_PATTERNS = {
-    "date": re.compile(r"(?<![\w/.-])\d{4}-[01]\d-[0-3]\d"
-                       r"(?>T[\d:]+(?:\.\d+)?Z?|[/-]\d\d?)?(?![\w/-]|\.\w)"),
+    "date": _date_pattern.DATE_MARKER_PATTERN_OUTSIDE_PATH_AND_FILE_NAMES,
     "user-ruled": re.compile(r"\buser-ruled\b", re.IGNORECASE),
 }
 

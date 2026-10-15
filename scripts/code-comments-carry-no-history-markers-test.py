@@ -25,11 +25,17 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
+_date_pattern_spec = importlib.util.spec_from_file_location(
+    "citation_and_history_marker_tests_date_pattern_common",
+    Path(__file__).resolve().with_name("citation-and-history-marker-tests-date-pattern-common.py"))
+_date_pattern = importlib.util.module_from_spec(_date_pattern_spec)
+_date_pattern_spec.loader.exec_module(_date_pattern)
+
 REPOSITORY = Path(__file__).resolve().parent.parent
 SUITE = "scripts/code-comments-carry-no-history-markers-test.py"
 
 MARKER_PATTERNS = {
-    "date": re.compile(r"\b20\d\d-[01]\d-[0-3]\d\b"),
+    "date": _date_pattern.DATE_MARKER_PATTERN,
     "ruling": re.compile(r"\b(?:user-)?ruled\b", re.IGNORECASE),
     "pull request or issue number": re.compile(
         r"\b(?:PR|GHI|issue)\s+#?\d{2,5}\b|(?<![\w&])#\d{2,5}\b|\bnedschorus#\d+\b"),
@@ -40,7 +46,7 @@ MARKER_PATTERNS = {
 # markers it may hold: awaiting the comment trim. A file may only go down.
 FILES_AWAITING_THE_COMMENT_TRIM = {
     ".claude/hooks/backup-and-snapshot-write-guard-test.py": 3,
-    ".claude/hooks/ghi-issue-write-redirect-test.py": 2,
+    ".claude/hooks/ghi-issue-write-redirect-test.py": 3,
     ".claude/hooks/ghi-issue-write-redirect.py": 21,
     ".claude/hooks/instruction-file-guard-test.py": 8,
     ".claude/hooks/session-location-write-guard-test.py": 6,
@@ -64,7 +70,7 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "nc-systems/cold-read/tests/cold-read-reviewer-score-test.py": 5,
     "nc-systems/cold-read/tests/cold-read-scratch-repository-fixture-ignores-git-redirecting-environment-test.py": 3,
     "nc-systems/cold-read/tests/cold-read-scratch-repository-test-fixture.py": 9,
-    "nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py": 6,
+    "nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py": 7,
     "nc-systems/general-tools/tests/install-scheduled-jobs-on-this-machine-test.py": 1,
     "nc-systems/handoff/handoff-supervisor.py": 7,
     "nc-systems/handoff/handoff-write-and-check-supervisor.py": 1,
@@ -73,7 +79,7 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "nc-systems/handoff/tests/handoff-supervisor-session-end-and-resume-test.py": 26,
     "nc-systems/handoff/tests/handoff-supervisor-session-launch-and-seat-lock-test.py": 19,
     "nc-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py": 82,
-    "nc-systems/handoff/tests/handoff-write-and-check-supervisor-test.py": 39,
+    "nc-systems/handoff/tests/handoff-write-and-check-supervisor-test.py": 40,
     "nc-systems/main-gatekeeper/tests/main-gatekeeper-test.py": 58,
     "nc-systems/skills/explain/tests/explain-reply-cold-read-fast-read-test.py": 3,
     "scripts/backup-health-check-test.py": 1,
@@ -86,7 +92,7 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/code-review-codex-cell-test.py": 12,
     "scripts/code-review-codex-cell.py": 25,
     "scripts/daily-full-test-run-of-main-test.py": 4,
-    "scripts/daily-full-test-run-of-main.py": 8,
+    "scripts/daily-full-test-run-of-main.py": 11,
     "scripts/dangling-path-citation-check-test.py": 11,
     "scripts/design-to-main/design-to-main-state-diagram-generator.py": 5,
     "scripts/design-to-main/tests/design-to-main-counters-contract-revision-and-redesign-ceilings-and-zeroing-test.py": 2,
@@ -114,7 +120,7 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/git-client-side-hooks-pre-push-test.py": 1,
     "scripts/git-redirecting-environment-removal-test-fixture.py": 3,
     "scripts/handoff-context-threshold-hook-test.py": 24,
-    "scripts/handoff-extract-conversation-test.py": 4,
+    "scripts/handoff-extract-conversation-test.py": 5,
     "scripts/install-restart-live-seats-at-login-launch-agent-test.py": 1,
     "scripts/install-restart-live-seats-at-login-launch-agent.py": 2,
     "scripts/install-restart-live-seats-at-login-systemd-unit-test.py": 5,
@@ -125,15 +131,15 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/locate-file-copies-across-machines-test.py": 19,
     "scripts/md-drift-lint-test.py": 21,
     "scripts/md-drift-lint.py": 1,
-    "scripts/merge-gate-test.py": 19,
+    "scripts/merge-gate-test.py": 20,
     "scripts/nedschorus-glossary-alphabetical-order-test.py": 10,
     "scripts/obsolete-file-edit-warning-hook-test.py": 6,
     "scripts/open-iterm-window-running-command-test.py": 3,
     "scripts/post-compaction-session-continues-hook-test.py": 1,
     "scripts/pr-reviewer-instructions-copies-test.py": 5,
-    "scripts/recover-crashed-seats-test.py": 168,
-    "scripts/recover-crashed-seats.py": 31,
-    "scripts/restart-live-seats-at-login-test.py": 38,
+    "scripts/recover-crashed-seats-test.py": 170,
+    "scripts/recover-crashed-seats.py": 32,
+    "scripts/restart-live-seats-at-login-test.py": 39,
     "scripts/restart-live-seats-at-login.py": 17,
     "scripts/resupervise-seat-test.py": 24,
     "scripts/resupervise-seat.py": 10,
@@ -159,6 +165,14 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
 
 # Lines whose marker is data the code needs, not history: "path:line": reason.
 ALLOWED_DATA_LINES = {
+    "scripts/agent-seat-due-task-raise-hook.py:18":
+        "an example of the timestamp form the due_utc field takes",
+    "scripts/transcript-mirror-to-log-store.py:87":
+        "an example of the timestamp form the pass stamp file holds",
+    "scripts/locate-user-approval-by-question-subject-test.py:743":
+        "the time the epoch constant on the same line stands for",
+    "scripts/merge-gate-test.py:499":
+        "the time the fixture's pinned review id stands for, in an outside project's data",
 }
 
 
@@ -402,6 +416,14 @@ def main():
         check("a date, a ruling, an issue number and a commit hash in a comment are each found",
               {kind for _, kind, _ in markers_in("x.py", "# 2026-09-30 user-ruled, PR 931, fix in a82b49e\n")}
               == set(MARKER_PATTERNS)),
+        check("a timestamp and a range of days in a comment are found as dates",
+              [m for _, k, m in markers_in("x.py", "# at 2026-09-19T04:00:31Z, 2026-09-07/08, 2026-08-10-11\n")
+               if k == "date"] == ["2026-09-19T04:00:31Z", "2026-09-07/08", "2026-08-10-11"]),
+        check("a path or file name that starts with a date or a timestamp is not a date",
+              [k for _, k, _ in markers_in("x.py", "# read 2026-09-19T04:00:31Z.log, logs/2026-10-14/x, "
+                                                   "2026-08-10-11.md\n")] == []),
+        check("a date that ends a name, such as a walk's, is still found",
+              [k for _, k, _ in markers_in("x.py", "# walk open-items-2026-09-24, item 3\n")] == ["date"]),
         check("a docstring's marker is found, and a string that is not a docstring is not",
               [k for _, k, _ in markers_in("x.py", 'def f():\n    """See GHI 913."""\n    return "2026-09-30"\n')]
               == ["pull request or issue number"]),
