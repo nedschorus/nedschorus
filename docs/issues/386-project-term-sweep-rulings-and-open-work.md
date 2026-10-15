@@ -163,3 +163,7 @@ No change is needed to `.claude/skills/cold-read/prompts/terminology.md`: it alr
 Searched `gh issue list --state all --search "rename project term hyphenated"` at filing: no existing issue. Adjacent but distinct: GHI [Project vocabulary wiki page: define this project's own terms so a zero-context reader can resolve them](https://github.com/nedschorus/nedschorus/issues/213) (the glossary page itself), GHI [update-glossary skill: the editor rules for the nedschorus glossary, taken off the page (user-asked 2026-09-06)](https://github.com/nedschorus/nedschorus/issues/262) (the update-glossary skill's editor rules), GHI [wiki-write skill, and the detect-set-aside-ask hook that enforces it — checking the file, not the tool call](https://github.com/nedschorus/nedschorus/issues/343) (wiki-write skill).
 
 `scripts/md-drift-lint.py` flags seven lines in this document; merge-lane's reviewer checked all seven and found them false positives (quotes of a declined proposal, of renames not yet applied, and log-store paths that never exist in the repository). Do not "fix" them.
+
+## Provisional additions (not yet vetted by the user)
+
+- ned-box-helper, 2026-10-14: apply the findings of the cold-read-fast-read of this GHI-MD that hold; record `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/386-project-term-sweep-rulings-and-open-work-2026-10-14`.

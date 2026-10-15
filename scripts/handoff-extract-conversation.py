@@ -105,11 +105,10 @@ class TranscriptProblem(Exception):
 
 def project_directory_for_working_directory(working_directory: Path) -> Path:
     """Return the harness project directory holding the worktree's sessions."""
-    mangled = "".join(
-        character if (character.isalnum() or character in "-_") else "-"
-        for character in str(working_directory)
-    )
-    return PROJECTS_ROOT / mangled
+    # Same rule as claude-code-session-transcript-project-directory-for-agent-seat-common.py,
+    # copied because this script runs copied beside hooks that lack that module; that
+    # module's test fails if the two disagree.
+    return PROJECTS_ROOT / re.sub(r"[^a-zA-Z0-9]", "-", str(Path(working_directory).resolve()))
 
 
 def find_transcript_path(session_id: str, working_directory: Path) -> Path:

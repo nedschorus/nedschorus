@@ -459,7 +459,9 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
                    if key not in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID",
                                   "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
                                   "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
-                                  "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID")}
+                                  "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID",
+                                  # The writer would prune this task list against this log-store.
+                                  "CLAUDE_CODE_TASK_LIST_ID", "TRANSCRIPT_MIRROR_DESTINATION")}
     environment["HANDOFF_SKIP_PROTECTION_AUDIT"] = "1"
     subprocess.run(
         [sys.executable, str(writer_script), "--agent", "roundtrip",

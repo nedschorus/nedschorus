@@ -410,6 +410,41 @@ with tempfile.TemporaryDirectory() as scratch:
           "cause: no-report — no report written; the reviewer's last line: "
           + refused_write_line in result.stderr, repr(result.stderr[-600:]))
 
+    # --- A refusal leaves no staging directory behind ----------------------
+    # The last refusal a cell can make is a missing prompt template. A copy of
+    # the cell whose checkout has no prompts directory makes that refusal for a
+    # report outside its checkout; with the staging directory made after every
+    # refusal, the temporary directory stays empty.
+    copied_checkout = scratch / "a-checkout-with-no-prompt-templates"
+    for relative_path in (
+            "nc-systems/cold-read/cold-read-codex-cell.py",
+            "nc-systems/cold-read/cold-read-cell-common.py",
+            "nc-systems/cold-read/cold-read-record-names.py",
+            "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py"):
+        (copied_checkout / relative_path).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(CELL_SCRIPT.parents[2] / relative_path, copied_checkout / relative_path)
+    copied_temporary_directory = scratch / "a-temporary-directory"
+    copied_temporary_directory.mkdir()
+    stubs.mkdir(parents=True, exist_ok=True)
+    (stubs / "codex").write_text(STUB_CODEX_WRITES_REPORT, encoding="utf-8")
+    (stubs / "codex").chmod(0o755)
+    environment = dict(os.environ)
+    environment["HOME"] = str(scratch / "scratch-home")
+    environment["PATH"] = f"{stubs}{os.pathsep}{environment.get('PATH', '')}"
+    environment["COLD_READ_CODEX_CELL_TEST_STUB_REPORT_PATH"] = str(report)
+    environment["TMPDIR"] = str(copied_temporary_directory)
+    result = subprocess.run(
+        [sys.executable,
+         str(copied_checkout / "nc-systems/cold-read/cold-read-codex-cell.py"),
+         "--report", str(report), "--cell", "restate", "--tier", "deep",
+         "--target", str(target)],
+        capture_output=True, text=True, check=False, env=environment)
+    check("a missing prompt template refuses the cell",
+          result.returncode == 64 and "prompt template missing" in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr[-600:]!r}")
+    leftover = sorted(path.name for path in copied_temporary_directory.iterdir())
+    check("a refusal leaves no staging directory behind", leftover == [], repr(leftover))
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

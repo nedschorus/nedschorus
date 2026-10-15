@@ -4,6 +4,7 @@
 Usage:
   scripts/run-all-test-suites.py [--checkout DIR] [--python INTERPRETER]
                                  [-j N] [--log-dir DIR] [--lock-file PATH]
+                                 [--wait-for-lock-seconds N]
                                  [--only-suites-whose-recorded-inputs-changed-since COMMIT]
                                  [--recorded-inputs-directory DIR]
 
@@ -19,6 +20,9 @@ Usage:
                 one --log-dir: the second exits 3
   --lock-file   the lock that keeps two runs on one machine apart; default
                 ~/.claude/.run-all-test-suites.lock
+  --wait-for-lock-seconds N
+                wait up to N seconds for that lock, in the kernel's queue as
+                `flock -w` waits, before exiting 3; default 0, no wait
   --only-suites-whose-recorded-inputs-changed-since COMMIT
                 run only the suites whose recorded inputs differ between
                 COMMIT and the checkout's files; see RECORDED INPUTS below.
@@ -178,9 +182,12 @@ ONE RUN AT A TIME PER MACHINE. Measured 2026-09-21: two overlapping runs of
 scripts/resupervise-seat-test.py both exit 0 and both print "all cases
 passed" while silently dropping cases to SKIP, because the suites share
 machine state. So a run takes an exclusive lock on --lock-file, and a
-second run on the same machine exits 3 without running anything. The lock
-file names its holder (process id, checkout, start time), and the refusal
-prints it.
+second run on the same machine exits 3 without running anything, or, with
+--wait-for-lock-seconds, waits for the lock first. A wait blocks in the
+kernel's queue: a caller that instead retried every few seconds lost the lock
+to every `flock -w` waiter on it and never ran. The lock file names its
+holder (process id, checkout, start time), and the refusal prints it, unless
+that process has ended.
 
 RUN RECORDS, on Linux. Each run writes a record into the directory beside
 its lock file (<lock file>.runs): its own process id and start time, its
@@ -756,6 +763,8 @@ EXIT_ALL_PASSED = 0
 EXIT_SOME_FAILED = 1
 EXIT_COULD_NOT_RUN = 2
 EXIT_LOCKED = 3
+MACHINE_LOCK_WAIT_SECONDS_SUGGESTED = 3600
+MACHINE_LOCK_WAITED_LINE_PREFIX = "seconds waiting for the machine's lock: "
 
 
 class CouldNotRun(Exception):
@@ -915,16 +924,76 @@ def commit_and_state(top):
     return commit, state
 
 
-def take_machine_lock(lock_file, top):
-    """Return (handle, refusal, previous holder), with None for unavailable fields."""
+class _MachineLockWaitEnded(Exception):
+    """The wait for the machine's lock reached its deadline."""
+
+
+def flock_exclusive_waiting_up_to(handle, wait_seconds):
+    """Take an exclusive flock on handle, waiting up to wait_seconds; False if not taken.
+
+    A wait blocks in the kernel's queue, like `flock -w`, rather than retrying: the
+    kernel hands a released lock to a blocked waiter, so a program that retries loses
+    to every blocked waiter and can wait forever. The deadline is a SIGALRM timer, so
+    a wait works only in the main thread."""
+    if wait_seconds <= 0:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
+        return True
+
+    def deadline_reached(signum, frame):
+        raise _MachineLockWaitEnded()
+
+    previous_handler = signal.signal(signal.SIGALRM, deadline_reached)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, wait_seconds)
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        except _MachineLockWaitEnded:
+            return False
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+    finally:
+        signal.signal(signal.SIGALRM, previous_handler)
+    return True
+
+
+def lock_holder_described(description):
+    """The lock file's holder description, or why it does not name the holder.
+
+    flock frees the lock when its holder dies, but nothing clears the description, and
+    a holder that is not a run of this program, such as `flock -w` on the lock, writes
+    none; so a description naming a process that has ended is from an earlier run."""
+    named = re.match(r"pid (?P<pid>\d+),", description)
+    if not description:
+        return "a process that wrote no description of itself"
+    if named is None or process_running(int(named["pid"])):
+        return description
+    return (f"a process that wrote no description of itself; the lock file still holds "
+            f"\"{description}\", from an earlier run whose process has ended")
+
+
+def process_running(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def take_machine_lock(lock_file, top, wait_seconds=0):
+    """Return (handle, refusal, previous holder), with None for unavailable fields.
+
+    With wait_seconds above 0, wait up to that long for the lock before refusing."""
     # Append mode preserves the holder's description when another run wins the lock.
     lock_file.parent.mkdir(parents=True, exist_ok=True)
     handle = open(lock_file, "a+")
-    try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    if not flock_exclusive_waiting_up_to(handle, wait_seconds):
         handle.seek(0)
-        holder = handle.read().strip() or "a run that has not described itself yet"
+        holder = lock_holder_described(handle.read().strip())
         handle.close()
         return None, holder, None
     handle.seek(0)
@@ -1929,6 +1998,23 @@ class Report:
         self.file.close()
 
 
+def machine_lock_refusal(lock_file, holder, wait_seconds):
+    """The refusal printed when this run could not take the machine's lock."""
+    if wait_seconds > 0:
+        return (f"{PROGRAM}: not run — waited {wait_seconds:g} s for {lock_file}, the lock "
+                f"that keeps test runs on one machine apart, and it was still held by "
+                f"{holder}.\n"
+                f"If you started this program under flock on that lock, that flock is the "
+                f"holder: run this program without flock, since it takes the lock itself.\n"
+                f"Otherwise, tell the user which process holds the lock, and do not run "
+                f"this again until the lock is released.")
+    return (f"{PROGRAM}: not run — another run holds {lock_file}: {holder}.\n"
+            f"To wait for the lock, run this again with --wait-for-lock-seconds "
+            f"{MACHINE_LOCK_WAIT_SECONDS_SUGGESTED}, instead of retrying in a loop: a "
+            f"process waiting on the lock always gets the lock before a process that "
+            f"retries.")
+
+
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         prog=PROGRAM, description="Run every *-test.py and *-test.sh suite git lists in a checkout.")
@@ -1937,6 +2023,7 @@ def parse_arguments(argv):
     parser.add_argument("-j", dest="jobs", type=int)
     parser.add_argument("--log-dir")
     parser.add_argument("--lock-file", default=str(DEFAULT_LOCK_FILE))
+    parser.add_argument("--wait-for-lock-seconds", type=float, default=0)
     parser.add_argument("--only-suites-whose-recorded-inputs-changed-since",
                         dest="changed_since", metavar="COMMIT")
     parser.add_argument("--recorded-inputs-directory",
@@ -1944,6 +2031,8 @@ def parse_arguments(argv):
     arguments = parser.parse_args(argv)
     if arguments.jobs is not None and arguments.jobs < 1:
         parser.error("-j takes a whole number of at least 1")
+    if arguments.wait_for_lock_seconds < 0:
+        parser.error("--wait-for-lock-seconds takes a number of seconds of at least 0")
     return arguments
 
 
@@ -1972,14 +2061,28 @@ def main(argv=None):
         print(signal_sandbox_refusal(error), file=sys.stderr)
         return EXIT_COULD_NOT_RUN
 
-    lock_handle, holder, previous_holder = take_machine_lock(Path(arguments.lock_file), top)
+    if arguments.wait_for_lock_seconds > 0:
+        # A caller waiting under a timeout of its own sees why nothing has happened yet.
+        print(f"{PROGRAM}: waiting up to {arguments.wait_for_lock_seconds:g} s for "
+              f"{arguments.lock_file}", file=sys.stderr, flush=True)
+    lock_wait_started = time.monotonic()
+    lock_handle, holder, previous_holder = take_machine_lock(
+        Path(arguments.lock_file), top, arguments.wait_for_lock_seconds)
+    seconds_waiting_for_lock = time.monotonic() - lock_wait_started
     if lock_handle is None:
-        print(f"{PROGRAM}: not run — another run holds {arguments.lock_file}: {holder}.\n"
-              f"Run this again after that run has finished.", file=sys.stderr)
+        print(machine_lock_refusal(arguments.lock_file, holder,
+                                   arguments.wait_for_lock_seconds), file=sys.stderr)
         return EXIT_LOCKED
 
     log_dir_handle = run_record = None
     try:
+        # Read again under the lock: the checkout may have changed while this run waited,
+        # and the commit this run reports is read under the lock too.
+        try:
+            suites = suites_listed_by_git(top)
+        except CouldNotRun as refusal:
+            print(refusal, file=sys.stderr)
+            return EXIT_COULD_NOT_RUN
         if arguments.log_dir:
             log_dir = Path(arguments.log_dir).resolve()
             log_dir.mkdir(parents=True, exist_ok=True)
@@ -2032,6 +2135,8 @@ def main(argv=None):
                     + (f" and {STRACE_INPUT_RECORDER_METHOD} ({strace})" if strace else "")
                     + f", kept in {recordings_dir}")
         report.line(signal_sandbox_line(sandbox_prefix, unconfined_because))
+        if arguments.wait_for_lock_seconds > 0:
+            report.line(f"{MACHINE_LOCK_WAITED_LINE_PREFIX}{seconds_waiting_for_lock:.0f}")
         if sandbox_prefix:
             for suite in chosen:
                 if suite in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX:
