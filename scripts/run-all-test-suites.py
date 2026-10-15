@@ -1910,7 +1910,7 @@ def is_credential_environment_variable(name):
                for pattern in TEST_SUITE_CREDENTIAL_ENVIRONMENT_VARIABLE_PATTERNS)
 
 
-def test_suite_launch_environment_without_git_redirecting_agent_session_attendance_and_credential_variables():
+def launch_environment_for_a_test_suite_with_git_redirecting_agent_session_attendance_and_credential_variables_removed():
     """Return the environment every path that launches a test suite gives the suite."""
     environment = environment_without_git_redirecting_variables()
     for variable in AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES:
@@ -2222,7 +2222,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
     run's log directory, where this program writes, stays out of its reach."""
     platform = sys.platform if platform is None else platform
     log_file = log_path_for(log_dir, suite)
-    environment = test_suite_launch_environment_without_git_redirecting_agent_session_attendance_and_credential_variables()
+    environment = launch_environment_for_a_test_suite_with_git_redirecting_agent_session_attendance_and_credential_variables_removed()
     command = ["sh", suite] if is_shell_test_suite(suite) else [interpreter, "-u", suite]
     writable_paths, read_only_paths = [], []
     if recorder is not None:

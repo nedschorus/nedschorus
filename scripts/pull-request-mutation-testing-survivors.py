@@ -359,7 +359,7 @@ def main(argv=None):
     runner = load_test_suite_runner()
     # An inherited GIT_DIR or GIT_WORK_TREE would point every git command at another repository,
     # and cosmic-ray launches the suites with this environment, as the runner launches them.
-    environment = runner.test_suite_launch_environment_without_git_redirecting_agent_session_attendance_and_credential_variables()
+    environment = runner.launch_environment_for_a_test_suite_with_git_redirecting_agent_session_attendance_and_credential_variables_removed()
     try:
         tools = cosmic_ray_tool_paths(arguments.cosmic_ray_venv)
         if arguments.pull_request is not None:

@@ -589,7 +589,7 @@ def run_probe(scratch):
         # A suite allowed to write the git directory gets a copy-on-write overlay of it.
         (checkout / ".git").write_text(git_file_before)
         git_writer = next(iter(runner.SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY))
-        environment = runner.test_suite_launch_environment_without_git_redirecting_agent_session_attendance_and_credential_variables()
+        environment = runner.launch_environment_for_a_test_suite_with_git_redirecting_agent_session_attendance_and_credential_variables_removed()
         written = subprocess.run(
             [*runner.command_prefix_starting_one_suite_in_its_test_sandbox(
                 sandbox_prefix, checkout, suite=git_writer),

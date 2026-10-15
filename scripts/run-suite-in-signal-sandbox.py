@@ -402,7 +402,7 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
     by_process_group = platform == "darwin"
     # A proof left by an earlier run must not vouch for this one.
     proof_file.write_text("")
-    environment = runner.test_suite_launch_environment_without_git_redirecting_agent_session_attendance_and_credential_variables()
+    environment = runner.launch_environment_for_a_test_suite_with_git_redirecting_agent_session_attendance_and_credential_variables_removed()
     # The proof is read after the sandbox ends, and the bytecode is the suite's own, so
     # both are written for real; nothing else outside the checkout is.
     writable = [proof_file]

@@ -326,7 +326,7 @@ def runner_summary_line(completed):
     return summary[-1] if summary else None
 
 
-def runner_admission_wait_line(completed):
+def runner_output_line_on_seconds_suites_waited_for_admission(completed):
     """The runner's line on how long its suites waited for admission, or None without one."""
     if completed is None:
         return None
@@ -483,7 +483,7 @@ def daily_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, machin
         record_lines.append(f"runner exit code: {completed.returncode}")
     record_lines.append(
         f"seconds waiting for the machine's lock: {seconds_waiting_for_lock:.0f}")
-    admission_wait = runner_admission_wait_line(completed)
+    admission_wait = runner_output_line_on_seconds_suites_waited_for_admission(completed)
     if admission_wait is not None:
         record_lines.append(admission_wait)
     record_lines.append(f"wall-clock seconds: {monotonic() - run_started:.0f}")

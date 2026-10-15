@@ -561,7 +561,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
     try:
         for name in saved:
             os.environ[name] = "value-of-" + name
-        environment = runner.test_suite_launch_environment_without_git_redirecting_agent_session_attendance_and_credential_variables()
+        environment = runner.launch_environment_for_a_test_suite_with_git_redirecting_agent_session_attendance_and_credential_variables_removed()
     finally:
         for name, value in saved.items():
             if value is None:
