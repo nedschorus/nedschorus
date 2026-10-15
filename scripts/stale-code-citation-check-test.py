@@ -303,6 +303,16 @@ with tempfile.TemporaryDirectory() as workspace:
           code == 1 and "lines 40-44" in out and "lines 20-24" not in out,
           f"{code} {out}")
 
+    # A heading-section starts on its heading line, so a pin written only in
+    # the heading pins the section below it.
+    write_document(root, "docs/pin-heading.md", document(
+        body=f"## 1. Facts from origin/main at {pinned_commit}; "
+             f"line numbers are that commit's\n\n"
+             f"- The test is `scripts/moved.py` lines 20-24.\n"))
+    code, out, err = run(root, "docs/pin-heading.md")
+    check("a pin written only on the heading line pins the section under it",
+          code == 0 and out == "", f"{code} {out}")
+
 
 # --- The frontmatter the check reads --------------------------------------
 with tempfile.TemporaryDirectory() as workspace:
