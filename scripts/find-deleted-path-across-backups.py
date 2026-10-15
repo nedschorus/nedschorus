@@ -1762,7 +1762,8 @@ def main(argv=None, runner=run_command):
                     "agent transcripts, Timeshift on the box, and Time Machine.",
     )
     parser.add_argument("path", help="repo-relative, absolute, or any trailing fragment of the path; "
-                                     "the scp form nedlern@ned-box:<path>, ../<path> and ~/<path> are read too")
+                                     "the scp form nedlern@ned-box:<path>, ../<path> and ~/<path> are read too; "
+                                     "a path that opens with a dash goes after --")
     parser.add_argument("--repo", default=os.environ.get("FIND_DELETED_PATH_REPO", "."),
                         help="git repository to search (default: current directory)")
     parser.add_argument("--transcripts-dir", default=os.environ.get("FIND_DELETED_PATH_TRANSCRIPTS_DIR", DEFAULT_TRANSCRIPTS_DIR))
