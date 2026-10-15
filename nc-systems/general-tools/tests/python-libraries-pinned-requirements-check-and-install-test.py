@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Tests for nc-systems/general-tools/compiled-python-libraries-pinned-requirements-check-and-install.py.
+"""Tests for nc-systems/general-tools/python-libraries-pinned-requirements-check-and-install.py.
 
 The process that reads installed versions and the installer are test
 doubles, except one case that reads this python3's real versions.
 
-Run: python3 nc-systems/general-tools/tests/compiled-python-libraries-pinned-requirements-check-and-install-test.py
+Run: python3 nc-systems/general-tools/tests/python-libraries-pinned-requirements-check-and-install-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -18,12 +18,12 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 _spec = importlib.util.spec_from_file_location(
-    "compiled_python_libraries_pinned_requirements_check_and_install",
+    "python_libraries_pinned_requirements_check_and_install",
     REPOSITORY_ROOT / "nc-systems" / "general-tools"
-    / "compiled-python-libraries-pinned-requirements-check-and-install.py")
+    / "python-libraries-pinned-requirements-check-and-install.py")
 checker = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(checker)
-install = checker.pinned_libraries_install
+install = checker.python_libraries_pinned_requirements_install_if_missing_then_import_common
 
 failures = 0
 
@@ -54,6 +54,13 @@ def check_and_install_with_fixture(host, runner, installer):
 real_pins = checker.pinned_versions()
 check("the real pinned file parses and pins tree-sitter and tree-sitter-bash, which the shell reader needs",
       {"tree-sitter", "tree-sitter-bash"} <= set(real_pins), real_pins)
+check("the real pinned file pins markdown-it-py and its dependency mdurl, which the hard-wrap reminder needs",
+      {"markdown-it-py", "mdurl"} <= set(real_pins), real_pins)
+pinned_lines = [line for line in install.PINNED_REQUIREMENTS_FILE.read_text(encoding="utf-8").splitlines()
+                if line.strip() and not line.lstrip().startswith("#")]
+check("every pinned line records the library's license beside it",
+      pinned_lines and all("  # " in line and line.split("  # ", 1)[1].strip() for line in pinned_lines),
+      pinned_lines)
 
 with tempfile.TemporaryDirectory() as scratch:
     bad = Path(scratch) / "requirements.txt"
@@ -91,7 +98,7 @@ def installer_that(outcome):
     def installer():
         state["installs"] += 1
         if outcome is not None:
-            raise install.CompiledPythonLibrariesUnavailable(outcome)
+            raise install.PythonLibrariesPinnedRequirementsInstallOrImportFailed(outcome)
         return "Successfully installed tree-sitter-bash-0.25.1"
     installer.state = state
     return installer
@@ -132,6 +139,14 @@ status, lines = check_and_install_with_fixture("Neds-MacBook-Pro", version_reade
 check("on another machine the by-hand command is run there as it is",
       lines[-1].startswith(f"To install them by hand, run this command on Neds-MacBook-Pro: "
                            f"{sys.executable} -m pip install --user"), lines[-1])
+
+status, lines = checker.check_and_install("ned-box", version_reader(ONE_MISSING),
+                                         installer_that("nothing was installed"),
+                                         requirements_file=FIXTURE, python_version=(3, 9, 6))
+check("below Python 3.11 the last line gives no pip command, and says how to put a newer Python "
+      "first on the PATH",
+      status == 1 and "pip" not in lines[-1] and "Python 3.9.6" in lines[-1]
+      and "on ned-box" in lines[-1] and "Homebrew" in lines[-1], lines[-1])
 
 status, lines = check_and_install_with_fixture("ned-box", version_reader(ONE_MISSING),
                                           installer_that(None))

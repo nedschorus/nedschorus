@@ -201,6 +201,47 @@ def main() -> int:
                   and temporary_leftovers(home) == [],
                   (state.read_text(encoding="utf-8"), temporary_leftovers(home)))
 
+        # The onboarding-only write, which the handoff-supervisor makes before every
+        # agent-session it launches: onboarding and theme, never a trust preset.
+        onboarding_write = presets.claude_json_onboarding_presets_write
+        home = root / "onboarding-only"
+        home.mkdir()
+        state = home / ".claude.json"
+        logged_out = {"numStartups": 7, "theme": "dark",
+                      "projects": {"/seats/one": {"history": ["kept"]}}}
+        state.write_text(json.dumps(logged_out), encoding="utf-8")
+        wrote = onboarding_write(state)
+        parsed = json.loads(state.read_text(encoding="utf-8"))
+        check("onboarding only: hasCompletedOnboarding is written, the set theme and "
+              "every project are kept, and no folder is trusted",
+              wrote is True and parsed == dict(logged_out, hasCompletedOnboarding=True),
+              (wrote, parsed))
+        before = state.stat()
+        wrote = onboarding_write(state)
+        after = state.stat()
+        check("onboarding only, already set: nothing is written (inode and mtime unchanged)",
+              wrote is False and (after.st_ino, after.st_mtime_ns)
+              == (before.st_ino, before.st_mtime_ns), wrote)
+        state.unlink()
+        wrote = onboarding_write(state)
+        parsed = json.loads(state.read_text(encoding="utf-8"))
+        check("onboarding only, no file: the file holds onboarding and the theme, "
+              "and no projects",
+              wrote is True and parsed == {"hasCompletedOnboarding": True, "theme": "light"},
+              (wrote, parsed))
+        unparseable = '{"oauthAccount": {"accountU'
+        state.write_text(unparseable, encoding="utf-8")
+        try:
+            onboarding_write(state)
+            raised = None
+        except presets.ClaudeJsonNotAJsonObjectError as error:
+            raised = error
+        check("onboarding only, not valid JSON: the write raises, naming the file, "
+              "and the file is left as it was",
+              raised is not None and str(state) in str(raised)
+              and state.read_text(encoding="utf-8") == unparseable,
+              (raised, state.read_text(encoding="utf-8")))
+
         # A write that cannot happen is reported, and the program exits 1.
         if os.geteuid() == 0:
             print("SKIP  unwritable HOME: running as root, which can write anywhere")

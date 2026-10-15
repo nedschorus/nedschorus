@@ -1181,7 +1181,7 @@ except r.ShellParserUnavailable as error:
         return run
 
     run = runner_exiting(0, "Successfully installed tree-sitter-0.25.2")
-    printed = reader.install_compiled_libraries(run)
+    printed = reader.shell_reader_python_libraries_pinned_requirements_pip_install(run)
     check("the install runs pip per user, from the pinned requirements file, within its timeout",
           run.command[1:7] == ["-m", "pip", "install", "--user", "--break-system-packages",
                                "--disable-pip-version-check"]
@@ -1189,7 +1189,7 @@ except r.ShellParserUnavailable as error:
           and run.kwargs["timeout"] == reader.INSTALL_TIMEOUT_SECONDS
           and "Successfully installed" in printed, (run.command, run.kwargs))
     try:
-        reader.install_compiled_libraries(runner_exiting(1, "", "ERROR: No matching distribution"))
+        reader.shell_reader_python_libraries_pinned_requirements_pip_install(runner_exiting(1, "", "ERROR: No matching distribution"))
         raised = None
     except reader.ShellParserUnavailable as error:
         raised = error
@@ -1200,7 +1200,7 @@ except r.ShellParserUnavailable as error:
     def runner_timing_out(command, **kwargs):
         raise subprocess.TimeoutExpired(command, kwargs["timeout"])
     try:
-        reader.install_compiled_libraries(runner_timing_out)
+        reader.shell_reader_python_libraries_pinned_requirements_pip_install(runner_timing_out)
         raised = None
     except reader.ShellParserUnavailable as error:
         raised = error
@@ -1299,6 +1299,13 @@ except r.ShellParserUnavailable as error:
         sys.executable = real_executable
     check("the install command names the interpreter the guard runs under, not a bare python3",
           words[1].startswith("/usr/bin/python3 -m pip install "), words)
+    words = reader.tree_sitter_bash_install_failure_report_words_build(
+        "Neds-MacBook", "nothing was installed", "nothing is checked there", (3, 9, 6))
+    check("below Python 3.11 the words give no pip command, and say how to put a newer Python first "
+          "on the PATH",
+          "pip" not in words.split("Then pass on")[0] and "Python 3.9.6" in words
+          and "Homebrew" in words and "next run" in words
+          and words.endswith("quoted as it is: nothing was installed"), words)
     on_ned_box = __import__("socket").gethostname().split(".")[0] == "ned-box"
     check("the install command for ned-box is given in the ssh form the user runs from the Mac",
           on_ned_box == (f"ssh nedlern@ned-box '{sys.executable} -m pip install" in first), first)

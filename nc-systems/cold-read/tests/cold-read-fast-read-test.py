@@ -950,14 +950,34 @@ with tempfile.TemporaryDirectory() as worktree_scratch:
     loose_brief = worktree_scratch / "no-repository/docs/agents/a-seat-instructions.md"
     loose_brief.parent.mkdir(parents=True)
     loose_brief.write_text("# A seat\n", encoding="utf-8")
+    walk_draft_in_second = second_worktree / "docs/walk/a-walk-item-draft.md"
+    walk_draft_in_second.parent.mkdir(parents=True)
+    walk_draft_in_second.write_text("## Item 1 of 1\n", encoding="utf-8")
+    loose_walk_draft = worktree_scratch / "no-repository/docs/walk/a-walk-item-draft.md"
+    loose_walk_draft.parent.mkdir(parents=True)
+    loose_walk_draft.write_text("## Item 1 of 1\n", encoding="utf-8")
 
     real_checkout = warning_module.REPO_ROOT
+    real_records = warning_module.RECORDS_DIR
     warning_module.REPO_ROOT = first_checkout.resolve()
+    warning_module.RECORDS_DIR = worktree_scratch / "records"
     try:
         in_second = class_of(brief_in_second.resolve())
         in_no_repository = class_of(loose_brief.resolve())
+        walk_report_in_second = warning_module.fast_read_report_path_for_target(
+            walk_draft_in_second.resolve(), datetime.datetime(2026, 10, 13, 12, 0))
+        loose_walk_report = warning_module.fast_read_report_path_for_target(
+            loose_walk_draft.resolve(), datetime.datetime(2026, 10, 13, 12, 0))
     finally:
         warning_module.REPO_ROOT = real_checkout
+        warning_module.RECORDS_DIR = real_records
+    check("a walk draft in another worktree gets its suggestions file beside it",
+          walk_report_in_second
+          == second_worktree.resolve() / "docs/walk/a-walk-item-suggestions.md",
+          str(walk_report_in_second))
+    check("a walk draft in no repository at all takes the records route",
+          (worktree_scratch / "records") in loose_walk_report.parents,
+          str(loose_walk_report))
     check("a brief in a second worktree of the repository is in the class",
           in_second == "a file under docs/agents/", repr(in_second))
     check("a brief in no repository at all is still not classified",
@@ -1179,6 +1199,51 @@ with tempfile.TemporaryDirectory() as bare_scratch:
           and "line 5: #418" in result.stderr
           and "line 5: #419" in result.stderr,
           repr(result.stderr))
+
+# A git failure other than finding no worktree is reported, not taken to mean
+# "no worktree", which would send a walk draft to the records route unsaid.
+with tempfile.TemporaryDirectory() as git_failure_scratch:
+    git_failure_scratch = Path(git_failure_scratch).resolve()
+    failing_git_directory = git_failure_scratch / "failing-git-bin"
+    failing_git_directory.mkdir()
+    failing_git = failing_git_directory / "git"
+    failing_git.write_text(
+        "#!/bin/sh\necho \"fatal: detected dubious ownership in repository\" >&2\nexit 128\n",
+        encoding="utf-8")
+    failing_git.chmod(0o755)
+    # Should the read get past git, as under a mutant, it must reach no model
+    # and ship nothing to the real log-store.
+    failing_agy = failing_git_directory / "agy"
+    failing_agy.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    failing_agy.chmod(0o755)
+    draft_git_cannot_place = git_failure_scratch / "docs/walk/a-walk-item-draft.md"
+    draft_git_cannot_place.parent.mkdir(parents=True)
+    draft_git_cannot_place.write_text("## Item 1 of 1\n", encoding="utf-8")
+    path_before = os.environ["PATH"]
+    os.environ["PATH"] = f"{failing_git_directory}{os.pathsep}{path_before}"
+    try:
+        try:
+            warning_module.checkout_root_holding(draft_git_cannot_place)
+            git_failure_raised = ""
+        except warning_module.CheckoutRootUnreadable as error:
+            git_failure_raised = str(error)
+        git_failure_environment = dict(os.environ)
+        git_failure_environment["HOME"] = str(git_failure_scratch)
+        git_failure_environment[RECORD_SHIP_DESTINATION_VARIABLE] = str(
+            git_failure_scratch / "log-store")
+        git_failure_run = subprocess.run(
+            [sys.executable, str(SYSTEM_DIRECTORY / "cold-read-fast-read.py"),
+             "--target", str(draft_git_cannot_place)],
+            capture_output=True, text=True, check=False, env=git_failure_environment)
+    finally:
+        os.environ["PATH"] = path_before
+    check("a git failure other than finding no worktree is raised, not read as no worktree",
+          "dubious ownership" in git_failure_raised, repr(git_failure_raised))
+    check("the read fails and says why when git cannot place the target",
+          git_failure_run.returncode == 1
+          and "FAILED (could not tell which checkout holds" in git_failure_run.stdout
+          and "dubious ownership" in git_failure_run.stderr,
+          f"exit {git_failure_run.returncode}; {git_failure_run.stdout!r}; {git_failure_run.stderr!r}")
 
 print()
 if failures:

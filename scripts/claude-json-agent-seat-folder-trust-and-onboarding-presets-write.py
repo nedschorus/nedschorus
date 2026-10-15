@@ -17,6 +17,11 @@ purpose.
 
 Used by scripts/launch-claude-mac, by scripts/launch-claude-ubuntu on the box,
 and by scripts/recover-crashed-seats.py before it starts a supervisor itself.
+nc-systems/handoff/handoff-supervisor.py calls
+claude_json_onboarding_presets_write, which writes the onboarding and theme
+presets without the trust preset, before every agent-session it launches,
+relaunches included: a /logout can clear hasCompletedOnboarding while a
+supervisor runs.
 
 Usage: claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py AGENT_SEAT_FOLDER
 Exits 0 when the file holds the presets, written or already there; exits 1,
@@ -48,36 +53,35 @@ def claude_json_path() -> pathlib.Path:
     return pathlib.Path(os.path.expanduser("~/.claude.json"))
 
 
-def claude_json_agent_seat_folder_trust_and_onboarding_presets_write(
-        claude_json: pathlib.Path, agent_seat_folder: str) -> bool:
-    """Write the presets into claude_json; return True if the file was written."""
-    exists = claude_json.exists()
-    if exists:
-        text = claude_json.read_text(encoding="utf-8")
-        try:
-            settings = json.loads(text)
-        except ValueError as error:
-            raise ClaudeJsonNotValidJsonError(
-                f"{claude_json} is not valid JSON ({error})") from error
-        if not isinstance(settings, dict):
-            raise ClaudeJsonNotAJsonObjectError(
-                f"{claude_json} holds JSON of type {type(settings).__name__}, not an object")
-    else:
-        settings = {}
-    folder = os.path.abspath(os.path.expanduser(agent_seat_folder))
-    project = settings.setdefault("projects", {}).setdefault(folder, {})
+def claude_json_settings_read(claude_json: pathlib.Path) -> dict:
+    """Return claude_json's settings, or {} when the file does not exist."""
+    if not claude_json.exists():
+        return {}
+    text = claude_json.read_text(encoding="utf-8")
+    try:
+        settings = json.loads(text)
+    except ValueError as error:
+        raise ClaudeJsonNotValidJsonError(
+            f"{claude_json} is not valid JSON ({error})") from error
+    if not isinstance(settings, dict):
+        raise ClaudeJsonNotAJsonObjectError(
+            f"{claude_json} holds JSON of type {type(settings).__name__}, not an object")
+    return settings
+
+
+def onboarding_presets_set(settings: dict) -> bool:
+    """Set the onboarding presets in settings; return True if anything changed."""
     changed = False
-    if project.get("hasTrustDialogAccepted") is not True:
-        project["hasTrustDialogAccepted"] = True
-        changed = True
     if settings.get("hasCompletedOnboarding") is not True:
         settings["hasCompletedOnboarding"] = True
         changed = True
     if "theme" not in settings:
         settings["theme"] = THEME_SET_WHEN_NONE_IS_SET
         changed = True
-    if not changed:
-        return False
+    return changed
+
+
+def claude_json_settings_replace(claude_json: pathlib.Path, settings: dict) -> None:
     # Running agent-sessions write this file too, so it is replaced, never truncated:
     # a reader sees the whole old file or the whole new one. The temporary file sits in
     # the target's own directory because os.replace is atomic only within one filesystem,
@@ -87,7 +91,7 @@ def claude_json_agent_seat_folder_trust_and_onboarding_presets_write(
     # os.replace keeps the temporary file's mode, so the target's mode is carried over;
     # a new file is 0600 because it holds credentials.
     # Not fixed: a write by an agent-session between the read and the replace is lost.
-    mode = claude_json.stat().st_mode & 0o777 if exists else 0o600
+    mode = claude_json.stat().st_mode & 0o777 if claude_json.exists() else 0o600
     handle, temporary = tempfile.mkstemp(dir=str(claude_json.parent),
                                          prefix=TEMPORARY_FILE_PREFIX,
                                          suffix=TEMPORARY_FILE_SUFFIX)
@@ -95,6 +99,31 @@ def claude_json_agent_seat_folder_trust_and_onboarding_presets_write(
     pathlib.Path(temporary).write_text(json.dumps(settings, indent=2), encoding="utf-8")
     os.chmod(temporary, mode)
     os.replace(temporary, claude_json)
+
+
+def claude_json_agent_seat_folder_trust_and_onboarding_presets_write(
+        claude_json: pathlib.Path, agent_seat_folder: str) -> bool:
+    """Write the presets into claude_json; return True if the file was written."""
+    settings = claude_json_settings_read(claude_json)
+    folder = os.path.abspath(os.path.expanduser(agent_seat_folder))
+    project = settings.setdefault("projects", {}).setdefault(folder, {})
+    changed = False
+    if project.get("hasTrustDialogAccepted") is not True:
+        project["hasTrustDialogAccepted"] = True
+        changed = True
+    changed = onboarding_presets_set(settings) or changed
+    if not changed:
+        return False
+    claude_json_settings_replace(claude_json, settings)
+    return True
+
+
+def claude_json_onboarding_presets_write(claude_json: pathlib.Path) -> bool:
+    """Write only the onboarding and theme presets, no folder trust; return True if written."""
+    settings = claude_json_settings_read(claude_json)
+    if not onboarding_presets_set(settings):
+        return False
+    claude_json_settings_replace(claude_json, settings)
     return True
 
 

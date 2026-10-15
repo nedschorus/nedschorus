@@ -520,5 +520,10 @@ if [ "$ATTACH" = yes ]; then
         [ "$RECONNECT_WAIT_SECONDS" -ge 30 ] || RECONNECT_WAIT_SECONDS=$((RECONNECT_WAIT_SECONDS * 2))
     done
 fi
+# The existing-seat case is checked before anything runs, so that a failed
+# prepare step or tmux start is reported as itself and exits nonzero, never
+# as "already exists"; like the attach path, a live seat is not re-prepared.
 exec ssh "$AGENT_BOX" \
-    "$PREPARE_COMMAND && $SEAT_SOCKET_SELECTION_COMMAND && tmux -L \"\$SEAT_TMUX_SOCKET\" new-session -d -s '$AGENT_NAME' -c \"$AGENT_DIRECTORY_REMOTE\" \"$SUPERVISOR_COMMAND\" $SEAT_TMUX_OPTIONS_CHAIN 2>/dev/null || echo 'launch-claude-ubuntu: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-ubuntu $AGENT_NAME)'"
+    "if $SEAT_EXISTS_COMMAND; then echo 'launch-claude-ubuntu: a tmux session named $AGENT_NAME already exists — a running seat, or its after-exit shell (attach with: launch-claude-ubuntu $AGENT_NAME)'; \
+else $PREPARE_COMMAND && $SEAT_SOCKET_SELECTION_COMMAND && tmux -L \"\$SEAT_TMUX_SOCKET\" new-session -d -s '$AGENT_NAME' -c \"$AGENT_DIRECTORY_REMOTE\" \"$SUPERVISOR_COMMAND\" $SEAT_TMUX_OPTIONS_CHAIN \
+|| { LAUNCH_STATUS=\$?; echo \"launch-claude-ubuntu: preparing or starting $AGENT_NAME on the box failed (exit \$LAUNCH_STATUS); the failing step's own message is above\" >&2; exit \$LAUNCH_STATUS; }; fi"

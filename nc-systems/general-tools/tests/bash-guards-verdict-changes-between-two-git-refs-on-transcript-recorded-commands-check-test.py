@@ -74,8 +74,10 @@ def commit_with_guard_changed(guard_path, appended_code, scratch):
 
 
 def worktrees_registered_under(directory):
+    # git lists resolved paths; on macOS the scratch directory is named through the /var symlink.
+    resolved = os.path.realpath(directory)
     return [line.split(" ", 1)[1] for line in git("worktree", "list", "--porcelain").splitlines()
-            if line.startswith("worktree ") and line.split(" ", 1)[1].startswith(str(directory))]
+            if line.startswith("worktree ") and line.split(" ", 1)[1].startswith(resolved)]
 
 
 FIXTURE_PAIRS = [
@@ -436,6 +438,25 @@ try:
     git("worktree", "unlock", str(locked))
     check("a checkout git cannot remove is reported, with git's reason",
           len(not_removed) == 1 and str(locked) in not_removed[0] and "exited" in not_removed[0], not_removed)
+
+    # macOS names its temporary directories through the /var -> /private/var symlink, and git lists checkouts by
+    # their resolved paths; a symlink to the scratch directory reproduces that on Linux.
+    through_symlink = Path(scratch) / "scratch-through-a-symlink"
+    through_symlink.symlink_to(scratch)
+    locked_through_symlink = through_symlink / "locked-checkout-named-through-a-symlink"
+    git("worktree", "add", "--detach", str(locked_through_symlink), "HEAD")
+    git("worktree", "lock", str(locked_through_symlink))
+    not_removed = replay.remove_checkouts(str(REPOSITORY_ROOT), [locked_through_symlink])
+    git("worktree", "unlock", str(locked_through_symlink))
+    check("a checkout named through a symlink that git cannot remove is reported, with git's reason",
+          len(not_removed) == 1 and str(locked_through_symlink) in not_removed[0] and "exited" in not_removed[0],
+          not_removed)
+    removed_through_symlink = through_symlink / "checkout-named-through-a-symlink"
+    git("worktree", "add", "--detach", str(removed_through_symlink), "HEAD")
+    not_removed = replay.remove_checkouts(str(REPOSITORY_ROOT), [removed_through_symlink])
+    check("a checkout named through a symlink is removed and left registered with git nowhere",
+          not_removed == [] and not worktrees_registered_under(removed_through_symlink),
+          f"{not_removed}; registered {worktrees_registered_under(scratch)}")
 
     hanging_git = Path(scratch) / "hanging-git"
     hanging_git.mkdir()
