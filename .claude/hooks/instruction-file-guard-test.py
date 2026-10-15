@@ -274,8 +274,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "If he has not, show him the change and wait for his answer; if you are a subagent, "
           "report the change to the agent that dispatched you instead."
           in result.stderr.splitlines(), result.stderr)
-    check("the block is one instruction per line, the three route-around lines included",
-          len(result.stderr.strip().splitlines()) == 10, result.stderr)
+    check("the block is one instruction per line, the obvious-fix and route-around lines included",
+          len(result.stderr.strip().splitlines()) == 12, result.stderr)
     draft_places = [
         ("a draft in docs/agents/queue/", workspace / "docs" / "agents" / "queue" / "x.md"),
         ("a draft in docs/nedschorus-wiki/queue/", workspace / "docs" / "nedschorus-wiki" / "queue" / "x.md"),
@@ -461,6 +461,22 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         check(f"the refusal for {label} ends with the three route-around lines",
               result.returncode == 2
               and result.stderr.strip().splitlines()[-3:] == route_around_lines,
+              result.stderr)
+
+    # Every refusal says how to write an obvious-fix marker, just before the route-around lines.
+    obvious_fix_lines = [
+        "For an obvious error, write \"Obvious fix under CLAUDE.md's standing approval:\" "
+        "and what you are fixing into .walk-approved at the root of your session's own "
+        "checkout, then resubmit.",
+        "If the edit then does not happen, delete .walk-approved."]
+    for label, target in (
+            ("an instruction file", workspace / "CLAUDE.md"),
+            ("a reusable prompt", workspace / "docs" / "agents" / "some-seat-instructions.md"),
+            ("a reviewed document", workspace / "docs" / "nedschorus-wiki" / "a-page.md")):
+        result = run_hook(decoy, workspace, str(target))
+        check(f"the refusal for {label} carries the two obvious-fix marker lines",
+              result.returncode == 2
+              and result.stderr.strip().splitlines()[-5:-3] == obvious_fix_lines,
               result.stderr)
 
     # Each approval refusal asks for a cold read of the change before it goes to the user.

@@ -394,6 +394,8 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
             "First see what the conflict is with: if main has already replaced "
             "this branch's work, do not merge; close the pull request and carry "
             "what main still lacks on a new topic branch cut from current main.",
+            "When you close the pull request, name in its closing comment the "
+            "commit or pull request on main that replaced the work.",
             "Merge %s into the branch by hand, with the frozen head as first "
             "parent." % base,
             "Resolve the conflict and change nothing else in the merge.",

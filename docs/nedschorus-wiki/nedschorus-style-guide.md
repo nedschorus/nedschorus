@@ -43,5 +43,6 @@ This page lists words to avoid in this project and what to write instead. Most o
 | `they` | `they` | | the noun the pronoun stands for, unless the noun is in the same sentence and no other noun there could be meant; a pronoun with no noun behind it, as in "it is raining", stays | messages to other agents, messages to the user |
 | `this` | `this` | | where "this" is used as a pronoun, the noun it stands for, unless the noun is in the same sentence and no other noun there could be meant; a pronoun with no noun behind it, as in "it is raining", stays | messages to other agents, messages to the user |
 | `that` | `that` | | where "that" is used as a pronoun, the noun it stands for, unless the noun is in the same sentence and no other noun there could be meant; a pronoun with no noun behind it, as in "it is raining", stays | messages to other agents, messages to the user |
+| `or` | `or` | | "one or the other" or "one or both", wherever a reader could take "or" either way | messages to other agents, messages to the user |
 
-"Applies to" names where the word is avoided: files, messages to other agents, and messages to the user. The pronoun rows apply to messages only, which CLAUDE.md's pronoun bullet governs; the hook checks files only, so no program checks the pronoun rows yet.
+"Applies to" names where the word is avoided: files, messages to other agents, and messages to the user. The pronoun rows and the `or` row apply to messages only; no program checks them.
