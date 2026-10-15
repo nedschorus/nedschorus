@@ -29,3 +29,7 @@ Headless halves: `codex exec` (MEASURED live 2026-08-03: read-only sandbox, `-C`
 - Team patterns consuming this: GHI [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26) (sparring pair; N-version competing mode with the third-team cherry-pick).
 
 new-vp session bba1b075
+
+## Provisional additions (not yet vetted by the user)
+
+- prime-intellect, 2026-10-14: when run-agent sandboxes the agent it launches, a second bubblewrap sandbox cannot start inside a first on ned-box (`kernel.apparmor_restrict_unprivileged_userns = 1`), and `scripts/run-all-test-suites.py` starts one per test suite; inside a sandbox, set `RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX` so the runner starts no second one, and keep Claude Code's own sandbox off. Measured in the benchmark pilot plan, `docs/issues/queue/agent-instructions-and-hooks-change-benchmark-built-from-project-history.md` on branch ghi-md-awaiting-filing-branch-proposing-development-system-benchmark-from-project-history.

@@ -1254,18 +1254,19 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             f"{reach_clause_for_a_running_seat(name)}")
 
 
-def list_agent_seat_names_with_agent_session_records(agents_root: Path, handoff_directory: Path,
-                             projects_root: Path) -> list:
-    """Return, sorted, the directories under agents_root that ever held a seat."""
-    # A never-run directory is not a crashed seat; explicit names may still recover one.
-    def ever_ran(name: str) -> bool:
+def list_agent_seat_names_with_agent_session_records(agents_root: Path,
+                                                     handoff_directory: Path) -> list:
+    """Return, sorted, the directories under agents_root that hold a supervisor
+    state file or a session-handoff file, the records only an agent-seat leaves."""
+    # Transcripts do not mark an agent-seat: any Claude session run in a topic
+    # worktree under agents_root leaves them. Explicit names may still recover any directory.
+    def supervisor_or_handoff_recorded(name: str) -> bool:
         return (supervisor.supervisor_state_path(handoff_directory, name).is_file()
-                or supervisor.handoff_file_path(handoff_directory, name).is_file()
-                or harness_project_directory(agents_root / name, projects_root).is_dir())
+                or supervisor.handoff_file_path(handoff_directory, name).is_file())
     if not agents_root.is_dir():
         return []
     return sorted(entry.name for entry in agents_root.iterdir()
-                  if entry.is_dir() and ever_ran(entry.name))
+                  if entry.is_dir() and supervisor_or_handoff_recorded(entry.name))
 
 
 def append_to_recovery_log(handoff_directory: Path, report: str):
@@ -1341,7 +1342,7 @@ def main(argv=None) -> int:
                              f"an apostrophe into an iTerm window: {path}")
 
     if arguments.all:
-        names = list_agent_seat_names_with_agent_session_records(agents_root, handoff_directory, projects_root)
+        names = list_agent_seat_names_with_agent_session_records(agents_root, handoff_directory)
         if not names:
             print(f"recover-crashed-seats: no seat directories under {agents_root}")
             return 1
