@@ -317,12 +317,14 @@ def state_directory(environment, home):
 
 
 def append_log_line(path, entry):
+    """Append entry to the log at path; return None, or why it could not be written."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as log:
             log.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except OSError:
-        pass
+    except OSError as error:
+        return f"{type(error).__name__}: {error}"
+    return None
 
 
 def claim_once_per_session(directory, key):
@@ -371,7 +373,8 @@ def run(stdin_text, environment, home, now):
         outcome = "reminded"
     else:
         outcome = "already_reminded"
-    append_log_line(log_path(environment, home), {
+    path = log_path(environment, home)
+    log_failure = append_log_line(path, {
         "time": now.isoformat(),
         "event": event,
         "session_id": payload.get("session_id"),
@@ -381,6 +384,10 @@ def run(stdin_text, environment, home, now):
         "matches": [{"pattern": number, "phrase": phrase} for number, phrase in matches],
         "reply": reply[:REPLY_TEXT_LOGGED_CHARACTERS],
     })
+    if log_failure:
+        # The reminder still goes out on stdout, so a log failure is told on stderr, not raised.
+        print(f"absence-claim-locator-reminder-hook: the outcome {outcome!r} was not logged "
+              f"to {path}: {log_failure}", file=sys.stderr)
     if outcome != "reminded":
         return None
     matched = ", ".join(f'"{phrase}"' for _, phrase in matches[:3])
@@ -415,16 +422,15 @@ def main(argv=None):
         if output is not None:
             print(output)
     except Exception as error:
-        not_logged = ""
         try:
-            append_log_line(log_path(os.environ, Path.home()), {
+            log_failure = append_log_line(log_path(os.environ, Path.home()), {
                 "time": datetime.now(timezone.utc).isoformat(),
                 "outcome": "error",
                 "error": f"{type(error).__name__}: {error}",
             })
         except Exception as log_error:
-            not_logged = (f"; the failure was not logged either: "
-                          f"{type(log_error).__name__}: {log_error}")
+            log_failure = f"{type(log_error).__name__}: {log_error}"
+        not_logged = f"; the failure was not logged either: {log_failure}" if log_failure else ""
         print(f"absence-claim-locator-reminder-hook: the last reply was not checked for a "
               f"claim that a file is missing, because the hook failed; the turn ends as "
               f"usual: {type(error).__name__}: {error}{not_logged}", file=sys.stderr)

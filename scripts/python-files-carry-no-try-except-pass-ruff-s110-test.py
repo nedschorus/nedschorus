@@ -147,6 +147,16 @@ def run_failure_cases():
     check("an error exit from Ruff is passed on, not taken as no hits",
           status == 2 and "Failed to parse" in output, repr((status, output)))
 
+    verdict = repository_verdict(status, output, 1)
+    check("an error exit from Ruff on the checkout fails the suite, naming the exit status",
+          verdict[1] is False and "Ruff exited 2: error: Failed to parse" in verdict[2],
+          repr(verdict))
+    verdict = repository_verdict(1, "a.py:3:1: S110", 1)
+    check("an S110 hit in the checkout fails the suite, with how to fix it",
+          verdict[1] is False and "a.py:3:1: S110" in verdict[2]
+          and FIX_INSTRUCTIONS.split("\n")[0] in verdict[2],
+          repr(verdict))
+
 
 def run_fixture_cases():
     """Ruff, as this suite runs it, flags a swallowed exception and passes a reported or narrowed one."""
@@ -169,18 +179,21 @@ def run_fixture_cases():
               repr((status, output)))
 
 
+def repository_verdict(status, output, file_count):
+    """Return (case name, passed, detail) for Ruff's exit status and output on the checkout."""
+    if status == 0:
+        return f"no `except` swallows a failure in the checkout's {file_count} Python files", True, ""
+    if status == 1:
+        return ("no `except` swallows a failure in the checkout's Python files", False,
+                f"{output}\n{FIX_INSTRUCTIONS}".replace("\n", "\n    "))
+    return ("Ruff checks the checkout's Python files", False,
+            f"Ruff exited {status}: {output or '(no output)'}".replace("\n", "\n    "))
+
+
 def run_repository_check():
     files = python_files(REPOSITORY, subprocess.run)
     check("the checkout has Python files to check", len(files) > 0, repr(files))
-    status, output = s110_report(REPOSITORY, files, subprocess.run)
-    if status == 0:
-        check(f"no `except` swallows a failure in the checkout's {len(files)} Python files", True)
-    elif status == 1:
-        check("no `except` swallows a failure in the checkout's Python files", False,
-              f"{output}\n{FIX_INSTRUCTIONS}".replace("\n", "\n    "))
-    else:
-        check("Ruff checks the checkout's Python files", False,
-              f"Ruff exited {status}: {output or '(no output)'}".replace("\n", "\n    "))
+    check(*repository_verdict(*s110_report(REPOSITORY, files, subprocess.run), len(files)))
 
 
 def main():
