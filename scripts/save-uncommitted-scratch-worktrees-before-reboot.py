@@ -26,10 +26,12 @@ THE RESTART PROCEDURE, for any agent preparing a restart of the Mac or
 ned-box:
 
 1. Check that no agent-seat is busy. Use your ListAgents tool and look for
-   busy sessions. Check ~/.claude/.run-all-test-suites.lock: if a process
-   holds it (`fuser ~/.claude/.run-all-test-suites.lock` on ned-box,
-   `lsof ~/.claude/.run-all-test-suites.lock` on the Mac), a test run is
-   going. Run `pgrep -fl 'git push|codex exec'` for pushes and Codex runs in
+   busy sessions. Run `pgrep -af 'run-all-test-suites|run-suite-in-signal-sandbox|pull-request-mutation-testing-survivors'`
+   on ned-box (`pgrep -lf` with the same pattern on the Mac): a process it
+   lists, by its full command line, is a test run going. On ned-box test
+   runs overlap and take no machine lock, so a free
+   ~/.claude/.run-all-test-suites.lock does not mean no run is going.
+   Run `pgrep -fl 'git push|codex exec'` for pushes and Codex runs in
    flight. Tell the user what you found. If anything is busy, wait for it to
    finish or let the user decide; do not stop another agent's work yourself.
    Wait for the user's go-ahead before going on.

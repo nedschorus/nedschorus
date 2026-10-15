@@ -541,6 +541,19 @@ def run_cases_on_ned_box(workspace: Path):
           and "seconds waiting for the machine's lock: 4" in record_lines,
           f"{result!r}\n{record_lines!r}")
 
+    # --- The runner's suites waited for admission ----------------------------
+    admission_line = "seconds suites waited for admission: 12 in all, the longest 6"
+    result = fixture.run(lines=[*PASSING_RUNNER_LINES[:-1], admission_line,
+                                PASSING_RUNNER_LINES[-1]])
+    record_lines = (fixture.record("ned-box") or "").splitlines()
+    lock_line = next((index for index, line in enumerate(record_lines)
+                      if line.startswith("seconds waiting for the machine's lock: ")), None)
+    check("the record gives the runner's line on how long its suites waited for "
+          "admission, after the lock's line",
+          result.code == 0 and lock_line is not None
+          and record_lines[lock_line + 1:lock_line + 2] == [admission_line],
+          f"{result!r}\n{record_lines!r}")
+
     result = fixture.run(exits=(3,), lock_wait_bound_seconds=6)
     record_lines = (fixture.record("ned-box") or "").splitlines()
     check("a runner that waited out its bound is run once and passed the bound, and the "

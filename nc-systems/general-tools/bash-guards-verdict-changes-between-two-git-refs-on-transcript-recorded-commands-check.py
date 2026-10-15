@@ -43,6 +43,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
@@ -507,7 +508,10 @@ def run_step_in_child(arguments, log_path, deadline_seconds):
         except subprocess.TimeoutExpired:
             returncode = None
         finally:
-            with contextlib.suppress(ProcessLookupError):
+            # macOS answers EPERM, not ESRCH, when every process left in the group has exited but is not yet
+            # reaped, as the step is after a normal exit; the processes are this replay's own, so EPERM can
+            # mean nothing else.
+            with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(step.pid, signal.SIGKILL)
             step.wait()
     if returncode is None:
@@ -552,9 +556,12 @@ def remove_checkouts(repository, checkouts):
     if listed.returncode != 0:
         return [f"{checkout}: git worktree list exited {listed.returncode}: {listed.stderr.strip()}"
                 for checkout in checkouts]
-    registered = {line[len("worktree "):] for line in listed.stdout.splitlines() if line.startswith("worktree ")}
+    # git lists each checkout by its resolved path, so a checkout named through a symlink, such as macOS's
+    # /var for /private/var, is matched by its resolved path; otherwise it would be deleted as unregistered.
+    registered = {os.path.realpath(line[len("worktree "):])
+                  for line in listed.stdout.splitlines() if line.startswith("worktree ")}
     for checkout in checkouts:
-        if str(checkout) not in registered:
+        if os.path.realpath(checkout) not in registered:
             if os.path.exists(checkout):
                 shutil.rmtree(checkout, ignore_errors=True)  # An add stopped before git registered it.
             if os.path.exists(checkout):
@@ -722,7 +729,13 @@ def main(argv=None):
         print(f"REPLAY FAILED: {error}", file=sys.stderr)
         return 2
     except Exception as error:  # A pairs file, the scratch directory or the disk; never the verdict status 1.
-        print(f"REPLAY FAILED: {type(error).__name__}: {error}", file=sys.stderr)
+        # Where in this file it was raised, since an error such as PermissionError does not say which step it
+        # stopped; the innermost frame is often inside the standard library.
+        where = [frame for frame in traceback.extract_tb(error.__traceback__)
+                 if os.path.realpath(frame.filename) == os.path.realpath(__file__)][-1]
+        this_file = Path(os.path.realpath(__file__))
+        print(f"REPLAY FAILED: {type(error).__name__}: {error}\n  raised at "
+              f"{this_file.relative_to(this_file.parents[2])}:{where.lineno}: {where.line}", file=sys.stderr)
         return 2
 
 

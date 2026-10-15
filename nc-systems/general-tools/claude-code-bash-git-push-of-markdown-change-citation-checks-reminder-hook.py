@@ -24,7 +24,8 @@ of the call's commands. When a git command earlier in the same call can move
 a ref, as `git commit -m x && git push` does, the pushed ref is not judged:
 the hook gives its failure line instead, naming that command. The commands
 counted are those in REF_CHANGING_GIT_SUBCOMMANDS, git branch with an option
-that moves, copies or renames a branch, and git fetch with a src:dst refspec.
+that moves, copies or renames a branch, and git fetch with a src:dst refspec
+after its repository.
 
 Any failure, git erroring, the git calls running past the hook's time budget,
 the shell reader failing, or the force-push guard's file failing to load,
@@ -74,6 +75,18 @@ REF_CHANGING_GIT_SUBCOMMANDS = {"am", "checkout", "cherry-pick", "commit", "merg
 # Short options of git branch that set, copy or rename a branch; a cluster such as -fm counts too.
 BRANCH_REF_MOVING_SHORT_OPTIONS = set("fcCmM")
 BRANCH_REF_MOVING_LONG_OPTIONS = {"--force", "--copy", "--move"}
+# Options of git branch and git fetch whose value may be the next word, which must
+# then not be read as an option or a refspec: `--sort -committerdate` sorts.
+BRANCH_VALUE_LONG_OPTIONS = {"--sort", "--contains", "--no-contains", "--with", "--without",
+                             "--merged", "--no-merged", "--points-at", "--format",
+                             "--set-upstream-to"}
+BRANCH_VALUE_SHORT_OPTIONS = set("u")
+FETCH_VALUE_LONG_OPTIONS = {"--depth", "--deepen", "--shallow-since", "--shallow-exclude",
+                            "--upload-pack", "--server-option", "--refmap", "--negotiation-tip",
+                            "--jobs", "--filter", "--submodule-prefix", "--recurse-submodules-default"}
+FETCH_VALUE_SHORT_OPTIONS = set("oj")
+# With any of these, every operand of git fetch names a remote, so none is a refspec.
+FETCH_EVERY_OPERAND_A_REMOTE_OPTIONS = {"--all", "--multiple", "-m"}
 
 REMINDER_TEMPLATE = (
     HOOK_NAME + ": this push goes ahead now. It sends {ref}, which changes "
@@ -165,15 +178,63 @@ def ref_changing_git_command(words):
     subcommand, arguments = git_subcommand(words)
     if subcommand in REF_CHANGING_GIT_SUBCOMMANDS:
         return subcommand
-    if subcommand == "branch" and any(
-            word in BRANCH_REF_MOVING_LONG_OPTIONS
-            or (word.startswith("-") and not word.startswith("--")
-                and BRANCH_REF_MOVING_SHORT_OPTIONS & set(word[1:]))
-            for word in arguments):
-        return "branch"
-    if subcommand == "fetch" and any(":" in word for word in arguments):
-        return "fetch"
+    if subcommand == "branch":
+        options, _, _ = options_and_operands(arguments, BRANCH_VALUE_LONG_OPTIONS,
+                                             BRANCH_VALUE_SHORT_OPTIONS)
+        if any(option in BRANCH_REF_MOVING_LONG_OPTIONS
+               or (not option.startswith("--") and option[1:] in BRANCH_REF_MOVING_SHORT_OPTIONS)
+               for option in options):
+            return "branch"
+    if subcommand == "fetch":
+        options, operands, values = options_and_operands(arguments, FETCH_VALUE_LONG_OPTIONS,
+                                                         FETCH_VALUE_SHORT_OPTIONS)
+        # A --refmap value that maps a source to a destination writes the destination.
+        if any(":" in value for value in values.get("--refmap", [])):
+            return "fetch"
+        # The first operand is the repository, which may hold a colon, as a URL or
+        # host:path does; with --all or --multiple every operand names a remote.
+        if not FETCH_EVERY_OPERAND_A_REMOTE_OPTIONS & set(options) and any(
+                ":" in operand for operand in operands[1:]):
+            return "fetch"
     return None
+
+
+def options_and_operands(arguments, value_long_options, value_short_options):
+    """Split a git subcommand's words into its options, its operands and the options' values.
+
+    Each option comes back as --name or as one -x letter, so a cluster such as -fm
+    gives -f and -m. An option's value, written in the same word or as the next word,
+    is not an operand; values maps each option that took one to its values in order.
+    Every word after -- is an operand."""
+    options, operands, values = [], [], {}
+    index = 0
+    while index < len(arguments):
+        word = arguments[index]
+        index += 1
+        if word == "--":
+            operands.extend(arguments[index:])
+            break
+        if word.startswith("--"):
+            name, has_value, value = word.partition("=")
+            options.append(name)
+            if name in value_long_options:
+                if not has_value and index < len(arguments):
+                    value = arguments[index]
+                    index += 1
+                values.setdefault(name, []).append(value)
+        elif word.startswith("-") and len(word) > 1:
+            for position, letter in enumerate(word[1:], start=1):
+                options.append("-" + letter)
+                if letter in value_short_options:
+                    value = word[position + 1:]
+                    if not value and index < len(arguments):
+                        value = arguments[index]
+                        index += 1
+                    values.setdefault("-" + letter, []).append(value)
+                    break
+        else:
+            operands.append(word)
+    return options, operands, values
 
 
 def push_deletes(push_words):

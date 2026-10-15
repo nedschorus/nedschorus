@@ -120,9 +120,12 @@ def git(repo, *arguments):
                    check=True, capture_output=True)
 
 
-# A suite that says it started, then runs until the test creates its stop file.
+# A suite that says it started, then runs until the test creates its stop file. It says
+# so in its output too, which the runner copies to the suite's log as it runs: a sandboxed
+# suite's write in the checkout does not reach the checkout outside.
 WAITS_FOR_THE_STOP_FILE = f'''import os, pathlib, time
 pathlib.Path(os.environ["{STARTED_FILE_VARIABLE}"]).write_text(str(os.getpid()))
+print("started", flush=True)
 while not pathlib.Path(os.environ["{STOP_FILE_VARIABLE}"]).exists():
     time.sleep(0.05)
 '''
@@ -138,15 +141,34 @@ def make_repo(root, suite_path, body=WAITS_FOR_THE_STOP_FILE, name="repo"):
     return repo
 
 
+# Runs the runner with admission's CPU and memory thresholds opened wide, so a case does
+# not wait on how busy the machine is; the admission directory is this test's own.
+ADMISSION_OPENED_DRIVER = r'''
+import importlib.util, sys
+program_path, *arguments = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("run_all_test_suites", program_path)
+program = importlib.util.module_from_spec(spec)
+sys.argv = [program_path, *arguments]
+spec.loader.exec_module(program)
+program.TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 101
+program.TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE = -1
+sys.exit(program.main(arguments))
+'''
+
+
 def start_run(root, repo, name):
     """Start the runner on repo with its own log directory; return (process, log dir)."""
     environment = dict(os.environ)
     environment.pop(module.SIGNAL_SANDBOX_INSIDE_VARIABLE, None)
-    environment[STARTED_FILE_VARIABLE] = str(root / f"{name}.started")
-    environment[STOP_FILE_VARIABLE] = str(root / "stop")
+    # In the checkout, which a suite outside the test sandbox and this test share; inside
+    # a test sandbox the checkout is a copy-on-write overlay, so a sandboxed suite reports
+    # its start in its output instead.
+    environment[STARTED_FILE_VARIABLE] = str(repo / f"{name}.started")
+    environment[STOP_FILE_VARIABLE] = str(repo / "stop")
     log_dir = root / f"logs-{name}"
     process = subprocess.Popen(
-        [sys.executable, str(PROGRAM), "--checkout", str(repo), "--log-dir", str(log_dir),
+        [sys.executable, "-c", ADMISSION_OPENED_DRIVER, str(PROGRAM), "--checkout", str(repo),
+         "--log-dir", str(log_dir),
          "--lock-file", str(root / "run.lock"),
          "--recorded-inputs-directory", str(root / "recordings")],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -165,7 +187,7 @@ def finish_run(root, repo, name):
     environment[STARTED_FILE_VARIABLE] = str(root / f"{name}.started")
     environment[STOP_FILE_VARIABLE] = str(root / "stop")
     return subprocess.run(
-        [sys.executable, str(PROGRAM), "--checkout", str(repo),
+        [sys.executable, "-c", ADMISSION_OPENED_DRIVER, str(PROGRAM), "--checkout", str(repo),
          "--log-dir", str(root / f"logs-{name}"), "--lock-file", str(root / "run.lock"),
          "--recorded-inputs-directory", str(root / "recordings")],
         stdin=subprocess.DEVNULL, capture_output=True, text=True, env=environment,
@@ -266,7 +288,7 @@ else:
             quick_repo = make_repo(root, "quick-test.py", "print('ok')\n", "quick-repo")
             run_b, logs_b = start_run(root, repo, "b")
             try:
-                started = wait_until(lambda: (root / "b.started").exists())
+                started = wait_until(lambda: (repo / "b.started").exists())
                 check("the killed run's suite starts", started, run_b.poll())
                 records = run_records(root)
                 suite_processes = records[0]["suite_processes"] if records else []
@@ -280,12 +302,12 @@ else:
                 signal_own_descendant(run_b.pid, runner_ticks, signal.SIGKILL)
                 run_b.wait(timeout=30)
                 run_b.stdout.close()
-                suite_pid = int((root / "b.started").read_text())
+                suite_pid = int((repo / "b.started").read_text())
                 check("the suite outlives its killed runner",
                       module.process_start_ticks(suite_pid) is not None)
                 result_c = finish_run(root, quick_repo, "c-with-the-suite-still-running")
             finally:
-                (root / "stop").write_text("stop\n")
+                (repo / "stop").write_text("stop\n")
             check("the next run keeps the traces of a killed run whose suite still runs",
                   trace.exists(), result_c.stdout)
             check("and says why",
@@ -314,7 +336,9 @@ else:
             quick_repo = make_repo(root, "quick-test.py", "print('ok')\n", "quick-repo")
             run_e, logs_e = start_run(root, repo, "e")
             try:
-                started = wait_until(lambda: (root / "e.started").exists())
+                suite_log = module.log_path_for(logs_e, sandboxed_suite)
+                started = wait_until(lambda: suite_log.exists()
+                                     and "started" in suite_log.read_text(errors="replace"))
                 records = run_records(root)
                 suite_processes = records[0]["suite_processes"] if records else []
                 init = suite_processes[0] if suite_processes else {}
@@ -334,7 +358,7 @@ else:
                       init_pid is not None and wait_until(
                           lambda: module.process_start_ticks(init_pid) is None, seconds=10))
             finally:
-                (root / "stop").write_text("stop\n")
+                (repo / "stop").write_text("stop\n")
             trace = logs_e / "recorded-inputs" / "left.strace"
             trace.mkdir(parents=True, exist_ok=True)
             result_f = finish_run(root, quick_repo, "f")

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Tests for the launchers' update-at-launch step (nedschorus#62): every
+# Tests for the launchers' update-at-launch step: every
 # launch checks for an update first, a hanging or failing update never
 # blocks the launch, a TIMED-OUT update is the one case the launcher reports
 # itself while a plain failure stays quiet, and the ubuntu twin carries the
@@ -117,7 +117,7 @@ status=$(run_mac_launcher ok okcase)
 check "a working update still launches" "$([ "$status" -eq 0 ]; echo $?)"
 check "every launch invokes claude update" "$([ -f "$WORKSPACE/update-ran-okcase" ]; echo $?)"
 
-# Per-seat tmux servers (2026-08-21): the seat is created on its OWN server
+# Per-seat tmux servers: the seat is created on its OWN server
 # (-L <name>) so one server crash cannot take the whole Mac fleet down, and
 # the set-titles options ride the same invocation (chained with \;) because
 # the seat's server does not exist before its first session does.
@@ -135,8 +135,7 @@ check "the mac launcher's window title reads [mac] <seat>" $?
 # a fresh per-seat server. The stub makes the per-seat socket look seatless
 # while the default socket claims the session, and the launcher must then
 # seat on -L default. HOME is sandboxed like every invocation here (see the
-# PR #107 note below: an unsandboxed run edits the operator's real
-# ~/.claude.json).
+# note below: an unsandboxed run edits the operator's real ~/.claude.json).
 : > "$WORKSPACE/tmux-calls-transition"
 HOME="$WORKSPACE/home" NEDSCHORUS_AGENTS_ROOT="$WORKSPACE/agents" \
     PATH="$STUBS:$PATH" \
@@ -177,7 +176,7 @@ case "$box_command" in
     (*) check "ubuntu box command runs the update under the update lock, with its limit" 1 ;;
 esac
 
-# Per-seat tmux servers on the box (2026-08-21): the remote command must probe
+# Per-seat tmux servers on the box: the remote command must probe
 # the seat's own socket, fall back to the default socket where a pre-change
 # seat still lives, and seat on whichever it selected.
 case "$box_command" in
@@ -192,12 +191,12 @@ case "$box_command" in
     (*'-L "$SEAT_TMUX_SOCKET" new-session'*) check "ubuntu box command seats on the selected tmux socket" 0 ;;
     (*) check "ubuntu box command seats on the selected tmux socket" 1 ;;
 esac
-# P2-3 (PR #122 review): the socket-selection string contains `;`, which
+# The socket-selection string contains `;`, which
 # un-grouped would END the && list on the box — a failed prepare would no
 # longer abort, and tmux would launch with an empty -L socket name. The
-# brace group keeps it one && operand. Proven by EXECUTION, not sed surgery
-# (the first probe here was vacuous — a greedy sed left a dangling quote and
-# the dead probe passed on both trees, caught in re-review): the captured
+# brace group keeps it one && operand. Proven by EXECUTION, not sed surgery,
+# because a sed edit of the command text can leave a dangling quote and a dead
+# probe that passes on both trees: the captured
 # box command runs with HOME sandboxed and python3 stubbed to fail, so the
 # pre-trust prepare step hard-fails; with correct grouping nothing after it
 # may run. A negative control un-braces the selection and asserts tmux IS
@@ -208,8 +207,11 @@ case "$box_command" in
 esac
 P23_STUBS="$WORKSPACE/p23-stubs"; mkdir -p "$P23_STUBS"
 P23_HOME="$WORKSPACE/p23-home"; mkdir -p "$P23_HOME"
+# has-session answers "no such session" without logging, so the box command
+# takes its prepare-and-start branch; only a later tmux call counts as reached.
 cat > "$P23_STUBS/tmux" << 'EOF'
 #!/bin/sh
+case " $* " in (*" has-session "*) exit 1;; esac
 echo "TMUX-RAN $*" >> "${TMUX_RAN_LOG:?}"
 exit 0
 EOF
@@ -246,10 +248,9 @@ esac
 
 # The after-exit prompt, both twins. When a supervisor exits, its shell offers
 # the operator a choice, and the ordering is load-bearing: `claude --continue`
-# runs but starts NO supervisor, so the seat it resumes can never reincarnate. It
-# was listed first until 2026-08-19, and on 2026-08-18 two seats ran
-# unsupervised for about 25 hours because it was the only listed option that
-# worked (nedschorus#45). Asserted on the emitted command text of both
+# runs but starts NO supervisor, so the seat it resumes can never reincarnate,
+# and an operator picks the first listed option that works. Asserted on the
+# emitted command text of both
 # launchers -- the box twin's shell text only ever exists as the string it
 # hands ssh, so the string is the only place the box's prompt can be checked
 # from this Mac.
@@ -293,8 +294,7 @@ esac
 # HOME is not optional here, and omitting it is not a quiet mistake: the Mac
 # launcher pre-trusts the seat directory by writing through ~/.claude.json, so a
 # run without it edits the OPERATOR'S REAL Claude config, adding one dead
-# temp-directory entry per run. Thirteen accumulated in his live config before
-# this was caught (PR #107 review, flagged by Codex). Every invocation in this
+# temp-directory entry per run. Every invocation in this
 # file sandboxes HOME for that reason; the case below proves this one did.
 : > "$WORKSPACE/tmux-calls-afterexit"
 HOME="$WORKSPACE/home" \
@@ -311,9 +311,9 @@ grep -qF -- "<new-session><-A>" "$WORKSPACE/tmux-calls-afterexit.arguments" \
 check "the mac launcher's attached launch titles the window [mac] <seat>" $?
 
 # The sandbox itself, asserted rather than assumed. The launcher's pre-trust step
-# always writes a .claude.json somewhere; the only question is whose. Thirteen
-# dead temp-directory entries reached the operator's real config before this was
-# caught (PR #107 review, flagged by Codex), one per suite run.
+# always writes a .claude.json somewhere; the only question is whose, and a
+# write to the operator's real config adds a dead temp-directory entry there
+# on every suite run.
 #
 # Asserted on THIS invocation's own seat name, not on the mere existence of a
 # workspace config: the earlier cases sandbox HOME correctly and create that file
