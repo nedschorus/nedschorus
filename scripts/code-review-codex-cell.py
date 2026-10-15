@@ -572,8 +572,8 @@ def main(argv=None) -> int:
     subject_sha = resolved.stdout.strip()
 
     try:
-        instructions = pathlib.Path(arguments.instructions_file).read_text(
-            encoding="utf-8").strip()
+        instructions_bytes = pathlib.Path(arguments.instructions_file).read_bytes()
+        instructions = instructions_bytes.decode("utf-8").strip()
     except (OSError, UnicodeDecodeError) as error:
         print(f"code-review-codex-cell: cannot read --instructions-file: "
               f"{type(error).__name__}: {error}\n"
@@ -586,7 +586,7 @@ def main(argv=None) -> int:
               "The review does not run without the PR reviewer instructions. Pass main's "
               "docs/agents/pr-reviewer-instructions.md.", file=sys.stderr)
         return EXIT_BAD_INVOCATION
-    instructions_digest = hashlib.sha256(instructions.encode("utf-8")).hexdigest()[:12]
+    instructions_digest = hashlib.sha256(instructions_bytes).hexdigest()[:12]
 
     description = ""
     if arguments.pull_request_description_file:

@@ -167,8 +167,8 @@ def scratch_home_for(stub_directory):
     return home
 
 
-def run_cell(stub_directory, stub_body, *arguments):
-    """Run the cell with a stub codex first on PATH.
+def run_cell(stub_directory, stub_body, *arguments, cwd=None):
+    """Run the cell with a stub codex first on PATH, from cwd if given.
 
     Run as a subprocess, not by importing main(): on the unfixed code the
     directory case raises, and a subprocess turns that into a readable exit
@@ -185,7 +185,7 @@ def run_cell(stub_directory, stub_body, *arguments):
     environment["HOME"] = str(scratch_home_for(stub_directory))
     return subprocess.run(
         [sys.executable, str(CELL_SCRIPT), *arguments],
-        capture_output=True, text=True, check=False, env=environment,
+        capture_output=True, text=True, check=False, env=environment, cwd=cwd,
     )
 
 
@@ -484,10 +484,34 @@ with tempfile.TemporaryDirectory() as scratch:
           default_overrides and "is this pull request's description, given as context" not in default_overrides[0],
           repr(default_overrides))
     argv_report_text = argv_report.read_text(encoding="utf-8")
-    default_digest = hashlib.sha256(default_instructions.encode("utf-8")).hexdigest()[:12]
-    check("the provenance header carries the instructions' SHA-256 prefix",
+    # The file's own bytes, so `sha256sum` on the file gives the same prefix.
+    default_digest = hashlib.sha256(
+        (CELL_SCRIPT.resolve().parent.parent / "docs" / "agents"
+         / "pr-reviewer-instructions.md").read_bytes()).hexdigest()[:12]
+    check("the provenance header carries the SHA-256 prefix of the instructions file's bytes",
           f"pull-request-reviewer-instructions-sha256={default_digest}"
           in argv_report_text.splitlines()[0], repr(argv_report_text[:300]))
+
+    # Run from a directory holding its own docs/agents/pr-reviewer-instructions.md,
+    # as a head worktree does: the default must still be the cell checkout's copy.
+    elsewhere = scratch / "elsewhere"
+    (elsewhere / "docs" / "agents").mkdir(parents=True)
+    (elsewhere / "docs" / "agents" / "pr-reviewer-instructions.md").write_text(
+        "ELSEWHERE-COPY-OF-THE-RULES\n", encoding="utf-8")
+    elsewhere_report = scratch / "elsewhere-report.md"
+    elsewhere_result = run_cell(stubs, STUB_CODEX_RECORDS_ARGV,
+                                "--commit", head_sha, "--repo", str(checkout),
+                                "--output", str(elsewhere_report), cwd=elsewhere)
+    elsewhere_command = json.loads(
+        Path(f"{elsewhere_report}.argv.json").read_text(encoding="utf-8")) \
+        if Path(f"{elsewhere_report}.argv.json").is_file() else []
+    elsewhere_overrides = [value for value in elsewhere_command
+                           if value.startswith("developer_instructions=")]
+    check("run from another directory, the default instructions are the cell checkout's copy",
+          elsewhere_result.returncode == 0 and len(elsewhere_overrides) == 1
+          and "ELSEWHERE-COPY-OF-THE-RULES" not in elsewhere_overrides[0]
+          and json.dumps(default_instructions, ensure_ascii=False)[1:-1] in elsewhere_overrides[0],
+          f"exit {elsewhere_result.returncode}; stderr={elsewhere_result.stderr!r}")
 
     instructions_file = scratch / "pr-reviewer-instructions.md"
     instructions_file.write_text("# Stand-in reviewer rules\n\nA markdown file gets no finding.\n",
