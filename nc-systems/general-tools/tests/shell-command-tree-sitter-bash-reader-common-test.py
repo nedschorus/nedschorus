@@ -146,6 +146,57 @@ check("a case's branches are commands and its patterns are not",
 check("$'...' ends at its unescaped quote, and a plain '...' at its first quote",
       words_of("a $'it\\'s' b; c 'x'") == [["a", "it's", "b"], ["c", "x"]],
       words_of("a $'it\\'s' b; c 'x'"))
+found = words_of("echo \\ #word; rm -rf x && git push --force")
+check("a # after an escaped space is part of its word, so the commands after it on the line are read",
+      [words[0] for words in found] == ["echo", "rm", "git"] and "#word" in found[0], found)
+check("a # after an escaped backslash still starts a comment, which hides the rest of its line",
+      words_of("echo \\\\ # rm -rf x\nls") == [["echo", "\\"], ["ls"]],
+      words_of("echo \\\\ # rm -rf x\nls"))
+found = reader.simple_commands("echo '\\ #q'; cat <<EOF\n\\ #body\nEOF\nls")
+check("a # after an escaped space inside quotes and in a here-document body is left as written",
+      [list(words) for words in found] == [["echo", "\\ #q"], ["cat"], ["ls"]]
+      and found[1].redirects == [("<<", "\\ #body\n")],
+      [(list(words), words.redirects) for words in found])
+found = words_of("echo \\\t#word; rm -rf x")
+check("a # after an escaped tab is part of its word, so the commands after it on the line are read",
+      [words[0] for words in found] == ["echo", "rm"], found)
+found = reader.simple_commands('cat <<EOF; echo \\ #word"\ninside"\nEOF\ntmux kill-server')
+check("a # after an escaped space on a here-document's opening line does not hide the quote that "
+      "carries the line on, so the body starts after it and the command after the body is read",
+      [words[0] for words in found] == ["cat", "echo", "tmux"] and found[0].redirects == [("<<", "")],
+      [(list(words), words.redirects) for words in found])
+found = words_of("cat <<EOF\n$(echo a \\ #x; rm y\n)\nEOF\n")
+check("a # after an escaped space in a substitution in a here-document body is part of its word, "
+      "so the commands after it in the substitution are read",
+      ["rm", "y"] in found, found)
+found = reader.simple_commands("cat <<EOF\nEOFX\n\\ #x\nEOF\necho after")
+check("a # after an escaped space on a body line that only starts with the delimiter is left as written",
+      found[0].redirects == [("<<", "EOFX\n\\ #x\n")] and list(found[1]) == ["echo", "after"],
+      [(list(words), words.redirects) for words in found])
+found = words_of('echo "$(echo \\ #x)" `echo \\ #y` ${v:-\\ #z}')
+check("a word holding a substitution or an expansion reads as written, with no backslash added before its #",
+      ["echo", "$(echo \\ #x)", "`echo \\ #y`", "${v:-\\ #z}"] in found, found)
+script = b"#!/bin/sh\nx=`# PR 1\necho hi`\necho \\ #word;# PR 2\ncat <<EOF\n# body\nEOF\ncase $y in\n  *\"a\"*\"b\"*) ;;\nesac\n"
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(script)
+check("the comments of a script are tree-sitter-bash's own, after the reader's corrections, "
+      "in offsets of the script as given",
+      [script[start:end] for start, end in read.comments] == [b"#!/bin/sh", b"# PR 1", b"# PR 2"],
+      [script[start:end] for start, end in read.comments])
+check("a span tree-sitter-bash cannot read is reported with whether it holds a #, "
+      "and a script whose quotes and here-documents close has nothing missing",
+      read.unreadable_spans and not any(holds for _, holds in read.unreadable_spans)
+      and read.missing_tokens == [] and read.heredocs_never_closed == [], read)
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(
+    b'case "$x" in\n  *"a#"*"b"*) echo hit ;;\nesac\n')
+check("a span tree-sitter-bash cannot read that holds a # is reported as holding one",
+      read.unreadable_spans == [(15, True)], read)
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(
+    b"cat <<EOF\nno end\n")
+check("a here-document that never closes is reported as written",
+      read.heredocs_never_closed == ["<<EOF"], read)
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(b"if true; then echo hi\n")
+check("a token a line needs that never comes is reported with its line",
+      read.missing_tokens == [("fi", 2)], read)
 check("export and unset are read as commands with their words",
       words_of("export A=1; unset B") == [["export", "A=1"], ["unset", "B"]],
       words_of("export A=1; unset B"))
