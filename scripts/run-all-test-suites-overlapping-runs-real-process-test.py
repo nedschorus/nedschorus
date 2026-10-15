@@ -11,7 +11,8 @@ overlapping runs of scripts/resupervise-seat-test.py both exited 0 while
 silently dropping cases to SKIP, because they shared tmux sockets under /tmp.
 
 Linux with bwrap only; elsewhere every case is skipped. It starts bwrap, which
-cannot start inside bwrap, so the runner runs it outside the test sandbox.
+cannot start inside bwrap, so the runner runs it outside the test sandbox; run
+inside a sandbox anyway, by a runner that does not list it, it skips.
 
 Run: python3 scripts/run-all-test-suites-overlapping-runs-real-process-test.py   (exit 0 = all passed)
 """
@@ -83,6 +84,10 @@ print("PASS  still alone after 3 s", flush=True)
 def unavailable_because():
     if not sys.platform.startswith("linux"):
         return f"{sys.platform} has no test sandbox"
+    # A runner older than this suite runs it inside its sandbox, as merge-lane-2's head test
+    # run does with main's runner; there the inner runs cannot build test sandboxes.
+    if os.environ.get("RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX"):
+        return "this suite is already inside a sandbox, where bwrap cannot start again"
     if shutil.which("bwrap") is None:
         return "bwrap is not on PATH"
     return None

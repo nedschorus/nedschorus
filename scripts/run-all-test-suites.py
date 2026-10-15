@@ -76,29 +76,40 @@ suite sends can reach only the processes it started, never the agent-seats
 that run as the same account.
 
 THE SIGNAL SANDBOX IS ALSO EACH SUITE'S TEST SANDBOX, built when the
-suite starts and gone when it ends. The file system is read-only, except: a
-private /tmp, which TMPDIR and TMUX_TMPDIR name, so no tmux server or socket
-of an agent-seat is reachable; a private /dev and System V IPC; the home
-directory as a copy-on-write overlay, so a suite reads the real home but its
-writes there vanish when it ends; the checkout under test, bound writable,
-so what the suite writes there stays; and the suite's own input record and
-strace traces, which this program reads after the suite ends. The run's log
-directory, where this program writes, is out of the suite's reach, and the
-input recorder is shown read-only; this program writes and reads the files
-there without following a symbolic link. The checkout's git common directory
-is bound read-only above the checkout, since every worktree of the
+suite starts and gone when it ends. It hides by default, because a list of
+files or sockets to cover misses every one not on it and every one made after
+the list. The file system is read-only, except: a private /tmp, which TMPDIR
+and TMUX_TMPDIR name, so no tmux server or socket of an agent-seat is
+reachable; a private /dev and System V IPC; the home directory, an empty
+tmpfs the suite may write, into which only the paths in
+TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY are bound, read-only, each with the
+reason suites need it, so no credential in the home directory is there; the
+checkout under test, bound writable, so what the suite writes there stays;
+and the suite's own input record and strace traces, which this program reads
+after the suite ends. An interpreter given with --python from inside the home
+directory is shown read-only too. The directories in
+TEST_SANDBOX_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS, such as /mnt, where the
+backup drive holds copies of the home directory, are empty tmpfs, and so is
+every other directory this account can create a file in, such as /var/tmp,
+found by one scan of the machine per process: a socket or file a process
+outside makes there after the suite starts is never visible inside. The run's
+log directory, where this program writes, is out of the suite's reach, and
+the input recorder is shown read-only; this program writes and reads the
+files there without following a symbolic link. The checkout's git common
+directory is bound read-only above the checkout, since every worktree of the
 repository shares it, and so is a linked worktree's .git file, which names
 the git directory every later git command in the checkout uses; when the
-common directory cannot be found, the run stops with exit 2. Each file
-TEST_SANDBOX_REAL_CREDENTIAL_FILES_HIDDEN_FROM_TESTS names is covered with an
-empty file, and no variable that TEST_SUITE_CREDENTIAL_ENVIRONMENT_VARIABLE_PATTERNS
-matches reaches a suite. /run is an empty tmpfs: it holds the machine's
-sockets, Docker's and the system bus among them, and the session's runtime
-directory, with the D-Bus session bus, through which `systemd-run --user`
-would start processes outside the sandbox, and the sockets of the running
-agent-sessions. A read-only mount does not stop a connection to a socket, so
-every other listening Unix socket of the machine, such as one under
-/var/snap, is covered with an empty file. The variables in
+common directory cannot be found, the run stops with exit 2. No variable
+that TEST_SUITE_CREDENTIAL_ENVIRONMENT_VARIABLE_PATTERNS matches reaches a
+suite. /run is an empty tmpfs: it holds the machine's sockets, Docker's and
+the system bus among them, and the session's runtime directory, with the
+D-Bus session bus, through which `systemd-run --user` would start processes
+outside the sandbox, and the sockets of the running agent-sessions. A
+read-only mount does not stop a connection to a socket, so a listening Unix
+socket still visible after that, made by a service in a directory this
+account cannot write, is hidden with its whole directory, so one the service
+makes there again stays hidden; one directly in a system directory such as
+/var is covered by an empty file. The variables in
 TEST_SANDBOX_OUTSIDE_SOCKET_VARIABLES, which name sockets
 outside, are unset. The suite gets a network of its own, holding only loopback, so it
 reaches no port and no abstract Unix socket outside, the X server's included;
@@ -546,16 +557,37 @@ AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES = (
 # the sandbox, such as a suite that tests this program, runs its suites as they
 # are: they are already inside.
 #
-# The signal sandbox is also each suite's test sandbox: the file system read-only, a
-# private /tmp, /dev and System V IPC, the home directory a copy-on-write overlay whose
-# writes vanish when the suite ends, and /run hidden, since it holds the machine's
-# sockets: Docker's, the system bus, and in the session's runtime directory the D-Bus
-# session bus, through which `systemd-run --user` starts processes outside the sandbox,
-# and the sockets of the running agent-sessions. A Unix socket accepts a connection
-# through a read-only mount, so hiding it is the only protection.
+# The signal sandbox is also each suite's test sandbox, which hides by default: the
+# file system read-only, a private /tmp, /dev and System V IPC, the home directory an
+# empty tmpfs into which only the paths in TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY are
+# bound, and /run hidden, since it holds the machine's sockets: Docker's, the system bus,
+# and in the session's runtime directory the D-Bus session bus, through which
+# `systemd-run --user` starts processes outside the sandbox, and the sockets of the
+# running agent-sessions. A Unix socket accepts a connection through a read-only mount,
+# so hiding it is the only protection, and a list of files to cover misses every file
+# not on it, so whole directories are hidden instead.
 # bwrap_arguments_for_one_suites_test_sandbox() adds, per suite, the paths the suite may
-# write for real.
-REAL_HOME_DIRECTORY_PATH_OVERLAID_COPY_ON_WRITE_IN_TEST_SANDBOX = str(Path.home())
+# write for real and every other directory this account can create a file in.
+REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX = str(Path.home())
+# Relative to the home directory: the only paths of it a suite sees, each read-only, with
+# why suites need it. Nothing else of the home directory is there, credentials included.
+TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY = {
+    ".local/lib": "the Python libraries pip installs for this account, tree-sitter and "
+                  "coverage among them, which suites import",
+    ".gitconfig": "git's settings for this account, which suites that run git read",
+    "nedschorus-logs/seats/ned-box-helper/absence-claim-trigger-phrases-2026-10-05/out/"
+    "precision/labels.csv": "the labelled replies scripts/absence-claim-locator-reminder-"
+                            "hook-test.py measures the reminder's precision against",
+}
+# Directories hidden whole, with why: each holds what no suite needs and a scan for
+# writable directories should not walk.
+TEST_SANDBOX_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS = {
+    "/mnt": "mounted file systems such as the backup drive, whose snapshots hold copies "
+            "of the home directory, credentials included",
+    "/media": "removable media",
+    "/var/snap": "snap services' data and listening sockets, which a snap refresh "
+                 "re-creates under a new directory",
+}
 XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX = f"/run/user/{os.getuid()}"
 # Variables naming a socket or a server outside the test sandbox.
 TEST_SANDBOX_OUTSIDE_SOCKET_VARIABLES = (
@@ -567,21 +599,6 @@ TEST_SANDBOX_OUTSIDE_SOCKET_VARIABLES = (
     "DISPLAY",
     "WAYLAND_DISPLAY",
     "GPG_AGENT_INFO",
-)
-# Relative to the home directory; a pattern is matched in its own directory only.
-TEST_SANDBOX_REAL_CREDENTIAL_FILES_HIDDEN_FROM_TESTS = (
-    ".config/nedschorus/*.token",
-    ".claude/.credentials.json",
-    ".codex/auth.json*",
-    ".config/gh/hosts.yml",
-    ".ssh/id_*",
-    ".git-credentials",
-    ".netrc",
-    ".gnupg/private-keys-v1.d/*",
-    ".local/share/keyrings/*",
-    ".steam/*.token",
-    ".aws/credentials",
-    ".docker/config.json",
 )
 # Environment variables that carry a credential; no suite is given one. Matched against
 # the variable's name in capitals.
@@ -596,8 +613,13 @@ SIGNAL_SANDBOX_BWRAP_ARGUMENTS = (
        "--setenv", "XDG_RUNTIME_DIR", XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX)
       if os.path.isdir(XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX)
       else ("--unsetenv", "XDG_RUNTIME_DIR")),
-    "--overlay-src", REAL_HOME_DIRECTORY_PATH_OVERLAID_COPY_ON_WRITE_IN_TEST_SANDBOX,
-    "--tmp-overlay", REAL_HOME_DIRECTORY_PATH_OVERLAID_COPY_ON_WRITE_IN_TEST_SANDBOX,
+    "--tmpfs", REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,
+    *(argument for relative in TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY
+      for argument in ("--ro-bind-try",
+                       os.path.join(REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX, relative),
+                       os.path.join(REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX, relative))),
+    *(argument for directory in TEST_SANDBOX_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS
+      if os.path.isdir(directory) for argument in ("--tmpfs", directory)),
     "--unshare-pid", "--unshare-ipc", "--die-with-parent",
     "--setenv", "TMPDIR", "/tmp", "--setenv", "TMUX_TMPDIR", "/tmp",
     *(argument for variable in TEST_SANDBOX_OUTSIDE_SOCKET_VARIABLES
@@ -1494,9 +1516,11 @@ class TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler:
         self.thread.start()
 
     def read_every_interval(self):
-        while not self.stopped.wait(self.interval):
+        # Each reading blocks for one interval: psutil keeps the CPU baseline of a
+        # nonblocking reading per thread, so this thread's first one would read 0.
+        while not self.stopped.is_set():
             try:
-                self.read_once()
+                self.read_once(blocking_seconds=self.interval)
             except Exception as error:
                 # Admission must not decide on readings that stopped; it reports this instead.
                 with self.lock:
@@ -1739,26 +1763,39 @@ def cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(text):
         return None, None, f"the suite's cgroup counters could not be read: {text.strip()[:200]!r}"
 
 
-def copy_suite_output_to_log_noting_each_case_line(stream, log, started, cases):
-    """Copy a suite's output to its open log, timing each PASS, FAIL or ok line as it arrives."""
-    with log:
-        for raw in iter(stream.readline, b""):
-            log.write(raw)
-            log.flush()
-            arrived = time.monotonic() - started
-            found = TEST_CASE_LINE.match(raw.decode("utf-8", "replace").rstrip("\r\n"))
-            if found is None:
-                continue
-            text = found["text"]
-            name, detail = text, ""
-            if found["verdict"] == "FAIL" and ": " in text:
-                name, detail = text.split(": ", 1)
-            begun = cases[-1]["ended"] if cases else 0.0
-            cases.append({"verdict": "FAIL" if found["verdict"] == "FAIL" else "PASS",
-                          "name": name.strip(), "detail": detail.strip(),
-                          "began": begun, "ended": arrived, "seconds": arrived - begun,
-                          "unix_time": time.time()})
-    stream.close()
+def copy_suite_output_to_log_noting_each_case_line(stream, log, started, cases, failures):
+    """Copy a suite's output to its open log, timing each PASS, FAIL or ok line as it arrives.
+
+    A write to the log that fails is appended to failures, and the rest of the output is
+    read and dropped, so the suite does not block on a full pipe."""
+    try:
+        with log:
+            copy_lines_of_suite_output(stream, log, started, cases)
+    except OSError as error:
+        failures.append(error)
+        for _ in iter(lambda: stream.read(1 << 16), b""):
+            pass
+    finally:
+        stream.close()
+
+
+def copy_lines_of_suite_output(stream, log, started, cases):
+    for raw in iter(stream.readline, b""):
+        log.write(raw)
+        log.flush()
+        arrived = time.monotonic() - started
+        found = TEST_CASE_LINE.match(raw.decode("utf-8", "replace").rstrip("\r\n"))
+        if found is None:
+            continue
+        text = found["text"]
+        name, detail = text, ""
+        if found["verdict"] == "FAIL" and ": " in text:
+            name, detail = text.split(": ", 1)
+        begun = cases[-1]["ended"] if cases else 0.0
+        cases.append({"verdict": "FAIL" if found["verdict"] == "FAIL" else "PASS",
+                      "name": name.strip(), "detail": detail.strip(),
+                      "began": begun, "ended": arrived, "seconds": arrived - begun,
+                      "unix_time": time.time()})
 
 
 def write_case_times_suite_resources_and_junit_xml_of_run(log_dir, results):
@@ -1785,9 +1822,12 @@ def write_case_times_suite_resources_and_junit_xml_of_run(log_dir, results):
     for result in results:
         cases = result.get("cases") or []
         failed = sum(1 for case in cases if case["verdict"] == "FAIL")
+        # A suite that fails after its last case line gets one more, failing, case below.
+        failed_after_last_case = int(bool(cases) and result["exit"] != 0 and not failed)
         suite_element = xml.etree.ElementTree.SubElement(
-            root, "testsuite", name=result["suite"], tests=str(max(1, len(cases))),
-            failures=str(failed if cases else int(result["exit"] != 0)),
+            root, "testsuite", name=result["suite"],
+            tests=str(len(cases) + failed_after_last_case if cases else 1),
+            failures=str(failed + failed_after_last_case if cases else int(result["exit"] != 0)),
             skipped=str(len(result["skips"])), time=f"{result['seconds']:.3f}")
         if not cases:
             # A suite that printed no case line is one case, judged by its exit code.
@@ -1805,7 +1845,7 @@ def write_case_times_suite_resources_and_junit_xml_of_run(log_dir, results):
             if case["verdict"] == "FAIL":
                 xml.etree.ElementTree.SubElement(case_element, "failure",
                                                  message=case["detail"] or case["name"])
-        if result["exit"] != 0 and not failed:
+        if failed_after_last_case:
             # The suite failed after its last case line, such as by a crash.
             case_element = xml.etree.ElementTree.SubElement(
                 suite_element, "testcase", classname=result["suite"],
@@ -2006,24 +2046,74 @@ def signal_sandbox(platform=None, environment=None, which=shutil.which,
     return prefix, None
 
 
-def real_credential_files_to_cover_with_an_empty_file_in_test_sandbox(home=None):
-    """The credential files present now, each to be covered with an empty file."""
-    home = Path(REAL_HOME_DIRECTORY_PATH_OVERLAID_COPY_ON_WRITE_IN_TEST_SANDBOX if home is None else home)
-    found = []
-    for pattern in TEST_SANDBOX_REAL_CREDENTIAL_FILES_HIDDEN_FROM_TESTS:
-        for path in sorted(home.glob(pattern)):
-            if path.name.endswith(".pub") or not path.is_file():
-                continue
-            found.append(str(path))
-    return found
+# Directories the test sandbox already makes private or hides, which the scan for
+# writable directories does not walk.
+TEST_SANDBOX_PRIVATE_DIRECTORIES_NOT_SCANNED = ("/proc", "/sys", "/dev", "/tmp", "/run")
 
 
-def empty_file_bound_over_each_credential_file_in_test_sandbox():
-    """An empty, read-only regular file to bind over each credential file.
+@functools.cache
+def directories_this_account_can_create_files_in_hidden_in_test_sandbox():
+    """Each topmost directory outside the sandbox's private ones that this account can write.
 
-    Fails rather than return a file that is not empty: binding one with content over a
-    credential file would hand a suite that content."""
-    path = Path(tempfile.gettempdir()) / f"{PROGRAM}-empty-file-covering-credentials-{os.getuid()}"
+    A suite that sees one could find there a socket or a file that some process outside
+    makes after the suite starts, so each is hidden whole by an empty tmpfs. A directory
+    made later sits inside one of these, so a scan once per process is enough. Raises
+    SignalSandboxCouldNotStart when the scan cannot run."""
+    pruned = (*TEST_SANDBOX_PRIVATE_DIRECTORIES_NOT_SCANNED,
+              REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,
+              *TEST_SANDBOX_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS)
+    expression = []
+    for path in pruned:
+        expression += (["-o"] if expression else []) + ["-path", path]
+    command = ["find", "/", "(", *expression, ")", "-prune", "-o",
+               "-type", "d", "-writable", "-print", "-prune"]
+    try:
+        # find exits 1 when some directory cannot be read; it still lists every
+        # directory it could, and a directory it cannot read it cannot write into either.
+        answer = subprocess.run(command, capture_output=True, text=True,
+                                stdin=subprocess.DEVNULL, check=False,
+                                timeout=SIGNAL_SANDBOX_START_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SignalSandboxCouldNotStart(
+            f"the scan for directories this account can write ({' '.join(command)}) could "
+            f"not run: {error}") from error
+    if answer.returncode not in (0, 1):
+        raise SignalSandboxCouldNotStart(
+            f"the scan for directories this account can write exited {answer.returncode}: "
+            f"{answer.stderr.strip()[-500:]}")
+    return tuple(line for line in answer.stdout.splitlines() if line.startswith("/"))
+
+
+def interpreter_directories_shown_read_only_in_test_sandbox(interpreter):
+    """The directories an interpreter in the hidden home directory needs, such as a virtual
+    environment's; none for one outside it."""
+    location = Path(os.path.abspath(interpreter))
+    if not location.is_relative_to(REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX):
+        return []
+    environment = location.parent.parent
+    return [environment if (environment / "pyvenv.cfg").is_file() else location.parent]
+
+
+def directories_hidden_whole_in_test_sandbox():
+    """Every directory a test sandbox shows as private or empty, the scanned ones included."""
+    return (*TEST_SANDBOX_PRIVATE_DIRECTORIES_NOT_SCANNED,
+            REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,
+            *TEST_SANDBOX_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS,
+            *directories_this_account_can_create_files_in_hidden_in_test_sandbox())
+
+
+# A directory whose hiding would hide what every program needs; a socket directly in one
+# is covered by an empty file instead, which a re-created socket would escape.
+TEST_SANDBOX_DIRECTORIES_NEVER_HIDDEN_FOR_A_SOCKET = (
+    "/", "/bin", "/boot", "/etc", "/lib", "/lib64", "/opt", "/sbin", "/srv", "/usr", "/var")
+
+
+def empty_file_bound_over_each_listening_socket_in_test_sandbox():
+    """An empty, read-only regular file to bind over a listening socket.
+
+    Fails rather than return a file that is not empty, which would hand a suite that
+    content."""
+    path = Path(tempfile.gettempdir()) / f"{PROGRAM}-empty-file-covering-sockets-{os.getuid()}"
     descriptor = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW, 0o444)
     try:
         status = os.fstat(descriptor)
@@ -2031,7 +2121,7 @@ def empty_file_bound_over_each_credential_file_in_test_sandbox():
         os.close(descriptor)
     if not stat.S_ISREG(status.st_mode) or status.st_size != 0 or status.st_uid != os.getuid():
         raise SignalSandboxCouldNotStart(
-            f"{path}, the empty file that covers each credential file inside the test "
+            f"{path}, the empty file that covers a listening socket inside the test "
             f"sandbox, is not an empty regular file of this account; delete it, "
             f"then run this again")
     return str(path)
@@ -2047,9 +2137,10 @@ def bwrap_arguments_for_one_suites_test_sandbox(checkout, writable_paths=(), sui
     every worktree of the repository shares it, or for a suite in
     SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY is a
     copy-on-write overlay, and so is a linked worktree's `.git` file, which names the
-    git directory every later git command in the checkout uses. Each credential file is
-    covered with an empty file. The sandbox gets a network of its own, unless the suite
-    is in SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK.
+    git directory every later git command in the checkout uses. Every directory this
+    account can create a file in is an empty tmpfs, and so is the directory of a
+    listening socket left visible. The sandbox gets a network of its own, unless the
+    suite is in SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK.
 
     Raises SignalSandboxCouldNotStart when the checkout's git common directory cannot be
     found, since the suite would then be able to write it."""
@@ -2091,26 +2182,31 @@ def bwrap_arguments_for_one_suites_test_sandbox(checkout, writable_paths=(), sui
     if git_file.is_file() and not git_file.is_symlink():
         for place in under_each_name(git_file):
             arguments += ["--ro-bind", str(git_file), place]
-    credentials = real_credential_files_to_cover_with_an_empty_file_in_test_sandbox()
-    sockets = listening_unix_sockets_the_test_sandbox_would_show()
-    if credentials or sockets:
-        cover = empty_file_bound_over_each_credential_file_in_test_sandbox()
-        for path in (*credentials, *sockets):
-            arguments += ["--ro-bind", cover, path]
+    for directory in directories_this_account_can_create_files_in_hidden_in_test_sandbox():
+        arguments += ["--tmpfs", directory]
+    # A socket left visible, made by a service in a directory this account cannot write,
+    # is hidden with its whole directory, so one the service makes again there stays hidden.
+    for path in listening_unix_sockets_the_test_sandbox_would_show(
+            hidden=directories_hidden_whole_in_test_sandbox()):
+        directory = os.path.dirname(path)
+        if directory in TEST_SANDBOX_DIRECTORIES_NEVER_HIDDEN_FOR_A_SOCKET:
+            arguments += ["--ro-bind", empty_file_bound_over_each_listening_socket_in_test_sandbox(),
+                          path]
+        else:
+            arguments += ["--tmpfs", directory]
     return arguments
 
 
 def listening_unix_sockets_the_test_sandbox_would_show(proc_net_unix="/proc/net/unix",
-                                                      unreachable=None):
-    """Each listening Unix socket on this machine outside the directories the sandbox hides.
+                                                      unreachable=None,
+                                                      hidden=TEST_SANDBOX_PRIVATE_DIRECTORIES_NOT_SCANNED):
+    """Each listening Unix socket on this machine outside the directories in hidden.
 
-    A read-only mount does not stop a connection to a socket, so each is covered with an
-    empty file, through which nothing connects; a daemon's socket outside /run, such as
-    one under /var/snap, would otherwise take a suite's requests. A socket this program
-    cannot lstat is left out, since bwrap cannot bind over it and a suite, running as the
-    same account with fewer rights, cannot reach it either; each such socket and its error
-    is appended to unreachable, when given. A socket gone before the lstat is left out too."""
-    hidden = ("/tmp", "/run", "/dev")
+    A read-only mount does not stop a connection to a socket, so each left visible is
+    hidden too. A socket this program cannot lstat is left out, since a suite, running as
+    the same account with fewer rights, cannot reach it either; each such socket and its
+    error is appended to unreachable, when given. A socket gone before the lstat is left
+    out too."""
     found = []
     try:
         rows = Path(proc_net_unix).read_text().splitlines()[1:]
@@ -2139,7 +2235,8 @@ def listening_unix_sockets_the_test_sandbox_would_show(proc_net_unix="/proc/net/
 def uncovered_listening_sockets_report_line_or_none(proc_net_unix="/proc/net/unix"):
     """The report's line naming listening sockets left uncovered because this program cannot reach them."""
     unreachable = []
-    listening_unix_sockets_the_test_sandbox_would_show(proc_net_unix, unreachable)
+    listening_unix_sockets_the_test_sandbox_would_show(
+        proc_net_unix, unreachable, hidden=directories_hidden_whole_in_test_sandbox())
     if not unreachable:
         return None
     return ("listening sockets left uncovered in each test sandbox, because this program "
@@ -2279,8 +2376,12 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                        "-o", str(strace_dir / "trace"), *command]
     if suite in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX:
         sandbox_prefix = ()
-    sandbox_prefix = command_prefix_starting_one_suite_in_its_test_sandbox(
-        sandbox_prefix, top, writable_paths, suite, read_only_paths)
+    read_only_paths += interpreter_directories_shown_read_only_in_test_sandbox(interpreter)
+    # The test sandbox is built from Linux's /proc and bwrap, so nothing of it is built
+    # on another platform, whatever the prefix.
+    if platform.startswith("linux"):
+        sandbox_prefix = command_prefix_starting_one_suite_in_its_test_sandbox(
+            sandbox_prefix, top, writable_paths, suite, read_only_paths)
     status_read = status_write = None
     if sandbox_prefix and note_suite_process is not None:
         status_read_fd, status_write = os.pipe()
@@ -2307,6 +2408,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                    (status_write, statistics.fileno() if statistics is not None else None)
                    if descriptor is not None)
     cases = []
+    copy_failures = []
     output_note = None
     # Case lines are timed on Linux only; elsewhere the output goes to the log as it always did.
     time_case_lines = platform.startswith("linux")
@@ -2326,7 +2428,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
             # The copier closes the log when the suite's output ends.
             copier = threading.Thread(
                 target=copy_suite_output_to_log_noting_each_case_line,
-                args=(process.stdout, log, started, cases), daemon=True)
+                args=(process.stdout, log, started, cases, copy_failures), daemon=True)
             copier.start()
         else:
             log.close()
@@ -2350,6 +2452,9 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         # Closed only after bwrap exits: bwrap writes its exit status to this pipe last.
         if status_read is not None:
             status_read.close()
+    if copy_failures:
+        raise OSError(f"the log of {suite}, {log_file}, could not be written while the suite "
+                      f"ran, so its output is incomplete: {copy_failures[0]}")
     if sandbox_started is False:
         with open_for_writing_without_following_symlinks(log_file, append=True) as log:
             log.write(TEST_SANDBOX_DID_NOT_START_NOTE)
@@ -2906,7 +3011,8 @@ def suites_run_at_once(jobs_given, suites_to_run, cores, admission_decides=False
     return max(1, min(cores or SUITES_RUN_AT_ONCE_WHEN_CORE_COUNT_UNKNOWN, suites_to_run))
 
 
-def main(argv=None):
+def main(argv=None, platform=None):
+    platform = sys.platform if platform is None else platform
     arguments = parse_arguments(argv)
     try:
         top = checkout_top_directory(arguments.checkout)
@@ -2918,15 +3024,15 @@ def main(argv=None):
         print(refusal, file=sys.stderr)
         return EXIT_COULD_NOT_RUN
     try:
-        sandbox_prefix, unconfined_because = signal_sandbox()
+        sandbox_prefix, unconfined_because = signal_sandbox(platform=platform)
     except SignalSandboxCouldNotStart as error:
         print(signal_sandbox_refusal(error), file=sys.stderr)
         return EXIT_COULD_NOT_RUN
 
     # In a test sandbox of its own each suite shares no machine state with another run's
     # suites, so runs overlap, and admission decides when each suite starts.
-    in_test_sandboxes = does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(
-        sandbox_prefix)
+    in_test_sandboxes = platform.startswith("linux") and \
+        does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix)
     lock_handle = None
     previous_holder = ""
     seconds_waiting_for_lock = 0.0
@@ -2969,18 +3075,18 @@ def main(argv=None):
                 return EXIT_LOCKED
         else:
             log_dir = Path(tempfile.mkdtemp(prefix=f"{PROGRAM}-"))
-        if sys.platform.startswith("linux"):
+        if platform.startswith("linux"):
             run_record = RunRecord(run_records_directory_for_lock_file(arguments.lock_file), log_dir,
                                    log_dir_is_temporary=not arguments.log_dir)
         if lock_handle is not None:
             name_log_directory_in_lock(lock_handle, log_dir)
             clean_up_lines = clean_up_after_earlier_runs(Path(arguments.lock_file),
-                                                         previous_holder)
+                                                         previous_holder, platform)
         else:
             # Runs overlap here, so one cleans up at a time; a live run's files are never touched.
             with lock_held_while_cleaning_up_after_earlier_runs(Path(arguments.lock_file)):
                 clean_up_lines = clean_up_after_earlier_runs(Path(arguments.lock_file),
-                                                             previous_holder)
+                                                             previous_holder, platform)
         commit, state = commit_and_state(top)
         recordings_dir = recordings_directory_for(arguments.recorded_inputs_directory, top)
         # Each recording is read once, so selection and starting order see the same one
@@ -3070,12 +3176,13 @@ def main(argv=None):
             kind = (f"outside the test sandbox: {SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX[suite]}"
                     if outside and sandbox_prefix else
                     "test sandbox" if in_test_sandboxes else
-                    "macOS sandbox" if sys.platform == "darwin" and sandbox_prefix else
+                    "macOS sandbox" if platform == "darwin" and sandbox_prefix else
                     "no sandbox")
             if admission is None:
                 result = run_one_suite(top, interpreter, suite, log_dir,
                                        sandbox_prefix=sandbox_prefix,
-                                       note_suite_process=note_suite_process, **options)
+                                       note_suite_process=note_suite_process,
+                                       platform=platform, **options)
                 result.update(kind=kind, admission_wait=0.0)
                 return result
             with admission.admitted(suite, outside_the_test_sandbox=outside) as waited:
@@ -3083,7 +3190,7 @@ def main(argv=None):
                                        sandbox_prefix=sandbox_prefix,
                                        note_suite_process=note_suite_process,
                                        in_cgroup_scope=cgroup_unavailable_because is None,
-                                       nice=True, **options)
+                                       nice=True, platform=platform, **options)
             result.update(kind=kind, admission_wait=waited, admitted=True)
             if cgroup_unavailable_because is not None:
                 result["resources_note"] = cgroup_unavailable_because
@@ -3166,15 +3273,21 @@ def main(argv=None):
             report.line(f"{ADMISSION_WAITED_LINE_PREFIX}{sum(waits):.0f} in all, the longest "
                         f"{max(waits, default=0.0):.0f}")
         # The case times, suite resources and failure history come with the test sandboxes.
+        records_failed = False
         if admission is not None:
             try:
                 write_case_times_suite_resources_and_junit_xml_of_run(log_dir, results)
                 append_test_case_failure_history(
-                    Path(arguments.recorded_inputs_directory) / TEST_CASE_FAILURE_HISTORY_FILE_NAME,
+                    Path(arguments.recorded_inputs_directory).expanduser()
+                    / TEST_CASE_FAILURE_HISTORY_FILE_NAME,
                     top, commit, branch_of_checkout(top), log_dir, results)
             except OSError as error:
-                report.line(f"the run's case times, suite resources, JUnit XML or failure "
-                            f"history could not be written: {error}")
+                records_failed = True
+                report.line(f"{PROGRAM}: the run's case times, suite resources, JUnit XML or "
+                            f"failure history could not be written: {error}")
+                report.line("The suites' verdicts below stand, but their records are "
+                            "missing, so this run exits 2. Fix what it names, then run "
+                            "this again.")
             else:
                 report.line(f"case times, suite resources and JUnit XML in {log_dir}")
         skip_count = sum(len(result["skips"]) for result in results)
@@ -3187,6 +3300,8 @@ def main(argv=None):
         report.close()
         if run_record is not None:
             run_record.finish()
+        if records_failed:
+            return EXIT_COULD_NOT_RUN
         return EXIT_SOME_FAILED if failed else EXIT_ALL_PASSED
     finally:
         if readings is not None:

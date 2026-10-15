@@ -197,6 +197,11 @@ def run_script(repository, control, *flags, path_override=None,
     environment = {name: value for name, value in os.environ.items()
                    if name not in dropped_variables}
     environment[CONTROL_DIRECTORY_VARIABLE] = str(control)
+    # As inside the suite runner's sandbox, so a case takes the same path whether this file
+    # runs there or directly: the machine lock and no sandbox. The sandbox cases drop it.
+    inside_variable = load_test_suite_runner().SIGNAL_SANDBOX_INSIDE_VARIABLE
+    if inside_variable not in dropped_variables:
+        environment[inside_variable] = "1"
     if path_override is not None:
         environment["PATH"] = path_override
     environment.update(extra_environment or {})
@@ -264,7 +269,10 @@ def run_cases():
         check("the config names the changed file as the module path",
               'module-path = "scripts/thing.py"' in config, config)
         test_suite_runner = load_test_suite_runner()
-        sandbox_prefix, _ = test_suite_runner.signal_sandbox()
+        # The script runs as inside the runner's sandbox (run_script), so it builds the
+        # prefix the runner builds there; the sandbox cases below cover the bwrap prefix.
+        sandbox_prefix, _ = test_suite_runner.signal_sandbox(environment={
+            **os.environ, test_suite_runner.SIGNAL_SANDBOX_INSIDE_VARIABLE: "1"})
         launch = shlex.join([*sandbox_prefix, "/usr/bin/python3", "-u", "scripts/thing-test.py"])
         # On macOS the prefix names the process that built it, which differs between
         # this file and the script it runs.
@@ -864,6 +872,10 @@ def run_cases():
                   cosmic_ray_calls
                   and all(call["outside_lock_held"] for call in cosmic_ray_calls),
                   json.dumps(cosmic_ray_calls)[:800])
+            check("in test sandboxes, no machine lock is taken",
+                  not (control / "machine.lock").exists()
+                  and all(call["lock_free"] is None for call in cosmic_ray_calls),
+                  json.dumps(cosmic_ray_calls)[:800])
     else:
         print("SKIP  the signal sandbox cases: bwrap is used only on Linux")
 
@@ -874,6 +886,36 @@ def run_cases():
                                                   SCRIPT)
     survivors = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(survivors)
+
+    # A test sandbox that does not start: cosmic-ray would count the failing exit as a
+    # killed mutant, so the suite's proof stays empty and the run stops instead.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        scratch = Path(scratch_name)
+        (scratch / "a-test.py").write_text("print('ran')\n")
+        proof, did_not_start = scratch / "a.started", scratch / "did-not-start"
+        for label, prefix, expected_exit, named in (
+                ("a sandbox that starts", ("env",), 0, False),
+                ("a sandbox that fails before the suite", ("sh", "-c", "exit 1", "stand-in"), 1,
+                 True)):
+            did_not_start.unlink(missing_ok=True)
+            command = survivors.test_command_for(["a-test.py"], sys.executable, prefix, (),
+                                                 {"a-test.py": proof}, did_not_start)
+            completed = subprocess.run(shlex.split(command), cwd=scratch, capture_output=True,
+                                       text=True, timeout=60)
+            check(f"{label}: the test command exits {expected_exit}, and names the suite as "
+                  f"not started {'' if named else 'not '}at all",
+                  completed.returncode == expected_exit
+                  and did_not_start.exists() == named
+                  and (not named or did_not_start.read_text().split() == ["a-test.py"]),
+                  (completed.returncode, did_not_start.exists(), completed.stderr))
+            try:
+                survivors.raise_when_a_test_sandbox_did_not_start(did_not_start, "a.py", "baseline")
+                raised = None
+            except survivors.CouldNotRun as error:
+                raised = str(error)
+            check(f"{label}: the run {'stops, naming the suite' if named else 'goes on'}",
+                  (raised is not None and "a-test.py" in raised and "did not start" in raised)
+                  if named else raised is None, raised)
     with tempfile.TemporaryDirectory() as scratch_name:
         repository, base, head = scratch_repository(scratch_name, {
             "scripts/tést.py": "VALUE = 1\n",

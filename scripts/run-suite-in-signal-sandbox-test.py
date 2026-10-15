@@ -637,11 +637,17 @@ with tempfile.TemporaryDirectory() as scratch_name:
           "runs with no prefix, and the inside check still proves the inherited sandbox",
           code == program.EXIT_PASSED_OR_KILLED and len(ran) == 1 and ran[0][3] == ()
           and ran[0][5] == "darwin", (code, output, ran))
-    bwrap_prefix = ("/usr/bin/bwrap",)
-    code, output, ran = main_with_nothing_run("linux", sandbox=(bwrap_prefix, None))
-    check("on Linux, the program becomes the child subreaper before the suite runs",
-          code == program.EXIT_PASSED_OR_KILLED and "linux" in subreaper_calls,
-          (code, output, subreaper_calls))
+    # Under a bwrap prefix the suite runs in its test sandbox, admitted by readings of
+    # this machine that only Linux gives, so this case runs only on Linux.
+    if sys.platform.startswith("linux"):
+        bwrap_prefix = ("/usr/bin/bwrap",)
+        code, output, ran = main_with_nothing_run("linux", sandbox=(bwrap_prefix, None))
+        check("on Linux, the program becomes the child subreaper before the suite runs",
+              code == program.EXIT_PASSED_OR_KILLED and "linux" in subreaper_calls,
+              (code, output, subreaper_calls))
+    else:
+        print("SKIP  the child subreaper on Linux: it runs the suite in a test sandbox, which "
+              "exists only on Linux")
 
     def sandbox_exec_missing(platform=None):
         raise program.runner.SignalSandboxCouldNotStart("/usr/bin/sandbox-exec is not on this Mac")
@@ -974,7 +980,8 @@ else:
               work_directories_left(scratch, "terminated"))
 
         # --- An interrupted run leaves no process of the suite running ---------
-        heartbeat = scratch / "heartbeat"
+        # In the checkout, the one place a suite in a test sandbox writes that stays outside.
+        heartbeat = repository / "heartbeat"
         (repository / "heartbeat-child.py").write_text(
             "import sys, time\n"
             "while True:\n"
@@ -1014,6 +1021,7 @@ else:
               and process.returncode == 2, (exited, process.returncode, beat_after_exit))
         (repository / "spawns-test.py").unlink()
         (repository / "heartbeat-child.py").unlink()
+        heartbeat.unlink(missing_ok=True)
 
         # --- Each failure while making, filling or removing the copy -----------
         def main_in_this_process(*arguments, git_fails_on=None, fill=None):
@@ -1131,9 +1139,12 @@ else:
             holder.write("pid 1, checkout elsewhere, started then\n")
             holder.flush()
             started = time.monotonic()
-            completed, last = run_program(scratch, repository, "doubling-test.py",
-                                          "--mutant", str(killing),
-                                          "--wait-for-lock-seconds", "1")
+            # The lock is taken only where the suite gets no test sandbox, so the program
+            # is told it already runs inside a sandbox; it refuses before running anything.
+            completed, last = run_program(
+                scratch, repository, "doubling-test.py", "--mutant", str(killing),
+                "--wait-for-lock-seconds", "1",
+                environment=dict(os.environ, **{program.runner.SIGNAL_SANDBOX_INSIDE_VARIABLE: "1"}))
             waited = time.monotonic() - started
         check("while another run holds the lock past the wait, nothing runs, nothing is "
               "mutated, exit 3, and the verdict names the wait and the holder",

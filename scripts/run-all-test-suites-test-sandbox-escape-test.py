@@ -32,6 +32,8 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 # Before anything runs git, so the scratch repository is built where this suite says.
 _git_environment_fixture_spec = importlib.util.spec_from_file_location(
@@ -79,7 +81,8 @@ CREDENTIAL_FILE_PATTERNS_THAT_MUST_BE_HIDDEN = (
     ".config/nedschorus/*.token", ".claude/.credentials.json", ".codex/auth.json*",
     ".config/gh/hosts.yml", ".ssh/id_*", ".git-credentials", ".netrc",
     ".gnupg/private-keys-v1.d/*", ".local/share/keyrings/*", ".steam/*.token",
-    ".aws/credentials", ".docker/config.json")
+    ".aws/credentials", ".docker/config.json", "nedsmessenger/secrets/*",
+    ".gemini/antigravity-cli/antigravity-oauth-token")
 # Sockets through which a process reaches far outside: root through Docker, the system,
 # the service manager. The test names each that is listening among those probed.
 MACHINE_SOCKETS_NAMED = (
@@ -154,12 +157,19 @@ def write(path, text="probe"):
     with open(path, "w") as handle:
         handle.write(text)
 canary = targets["home_canary"]
-attempt("write the home canary", lambda: write(canary, "changed by the probe"))
+def read_canary():
+    with open(canary) as handle:
+        return handle.read() == "original"
+attempt("read the home canary", read_canary)
 attempt("chmod the home canary", lambda: os.chmod(canary, 0o600))
 attempt("rename the home canary", lambda: os.rename(canary, canary + ".renamed"))
-attempt("delete the home canary", lambda: os.unlink(canary + ".renamed")
-        if os.path.exists(canary + ".renamed") else os.unlink(canary))
+attempt("delete the home canary", lambda: os.unlink(canary))
+os.makedirs(os.path.dirname(canary), exist_ok=True)
+attempt("write the home canary", lambda: write(canary, "changed by the probe"))
 attempt("create a file in the home directory", lambda: write(targets["home_new_file"]))
+for directory in targets["writable_directories"]:
+    attempt(f"create a file in {directory}",
+            lambda directory=directory: write(os.path.join(directory, targets["probe_file_name"])))
 for path in targets["credential_files"]:
     def read(path=path):
         with open(path, "rb") as handle:
@@ -251,6 +261,17 @@ def append_input_record():
     with open(targets["hook_log"], "a") as handle:
         handle.write("escape-test\tthe probe's own line\n")
 attempt("write the suite's own input record", append_input_record)
+# Sockets this test makes outside only once the probe has started, in /var/tmp and in the
+# home directory: what a process outside makes later must not show inside either.
+write(targets["late_sockets_ready"], "the probe is waiting")
+import time
+deadline = time.monotonic() + 60
+while not os.path.exists(targets["late_sockets_made"]) and time.monotonic() < deadline:
+    time.sleep(0.1)
+report("the late sockets were made outside", os.path.exists(targets["late_sockets_made"]))
+for path in targets["late_sockets"]:
+    attempt(f"connect to a socket made outside after the suite started: {path}",
+            lambda path=path: connect(path))
 '''
 
 
@@ -327,15 +348,15 @@ def run_probe(scratch):
     if not sandbox_prefix:
         print(f"SKIP  every escape case: the runner builds no sandbox here: {unconfined_because}")
         return
-    home = pathlib.Path(runner.REAL_HOME_DIRECTORY_PATH_OVERLAID_COPY_ON_WRITE_IN_TEST_SANDBOX)
+    home = pathlib.Path(runner.REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX)
     runtime = pathlib.Path(runner.XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX)
     name = f"run-all-test-suites-escape-test-{os.getpid()}"
 
     git_directory, checkout = make_linked_worktree(scratch)
     (checkout / PROBE_SUITE).write_text(X11_PROBE_SOURCE + PROBE_SOURCE)
     git_file_before = (checkout / ".git").read_text()
-    # The run's log directory is placed in the home directory, which the sandbox shows,
-    # so it is the bind of the log directory alone that keeps the suite out of it.
+    # The run's log directory is placed in the home directory, as a run's often is; only
+    # the suite's own input record in it is bound into the sandbox.
     log_dir = home / ".cache" / f"{name}-log"
     log_dir.mkdir(parents=True)
     recording_dir = log_dir / "recorded-inputs"
@@ -400,6 +421,33 @@ def run_probe(scratch):
         str(path) for pattern in CREDENTIAL_FILE_PATTERNS_THAT_MUST_BE_HIDDEN
         for path in home.glob(pattern) if path.is_file() and not path.name.endswith(".pub"))
     nonempty_credentials = [path for path in credential_files if os.path.getsize(path) > 0]
+    # A credential under a name no list knows, in a directory of the home directory no
+    # list names: hiding by default must hide it too.
+    unlisted_directory = home / f".{name}-unlisted"
+    unlisted_directory.mkdir()
+    unlisted_credential = unlisted_directory / "oauth-token"
+    unlisted_credential.write_text("planted-secret")
+    credential_files.append(str(unlisted_credential))
+    probe_file_name = f"{name}-probe"
+    writable_directories = [*runner.directories_this_account_can_create_files_in_hidden_in_test_sandbox(),
+                            str(home)]
+    late_sockets = [pathlib.Path("/var/tmp") / f"{name}-late.sock", canary_dir / "late.sock"]
+    late_ready, late_made = checkout / "late-sockets-ready", checkout / "late-sockets-made"
+    late_listeners = []
+
+    def make_late_sockets():
+        deadline = time.monotonic() + 120
+        while not late_ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        for path in late_sockets:
+            late = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            late.bind(str(path))
+            late.listen(1)
+            late.setblocking(False)
+            late_listeners.append(late)
+        late_made.write_text("made")
+
+    late_maker = threading.Thread(target=make_late_sockets, daemon=True)
     machine_sockets = [(path, kind) for path, kind in listening_unix_sockets_of_this_machine()
                        if path not in (str(runtime_socket_path), "@" + name)]
 
@@ -428,6 +476,11 @@ def run_probe(scratch):
         "log_file": str(log_dir / "probe-was-here"),
         "hook_log": str(hook_log),
         "x11_displays": X11_DISPLAYS_PROBED,
+        "writable_directories": writable_directories,
+        "probe_file_name": probe_file_name,
+        "late_sockets": [str(path) for path in late_sockets],
+        "late_sockets_ready": str(late_ready),
+        "late_sockets_made": str(late_made),
         "tcp_port": tcp_listener.getsockname()[1],
         "abstract_socket_name": name,
     }
@@ -440,6 +493,7 @@ def run_probe(scratch):
     # Descriptors held open, so the one the cgroup counters go to is numbered above 9, which
     # a shell such as dash cannot name.
     held_open = [open(os.devnull) for _ in range(12)]
+    late_maker.start()
     try:
         with environment_set(planted):
             result = runner.run_one_suite(
@@ -507,13 +561,15 @@ def run_probe(scratch):
         print("named machine sockets among those probed: "
               + (", ".join(path for path in MACHINE_SOCKETS_NAMED if path in probed) or "none"))
 
-        # Suites write in the home directory, so inside it must take the writes.
-        for attempt in ("write the home canary", "chmod the home canary",
-                        "rename the home canary", "delete the home canary",
-                        "create a file in the home directory"):
+        # The home directory inside is empty but the suite's own, so it takes writes.
+        for attempt in ("write the home canary", "create a file in the home directory"):
             record = attempts.get(attempt)
             check(f"inside, the home directory takes the write: {attempt}",
                   record is not None and record["worked"], record)
+        for attempt in ("read the home canary", "chmod the home canary",
+                        "rename the home canary", "delete the home canary"):
+            ok, record = blocked(attempt)
+            check(f"inside, the real home directory's file is not there: {attempt}", ok, record)
         check("outside afterwards, the home canary is unchanged: content, mode and name",
               canary.is_file() and canary.read_text() == "original"
               and (canary.stat().st_mode & 0o777) == 0o644
@@ -523,7 +579,18 @@ def run_probe(scratch):
               not (canary_dir / "new-file").exists())
         for path in credential_files:
             ok, record = blocked(f"read credential file {path}")
-            check(f"a credential file reads as empty or not at all: {path}", ok, record)
+            check(f"inside, a credential file is not there: {path}", ok, record)
+        for directory in writable_directories:
+            check(f"outside afterwards, nothing the suite wrote in {directory}, a directory "
+                  f"this account can create files in, is there",
+                  not (pathlib.Path(directory) / probe_file_name).exists())
+        record = attempts.get("the late sockets were made outside")
+        check("precondition: the sockets made outside after the suite started were made",
+              record is not None and record["worked"], record)
+        for path in late_sockets:
+            ok, record = blocked(f"connect to a socket made outside after the suite started: {path}")
+            check(f"inside, a socket made outside after the suite started cannot be reached: "
+                  f"{path}", ok, record)
         for path in outside_files:
             check(f"outside afterwards, nothing was written at {path}", not path.exists())
         for attempt in ("reach the tmux server by name", "connect to the tmux server's socket",
@@ -604,6 +671,34 @@ def run_probe(scratch):
               written.returncode == 0, written.stderr)
         check("outside afterwards, that branch is not in the repository's git directory",
               git_directory_state(git_directory) == git_before)
+        # A checkout that is a repository's main worktree, in the home directory as
+        # agent-seats' checkouts are: its .git directory sits inside the writable checkout,
+        # and only the read-only bind of the git common directory keeps a suite out of it.
+        main_worktree = home / ".cache" / f"{name}-main-worktree"
+        main_worktree.mkdir(parents=True)
+        try:
+            git("init", "-q", cwd=main_worktree)
+            (main_worktree / "tracked.txt").write_text("tracked\n")
+            git("add", ".", cwd=main_worktree)
+            git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "start",
+                cwd=main_worktree)
+            main_git_before = git_directory_state(main_worktree / ".git")
+            tried = subprocess.run(
+                [*runner.command_prefix_starting_one_suite_in_its_test_sandbox(
+                    sandbox_prefix, main_worktree, suite=PROBE_SUITE),
+                 "sh", "-c",
+                 "echo 0000000000000000000000000000000000000000 > .git/refs/heads/escaped; "
+                 "echo '[escaped]' >> .git/config; git branch escaped-by-git; "
+                 "test ! -e .git/refs/heads/escaped && test ! -e .git/refs/heads/escaped-by-git"],
+                cwd=str(main_worktree), env=environment, stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=120)
+            check("inside, a suite cannot write the git directory of a checkout that is a "
+                  "main worktree: no ref, no config, no branch",
+                  tried.returncode == 0, (tried.returncode, tried.stderr[-600:]))
+            check("outside afterwards, that main worktree's git directory is unchanged",
+                  git_directory_state(main_worktree / ".git") == main_git_before)
+        finally:
+            shutil.rmtree(main_worktree, ignore_errors=True)
         # A suite listed to share the machine's network reaches the same port.
         shared = "scripts/shares-the-machine-network-for-this-case-test.py"
         runner.SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK[shared] = "this case"
@@ -623,6 +718,17 @@ def run_probe(scratch):
     finally:
         for handle in held_open:
             handle.close()
+        late_maker.join(5)
+        for late in late_listeners:
+            late.close()
+        for path in late_sockets:
+            path.unlink(missing_ok=True)
+        shutil.rmtree(unlisted_directory, ignore_errors=True)
+        for directory in writable_directories:
+            try:
+                (pathlib.Path(directory) / probe_file_name).unlink(missing_ok=True)
+            except OSError:
+                pass
         sleeper.kill()
         sleeper.wait()
         listener.close()

@@ -410,14 +410,19 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
         bytecode_dir.mkdir(parents=True, exist_ok=True)
         writable.append(bytecode_dir)
         environment["PYTHONPYCACHEPREFIX"] = str(bytecode_dir)
-    command = [*runner.command_prefix_starting_one_suite_in_its_test_sandbox(sandbox_prefix, top, writable,
-                                                                              suite),
+    # The test sandbox is built from Linux's /proc and bwrap, so not on another platform.
+    if platform.startswith("linux"):
+        sandbox_prefix = runner.command_prefix_starting_one_suite_in_its_test_sandbox(
+            sandbox_prefix, top, writable, suite,
+            read_only_paths=[*runner.interpreter_directories_shown_read_only_in_test_sandbox(sys.executable),
+                             *runner.interpreter_directories_shown_read_only_in_test_sandbox(interpreter)])
+    command = [*sandbox_prefix,
                sys.executable, str(Path(__file__).resolve()),
                INSIDE_CHECK_OPTION, str(proof_file), "--",
                *suite_command(top, suite, interpreter)]
     statistics = None
-    in_test_sandbox = runner.does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(
-        sandbox_prefix)
+    in_test_sandbox = platform.startswith("linux") and \
+        runner.does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix)
     if in_test_sandbox:
         # At low priority and in a cgroup scope of its own, as the runner's suites run.
         resource_prefix = ["nice", "-n", str(runner.TEST_SUITE_NICE_INCREMENT)]
@@ -528,8 +533,8 @@ def run(arguments, platform):
 
     # In its own test sandbox the suite shares no machine state with other runs, so no
     # machine lock is taken; admission decides when it starts, as for the runner's suites.
-    in_test_sandbox = runner.does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(
-        sandbox_prefix)
+    in_test_sandbox = platform.startswith("linux") and \
+        runner.does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix)
     lock_handle = None
     previous_holder = ""
     if in_test_sandbox:

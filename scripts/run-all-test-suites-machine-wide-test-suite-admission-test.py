@@ -311,9 +311,43 @@ with tempfile.TemporaryDirectory() as scratch_name:
     check("the CPU average is over the last few readings only, so earlier ones drop out",
           abs(readings.cpu_percent_average() - 70.0) < 1e-9, readings.cpu_percent_average())
 
-    class FailingPsutil(Psutil):
+    class BaselinePerThread(Psutil):
+        """As psutil 7: a nonblocking reading measures from the last one in the same thread,
+        so a thread's first nonblocking reading is 0."""
+
+        def __init__(self):
+            super().__init__()
+            self.threads_read = set()
+            self.intervals = []
+
         def cpu_percent(self, interval=None):
-            if interval is None:
+            self.intervals.append(interval)
+            thread = threading.get_ident()
+            first_in_thread = thread not in self.threads_read
+            self.threads_read.add(thread)
+            return 0.0 if interval is None and first_in_thread else 80.0
+
+    per_thread = BaselinePerThread()
+    readings = runner.TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler(
+        per_thread, None, interval=0.01, average_seconds=0.05)
+    readings.start()
+    time.sleep(0.2)
+    readings.stop()
+    check("at a steady 80% CPU every reading is 80%, the reading thread's first included",
+          abs(readings.cpu_percent_average() - 80.0) < 1e-9, list(readings.cpu))
+    check("every CPU reading measures over one interval itself, so no reading depends on "
+          "the thread it is taken in",
+          per_thread.intervals and all(interval == 0.01 for interval in per_thread.intervals),
+          per_thread.intervals[:10])
+
+    class FailingPsutil(Psutil):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def cpu_percent(self, interval=None):
+            self.calls += 1
+            if self.calls > 1:
                 raise RuntimeError("the CPU counters vanished")
             return 10.0
 
@@ -443,7 +477,10 @@ with tempfile.TemporaryDirectory() as scratch_name:
         "raise SystemExit(1)\n")
     log_dir = scratch / "logs"
     log_dir.mkdir()
-    result = runner.run_one_suite(repository, sys.executable, "timed-test.py", log_dir)
+    # Case lines are timed on Linux only; the timing itself is plain Python, so it is
+    # tested on every platform by asking for the Linux path.
+    result = runner.run_one_suite(repository, sys.executable, "timed-test.py", log_dir,
+                                  platform="linux")
     cases = result["cases"]
     check("each PASS, FAIL and ok line is a case, with its name and a FAIL's detail",
           [(case["verdict"], case["name"], case["detail"]) for case in cases]
@@ -464,12 +501,55 @@ with tempfile.TemporaryDirectory() as scratch_name:
     runner.TEST_SUITE_OUTPUT_DRAIN_SECONDS = 1
     began = time.monotonic()
     leaver_result = runner.run_one_suite(repository, sys.executable, leaver.name,
-                                         log_dir)
+                                         log_dir, platform="linux")
     runner.TEST_SUITE_OUTPUT_DRAIN_SECONDS = original_drain
     check("a process the suite leaves holding its output open does not hold up the run, "
           "and the result says so",
           time.monotonic() - began < 10 and leaver_result["output_note"] is not None
           and leaver_result["exit"] == 0, leaver_result)
+
+    # A log that cannot be written while the suite runs, such as on a full disk.
+    class LogThatFillsUp:
+        def __init__(self, real):
+            self.real, self.written = real, 0
+
+        def write(self, data):
+            self.written += len(data)
+            if self.written > 4096:
+                raise OSError(28, "No space left on device")
+            return self.real.write(data)
+
+        def __getattr__(self, name):
+            return getattr(self.real, name)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *details):
+            self.real.close()
+
+    chatty = repository / "chatty-test.py"
+    chatty.write_text("import sys\nfor n in range(20000):\n    print('PASS  case', n)\n")
+    original_open = runner.open_for_writing_without_following_symlinks
+
+    def open_filling_up(path, *arguments, **options):
+        handle = original_open(path, *arguments, **options)
+        return LogThatFillsUp(handle) if options.get("binary") else handle
+
+    runner.open_for_writing_without_following_symlinks = open_filling_up
+    began = time.monotonic()
+    try:
+        runner.run_one_suite(repository, sys.executable, chatty.name, log_dir, platform="linux")
+        raised = None
+    except OSError as error:
+        raised = str(error)
+    finally:
+        runner.open_for_writing_without_following_symlinks = original_open
+    check("a log that cannot be written while the suite runs fails the suite's run, naming "
+          "the error, and the suite is not left blocked on its output",
+          raised is not None and "could not be written" in raised
+          and "No space left" in raised and time.monotonic() - began < 60, raised)
+    chatty.unlink()
 
     # --- The run's records: case times, suite resources, JUnit XML, failure history ---
     result.update(kind="test sandbox", admission_wait=1.5, cpu_seconds=0.7,
@@ -511,6 +591,10 @@ with tempfile.TemporaryDirectory() as scratch_name:
     runner.write_case_times_suite_resources_and_junit_xml_of_run(records, [crashed])
     crashed_suite = xml.etree.ElementTree.parse(
         records / runner.JUNIT_XML_FILE_NAME).getroot().find("testsuite")
+    check("a suite that fails after its last case line is counted as one more test and one "
+          "failure, so a reader of the totals sees it fail",
+          crashed_suite.get("tests") == "2" and crashed_suite.get("failures") == "1",
+          xml.etree.ElementTree.tostring(crashed_suite))
     check("a suite that fails after its last case line gets a failing testcase naming how "
           "it ended",
           any(case.find("failure") is not None and "SIGKILL" in case.find("failure").get("message")
@@ -553,6 +637,28 @@ with tempfile.TemporaryDirectory() as scratch_name:
     check("on the Mac no case line is timed, and the output reaches the log whole",
           mac_result["cases"] == [] and mac_result["exit"] == 1
           and "a detail line" in mac_result["log"].read_text(), mac_result)
+
+    fake_bwrap = scratch / "fake-bin" / "bwrap"
+    fake_bwrap.parent.mkdir()
+    fake_bwrap.write_text('#!/bin/sh\nexec "$@"\n')
+    fake_bwrap.chmod(0o755)
+    original_listening = runner.listening_unix_sockets_the_test_sandbox_would_show
+
+    def listening_read(*arguments, **options):
+        raise AssertionError("the machine's sockets were read")
+
+    runner.listening_unix_sockets_the_test_sandbox_would_show = listening_read
+    try:
+        mac_under_bwrap = runner.run_one_suite(repository, sys.executable, "timed-test.py",
+                                               log_dir, sandbox_prefix=(str(fake_bwrap),),
+                                               platform="darwin")
+        built = None
+    except AssertionError as error:
+        mac_under_bwrap, built = None, str(error)
+    finally:
+        runner.listening_unix_sockets_the_test_sandbox_would_show = original_listening
+    check("off Linux no test sandbox is built, whatever the prefix, so nothing reads /proc",
+          built is None and mac_under_bwrap["exit"] == 1, (built, mac_under_bwrap))
 
     # --- The suites' environment carries no credential -----------------------------
     saved = {name: os.environ.get(name) for name in
@@ -627,48 +733,90 @@ with tempfile.TemporaryDirectory() as scratch_name:
     def no_git_directory(top):
         return None
 
-    code, printed, _ = main_with("no-git-directory", git_common_directory_of_checkout=no_git_directory,
-                                 **as_if_bwrap)
-    check("a test sandbox that cannot be built for the checkout stops the run before any "
-          "suite, with exit 2 and the reason",
-          code == runner.EXIT_COULD_NOT_RUN and "git common directory" in printed
-          and "Traceback" not in printed, (code, printed[-800:]))
+    # These drive the run path taken where suites run in test sandboxes, which reads
+    # psutil and /proc, so they run only on Linux.
+    if sys.platform.startswith("linux"):
+        code, printed, _ = main_with("no-git-directory", git_common_directory_of_checkout=no_git_directory,
+                                     **as_if_bwrap)
+        check("a test sandbox that cannot be built for the checkout stops the run before any "
+              "suite, with exit 2 and the reason",
+              code == runner.EXIT_COULD_NOT_RUN and "git common directory" in printed
+              and "Traceback" not in printed, (code, printed[-800:]))
 
-    def first_reading_fails(self):
-        raise runner.MachineWideTestSuiteAdmissionCouldNotDecide("the first reading failed: x")
+        def first_reading_fails(self):
+            raise runner.MachineWideTestSuiteAdmissionCouldNotDecide("the first reading failed: x")
 
-    sampler_class = runner.TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler
-    original_start = sampler_class.start
-    sampler_class.start = first_reading_fails
-    try:
-        code, printed, _ = main_with("first-reading", **as_if_bwrap)
-    finally:
-        sampler_class.start = original_start
-    check("a first machine reading that fails ends the run with exit 2 and the reason on "
-          "its own line",
-          code == runner.EXIT_COULD_NOT_RUN
-          and "admission could not start: the first reading failed" in printed
-          and "Traceback" not in printed, (code, printed[-800:]))
+        sampler_class = runner.TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler
+        original_start = sampler_class.start
+        sampler_class.start = first_reading_fails
+        try:
+            code, printed, _ = main_with("first-reading", **as_if_bwrap)
+        finally:
+            sampler_class.start = original_start
+        check("a first machine reading that fails ends the run with exit 2 and the reason on "
+              "its own line",
+              code == runner.EXIT_COULD_NOT_RUN
+              and "admission could not start: the first reading failed" in printed
+              and "Traceback" not in printed, (code, printed[-800:]))
 
-    def admission_breaks(*arguments, **options):
-        raise runner.MachineWideTestSuiteAdmissionCouldNotDecide("slot-07 could not be opened")
+        def admission_breaks(*arguments, **options):
+            raise runner.MachineWideTestSuiteAdmissionCouldNotDecide("slot-07 could not be opened")
 
-    code, printed, _ = main_with("mid-run", run_one_suite=admission_breaks, **as_if_bwrap)
-    check("admission that fails while suites run ends the run with exit 2, the reason on "
-          "its own line, not a traceback with exit 1",
-          code == runner.EXIT_COULD_NOT_RUN and "admission failed: slot-07" in printed
-          and "Fix what it names" in printed and "Traceback" not in printed,
-          (code, printed[-800:]))
+        code, printed, _ = main_with("mid-run", run_one_suite=admission_breaks, **as_if_bwrap)
+        check("admission that fails while suites run ends the run with exit 2, the reason on "
+              "its own line, not a traceback with exit 1",
+              code == runner.EXIT_COULD_NOT_RUN and "admission failed: slot-07" in printed
+              and "Fix what it names" in printed and "Traceback" not in printed,
+              (code, printed[-800:]))
 
-    def cover_breaks(*arguments, **options):
-        raise runner.SignalSandboxCouldNotStart("the empty file that covers each credential "
-                                                "file is not empty; delete it")
+        def cover_breaks(*arguments, **options):
+            raise runner.SignalSandboxCouldNotStart("the empty file that covers each credential "
+                                                    "file is not empty; delete it")
 
-    code, printed, _ = main_with("cover", run_one_suite=cover_breaks, **as_if_bwrap)
-    check("a test sandbox that fails while suites run ends the run with exit 2 and the "
-          "reason, not a traceback",
-          code == runner.EXIT_COULD_NOT_RUN and "delete it" in printed
-          and "Traceback" not in printed, (code, printed[-800:]))
+        code, printed, _ = main_with("cover", run_one_suite=cover_breaks, **as_if_bwrap)
+        check("a test sandbox that fails while suites run ends the run with exit 2 and the "
+              "reason, not a traceback",
+              code == runner.EXIT_COULD_NOT_RUN and "delete it" in printed
+              and "Traceback" not in printed, (code, printed[-800:]))
+
+        def records_cannot_be_written(*arguments, **options):
+            raise OSError(21, "Is a directory", "junit.xml")
+
+        code, printed, _ = main_with("records", **as_if_bwrap,
+                                     write_case_times_suite_resources_and_junit_xml_of_run=records_cannot_be_written)
+        # The stand-in bwrap builds no real sandbox, so the suite itself fails here; exit 2
+        # still says the records are missing, rather than the suites' own exit.
+        check("records that cannot be written end the run with exit 2, the suites' SUMMARY "
+              "still printed, rather than the exit the suites alone would give",
+              code == runner.EXIT_COULD_NOT_RUN and "could not be written" in printed
+              and "SUMMARY: " in printed, (code, printed[-800:]))
+
+        history_paths = []
+
+        def note_history_path(history_file, *arguments):
+            history_paths.append(history_file)
+
+        tilde_home = scratch / "tilde-home"
+        tilde_home.mkdir()
+        saved_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(tilde_home)
+        try:
+            run_scratch = scratch / "main-tilde"
+            run_scratch.mkdir()
+            with replaced(append_test_case_failure_history=note_history_path, **as_if_bwrap), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                runner.main(["--checkout", str(run_repository),
+                             "--lock-file", str(run_scratch / "run.lock"),
+                             "--log-dir", str(run_scratch / "logs"),
+                             "--recorded-inputs-directory", "~/recorded-for-this-case"])
+        finally:
+            os.environ["HOME"] = saved_home
+        check("a --recorded-inputs-directory starting with ~ puts the failure history under "
+              "the home directory, as the recorded inputs are",
+              history_paths == [tilde_home / "recorded-for-this-case"
+                                / runner.TEST_CASE_FAILURE_HISTORY_FILE_NAME], history_paths)
+    else:
+        print("SKIP  the exit-2 cases of a run in test sandboxes: test sandboxes exist only on Linux")
 
     code, printed, logs = main_with(
         "no-bwrap", signal_sandbox=lambda **options: ((), "bwrap is not on PATH"))
@@ -676,6 +824,46 @@ with tempfile.TemporaryDirectory() as scratch_name:
           "failure history are written",
           code == runner.EXIT_ALL_PASSED and not (logs / runner.JUNIT_XML_FILE_NAME).exists()
           and runner.ADMISSION_WAITED_LINE_PREFIX not in printed, (code, printed[-800:]))
+
+    # --- On the Mac a run needs neither psutil nor /proc, and builds no test sandbox ---
+    mac_scratch = scratch / "main-mac"
+    mac_scratch.mkdir()
+    fake_sandbox_exec = mac_scratch / "sandbox-exec"
+    fake_sandbox_exec.write_text('#!/bin/sh\nexec "$@"\n')
+    fake_sandbox_exec.chmod(0o755)
+    original_listening = runner.listening_unix_sockets_the_test_sandbox_would_show
+
+    def listening_with_no_proc(proc_net_unix=None, unreachable=None):
+        return original_listening(str(mac_scratch / "no-proc" / "net" / "unix"), unreachable)
+
+    asked_for_platform = []
+    saved_psutil = sys.modules.get("psutil", "absent")
+    sys.modules["psutil"] = None
+    printed_out, printed_err = io.StringIO(), io.StringIO()
+    try:
+        with replaced(signal_sandbox=lambda **options: (
+                          asked_for_platform.append(options.get("platform"))
+                          or ((str(fake_sandbox_exec),), None)),
+                      listening_unix_sockets_the_test_sandbox_would_show=listening_with_no_proc), \
+                contextlib.redirect_stdout(printed_out), contextlib.redirect_stderr(printed_err):
+            code = runner.main(["--checkout", str(run_repository),
+                                "--lock-file", str(mac_scratch / "run.lock"),
+                                "--log-dir", str(mac_scratch / "logs"),
+                                "--recorded-inputs-directory", str(mac_scratch / "recorded")],
+                               platform="darwin")
+    finally:
+        if saved_psutil == "absent":
+            sys.modules.pop("psutil", None)
+        else:
+            sys.modules["psutil"] = saved_psutil
+    printed = printed_out.getvalue() + printed_err.getvalue()
+    check("on the Mac, with no psutil and no /proc/net/unix, a run takes the machine lock, "
+          "runs its suites under sandbox-exec and passes, as before",
+          code == runner.EXIT_ALL_PASSED and "SUMMARY: 1 passed, 0 failed" in printed
+          and "Traceback" not in printed
+          and runner.ADMISSION_WAITED_LINE_PREFIX not in printed, (code, printed[-800:]))
+    check("on the Mac, the signal sandbox is asked for as the Mac's", asked_for_platform == ["darwin"],
+          asked_for_platform)
 
     # --- -j where admission decides --------------------------------------------
     check("where admission decides, every suite of the run may wait for admission at once",

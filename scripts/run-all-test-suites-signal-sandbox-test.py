@@ -310,7 +310,7 @@ if sys.platform.startswith("linux"):
             "status_fd=\n"
             "while [ $# -gt 0 ]; do\n"
             "  case \"$1\" in\n"
-            "    --dev-bind|--bind|--ro-bind|--setenv) shift 3 ;;\n"
+            "    --dev-bind|--bind|--ro-bind|--ro-bind-try|--setenv) shift 3 ;;\n"
             "    --proc|--dev|--tmpfs|--overlay-src|--tmp-overlay|--unsetenv) shift 2 ;;\n"
             "    --json-status-fd) status_fd=$2; shift 2 ;;\n"
             "    --unshare-pid|--unshare-net|--unshare-ipc|--die-with-parent) shift ;;\n"
@@ -462,6 +462,82 @@ with tempfile.TemporaryDirectory() as scratch_name:
     check("a suite whose test sandbox could not start says so plainly in its log, and what to do",
           "the suite did not start: bwrap could not build its test sandbox" in text
           and "run the suite again" in text, text)
+
+
+# --- Hiding by default: writable directories, and sockets left visible ---------
+
+if sys.platform.startswith("linux"):
+    scan = runner.directories_this_account_can_create_files_in_hidden_in_test_sandbox
+    scan.cache_clear()
+    scanned = scan()
+    check("the scan finds /var/tmp, which every account can create files in, to hide it",
+          "/var/tmp" in scanned, scanned)
+    check("the scan walks none of the directories the sandbox already makes private or empty",
+          not any(path == top or path.startswith(top + "/")
+                  for path in scanned for top in (
+                      *runner.TEST_SANDBOX_PRIVATE_DIRECTORIES_NOT_SCANNED,
+                      runner.REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,
+                      *runner.TEST_SANDBOX_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS)), scanned)
+    real_run = runner.subprocess.run
+    for label, stand_in in (
+            ("find exits 2", lambda *arguments, **options: subprocess.CompletedProcess(
+                arguments[0], 2, "", "find: bad expression")),
+            ("find cannot start", lambda *arguments, **options: (_ for _ in ()).throw(
+                FileNotFoundError("find")))):
+        scan.cache_clear()
+        runner.subprocess.run = stand_in
+        try:
+            scan()
+            raised = None
+        except runner.SignalSandboxCouldNotStart as error:
+            raised = str(error)
+        finally:
+            runner.subprocess.run = real_run
+        check(f"when the scan for writable directories fails ({label}), the sandbox is not "
+              f"built", raised is not None and "scan for directories" in raised, raised)
+    scan.cache_clear()
+else:
+    print("SKIP  the scan for writable directories: test sandboxes exist only on Linux")
+
+with tempfile.TemporaryDirectory(
+        dir=runner.REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX) as home_name:
+    environment_root = pathlib.Path(home_name) / "venv"
+    (environment_root / "bin").mkdir(parents=True)
+    (environment_root / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    check("an interpreter in a virtual environment in the hidden home directory has the "
+          "environment shown read-only",
+          runner.interpreter_directories_shown_read_only_in_test_sandbox(
+              str(environment_root / "bin" / "python3")) == [environment_root])
+    check("an interpreter in the home directory outside a virtual environment has its own "
+          "directory shown",
+          runner.interpreter_directories_shown_read_only_in_test_sandbox(
+              str(pathlib.Path(home_name) / "python3")) == [pathlib.Path(home_name)])
+check("an interpreter outside the home directory needs nothing shown",
+      runner.interpreter_directories_shown_read_only_in_test_sandbox("/usr/bin/python3") == [])
+
+with tempfile.TemporaryDirectory() as scratch_name:
+    scratch = pathlib.Path(scratch_name)
+    subprocess.run(["git", "init", "-q"], cwd=scratch, check=True)
+    original_scan = runner.directories_this_account_can_create_files_in_hidden_in_test_sandbox
+    original_listening = runner.listening_unix_sockets_the_test_sandbox_would_show
+    runner.directories_this_account_can_create_files_in_hidden_in_test_sandbox = (
+        lambda: ("/var/crash-for-this-case",))
+    runner.listening_unix_sockets_the_test_sandbox_would_show = (
+        lambda *arguments, **options: ["/var/lib/a-service/listening.sock", "/var/direct.sock"])
+    try:
+        arguments = runner.bwrap_arguments_for_one_suites_test_sandbox(scratch)
+    finally:
+        runner.directories_this_account_can_create_files_in_hidden_in_test_sandbox = original_scan
+        runner.listening_unix_sockets_the_test_sandbox_would_show = original_listening
+    pairs = list(zip(arguments, arguments[1:]))
+    check("each directory this account can create files in is an empty tmpfs in the sandbox",
+          ("--tmpfs", "/var/crash-for-this-case") in pairs, arguments)
+    check("a listening socket left visible is hidden with its whole directory, so the "
+          "service making it again there does not show it",
+          ("--tmpfs", "/var/lib/a-service") in pairs, arguments)
+    check("a listening socket directly in a system directory is covered by an empty file, "
+          "and the system directory is not hidden",
+          "/var/direct.sock" in arguments and ("--tmpfs", "/var") not in pairs, arguments)
 
 
 # --- Isolation ----------------------------------------------------------------

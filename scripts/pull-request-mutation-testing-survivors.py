@@ -174,19 +174,34 @@ def suites_for_file(path, suites_at_head, recordings_directory, runner):
     return chosen
 
 
-def test_command_for(suites, interpreter, sandbox_prefix=(), suites_outside_sandbox=()):
+def test_command_for(suites, interpreter, sandbox_prefix=(), suites_outside_sandbox=(),
+                     started_proofs=None, sandbox_did_not_start_file=None):
     # The same launch the suite runner uses, so a suite judged by its exit code here is judged the same way there.
     # A mutant can aim a signal anywhere, so each suite runs inside the runner's signal sandbox.
     # sandbox_prefix is one prefix for every suite, or a mapping of each suite to its own.
+    # cosmic-ray counts any failing exit as a killed mutant, so a sandbox that does not
+    # start would kill every mutant: with started_proofs, a mapping of each sandboxed suite
+    # to a file bound writable in its sandbox, the suite writes its proof inside before it
+    # runs, and a suite whose proof stays empty is named in sandbox_did_not_start_file.
     def prefix_of(suite):
         if suite in suites_outside_sandbox:
             return ()
         return sandbox_prefix[suite] if isinstance(sandbox_prefix, dict) else sandbox_prefix
-    chain = " && ".join(
-        shlex.join([*prefix_of(suite),
-                    *(["sh", suite] if suite.endswith("-test.sh")
-                      else [interpreter, "-u", suite])])
-        for suite in suites)
+
+    def launch(suite):
+        command = ["sh", suite] if suite.endswith("-test.sh") else [interpreter, "-u", suite]
+        prefix = prefix_of(suite)
+        proof = (started_proofs or {}).get(suite)
+        if not prefix or proof is None:
+            return shlex.join([*prefix, *command])
+        inside = shlex.join([*prefix, "sh", "-c", 'echo started > "$0" && exec "$@"',
+                             str(proof), *command])
+        return (f"{{ : > {shlex.quote(str(proof))}; {inside}; status=$?; "
+                f"[ -s {shlex.quote(str(proof))} ] || "
+                f"echo {shlex.quote(suite)} >> {shlex.quote(str(sandbox_did_not_start_file))}; "
+                f"[ $status -eq 0 ]; }}")
+
+    chain = " && ".join(launch(suite) for suite in suites)
     # cosmic-ray splits the command with shlex and runs it without a shell, so && needs sh -c.
     return f"sh -c {shlex.quote(chain)}"
 
@@ -267,23 +282,41 @@ def outcomes_from_dump(dump_text):
     return counts, survivors, errored
 
 
+def raise_when_a_test_sandbox_did_not_start(sandbox_did_not_start_file, path, step):
+    """Stop the run when a suite's test sandbox did not start, which cosmic-ray counts as a kill."""
+    try:
+        named = sandbox_did_not_start_file.read_text().split()
+    except FileNotFoundError:
+        return
+    raise CouldNotRun(
+        f"{PROGRAM}: not run to the end — during the {step} for {path}, the test sandbox of "
+        f"{', '.join(sorted(set(named)))} did not start, so cosmic-ray would have counted a "
+        f"mutant as killed that no suite judged.\n"
+        f"Run scripts/run-suite-in-signal-sandbox.py on that suite to see bwrap's message, fix "
+        f"what it names, then run this again.")
+
+
 def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
                            arguments, environment, sandbox_prefix=(),
-                           suites_outside_sandbox=(), nice_prefix=()):
+                           suites_outside_sandbox=(), nice_prefix=(), started_proofs=None):
     """Run cosmic-ray on one file's changed lines; return (counts, survivors, errored).
 
-    nice_prefix goes before each cosmic-ray command, so the suites it runs inherit it."""
+    nice_prefix goes before each cosmic-ray command, so the suites it runs inherit it.
+    started_proofs maps each suite in a test sandbox to its proof file, as test_command_for
+    takes it; a sandbox that did not start stops the run."""
     name = path.replace("/", "__")
     config = scratch / f"{name}.toml"
     session = scratch / f"{name}.sqlite"
     baseline_session = scratch / f"{name}.baseline.sqlite"
+    did_not_start = scratch / f"{name}.test-sandbox-did-not-start"
     config.write_text(cosmic_ray_config_text(
         path, test_command_for(suites, arguments.python, sandbox_prefix,
-                               suites_outside_sandbox), merge_base,
-        arguments.mutant_timeout_seconds))
+                               suites_outside_sandbox, started_proofs, did_not_start),
+        merge_base, arguments.mutant_timeout_seconds))
     cosmic_ray = [*nice_prefix, tools["cosmic-ray"]]
     baseline = run([*cosmic_ray, "baseline", "--session-file",
                     str(baseline_session), str(config)], worktree, environment)
+    raise_when_a_test_sandbox_did_not_start(did_not_start, path, "baseline")
     if baseline.returncode != 0:
         raise CouldNotRun(
             f"{PROGRAM}: not run — the suites for {path} fail on the unmutated "
@@ -309,6 +342,7 @@ def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
                  worktree, environment, what=f"cr-filter-git for {path}")
     run_or_raise([*cosmic_ray, "exec", str(config), str(session)], worktree,
                  environment, what=f"cosmic-ray exec for {path}")
+    raise_when_a_test_sandbox_did_not_start(did_not_start, path, "mutants' runs")
     return outcomes_from_dump(run_or_raise(
         [*cosmic_ray, "dump", str(session)], worktree, environment,
         what=f"cosmic-ray dump for {path}"))
@@ -477,13 +511,21 @@ def main(argv=None):
                                         f"mutation testing of {path}",
                                         outside_the_test_sandbox=any(
                                             suite in outside for suite in suites)))
+                        started_proofs = {}
+                        if in_test_sandboxes:
+                            for suite in suites:
+                                proof = scratch / f"{path.replace('/', '__')}.{suite.replace('/', '__')}.started"
+                                proof.touch()
+                                started_proofs[suite] = proof
                         with admitted:
                             counts, survivors, errored = mutation_test_one_file(
                                 path, suites, worktree, scratch, tools, merge_base,
                                 arguments, environment,
                                 {suite: runner.command_prefix_starting_one_suite_in_its_test_sandbox(
-                                    sandbox_prefix, worktree, suite=suite) for suite in suites},
-                                outside, nice_prefix)
+                                    sandbox_prefix, worktree,
+                                    [started_proofs[suite]] if suite in started_proofs else (),
+                                    suite=suite) for suite in suites},
+                                outside, nice_prefix, started_proofs)
                         for key in totals:
                             totals[key] += counts[key]
                         for label, mutants in (("SURVIVED", survivors),
