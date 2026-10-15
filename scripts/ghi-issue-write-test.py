@@ -3746,61 +3746,77 @@ def run_edit_landing_real_git_cases(scratch: Path):
 
 
 def run_push_time_limit_cases(scratch: Path):
-    hook_seconds = (tool.pre_push_conflict_check.DEFAULT_TIME_BUDGET_SECONDS
-                    + tool.pre_push_conflict_check.TERMINATE_GRACE_SECONDS
-                    + tool.pre_push_selective_test_run.DEFAULT_TIME_BUDGET_SECONDS
-                    + tool.pre_push_selective_test_run.TERMINATE_GRACE_SECONDS)
+    conflict = tool.pre_push_conflict_check
+    selective = tool.pre_push_selective_test_run
+    # The longest the hook can take: each stop_process_group waits its grace
+    # twice, and the selective run first lists descendants with `ps`, which
+    # descendant_process_ids gives 30 seconds.
+    hook_seconds = (conflict.DEFAULT_TIME_BUDGET_SECONDS
+                    + 2 * conflict.TERMINATE_GRACE_SECONDS
+                    + 30
+                    + selective.DEFAULT_TIME_BUDGET_SECONDS
+                    + 2 * selective.TERMINATE_GRACE_SECONDS)
     check("a push is given more time than the pre-push hook can take",
           tool.push_time_limit_seconds({}) > hook_seconds,
           f"{tool.push_time_limit_seconds({})} against {hook_seconds}")
-    longer = {tool.pre_push_selective_test_run.TIME_BUDGET_ENVIRONMENT_VARIABLE: "1000"}
-    check("a longer selective-run budget in the environment lengthens the "
-          "push's time by as much",
-          tool.push_time_limit_seconds(longer)
-          == tool.push_time_limit_seconds({}) - tool.pre_push_selective_test_run.DEFAULT_TIME_BUDGET_SECONDS + 1000,
-          str(tool.push_time_limit_seconds(longer)))
+    for module in (conflict, selective):
+        longer = {module.TIME_BUDGET_ENVIRONMENT_VARIABLE: "1000"}
+        check(f"a longer budget in {module.TIME_BUDGET_ENVIRONMENT_VARIABLE} "
+              "lengthens the push's time by as much",
+              tool.push_time_limit_seconds(longer)
+              == tool.push_time_limit_seconds({})
+              - module.DEFAULT_TIME_BUDGET_SECONDS + 1000,
+              str(tool.push_time_limit_seconds(longer)))
 
     stopped = subprocess.TimeoutExpired(["git", "push"], 1)
-    for case_name, answers, expected, unexpected in [
-        ("a push stopped with nothing on origin says nothing was pushed and a "
-         "rerun is safe",
-         {"git push": stopped, "git ls-remote": Completed("")},
-         ["Nothing was pushed", "a rerun is safe"], ["Do not rerun"]),
-        ("a push stopped after its branch reached origin says not to rerun",
-         {"git push": stopped,
-          "git ls-remote": Completed("0123abcd\trefs/heads/b\n")},
-         ["reached origin anyway", "Do not rerun"], ["a rerun is safe"]),
-        ("a push stopped where origin cannot be read gives the command that "
-         "tells the two apart",
-         {"git push": stopped, "git ls-remote": Completed("", 128, "fatal")},
-         ["could not be read", "git ls-remote --heads origin refs/heads/b"],
-         ["a rerun is safe"]),
-    ]:
-        recorder = Recorder(answers)
-        try:
-            tool.push_branch(scratch, "b", recorder, environment={})
-            check(case_name, False, "the push reported success")
-        except tool.Refused as refusal:
-            text = str(refusal)
-            check(case_name,
-                  refusal.code == 1
-                  and text.startswith("git push of branch b was stopped after ")
-                  and all(part in text for part in expected)
-                  and not any(part in text for part in unexpected),
-                  text)
-        except subprocess.TimeoutExpired:
-            check(case_name, False, "the timeout escaped without the message")
+    case_name = ("a stopped push says how long it ran, that a rerun is safe "
+                 "and when to tell the user, and asks origin nothing more")
+    recorder = Recorder({"git push": stopped})
+    try:
+        tool.push_branch(scratch, "b", recorder, environment={})
+        check(case_name, False, "the push reported success")
+    except tool.Refused as refusal:
+        text = str(refusal)
+        check(case_name,
+              refusal.code == 1
+              and text.startswith(
+                  f"git push of branch b was stopped after "
+                  f"{tool.push_time_limit_seconds({}):.0f} seconds, longer "
+                  "than the pre-push hook's own limit")
+              and "Rerun the same command; a rerun is safe" in text
+              and "tell the user the push hangs" in text
+              and recorder.commands() == ["git push --quiet"],
+              text + "\n" + str(recorder.commands()))
+    except subprocess.TimeoutExpired:
+        check(case_name, False, "the timeout escaped without the message")
 
     quick = Recorder()
     tool.push_branch(scratch, "b", quick, environment={})
     check("a push that finishes asks origin nothing more",
           quick.ran("git push") and not quick.ran("git ls-remote"),
           str(quick.commands()))
+    longer = {selective.TIME_BUDGET_ENVIRONMENT_VARIABLE: "1000"}
     configured = Recorder()
     tool.push_branch(scratch, "b", configured, environment=longer)
     check("the push is given the time the hook reads from the same environment",
           configured.timeout_of("git push") == tool.push_time_limit_seconds(longer),
           str(configured.timeout_of("git push")))
+    variable = selective.TIME_BUDGET_ENVIRONMENT_VARIABLE
+    saved = os.environ.get(variable)
+    os.environ[variable] = "1000"
+    try:
+        from_process = Recorder()
+        tool.push_branch(scratch, "b", from_process)
+        check("with no environment given, the push's time comes from this "
+              "process's environment, as the hook's does",
+              from_process.timeout_of("git push")
+              == tool.push_time_limit_seconds(longer),
+              str(from_process.timeout_of("git push")))
+    finally:
+        if saved is None:
+            del os.environ[variable]
+        else:
+            os.environ[variable] = saved
 
 
 def run_pull_request_description_cases(directory):

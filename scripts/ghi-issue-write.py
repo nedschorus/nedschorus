@@ -492,58 +492,37 @@ def run(arguments, timeout=GH_TIMEOUT_SECONDS, cwd=None, check=True):
 def push_time_limit_seconds(environment):
     """How long a push may take: the pre-push hook's conflict check and
     selective test run, each with its budget as the hook reads it from the
-    same environment, its grace period for stopping, and a margin."""
+    same environment and its grace period counted twice, since each one's
+    stop_process_group waits it after SIGTERM and again after SIGKILL, and a
+    margin that also covers the selective run's listing of descendants."""
     return (pre_push_conflict_check.time_budget_seconds(environment)
-            + pre_push_conflict_check.TERMINATE_GRACE_SECONDS
+            + 2 * pre_push_conflict_check.TERMINATE_GRACE_SECONDS
             + pre_push_selective_test_run.time_budget_seconds(environment)
-            + pre_push_selective_test_run.TERMINATE_GRACE_SECONDS
+            + 2 * pre_push_selective_test_run.TERMINATE_GRACE_SECONDS
             + PUSH_TIME_MARGIN_SECONDS)
 
 
 def push_branch(worktree, branch, runner, environment=None):
     """Push the landing branch, refusing with what to do when the push is
-    stopped by its time limit. Whether anything reached origin is read back,
-    so the message says which of the two it is."""
+    stopped by its time limit. A rerun is safe whether or not the branch
+    reached origin, because both landings read origin before they push: a
+    branch already there gets its missing pull request opened, not a second
+    push (land_file, edit_landing_state)."""
     environment = os.environ if environment is None else environment
     seconds = push_time_limit_seconds(environment)
     try:
         runner(["git", "push", "--quiet", "origin",
                 f"HEAD:refs/heads/{branch}"], timeout=seconds, cwd=str(worktree))
-        return
     except subprocess.TimeoutExpired:
-        pass
-    try:
-        listed = runner(["git", "ls-remote", "--heads", "origin",
-                         f"refs/heads/{branch}"],
-                        timeout=GH_TIMEOUT_SECONDS, cwd=str(worktree),
-                        check=False)
-        reached = (listed.stdout.strip() != "" if listed.returncode == 0
-                   else None)
-    except subprocess.TimeoutExpired:
-        reached = None
-    stopped = (f"git push of branch {branch} was stopped after "
-               f"{seconds:.0f} seconds, longer than the pre-push hook's own "
-               "limit, so the push itself hung.")
-    if reached is False:
         raise Refused(
-            f"{stopped}\nNothing was pushed: origin has no branch {branch}.\n"
-            "Rerun the same command; a rerun is safe.\n"
+            f"git push of branch {branch} was stopped after {seconds:.0f} "
+            "seconds, longer than the pre-push hook's own limit, so the push "
+            "itself hung.\n"
+            "Rerun the same command; a rerun is safe, because it reads origin "
+            "first and opens the pull request for a branch that is already "
+            "there.\n"
             "If it stops the same way again, tell the user the push hangs, "
-            "with this message.", 1)
-    if reached:
-        raise Refused(
-            f"{stopped}\nBranch {branch} reached origin anyway, so the pull "
-            "request was not opened.\n"
-            "Do not rerun this command: it would push the same branch again.\n"
-            f"Tell the user branch {branch} is on origin without its pull "
-            "request, with this message.", 1)
-    raise Refused(
-        f"{stopped}\nWhether branch {branch} reached origin could not be "
-        "read.\n"
-        f"Run: git ls-remote --heads origin refs/heads/{branch}\n"
-        "If it prints nothing, nothing was pushed: rerun the same command.\n"
-        "If it prints a line, do not rerun; tell the user the branch is on "
-        "origin without its pull request, with this message.", 1)
+            "with this message.", 1) from None
 
 
 def pairing_key(file_text: str) -> str:
