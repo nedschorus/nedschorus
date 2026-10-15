@@ -312,7 +312,7 @@ if sys.platform.startswith("linux"):
             "    --dev-bind|--bind|--ro-bind|--setenv) shift 3 ;;\n"
             "    --proc|--dev|--tmpfs|--overlay-src|--tmp-overlay|--unsetenv) shift 2 ;;\n"
             "    --json-status-fd) status_fd=$2; shift 2 ;;\n"
-            "    --unshare-pid|--unshare-net|--die-with-parent) shift ;;\n"
+            "    --unshare-pid|--unshare-net|--unshare-ipc|--die-with-parent) shift ;;\n"
             "    *) break ;;\n"
             "  esac\n"
             "done\n"
@@ -348,6 +348,8 @@ check("without a sandbox, the mutant's test command is unchanged",
 
 with tempfile.TemporaryDirectory() as scratch_name:
     scratch = pathlib.Path(scratch_name)
+    # A checkout, since a test sandbox keeps the checkout's git directory read-only.
+    subprocess.run(["git", "init", "-q"], cwd=scratch, check=True)
     (scratch / "dies-test.sh").write_text("kill -TERM $$\n")
     (scratch / "exits-143-test.sh").write_text("exit 143\n")
     # Stand in for bwrap's report of a signalled command: run it, then exit 128+15.

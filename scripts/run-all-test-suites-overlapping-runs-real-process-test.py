@@ -146,12 +146,12 @@ with tempfile.TemporaryDirectory(prefix="run-all-test-suites-overlapping-runs-")
           (first_rows, second_rows))
     for name in ("first", "second"):
         log_dir = scratch / f"logs-{name}"
-        resources = (log_dir / "suite-resources.tsv").read_text().splitlines()
+        resources = (log_dir / "test-suite-resource-use.tsv").read_text().splitlines()
         fields = resources[1].split("\t") if len(resources) > 1 else []
         check(f"the {name} run records the suite's kind, admission wait, CPU seconds and peak "
               f"memory", len(fields) == 8 and fields[1] == "test sandbox"
               and fields[4] != "" and fields[5] != "" and int(fields[6] or 0) > 0, resources)
-        readings = (log_dir / "machine-readings.tsv").read_text().splitlines()
+        readings = (log_dir / "machine-cpu-and-memory-readings.tsv").read_text().splitlines()
         check(f"the {name} run records the machine's readings each second", len(readings) >= 3,
               readings)
         check(f"the {name} run records each case's time, and writes JUnit XML",

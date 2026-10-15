@@ -714,6 +714,53 @@ with tempfile.TemporaryDirectory() as scratch_name:
           code == program.EXIT_NOT_RUN and ran == [] and "not a file" in output,
           (code, output, ran))
 
+# --- In a test sandbox the suite runs at low priority, in a cgroup scope of its own ---
+if sys.platform.startswith("linux"):
+    with tempfile.TemporaryDirectory() as scratch_name:
+        scratch = pathlib.Path(scratch_name).resolve()
+        repository = scratch_checkout(scratch)
+        launched = []
+
+        class LaunchedNothing:
+            returncode = 0
+
+            def wait(self):
+                return 0
+
+        real_popen = program.subprocess.Popen
+
+        def noting_popen(command, *arguments, **options):
+            # Only the suite's launch is noted; git and the rest run as usual.
+            if not any("doubling-test.py" in str(part) for part in command):
+                return real_popen(command, *arguments, **options)
+            launched.append(list(command))
+            return LaunchedNothing()
+
+        originals = (program.subprocess.Popen, program.stop_descendants,
+                     program.runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none)
+        program.subprocess.Popen = noting_popen
+        program.stop_descendants = lambda: None
+        for cgroup_reason in (None, "systemd-run is not on PATH"):
+            program.runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none = \
+                lambda reason=cgroup_reason: reason
+            try:
+                program.run_suite_confined(repository, "doubling-test.py", sys.executable,
+                                           ("/usr/bin/bwrap",), scratch / "proof")
+            except program.NotRun:
+                pass
+        (program.subprocess.Popen, program.stop_descendants,
+         program.runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none) = originals
+        nice = ["nice", "-n", str(program.runner.TEST_SUITE_NICE_INCREMENT)]
+        check("in a test sandbox, the suite runs in a cgroup scope of its own and at low "
+              "priority, as the runner's suites do",
+              len(launched) == 2
+              and launched[0][:len(program.runner.TEST_SUITE_CGROUP_SCOPE_COMMAND)]
+              == list(program.runner.TEST_SUITE_CGROUP_SCOPE_COMMAND)
+              and any(launched[0][index:index + 3] == nice for index in range(len(launched[0]))),
+              launched[:1])
+        check("where no cgroup scope can be made, the suite still runs at low priority",
+              len(launched) == 2 and launched[1][:3] == nice, launched[1:])
+
 if not sys.platform.startswith("linux") or not bwrap_usable():
     print("SKIP  the cases that run a suite: no usable bwrap here")
 else:

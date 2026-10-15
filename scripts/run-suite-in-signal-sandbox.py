@@ -34,8 +34,9 @@ The suite runs exactly as scripts/run-all-test-suites.py runs it: from the
 checkout's top directory, stdin closed, without the variables that redirect
 git, inside the signal sandbox (`bwrap --unshare-pid` on Linux, `sandbox-exec`
 on macOS), with RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX=1; on Linux in a test
-sandbox of its own once admission lets it start, and on macOS while holding the
-machine's test-run lock. Before the suite starts, a check inside the sandbox
+sandbox of its own once admission lets it start, at low priority and in a cgroup
+scope of its own, whose CPU seconds and peak memory it prints, and on macOS while
+holding the machine's test-run lock. Before the suite starts, a check inside the sandbox
 proves it is confined: on Linux, that process 1 there is bwrap; on macOS, that
 a signal to a process outside the sandbox is refused. If the check fails, the
 suite is not run. This program never runs a suite unconfined: without the
@@ -399,19 +400,39 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
     """
     platform = sys.platform if platform is None else platform
     by_process_group = platform == "darwin"
-    # The proof is read after the sandbox ends, so its directory is written for real.
-    command = [*runner.command_prefix_starting_one_suite_in_its_test_sandbox(sandbox_prefix, top, (proof_file.parent,),
-                                                         suite),
+    # A proof left by an earlier run must not vouch for this one.
+    proof_file.write_text("")
+    environment = runner.test_suite_launch_environment_without_git_redirecting_agent_session_attendance_and_credential_variables()
+    # The proof is read after the sandbox ends, and the bytecode is the suite's own, so
+    # both are written for real; nothing else outside the checkout is.
+    writable = [proof_file]
+    if bytecode_dir is not None:
+        bytecode_dir.mkdir(parents=True, exist_ok=True)
+        writable.append(bytecode_dir)
+        environment["PYTHONPYCACHEPREFIX"] = str(bytecode_dir)
+    command = [*runner.command_prefix_starting_one_suite_in_its_test_sandbox(sandbox_prefix, top, writable,
+                                                                              suite),
                sys.executable, str(Path(__file__).resolve()),
                INSIDE_CHECK_OPTION, str(proof_file), "--",
                *suite_command(top, suite, interpreter)]
-    environment = runner.test_suite_launch_environment_without_git_redirecting_and_agent_session_attendance_variables()
-    if bytecode_dir is not None:
-        environment["PYTHONPYCACHEPREFIX"] = str(bytecode_dir)
-    # A proof left by an earlier run must not vouch for this one.
-    proof_file.write_text("")
+    statistics = None
+    in_test_sandbox = runner.does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(
+        sandbox_prefix)
+    if in_test_sandbox:
+        # At low priority and in a cgroup scope of its own, as the runner's suites run.
+        resource_prefix = ["nice", "-n", str(runner.TEST_SUITE_NICE_INCREMENT)]
+        cgroup_unavailable_because = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none()
+        if cgroup_unavailable_because is None:
+            statistics = tempfile.TemporaryFile()
+            resource_prefix = [*runner.command_prefix_running_one_suite_in_its_cgroup_scope(
+                statistics.fileno(), in_bwrap=True), *resource_prefix]
+        else:
+            print(f"{PROGRAM}: the suite runs without a cgroup scope, so its CPU seconds and "
+                  f"peak memory are not measured: {cgroup_unavailable_because}", flush=True)
+        command = [*resource_prefix, *command]
     process = subprocess.Popen(command, cwd=str(top), env=environment,
-                               stdin=subprocess.DEVNULL, start_new_session=by_process_group)
+                               stdin=subprocess.DEVNULL, start_new_session=by_process_group,
+                               pass_fds=(statistics.fileno(),) if statistics is not None else ())
     if by_process_group:
         try:
             wait_without_reaping(process)
@@ -425,12 +446,24 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
                 process.kill()
                 process.wait()
             stop_descendants()
-    if proof_file.read_text().strip() != expected_proof(platform):
+    if statistics is not None:
+        with statistics:
+            statistics.seek(0)
+            cpu_seconds, peak_memory, missing = \
+                runner.cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(
+                    statistics.read().decode("utf-8", "replace"))
+        print(f"{PROGRAM}: " + (missing if missing else
+                                f"the suite used {cpu_seconds:.1f} CPU seconds, peak memory "
+                                f"{peak_memory / 10**6:.0f} MB"), flush=True)
+    try:
+        proof = runner.read_text_without_following_symlinks(proof_file)
+    except OSError:
+        proof = ""
+    if proof.strip() != expected_proof(platform):
         raise NotRun(f"the check inside the sandbox did not confirm the suite would be "
                      f"confined (exit {process.returncode}), so the suite was not started")
     exit_code = process.returncode
-    if runner.does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix) and \
-            128 < exit_code <= 128 + runner.SIGNAL_NUMBER_LIMIT:
+    if in_test_sandbox and 128 < exit_code <= 128 + runner.SIGNAL_NUMBER_LIMIT:
         exit_code = -(exit_code - 128)
     return exit_code
 
@@ -526,7 +559,7 @@ def run(arguments, platform):
     try:
         # Clean up after earlier runs here, as scripts/run-all-test-suites.py does.
         if lock_handle is None:
-            with runner.clean_up_lock_shared_by_overlapping_runs(Path(arguments.lock_file)):
+            with runner.lock_held_while_cleaning_up_after_earlier_runs(Path(arguments.lock_file)):
                 runner.clean_up_after_earlier_runs(Path(arguments.lock_file), previous_holder,
                                                    platform)
         else:
@@ -534,18 +567,18 @@ def run(arguments, platform):
                                                platform)
         admitted = contextlib.nullcontext(0.0)
         if in_test_sandbox:
-            readings = runner.MachineReadings(psutil)
+            readings = runner.TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler(psutil)
             readings.start()
             try:
-                admission = runner.MachineWideSuiteAdmission(
-                    runner.admission_directory_for_lock_file(arguments.lock_file), readings,
+                admission = runner.MachineWideTestSuiteAdmission(
+                    runner.test_suite_admission_directory_for_lock_file(arguments.lock_file), readings,
                     lambda line: print(f"{PROGRAM}: {line}", flush=True))
-            except runner.MachineWideSuiteAdmissionFailed as error:
+            except runner.MachineWideTestSuiteAdmissionCouldNotDecide as error:
                 raise NotRun(f"admission could not start: {error}") from error
             admitted = admission.admitted(suite)
         with admitted:
             return run_admitted_suite(top, suite, interpreter, sandbox_prefix, patch, platform)
-    except runner.MachineWideSuiteAdmissionFailed as error:
+    except runner.MachineWideTestSuiteAdmissionCouldNotDecide as error:
         raise NotRun(f"admission failed: {error}") from error
     finally:
         if readings is not None:

@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """Tests that a suite inside its test sandbox cannot escape it.
 
-The environment is built by scripts/run-all-test-suites.py's own code, exactly as
-for a suite, and a probe inside it tries every escape. Each target is one this
-file made for the purpose: a file in the real home directory, a tmux server on a
-socket of its own, a listening socket in the session's runtime directory, a
+A probe is run as a suite by scripts/run-all-test-suites.py's own run_one_suite,
+the path every suite takes: in a cgroup scope at low priority, with the input
+recorder, in a checkout that is a linked worktree, as merge-lane-2's head test
+runs and mutation testing use. The probe tries every escape. Each target is one
+this file made for the purpose: a file in the real home directory, a tmux server
+on a socket of its own, a listening socket in the session's runtime directory, a
 sleeper process, a scratch repository. If a protection were missing, the worst a
-probe can do is change those targets, and this file removes them afterwards.
-The real credential files are only measured, never printed.
+probe can do is change those targets, and this file removes them afterwards. The
+real credential files are only measured, never printed, and the machine's real
+listening sockets only connected to and closed.
+
+The lists of what must be hidden are written out here, not read from the
+runner, so dropping an entry from one of the runner's lists fails a case.
 
 bwrap cannot start inside bwrap, so the runner runs this suite outside its
 sandbox (SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX); run anywhere bwrap cannot
@@ -16,6 +22,7 @@ start, it prints SKIP.
 Run: python3 scripts/run-all-test-suites-test-sandbox-escape-test.py   (exit 0 = all passed)
 """
 
+import contextlib
 import importlib.util
 import json
 import os
@@ -60,15 +67,28 @@ def load(name, path):
 
 runner = load("run_all_test_suites", RUNNER_PATH)
 
-# Listed here as well as in the runner, so dropping one from the runner's list fails a case.
 SOCKET_VARIABLES_THAT_MUST_BE_UNSET = (
     "TMUX", "TMUX_PANE", "DBUS_SESSION_BUS_ADDRESS", "SSH_AUTH_SOCK",
-    "CLAUDE_CODE_MESSAGING_SOCKET")
+    "CLAUDE_CODE_MESSAGING_SOCKET", "DISPLAY", "WAYLAND_DISPLAY", "GPG_AGENT_INFO")
+CREDENTIAL_VARIABLES_THAT_MUST_BE_UNSET = (
+    "GH_TOKEN", "GITHUB_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_MESSAGING_TOKEN",
+    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AWS_SECRET_ACCESS_KEY", "NPM_TOKEN",
+    "DATABASE_PASSWORD")
+# Relative to the home directory, each matched in its own directory.
+CREDENTIAL_FILE_PATTERNS_THAT_MUST_BE_HIDDEN = (
+    ".config/nedschorus/*.token", ".claude/.credentials.json", ".codex/auth.json*",
+    ".config/gh/hosts.yml", ".ssh/id_*", ".git-credentials", ".netrc",
+    ".gnupg/private-keys-v1.d/*", ".local/share/keyrings/*", ".steam/*.token",
+    ".aws/credentials", ".docker/config.json")
+# Sockets through which a process reaches far outside: root through Docker, the system,
+# the service manager. Each must be among those the probe is refused, where it exists.
+MACHINE_SOCKETS_NAMED = (
+    "/run/docker.sock", "/run/dbus/system_bus_socket", "/run/snapd.socket",
+    "/run/systemd/io.systemd.Manager")
 # gnome-shell on ned-box serves displays :0 and :1; its authorization cookie lives in the
 # runtime directory, which the test sandbox hides.
 X11_DISPLAYS_PROBED = (0, 1)
-CREDENTIAL_FILES_THAT_MUST_BE_HIDDEN = (
-    ".config/nedschorus/*.token", ".claude/.credentials.json", ".codex/auth.json")
+PROBE_SUITE = "escape-probe-test.py"
 
 # Opens an X11 connection with the first cookie it can find, as a program in the session
 # would; True only when the display accepts it. Run inside the environment by the probe,
@@ -116,8 +136,8 @@ def x11_display_accepts(display):
     return False
 '''
 
-# Runs inside the environment. Each attempt prints one JSON line: what it tried and
-# whether it worked. It writes only to the paths it is given.
+# Runs inside the environment as a suite. Each attempt prints one JSON line: what it
+# tried and whether it worked. It writes only to the paths it is given.
 PROBE_SOURCE = r'''
 import json, os, signal, socket, subprocess, sys
 targets = json.loads(os.environ["ESCAPE_TEST_TARGETS"])
@@ -152,8 +172,9 @@ def tmux_has_session():
                           capture_output=True, text=True)
     return done.returncode == 0
 attempt("reach the tmux server by name", tmux_has_session)
-def connect(path):
-    connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+def connect(path, kind=socket.SOCK_STREAM):
+    connection = socket.socket(socket.AF_UNIX, kind)
+    connection.settimeout(2)
     try:
         connection.connect(path)
     finally:
@@ -161,6 +182,10 @@ def connect(path):
 attempt("connect to the tmux server's socket", lambda: connect(targets["tmux_socket_path"]))
 attempt("connect to the runtime directory's socket", lambda: connect(targets["runtime_socket_path"]))
 attempt("connect to the session bus", lambda: connect(targets["session_bus_path"]))
+for path, kind in targets["machine_sockets"]:
+    address = "\0" + path[1:] if path.startswith("@") else path
+    attempt(f"connect to the machine's listening socket {path}",
+            lambda address=address, kind=kind: connect(address, kind))
 def systemd_run():
     done = subprocess.run(["systemd-run", "--user", "--scope", "--quiet", "true"],
                           capture_output=True, text=True)
@@ -176,6 +201,13 @@ for display in targets["x11_displays"]:
     attempt(f"open an X11 connection to display :{display}",
             lambda display=display: x11_display_accepts(display))
 attempt("signal the sleeper outside", lambda: os.kill(targets["sleeper_pid"], signal.SIGTERM))
+def system_v_message_queue():
+    import ctypes
+    libc = ctypes.CDLL(None, use_errno=True)
+    queue = libc.msgget(targets["system_v_key"], 0)
+    if queue < 0:
+        raise OSError(ctypes.get_errno(), "msgget")
+attempt("reach a System V message queue outside", system_v_message_queue)
 git_directory = targets["git_directory"]
 attempt("write a ref in the repository's git directory",
         lambda: write(os.path.join(git_directory, "refs", "heads", "escaped"), "0" * 40 + "\n"))
@@ -188,10 +220,37 @@ def git_branch():
                           capture_output=True, text=True)
     return done.returncode == 0
 attempt("create a branch with git", git_branch)
-for variable in targets["outside_socket_variables"]:
-    report(f"see variable {variable}", variable in os.environ, os.environ.get(variable, ""))
+# A worktree's .git file names the git directory that later git commands in it use,
+# outside the sandbox too; pointed at one with a filter, git would run that filter.
+fake = os.path.join(targets["checkout"], "fake-git-directory")
+def point_git_file_elsewhere():
+    subprocess.run(["git", "init", "-q", "--bare", fake], capture_output=True)
+    with open(os.path.join(fake, "config"), "a") as handle:
+        handle.write(f"[filter \"escape\"]\n\tclean = touch {targets['filter_marker']}; cat\n")
+    write(os.path.join(targets["checkout"], ".gitattributes"), "* filter=escape\n")
+    write(os.path.join(targets["checkout"], ".git"), f"gitdir: {fake}\n")
+attempt("point the worktree's .git file at another git directory", point_git_file_elsewhere)
+for variable in targets["outside_socket_variables"] + targets["credential_variables"]:
+    report(f"see variable {variable}", variable in os.environ, "set" if variable in os.environ else "")
+attempt("change the input recorder's sitecustomize.py",
+        lambda: write(targets["recorder_sitecustomize"], "print('planted')\n"))
+for name, path in targets["runner_written_paths"].items():
+    def plant(path=path):
+        if os.path.lexists(path):
+            os.unlink(path)
+        os.symlink(targets["symlink_target"], path)
+    attempt(f"put a symbolic link where the runner writes {name}", plant)
+def plant_in_strace_directory():
+    os.symlink(targets["symlink_target"], os.path.join(targets["strace_directory"], "trace.planted-link"))
+    os.mkfifo(os.path.join(targets["strace_directory"], "trace.planted-pipe"))
+if targets["strace_directory"]:
+    attempt("put a link and a named pipe among the strace traces", plant_in_strace_directory)
+attempt("write in the run's log directory", lambda: write(targets["log_file"]))
 attempt("write in the checkout under test", lambda: write(targets["checkout_file"]))
-attempt("write in the log directory", lambda: write(targets["log_file"]))
+def append_input_record():
+    with open(targets["hook_log"], "a") as handle:
+        handle.write("escape-test\tthe probe's own line\n")
+attempt("write the suite's own input record", append_input_record)
 '''
 
 
@@ -223,8 +282,47 @@ def git_directory_state(git_directory):
     return state
 
 
+def listening_unix_sockets_of_this_machine():
+    """(path, socket type) of every listening Unix socket; an abstract one starts with @."""
+    found = set()
+    for row in pathlib.Path("/proc/net/unix").read_text().splitlines()[1:]:
+        fields = row.split()
+        if len(fields) >= 8 and int(fields[3], 16) & 0x10000:
+            kind = socket.SOCK_SEQPACKET if fields[4] == "0005" else socket.SOCK_STREAM
+            found.add((fields[7], int(kind)))
+    return sorted(found)
+
+
+@contextlib.contextmanager
+def environment_set(values):
+    saved = {name: os.environ.get(name) for name in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def make_linked_worktree(scratch):
+    """A repository and a worktree linked to it, whose .git is a file naming its git directory."""
+    repository = scratch / "repository"
+    repository.mkdir()
+    git("init", "-q", cwd=repository)
+    (repository / "tracked.txt").write_text("tracked\n")
+    git("add", ".", cwd=repository)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "start",
+        cwd=repository)
+    checkout = scratch / "checkout"
+    git("worktree", "add", "-q", "--detach", str(checkout), "HEAD", cwd=repository)
+    return repository / ".git", checkout
+
+
 def run_probe(scratch):
-    """Build one suite's environment, run the probe in it, and check every target after."""
+    """Run the probe as a suite in its test sandbox, and check every target after."""
     sandbox_prefix, unconfined_because = runner.signal_sandbox()
     if not sandbox_prefix:
         print(f"SKIP  every escape case: the runner builds no sandbox here: {unconfined_because}")
@@ -233,28 +331,45 @@ def run_probe(scratch):
     runtime = pathlib.Path(runner.XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX)
     name = f"run-all-test-suites-escape-test-{os.getpid()}"
 
-    # A checkout whose git directory lies inside it, as in a clone, so the read-only
-    # bind of the git directory is all that protects it.
-    checkout = scratch / "checkout"
-    checkout.mkdir()
-    git("init", "-q", cwd=checkout)
-    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty",
-        "-m", "start", cwd=checkout)
-    git_directory = checkout / ".git"
-    log_dir = scratch / "log"
-    log_dir.mkdir()
+    git_directory, checkout = make_linked_worktree(scratch)
+    (checkout / PROBE_SUITE).write_text(X11_PROBE_SOURCE + PROBE_SOURCE)
+    git_file_before = (checkout / ".git").read_text()
+    # The run's log directory is placed in the home directory, which the sandbox shows,
+    # so it is the bind of the log directory alone that keeps the suite out of it.
+    log_dir = home / ".cache" / f"{name}-log"
+    log_dir.mkdir(parents=True)
+    recording_dir = log_dir / "recorded-inputs"
+    recording_dir.mkdir()
+    recorder_dir = runner.install_python_input_recorder(log_dir)
+    strace = runner.strace_usable()
+    hook_log, strace_dir = runner.recording_paths_for(recording_dir, PROBE_SUITE)
+    sitecustomize = recorder_dir / "sitecustomize.py"
+    sitecustomize_before = sitecustomize.read_text()
 
     canary_dir = home / ".cache" / name
     canary_dir.mkdir(parents=True)
     canary = canary_dir / "canary"
     canary.write_text("original")
     canary.chmod(0o644)
+    symlink_target = canary_dir / "symlink-target"
+    symlink_target.write_text("untouched")
+    filter_marker = canary_dir / "filter-ran"
     host_tmp = pathlib.Path(tempfile.mkdtemp(prefix=f"{name}-", dir="/tmp"))
     var_tmp_file = pathlib.Path("/var/tmp") / f"{name}-probe"
     dev_shm_file = pathlib.Path("/dev/shm") / f"{name}-probe"
     runtime_file = runtime / f"{name}-probe"
     outside_files = [host_tmp / "probe", var_tmp_file, dev_shm_file, runtime_file,
                      pathlib.Path("/etc") / f"{name}-probe"]
+    runner_written = {
+        "the suite's log": runner.log_path_for(log_dir, PROBE_SUITE),
+        "another suite's log": runner.log_path_for(log_dir, "another-test.py"),
+        "the report": log_dir / runner.REPORT_FILE_NAME,
+        "the JUnit XML": log_dir / runner.JUNIT_XML_FILE_NAME,
+        "the case times": log_dir / runner.TEST_CASE_TIMES_FILE_NAME,
+        "the suite resource use": log_dir / runner.TEST_SUITE_RESOURCE_USE_FILE_NAME,
+        "the machine readings": log_dir / runner.MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME,
+        "the suite's input record": hook_log,
+    }
 
     tmux_environment = {key: value for key, value in os.environ.items()
                         if key not in ("TMUX", "TMUX_PANE", "TMUX_TMPDIR")}
@@ -273,14 +388,20 @@ def run_probe(scratch):
     abstract_listener.bind("\0" + name)
     abstract_listener.listen(4)
     sleeper = subprocess.Popen(["sleep", "600"])
+    system_v_key = 0x5e5c0000 + (os.getpid() & 0xffff)
+    system_v_queue = subprocess.run(
+        [sys.executable, "-c",
+         "import ctypes, sys\n"
+         "libc = ctypes.CDLL(None, use_errno=True)\n"
+         f"print(libc.msgget({system_v_key}, 0o1600))\n"],
+        capture_output=True, text=True).stdout.strip()
     git_before = git_directory_state(git_directory)
     credential_files = sorted(
-        set(runner.real_credential_files_to_cover_with_an_empty_file_in_test_sandbox())
-        | {str(path) for pattern in CREDENTIAL_FILES_THAT_MUST_BE_HIDDEN
-           for path in home.glob(pattern) if path.is_file()})
-    socket_variables = sorted(set(runner.TEST_SANDBOX_OUTSIDE_SOCKET_VARIABLES)
-                              | set(SOCKET_VARIABLES_THAT_MUST_BE_UNSET))
+        str(path) for pattern in CREDENTIAL_FILE_PATTERNS_THAT_MUST_BE_HIDDEN
+        for path in home.glob(pattern) if path.is_file() and not path.name.endswith(".pub"))
     nonempty_credentials = [path for path in credential_files if os.path.getsize(path) > 0]
+    machine_sockets = [(path, kind) for path, kind in listening_unix_sockets_of_this_machine()
+                       if path not in (str(runtime_socket_path), "@" + name)]
 
     targets = {
         "home_canary": str(canary),
@@ -291,36 +412,66 @@ def run_probe(scratch):
         "tmux_socket_path": str(tmux_socket_path),
         "runtime_socket_path": str(runtime_socket_path),
         "session_bus_path": str(runtime / "bus"),
+        "machine_sockets": machine_sockets,
         "sleeper_pid": sleeper.pid,
+        "system_v_key": system_v_key,
         "git_directory": str(git_directory),
         "checkout": str(checkout),
-        "outside_socket_variables": socket_variables,
+        "filter_marker": str(filter_marker),
+        "outside_socket_variables": list(SOCKET_VARIABLES_THAT_MUST_BE_UNSET),
+        "credential_variables": list(CREDENTIAL_VARIABLES_THAT_MUST_BE_UNSET),
+        "recorder_sitecustomize": str(sitecustomize),
+        "runner_written_paths": {label: str(path) for label, path in runner_written.items()},
+        "symlink_target": str(symlink_target),
+        "strace_directory": str(strace_dir) if strace else "",
         "checkout_file": str(checkout / "probe-stays"),
-        "log_file": str(log_dir / "probe-stays"),
+        "log_file": str(log_dir / "probe-was-here"),
+        "hook_log": str(hook_log),
         "x11_displays": X11_DISPLAYS_PROBED,
         "tcp_port": tcp_listener.getsockname()[1],
         "abstract_socket_name": name,
     }
-    environment = runner.test_suite_launch_environment_without_git_redirecting_and_agent_session_attendance_variables()
-    for variable in socket_variables:
-        environment.setdefault(variable, f"/outside/{variable.lower()}")
-    environment["ESCAPE_TEST_TARGETS"] = json.dumps(targets)
-    command = [*runner.command_prefix_starting_one_suite_in_its_test_sandbox(sandbox_prefix, checkout, (log_dir,)),
-               sys.executable, "-c", X11_PROBE_SOURCE + PROBE_SOURCE]
+    planted = {"ESCAPE_TEST_TARGETS": json.dumps(targets)}
+    planted.update({variable: f"/outside/{variable.lower()}"
+                    for variable in SOCKET_VARIABLES_THAT_MUST_BE_UNSET})
+    planted.update({variable: f"secret-{variable.lower()}"
+                    for variable in CREDENTIAL_VARIABLES_THAT_MUST_BE_UNSET})
+    cgroup_unavailable = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none()
+    # Descriptors held open, so the one the cgroup counters go to is numbered above 9, which
+    # a shell such as dash cannot name.
+    held_open = [open(os.devnull) for _ in range(12)]
     try:
-        probe = subprocess.run(command, cwd=str(checkout), env=environment,
-                               stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                               timeout=120)
+        with environment_set(planted):
+            result = runner.run_one_suite(
+                checkout, sys.executable, PROBE_SUITE, log_dir,
+                recorder=(recorder_dir, recording_dir, strace), sandbox_prefix=sandbox_prefix,
+                in_cgroup_scope=cgroup_unavailable is None, nice=True)
+        # What the runner does with the suite's files after it ends, as a run does. A link
+        # the suite could plant where the runner writes makes the runner refuse to write.
+        try:
+            runner.recording_of(checkout, PROBE_SUITE, result, recording_dir,
+                                {PROBE_SUITE, "tracked.txt"}, "HEAD", strace is not None)
+            runner.blob_hashes(checkout, ["tracked.txt"])
+            runner.write_case_times_suite_resources_and_junit_xml_of_run(log_dir, [result])
+            refused = None
+        except OSError as error:
+            refused = error
+        check("after the suite, the runner reads its files and writes its records, finding no "
+              "link the suite planted where it writes", refused is None, repr(refused))
+        log_text = result["log"].read_text(errors="replace")
         attempts = {}
-        for line in probe.stdout.splitlines():
+        for line in log_text.splitlines():
             try:
                 record = json.loads(line)
             except ValueError:
                 continue
             attempts[record["attempt"]] = record
-        check("the probe ran inside the environment and reported",
-              probe.returncode == 0 and len(attempts) > 20,
-              (probe.returncode, probe.stdout[-800:], probe.stderr[-800:]))
+        check("the probe ran as a suite inside its test sandbox and reported",
+              result["exit"] == 0 and len(attempts) > 40, (result["exit"], log_text[-1500:]))
+        check("the probe ran in a cgroup scope of its own, as suites do, and its counters "
+              "were read",
+              cgroup_unavailable is not None or result["cpu_seconds"] is not None,
+              (cgroup_unavailable, result.get("resources_note")))
 
         def blocked(attempt):
             record = attempts.get(attempt)
@@ -345,6 +496,12 @@ def run_probe(scratch):
               tmux_started.returncode == 0, tmux_started.stderr)
         check("precondition: at least one real credential file exists and is not empty",
               bool(nonempty_credentials), credential_files)
+        check("precondition: the System V message queue of this test exists outside",
+              system_v_queue.lstrip("-").isdigit() and int(system_v_queue) >= 0, system_v_queue)
+        named_present = [path for path in MACHINE_SOCKETS_NAMED if os.path.exists(path)]
+        check("precondition: every named machine socket that exists here is among those probed",
+              all(path in {path for path, _ in machine_sockets} for path in named_present),
+              named_present)
 
         # Suites write in the home directory, so inside it must take the writes.
         for attempt in ("write the home canary", "chmod the home canary",
@@ -373,10 +530,17 @@ def run_probe(scratch):
                         "change the repository's git config", "create a branch with git",
                         "connect to a localhost TCP port outside",
                         "connect to an abstract Unix socket outside",
+                        "reach a System V message queue outside",
+                        "point the worktree's .git file at another git directory",
+                        "change the input recorder's sitecustomize.py",
                         *(f"open an X11 connection to display :{display}"
                           for display in X11_DISPLAYS_PROBED)):
             ok, record = blocked(attempt)
             check(f"inside, this fails: {attempt}", ok, record)
+        for path, _ in machine_sockets:
+            ok, record = blocked(f"connect to the machine's listening socket {path}")
+            check(f"inside, connecting to the machine's listening socket fails: {path}",
+                  ok, record)
         try:
             accepted = listener.accept()
         except BlockingIOError:
@@ -387,14 +551,48 @@ def run_probe(scratch):
               sleeper.poll() is None, sleeper.returncode)
         check("outside afterwards, the repository's git directory is unchanged",
               git_directory_state(git_directory) == git_before)
-        for variable in socket_variables:
+        check("outside afterwards, the worktree's .git file still names its git directory",
+              (checkout / ".git").read_text() == git_file_before, (checkout / ".git").read_text())
+        check("outside afterwards, no git filter planted in the checkout ran when the runner "
+              "hashed the suite's files", not filter_marker.exists())
+        check("outside afterwards, the input recorder's sitecustomize.py is unchanged",
+              sitecustomize.read_text() == sitecustomize_before)
+        check("outside afterwards, nothing the suite wrote in the run's log directory is "
+              "there", not (log_dir / "probe-was-here").exists())
+        check("outside afterwards, the file a planted link pointed at is unchanged",
+              symlink_target.read_text() == "untouched")
+        check("outside afterwards, the runner wrote its records as files of its own",
+              all(not path.is_symlink() for path in runner_written.values()
+                  if path.parent.exists()),
+              [str(path) for path in runner_written.values() if path.is_symlink()])
+        for variable in SOCKET_VARIABLES_THAT_MUST_BE_UNSET:
             ok, record = blocked(f"see variable {variable}")
             check(f"inside, the variable naming a socket outside is unset: {variable}", ok, record)
+        for variable in CREDENTIAL_VARIABLES_THAT_MUST_BE_UNSET:
+            ok, record = blocked(f"see variable {variable}")
+            check(f"inside, the variable carrying a credential is unset: {variable}", ok, record)
+        record = attempts.get("write in the checkout under test")
+        check("inside, a write in the checkout under test works",
+              record is not None and record["worked"], record)
+        check("outside afterwards, a write in the checkout under test stays",
+              (checkout / "probe-stays").is_file())
+        record = attempts.get("write the suite's own input record")
+        recorded = hook_log.read_text(errors="replace").splitlines()
+        check("inside, the suite writes its own input record, which the runner reads after",
+              record is not None and record["worked"]
+              and "escape-test\tthe probe's own line" in recorded, record)
+        check("inside, the input recorder, which the sandbox shows read-only, ran in the "
+              "suite and recorded what it read",
+              any(line.split("\t")[0] in ("read", "list", "probe", "git") for line in recorded),
+              recorded[:5])
+
         # A suite allowed to write the git directory gets a copy-on-write overlay of it.
+        (checkout / ".git").write_text(git_file_before)
         git_writer = next(iter(runner.SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY))
+        environment = runner.test_suite_launch_environment_without_git_redirecting_agent_session_attendance_and_credential_variables()
         written = subprocess.run(
-            [*runner.command_prefix_starting_one_suite_in_its_test_sandbox(sandbox_prefix, checkout, (log_dir,),
-                                                     suite=git_writer),
+            [*runner.command_prefix_starting_one_suite_in_its_test_sandbox(
+                sandbox_prefix, checkout, suite=git_writer),
              "git", "-C", str(checkout), "branch", "escaped-by-git"],
             cwd=str(checkout), env=environment, stdin=subprocess.DEVNULL,
             capture_output=True, text=True, timeout=120)
@@ -408,7 +606,7 @@ def run_probe(scratch):
         try:
             reached = subprocess.run(
                 [*runner.command_prefix_starting_one_suite_in_its_test_sandbox(
-                    sandbox_prefix, checkout, (log_dir,), suite=shared),
+                    sandbox_prefix, checkout, suite=shared),
                  sys.executable, "-c",
                  "import socket, sys\n"
                  f"socket.create_connection(('127.0.0.1', {targets['tcp_port']}), timeout=3).close()\n"],
@@ -418,20 +616,24 @@ def run_probe(scratch):
             del runner.SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK[shared]
         check("inside, a suite listed to share the machine's network reaches a localhost port "
               "outside", reached.returncode == 0, reached.stderr)
-        check("outside afterwards, a write in the checkout under test stays",
-              (checkout / "probe-stays").is_file())
-        check("outside afterwards, a write in the log directory stays",
-              (log_dir / "probe-stays").is_file())
     finally:
+        for handle in held_open:
+            handle.close()
         sleeper.kill()
         sleeper.wait()
         listener.close()
         tcp_listener.close()
         abstract_listener.close()
         runtime_socket_path.unlink(missing_ok=True)
+        subprocess.run([sys.executable, "-c",
+                        "import ctypes\n"
+                        "libc = ctypes.CDLL(None)\n"
+                        f"queue = libc.msgget({system_v_key}, 0)\n"
+                        "queue >= 0 and libc.msgctl(queue, 0, None)\n"], capture_output=True)
         subprocess.run(["tmux", "-L", name, "kill-server"], env=tmux_environment,
                        capture_output=True)
         shutil.rmtree(canary_dir, ignore_errors=True)
+        shutil.rmtree(log_dir, ignore_errors=True)
         shutil.rmtree(host_tmp, ignore_errors=True)
         for path in outside_files:
             try:
@@ -439,6 +641,56 @@ def run_probe(scratch):
             except OSError:
                 pass
 
+
+def check_runner_writes_and_reads_refuse_symbolic_links(scratch):
+    """The runner's own file access refuses a link a suite could have left in its place."""
+    target = scratch / "link-target"
+    target.write_text("untouched")
+    link = scratch / "planted-link"
+    link.symlink_to(target)
+    try:
+        with runner.open_for_writing_without_following_symlinks(link) as handle:
+            handle.write("written through the link")
+        refused = False
+    except OSError:
+        refused = True
+    check("the runner refuses to write a record through a symbolic link",
+          refused and target.read_text() == "untouched", target.read_text())
+    try:
+        runner.read_text_without_following_symlinks(link)
+        refused = False
+    except OSError:
+        refused = True
+    check("the runner refuses to read a suite's file through a symbolic link", refused)
+    pipe = scratch / "planted-pipe"
+    os.mkfifo(pipe)
+    try:
+        runner.read_text_without_following_symlinks(pipe)
+        refused = False
+    except OSError:
+        refused = True
+    check("the runner refuses to read a named pipe left among a suite's files, rather than "
+          "wait on it", refused)
+
+
+def check_blob_hashes_run_no_filter(scratch):
+    """Hashing a checkout's files runs no filter the checkout's git configuration names."""
+    repository = scratch / "filtered"
+    repository.mkdir()
+    git("init", "-q", cwd=repository)
+    marker = scratch / "filter-ran"
+    git("config", "filter.planted.clean", f"touch {marker}; cat", cwd=repository)
+    (repository / ".gitattributes").write_text("* filter=planted\n")
+    (repository / "file.txt").write_text("content\n")
+    hashes = runner.blob_hashes(repository, ["file.txt"])
+    check("hashing a file whose attributes name a filter runs no filter",
+          not marker.exists() and hashes.get("file.txt") not in (None, "unknown"), hashes)
+
+
+with tempfile.TemporaryDirectory() as scratch_name:
+    check_runner_writes_and_reads_refuse_symbolic_links(pathlib.Path(scratch_name))
+with tempfile.TemporaryDirectory() as scratch_name:
+    check_blob_hashes_run_no_filter(pathlib.Path(scratch_name))
 
 unavailable = bwrap_unavailable_reason()
 if unavailable:

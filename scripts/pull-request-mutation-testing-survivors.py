@@ -18,7 +18,10 @@ recordings scripts/run-all-test-suites.py keeps), plus the file's sibling
 
 On Linux with bwrap each mutant's suites run in test sandboxes of their own, as
 scripts/run-all-test-suites.py runs them, so the script takes no lock and
-overlaps other test runs. Elsewhere, while cosmic-ray runs, the script holds the
+overlaps other test runs; the admission scripts/run-all-test-suites.py uses
+decides when each file's mutants start, they hold one of its slots while they
+run, at low priority, and a suite that runs outside the test sandbox first
+takes the lock those suites share with every other run. Elsewhere, while cosmic-ray runs, the script holds the
 lock scripts/run-all-test-suites.py takes (--lock-file, default
 ~/.claude/.run-all-test-suites.lock), because each mutant is a test run and two
 test runs sharing the machine disturb each other. It takes the lock without
@@ -266,8 +269,10 @@ def outcomes_from_dump(dump_text):
 
 def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
                            arguments, environment, sandbox_prefix=(),
-                           suites_outside_sandbox=()):
-    """Run cosmic-ray on one file's changed lines; return (counts, survivors, errored)."""
+                           suites_outside_sandbox=(), nice_prefix=()):
+    """Run cosmic-ray on one file's changed lines; return (counts, survivors, errored).
+
+    nice_prefix goes before each cosmic-ray command, so the suites it runs inherit it."""
     name = path.replace("/", "__")
     config = scratch / f"{name}.toml"
     session = scratch / f"{name}.sqlite"
@@ -276,8 +281,8 @@ def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
         path, test_command_for(suites, arguments.python, sandbox_prefix,
                                suites_outside_sandbox), merge_base,
         arguments.mutant_timeout_seconds))
-    cosmic_ray = tools["cosmic-ray"]
-    baseline = run([cosmic_ray, "baseline", "--session-file",
+    cosmic_ray = [*nice_prefix, tools["cosmic-ray"]]
+    baseline = run([*cosmic_ray, "baseline", "--session-file",
                     str(baseline_session), str(config)], worktree, environment)
     if baseline.returncode != 0:
         raise CouldNotRun(
@@ -287,7 +292,7 @@ def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
     # cosmic-ray's baseline exits 0 unless the suites failed, so a suite it
     # could not launch at all passes it; only a survived baseline means they ran.
     baseline_results = [json.loads(line) for line in run_or_raise(
-        [cosmic_ray, "dump", str(baseline_session)], worktree, environment,
+        [*cosmic_ray, "dump", str(baseline_session)], worktree, environment,
         what=f"cosmic-ray dump of the baseline for {path}").splitlines()
         if line.strip()]
     if not any(result and result.get("test_outcome") == "survived"
@@ -298,14 +303,14 @@ def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
             f"{' '.join(suites)}\n"
             + "\n".join((result or {}).get("output") or ""
                         for _, result in baseline_results).strip())
-    run_or_raise([cosmic_ray, "init", str(config), str(session)], worktree,
+    run_or_raise([*cosmic_ray, "init", str(config), str(session)], worktree,
                  environment, what=f"cosmic-ray init for {path}")
     run_or_raise([tools["cr-filter-git"], "--config", str(config), str(session)],
                  worktree, environment, what=f"cr-filter-git for {path}")
-    run_or_raise([cosmic_ray, "exec", str(config), str(session)], worktree,
+    run_or_raise([*cosmic_ray, "exec", str(config), str(session)], worktree,
                  environment, what=f"cosmic-ray exec for {path}")
     return outcomes_from_dump(run_or_raise(
-        [cosmic_ray, "dump", str(session)], worktree, environment,
+        [*cosmic_ray, "dump", str(session)], worktree, environment,
         what=f"cosmic-ray dump for {path}"))
 
 
@@ -354,12 +359,14 @@ def main(argv=None):
     runner = load_test_suite_runner()
     # An inherited GIT_DIR or GIT_WORK_TREE would point every git command at another repository,
     # and cosmic-ray launches the suites with this environment, as the runner launches them.
-    environment = runner.test_suite_launch_environment_without_git_redirecting_and_agent_session_attendance_variables()
+    environment = runner.test_suite_launch_environment_without_git_redirecting_agent_session_attendance_and_credential_variables()
     try:
         tools = cosmic_ray_tool_paths(arguments.cosmic_ray_venv)
         if arguments.pull_request is not None:
-            head, base = head_and_base_of_pull_request(arguments.pull_request,
-                                                       checkout, environment)
+            # gh needs the credential that the suites' environment leaves out.
+            head, base = head_and_base_of_pull_request(
+                arguments.pull_request, checkout,
+                runner.environment_without_git_redirecting_variables())
         else:
             head, base = arguments.head, arguments.base
         head = run_or_raise(["git", "rev-parse", "--verify", f"{head}^{{commit}}"],
@@ -417,10 +424,31 @@ def main(argv=None):
             return EXIT_LOCKED
         # Clean up after earlier runs here, as scripts/run-all-test-suites.py does.
         if in_test_sandboxes:
-            with runner.clean_up_lock_shared_by_overlapping_runs(lock_file):
+            with runner.lock_held_while_cleaning_up_after_earlier_runs(lock_file):
                 runner.clean_up_after_earlier_runs(lock_file, previous_holder)
         else:
             runner.clean_up_after_earlier_runs(lock_file, previous_holder)
+        # Each file's mutants are a test run of their own: admission decides when they start,
+        # they hold a slot while they run, at low priority, and a suite run outside the
+        # test sandbox first takes the lock those suites share with every other run.
+        admission = readings = None
+        nice_prefix = ()
+        if in_test_sandboxes:
+            psutil, refusal = runner.psutil_imported_or_why_not()
+            if psutil is None:
+                raise CouldNotRun(refusal.replace(f"{runner.PROGRAM}:", f"{PROGRAM}:", 1))
+            try:
+                readings = runner.TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler(psutil)
+                readings.start()
+                admission = runner.MachineWideTestSuiteAdmission(
+                    runner.test_suite_admission_directory_for_lock_file(lock_file), readings,
+                    lambda line: print(f"{PROGRAM}: {line}", flush=True))
+            except runner.MachineWideTestSuiteAdmissionCouldNotDecide as error:
+                if readings is not None:
+                    readings.stop()
+                raise CouldNotRun(f"{PROGRAM}: not run — admission could not start: {error}\n"
+                                  f"Fix what it names, then run this again.") from error
+            nice_prefix = ("nice", "-n", str(runner.TEST_SUITE_NICE_INCREMENT))
         with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as scratch_name:
             scratch = Path(scratch_name)
             worktree = scratch / "worktree"
@@ -444,12 +472,18 @@ def main(argv=None):
                             if sandbox_prefix and suite in outside:
                                 print(f"NO SANDBOX  {suite} runs WITHOUT the signal "
                                       f"sandbox: {outside[suite]}", flush=True)
-                        counts, survivors, errored = mutation_test_one_file(
-                            path, suites, worktree, scratch, tools, merge_base,
-                            arguments, environment,
-                            {suite: runner.command_prefix_starting_one_suite_in_its_test_sandbox(
-                                sandbox_prefix, worktree, suite=suite) for suite in suites},
-                            outside)
+                        admitted = (contextlib.nullcontext() if admission is None else
+                                    admission.admitted(
+                                        f"mutation testing of {path}",
+                                        outside_the_test_sandbox=any(
+                                            suite in outside for suite in suites)))
+                        with admitted:
+                            counts, survivors, errored = mutation_test_one_file(
+                                path, suites, worktree, scratch, tools, merge_base,
+                                arguments, environment,
+                                {suite: runner.command_prefix_starting_one_suite_in_its_test_sandbox(
+                                    sandbox_prefix, worktree, suite=suite) for suite in suites},
+                                outside, nice_prefix)
                         for key in totals:
                             totals[key] += counts[key]
                         for label, mutants in (("SURVIVED", survivors),
@@ -465,6 +499,15 @@ def main(argv=None):
                                     print(f"    {diff_line}")
             finally:
                 remove_worktree(checkout, worktree, environment)
+                if readings is not None:
+                    readings.stop()
+    except runner.MachineWideTestSuiteAdmissionCouldNotDecide as error:
+        print(f"{PROGRAM}: not run to the end — admission failed: {error}\n"
+              f"Fix what it names, then run this again.", file=sys.stderr)
+        return EXIT_COULD_NOT_RUN
+    except runner.SignalSandboxCouldNotStart as error:
+        print(runner.signal_sandbox_refusal(error, PROGRAM), file=sys.stderr)
+        return EXIT_COULD_NOT_RUN
     except CouldNotRun as failure:
         print(str(failure), file=sys.stderr)
         return EXIT_COULD_NOT_RUN

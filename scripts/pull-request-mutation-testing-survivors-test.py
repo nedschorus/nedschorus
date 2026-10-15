@@ -60,10 +60,24 @@ if (control / "machine.lock").exists():
             lock_free = True
         except OSError:
             lock_free = False
+# Which of admission's locks another process holds at this call.
+def held_by_another(path):
+    with open(path, "a") as probe:
+        try:
+            fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return False
+        except OSError:
+            return True
+admission = control / "machine.lock.test-suite-admission"
+slots_held = (sum(held_by_another(path) for path in admission.glob("slot-*"))
+              if admission.is_dir() else 0)
+outside = admission / "suites-run-outside-the-signal-sandbox.lock"
+outside_lock_held = outside.exists() and held_by_another(outside)
 with (control / "calls.log").open("a") as log:
     log.write(json.dumps({{"tool": tool, "arguments": arguments,
                           "cwd": os.getcwd(), "head": head,
-                          "lock_free": lock_free,
+                          "lock_free": lock_free, "niceness": os.nice(0),
+                          "slots_held": slots_held, "outside_lock_held": outside_lock_held,
                           "session_attended": os.environ.get("CLAUDE_CODE_SESSION_ATTENDED")}}) + "\\n")
 if tool == "cr-filter-git":
     sys.exit(plan.get("filter_exit", 0))
@@ -160,6 +174,24 @@ def calls(control):
             (control / "calls.log").read_text().splitlines() if line]
 
 
+ADMISSION_OPENED_DRIVER = r'''
+import importlib.util, sys
+program_path, *arguments = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("pull_request_mutation_testing_survivors", program_path)
+program = importlib.util.module_from_spec(spec)
+sys.argv = [program_path, *arguments]
+spec.loader.exec_module(program)
+load_runner = program.load_test_suite_runner
+def load_runner_with_admission_opened():
+    runner = load_runner()
+    runner.TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 101
+    runner.TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE = -1
+    return runner
+program.load_test_suite_runner = load_runner_with_admission_opened
+sys.exit(program.main(arguments))
+'''
+
+
 def run_script(repository, control, *flags, path_override=None,
                extra_environment=None, dropped_variables=()):
     environment = {name: value for name, value in os.environ.items()
@@ -169,8 +201,9 @@ def run_script(repository, control, *flags, path_override=None,
         environment["PATH"] = path_override
     environment.update(extra_environment or {})
     # Never the real machine lock: the suite runner holds that one while this file runs.
+    # Admission's thresholds are opened wide, so a case does not wait on a busy machine.
     return subprocess.run(
-        [sys.executable, str(SCRIPT), "--checkout", str(repository),
+        [sys.executable, "-c", ADMISSION_OPENED_DRIVER, str(SCRIPT), "--checkout", str(repository),
          "--recorded-inputs-directory", str(control / "recordings"),
          "--lock-file", str(control / "machine.lock"), *flags],
         capture_output=True, text=True, check=False, env=environment, timeout=120)
@@ -819,6 +852,18 @@ def run_cases():
                   "the mutant's test command",
                   outside_suite in config and str(fake_bin / "bwrap") not in config,
                   config)
+            cosmic_ray_calls = [call for call in calls(control) if call["tool"] == "cosmic-ray"]
+            check("in test sandboxes, cosmic-ray, and so every suite it runs, holds an admission "
+                  "slot and runs at low priority",
+                  cosmic_ray_calls
+                  and all(call["slots_held"] >= 1 for call in cosmic_ray_calls)
+                  and all(call["niceness"] >= 10 for call in cosmic_ray_calls),
+                  json.dumps(cosmic_ray_calls)[:800])
+            check("with a suite that runs outside the sandbox, cosmic-ray holds the lock those "
+                  "suites share with every other run",
+                  cosmic_ray_calls
+                  and all(call["outside_lock_held"] for call in cosmic_ray_calls),
+                  json.dumps(cosmic_ray_calls)[:800])
     else:
         print("SKIP  the signal sandbox cases: bwrap is used only on Linux")
 

@@ -138,6 +138,21 @@ def make_repo(root, suite_path, body=WAITS_FOR_THE_STOP_FILE, name="repo"):
     return repo
 
 
+# Runs the runner with admission's CPU and memory thresholds opened wide, so a case does
+# not wait on how busy the machine is; the admission directory is this test's own.
+ADMISSION_OPENED_DRIVER = r'''
+import importlib.util, sys
+program_path, *arguments = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("run_all_test_suites", program_path)
+program = importlib.util.module_from_spec(spec)
+sys.argv = [program_path, *arguments]
+spec.loader.exec_module(program)
+program.TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 101
+program.TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE = -1
+sys.exit(program.main(arguments))
+'''
+
+
 def start_run(root, repo, name):
     """Start the runner on repo with its own log directory; return (process, log dir)."""
     environment = dict(os.environ)
@@ -148,7 +163,8 @@ def start_run(root, repo, name):
     environment[STOP_FILE_VARIABLE] = str(repo / "stop")
     log_dir = root / f"logs-{name}"
     process = subprocess.Popen(
-        [sys.executable, str(PROGRAM), "--checkout", str(repo), "--log-dir", str(log_dir),
+        [sys.executable, "-c", ADMISSION_OPENED_DRIVER, str(PROGRAM), "--checkout", str(repo),
+         "--log-dir", str(log_dir),
          "--lock-file", str(root / "run.lock"),
          "--recorded-inputs-directory", str(root / "recordings")],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -167,7 +183,7 @@ def finish_run(root, repo, name):
     environment[STARTED_FILE_VARIABLE] = str(root / f"{name}.started")
     environment[STOP_FILE_VARIABLE] = str(root / "stop")
     return subprocess.run(
-        [sys.executable, str(PROGRAM), "--checkout", str(repo),
+        [sys.executable, "-c", ADMISSION_OPENED_DRIVER, str(PROGRAM), "--checkout", str(repo),
          "--log-dir", str(root / f"logs-{name}"), "--lock-file", str(root / "run.lock"),
          "--recorded-inputs-directory", str(root / "recordings")],
         stdin=subprocess.DEVNULL, capture_output=True, text=True, env=environment,

@@ -4,12 +4,13 @@
 Admission is tested with stubbed readings, clocks and sleeps, in an admission
 directory of this test's own, so no case depends on how busy the machine is.
 
-Run: python3 scripts/run-all-test-suites-machine-wide-suite-admission-test.py   (exit 0 = all passed)
+Run: python3 scripts/run-all-test-suites-machine-wide-test-suite-admission-test.py   (exit 0 = all passed)
 """
 
 import contextlib
 import fcntl
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -19,6 +20,15 @@ import tempfile
 import threading
 import time
 import xml.etree.ElementTree
+
+# Before anything runs git, so the scratch repository is built where this suite says.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    pathlib.Path(__file__).resolve().with_name(
+        "git-redirecting-environment-removal-test-fixture.py"))
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 RUNNER_PATH = SCRIPTS_DIR / "run-all-test-suites.py"
@@ -74,9 +84,9 @@ class Clock:
 
 def admission_in(directory, readings, said=None, clock=None):
     clock = clock or Clock()
-    return runner.MachineWideSuiteAdmission(
+    return runner.MachineWideTestSuiteAdmission(
         directory, readings, (said if said is not None else []).append,
-        clock=clock.clock, sleep=clock.sleep, wall_clock=clock.clock), clock
+        clock=clock.clock, sleep=clock.sleep, machine_clock=clock.clock), clock
 
 
 def free_starts(directory):
@@ -254,9 +264,9 @@ with tempfile.TemporaryDirectory() as scratch_name:
     blocked = scratch / "not-a-directory"
     blocked.write_text("")
     try:
-        runner.MachineWideSuiteAdmission(blocked / "admission", Readings(), print)
+        runner.MachineWideTestSuiteAdmission(blocked / "admission", Readings(), print)
         raised = None
-    except runner.MachineWideSuiteAdmissionFailed as error:
+    except runner.MachineWideTestSuiteAdmissionCouldNotDecide as error:
         raised = str(error)
     check("an admission directory that cannot be made is reported as an admission failure",
           raised is not None and "admission" in raised, raised)
@@ -268,7 +278,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
         with admission.admitted("a-test.py"):
             pass
         raised = None
-    except runner.MachineWideSuiteAdmissionFailed as error:
+    except runner.MachineWideTestSuiteAdmissionCouldNotDecide as error:
         raised = str(error)
     check("a slot file that cannot be opened is reported as an admission failure, naming "
           "the file", raised is not None and "slot-00" in raised, raised)
@@ -287,8 +297,9 @@ with tempfile.TemporaryDirectory() as scratch_name:
                 available = 33 * GB
             return Memory()
 
-    readings_file = scratch / "machine-readings.tsv"
-    readings = runner.MachineReadings(Psutil(), readings_file, interval=0.01, average_seconds=0.05)
+    readings_file = scratch / "machine-cpu-and-memory-readings.tsv"
+    readings = runner.TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler(
+        Psutil(), readings_file, interval=0.01, average_seconds=0.05)
     readings.start()
     time.sleep(0.3)
     readings.stop()
@@ -306,17 +317,60 @@ with tempfile.TemporaryDirectory() as scratch_name:
                 raise RuntimeError("the CPU counters vanished")
             return 10.0
 
-    readings = runner.MachineReadings(FailingPsutil(), None, interval=0.01)
+    readings = runner.TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler(
+        FailingPsutil(), None, interval=0.01)
     readings.start()
     time.sleep(0.2)
     readings.stop()
     try:
         readings.cpu_percent_average()
         raised = None
-    except runner.MachineWideSuiteAdmissionFailed as error:
+    except runner.MachineWideTestSuiteAdmissionCouldNotDecide as error:
         raised = str(error)
     check("readings that stop with an error make admission fail, naming the error, rather "
           "than decide on old readings", raised is not None and "vanished" in raised, raised)
+
+    class FirstReadingFails(Psutil):
+        def cpu_percent(self, interval=None):
+            raise RuntimeError("no CPU counters at all")
+
+    try:
+        runner.TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler(
+            FirstReadingFails(), None, interval=0.01).start()
+        raised = None
+    except runner.MachineWideTestSuiteAdmissionCouldNotDecide as error:
+        raised = str(error)
+    check("a first reading that fails is an admission failure naming the error, not a "
+          "traceback", raised is not None and "no CPU counters" in raised, raised)
+
+    class MemoryFails(Psutil):
+        def virtual_memory(self):
+            raise RuntimeError("no memory counters")
+
+    sampler = runner.TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler(
+        MemoryFails(), None, interval=0.01)
+    try:
+        sampler.available_memory_bytes()
+        raised = None
+    except runner.MachineWideTestSuiteAdmissionCouldNotDecide as error:
+        raised = str(error)
+    check("available memory that cannot be read is an admission failure naming the error",
+          raised is not None and "no memory counters" in raised, raised)
+
+    # --- Start times on a clock every run shares, which never steps back -----------
+    check("start times are read on the monotonic clock, which every process on Linux shares",
+          runner.MachineWideTestSuiteAdmission.__init__.__defaults__[-1] is time.monotonic)
+    directory = scratch / "clock-stepped-back"
+    admission, clock = admission_in(directory, Readings())
+    directory.mkdir(exist_ok=True)
+    (directory / runner.TEST_SUITE_ADMISSION_START_TIMES_FILE_NAME).write_text(
+        "".join(f"{clock.now + 500.0!r}\n"
+                for _ in range(runner.TEST_SUITE_ADMISSION_STARTS_PER_SECOND)))
+    slot, why = admission.take_a_start_and_a_slot()
+    check("starts recorded later than now, as after a clock stepped back, do not hold "
+          "admission back", slot is not None, why)
+    if slot is not None:
+        slot.close()
 
     # --- psutil missing ----------------------------------------------------------
     hidden = scratch / "no-psutil"
@@ -339,11 +393,11 @@ with tempfile.TemporaryDirectory() as scratch_name:
           answer.stdout + answer.stderr)
 
     # --- The cgroup scope ------------------------------------------------------
-    why = runner.why_suites_cannot_run_in_cgroup_scopes(which=lambda name: None)
+    why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(which=lambda name: None)
     check("without systemd-run on PATH, the reason says so",
           why is not None and "not on PATH" in why, why)
 
-    why = runner.why_suites_cannot_run_in_cgroup_scopes(
+    why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
         which=lambda name: None if name == "setpriv" else f"/usr/bin/{name}")
     check("without setpriv, which ties the counting shell's life to this program's, the "
           "reason names it", why is not None and "setpriv" in why, why)
@@ -351,7 +405,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
     class Failed:
         returncode, stdout, stderr = 1, "", "Failed to connect to bus: No medium found"
 
-    why = runner.why_suites_cannot_run_in_cgroup_scopes(
+    why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
         which=lambda name: "/usr/bin/systemd-run", runner=lambda *a, **k: Failed())
     check("a systemd-run that cannot start a scope gives its own error as the reason",
           why is not None and "No medium found" in why, why)
@@ -359,23 +413,20 @@ with tempfile.TemporaryDirectory() as scratch_name:
     def os_error(*arguments, **options):
         raise OSError("Permission denied")
 
-    why = runner.why_suites_cannot_run_in_cgroup_scopes(
+    why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(
         which=lambda name: "/usr/bin/systemd-run", runner=os_error)
     check("a systemd-run that cannot be started at all gives the error as the reason",
           why is not None and "Permission denied" in why, why)
 
-    statistics = scratch / "suite.cgroup"
-    statistics.write_text("usage_usec 2500000\nuser_usec 2000000\nsystem_usec 500000\n"
-                          "memory.peak 123456789\n")
     check("the cgroup counters give the suite's CPU seconds and peak memory",
-          runner.cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(statistics)
-          == (2.5, 123456789, None))
-    statistics.write_text("cat: /sys/fs/cgroup/x/memory.peak: No such file or directory\n")
-    cpu, peak, why = runner.cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(statistics)
+          runner.cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(
+              "usage_usec 2500000\nuser_usec 2000000\nsystem_usec 500000\n"
+              "memory.peak 123456789\n") == (2.5, 123456789, None))
+    cpu, peak, why = runner.cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(
+        "cat: /sys/fs/cgroup/x/memory.peak: No such file or directory\n")
     check("counters that could not be read leave the numbers out and say why",
           cpu is None and peak is None and "No such file" in why, why)
-    cpu, peak, why = runner.cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(
-        scratch / "never-written.cgroup")
+    cpu, peak, why = runner.cpu_seconds_and_peak_memory_from_suite_cgroup_statistics("")
     check("counters that were never written leave the numbers out and say why",
           cpu is None and peak is None and "not written" in why, why)
 
@@ -433,7 +484,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
     times = (records / runner.TEST_CASE_TIMES_FILE_NAME).read_text().splitlines()
     check("the case times file has one row per case line",
           len(times) == 4 and times[2].split("\t")[:2] == ["timed-test.py", "FAIL"], times)
-    resources = (records / runner.TEST_SUITE_RESOURCES_FILE_NAME).read_text().splitlines()
+    resources = (records / runner.TEST_SUITE_RESOURCE_USE_FILE_NAME).read_text().splitlines()
     check("the suite resources file has each suite's kind, admission wait, CPU seconds and "
           "peak memory, or why they are missing",
           resources[1].split("\t")[1:7] == ["test sandbox", "1", f"{result['seconds']:.3f}",
@@ -476,6 +527,155 @@ with tempfile.TemporaryDirectory() as scratch_name:
           == [("timed-test.py", "second case"), ("crashed-test.py", None)]
           and all(entry["commit"] == "abc123" and entry["branch"] == "topic-branch"
                   for entry in entries), entries)
+
+    # --- A suite in a cgroup scope of its own gets its counters, whatever descriptor ---
+    cgroup_unavailable = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none()
+    if cgroup_unavailable is None:
+        # Hold descriptors open, so the one the counters go to is numbered above 9, which a
+        # shell such as dash cannot name.
+        held_open = [open(os.devnull) for _ in range(12)]
+        try:
+            scoped = runner.run_one_suite(repository, sys.executable, "timed-test.py", log_dir,
+                                          in_cgroup_scope=True)
+        finally:
+            for handle in held_open:
+                handle.close()
+        check("a suite run in a cgroup scope of its own gets its CPU seconds and peak memory, "
+              "and keeps its own exit code",
+              scoped["cpu_seconds"] is not None and scoped["peak_memory_bytes"]
+              and scoped["exit"] == 1, scoped)
+    else:
+        print(f"SKIP  the cgroup scope case: {cgroup_unavailable}")
+
+    # --- On the Mac, the suite's output goes straight to its log, as it always did ---
+    mac_result = runner.run_one_suite(repository, sys.executable, "timed-test.py", log_dir,
+                                      platform="darwin")
+    check("on the Mac no case line is timed, and the output reaches the log whole",
+          mac_result["cases"] == [] and mac_result["exit"] == 1
+          and "a detail line" in mac_result["log"].read_text(), mac_result)
+
+    # --- The suites' environment carries no credential -----------------------------
+    saved = {name: os.environ.get(name) for name in
+             ("GH_TOKEN", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", "SOME_SERVICE_SECRET",
+              "DB_PASSWORD", "AWS_CREDENTIALS", "KEEP_THIS_ONE")}
+    try:
+        for name in saved:
+            os.environ[name] = "value-of-" + name
+        environment = runner.test_suite_launch_environment_without_git_redirecting_agent_session_attendance_and_credential_variables()
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+    check("a suite is launched without any variable that carries a credential, and with "
+          "the others",
+          not any(name in environment for name in saved if name != "KEEP_THIS_ONE")
+          and environment.get("KEEP_THIS_ONE") == "value-of-KEEP_THIS_ONE",
+          sorted(name for name in saved if name in environment))
+
+    # --- A checkout whose git directory cannot be found gets no test sandbox ---------
+    original_common = runner.git_common_directory_of_checkout
+    runner.git_common_directory_of_checkout = lambda top: None
+    try:
+        runner.bwrap_arguments_for_one_suites_test_sandbox(repository)
+        raised = None
+    except runner.SignalSandboxCouldNotStart as error:
+        raised = str(error)
+    finally:
+        runner.git_common_directory_of_checkout = original_common
+    check("when the checkout's git common directory cannot be found, the test sandbox is "
+          "refused rather than built without its read-only git directory",
+          raised is not None and "git common directory" in raised, raised)
+
+    # --- Every failure of admission or of a test sandbox ends the run with exit 2 ---
+    run_repository = scratch / "run-repository"
+    run_repository.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=run_repository, check=True)
+    (run_repository / "a-test.py").write_text("print('PASS  only case')\n")
+    subprocess.run(["git", "add", "."], cwd=run_repository, check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                    "-m", "start"], cwd=run_repository, check=True)
+
+    @contextlib.contextmanager
+    def replaced(**names):
+        originals = {name: getattr(runner, name) for name in names}
+        for name, value in names.items():
+            setattr(runner, name, value)
+        try:
+            yield
+        finally:
+            for name, value in originals.items():
+                setattr(runner, name, value)
+
+    def main_with(label, **names):
+        run_scratch = scratch / f"main-{label}"
+        run_scratch.mkdir()
+        printed_out, printed_err = io.StringIO(), io.StringIO()
+        with replaced(**names), contextlib.redirect_stdout(printed_out), \
+                contextlib.redirect_stderr(printed_err):
+            code = runner.main(["--checkout", str(run_repository),
+                                "--lock-file", str(run_scratch / "run.lock"),
+                                "--log-dir", str(run_scratch / "logs"),
+                                "--recorded-inputs-directory", str(run_scratch / "recorded")])
+        return code, printed_out.getvalue() + printed_err.getvalue(), run_scratch / "logs"
+
+    as_if_bwrap = {"signal_sandbox": lambda **options: (("/usr/bin/bwrap",), None),
+                   "TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW": 101,
+                   "TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE": -1}
+
+    def no_git_directory(top):
+        return None
+
+    code, printed, _ = main_with("no-git-directory", git_common_directory_of_checkout=no_git_directory,
+                                 **as_if_bwrap)
+    check("a test sandbox that cannot be built for the checkout stops the run before any "
+          "suite, with exit 2 and the reason",
+          code == runner.EXIT_COULD_NOT_RUN and "git common directory" in printed
+          and "Traceback" not in printed, (code, printed[-800:]))
+
+    def first_reading_fails(self):
+        raise runner.MachineWideTestSuiteAdmissionCouldNotDecide("the first reading failed: x")
+
+    sampler_class = runner.TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler
+    original_start = sampler_class.start
+    sampler_class.start = first_reading_fails
+    try:
+        code, printed, _ = main_with("first-reading", **as_if_bwrap)
+    finally:
+        sampler_class.start = original_start
+    check("a first machine reading that fails ends the run with exit 2 and the reason on "
+          "its own line",
+          code == runner.EXIT_COULD_NOT_RUN
+          and "admission could not start: the first reading failed" in printed
+          and "Traceback" not in printed, (code, printed[-800:]))
+
+    def admission_breaks(*arguments, **options):
+        raise runner.MachineWideTestSuiteAdmissionCouldNotDecide("slot-07 could not be opened")
+
+    code, printed, _ = main_with("mid-run", run_one_suite=admission_breaks, **as_if_bwrap)
+    check("admission that fails while suites run ends the run with exit 2, the reason on "
+          "its own line, not a traceback with exit 1",
+          code == runner.EXIT_COULD_NOT_RUN and "admission failed: slot-07" in printed
+          and "Fix what it names" in printed and "Traceback" not in printed,
+          (code, printed[-800:]))
+
+    def cover_breaks(*arguments, **options):
+        raise runner.SignalSandboxCouldNotStart("the empty file that covers each credential "
+                                                "file is not empty; delete it")
+
+    code, printed, _ = main_with("cover", run_one_suite=cover_breaks, **as_if_bwrap)
+    check("a test sandbox that fails while suites run ends the run with exit 2 and the "
+          "reason, not a traceback",
+          code == runner.EXIT_COULD_NOT_RUN and "delete it" in printed
+          and "Traceback" not in printed, (code, printed[-800:]))
+
+    code, printed, logs = main_with(
+        "no-bwrap", signal_sandbox=lambda **options: ((), "bwrap is not on PATH"))
+    check("without test sandboxes there is no admission, and no case times, JUnit XML or "
+          "failure history are written",
+          code == runner.EXIT_ALL_PASSED and not (logs / runner.JUNIT_XML_FILE_NAME).exists()
+          and runner.ADMISSION_WAITED_LINE_PREFIX not in printed, (code, printed[-800:]))
 
     # --- -j where admission decides --------------------------------------------
     check("where admission decides, every suite of the run may wait for admission at once",
