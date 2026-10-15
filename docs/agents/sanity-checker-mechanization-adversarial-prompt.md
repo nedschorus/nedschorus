@@ -1,6 +1,6 @@
 # Sanity-checker mechanization audit — reviewer instructions
 
-This audit carries: the Encode, Constrain, Externalize, and Verify questions, the hunt for steps left to human memory, and the prompts-to-code doctrine. Its siblings are the cut and fresh-eyes audits (`docs/agents/sanity-checker-cut-attack-prompt.md`, `docs/agents/sanity-checker-fresh-eyes-attack-prompt.md`). `scripts/sanity-check-attacks.py` dispatches this prompt; its docstring is the canonical location of the operating rules.
+This audit carries: the Encode, Constrain, Externalize, and Verify questions, the hunt for steps left to human memory, and the prompts-to-code doctrine. Its siblings are the cut and fresh-eyes audits (`docs/agents/sanity-checker-cut-adversarial-prompt.md`, `docs/agents/sanity-checker-fresh-eyes-adversarial-prompt.md`). `scripts/sanity-check-adversarial-prompts.py` dispatches this prompt; its docstring is the canonical location of the operating rules.
 
 Everything below the marker is the prompt itself, written for a reviewer with zero context beyond what it and the appended review request supply.
 

@@ -149,7 +149,7 @@ To re-check on ned-box, read the `--permission-profile` of every
 `codex-linux-sandbox` child of this run while it runs. Pick the children by
 ancestry, not by `pgrep -n`, which takes the newest one on the whole
 machine: another Codex run -- a cold-read Codex cell, or the sanity check's
-attacks, both `:workspace` -- often overlaps a review on ned-box, and its
+adversarial prompts, both `:workspace` -- often overlaps a review on ned-box, and its
 child carries "write" entries. Nor by `--command-cwd`: the review's own
 children can run with `--command-cwd /`. Keep only the outer stage, whose
 ancestry reaches the cell with no `bwrap` or `codex-linux-sandbox` in
@@ -226,7 +226,7 @@ ned-box, and nothing on the Mac, whose child recorded a workspace-write
 
 WHY THE CODEX MEMORY STORE IS OFF FOR REVIEW CELLS -- the one explanation
 for every `codex exec` this repository launches; the other two sites
-(nc-systems/cold-read/cold-read-codex-cell.py, scripts/sanity-check-attacks.py) pass the
+(nc-systems/cold-read/cold-read-codex-cell.py, scripts/sanity-check-adversarial-prompts.py) pass the
 same flag and point here.
 
 Codex keeps a memory store under `~/.codex/` that Codex processes on this

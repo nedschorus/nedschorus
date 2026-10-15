@@ -1,6 +1,6 @@
 # Sanity-checker cut audit — reviewer instructions
 
-This audit carries: the Delete question, the cut classes, internal consistency, and their guard rules. Its siblings are the mechanization and fresh-eyes audits (`docs/agents/sanity-checker-mechanization-attack-prompt.md`, `docs/agents/sanity-checker-fresh-eyes-attack-prompt.md`). `scripts/sanity-check-attacks.py` dispatches this prompt; its docstring is the canonical location of the operating rules.
+This audit carries: the Delete question, the cut classes, internal consistency, and their guard rules. Its siblings are the mechanization and fresh-eyes audits (`docs/agents/sanity-checker-mechanization-adversarial-prompt.md`, `docs/agents/sanity-checker-fresh-eyes-adversarial-prompt.md`). `scripts/sanity-check-adversarial-prompts.py` dispatches this prompt; its docstring is the canonical location of the operating rules.
 
 Everything below the marker is the prompt itself, written for a reviewer with zero context beyond what it and the appended review request supply.
 
