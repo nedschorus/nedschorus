@@ -1805,6 +1805,22 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and "cold-read-full-run 3 of 3 for" in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
+    # A record directory that cannot be read is reported, not skipped: skipping
+    # it would count fewer runs and lift the limit without saying so.
+    repository = build_scratch_repository(scratch, "full-run-count-record-unreadable")
+    for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
+        seed_log_store_record(repository, f"cold-read-grid-test-target-{day}", ["claude-hunt-deep.md"])
+    unreadable_record = repository / SCRATCH_LOG_STORE_RELATIVE / "cold-read-grid-test-target-2026-09-03"
+    unreadable_record.chmod(0o000)
+    try:
+        result = run_grid(repository, stubs / "full-run-count-record-unreadable")
+    finally:
+        unreadable_record.chmod(0o755)
+    check("an unreadable record directory is reported as EARLIER COLD-READ-FULL-RUNS NOT COUNTED",
+          result.returncode == 0 and "EARLIER COLD-READ-FULL-RUNS NOT COUNTED:" in result.stdout
+          and " of 3 for " not in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
     # A log-store that cannot be listed does not stop the read, as with
     # shipping, and the run says it went uncounted rather than counting zero.
     repository = build_scratch_repository(scratch, "full-run-count-store-unreadable")

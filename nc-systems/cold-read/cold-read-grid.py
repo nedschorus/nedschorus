@@ -280,9 +280,17 @@ def record_file_listing(host, store) -> list:
         store = pathlib.Path(store)
         if not store.is_dir():
             raise FullRunCountUnavailable(f"listing {store} failed: no such directory")
+        def unreadable(error):
+            raise FullRunCountUnavailable(f"listing {store} failed: {error}") from error
         try:
-            return [f"{path.relative_to(store)}\t{path.stat().st_mtime}"
-                    for path in sorted(store.glob("*/**/*")) if path.is_file()]
+            listing = []
+            for directory, _, files in os.walk(store, onerror=unreadable):
+                if pathlib.Path(directory) == store:
+                    continue
+                for name in files:
+                    path = pathlib.Path(directory, name)
+                    listing.append(f"{path.relative_to(store)}\t{path.stat().st_mtime}")
+            return sorted(listing)
         except OSError as error:
             raise FullRunCountUnavailable(f"listing {store} failed: {error}") from error
     # The store a remote host holds is on ned-box, whose find is GNU find.
