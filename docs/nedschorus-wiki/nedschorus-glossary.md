@@ -31,6 +31,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **code-prompt-code (aka CPC)** — a program built from both code and prompts.
 - **conversation-tail** — the verbatim tail of an agent-session's dialog, `~/.claude/handoffs/<seat>-dialog-NNNN.md`, which the handoff-supervisor writes when it replaces the agent-session, for the successor to read first.
 - **create-GHI** — the ghi-write-tool operation that files a new GHI for a GHI-MD that has none, refusing when an open GHI already covers the same ground.
+- **deferred-decisions** — the section of a design or GHI-MD, headed `Deferred-decisions` at any heading level, that lists the cases and decisions the document leaves for its build, for later evidence or for the user to settle; a reviewer does not report a case listed there as missing.
 - **design-contract** — the file beside a design listing what the component promises its component-consumers, one testable clause per observable effect.
 - **design-to-main** — the workflow that takes an approved design to code, tests and a pull request; its design and its own glossary are in `docs/design-to-main/`.
 - **edit-GHI** — the ghi-write-tool operation that merges an edit of a filed GHI-MD into main and updates the GHI from main.

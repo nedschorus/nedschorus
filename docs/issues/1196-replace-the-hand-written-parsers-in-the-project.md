@@ -49,7 +49,7 @@ Each step is a build-slice on its own topic branch, tested, and merged before th
 6. **Hook defects that are not about parsing**, from the audit's section "Hook improvements that are not about parsing", one pull request per hook: a hook that fails silently or exits 0 on a crash reports the failure to the agent, as CLAUDE.md's rule on reporting failures requires; hooks without timeouts get them; dead code goes.
 7. **The main-gatekeeper**, `nc-systems/main-gatekeeper/main-gatekeeper.py`, last: it is dormant, so its findings harm no agent until it is switched on.
 
-## What is not decided
+## Deferred-decisions
 
 1. **A missing parser.** Settled by the user on 2026-10-12: when a Bash guard cannot import `tree-sitter-bash`, it installs the pinned requirements file with step 2's install command, then checks the command as usual. If the install fails, the guard lets the command through and tells the agent to tell the user that the parser is missing, with what the install printed.
 2. **The `MultiEdit` matcher.** The three Edit and Write guards do not match `MultiEdit`; whether Claude Code still offers `MultiEdit` is for the user to settle before step 6 touches it.

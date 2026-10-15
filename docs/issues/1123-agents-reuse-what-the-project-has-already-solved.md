@@ -48,7 +48,7 @@ The user ruled on the order above and the open questions on 2026-10-12 and 2026-
 
 How to measure the result, and a daily search for duplicates, which the user proposed while ruling on question 9, moved to a new approval-walk on agent-seats that run the daily and 10-day maintenance; the outcome goes into GHI 1058's GHI-MD.
 
-## What is not decided
+## Deferred-decisions
 
 1. Whether ShellCheck, the standard linter for shell scripts, gets a GHI of its own.
 

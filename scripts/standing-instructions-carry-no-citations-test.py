@@ -66,6 +66,8 @@ EXCEPTIONS = {
     ("nc-systems/skills/explain/explain-how-to-write-an-identifier-instructions.md",
      '`ruled 2026-09-15 at "<which walk or'):
         "an example of a citation's form, which the agent copies when it cites a ruling",
+    (".claude/skills/cold-read/SKILL.md", "`--user-ruled-cold-read-full-run-count-restart`"):
+        "the name of a cold-read-grid.py flag the agent must type, not a record of a ruling",
 }
 
 
