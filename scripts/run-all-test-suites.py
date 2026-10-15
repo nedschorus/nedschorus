@@ -2100,12 +2100,16 @@ def bwrap_arguments_for_one_suites_test_sandbox(checkout, writable_paths=(), sui
     return arguments
 
 
-def listening_unix_sockets_the_test_sandbox_would_show(proc_net_unix="/proc/net/unix"):
+def listening_unix_sockets_the_test_sandbox_would_show(proc_net_unix="/proc/net/unix",
+                                                      unreachable=None):
     """Each listening Unix socket on this machine outside the directories the sandbox hides.
 
     A read-only mount does not stop a connection to a socket, so each is covered with an
     empty file, through which nothing connects; a daemon's socket outside /run, such as
-    one under /var/snap, would otherwise take a suite's requests."""
+    one under /var/snap, would otherwise take a suite's requests. A socket this program
+    cannot lstat is left out, since bwrap cannot bind over it and a suite, running as the
+    same account with fewer rights, cannot reach it either; each such socket and its error
+    is appended to unreachable, when given. A socket gone before the lstat is left out too."""
     hidden = ("/tmp", "/run", "/dev")
     found = []
     try:
@@ -2124,9 +2128,22 @@ def listening_unix_sockets_the_test_sandbox_would_show(proc_net_unix="/proc/net/
         try:
             if stat.S_ISSOCK(os.lstat(real).st_mode) and real not in found:
                 found.append(real)
-        except OSError:
+        except FileNotFoundError:
             continue
+        except OSError as error:
+            if unreachable is not None:
+                unreachable.append(f"{real} ({error.strerror})")
     return found
+
+
+def uncovered_listening_sockets_report_line_or_none(proc_net_unix="/proc/net/unix"):
+    """The report's line naming listening sockets left uncovered because this program cannot reach them."""
+    unreachable = []
+    listening_unix_sockets_the_test_sandbox_would_show(proc_net_unix, unreachable)
+    if not unreachable:
+        return None
+    return ("listening sockets left uncovered in each test sandbox, because this program "
+            "cannot reach them and so neither can a suite: " + ", ".join(sorted(set(unreachable))))
 
 
 def command_prefix_starting_one_suite_in_its_test_sandbox(sandbox_prefix, checkout, writable_paths=(),
@@ -2195,11 +2212,23 @@ def signal_sandbox_line(prefix, unconfined_because):
     return "suites run inside the signal sandbox this run was started in"
 
 
+TEST_SANDBOX_DID_NOT_START_NOTE = (
+    f"\n{PROGRAM}: the suite did not start: bwrap could not build its test sandbox, for the "
+    f"reason bwrap printed above.\n"
+    f"If bwrap says it can't create a file at a path, that path is a socket or credential "
+    f"file that disappeared between this program's scan and the sandbox's start: run the "
+    f"suite again.\n"
+    f"Otherwise, report bwrap's message to the user.\n")
+
+
 def suite_process_started(process, status_read, note_suite_process):
-    """Record the process whose end ends the suite: bwrap's namespace init, or the suite itself."""
+    """Record the process whose end ends the suite: bwrap's namespace init, or the suite itself.
+
+    Returns False when bwrap failed before starting the suite, True when it started it,
+    and None when there is no bwrap status to tell."""
     if status_read is None:
         note_suite_process(process.pid, namespace_init=False)
-        return
+        return None
     # bwrap's first status line names the init of the suite's PID namespace; when
     # that init ends, the kernel ends every process inside it.
     line = status_read.readline()
@@ -2208,8 +2237,9 @@ def suite_process_started(process, status_read, note_suite_process):
     except (ValueError, KeyError, TypeError):
         # bwrap failed before starting the suite; the outer bwrap is all there is.
         note_suite_process(process.pid, namespace_init=False)
-        return
+        return False
     note_suite_process(init, namespace_init=True)
+    return True
 
 
 def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefix=(),
@@ -2303,8 +2333,9 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         if status_write is not None:
             os.close(status_write)
             status_write = None
+        sandbox_started = None
         if note_suite_process is not None:
-            suite_process_started(process, status_read, note_suite_process)
+            sandbox_started = suite_process_started(process, status_read, note_suite_process)
         exit_code = process.wait()
         seconds = time.monotonic() - started
         if copier is not None:
@@ -2319,6 +2350,9 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         # Closed only after bwrap exits: bwrap writes its exit status to this pipe last.
         if status_read is not None:
             status_read.close()
+    if sandbox_started is False:
+        with open_for_writing_without_following_symlinks(log_file, append=True) as log:
+            log.write(TEST_SANDBOX_DID_NOT_START_NOTE)
     if exit_reports_signal_as_128_plus and 128 < exit_code <= 128 + SIGNAL_NUMBER_LIMIT:
         exit_code = -(exit_code - 128)
     result = {
@@ -2991,6 +3025,10 @@ def main(argv=None):
                 if suite in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX:
                     report.line(f"{suite} runs WITHOUT the signal sandbox: "
                                 f"{SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX[suite]}")
+        if in_test_sandboxes:
+            uncovered = uncovered_listening_sockets_report_line_or_none()
+            if uncovered is not None:
+                report.line(uncovered)
         admission = None
         cgroup_unavailable_because = None
         if in_test_sandboxes:

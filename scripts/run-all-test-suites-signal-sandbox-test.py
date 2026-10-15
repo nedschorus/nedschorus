@@ -17,6 +17,7 @@ import importlib.util
 import os
 import pathlib
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -394,6 +395,73 @@ command = mutation.test_command_for(["a-test.py", "b-test.py"], "/usr/bin/python
 check("a mutant's suite listed to run outside the sandbox runs without the prefix",
       command == "sh -c '/usr/bin/bwrap --unshare-pid /usr/bin/python3 -u a-test.py "
                  "&& /usr/bin/python3 -u b-test.py'", command)
+
+
+# --- Covers over listening sockets that vanish or cannot be reached -----------
+
+def proc_net_unix_listing(paths):
+    """A /proc/net/unix text listing each path as a listening stream socket."""
+    rows = ["Num       RefCount Protocol Flags    Type St Inode Path"]
+    rows += [f"0000000000000000: 00000002 00000000 00010000 0001 01 {100 + number} {path}"
+             for number, path in enumerate(paths)]
+    return "\n".join(rows) + "\n"
+
+
+with tempfile.TemporaryDirectory(dir=pathlib.Path.home()) as home_scratch_name, \
+        tempfile.TemporaryDirectory() as scratch_name:
+    home_scratch = pathlib.Path(home_scratch_name)
+    scratch = pathlib.Path(scratch_name)
+    listening = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    reachable = str(home_scratch / "listening.sock")
+    listening.bind(reachable)
+    listening.listen()
+    vanished = str(home_scratch / "vanished.sock")
+    # /root is closed to every account but root, so this program cannot lstat inside it.
+    unreachable_path = "/root/nedschorus-run-all-test-suites-test.sock"
+    listing = scratch / "unix"
+    listing.write_text(proc_net_unix_listing([reachable, vanished, unreachable_path]))
+    unreachable = []
+    try:
+        found = runner.listening_unix_sockets_the_test_sandbox_would_show(str(listing), unreachable)
+    finally:
+        listening.close()
+    check("a listening socket this program can reach is covered", reachable in found, found)
+    check("a listening socket gone before the scan's lstat is left out of the covers, "
+          "so bwrap is not asked to bind over a missing path", vanished not in found, found)
+    if os.geteuid() != 0:
+        check("a listening socket this program cannot reach is left out of the covers, "
+              "so bwrap's start does not fail on it", unreachable_path not in found, found)
+        check("a listening socket this program cannot reach is named as uncovered, with its error",
+              any(entry.startswith(unreachable_path + " (") for entry in unreachable), unreachable)
+        line = runner.uncovered_listening_sockets_report_line_or_none(str(listing))
+        check("the run's report names a listening socket left uncovered because it cannot be reached",
+              line is not None and unreachable_path in line and vanished not in line, line)
+    else:
+        print("SKIP  an unreachable socket: root can reach every path")
+    listing.write_text(proc_net_unix_listing([vanished]))
+    check("with no unreachable listening socket, the report has no uncovered-sockets line",
+          runner.uncovered_listening_sockets_report_line_or_none(str(listing)) is None)
+
+with tempfile.TemporaryDirectory() as scratch_name:
+    scratch = pathlib.Path(scratch_name)
+    subprocess.run(["git", "init", "-q"], cwd=scratch, check=True)
+    (scratch / "plain-test.sh").write_text("echo ran\n")
+    fake_bin = scratch / "bin"
+    fake_bin.mkdir()
+    # Fails as bwrap does when a path it must bind over vanished before it started.
+    (fake_bin / "bwrap").write_text(
+        "#!/bin/sh\necho \"bwrap: Can't create file at /var/gone.sock: Read-only file system\" >&2\n"
+        "exit 1\n")
+    (fake_bin / "bwrap").chmod(0o755)
+    failed = runner.run_one_suite(scratch, sys.executable, "plain-test.sh", scratch,
+                                  sandbox_prefix=(str(fake_bin / "bwrap"),),
+                                  note_suite_process=lambda *arguments, **options: None)
+    text = failed["log"].read_text()
+    check("a suite whose test sandbox could not start fails, with bwrap's message kept in its log",
+          failed["exit"] != 0 and "Can't create file at /var/gone.sock" in text, text)
+    check("a suite whose test sandbox could not start says so plainly in its log, and what to do",
+          "the suite did not start: bwrap could not build its test sandbox" in text
+          and "run the suite again" in text, text)
 
 
 # --- Isolation ----------------------------------------------------------------
