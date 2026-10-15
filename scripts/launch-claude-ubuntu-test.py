@@ -948,6 +948,38 @@ def main() -> int:
               (result["replay"].returncode, f"{elapsed:.1f}s",
                result["replay"].stderr[:300]))
 
+        # --- 18. a detached launch whose prepare step fails reports the
+        # failure and exits nonzero; only a seat that really exists gets the
+        # "already exists" line. A regular file where the box's agents
+        # directory belongs makes the prepare step's mkdir fail.
+        harness = LaunchHarness(root / "detached-prepare-fails")
+        (harness.home / "agents").write_text("not a directory\n",
+                                             encoding="utf-8")
+        result = harness.run(["seat-w", "--no-attach"])
+        check("detached, prepare fails: the remote side exits nonzero",
+              result["replay"].returncode != 0,
+              (result["replay"].returncode, result["replay"].stdout[:200]))
+        check("detached, prepare fails: no 'already exists' line, and the "
+              "failure is named on stderr",
+              "already exists" not in result["replay"].stdout
+              and "preparing or starting seat-w on the box failed"
+              in result["replay"].stderr,
+              (result["replay"].stdout[:200], result["replay"].stderr[:400]))
+        check("detached, prepare fails: no tmux session is started",
+              result["tmux_argv"] == "", result["tmux_argv"][:200])
+
+        harness = LaunchHarness(root / "detached-seat-exists")
+        harness.seat_exists_on_the_box()
+        result = harness.run(["seat-x", "--no-attach"])
+        check("detached onto a live seat: 'already exists', exit 0, and the "
+              "prepare step does not run",
+              result["replay"].returncode == 0
+              and "a tmux session named seat-x already exists"
+              in result["replay"].stdout
+              and not harness.prepare_ran() and result["tmux_argv"] == "",
+              (result["replay"].returncode, result["replay"].stdout[:200],
+               harness.prepare_ran()))
+
     print()
     if failures:
         print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
