@@ -768,11 +768,8 @@ def main() -> int:
         if output is not None:
             print(output)
     except Exception as error:
-        try:
-            print(f"bare-number-citation-in-markdown-and-agent-reply-warning-hook: "
-                  f"no check was made: {type(error).__name__}: {error}", file=sys.stderr)
-        except Exception:
-            pass
+        print(f"bare-number-citation-in-markdown-and-agent-reply-warning-hook: "
+              f"no check was made: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
     return 0
 

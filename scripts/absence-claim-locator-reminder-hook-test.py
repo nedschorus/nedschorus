@@ -473,15 +473,20 @@ for case_name, stdin_text, fault_words in (
 case = Case()
 case.log.mkdir()
 result = case.run(stdin_text="not json")
-check("a fault whose error cannot be logged: still reported on stderr, exit 1",
-      reported(result, "JSONDecodeError"), (result.returncode, result.stdout, result.stderr))
+check("a fault whose error cannot be logged: still reported on stderr, exit 1, "
+      "and stderr says the fault was not logged",
+      reported(result, "JSONDecodeError")
+      and "the failure was not logged either: IsADirectoryError" in result.stderr,
+      (result.returncode, result.stdout, result.stderr))
 
 case = Case().user("Where are the transcripts?").assistant_text(B01_CLAIM).write()
 case.log.mkdir()
 result = case.run()
-check("a log path that cannot be written: still reminds, exit 0",
-      result.returncode == 0 and blocked_reason(result) == REMINDER_FOR_B01,
-      (result.returncode, result.stdout))
+check("a log path that cannot be written: still reminds, exit 0, and stderr says the "
+      "outcome was not logged",
+      result.returncode == 0 and blocked_reason(result) == REMINDER_FOR_B01
+      and "'reminded' was not logged" in result.stderr and "IsADirectoryError" in result.stderr,
+      (result.returncode, result.stdout, result.stderr))
 
 shutil.rmtree(SUITE_ROOT, ignore_errors=True)
 print()
