@@ -1704,6 +1704,107 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and "cold-read-full-run 2 of 3 for" in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
+    # A fast read of a document whose stem starts claude- saves its
+    # sentence-id copy as claude-...-with-sentence-ids.md, a name a grid
+    # report also matches; that copy is not a report.
+    repository = build_scratch_repository(scratch, "full-run-count-fast-read-claude-stem")
+    claude_stem_relative = "docs/drafts/claude-notes.md"
+    write_target(repository, claude_stem_relative)
+    for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
+        seed_log_store_record(repository, f"claude-notes-{day}",
+                              ["fast-read.md", "claude-notes-with-sentence-ids.md"],
+                              frozen_relative=claude_stem_relative)
+    result = run_grid(repository, stubs / "full-run-count-fast-read-claude-stem",
+                      target_relative_path=claude_stem_relative)
+    check("a fast read's sentence-id copy of a claude- document does not count as a full run",
+          result.returncode == 0 and "cold-read-full-run 1 of 3 for claude-notes.md." in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    # The Mac's find has no -printf; listing this checkout's records must not need it.
+    repository = build_scratch_repository(scratch, "full-run-count-find-without-printf")
+    find_stub_directory = stubs / "full-run-count-find-without-printf"
+    find_stub_directory.mkdir(parents=True, exist_ok=True)
+    real_find = shutil.which("find")
+    (find_stub_directory / "find").write_text(
+        "#!/bin/sh\nfor argument in \"$@\"; do\n"
+        "  if [ \"$argument\" = -printf ]; then echo 'find: -printf: unknown primary or operator' >&2; exit 1; fi\n"
+        f"done\nexec {real_find} \"$@\"\n", encoding="utf-8")
+    (find_stub_directory / "find").chmod(0o755)
+    for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
+        seed_log_store_record(repository, f"cold-read-grid-test-target-{day}",
+                              ["claude-hunt-deep.md"], tree=Path("cold-read-records"))
+    result = run_grid(repository, find_stub_directory)
+    check("with a find that has no -printf, the records are still counted and a fourth run refused",
+          result.returncode == 2 and "refusing cold-read-full-run 4" in result.stderr,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    # A change merged from a topic branch lands at the merge, not at the
+    # topic's commit: runs between the two reviewed that change and do not count.
+    repository = build_scratch_repository(scratch, "full-run-count-merged-topic")
+    git_in = lambda *arguments, when=None: subprocess.run(
+        ["git", "-C", str(repository), *arguments], check=True, capture_output=True,
+        env={**os.environ, **({"GIT_COMMITTER_DATE": f"@{when} +0000",
+                               "GIT_AUTHOR_DATE": f"@{when} +0000"} if when else {})})
+    topic_committed_at = int(time.time()) - 20000
+    git_in("checkout", "-q", "-b", "topic")
+    (repository / TARGET_RELATIVE_PATH).write_text("# Target\n\nA topic change.\n", encoding="utf-8")
+    git_in("commit", "-q", "-am", "topic change", when=topic_committed_at)
+    git_in("checkout", "-q", "main")
+    git_in("merge", "-q", "--no-ff", "-m", "merge topic", "topic", when=topic_committed_at + 10000)
+    git_in("update-ref", "refs/remotes/origin/main", "HEAD")
+    for offset, day in ((1000, "2026-09-01"), (2000, "2026-09-02"), (3000, "2026-09-03")):
+        seed_log_store_record(repository, f"cold-read-grid-test-target-{day}",
+                              ["claude-hunt-deep.md"], written_at=topic_committed_at + offset)
+    result = run_grid(repository, stubs / "full-run-count-merged-topic")
+    check("runs made before the merge that landed the change do not count",
+          result.returncode == 0 and "cold-read-full-run 1 of 3 for" in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    # A run on the user's ruling whose every cell failed leaves its marker and
+    # no report; the ruling still starts the count again.
+    repository = build_scratch_repository(scratch, "full-run-count-marker-without-report")
+    now = int(time.time())
+    for offset, day in ((7200, "2026-09-01"), (6000, "2026-09-02"), (4800, "2026-09-03")):
+        seed_log_store_record(repository, f"cold-read-grid-test-target-{day}",
+                              ["claude-hunt-deep.md"], written_at=now - offset)
+    seed_log_store_record(repository, "cold-read-grid-test-target-2026-09-04",
+                          ["user-ruled-cold-read-full-run-count-restart-marker.txt"],
+                          written_at=now - 3600)
+    result = run_grid(repository, stubs / "full-run-count-marker-without-report")
+    check("a marker in a record with no report still restarts the count",
+          result.returncode == 0 and "cold-read-full-run 1 of 3 for" in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    # A document renamed on a branch main has not taken: main last took it
+    # under its earlier name, and runs from before that do not count.
+    repository = build_scratch_repository(scratch, "full-run-count-renamed-unmerged")
+    later_relative = "docs/drafts/later-name-of-the-target.md"
+    git_in = lambda *arguments: subprocess.run(
+        ["git", "-C", str(repository), *arguments], check=True, capture_output=True)
+    git_in("update-ref", "refs/remotes/origin/main", "HEAD")
+    landed_at = int(subprocess.run(["git", "-C", str(repository), "log", "-1", "--format=%ct"],
+                                   check=True, capture_output=True, text=True).stdout)
+    git_in("mv", TARGET_RELATIVE_PATH, later_relative)
+    git_in("commit", "-q", "-m", "renamed on the branch")
+    for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
+        seed_log_store_record(repository, f"cold-read-grid-test-target-{day}",
+                              ["codex-hunt-deep.md"], written_at=landed_at - 3600)
+    result = run_grid(repository, stubs / "full-run-count-renamed-unmerged",
+                      target_relative_path=later_relative)
+    check("runs under the earlier name from before main took it do not count after a rename main lacks",
+          result.returncode == 0 and "cold-read-full-run 1 of 3 for" in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    # An interrupted shipment's staging copy beside its record is not a second run.
+    repository = build_scratch_repository(scratch, "full-run-count-staging-copy")
+    for name in ("cold-read-grid-test-target-2026-09-01", "cold-read-grid-test-target-2026-09-02",
+                 ".ship-staging-cold-read-grid-test-target-2026-09-02-a1b2c3d4e5f6"):
+        seed_log_store_record(repository, name, ["claude-hunt-deep.md"])
+    result = run_grid(repository, stubs / "full-run-count-staging-copy")
+    check("a shipment's staging copy does not count as a run",
+          result.returncode == 0 and "cold-read-full-run 3 of 3 for" in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
     # A log-store that cannot be listed does not stop the read, as with
     # shipping, and the run says it went uncounted rather than counting zero.
     repository = build_scratch_repository(scratch, "full-run-count-store-unreadable")

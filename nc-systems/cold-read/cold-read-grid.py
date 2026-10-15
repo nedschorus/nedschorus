@@ -20,7 +20,9 @@ AT MOST THREE COLD-READ-FULL-RUNS OF A CHANGE, THEN THE USER DECIDES. Before
 it creates anything, the grid lists the cold-read-records in the log-store and
 in this checkout, counts those that froze this document, under its present
 path or an earlier one `git log --follow` shows, and hold a grid report written
-after origin/main last took a change to the document, prints
+after the commit on origin/main's first-parent line that last changed the
+document -- for a merged topic branch, the merge, not the topic's own commit --
+prints
 "cold-read-full-run N of 3", and refuses a fourth. A flag saying the user
 decided to run again or to change the design makes the run number 1, and the
 marker file it leaves in its record starts the count again for later runs. A log-store or git history that cannot be read does not stop the read, as
@@ -224,8 +226,10 @@ record_directory_name_for_target = record_names.record_directory_name_for_target
 FULL_RUN_LIMIT = 3
 USER_RULED_COUNT_RESTART_FLAG = "--user-ruled-cold-read-full-run-count-restart"
 USER_RULED_COUNT_RESTART_MARKER_NAME = "user-ruled-cold-read-full-run-count-restart-marker.txt"
-# A grid report's name; a fast read's record holds only fast-read.md. Older
-# records prefix each report with "<record name>--".
+# A grid report's name. Older records prefix each report with "<record name>--".
+# A fast read's record holds fast-read.md and, beside it, a copy of the target
+# marked with sentence ids, whose name matches this pattern too when the
+# target's stem starts claude- or codex-, so that copy is excluded by suffix.
 FULL_RUN_REPORT_NAME_PATTERN = re.compile(r"^(?:.*--)?(?:claude|codex)-.*\.md$")
 
 
@@ -259,21 +263,35 @@ def frozen_paths_and_landing_time(target: pathlib.Path) -> tuple:
     has_main = subprocess.run(
         ["git", "-C", str(target.parent), "rev-parse", "--verify", "--quiet", "origin/main"],
         capture_output=True, text=True, check=False).returncode == 0
-    landed = git_output(target, "log", "-1", "--format=%ct", "origin/main", "--", target.name).strip() \
+    # --first-parent: a merge commit is TREESAME to its topic parent, so plain
+    # `git log` simplifies it away and reports the topic commit's older time.
+    # Every path is given, so a document renamed on a branch not yet merged is
+    # found on main under its earlier name.
+    landed = git_output(target, "log", "-1", "--first-parent", "--format=%ct", "origin/main", "--",
+                        *(f":(top,literal){path}" for path in sorted(paths))).strip() \
         if has_main else ""
     return paths, float(landed) if landed else None
 
 
 def record_file_listing(host, store) -> list:
     """Every '<record directory>/<path>\t<mtime>' under one cold-read-records tree."""
-    command = ["find", str(store), "-mindepth", "2", "-type", "f", "-printf", "%P\t%T@\n"]
-    if host:
-        command = record_shipper.SSH_COMMAND + [host, shlex.join(command)]
+    if not host:
+        # Listed in Python: the Mac's find has no -printf.
+        store = pathlib.Path(store)
+        if not store.is_dir():
+            raise FullRunCountUnavailable(f"listing {store} failed: no such directory")
+        try:
+            return [f"{path.relative_to(store)}\t{path.stat().st_mtime}"
+                    for path in sorted(store.glob("*/**/*")) if path.is_file()]
+        except OSError as error:
+            raise FullRunCountUnavailable(f"listing {store} failed: {error}") from error
+    # The store a remote host holds is on ned-box, whose find is GNU find.
+    command = record_shipper.SSH_COMMAND + [host, shlex.join(
+        ["find", str(store), "-mindepth", "2", "-type", "f", "-printf", "%P\t%T@\n"])]
     listing = subprocess.run(command, capture_output=True, text=True, check=False)
     if listing.returncode != 0:
-        where = f"{host}:{store}" if host else str(store)
         raise FullRunCountUnavailable(
-            f"listing {where} exited {listing.returncode}: {listing.stderr.strip()}")
+            f"listing {host}:{store} exited {listing.returncode}: {listing.stderr.strip()}")
     return listing.stdout.splitlines()
 
 
@@ -285,20 +303,25 @@ def earlier_full_runs_since_count_start(frozen_paths: set, landed_at, listing: l
     for line in listing:
         path, _, mtime = line.rpartition("\t")
         directory, _, inside = path.partition("/")
-        record = records.setdefault(directory, {"frozen": False, "reported": None, "marked": False})
+        # An interrupted shipment's staging copy holds the same files as its record.
+        if directory.startswith(record_shipper.STAGING_DIRECTORY_PREFIX):
+            continue
+        record = records.setdefault(directory, {"frozen": False, "reported": None, "marked": None})
         frozen = inside.removeprefix(record_names.FROZEN_TARGET_DIRECTORY_NAME + "/")
         if frozen != inside and any(frozen == p or frozen.endswith("/" + p) for p in frozen_paths):
             record["frozen"] = True
-        elif FULL_RUN_REPORT_NAME_PATTERN.match(inside):
+        elif (FULL_RUN_REPORT_NAME_PATTERN.match(inside)
+              and not inside.endswith(record_names.GENERATED_INPUT_COPY_SUFFIXES)):
             record["reported"] = max(record["reported"] or 0.0, float(mtime))
         elif inside == USER_RULED_COUNT_RESTART_MARKER_NAME:
-            record["marked"] = True
-    runs = sorted((record["reported"], directory, record["marked"])
-                  for directory, record in records.items()
-                  if record["frozen"] and record["reported"]
-                  and (landed_at is None or record["reported"] > landed_at))
-    restarts = [index for index, run in enumerate(runs) if run[2]]
-    return [run[1] for run in runs[restarts[-1] if restarts else 0:]]
+            record["marked"] = float(mtime)
+    # The marker is written when its run starts, before any report, so a run
+    # whose every cell failed still restarts the count.
+    count_start = max([landed_at or 0.0] + [record["marked"] for record in records.values()
+                                             if record["frozen"] and record["marked"] is not None])
+    runs = sorted((record["reported"], directory) for directory, record in records.items()
+                  if record["frozen"] and record["reported"] and record["reported"] > count_start)
+    return [directory for _, directory in runs]
 
 
 def earlier_full_runs_of(target: pathlib.Path) -> list:
