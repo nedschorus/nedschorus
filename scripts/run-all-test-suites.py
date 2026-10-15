@@ -578,6 +578,8 @@ REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX = str(Path.home()
 TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY = {
     ".local/lib": "the Python libraries pip installs for this account, tree-sitter and "
                   "coverage among them, which suites import",
+    ".local/bin/ruff": "the Ruff binary pip installs for this account, which `python3 -m ruff` "
+                       "looks for here",
     ".gitconfig": "git's settings for this account, which suites that run git read",
     "nedschorus-logs/seats/ned-box-helper/absence-claim-trigger-phrases-2026-10-05/out/"
     "precision/labels.csv": "the labelled replies scripts/absence-claim-locator-reminder-"
