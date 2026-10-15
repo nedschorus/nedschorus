@@ -57,6 +57,10 @@ def agent(text, stamp):
             "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
 
 
+# The dialogs refresher gives a dialog its transcript's change time, which an import resets.
+DIALOG_IMPORTED_AT = epoch("2026-12-01")
+
+
 def build_store(root):
     """A log-store with one record of each kind that mentions the heron plan."""
     write(root / "walk" / "heron-walk-2026-10-01-minutes.md",
@@ -68,14 +72,15 @@ def build_store(root):
     key = "-home-nedlern-agents-prime-intellect"
     write(root / "session-dialogs" / "ned-box" / key / "s1-dialog-complete.md",
           "# Complete session dialog\n\n## Agent\n\nShall we start the heron plan?\n",
-          mtime=epoch("2026-10-05"))
+          mtime=DIALOG_IMPORTED_AT)
     write(root / "transcripts" / "ned-box" / "projects" / key / "s1.jsonl",
           transcript_records(agent("Shall we?", "2026-09-28T09:00:00Z"),
-                             typed("go with the heron plan", "2026-09-28T09:01:00Z")),
+                             typed("go with the heron plan", "2026-09-28T09:01:00Z"),
+                             agent("Done.", "2026-10-05T10:00:00Z")),
           mtime=epoch("2026-10-05"))
     mac_key = "-Users-el-agents-fleet-restart-at-login"
     write(root / "session-dialogs" / "mac" / mac_key / "s2-dialog-complete.md",
-          "## User\n\nheron plan on the Mac\n", mtime=epoch("2026-10-07"))
+          "## User\n\nheron plan on the Mac\n", mtime=DIALOG_IMPORTED_AT)
     write(root / "transcripts" / "mac" / "projects" / mac_key / "s2.jsonl",
           transcript_records(typed("heron plan on the Mac", "2026-10-07T08:00:00Z")),
           mtime=epoch("2026-10-07"))
@@ -130,11 +135,48 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a hit shows its file and line, and its context",
           "fast-read.md:2" in result.stdout and "line one" in result.stdout
           and "line three" in result.stdout, result.stdout)
-    check("a session dialog's date is labelled as its last activity",
-          "2026-10-05T12:00:00Z (last activity)  session-dialogs" in result.stdout, result.stdout)
+    check("a session dialog is dated by its transcript's last timestamp, not the dialog's modification time",
+          "2026-10-05T10:00:00Z (last activity)  session-dialogs" in result.stdout
+          and "2026-12-01" not in result.stdout, result.stdout)
     check("a user's message carries the time he sent it",
           "2026-09-28T09:01:00Z  user-messages" in result.stdout, result.stdout)
 
+    result = run(root, "heron plan", "--kind", "session-dialogs", "--since", "2026-11-01")
+    check("--since leaves out a session dialog whose transcript ended before it, whatever the dialog's modification time",
+          result.returncode == 1 and not hit_headers(result.stdout), result.stdout)
+
+    long_tail = root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-z" / "s8.jsonl"
+    write(long_tail, transcript_records(agent("heron plan tail", "2026-10-04T00:00:00Z"),
+                                        {"type": "summary", "summary": "x" * 300000}))
+    write(root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-z" / "s8-dialog-complete.md",
+          "## Agent\n\nheron plan tail\n", mtime=DIALOG_IMPORTED_AT)
+    finding = run(root, "heron plan tail", "--kind", "session-dialogs")
+    long_tail.unlink()
+    (root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-z" / "s8-dialog-complete.md").unlink()
+    check("a transcript's last timestamp is found behind a long record with none",
+          "2026-10-04T00:00:00Z (last activity)" in finding.stdout, finding.stdout)
+
+    write(root / "session-dialogs" / ".dialogs-written-by-extractor-sha256", "heron plan\n")
+    result = run(root, "heron plan", "--kind", "session-dialogs")
+    (root / "session-dialogs" / ".dialogs-written-by-extractor-sha256").unlink()
+    check("a file in session-dialogs/ that is not a session dialog is passed over",
+          result.returncode == 0 and "sha256" not in result.stdout and "Traceback" not in result.stderr,
+          result.stdout + result.stderr)
+
+    answered = root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s7.jsonl"
+    write(answered, transcript_records(agent("Ship it?", "2026-10-03T00:00:00Z"),
+                                       typed("yes", "2026-10-03T00:01:00Z")))
+    result = run(root, "^yes$", "--kind", "user-messages")
+    answered.unlink()
+    check("a pattern anchored to a whole message finds that message in the transcripts",
+          result.returncode == 0 and "USER: yes" in result.stdout, result.stdout + result.stderr)
+
+    wide = write(root / "walk" / "wide-2026-10-02.md", "é" * 400 + " heron tail\n")
+    result = run(root, "heron tail", "--kind", "walk")
+    wide.unlink()
+    check("a match after multibyte text is shown in its excerpt",
+          result.returncode == 0 and "heron tail" in result.stdout.split("wide-2026-10-02.md")[1],
+          result.stdout)
     result = run(root, "heron plan", "--limit", "2")
     check("--limit caps the hits and the closing line says how to see the rest",
           len(hit_headers(result.stdout)) == 2 and "rerun with --skip 2" in result.stdout,

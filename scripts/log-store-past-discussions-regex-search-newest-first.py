@@ -27,9 +27,10 @@ with a dash goes after --, as in `-- -foo`. ripgrep matches
 it in every kind; the user's messages are then read with the handoff
 extractor's reader (scripts/handoff-extract-conversation.py) and matched again
 with Python's re module, so the pattern must be one both read. ripgrep picks
-the transcripts to read from their raw JSON, where a quote mark or a backslash
-is escaped: a pattern holding either can miss a user's message, though not
-the same words in the session dialogs.
+the transcripts to read from their raw JSON, with the pattern's anchors (^, $,
+\\A, \\z) removed, since there a message is one string inside a longer line. A
+quote mark or a backslash is escaped in that JSON, so a pattern holding either
+can miss a user's message, though not the same words in the session dialogs.
 
 WHAT EACH HIT SAYS. Its kind, date, machine and agent-seat where the record
 shows them, its file and line, and the matching line with --context lines
@@ -37,7 +38,8 @@ either side (default 1); a user's message is shown as an excerpt around the
 match. The date is the one in the file's name for walk, cold-read-records and
 analysis, or the file's modification date when the name has none; the time
 the user sent a message; and for a session dialog the session's last
-activity, since a dialog's turns carry no time. A walk file's agent-seat is
+activity, the last timestamp in its transcript, since a dialog's turns carry
+no time and the dialog file's modification time is when it was last written. A walk file's agent-seat is
 the one its header says ran the approval-walk. A session's agent-seat is read
 from its project-key, the transcript folder Claude Code names after the
 session's directory.
@@ -138,6 +140,7 @@ WALK_HEADER_SEAT = re.compile(r"\brun by ([A-Za-z0-9][A-Za-z0-9-]*) on\b")
 SEAT_IN_PROJECT_KEY = re.compile(r"-agents-(.+?)(?:--claude-worktrees-.*|-worktrees-.*)?$")
 DIALOG_FILE_SUFFIX = "-dialog-complete.md"
 MODIFICATION_TIME_MARGIN_SECONDS = 2
+TRANSCRIPT_TAIL_BYTES = 64 * 1024
 
 
 def load_handoff_extractor():
@@ -207,20 +210,51 @@ def in_window(date, since, until):
     return (since is None or day >= since) and (until is None or day <= until)
 
 
+def timestamp_of(line):
+    try:
+        stamp = json.loads(line).get("timestamp")
+    except (ValueError, AttributeError):
+        return ""
+    return stamp if isinstance(stamp, str) else ""
+
+
 def session_start(transcript):
     """The first timestamp in a transcript, or "" when there is none or it cannot be read."""
     try:
         with transcript.open("rb") as handle:
             for line in handle:
-                try:
-                    stamp = json.loads(line).get("timestamp")
-                except (ValueError, AttributeError):
-                    continue
-                if isinstance(stamp, str) and stamp:
+                stamp = timestamp_of(line)
+                if stamp:
                     return stamp
     except OSError:
         pass
     return ""
+
+
+def session_last_activity(transcript):
+    """The last timestamp in a transcript, or "" when there is none or it cannot be read.
+
+    Reads backwards from the end in growing blocks, since a transcript can be hundreds of megabytes.
+    """
+    try:
+        with transcript.open("rb") as handle:
+            size = handle.seek(0, os.SEEK_END)
+            block = TRANSCRIPT_TAIL_BYTES
+            while True:
+                start = max(0, size - block)
+                handle.seek(start)
+                lines = handle.read(size - start).splitlines()
+                if start > 0:
+                    lines = lines[1:]
+                for line in reversed(lines):
+                    stamp = timestamp_of(line)
+                    if stamp:
+                        return stamp
+                if start == 0:
+                    return ""
+                block *= 4
+    except OSError:
+        return ""
 
 
 def walk_seat(path):
@@ -265,10 +299,17 @@ class RipgrepMissing(Exception):
 
 
 def file_facts(path, root):
-    """The kind, machine, agent-seat and, where its name holds one, the date of one file's hits."""
-    kind = path.relative_to(root).parts[0]
+    """The kind, machine, agent-seat and, where its name holds one, the date of one file's hits.
+
+    None for a file in session-dialogs/ that is not a session dialog.
+    """
+    parts = path.relative_to(root).parts
+    kind = parts[0]
     facts = {"kind": kind, "machine": "", "seat": ""}
     if kind == SESSION_DIALOGS:
+        # The refresher keeps its own state files beside the machines' directories.
+        if len(parts) != 4 or not parts[3].endswith(DIALOG_FILE_SUFFIX):
+            return None
         facts["machine"], key = session_parts(path, root)
         facts["seat"] = seat_from_project_key(key)
         facts["project_key"] = key
@@ -317,14 +358,17 @@ def file_hits(root, kinds, pattern, context, failures):
         lines_by_file.setdefault(path, {})[number] = text
         if message["type"] == "match":
             submatches = data.get("submatches") or []
-            # ripgrep counts bytes; the excerpt only needs to land near the match.
-            start = submatches[0]["start"] if submatches else 0
+            start_byte = submatches[0]["start"] if submatches else 0
+            # ripgrep counts bytes; the excerpt counts characters.
+            start = len(text.encode("utf-8")[:start_byte].decode("utf-8", "ignore"))
             matches.append((path, number, excerpt(text, start)))
     hits = []
     facts_by_file = {}
     for path_text, number, shown in matches:
         if path_text not in facts_by_file:
             facts_by_file[path_text] = file_facts(Path(path_text), root)
+        if facts_by_file[path_text] is None:
+            continue
         nearby = lines_by_file[path_text]
         hit = {"path": path_text, "line": number, "shown": shown,
                "before": [(n, nearby[n][:CONTEXT_CHARACTERS]) for n in range(number - context, number)
@@ -336,10 +380,16 @@ def file_hits(root, kinds, pattern, context, failures):
     return hits
 
 
+def session_transcript(root, hit):
+    session_id = Path(hit["path"]).name[:-len(DIALOG_FILE_SUFFIX)]
+    return root / "transcripts" / hit["machine"] / "projects" / hit["project_key"] / f"{session_id}.jsonl"
+
+
 def dated_file_hits(hits, root, seat, machine, since, until, failures):
     """Fill in each hit's date and drop those outside the filters."""
     kept = []
     modification_dates = {}
+    last_activities = {}
     starts = {}
     for hit in hits:
         path = Path(hit["path"])
@@ -348,7 +398,11 @@ def dated_file_hits(hits, root, seat, machine, since, until, failures):
                 continue
             if seat and seat not in hit["project_key"]:
                 continue
-        if hit.get("date") is None:
+        if hit["kind"] == SESSION_DIALOGS:
+            if hit["path"] not in last_activities:
+                last_activities[hit["path"]] = session_last_activity(session_transcript(root, hit))
+            hit["date"] = last_activities[hit["path"]]
+        elif hit.get("date") is None:
             if hit["path"] not in modification_dates:
                 try:
                     modification_dates[hit["path"]] = utc_iso(path.stat().st_mtime)
@@ -357,16 +411,14 @@ def dated_file_hits(hits, root, seat, machine, since, until, failures):
                     modification_dates[hit["path"]] = ""
             hit["date"] = modification_dates[hit["path"]]
         if hit["kind"] == SESSION_DIALOGS:
-            hit["date_note"] = "last activity"
+            if hit["date"]:
+                hit["date_note"] = "last activity"
             last = hit["date"][:10]
             if since and last and last < since:
                 continue
             if until and last and last > until:
                 if hit["path"] not in starts:
-                    session_id = path.name[:-len(DIALOG_FILE_SUFFIX)]
-                    transcript = (root / "transcripts" / hit["machine"] / "projects"
-                                  / hit["project_key"] / f"{session_id}.jsonl")
-                    starts[hit["path"]] = session_start(transcript)
+                    starts[hit["path"]] = session_start(session_transcript(root, hit))
                 start = starts[hit["path"]][:10]
                 if start and start > until:
                     continue
@@ -374,6 +426,49 @@ def dated_file_hits(hits, root, seat, machine, since, until, failures):
             continue
         kept.append(hit)
     return kept
+
+
+def pattern_without_anchors(pattern):
+    """The pattern with its line and text anchors removed, for ripgrep to pick transcripts by.
+
+    ripgrep reads a transcript's raw JSON records, where a message is one quoted string inside
+    a longer line, so an anchor such as ^ or $ would miss it. Without its anchors the pattern
+    matches wherever it matched before, and the user's messages are then matched with them.
+    """
+    kept = []
+    in_class = False
+    index = 0
+    while index < len(pattern):
+        character = pattern[index]
+        if character == "\\" and index + 1 < len(pattern):
+            if in_class or pattern[index + 1] not in "AzZ":
+                kept.append(pattern[index:index + 2])
+            index += 2
+            continue
+        if in_class:
+            closing = pattern.find(":]", index + 2)
+            if pattern.startswith("[:", index) and closing != -1:
+                kept.append(pattern[index:closing + 2])
+                index = closing + 2
+                continue
+            if character == "]":
+                in_class = False
+        elif character == "[":
+            in_class = True
+            kept.append("[")
+            index += 1
+            # A ] first in a class, or right after its ^, is a literal ].
+            for opening in "^]":
+                if pattern[index:index + 1] == opening:
+                    kept.append(opening)
+                    index += 1
+            continue
+        elif character in "^$":
+            index += 1
+            continue
+        kept.append(character)
+        index += 1
+    return "".join(kept)
 
 
 def transcript_candidates(root, pattern, seat, machine, since, failures):
@@ -398,7 +493,7 @@ def transcript_candidates(root, pattern, seat, machine, since, failures):
     if not directories:
         return []
     output = run_ripgrep(ripgrep_command(["--files-with-matches", "--max-depth", "2", "--glob", "*.jsonl"],
-                                         pattern, directories), failures)
+                                         pattern_without_anchors(pattern), directories), failures)
     candidates = []
     for line in sorted(output.splitlines()):
         path = Path(line)
