@@ -706,9 +706,8 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
     except (claude_json_presets.ClaudeJsonNotAJsonObjectError, OSError) as error:
         print(f"recover-crashed-seats: {name}: not launched, because the folder-trust and "
               f"onboarding presets could not be written to {claude_json}: {error}.\n"
-              f"If {claude_json} is not valid JSON: restore it from the newest copy in "
-              "~/.claude/backups/ that is valid JSON, then run this recovery again.\n"
-              "Otherwise: fix the cause named above, then run this recovery again.",
+              + claude_json_presets.claude_json_presets_failure_remedy(
+                  error, claude_json, "run this recovery again"),
               file=sys.stderr)
         return 1
     # Export the seat’s own git identity, since tmux otherwise inherits the recovering seat’s identity.

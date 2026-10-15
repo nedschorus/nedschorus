@@ -40,6 +40,10 @@ class ClaudeJsonNotAJsonObjectError(ValueError):
     """~/.claude.json exists but does not hold a JSON object."""
 
 
+class ClaudeJsonNotValidJsonError(ClaudeJsonNotAJsonObjectError):
+    """~/.claude.json exists but cannot be read as JSON at all."""
+
+
 def claude_json_path() -> pathlib.Path:
     return pathlib.Path(os.path.expanduser("~/.claude.json"))
 
@@ -53,7 +57,7 @@ def claude_json_agent_seat_folder_trust_and_onboarding_presets_write(
         try:
             settings = json.loads(text)
         except ValueError as error:
-            raise ClaudeJsonNotAJsonObjectError(
+            raise ClaudeJsonNotValidJsonError(
                 f"{claude_json} is not valid JSON ({error})") from error
         if not isinstance(settings, dict):
             raise ClaudeJsonNotAJsonObjectError(
@@ -94,6 +98,19 @@ def claude_json_agent_seat_folder_trust_and_onboarding_presets_write(
     return True
 
 
+def claude_json_presets_failure_remedy(error: Exception, claude_json: pathlib.Path,
+                                       run_again: str) -> str:
+    """The one remedy that fits the failure the presets write raised."""
+    backups = claude_json.parent / ".claude" / "backups"
+    if isinstance(error, ClaudeJsonNotValidJsonError):
+        return (f"Restore {claude_json} from the newest copy in {backups}/ that is valid JSON, "
+                f"then {run_again}.")
+    if isinstance(error, ClaudeJsonNotAJsonObjectError):
+        return (f"Restore {claude_json} from the newest copy in {backups}/ that holds a JSON "
+                f"object, then {run_again}.")
+    return f"Fix the cause named above, then {run_again}."
+
+
 USAGE = "usage: claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py AGENT_SEAT_FOLDER"
 
 
@@ -113,9 +130,7 @@ def main(arguments) -> int:
         print(f"claude-json-agent-seat-folder-trust-and-onboarding-presets-write: {error}. "
               f"{path} was left unchanged, so the agent-session may stop at Claude Code's "
               "folder-trust dialog or onboarding screens.\n"
-              f"If {path} is not valid JSON: restore it from the newest copy in "
-              "~/.claude/backups/ that is valid JSON, then launch again.\n"
-              "Otherwise: fix the cause named above, then launch again.",
+              + claude_json_presets_failure_remedy(error, path, "launch again"),
               file=sys.stderr)
         return 1
     return 0

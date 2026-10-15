@@ -272,6 +272,15 @@ class LaunchHarness:
             "claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py"
             in calls.read_text(encoding="utf-8"))
 
+    def python3_script_order(self) -> list:
+        """The scripts the box-side command ran through python3, in order."""
+        calls = self.captures / "python3-calls.txt"
+        if not calls.is_file():
+            return []
+        return [Path(block.split("\n", 1)[0]).name
+                for block in calls.read_text(encoding="utf-8").split(
+                    "=== call boundary ===\n") if block.strip()]
+
     def write_seat_token(self, account: str, token: str,
                          trailing_newline: bool = True) -> Path:
         """Put a token file for one account in the sandbox HOME, which stands
@@ -417,6 +426,16 @@ def main() -> int:
         check("default root: the seat directory was created at P1",
               (harness.home / "agents" / "seat-a").is_dir(),
               str(harness.home / "agents"))
+        # The presets script runs from the box's checkout, so the box's
+        # checkout must be fast-forwarded first, or a box checkout older than
+        # the script stops every launch on a file it does not have yet.
+        scripts_run = harness.python3_script_order()
+        freshness = "checkout-freshness-catch-up.py"
+        presets = "claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py"
+        check("prepare: the box checkout is fast-forwarded before the presets script runs",
+              freshness in scripts_run and presets in scripts_run
+              and scripts_run.index(freshness) < scripts_run.index(presets),
+              scripts_run)
 
         # --- 1b. the launcher itself must have reached ssh — without this,
         # a launcher that exits before the transport leaves an empty remote
