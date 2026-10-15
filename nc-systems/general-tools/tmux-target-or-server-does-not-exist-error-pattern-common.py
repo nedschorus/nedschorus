@@ -25,7 +25,7 @@ TMUX_TARGET_OR_SERVER_DOES_NOT_EXIST_ERROR_WORDINGS = (
     ("can't find pane", r"can't find pane"),
     ("no current target", r"no current target"),
     ("no server running", r"no server running"),
-    ("error connecting to ... (No such file or directory)",
+    ("error connecting to <socket path> (No such file or directory)",
      r"error connecting to .*\(No such file or directory\)"),
 )
 TMUX_TARGET_OR_SERVER_DOES_NOT_EXIST_ERROR_PATTERN = re.compile(

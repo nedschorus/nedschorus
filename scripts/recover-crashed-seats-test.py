@@ -4651,10 +4651,10 @@ with tempfile.TemporaryDirectory() as temporary:
     check_instruction = ("If the check exits 0, the session still exists: start no agent, and "
                          "report to the user. If it prints \"can't find session\" or \"can't find "
                          "window\" or \"can't find pane\" or \"no current target\" or \"no server "
-                         "running\" or \"error connecting to ... (No such file or directory)\", the "
-                         "session is gone: run again the command that printed this message. Any other "
-                         "output, or a check "
-                         "that does not return, leaves the outcome unknown: start no agent, and "
+                         "running\" or \"error connecting to <socket path> (No such file or directory)\", "
+                         "the session is gone: run again, for this agent-seat only, the command "
+                         "that printed this message. Any other output, or a check that does not "
+                         "return within 30 seconds, leaves the outcome unknown: start no agent, and "
                          "report the output to the user.\n"
                          "To check, run the command on the next line on ned-box:"
                          "\ntmux -L seat-a has-session -t '=seat-a'")
@@ -4688,9 +4688,15 @@ with tempfile.TemporaryDirectory() as temporary:
     finally:
         recovery.resupervise.run_tmux = real_resupervise_run_tmux
     check("LEFTOVER SHELL: the real unknown-kill text reaches the REFUSED line, names no other "
-          "program to run, and ends with the check command after the line pointing at it",
+          "program to run, scopes the rerun to this agent-seat, gives the check's time limit, "
+          "names the socket path placeholder, and ends with the check command after the line "
+          "pointing at it",
           workspace.launches == []
-          and "run again the command that printed this message" in report_real
+          and "run again, for this agent-seat only, the command that printed this message"
+          in report_real
+          and "a check that does not return within 30 seconds" in report_real
+          and "error connecting to <socket path> (No such file or directory)" in report_real
+          and "..." not in report_real
           and "resupervise-seat" not in report_real
           and report_real.splitlines()[-2].startswith("To check, run the command on the next line")
           and report_real.splitlines()[-1] == "tmux -L seat-a has-session -t '=seat-a'",
