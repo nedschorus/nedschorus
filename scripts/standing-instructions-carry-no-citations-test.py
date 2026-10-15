@@ -45,10 +45,11 @@ STANDING_INSTRUCTION_PATHSPECS = ("CLAUDE.md", "*/CLAUDE.md", "SKILL.md", "*/SKI
 # A date joined to a path or file name, such as `x-YYYY-MM-DD.md`,
 # `logs/YYYY-MM-DD/` or `YYYY-MM-DD-minutes.md`, is a pointer, so the lookarounds
 # leave it out. The optional group takes a timestamp's time or a range's last day
-# into the date, so the lookahead judges what follows the whole date.
+# into the date, so the lookahead judges what follows the whole date. The group
+# is atomic: a failed lookahead must not shorten a timestamp to an earlier colon.
 MARKER_PATTERNS = {
     "date": re.compile(r"(?<![\w/.-])\d{4}-[01]\d-[0-3]\d"
-                       r"(?:T[\d:]+(?:\.\d+)?Z?|[/-]\d\d?)?(?![\w/-]|\.\w)"),
+                       r"(?>T[\d:]+(?:\.\d+)?Z?|[/-]\d\d?)?(?![\w/-]|\.\w)"),
     "user-ruled": re.compile(r"\buser-ruled\b", re.IGNORECASE),
 }
 
@@ -223,6 +224,9 @@ def main():
               == ["date", "date", "date"]),
         check("a path or file name that starts with a date, a range or a timestamp is not checked",
               kinds("Read 2026-10-14/x, 2026-08-10-11.md and 2026-09-19T04-00.log now.\n") == []),
+        check("a path or file name that starts with a colon timestamp is not checked",
+              kinds("Read 2026-09-19T04:00:31Z.log and logs/2026-09-19T04:00:31Z/x now.\n")
+              == []),
         check("the word user-ruled is found, in any case",
               kinds("(user-ruled)\n(User-Ruled)\n") == ["user-ruled", "user-ruled"]),
         check("user-ruling, the glossary's noun, and a bare ruled are not markers",
