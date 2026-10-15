@@ -58,7 +58,8 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
                 merge_tree_status=0, merge_tree_output="", deleting_log=None,
                 gh_results=None, log=None,
                 fetch_status=0, gh_head=RESOLVED_HEAD, gh_head_status=0,
-                full_refs=None, gh_base="main", gh_base_status=0):
+                full_refs=None, gh_base="main", gh_base_status=0,
+                missing_at_base=(), unlookable_at_base=()):
     """A runner that answers git and gh without touching either.
 
     base_resolves and head_resolves override `resolves` for one side, so a case
@@ -77,6 +78,10 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
     which is right for origin/main, the base every older case uses. gh_base is
     the branch the pull request targets, answered apart from the queue for the
     same reason as gh_head.
+
+    missing_at_base names the paths `git ls-tree <base> -- <path>` does not
+    list, and unlookable_at_base the paths it fails on; every other path
+    exists.
     """
     refs = dict(full_refs or {})
     gh_queue = list(gh_results or [])
@@ -102,6 +107,11 @@ def fake_runner(*, resolves=True, base_resolves=None, head_resolves=None,
             return 0, RESOLVED_BASE if is_base else RESOLVED_HEAD
         if command[:2] == ["git", "merge-tree"]:
             return merge_tree_status, merge_tree_output
+        if command[:2] == ["git", "ls-tree"]:
+            path = command[-1]
+            if path in unlookable_at_base:
+                return 128, ""
+            return (0, "") if path in missing_at_base else (0, path + "\0")
         if command[:2] == ["git", "log"] and "--diff-filter=D" in command \
                 and deleting_log is not None:
             return deleting_log
@@ -892,6 +902,43 @@ REAPPLY_ALSO_CONFLICTS = (
     "On the new topic branch, start each ALSO CONFLICTS file from "
     "origin/main's version and reapply the branch's change to it by hand.")
 
+# The one block that replaces the lines above whenever a file may have been
+# renamed or a RENAME CHECK prints, copied from deleted_on_base_lines().
+RENAME_NOT_PAIRED = (
+    "git paired none of the files marked DELETED ON or DELETED OR RENAMED with "
+    "a new name, but origin/main may have renamed one and changed it in the "
+    "same commit, so much that git saw a deletion.")
+FIND_OUT_EACH = (
+    "Before you merge or close, find out for each file marked DELETED ON or "
+    "DELETED OR RENAMED whether origin/main renamed it or deleted it: compare "
+    "the branch's version of it with origin/main's version of each file named "
+    "after \"possibly\" on its line, and do each RENAME CHECK that names it. "
+    "A file with no \"possibly\" on its line and no RENAME CHECK naming it was "
+    "deleted.")
+HAND_MERGE_IF_EVERY_RENAMED = (
+    "If every file marked DELETED ON or DELETED OR RENAMED was renamed, merge "
+    "origin/main into the branch by hand, with the frozen head as first "
+    "parent, and carry the branch's change to each file onto its new name.")
+HAND_MERGE_STEPS = (
+    "In that hand-merge, resolve any ALSO CONFLICTS file too, change nothing "
+    "else, put any edit the resolution forces beyond the conflicting lines in "
+    "one ordinary commit after the merge, rerun the test suites for what the "
+    "merge touched, and push the merge and that commit once, naming the files "
+    "you resolved in the merge's commit message and in the pull request's "
+    "description.")
+CLOSE_IF_ANY_DELETED = (
+    "If any file marked DELETED ON or DELETED OR RENAMED was deleted, do not "
+    "merge: close the pull request with a comment naming the commit that "
+    "deleted it, and carry what origin/main still lacks on a new topic branch "
+    "cut from current origin/main, in a new pull request that names the "
+    "closed one; on that branch, carry the branch's change to each renamed "
+    "file onto its new name.")
+RENAME_BLOCK = [RENAME_NOT_PAIRED, FIND_OUT_EACH, HAND_MERGE_IF_EVERY_RENAMED,
+                HAND_MERGE_STEPS, CLOSE_IF_ANY_DELETED]
+# Lines the one block replaced; none may print beside it.
+OLD_CLOSE_LINES = [DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION,
+                   CARRY_WHAT_MAIN_LACKS]
+
 
 # The head deleted a file the base changed: stages 1 and 2, no 3. That is the
 # branch's own removal, an ordinary hand-merge, not the close-and-carry case.
@@ -936,6 +983,231 @@ case("a deleting-commit lookup that exits 0 with no output is not found",
      and lines[1] == "DELETED ON origin/main: gone, by a commit this run "
                      "could not find"
      and FIND_DELETING_COMMIT in lines)
+
+
+# A rename git missed: the deleting commit's own diff, read with a low
+# similarity threshold, offers a likely new name. The fake answers that diff.
+DELETING_COMMIT = "c" * 40
+
+
+def with_deleting_diff(answer, **fake):
+    inner = fake_runner(deleting_log=(0, DELETING_COMMIT), **fake)
+
+    def runner(command):
+        if command[:2] == ["git", "diff-tree"]:
+            return answer
+        return inner(command)
+    return runner
+
+
+TWO_DELETED = merge_tree_z(("1", "a.txt"), ("3", "a.txt"),
+                           ("1", "b.txt"), ("3", "b.txt"))
+status, lines = run(with_deleting_diff(
+    (0, "R020\0a.txt\0a2.txt\0A\0unrelated.md\0"),
+    merge_tree_status=1, merge_tree_output=TWO_DELETED))
+case("a rename beside a real deletion gets the one block, whose close line "
+     "says to carry the change onto the new name", status == CHECK.EXIT_CONFLICT
+     and "DELETED OR RENAMED ON origin/main: a.txt, deleted by commit %s -> "
+         "possibly a2.txt" % DELETING_COMMIT[:12] in lines
+     and "DELETED ON origin/main: b.txt, by commit %s" % DELETING_COMMIT[:12]
+         in lines
+     and lines[-5:] == RENAME_BLOCK
+     and not any(line in OLD_CLOSE_LINES for line in lines))
+
+status, lines = run(with_deleting_diff(
+    (128, ""), merge_tree_status=1,
+    merge_tree_output=merge_tree_z(("1", "a.txt"), ("3", "a.txt"))))
+case("a deleting commit whose files git cannot list is reported, and the one "
+     "block sends the reader to that check before closing",
+     status == CHECK.EXIT_CONFLICT
+     and "DELETED ON origin/main: a.txt, by commit %s" % DELETING_COMMIT[:12]
+         in lines
+     and any(line.startswith("RENAME CHECK: git could not list the files")
+             for line in lines)
+     and lines[-5:] == RENAME_BLOCK)
+
+# main renamed a.txt to a2.txt in one commit and a2.txt to a3.txt in a later
+# one, so a2.txt is not on the base: the name the base holds is the candidate.
+LATER_COMMIT = "d" * 40
+
+
+def with_two_renames(later_log, later_diff, log=None, later_diffs=None, **fake):
+    inner = fake_runner(**fake)
+
+    def runner(command):
+        if log is not None:
+            log.append(command)
+        if command[:2] == ["git", "diff-tree"]:
+            if DELETING_COMMIT in command[-1]:
+                return 0, "R020\0a.txt\0a2.txt\0"
+            return (later_diffs or {}).get(command[-1], later_diff)
+        if command[:2] == ["git", "log"] and "--diff-filter=D" in command:
+            return (later_log if "--reverse" in command
+                    else (0, DELETING_COMMIT))
+        return inner(command)
+    return runner
+
+
+ONE_DELETED = merge_tree_z(("1", "a.txt"), ("3", "a.txt"))
+log = []
+status, lines = run(with_two_renames(
+    (0, LATER_COMMIT + "\n"), (0, "R100\0a2.txt\0a3.txt\0"), log=log,
+    merge_tree_status=1, merge_tree_output=ONE_DELETED,
+    missing_at_base=("a2.txt",)))
+case("a file main renamed twice is named by the name the base holds",
+     status == CHECK.EXIT_CONFLICT
+     and "DELETED OR RENAMED ON origin/main: a.txt, deleted by commit %s -> "
+         "possibly a3.txt (the name commit %s gave it)"
+         % (DELETING_COMMIT[:12], LATER_COMMIT[:12]) in lines
+     and not any("a2.txt" in line for line in lines))
+case("the later rename is looked for only after the first one, on the base",
+     ["git", "log", "--full-history", "--reverse", "--format=%H",
+      "--diff-filter=D",
+      "%s..%s" % (DELETING_COMMIT, RESOLVED_BASE), "--", "a2.txt"] in log)
+case("a candidate is checked against the base by its path there",
+     ["git", "ls-tree", "-z", "--full-tree", "--name-only", RESOLVED_BASE, "--",
+      "a3.txt"] in log)
+
+# a2.txt was deleted twice after the first rename (re-added between): the
+# first deletion is the rename to follow, not the last.
+LAST_COMMIT = "e" * 40
+status, lines = run(with_two_renames(
+    (0, LATER_COMMIT + "\n" + LAST_COMMIT + "\n"), None,
+    merge_tree_status=1, merge_tree_output=ONE_DELETED,
+    missing_at_base=("a2.txt",), later_diffs={
+        LATER_COMMIT: (0, "R100\0a2.txt\0a3.txt\0"),
+        LAST_COMMIT: (0, "R100\0a2.txt\0a9.txt\0")}))
+case("a candidate deleted more than once later is followed through its first "
+     "deletion", "DELETED OR RENAMED ON origin/main: a.txt, deleted by commit "
+                 "%s -> possibly a3.txt (the name commit %s gave it)"
+                 % (DELETING_COMMIT[:12], LATER_COMMIT[:12]) in lines)
+
+status, lines = run(with_two_renames(
+    (0, ""), (0, ""), merge_tree_status=1, merge_tree_output=ONE_DELETED,
+    missing_at_base=("a2.txt",)))
+case("a candidate the base no longer holds, with no later rename found, "
+     "leaves the file plainly deleted", status == CHECK.EXIT_CONFLICT
+     and "DELETED ON origin/main: a.txt, by commit %s" % DELETING_COMMIT[:12]
+         in lines
+     and not any("possibly" in line for line in lines)
+     and DO_NOT_MERGE_DELETED in lines)
+
+status, lines = run(with_two_renames(
+    (0, LATER_COMMIT), (128, ""), merge_tree_status=1,
+    merge_tree_output=ONE_DELETED, missing_at_base=("a2.txt",)))
+case("a later renaming commit whose files git cannot list is named in the "
+     "RENAME CHECK line, and the file stays deleted",
+     "DELETED ON origin/main: a.txt, by commit %s" % DELETING_COMMIT[:12]
+     in lines
+     and any(line.startswith("RENAME CHECK:") and LATER_COMMIT[:12] in line
+             for line in lines))
+
+status, lines = run(with_two_renames(
+    (128, ""), (0, ""), merge_tree_status=1, merge_tree_output=ONE_DELETED,
+    missing_at_base=("a2.txt",)))
+case("a git log that cannot list a candidate's later deletions is reported "
+     "on a RENAME CHECK line naming the file, not read as no later rename",
+     status == CHECK.EXIT_CONFLICT
+     and "RENAME CHECK: git could not list the commits on origin/main after "
+         "commit %s that deleted a2.txt, so a.txt may have been renamed again, "
+         "to a name this run could not find; check with git log --full-history "
+         "--diff-filter=D %s..%s -- a2.txt."
+         % (DELETING_COMMIT[:12], DELETING_COMMIT[:12], RESOLVED_BASE[:12])
+         in lines
+     and lines[-5:] == RENAME_BLOCK)
+
+def with_b_unlisted(**fake):
+    inner = fake_runner(**fake)
+
+    def runner(command):
+        if command[:2] == ["git", "diff-tree"]:
+            return ((0, "R020\0a.txt\0a2.txt\0") if DELETING_COMMIT in command[-1]
+                    else (128, ""))
+        if command[:2] == ["git", "log"] and "--diff-filter=D" in command:
+            return 0, DELETING_COMMIT if command[-1] == "a.txt" else LATER_COMMIT
+        return inner(command)
+    return runner
+
+
+status, lines = run(with_b_unlisted(merge_tree_status=1,
+                                    merge_tree_output=TWO_DELETED))
+case("a RENAME CHECK beside a renamed file gets the one block, and no line says "
+     "the DELETED ON file was surely deleted",
+     lines[-5:] == RENAME_BLOCK
+     and not any(line in OLD_CLOSE_LINES for line in lines)
+     and any(line.startswith("RENAME CHECK: git could not list the files "
+                             "commit %s added, so b.txt" % LATER_COMMIT[:12])
+             for line in lines))
+
+status, lines = run(with_deleting_diff(
+    (0, "R020\0a.txt\0a2.txt\0"), merge_tree_status=1,
+    merge_tree_output=ONE_DELETED, unlookable_at_base=("a2.txt",)))
+case("a candidate git cannot look up at the base is reported on a RENAME CHECK "
+     "line, not read as missing there", status == CHECK.EXIT_CONFLICT
+     and "RENAME CHECK: git could not tell whether origin/main holds a2.txt, so "
+         "a.txt may have been renamed to it; check with git ls-tree --full-tree "
+         "--name-only %s -- a2.txt." % RESOLVED_BASE[:12] in lines
+     and lines[-5:] == RENAME_BLOCK)
+
+status, lines = run(with_deleting_diff(
+    (0, "R020\0a.txt\0a2.txt\0"), merge_tree_status=1,
+    merge_tree_output=merge_tree_z(("1", "a.txt"), ("3", "a.txt"),
+                                   ("1", "o.py"), ("2", "o.py"), ("3", "o.py"))))
+case("with an ALSO CONFLICTS file, the one block's close line also restarts it "
+     "from main's version", status == CHECK.EXIT_CONFLICT
+     and "ALSO CONFLICTS: o.py" in lines
+     and lines[-1] == CLOSE_IF_ANY_DELETED[:-1] + ", and start each ALSO "
+         "CONFLICTS file from origin/main's version and reapply the branch's "
+         "change to it by hand."
+     and REAPPLY_ALSO_CONFLICTS not in lines)
+
+# A name can come back: p.txt became b.txt, then a.txt, then b.txt again, then
+# c.txt, which the base holds. Following b.txt only once would lose c.txt.
+CHAIN = ["%d" % n * 40 for n in range(1, 5)]
+
+
+def with_rename_chain(**fake):
+    inner = fake_runner(**fake)
+    diffs = {CHAIN[0]: "R020\0p.txt\0b.txt\0", CHAIN[1]: "R100\0b.txt\0a.txt\0",
+             CHAIN[2]: "R100\0a.txt\0b.txt\0", CHAIN[3]: "R100\0b.txt\0c.txt\0"}
+    later = {("b.txt", CHAIN[0]): CHAIN[1], ("a.txt", CHAIN[1]): CHAIN[2],
+             ("b.txt", CHAIN[2]): CHAIN[3]}
+
+    def runner(command):
+        if command[:2] == ["git", "diff-tree"]:
+            return 0, diffs[command[-1]]
+        if command[:2] == ["git", "log"] and "--diff-filter=D" in command:
+            if "--reverse" not in command:
+                return 0, CHAIN[0]
+            after = command[-3].split("..")[0]
+            return 0, later.get((command[-1], after), "")
+        return inner(command)
+    return runner
+
+
+status, lines = run(with_rename_chain(
+    merge_tree_status=1,
+    merge_tree_output=merge_tree_z(("1", "p.txt"), ("3", "p.txt")),
+    missing_at_base=("b.txt", "a.txt")))
+case("a name that comes back in a chain of renames is followed again, to the "
+     "name the base holds",
+     "DELETED OR RENAMED ON origin/main: p.txt, deleted by commit %s -> "
+     "possibly c.txt (the name commit %s gave it)"
+     % (CHAIN[0][:12], CHAIN[3][:12]) in lines)
+
+for old, new, expected in (
+        ("compiled-python-libraries-pinned-requirements.txt",
+         "python-libraries-pinned-requirements.txt", True),
+        ("tool-settings.txt", "tool-settings-list.txt", True),
+        ("x/a-b.txt", "y/a-b.txt", True),
+        ("x/README.md", "y/README.md", False),
+        ("a-b.txt", "a-b.md", False),
+        ("notes.txt", "test-notes.txt", False),
+        ("a-b-c.txt", "b-c-d.txt", False),
+        ("a-x-b.txt", "a-b.txt", False)):
+    case("names %s and %s %s by leading or trailing words only"
+         % (old, new, "differ" if expected else "do not differ"),
+         CHECK.names_differ_by_end_words(old, new) is expected)
 
 
 # merge-tree -z output for a branch that renamed old.py to new.py, which the
@@ -1088,6 +1360,19 @@ def real_repository_cases(root):
         commit_in(origin, "dir1/f%d" % n,
                   "".join("file %d line %d\n" % (n, i) for i in range(8)),
                   "base adds dir1/f%d" % n)
+    # Files main renames and changes in the same commit, below git's 50%
+    # rename threshold, and one main deletes while adding an unrelated file.
+    commit_in(origin, "alpha.cfg",
+              "".join("alpha setting %d = value %d\n" % (i, i) for i in range(10)),
+              "base adds the file main renames and rewrites in part")
+    commit_in(origin, "compiled-tool-settings-list.txt",
+              "first pinned entry\nsecond pinned entry\n",
+              "base adds the file main renames and rewrites whole")
+    commit_in(origin, "compiled-twice-renamed-notes.txt",
+              "an old line\nanother old line\n",
+              "base adds the file main renames twice")
+    commit_in(origin, "doomed-notes.txt", "notes nobody keeps\n",
+              "base adds the file main deletes beside an unrelated addition")
     git_in(root, "clone", "-q", str(origin), str(work))
     git_in(work, "checkout", "-q", "-b", "clean-topic")
     clean_head = commit_in(work, "g", "new file\n", "clean topic")
@@ -1116,6 +1401,23 @@ def real_repository_cases(root):
     commit_in(work, "d", "doomed, topic\n", "deleted topic, part one")
     mixed_head = commit_in(work, "f", "one\ntwo, topic\n",
                            "deleted topic, part two")
+    git_in(work, "checkout", "-q", "-b", "similar-rename-topic", "main")
+    similar_rename_head = commit_in(
+        work, "alpha.cfg",
+        "".join("alpha setting %d = value %d\n" % (i, i) for i in range(9))
+        + "alpha setting 9 = topic value\n", "similar-rename topic")
+    git_in(work, "checkout", "-q", "-b", "name-rename-topic", "main")
+    name_rename_head = commit_in(work, "compiled-tool-settings-list.txt",
+                                 "first pinned entry\nsecond pinned entry, topic\n",
+                                 "name-rename topic")
+    git_in(work, "checkout", "-q", "-b", "twice-renamed-topic", "main")
+    twice_renamed_head = commit_in(work, "compiled-twice-renamed-notes.txt",
+                                   "an old line\nanother old line, topic\n",
+                                   "twice-renamed topic")
+    git_in(work, "checkout", "-q", "-b", "deleted-beside-addition-topic", "main")
+    deleted_beside_addition_head = commit_in(
+        work, "doomed-notes.txt", "notes nobody keeps, topic\n",
+        "deleted-beside-addition topic")
     git_in(work, "checkout", "-q", "--orphan", "unrelated-topic")
     git_in(work, "rm", "-q", "-r", "-f", ".")
     commit_in(work, "h", "unrelated\n", "unrelated history")
@@ -1125,6 +1427,56 @@ def real_repository_cases(root):
     git_in(origin, "mv", "moved.py", "moved-on-main.py")
     git_in(origin, "mv", "dir1", "dir2")
     git_in(origin, "commit", "-q", "-m", "main renames moved.py and dir1")
+    git_in(origin, "rm", "-q", "alpha.cfg")
+    (origin / "omega.ini").write_text(
+        "".join("alpha setting %d = value %d\n" % (i, i) for i in range(3))
+        + "".join("omega option %d is now spelled differently\n" % i
+                  for i in range(7)))
+    git_in(origin, "add", "omega.ini")
+    git_in(origin, "commit", "-q", "-m", "main renames alpha.cfg and rewrites it")
+    similar_rename_label = real_label(git_in(origin, "rev-parse", "HEAD"),
+                                      "main renames alpha.cfg and rewrites it")
+    git_in(origin, "rm", "-q", "compiled-tool-settings-list.txt")
+    (origin / "tool-settings-list.txt").write_text(
+        "an entirely new format\nwith nothing kept\nfrom before\n")
+    git_in(origin, "add", "tool-settings-list.txt")
+    git_in(origin, "commit", "-q", "-m",
+           "main renames compiled-tool-settings-list.txt and rewrites it whole")
+    name_rename_label = real_label(
+        git_in(origin, "rev-parse", "HEAD"),
+        "main renames compiled-tool-settings-list.txt and rewrites it whole")
+    # The first rename rewrites the file whole, so only its name pairs it; the
+    # second is a plain git mv. Both land on one side branch merged with a
+    # merge commit after main moved on, as a pull request and its fix round
+    # land: main never held the first new name, so git log finds the second
+    # rename only with --full-history.
+    git_in(origin, "checkout", "-q", "-b", "two-renames")
+    git_in(origin, "rm", "-q", "compiled-twice-renamed-notes.txt")
+    (origin / "twice-renamed-notes.txt").write_text("a new format entirely\n")
+    git_in(origin, "add", "twice-renamed-notes.txt")
+    git_in(origin, "commit", "-q", "-m",
+           "main renames compiled-twice-renamed-notes.txt and rewrites it")
+    twice_renamed_label = real_label(
+        git_in(origin, "rev-parse", "HEAD"),
+        "main renames compiled-twice-renamed-notes.txt and rewrites it")
+    git_in(origin, "mv", "twice-renamed-notes.txt", "twice-renamed-notes-kept.txt")
+    git_in(origin, "commit", "-q", "-m", "main renames twice-renamed-notes.txt")
+    second_rename_label = real_label(git_in(origin, "rev-parse", "HEAD"),
+                                     "main renames twice-renamed-notes.txt")
+    git_in(origin, "checkout", "-q", "main")
+    (origin / "work-while-renames-were-reviewed.txt").write_text("other work\n")
+    git_in(origin, "add", "work-while-renames-were-reviewed.txt")
+    git_in(origin, "commit", "-q", "-m", "main moves on while the renames wait")
+    git_in(origin, "merge", "-q", "--no-ff", "-m", "merge the two renames",
+           "two-renames")
+    git_in(origin, "rm", "-q", "doomed-notes.txt")
+    (origin / "unrelated-report.md").write_text("# A report\n\nAbout other things.\n")
+    git_in(origin, "add", "unrelated-report.md")
+    git_in(origin, "commit", "-q", "-m",
+           "main deletes doomed-notes.txt and adds a report")
+    deleted_beside_addition_label = real_label(
+        git_in(origin, "rev-parse", "HEAD"),
+        "main deletes doomed-notes.txt and adds a report")
     git_in(origin, "rm", "-q", "old.py")
     git_in(origin, "commit", "-q", "-m", "main deletes old.py")
     renamed_deleting_label = real_label(git_in(origin, "rev-parse", "HEAD"),
@@ -1218,6 +1570,54 @@ def real_repository_cases(root):
              "ALSO CONFLICTS: dir2/new",
              DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
              REAPPLY_ALSO_CONFLICTS,
+         ])
+
+    # main renamed a file and changed it so much that git saw a deletion. The
+    # program names the likely new file and sends the agent to check and
+    # hand-merge, not to close: by content similar enough for -M10%, and by
+    # a name that only lost a leading word, even with nothing in common.
+    def rename_advice():
+        return list(RENAME_BLOCK)
+
+    for topic, head, old, new, label, why in (
+            ("similar-rename-topic", similar_rename_head, "alpha.cfg",
+             "omega.ini", similar_rename_label, "by content below 50%"),
+            ("name-rename-topic", name_rename_head,
+             "compiled-tool-settings-list.txt", "tool-settings-list.txt",
+             name_rename_label, "by name alone")):
+        status, lines, _ = run_here("--head", topic)
+        case("real: a file main renamed and rewrote %s is named with its likely "
+             "new name and a hand-merge, not a close" % why,
+             status == CHECK.EXIT_CONFLICT and lines == [
+                 "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
+                 "origin/main deleted 1 file(s) the branch changes."
+                 % real_label(head, topic.replace("-topic", " topic")),
+                 "DELETED OR RENAMED ON origin/main: %s, deleted by %s -> "
+                 "possibly %s" % (old, label, new),
+             ] + rename_advice())
+
+    status, lines, _ = run_here("--head", "twice-renamed-topic")
+    case("real: a file main renamed twice is named by its name on the base, "
+         "with a hand-merge, not a close",
+         status == CHECK.EXIT_CONFLICT and lines == [
+             "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
+             "origin/main deleted 1 file(s) the branch changes."
+             % real_label(twice_renamed_head, "twice-renamed topic"),
+             "DELETED OR RENAMED ON origin/main: compiled-twice-renamed-notes.txt, "
+             "deleted by %s -> possibly twice-renamed-notes-kept.txt (the name %s "
+             "gave it)" % (twice_renamed_label, second_rename_label),
+         ] + rename_advice())
+
+    status, lines, _ = run_here("--head", "deleted-beside-addition-topic")
+    case("real: a file main deleted while adding an unrelated file still gets "
+         "close-and-carry-forward", status == CHECK.EXIT_CONFLICT and lines == [
+             "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
+             "origin/main deleted 1 file(s) the branch changes."
+             % real_label(deleted_beside_addition_head,
+                          "deleted-beside-addition topic"),
+             "DELETED ON origin/main: doomed-notes.txt, by %s"
+             % deleted_beside_addition_label,
+             DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
          ])
 
     # Both kinds at once: the deletion decides, and the ordinary conflict is
