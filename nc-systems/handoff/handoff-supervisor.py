@@ -268,8 +268,9 @@ BRANCH_STATE_INSTRUCTION = (
     "open pull requests, check their state with `gh`: merge-lane-2 reviews "
     "and merges them; when one has a review with findings, dispatch a forked "
     "subagent to fix it — never extend a head you've already pushed. When "
-    "one conflicts with main, clear the conflict with the hand-merge that "
-    "scripts/branch-conflict-check.py describes."
+    "one conflicts with main, run scripts/branch-conflict-check.py and do what "
+    "its report says: the pull request is replaced by a new one cut from "
+    "current main."
 )
 
 # Overview refreshes are this agent-seat's job; other agent-seats have jobs of their own.

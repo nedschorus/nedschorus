@@ -45,7 +45,6 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **ghi-info** — the GHI knowledge agent, which an agent asks, with `scripts/ghi-info-ask.py`, which issues to read before filing or editing an issue.
 - **GHI-MD** — the MD file used to explain a GitHub issue.
 - **ghi-write-tool** — `scripts/ghi-issue-write.py`, the program whose operations are create-GHI and edit-GHI.
-- **hand-merge** — a merge of main into a conflicting pull-request branch, with each conflict resolved by hand and nothing else changed, pushed on top of the frozen-head.
 - **handoff-supervisor** — the program `nc-systems/handoff/handoff-supervisor.py`, one per agent-seat, that launches an agent-session, replaces it when it writes a session-handoff, and exits when it ends without one.
 - **handoff-system** — the subsystem that replaces an agent-session with a fresh one, which continues from the session-handoff the old agent-session wrote. Overview: `docs/nedschorus-wiki/nedschorus-handoff-architecture-overview.md`.
 - **hard-block** — a refusal that nothing overrides.

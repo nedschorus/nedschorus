@@ -80,7 +80,8 @@ HANGING_CHECK_BUDGET_SECONDS = "1"
 HANGING_CASE_WALL_CLOCK_LIMIT_SECONDS = 15
 
 REFUSAL_HEADER = "pre-push: branch %s conflicts with origin/main; this push is refused."
-CLOSING_INSTRUCTION = "Once the merge is committed, push again."
+CLOSING_INSTRUCTION = ("Once the conflict is cleared as the lines above say, push the "
+                       "branch they name.")
 # The hooks' own texts, copied here rather than imported, so a change to a
 # text fails a case.
 TELL_USER_LINE = ("Tell the user this whole message, including any error printed "
@@ -129,7 +130,7 @@ if _log:
 
 FAKE_CHECK_ALWAYS_CONFLICT = FAKE_CHECK_PREAMBLE + """\
 print("VERDICT: CONFLICT -- fake conflict for the test.")
-print("Merge origin/main into the branch by hand, with the frozen head as first parent.")
+print("Do not merge origin/main into this branch: a conflict with origin/main is never cleared by a merge.")
 sys.exit(1)
 """
 
@@ -696,17 +697,16 @@ def run_push_cases(scratch):
           REFUSAL_HEADER % "conflicting" in result.stderr, result.describe())
     check("and passes on the check's own verdict and instructions",
           "VERDICT: CONFLICT" in result.stderr
-          and "Merge origin/main into the branch by hand" in result.stderr,
+          and "Do not merge origin/main into this branch" in result.stderr,
           result.describe())
-    check("and carries the line on an edit beyond the conflicting lines",
-          "If the resolution forces an edit beyond the conflicting lines, put "
-          "that edit in one ordinary commit after the merge." in result.stderr,
+    check("and carries the line on cutting a new topic branch",
+          "Otherwise, cut a new topic branch from current origin/main and apply "
+          "this branch's change to it, resolving the conflict." in result.stderr,
           result.describe())
-    check("and carries the line on pushing the merge and that commit once",
-          "Push the merge and that commit once, and name the files you "
-          "resolved in the merge's commit message and in the pull request's "
-          "description." in result.stderr, result.describe())
-    check("and ends with the instruction to push again",
+    check("and carries the line on closing the old pull request",
+          "Close the old pull request with a comment linking the new one."
+          in result.stderr, result.describe())
+    check("and ends with the instruction to push the branch the report names",
           CLOSING_INSTRUCTION in result.stderr, result.describe())
     check("and does not offer --no-verify", "--no-verify" not in result.stderr,
           result.describe())
@@ -726,17 +726,15 @@ def run_push_cases(scratch):
           scenario.origin_ref("pushed-then-conflicting") == early,
           repr(scenario.origin_ref("pushed-then-conflicting")))
 
-    # The remedy the refusal gives: merge origin/main by hand, then push again.
-    merge = subprocess.run(
-        ["git", "merge", "--quiet", "origin/main"], cwd=str(scenario.clone),
-        env=scenario.environment(), capture_output=True, text=True, timeout=60)
-    check("(setup) the hand merge stops on the conflict", merge.returncode != 0,
-          merge.stderr)
-    (scenario.clone / "shared.txt").write_text("main's line\nanother branch line\n")
-    scenario.git(scenario.clone, "add", "shared.txt")
-    scenario.git(scenario.clone, "commit", "--quiet", "--no-edit")
-    result = scenario.push("origin", "pushed-then-conflicting")
-    check("after the hand merge the same branch is pushed",
+    # The remedy the refusal gives: a new topic branch cut from current
+    # origin/main carries the change with the conflict resolved, and is pushed.
+    scenario.git(scenario.clone, "switch", "--quiet", "-c",
+                 "pushed-then-conflicting-replacement", "origin/main")
+    scenario.commit("early.txt", "early\n", "Early work, carried over")
+    scenario.commit("shared.txt", "main's line\nanother branch line\n",
+                    "Later work, with the conflict resolved")
+    result = scenario.push("origin", "pushed-then-conflicting-replacement")
+    check("the new branch cut from current main, with the conflict resolved, is pushed",
           went_through(result), result.describe())
 
     result = scenario.push("origin", "clean-second", "conflicting")

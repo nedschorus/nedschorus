@@ -109,8 +109,8 @@ def main(argv=None):
               f"cd {checkout} && python3 scripts/branch-conflict-check.py --head {head_full} "
               f"--pull-request {number}\n"
               f"If that reports VERDICT: CONFLICT, send pull request {number} back to its "
-              f"author for the hand-merge that report describes, and review it again after "
-              f"the author pushes.\n"
+              f"author, who replaces it with a new pull request cut from current main as "
+              f"that report describes, and review the new pull request when it opens.\n"
               f"If it reports no conflict, run this again with the current main commit.")
         return 1
     except GitStepFailed as failure:
