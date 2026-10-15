@@ -185,7 +185,7 @@ with tempfile.TemporaryDirectory() as workspace:
     for case_name, raw_input_text, fault_words in (
             ("empty stdin", "", "JSONDecodeError"),
             ("unparseable stdin", "{not json at all", "JSONDecodeError"),
-            ("a non-object payload", '["a list, not an object"]', "a JSON list, not an object")):
+            ("a non-object payload", '["a list, not an object"]', "JSON, but not an object")):
         result = run_hook(None, home, raw_input_text=raw_input_text)
         check(f"{case_name} is reported on stderr, exit 1",
               reported(result, fault_words), f"code {result.returncode}, "

@@ -987,7 +987,7 @@ def run_claude_json_presets_cases(root: Path):
               "carries out",
               exit_code == 1 and tmux_calls == []
               and "not launched" in stderr.getvalue()
-              and "that is valid JSON, then run this recovery again" in stderr.getvalue()
+              and "that is valid JSON; after that, run this recovery again." in stderr.getvalue()
               and "so the user restores or moves it; an agent that reads this tells the user "
                   "and does not replace the file." in stderr.getvalue(),
               (exit_code, tmux_calls, stderr.getvalue()))

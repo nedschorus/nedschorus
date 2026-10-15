@@ -687,7 +687,7 @@ def note_record_read(record_path):
     except (OSError, ValueError) as error:
         return {}, f"{type(error).__name__}: {error}"
     if not isinstance(record, dict):
-        return {}, f"a JSON {type(record).__name__}, not an object"
+        return {}, "it holds JSON, but not an object"
     return record, None
 
 

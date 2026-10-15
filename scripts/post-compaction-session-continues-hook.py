@@ -76,7 +76,7 @@ def hook_payload_from_stdin() -> dict:
     """Return the stdin payload; raise when it is not a JSON object."""
     payload = json.loads(sys.stdin.read())
     if not isinstance(payload, dict):
-        raise ValueError(f"the input on the hook's stdin is a JSON {type(payload).__name__}, not an object")
+        raise ValueError("the input on the hook's stdin is JSON, but not an object")
     return payload
 
 

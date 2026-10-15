@@ -1014,6 +1014,13 @@ for name, stdin in (("a JSON list", "[1, 2]"), ("empty stdin", ""),
           result.returncode == 0 and result.stdout == "" and result.stderr == "",
           (result.returncode, result.stdout, result.stderr))
 
+with tempfile.TemporaryDirectory() as directory:
+    note_record = Path(directory) / "record.json"
+    note_record.write_text("[1, 2]", encoding="utf-8")
+    read = hook.note_record_read(note_record)
+    check("a note record that is not an object is reported without Python's type name",
+          read == ({}, "it holds JSON, but not an object"), read)
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

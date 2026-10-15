@@ -345,7 +345,7 @@ def run(stdin_text, environment, home, now):
     """Return the text to print, or None; append what it decided to the log."""
     payload = json.loads(stdin_text)
     if not isinstance(payload, dict):
-        raise ValueError(f"the input on the hook's stdin is a JSON {type(payload).__name__}, not an object")
+        raise ValueError("the input on the hook's stdin is JSON, but not an object")
     event = payload.get("hook_event_name") or "Stop"
     if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None

@@ -137,9 +137,9 @@ def claude_json_presets_failure_remedy(error: Exception, claude_json: pathlib.Pa
     """The one remedy that fits the failure the presets write raised.
 
     run_again, such as "launch again", is added to each instruction as
-    ", then <run_again>"; a caller that has nothing to run again passes nothing.
+    "; after that, <run_again>"; a caller that has nothing to run again passes nothing.
     """
-    then = f", then {run_again}" if run_again else ""
+    then = f"; after that, {run_again}" if run_again else ""
     backups = claude_json.parent / ".claude" / "backups"
     if isinstance(error, ClaudeJsonNotValidJsonError):
         wanted = "is valid JSON"
@@ -153,9 +153,9 @@ def claude_json_presets_failure_remedy(error: Exception, claude_json: pathlib.Pa
                 f"runs as; for a full disk, free space on the disk that holds {claude_json}.")
     return (f"{claude_json} holds the Claude Code login, so the user restores or moves it; "
             "an agent that reads this tells the user and does not replace the file.\n"
-            f"Restore {claude_json} from the newest copy in {backups}/ that {wanted}{then}.\n"
-            f"If no copy in {backups}/ {wanted}: move {claude_json} aside, such as to "
-            f"{claude_json}.unreadable{then}; the next launch writes a new {claude_json}, "
+            f"The user restores {claude_json} from the newest copy in {backups}/ that {wanted}{then}.\n"
+            f"If no copy in {backups}/ {wanted}, the user moves {claude_json} aside, such as to "
+            f"{claude_json}.unreadable{then}. The next launch writes a new {claude_json}, "
             "and the user may have to log in to Claude Code again.")
 
 

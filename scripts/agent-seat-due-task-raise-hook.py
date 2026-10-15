@@ -439,8 +439,8 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
     """The JSON to print, or None for silence; raises on a fault."""
     payload = json.loads(stdin_text)
     if not isinstance(payload, dict):
-        raise HookFault(f"the payload Claude Code sent on stdin is a JSON "
-                        f"{type(payload).__name__}, not an object, so no task was checked")
+        raise HookFault("the payload Claude Code sent on stdin is JSON, but not an object, "
+                        "so no task was checked")
     if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
     if environment.get(REINCARNATION_OWNED_BY_CALLER_VARIABLE):
