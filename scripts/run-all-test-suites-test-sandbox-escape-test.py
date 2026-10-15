@@ -13,7 +13,9 @@ real credential files are only measured, never printed, and the machine's real
 listening sockets only connected to and closed.
 
 The lists of what must be hidden are written out here, not read from the
-runner, so dropping an entry from one of the runner's lists fails a case.
+runner, so dropping an entry from one of the runner's lists fails a case. The
+probe also runs `python3 -m ruff --version`, which must work inside, so dropping
+the Ruff binary from the paths the runner shows fails a case too.
 
 bwrap cannot start inside bwrap, so the runner runs this suite outside its
 sandbox (SUITES_RUN_WITHOUT_ANY_SANDBOX); run anywhere bwrap cannot
@@ -271,6 +273,12 @@ def append_input_record():
     with open(targets["hook_log"], "a") as handle:
         handle.write("escape-test\tthe probe's own line\n")
 attempt("write the suite's own input record", append_input_record)
+def ruff_version():
+    done = subprocess.run([sys.executable, "-m", "ruff", "--version"],
+                          capture_output=True, text=True, timeout=60)
+    if done.returncode != 0:
+        raise RuntimeError((done.stdout + done.stderr).strip()[-300:])
+attempt("run python3 -m ruff --version", ruff_version)
 # Sockets this test makes outside only once the probe has started, in /var/tmp and in the
 # home directory: what a process outside makes later must not show inside either.
 # The handshake goes through the suite's own input record, the one file both sides write
@@ -603,6 +611,19 @@ def run_probe(scratch):
               sorted(probed))
         print("named machine sockets among those probed: "
               + (", ".join(path for path in MACHINE_SOCKETS_NAMED if path in probed) or "none"))
+
+        # Not an escape: a path the runner shows on purpose, which a suite needs, must work inside.
+        ruff_binary = pathlib.Path.home() / ".local/bin/ruff"
+        ruff_outside = subprocess.run([sys.executable, "-m", "ruff", "--version"],
+                                      capture_output=True, text=True, timeout=60)
+        if not ruff_binary.is_file() or ruff_outside.returncode != 0:
+            print(f"SKIP  inside, python3 -m ruff --version runs: outside, {ruff_binary} "
+                  f"{'exists' if ruff_binary.is_file() else 'is absent'} and python3 -m ruff "
+                  f"--version exits {ruff_outside.returncode}, so there is no Ruff to show")
+        else:
+            record = attempts.get("run python3 -m ruff --version")
+            check("inside, python3 -m ruff --version runs, from the Ruff binary the runner shows "
+                  "read-only", record is not None and record["worked"], record)
 
         # The home directory inside is empty but the suite's own, so it takes writes.
         for attempt in ("write the home canary", "create a file in the home directory"):
