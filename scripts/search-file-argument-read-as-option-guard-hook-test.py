@@ -247,18 +247,56 @@ try:
               two_names.stdout.startswith("1:"),
               f"stdout {two_names.stdout!r}, stderr {two_names.stderr!r}")
     refusal = run_main("grep -f -? notes.txt", option_values)
-    check("refused: grep -f -? notes.txt, whose value expands to -a and -n",
+    check("refused: grep -f -? notes.txt, whose value expands to -a and -n, naming -n, "
+          "the one grep reads as an option",
           refusal == (
-              "Refused: -?, the value of -f, expands to two or more names, such as -a. "
-              "The shell passes only the first name as -f's value; grep reads the others as "
-              "more words, and a name beginning with - as an option. -- cannot fix this. "
-              "Quote -?, or write the one name you meant, then run the command again."),
+              "Refused: -?, the value of -f, expands to two or more names. The shell passes "
+              "only the first of them as -f's value, and grep reads each of the others as one "
+              "more word, and a name beginning with - as an option, such as -n. "
+              "-- cannot fix this.\n"
+              "If you meant one of the names, write that name in place of -?.\n"
+              "If you meant every name -? matches, give -f once before each name.\n"
+              "If you meant a file named -? itself, quote -?.\n"
+              "Then run the command again."),
           repr(refusal))
+    # The name reported does not depend on the order the directory lists its entries in.
+    real_iglob = guard.glob.iglob
+    for listing in (["/d/-a", "/d/-n"], ["/d/-n", "/d/-a"]):
+        guard.glob.iglob = lambda pattern, recursive=False, listing=listing: iter(listing)
+        try:
+            name = guard.dash_name_among_two_or_more_expansions(
+                guard.GLOB_CHARACTER_MARKERS["*"], "/d", float("inf"), lambda: 0.0)
+        finally:
+            guard.glob.iglob = real_iglob
+        check(f"listed as {listing}, the name reported is -n, not the first in byte order",
+              name == "-n", repr(name))
+    guard.glob.iglob = lambda pattern, recursive=False: iter(["/d/a", "/d/-z"])
+    try:
+        name = guard.dash_name_among_two_or_more_expansions(
+            guard.GLOB_CHARACTER_MARKERS["*"], "/d", float("inf"), lambda: 0.0)
+    finally:
+        guard.glob.iglob = real_iglob
+    check("with -z and a, the one dash name -z is reported though it is first in byte order",
+          name == "-z", repr(name))
+    # A later search that -- cannot fix leaves no command to suggest for the earlier one.
+    refusal = run_main("grep needle *; grep -f -? notes.txt", option_values) or ""
+    check("refused with no command: grep needle *; grep -f -? notes.txt, whose second "
+          "search -- cannot fix",
+          refusal.startswith("Refused: * expands to names beginning with -")
+          and "run:" not in refusal, repr(refusal))
     for command in ["grep -lf -? notes.txt", "grep --file -? notes.txt",
                     "rg -g -? needle notes.txt"]:
         check(f"refused: {command}, whose value expands to two names beginning with -",
               run_main(command, option_values) is not None)
     shutil.rmtree(option_values)
+    # A recursive ** also lists the folder itself; the shell does not expand to it, so a
+    # folder holding only -n gives ** one name, the option's value.
+    only_dash = scratch / "only-dash"
+    only_dash.mkdir()
+    (only_dash / "-n").write_text("needle\n")
+    check("passes: grep -f ** /dev/null in a folder holding only -n",
+          run_main("grep -f ** /dev/null", only_dash) is None)
+    shutil.rmtree(only_dash)
 
     # At a cwd of /, the matches' prefix is / itself, so a name is cut after it, not after //.
     real_iglob = guard.glob.iglob
