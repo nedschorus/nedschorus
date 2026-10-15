@@ -181,6 +181,19 @@ for command, expected in [
         ("echo `a # c` `b`; d", [["a"], ["b"], ["echo", "`a # c`", "`b`"], ["d"]])]:
     check(f"a comment inside a one-line backticked command ends at its closing backtick: {command!r}",
           words_of(command) == expected, words_of(command))
+found = reader.simple_commands('cat <<EOF; echo `echo a #c` "x\ny"\nEOF\ntmux kill-server')
+check("a backticked comment on a here-document's opening line does not hide the quote that carries "
+      "the line on, so the body starts after it and the command after the body is read",
+      [words[0] for words in found] == ["cat", "echo", "echo", "tmux"] and list(found[-1]) == ["tmux", "kill-server"],
+      [(list(words), words.redirects) for words in found])
+found = reader.simple_commands('cat <<EOF; echo `echo a #c` \\ #w"\nx"\nEOF\ntmux kill-server')
+check("a backticked comment and a # after an escaped space on one opening line are both corrected",
+      list(found[-1]) == ["tmux", "kill-server"], [list(words) for words in found])
+check("an escaped space before a here-string redirection leaves its blank as a word",
+      words_of("echo \\ <<<x y") == [["echo", " ", "y"]], words_of("echo \\ <<<x y"))
+check("an escaped backtick inside a comment inside backticks does not end the comment",
+      words_of("echo `a # c \\`b\\``; rm z")[-2:] == [["echo", "`a # c \\`b\\``"], ["rm", "z"]],
+      words_of("echo `a # c \\`b\\``; rm z"))
 read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(b"echo `a # c`; rm z")
 check("a comment inside a one-line backticked command is found, ending at the backtick",
       read.comments == [(8, 11)] and not read.unreadable_spans, read)

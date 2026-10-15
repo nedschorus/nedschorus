@@ -1488,11 +1488,10 @@ def _comment_running_past_its_closing_backtick(root, source):
     tree-sitter-bash leaves the opening backtick in an error just before the
     comment instead.
     """
-    stack, found = [(root, False, None)], []
+    stack, found = [(root, False, False)], []
     while stack:
-        node, in_backticks, before = stack.pop()
-        if node.type == "comment" and before is not None and before.type == "ERROR" \
-                and sum(child.type == "`" for child in before.children) % 2 == 1:
+        node, in_backticks, tick_open = stack.pop()
+        if node.type == "comment" and tick_open:
             in_backticks = True
         if node.type == "comment" and in_backticks:
             text = node.text
@@ -1504,12 +1503,31 @@ def _comment_running_past_its_closing_backtick(root, source):
             continue
         if node.type == "command_substitution":
             in_backticks = bool(node.children) and node.children[0].type == "`"
-        children = node.children
-        # prev_sibling walks the parent's children from the start, so a long script would take
-        # time that grows with the square of its length.
-        stack.extend((child, in_backticks, children[index - 1] if index else None)
-                     for index, child in enumerate(children))
+        # tick_open: an error node's backtick, opened before this child and never closed,
+        # either inside the error node or in the error node just before this child.
+        tick_open, previous_error_open = False, False
+        for child in node.children:
+            stack.append((child, in_backticks, tick_open or previous_error_open))
+            if node.type == "ERROR" and child.type == "`":
+                tick_open = not tick_open
+            previous_error_open = child.type == "ERROR" and sum(
+                grandchild.type == "`" for grandchild in child.children) % 2 == 1
     return min(found, default=None)
+
+
+def _earliest_reader_correction(root, source):
+    """Return (offset, inserted) for the earliest misread of source to correct, or None.
+
+    inserted is the byte to put at offset before parsing again: a backslash that
+    ends a comment started after an escaped blank, or a line end that ends a
+    comment at its closing backtick. Everything that corrects a parse applies
+    this one function, so a new kind of correction is added here only.
+    """
+    misread = _comment_misread_after_an_escaped_blank(root, source)
+    past_backtick = _comment_running_past_its_closing_backtick(root, source)
+    if past_backtick is not None and (misread is None or past_backtick < misread):
+        return past_backtick, b"\n"
+    return None if misread is None else (misread, b"\\")
 
 
 def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
@@ -1531,8 +1549,9 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
     blank is written as \\#, which bash reads as the same word, when it comes
     before the next heredoc operator: one after the operator may be a line of that
     heredoc's body that tree-sitter-bash misplaced, and a body is kept as written.
-    A misread on the operator's own line is corrected where the body's start is
-    found, and in source once that heredoc is taken out. edits, when given, gets (offset, length removed, length inserted) for each
+    A misread on the operator's own line is corrected, by the same function,
+    where the body's start is found, and in source once that heredoc is taken
+    out. edits, when given, gets (offset, length removed, length inserted) for each
     change, in the order made.
     """
     taken = {}
@@ -1544,13 +1563,9 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
         operator = start.prev_sibling if start is not None else None
         if operator is None or operator.type not in ("<<", "<<-"):
             operator = None
-        misread = _comment_misread_after_an_escaped_blank(tree.root_node, source)
-        past_backtick = _comment_running_past_its_closing_backtick(tree.root_node, source)
-        if past_backtick is not None and (misread is None or past_backtick < misread):
-            misread, inserted = past_backtick, b"\n"
-        else:
-            inserted = b"\\"
-        if misread is not None and (operator is None or misread < operator.start_byte):
+        correction = _earliest_reader_correction(tree.root_node, source)
+        if correction is not None and (operator is None or correction[0] < operator.start_byte):
+            misread, inserted = correction
             source = source[:misread] + inserted + source[misread:]
             if edits is not None:
                 edits.append((misread, 0, 1))
@@ -1708,34 +1723,39 @@ def _heredoc_body_start(source, delimiter_end):
     backslash continuations, as in `cat <<EOF && git commit -m "two` with the
     message's second line next. The rest of the command line is parsed on its
     own to find it; what follows that line end does not change how the text
-    before it is read. A comment tree-sitter-bash misreads after an escaped blank
-    is corrected in that parse first, since it would hide a quote that carries
-    the line on, as in `cat <<EOF; echo \\ #word"` with the quote closed on the
-    next line.
+    before it is read. Every misread _earliest_reader_correction finds before
+    that line end is corrected in that parse first, since a misread comment can
+    hide a quote that carries the line on, as in `cat <<EOF; echo \\ #word"`
+    with the quote closed on the next line. A line end a correction inserts is
+    not a line end of source and is skipped.
     """
     probe = b": " + source[delimiter_end:]
     inserted = []
     tree = parser().parse(probe)
     for _ in range(probe.count(b"#") + 1):
-        line_end = _opening_line_end(tree.root_node, probe)
-        misread = _comment_misread_after_an_escaped_blank(tree.root_node, probe)
+        line_end = _opening_line_end(tree.root_node, probe, inserted)
+        correction = _earliest_reader_correction(tree.root_node, probe)
         # A misread in the body cannot move the opening line's end, and correcting
         # each one costs a parse of the whole body.
-        if misread is None or (line_end is not None and misread > line_end):
+        if correction is None or (line_end is not None and correction[0] > line_end):
             break
-        probe = probe[:misread] + b"\\" + probe[misread:]
-        inserted.append(misread)
+        at, byte = correction
+        probe = probe[:at] + byte + probe[at:]
+        inserted = [(earlier + (earlier >= at), line) for earlier, line in inserted]
+        inserted.append((at, byte == b"\n"))
         tree = parser().parse(probe)
     if line_end is None:
         return len(source)
-    for at in reversed(inserted):
-        if line_end > at:
-            line_end -= 1
+    line_end -= sum(at < line_end for at, _ in inserted)
     return delimiter_end + line_end - 2 + 1
 
 
-def _opening_line_end(root, probe):
-    """Return the offset in probe of the first line end outside quotes, substitutions and continuations, or None."""
+def _opening_line_end(root, probe, inserted=()):
+    """Return the offset in probe of the first line end outside quotes, substitutions and continuations, or None.
+
+    inserted is [(offset, is_a_line_end)] for each byte a correction put in
+    probe; such a line end is not one of the source's.
+    """
     stack, inside, comments = [root], [], []
     while stack:
         node = stack.pop()
@@ -1753,6 +1773,9 @@ def _opening_line_end(root, probe):
         line_end = probe.find(b"\n", position)
         if line_end == -1:
             return None
+        if (line_end, True) in inserted:
+            position = line_end + 1
+            continue
         # A backslash continues a line, except at the end of a comment.
         continued = _escaped_by_backslashes(probe, line_end) \
             and not any(begin <= line_end - 1 < end for begin, end in comments)
