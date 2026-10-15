@@ -3759,6 +3759,14 @@ def run_push_time_limit_cases(scratch: Path):
     check("a push is given more time than the pre-push hook can take",
           tool.push_time_limit_seconds({}) > hook_seconds,
           f"{tool.push_time_limit_seconds({})} against {hook_seconds}")
+    check("the push's time, less its margin, waits out each hook stop's "
+          "grace twice, once after SIGTERM and once after SIGKILL",
+          tool.push_time_limit_seconds({}) - tool.PUSH_TIME_MARGIN_SECONDS
+          == conflict.DEFAULT_TIME_BUDGET_SECONDS
+          + 2 * conflict.TERMINATE_GRACE_SECONDS
+          + selective.DEFAULT_TIME_BUDGET_SECONDS
+          + 2 * selective.TERMINATE_GRACE_SECONDS,
+          str(tool.push_time_limit_seconds({})))
     for module in (conflict, selective):
         longer = {module.TIME_BUDGET_ENVIRONMENT_VARIABLE: "1000"}
         check(f"a longer budget in {module.TIME_BUDGET_ENVIRONMENT_VARIABLE} "
@@ -3783,7 +3791,10 @@ def run_push_time_limit_cases(scratch: Path):
                   f"git push of branch b was stopped after "
                   f"{tool.push_time_limit_seconds({}):.0f} seconds, longer "
                   "than the pre-push hook's own limit")
-              and "Rerun the same command; a rerun is safe" in text
+              and "so the push did not finish." in text
+              and "Rerun the same command; a rerun is safe: it reads origin "
+                  "first, and if the branch got there, it opens the pull "
+                  "request for it instead of pushing again." in text
               and "tell the user the push hangs" in text
               and recorder.commands() == ["git push --quiet"],
               text + "\n" + str(recorder.commands()))
@@ -3801,9 +3812,13 @@ def run_push_time_limit_cases(scratch: Path):
     check("the push is given the time the hook reads from the same environment",
           configured.timeout_of("git push") == tool.push_time_limit_seconds(longer),
           str(configured.timeout_of("git push")))
-    variable = selective.TIME_BUDGET_ENVIRONMENT_VARIABLE
-    saved = os.environ.get(variable)
-    os.environ[variable] = "1000"
+    # Both budget variables are set here, so one the outer process carries
+    # cannot change what this case compares.
+    variables = (conflict.TIME_BUDGET_ENVIRONMENT_VARIABLE,
+                 selective.TIME_BUDGET_ENVIRONMENT_VARIABLE)
+    saved = {name: os.environ.get(name) for name in variables}
+    os.environ.pop(conflict.TIME_BUDGET_ENVIRONMENT_VARIABLE, None)
+    os.environ[selective.TIME_BUDGET_ENVIRONMENT_VARIABLE] = "1000"
     try:
         from_process = Recorder()
         tool.push_branch(scratch, "b", from_process)
@@ -3813,10 +3828,11 @@ def run_push_time_limit_cases(scratch: Path):
               == tool.push_time_limit_seconds(longer),
               str(from_process.timeout_of("git push")))
     finally:
-        if saved is None:
-            del os.environ[variable]
-        else:
-            os.environ[variable] = saved
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def run_pull_request_description_cases(directory):

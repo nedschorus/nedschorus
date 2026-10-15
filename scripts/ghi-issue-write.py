@@ -517,10 +517,10 @@ def push_branch(worktree, branch, runner, environment=None):
         raise Refused(
             f"git push of branch {branch} was stopped after {seconds:.0f} "
             "seconds, longer than the pre-push hook's own limit, so the push "
-            "itself hung.\n"
-            "Rerun the same command; a rerun is safe, because it reads origin "
-            "first and opens the pull request for a branch that is already "
-            "there.\n"
+            "did not finish.\n"
+            "Rerun the same command; a rerun is safe: it reads origin first, "
+            "and if the branch got there, it opens the pull request for it "
+            "instead of pushing again.\n"
             "If it stops the same way again, tell the user the push hangs, "
             "with this message.", 1) from None
 
