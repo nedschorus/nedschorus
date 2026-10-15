@@ -165,10 +165,9 @@ def names_differ_by_end_words(old, new):
     new_extension, new_words = name_words(new)
     if old_extension != new_extension:
         return False
-    if old_words == new_words:
-        return True
     shorter, longer = sorted((old_words, new_words), key=len)
-    # One shared word, such as "test", says nothing about a rename.
+    # One shared word, such as "test" or "README", says nothing about a
+    # rename, even when the whole name is that word.
     if len(shorter) < 2:
         return False
     return any(longer[start:start + len(shorter)] == shorter
@@ -198,6 +197,52 @@ def renamed_to_candidates(path, commit, runner=run):
                      if new not in paired and names_differ_by_end_words(path, new)]
 
 
+def path_exists_at(commit, path, runner=run):
+    """Return whether path names a file in commit's tree."""
+    status, _ = runner(["git", "cat-file", "-e", "%s:%s" % (commit, path)])
+    return status == 0
+
+
+def later_deleting_commit(path, after, base_hash, runner=run):
+    """Return the first commit after `after` on the base that deleted path, or None."""
+    # A rename made on a side branch and merged leaves the path unchanged
+    # between the merge and its first parent, and git log's default history
+    # simplification then never visits the side branch.
+    status, out = runner(["git", "log", "--full-history", "--reverse",
+                          "--format=%H", "--diff-filter=D",
+                          "%s..%s" % (after, base_hash), "--", path])
+    hashes = out.split() if status == 0 else []
+    return hashes[0] if hashes else None
+
+
+def candidates_at_base(path, commit, base_hash, runner=run):
+    """Return (names at the base path may now have, commits git could not list).
+
+    A file the deleting commit renamed may have been renamed or deleted again
+    later on the base, so each candidate is kept only under a name the base
+    holds: one it has, or the one a later rename gave it.
+    """
+    found, unlisted, seen = [], [], set()
+    pending = [(path, commit)]
+    while pending:
+        old, deleting = pending.pop(0)
+        candidates = renamed_to_candidates(old, deleting, runner)
+        if candidates is None:
+            unlisted.append(deleting)
+            continue
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            if path_exists_at(base_hash, candidate, runner):
+                found.append(candidate)
+                continue
+            later = later_deleting_commit(candidate, deleting, base_hash, runner)
+            if later is not None:
+                pending.append((candidate, later))
+    return found, unlisted
+
+
 def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
                           messages=None, runner=run):
     """Return the VERDICT lines for a conflict where the base deleted files the branch changes."""
@@ -218,9 +263,9 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
             lines.append("DELETED ON %s: %s, by a commit this run could not find"
                          % (base, path))
             continue
-        candidates = renamed_to_candidates(path, commit, runner)
-        if candidates is None:
-            unlisted.append(commit)
+        candidates, not_listed = candidates_at_base(path, commit, base_hash,
+                                                    runner)
+        unlisted += [c for c in not_listed if c not in unlisted]
         if candidates:
             renamed += 1
             lines.append("DELETED OR RENAMED ON %s: %s -> possibly %s, by %s"
