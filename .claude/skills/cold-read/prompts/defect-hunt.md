@@ -6,4 +6,4 @@ For each flag: quote the exact phrase or sentence, and explain what is wrong, wh
 
 HOW TO DELIVER YOUR ANSWER. Write your answer to {REPORT_PATH}, with whatever file-writing tool you have. That file is your entire deliverable: this cold-read-cell discards what you say in conversation, so an answer given only in chat is a lost answer. Write it once, when your analysis is complete, rather than building it up across several writes.
 
-Write {REPORT_PATH} even when you found nothing: its first line is `Report complete: no findings.`, and the next names what you examined. A missing or empty report is read as a run that did not happen: it is relaunched once, and counted absent if the relaunch also leaves none. {REPORT_PATH} is the only file to create; write nothing anywhere else.
+Write {REPORT_PATH} even when you found nothing: its first line is `Report complete: no findings.`, and the next names what you examined; such a report has no `clean sections:` line. A missing or empty report is read as a run that did not happen: it is relaunched once, and counted absent if the relaunch also leaves none. {REPORT_PATH} is the only file to create; write nothing anywhere else.
