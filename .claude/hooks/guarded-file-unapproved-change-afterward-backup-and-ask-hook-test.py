@@ -541,6 +541,16 @@ def cases(scratch):
     check("a live asking session's file only reminds another session",
           "Reminder" in world.run(session="third", owner="owner-third"), "")
 
+    # -- the takeover of a deletion's ask after the asking session ended
+    world = fresh(scratch, "deleted-takeover")
+    claude = world.repo / "CLAUDE.md"
+    claude.unlink()
+    world.run(session="old", owner="ended-old")
+    message = world.run(session="successor", owner="owner-new")
+    check("when the asking session has ended, the next session is asked about a deletion",
+          "A guarded file changed" in message and "version deleted" in message
+          and "did not run" not in message, message)
+
     # -- a shell deletion, and a declined version that is in a commit
     world = fresh(scratch, "deletion")
     claude = world.repo / "CLAUDE.md"

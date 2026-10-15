@@ -16,7 +16,9 @@ program with --approve or --restore. The change stays in place while he is asked
 Design and tests: docs/issues/1268-catch-a-guarded-file-changed-without-the-user.md.
 
 Exit status: the hook always exits 0, since the tool call has already happened. --approve and
---restore exit 0 when done, 1 when they refuse, and 64 on a bad command line.
+--restore exit 0 when done, 1 when they refuse, when the store cannot be reached, when a
+file operation fails, or when --restore changes some files and fails on others, and 64 on a bad
+command line.
 """
 
 import difflib
@@ -712,8 +714,9 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
         log = store.log(path)
         asking = asking_session(log, key)
         if asking is not None and asking[0] != session and not owner_alive(asking[1]):
+            data = b"" if key == DELETED else read_file(path)
             log_line(store, path, "asking", session, owner, key)
-            asks.append(ask_entry(store, Check(path, read_file(path), key, copy_of(log, key)), log))
+            asks.append(ask_entry(store, Check(path, data, key, copy_of(log, key)), log))
         elif asking is None or asking[0] == session:
             reminders.append((path, key))
         elif not was_reminded(log, key, session):
