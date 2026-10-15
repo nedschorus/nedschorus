@@ -704,13 +704,13 @@ def cases(scratch):
 
     # -- speed, on a copy of main
     if sys.platform != "linux":
-        print("SKIP  with nothing changed, a run uses under 100 ms of CPU on ned-box: not on ned-box")
+        print("SKIP  with nothing changed, a run does no hashing, copying or store work: not on ned-box")
         return
     top = subprocess.run(["git", "-C", str(HOOK.parent), "rev-parse", "--show-toplevel"],
                          capture_output=True, text=True)
     if top.returncode != 0:
-        print("SKIP  with nothing changed, a run uses under 100 ms of CPU on ned-box: the hook is in "
-              "no checkout to copy")
+        print("SKIP  with nothing changed, a run does no hashing, copying or store work: the hook is "
+              "in no checkout to copy")
         return
     world = World(Path(scratch) / "speed")
     copy_of_main = Path(scratch) / "speed" / "main"
@@ -718,8 +718,8 @@ def cases(scratch):
                    check=True, env=world.environment())
     world.run(cwd=copy_of_main)
     world.run(cwd=copy_of_main)
-    # Wall time on a loaded machine measures the load as much as the hook: about 50 ms unloaded
-    # became 110 ms under a full parallel test run. CPU time is what the hook controls.
+    # CPU and wall time vary with machine load and tracing, so they are printed for information
+    # only. What the case guards is that a run with nothing changed does no expensive work.
     times = []
     cpu_times = []
     for _ in range(5):
@@ -727,8 +727,55 @@ def cases(scratch):
         times.append(world.last_seconds)
         cpu_times.append(world.last_cpu_seconds)
     print(f"INFO  with nothing changed, wall seconds per run: {[round(t, 3) for t in times]}")
-    check("with nothing changed, a run on a copy of main uses under 100 ms of CPU on ned-box",
-          min(cpu_times) < 0.1, cpu_times)
+    print(f"INFO  with nothing changed, CPU seconds per run: {[round(t, 3) for t in cpu_times]}")
+    hook = load_hook_in_this_process()
+    calls = {"hash a file": 0, "read a file": 0, "hash bytes": 0, "open the store": 0}
+
+    def counting(name, function):
+        def wrapper(*arguments, **keywords):
+            calls[name] += 1
+            return function(*arguments, **keywords)
+        return wrapper
+
+    hashes_in_checkout = hook.hashes_in_checkout
+
+    def hashes_counting_files(checkout, paths):
+        calls["hash a file"] += len(paths)  # a call with no paths hashes nothing
+        return hashes_in_checkout(checkout, paths)
+
+    hook.hashes_in_checkout = hashes_counting_files
+    hook.read_file = counting("read a file", hook.read_file)
+    hook.blob_hash = counting("hash bytes", hook.blob_hash)
+    hook.Store = counting("open the store", hook.Store)
+    store_before = store_listing(world.store)
+    saved_environment, saved_directory = dict(os.environ), os.getcwd()
+    try:
+        os.environ.update(world.environment())
+        os.chdir(copy_of_main)
+        texts = hook.run_hook({"session_id": "session-a", "hook_event_name": "PostToolUse",
+                               "tool_name": "Bash", "cwd": str(copy_of_main),
+                               "tool_input": {"command": "x"}})
+    finally:
+        os.chdir(saved_directory)
+        os.environ.clear()
+        os.environ.update(saved_environment)
+    check("with nothing changed, a run on a copy of main hashes no file, reads no file, copies "
+          "nothing and does not open the store",
+          texts == [] and not any(calls.values()) and store_listing(world.store) == store_before,
+          (texts, calls))
+
+
+def load_hook_in_this_process():
+    specification = importlib.util.spec_from_file_location("guarded_file_hook_under_test", HOOK)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def store_listing(store):
+    """Every path in the store with its size and modification time."""
+    return sorted((str(path), path.stat().st_size, path.stat().st_mtime_ns)
+                  for path in Path(store).rglob("*"))
 
 
 def mac_cases(scratch):
