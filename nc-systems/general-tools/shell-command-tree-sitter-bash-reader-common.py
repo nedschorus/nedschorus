@@ -606,18 +606,21 @@ def _word_value_without_tilde_mark(node, glob_markers, restored):
 
 
 def _text_restored(node, restored):
-    """Return node's text with each case terminator the repair wrote inside it as it was written."""
+    """Return node's text with each repair the reader wrote inside it undone, as it was written."""
     return _bytes_restored(node.text, node.start_byte, restored)
 
 
 def _bytes_restored(text, start, restored):
-    """Return text, which starts at offset start of the text parsed, with its terminators restored.
+    """Return text, which starts at offset start of the text parsed, with its repairs undone.
 
-    restored maps an offset in the text parsed to the terminator written there before the repair.
+    restored maps an offset in the text parsed to (length, written): the repair
+    put length bytes there in place of written, a case terminator written as ;;
+    or a backslash put before a misread #.
     """
     for offset in sorted((offset for offset in restored or ()
                           if start <= offset < start + len(text)), reverse=True):
-        text = text[:offset - start] + restored[offset] + text[offset - start + 2:]
+        length, written = restored[offset]
+        text = text[:offset - start] + written + text[offset - start + length:]
     return text.decode("utf-8", SHELL_TEXT_ERRORS)
 
 
@@ -1132,7 +1135,12 @@ def _source_with_case_terminators_repaired(text, text_node_types, keep_first=Fal
     for offset, terminator in written:
         in_source = _offset_after_edits(offset, edits)
         if in_source is not None:
-            restored[in_source] = terminator
+            restored[in_source] = (2, terminator)
+    for index, (at, removed, inserted) in enumerate(edits):
+        if (removed, inserted) == (0, 1):
+            in_source = _offset_after_edits(at, edits[index + 1:])
+            if in_source is not None:
+                restored[in_source] = (1, b"")
     return source, tree, taken, restored
 
 
@@ -1425,8 +1433,6 @@ def _comment_misread_after_an_escaped_blank(root, source):
     stack, found = [root], []
     while stack:
         node = stack.pop()
-        if node.type == "heredoc_body":
-            continue
         start = node.start_byte
         if node.type == "comment" and start > 0 and source[start - 1:start] in (b" ", b"\t") \
                 and _escaped_by_backslashes(source, start - 1):
@@ -1451,9 +1457,11 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
     tree-sitter-bash reads correctly, and the body lines are removed; then
     the next one, until none is left. keep_first leaves the earliest heredoc in
     place. A # that tree-sitter-bash takes for a comment's start after an escaped
-    blank is written as \\#, which bash reads as the same word, before any heredoc
-    after it is taken out, since a comment read there would hide that heredoc.
-    edits, when given, gets (offset, length removed, length inserted) for each
+    blank is written as \\#, which bash reads as the same word, when it comes
+    before the next heredoc operator: one after the operator may be a line of that
+    heredoc's body that tree-sitter-bash misplaced, and a body is kept as written.
+    A misread on the operator's own line is corrected where the body's start is
+    found, and in source once that heredoc is taken out. edits, when given, gets (offset, length removed, length inserted) for each
     change, in the order made.
     """
     taken = {}
@@ -1623,10 +1631,28 @@ def _heredoc_body_start(source, delimiter_end):
     backslash continuations, as in `cat <<EOF && git commit -m "two` with the
     message's second line next. The rest of the command line is parsed on its
     own to find it; what follows that line end does not change how the text
-    before it is read.
+    before it is read. A comment tree-sitter-bash misreads after an escaped blank
+    is corrected in that parse first, since it would hide a quote that carries
+    the line on, as in `cat <<EOF; echo \\ #word"` with the quote closed on the
+    next line.
     """
     probe = b": " + source[delimiter_end:]
-    stack, inside, comments = [parser().parse(probe).root_node], [], []
+    inserted = []
+    tree = parser().parse(probe)
+    for _ in range(probe.count(b"#")):
+        misread = _comment_misread_after_an_escaped_blank(tree.root_node, probe)
+        if misread is None:
+            break
+        probe = probe[:misread] + b"\\" + probe[misread:]
+        inserted.append(misread)
+        tree = parser().parse(probe)
+
+    def in_source(offset):
+        for at in reversed(inserted):
+            if offset > at:
+                offset -= 1
+        return delimiter_end + offset - 2
+    stack, inside, comments = [tree.root_node], [], []
     while stack:
         node = stack.pop()
         if node.type == "comment":
@@ -1647,7 +1673,7 @@ def _heredoc_body_start(source, delimiter_end):
         continued = (len(probe[:line_end]) - len(probe[:line_end].rstrip(b"\\"))) % 2 == 1 \
             and not any(begin <= line_end - 1 < end for begin, end in comments)
         if not any(begin < line_end < end for begin, end in inside) and not continued:
-            return delimiter_end + line_end - 2 + 1
+            return in_source(line_end) + 1
         position = line_end + 1
 
 

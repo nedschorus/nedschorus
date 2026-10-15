@@ -415,6 +415,8 @@ def main():
                   "x.sh", 'case "$x" in\n  *"a"*"b"*) echo hit ;;\nesac\n'
                           "case $y in\n  @(a|b)) echo y ;;\nesac\n# PR 931\n", "shell")]
               == [(7, "pull request or issue number")]),
+        check("a span bash reads but tree-sitter-bash cannot, with a # in it, raises",
+              shell_script_does_not_parse('case "$x" in\n  *"a#"*"b"*) echo hit ;;\nesac\n')),
         check("a quote that never closes raises, with no # after it",
               shell_script_does_not_parse("echo 'never closed\n")),
         check("a double quote that never closes raises, with no # after it",
