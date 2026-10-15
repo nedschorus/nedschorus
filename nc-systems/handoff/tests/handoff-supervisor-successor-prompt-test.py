@@ -3146,6 +3146,7 @@ if "--canary" in sys.argv:
           "authentication, not on task-list pinning. Running them needs a test file of "
           "their own that does not load that fixture.")
 else:
-    print("\n(skipped the live pinned-task-list canaries; pass --canary to run them)")
+    print("\n(skipped the live pinned-task-list canaries: under this suite's scratch HOME "
+          "`claude` has no login; the module docstring says why)")
 
 fixture.print_summary_and_exit_nonzero_if_any_case_failed()
