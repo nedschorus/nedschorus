@@ -8,7 +8,10 @@ Usage:
 The round is set by merge-lane-2's latest review that requests changes, together with every later
 review of merge-lane-2's that comments on the same commit, where merge-lane-2 can add or re-post
 blockers. That commit is the frozen-head. The blocking findings are those reviews' inline comments
-whose body starts BLOCKING_MARKER; the bodies' free text is never parsed for findings.
+whose body starts BLOCKING_MARKER; the bodies' free text is never parsed for findings. A blocker
+re-posted with the same path, line and body counts once. A review's stated **Blocking: N** is
+checked against its own marked comments, or, when it has none, against those of the later reviews,
+which then re-post its blockers.
 
 Without --check: refuse when the pull request's head has moved past the frozen-head, else print
 the brief: the frozen-head, each blocking finding word for word, the round's rules, and the
@@ -130,7 +133,7 @@ def round_reviews(number, reviewer_login):
                and review.get("commit_id") == round_set[0].get("commit_id") for review in round_set[1:]):
             return round_set
     latest = own[-1]
-    on_commit = f" of commit {latest.get('commit_id')}" if latest.get("state") == "COMMENTED" else ""
+    on_commit = f" on commit {latest.get('commit_id')}" if latest.get("state") == "COMMENTED" else ""
     raise Refused(f"merge-lane-2's latest review of pull request {number} ({latest.get('html_url')}) "
                   f"is {latest.get('state')}{on_commit}, not CHANGES_REQUESTED, so there is no fix-round to brief.\n"
                   "If that review lists follow-ups, answer them in a new pull request or tell "
@@ -141,30 +144,57 @@ def review_links(reviews):
     return " and ".join(str(review.get("html_url")) for review in reviews)
 
 
+def finding_identity(comment):
+    return (comment.get("path"), comment.get("line") or comment.get("original_line"),
+            (comment.get("body") or "").strip())
+
+
+def marked(comments):
+    return [comment for comment in comments
+            if (comment.get("body") or "").lstrip().startswith(BLOCKING_MARKER)]
+
+
+def without_reposts(comments):
+    seen, kept = set(), []
+    for comment in comments:
+        if finding_identity(comment) not in seen:
+            seen.add(finding_identity(comment))
+            kept.append(comment)
+    return kept
+
+
 def blocking_findings(number, reviews):
-    comments = []
-    for review in reviews:
-        comments += gh_json_lines(["api", "--paginate",
-                                   f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews/{review['id']}/comments",
-                                   "--jq", ".[]"])
-    findings = [comment for comment in comments
-                if (comment.get("body") or "").lstrip().startswith(BLOCKING_MARKER)]
+    comments_by_review = [gh_json_lines(["api", "--paginate",
+                                         f"repos/{{owner}}/{{repo}}/pulls/{number}/reviews/{review['id']}/comments",
+                                         "--jq", ".[]"]) for review in reviews]
+    marked_by_review = [marked(comments) for comments in comments_by_review]
+    findings = without_reposts([comment for found in marked_by_review for comment in found])
     named = review_links(reviews)
     whose = "its" if len(reviews) == 1 else "their"
+    asked_about = reviews[0].get("html_url")
+    ask = ("Until merge-lane-2 answers, change nothing and push nothing.\n"
+           f"Ask merge-lane-2 with SendMessage which findings block, naming its changes-requested review, "
+           f"{asked_about}")
     if not findings:
+        total = sum(len(comments) for comments in comments_by_review)
         raise Refused(f"merge-lane-2's review {named} requests changes, but none of {whose} "
-                      f"{len(comments)} inline comments starts with {BLOCKING_MARKER}, the mark this "
+                      f"{total} inline comments starts with {BLOCKING_MARKER}, the mark this "
                       "program reads blocking findings by.\n"
-                      "Ask merge-lane-2 with SendMessage which findings block, naming the review; "
-                      "do not guess them from the review's text.")
-    for review in reviews:
+                      + ask + "; do not guess them from the reviews' text.")
+    for index, review in enumerate(reviews):
         stated = BLOCKING_COUNT_PATTERN.search(review.get("body") or "")
-        if stated and int(stated.group(1)) != len(findings):
+        if not stated:
+            continue
+        own = without_reposts(marked_by_review[index])
+        counted = own or without_reposts([comment for found in marked_by_review[index + 1:]
+                                          for comment in found])
+        if int(stated.group(1)) != len(counted):
+            where = ("its own inline comments" if own or len(reviews) == 1
+                     else "the inline comments of the reviews after it")
             raise Refused(f"merge-lane-2's review {review.get('html_url')} says **Blocking: {stated.group(1)}**, "
-                          f"but {len(findings)} of {whose} inline comments start with {BLOCKING_MARKER}"
+                          f"but {len(counted)} of {where} start with {BLOCKING_MARKER}"
                           + (f" ({named})" if len(reviews) > 1 else "") + ".\n"
-                          "Ask merge-lane-2 with SendMessage which findings block, naming the review "
-                          "and both counts.")
+                          + ask + ", and both counts.")
     return findings
 
 
