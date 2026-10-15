@@ -4,7 +4,7 @@
 Usage:
   scripts/log-store-past-discussions-regex-search-newest-first.py PATTERN
       [--kind KIND]... [--seat SUBSTRING] [--machine {ned-box,mac}]
-      [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--context N] [--limit N] [--skip N]
+      [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--context N] [--limit N] [--skip N] [--jobs N]
 
 WHAT IT SEARCHES. Five kinds of record in the log-store,
 /home/nedlern/nedschorus-logs/ on ned-box:
@@ -51,6 +51,15 @@ the window. Hits come newest first; --limit (default 30) caps how many are
 shown and --skip passes over the first N, so the closing line says how to see
 the next ones.
 
+SPEED. ripgrep searches the other kinds while it finds the transcripts that
+hold the pattern. The program then reads those transcripts in --jobs
+processes (default one per core), newest modification time first, and stops
+once the page of hits is full and every unread transcript was last written
+before the page's oldest hit, since no message in it could change the page.
+The hits shown are the ones a full read would show; the closing line then
+says older transcripts were not read, in place of the count of all hits.
+--limit 0 reads every transcript.
+
 FROM THE MAC. The whole log-store, the Mac's mirrored transcripts and session
 dialogs included, is on ned-box. When the log-store is not on this machine
 and this machine is not ned-box, the program runs ned-box's copy,
@@ -76,9 +85,14 @@ Environment, for the tests:
 """
 
 import argparse
+import collections
+import concurrent.futures
 import datetime
+import heapq
 import importlib.util
+import itertools
 import json
+import multiprocessing
 import os
 import re
 import shlex
@@ -123,6 +137,7 @@ DATE_IN_NAME = re.compile(r"\d{4}-\d{2}-\d{2}")
 WALK_HEADER_SEAT = re.compile(r"\brun by ([A-Za-z0-9][A-Za-z0-9-]*) on\b")
 SEAT_IN_PROJECT_KEY = re.compile(r"-agents-(.+?)(?:--claude-worktrees-.*|-worktrees-.*)?$")
 DIALOG_FILE_SUFFIX = "-dialog-complete.md"
+MODIFICATION_TIME_MARGIN_SECONDS = 2
 
 
 def load_handoff_extractor():
@@ -249,6 +264,22 @@ class RipgrepMissing(Exception):
     pass
 
 
+def file_facts(path, root):
+    """The kind, machine, agent-seat and, where its name holds one, the date of one file's hits."""
+    kind = path.relative_to(root).parts[0]
+    facts = {"kind": kind, "machine": "", "seat": ""}
+    if kind == SESSION_DIALOGS:
+        facts["machine"], key = session_parts(path, root)
+        facts["seat"] = seat_from_project_key(key)
+        facts["project_key"] = key
+    else:
+        named = DATE_IN_NAME.search(str(path.relative_to(root / kind)))
+        facts["date"] = named.group(0) if named else None
+        if kind == "walk":
+            facts["seat"] = walk_seat(path)
+    return facts
+
+
 def file_hits(root, kinds, pattern, context, failures):
     """Hits from ripgrep over the file kinds and session-dialogs, each a dict."""
     directories = []
@@ -290,25 +321,17 @@ def file_hits(root, kinds, pattern, context, failures):
             start = submatches[0]["start"] if submatches else 0
             matches.append((path, number, excerpt(text, start)))
     hits = []
+    facts_by_file = {}
     for path_text, number, shown in matches:
-        path = Path(path_text)
-        kind = path.relative_to(root).parts[0]
+        if path_text not in facts_by_file:
+            facts_by_file[path_text] = file_facts(Path(path_text), root)
         nearby = lines_by_file[path_text]
-        hit = {"kind": kind, "path": path_text, "line": number, "shown": shown,
+        hit = {"path": path_text, "line": number, "shown": shown,
                "before": [(n, nearby[n][:CONTEXT_CHARACTERS]) for n in range(number - context, number)
                           if n in nearby],
                "after": [(n, nearby[n][:CONTEXT_CHARACTERS]) for n in range(number + 1, number + context + 1)
-                         if n in nearby],
-               "machine": "", "seat": ""}
-        if kind == SESSION_DIALOGS:
-            hit["machine"], key = session_parts(path, root)
-            hit["seat"] = seat_from_project_key(key)
-            hit["project_key"] = key
-        else:
-            named = DATE_IN_NAME.search(str(path.relative_to(root / kind)))
-            hit["date"] = named.group(0) if named else None
-            if kind == "walk":
-                hit["seat"] = walk_seat(path)
+                         if n in nearby]}
+        hit.update(facts_by_file[path_text])
         hits.append(hit)
     return hits
 
@@ -353,15 +376,18 @@ def dated_file_hits(hits, root, seat, machine, since, until, failures):
     return kept
 
 
-def user_message_hits(root, pattern, seat, machine, since, until, failures):
-    """Hits among the user's typed messages in the mirrored transcripts."""
+def transcript_candidates(root, pattern, seat, machine, since, failures):
+    """The transcripts ripgrep finds the pattern in, as (path, modification time), in path order.
+
+    Returns None when Python cannot read the pattern, since then no transcript is read.
+    """
     try:
-        regex = re.compile(pattern, re.IGNORECASE)
+        re.compile(pattern, re.IGNORECASE)
     except re.error as error:
         failures.append(f"the user's messages were not searched: Python's re module cannot read "
                         f"the pattern ({error}); give a pattern both ripgrep and Python read, "
                         f"or pass --kind to search the other kinds alone")
-        return []
+        return None
     directories = []
     for each in ([machine] if machine else MACHINES):
         directory = root / "transcripts" / each / "projects"
@@ -373,35 +399,127 @@ def user_message_hits(root, pattern, seat, machine, since, until, failures):
         return []
     output = run_ripgrep(ripgrep_command(["--files-with-matches", "--max-depth", "2", "--glob", "*.jsonl"],
                                          pattern, directories), failures)
-    extractor = None
-    hits = []
+    candidates = []
     for line in sorted(output.splitlines()):
         path = Path(line)
-        transcript_machine, key = session_parts(path, root)
-        if seat and seat not in key:
+        if seat and seat not in session_parts(path, root)[1]:
             continue
         try:
-            if since and utc_iso(path.stat().st_mtime)[:10] < since:
-                continue
-            if extractor is None:
-                extractor = load_handoff_extractor()
-            turns, _ = extractor.read_dialog_turns(path, drop_acknowledgements=False)
+            modified = path.stat().st_mtime
         except OSError as error:
-            failures.append(f"could not read the transcript {path}: {error}")
+            candidates.append((path, None, f"could not read the transcript {path}: {error}"))
             continue
-        for turn in turns:
-            if turn.get("voice") != "user":
-                continue
-            found = regex.search(turn["text"])
-            if not found or not in_window(turn.get("timestamp", ""), since, until):
-                continue
-            flat = " ".join(turn["text"][:found.start()].split())
-            whole = " ".join(turn["text"].split())
+        if since and utc_iso(modified)[:10] < since:
+            continue
+        candidates.append((path, modified, None))
+    return candidates
+
+
+_extractor_in_this_process = None
+
+
+def matching_user_messages(path_text, pattern, since, until):
+    """Return (timestamp and excerpt of each matching user message, error or None) for one transcript.
+
+    Runs in a worker process, so it takes and returns only plain values.
+    """
+    global _extractor_in_this_process
+    if _extractor_in_this_process is None:
+        _extractor_in_this_process = load_handoff_extractor()
+    try:
+        turns, _ = _extractor_in_this_process.read_dialog_turns(Path(path_text), drop_acknowledgements=False)
+    except OSError as error:
+        return [], f"could not read the transcript {path_text}: {error}"
+    regex = re.compile(pattern, re.IGNORECASE)
+    found_messages = []
+    for turn in turns:
+        if turn.get("voice") != "user":
+            continue
+        found = regex.search(turn["text"])
+        if not found or not in_window(turn.get("timestamp", ""), since, until):
+            continue
+        flat = " ".join(turn["text"][:found.start()].split())
+        whole = " ".join(turn["text"].split())
+        found_messages.append((turn.get("timestamp", ""), "USER: " + excerpt(whole, len(flat))))
+    return found_messages, None
+
+
+def newest_first_results(paths, pattern, since, until, jobs):
+    """Yield each transcript's result, newest transcript first, read by `jobs` processes."""
+    arguments = [(str(path), pattern, since, until) for path in paths]
+    if jobs <= 1 or len(arguments) <= 1:
+        for each in arguments:
+            yield matching_user_messages(*each)
+        return
+    # spawn, not fork: the ripgrep thread may still be running when the pool starts.
+    executor = concurrent.futures.ProcessPoolExecutor(
+        max_workers=min(jobs, len(arguments)), mp_context=multiprocessing.get_context("spawn"))
+    try:
+        in_flight = collections.deque()
+        upcoming = iter(arguments)
+        for each in itertools.islice(upcoming, 2 * jobs):
+            in_flight.append(executor.submit(matching_user_messages, *each))
+        while in_flight:
+            result = in_flight.popleft().result()
+            for each in itertools.islice(upcoming, 1):
+                in_flight.append(executor.submit(matching_user_messages, *each))
+            yield result
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
+
+
+def user_message_hits(root, candidates, pattern, since, until, jobs, page_size, other_dates, failures):
+    """Hits among the user's typed messages; and whether older transcripts were left unread.
+
+    Transcripts are read newest first by modification time. Once page_size hits are in hand
+    and the next transcript was last written before the page's oldest hit, no unread
+    transcript can change the page, so reading stops. Hits and failures come back in path
+    order, the order a full read gives them.
+    """
+    readable = sorted((c for c in candidates if c[1] is not None), key=lambda c: (-c[1], str(c[0])))
+    results = {}
+    page = [date or "" for date in other_dates]
+    heapq.heapify(page)
+    while page_size and len(page) > page_size:
+        heapq.heappop(page)
+    stopped_early = False
+    reader = newest_first_results([c[0] for c in readable], pattern, since, until, jobs)
+    try:
+        for index, (found_messages, error) in enumerate(reader):
+            results[readable[index][0]] = (found_messages, error)
+            for date, _ in found_messages:
+                if page_size:
+                    if len(page) < page_size:
+                        heapq.heappush(page, date or "")
+                    elif (date or "") > page[0]:
+                        heapq.heapreplace(page, date or "")
+            if page_size and len(page) == page_size and index + 1 < len(readable):
+                # A message is written before its transcript's modification time, which the Mac
+                # mirror keeps only to the whole second; MODIFICATION_TIME_MARGIN_SECONDS covers that.
+                newest_unread = utc_iso(readable[index + 1][1] + MODIFICATION_TIME_MARGIN_SECONDS)
+                if newest_unread < page[0]:
+                    stopped_early = True
+                    break
+    finally:
+        reader.close()
+    hits = []
+    for path, _, stat_error in candidates:
+        if stat_error:
+            failures.append(stat_error)
+            continue
+        if path not in results:
+            continue
+        found_messages, error = results[path]
+        if error:
+            failures.append(error)
+            continue
+        transcript_machine, key = session_parts(path, root)
+        for date, shown in found_messages:
             hits.append({"kind": USER_MESSAGES, "path": str(path), "line": None,
-                         "shown": "USER: " + excerpt(whole, len(flat)), "before": [], "after": [],
-                         "date": turn.get("timestamp", ""), "machine": transcript_machine,
+                         "shown": shown, "before": [], "after": [],
+                         "date": date, "machine": transcript_machine,
                          "seat": seat_from_project_key(key)})
-    return hits
+    return hits, stopped_early
 
 
 def print_hit(hit):
@@ -440,6 +558,8 @@ def argument_parser():
     parser.add_argument("--context", type=int, default=1, metavar="N", help="lines shown either side of a hit (default 1)")
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT, metavar="N",
                         help=f"show at most N hits (default {DEFAULT_LIMIT})")
+    parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1, metavar="N",
+                        help="read transcripts in N processes (default: one per core); 1 reads them in this one")
     parser.add_argument("--skip", type=int, default=0, metavar="N", help="pass over the newest N hits")
     return parser
 
@@ -460,17 +580,30 @@ def main(argv=None):
     kinds = parsed.kind or KINDS
     if parsed.seat or parsed.machine:
         kinds = [kind for kind in kinds if kind in (SESSION_DIALOGS, USER_MESSAGES)]
-    failures = []
+    page_size = parsed.skip + parsed.limit if parsed.limit > 0 else 0
+    file_failures, user_failures = [], []
+    stopped_early = False
     try:
-        hits = dated_file_hits(file_hits(root, kinds, parsed.pattern, max(0, parsed.context), failures),
-                               root, parsed.seat, parsed.machine, parsed.since, parsed.until, failures)
-        if USER_MESSAGES in kinds:
-            hits += user_message_hits(root, parsed.pattern, parsed.seat, parsed.machine,
-                                      parsed.since, parsed.until, failures)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as threads:
+            file_search = threads.submit(
+                lambda: dated_file_hits(
+                    file_hits(root, kinds, parsed.pattern, max(0, parsed.context), file_failures),
+                    root, parsed.seat, parsed.machine, parsed.since, parsed.until, file_failures))
+            transcript_search = (threads.submit(transcript_candidates, root, parsed.pattern, parsed.seat,
+                                                parsed.machine, parsed.since, user_failures)
+                                 if USER_MESSAGES in kinds else None)
+            hits = file_search.result()
+            candidates = transcript_search.result() if transcript_search else None
+        if candidates:
+            found, stopped_early = user_message_hits(
+                root, candidates, parsed.pattern, parsed.since, parsed.until, parsed.jobs, page_size,
+                [hit["date"] for hit in hits], user_failures)
+            hits += found
     except RipgrepMissing as missing:
         print(f"FAILED: ripgrep ({missing}) is not installed on {this_machine()}, so nothing was searched.\n"
               f"Install it: sudo apt install ripgrep (on the Mac: brew install ripgrep).", file=sys.stderr)
         return EXIT_FAILED
+    failures = file_failures + user_failures
 
     hits.sort(key=lambda hit: hit["date"] or "", reverse=True)
     shown = hits[parsed.skip:parsed.skip + parsed.limit] if parsed.limit > 0 else hits[parsed.skip:]
@@ -480,8 +613,13 @@ def main(argv=None):
     searched = ", ".join(kinds) if kinds else "nothing: --seat and --machine leave no --kind given"
     if shown:
         last = parsed.skip + len(shown)
-        print(f"Hits {parsed.skip + 1}-{last} of {len(hits)}, newest first. Searched: {searched}.")
-        if last < len(hits):
+        if stopped_early:
+            print(f"Hits {parsed.skip + 1}-{last}, newest first, of more than {last}: older transcripts "
+                  f"were not read, since they could not change these hits. Searched: {searched}.")
+            print(f"More: rerun with --skip {last}, or narrow with --since or --kind.")
+        else:
+            print(f"Hits {parsed.skip + 1}-{last} of {len(hits)}, newest first. Searched: {searched}.")
+        if not stopped_early and last < len(hits):
             print(f"{len(hits) - last} more: rerun with --skip {last}, or narrow with --since or --kind.")
     else:
         print(f"No hits shown of {len(hits)}. Searched: {searched}.")

@@ -187,6 +187,43 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a malformed date is refused", result.returncode == 2 and "YYYY-MM-DD" in result.stderr,
           result.stderr)
 
+    # Parallel reading and the early stop: many transcripts, one with old messages but a recent
+    # modification time, and messages in the same second as their transcript's modification time.
+    many = Path(scratch) / "many"
+    build_store(many)
+    for number in range(40):
+        day = f"2026-07-{1 + number % 28:02d}"
+        stamp = f"{day}T10:{number:02d}:00.500Z"
+        touched = epoch(day) - 2 * 3600 + number * 60 if number != 7 else epoch("2026-07-30")
+        write(many / "transcripts" / "ned-box" / "projects" / f"-home-nedlern-agents-seat{number % 3}"
+              / f"t{number}.jsonl",
+              transcript_records(typed(f"heron plan number {number}", stamp),
+                                 typed(f"heron plan again {number}", stamp.replace(".500Z", ".900Z"))),
+              mtime=touched)
+    write(many / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-seat0" / "t7.jsonl",
+          transcript_records(typed("heron plan from long ago", "2026-06-01T00:00:00Z"),
+                             typed("heron plan newest of all", "2026-07-29T23:00:00Z")),
+          mtime=epoch("2026-07-30"))
+    everything = run(many, "heron plan", "--limit", "0", "--jobs", "1")
+    every_hit = everything.stdout.split("\n\nHits ")[0].split("\n\n")
+    for arguments in (["--limit", "5"], ["--limit", "7", "--skip", "3"], ["--limit", "0"],
+                      ["--kind", "user-messages", "--limit", "4"], ["--seat", "seat1", "--limit", "3"]):
+        sequential = run(many, "heron plan", "--jobs", "1", *arguments)
+        parallel = run(many, "heron plan", "--jobs", "4", *arguments)
+        check(f"parallel and sequential reading print the same output, {' '.join(arguments)}",
+              (parallel.returncode, parallel.stdout, parallel.stderr)
+              == (sequential.returncode, sequential.stdout, sequential.stderr),
+              f"\n--- sequential\n{sequential.stdout}{sequential.stderr}\n--- parallel\n{parallel.stdout}{parallel.stderr}")
+    paged = run(many, "heron plan", "--limit", "7", "--skip", "3")
+    check("reading stops early once older transcripts cannot change the page",
+          "older transcripts were not read" in paged.stdout, paged.stdout)
+    check("the page read with an early stop is the same page a full read gives",
+          paged.stdout.split("\n\nHits ")[0].split("\n\n") == every_hit[3:10],
+          f"\n{paged.stdout}\n--- full read's hits 4-10\n" + "\n\n".join(every_hit[3:10]))
+    check("a transcript with a recent modification time is read before older ones",
+          "heron plan newest of all" in paged.stdout or "heron plan newest of all" in "".join(every_hit[:3]),
+          paged.stdout)
+
     # Failures.
     result = run(Path(scratch) / "absent", "heron")
     check("a missing log-store on ned-box is a failure, not an empty result",
@@ -230,6 +267,16 @@ with tempfile.TemporaryDirectory() as scratch:
     locked_transcript.unlink()
     check("a transcript the reader cannot read is a failure",
           result.returncode == 2 and "could not read the transcript" in result.stderr, result.stderr)
+
+    gone = [root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-x" / f"gone-{letter}.jsonl"
+            for letter in "ab"]
+    gone_lister = stub(scratch, "rg-lists-gone-transcripts", "".join(f"echo '{path}'\n" for path in reversed(gone)))
+    result = run(root, "heron", "--kind", "user-messages",
+                 environment={PREFIX + "RIPGREP_PROGRAM_OVERRIDE": gone_lister})
+    reported = [line for line in result.stderr.splitlines() if "could not read the transcript" in line]
+    check("transcripts that vanish before they are read are failures, reported in path order",
+          result.returncode == 2 and len(reported) == 2 and "gone-a" in reported[0] and "gone-b" in reported[1],
+          result.stderr)
 
     vanished = root / "walk" / "vanished-walk-minutes.md"
     match = json.dumps({"type": "match", "data": {
