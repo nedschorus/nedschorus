@@ -1357,6 +1357,8 @@ with tempfile.TemporaryDirectory() as temporary:
         "handoff_supervisor_under_test", SUPERVISOR_SCRIPT)
     supervisor_module = importlib.util.module_from_spec(supervisor_spec)
     supervisor_spec.loader.exec_module(supervisor_module)
+    # Every launch writes the onboarding presets; this copy of the supervisor writes the scratch file.
+    supervisor_module.claude_json_presets.claude_json_path = lambda: CLAUDE_JSON_SCRATCH_PATH
 
     launched = []
     class FakeProcess:

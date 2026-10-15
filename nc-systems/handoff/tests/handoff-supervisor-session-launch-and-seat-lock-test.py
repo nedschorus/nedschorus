@@ -1023,6 +1023,59 @@ with tempfile.TemporaryDirectory() as update_workspace:
           "checking for" not in captured_output.getvalue(),
           captured_output.getvalue())
 
+with tempfile.TemporaryDirectory() as onboarding_workspace:
+    # A relaunch by a running supervisor writes the onboarding presets again: a
+    # /logout between two launches can clear hasCompletedOnboarding, and the
+    # session would stop at the welcome screen. Folder trust is never written here.
+    # The stub agent copies ~/.claude.json as it starts, so what is proven is
+    # what the launched session finds.
+    seen_at_start = Path(onboarding_workspace) / "claude-json-at-start"
+    agent = an_agent_recording_its_invocations(
+        onboarding_workspace,
+        body=f'cp "$HOME/.claude.json" "{seen_at_start}"')
+    claude_json = fixture.SCRATCH_CLAUDE_JSON_PATH
+    logged_out = {"numStartups": 3, "theme": "dark",
+                  "projects": {"/seats/other": {"history": ["kept"]}}}
+    try:
+        claude_json.write_text(json.dumps({**logged_out, "hasCompletedOnboarding": True}),
+                               encoding="utf-8")
+        supervisor.launch_agent_session(
+            str(agent), "session-before-logout", Path(onboarding_workspace), "prompt",
+            update_timeout_seconds=0).wait()
+        claude_json.write_text(json.dumps(logged_out), encoding="utf-8")
+        supervisor.launch_agent_session(
+            str(agent), "session-before-logout", Path(onboarding_workspace), "prompt",
+            resume=True, update_timeout_seconds=0).wait()
+        seen = (json.loads(seen_at_start.read_text(encoding="utf-8"))
+                if seen_at_start.exists() else None)
+        check("a relaunch records onboarding as done before the session starts, keeps the "
+              "set theme and every project, and trusts no folder",
+              len(invocations_of(onboarding_workspace)) == 2
+              and seen == {**logged_out, "hasCompletedOnboarding": True},
+              (invocations_of(onboarding_workspace), seen))
+
+        unparseable = '{"oauthAccount": {"accountUuid": "not-a-real'
+        claude_json.write_text(unparseable, encoding="utf-8")
+        seen_at_start.unlink(missing_ok=True)
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured):
+            supervisor.launch_agent_session(
+                str(agent), "session-before-logout", Path(onboarding_workspace), "prompt",
+                resume=True, update_timeout_seconds=0).wait()
+        check("a ~/.claude.json that is not valid JSON: the cause is printed, naming the file",
+              str(claude_json) in captured.getvalue()
+              and "not valid JSON" in captured.getvalue()
+              and "launched anyway" in captured.getvalue(),
+              captured.getvalue())
+        check("a ~/.claude.json that is not valid JSON: the session is launched anyway",
+              len(invocations_of(onboarding_workspace)) == 3,
+              invocations_of(onboarding_workspace))
+        check("a ~/.claude.json that is not valid JSON is left as it was",
+              claude_json.read_text(encoding="utf-8") == unparseable,
+              claude_json.read_text(encoding="utf-8"))
+    finally:
+        claude_json.unlink(missing_ok=True)
+
 for resume in (False, True):
     with tempfile.TemporaryDirectory() as naming_workspace:
         # Without --name, Claude Code registers a name derived from the working
