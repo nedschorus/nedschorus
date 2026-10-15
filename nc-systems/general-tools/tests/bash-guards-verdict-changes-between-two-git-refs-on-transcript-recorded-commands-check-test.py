@@ -82,6 +82,13 @@ def scratch_directory_removal_failures(directory):
     return could_not_remove
 
 
+def check_scratch_directory_removed(directory, record=None):
+    """Remove directory; a path that could not be removed fails the suite through record, check by default."""
+    record = check if record is None else record
+    could_not_remove = scratch_directory_removal_failures(directory)
+    record("the scratch directory is removed after the run", not could_not_remove, "\n".join(could_not_remove))
+
+
 def worktrees_registered_under(directory):
     # git lists resolved paths; on macOS the scratch directory is named through the /var symlink.
     resolved = os.path.realpath(directory)
@@ -600,10 +607,22 @@ try:
         (unremovable / "locked").chmod(0o700)
     check("a scratch directory that cannot be removed is reported, naming the path",
           could_not_remove and str(unremovable / "locked" / "file") in could_not_remove[0], could_not_remove)
+
+    left_behind = Path(scratch) / "left-behind"
+    (left_behind / "locked").mkdir(parents=True)
+    (left_behind / "locked" / "file").write_text("x")
+    (left_behind / "locked").chmod(0o500)
+    recorded = []
+    try:
+        check_scratch_directory_removed(left_behind, lambda *outcome: recorded.append(outcome))
+    finally:
+        (left_behind / "locked").chmod(0o700)
+    check("the end-of-run cleanup fails the suite when the scratch directory cannot be removed, naming the path",
+          len(recorded) == 1 and recorded[0][1] is False and str(left_behind / "locked" / "file") in recorded[0][2],
+          recorded)
 finally:
     # The test's checkouts are registered only in its own clone, which goes with the scratch directory.
-    could_not_remove = scratch_directory_removal_failures(scratch)
-    check("the scratch directory is removed after the run", not could_not_remove, "\n".join(could_not_remove))
+    check_scratch_directory_removed(scratch)
 
 if failures:
     print(f"{len(failures)} failed")
