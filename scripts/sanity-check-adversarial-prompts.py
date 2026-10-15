@@ -25,7 +25,7 @@ fresh context:
   is reviewed and ruled on
   by the user, one item at a time.
 
-Prompts: `docs/agents/sanity-checker-<audit>-attack-prompt.md`. Each file is
+Prompts: `docs/agents/sanity-checker-<audit>-adversarial-prompt.md`. Each file is
 split at its `<!-- SANITY-CHECK-PROMPT-BODY -->` line: above it a header for
 maintainers that the runner never sends to a review agent, below it the
 prompt itself. The
@@ -96,18 +96,19 @@ Operating rules:
 
 Usage:
 
-  scripts/sanity-check-attacks.py --target <path> [--context <path> ...]
-      [--problem-statement <path>] [--attack <name> ...] [--runtime <name> ...]
+  scripts/sanity-check-adversarial-prompts.py --target <path> [--context <path> ...]
+      [--problem-statement <path>] [--adversarial-prompt <name> ...] [--runtime <name> ...]
       [--print <surface>]
 
 `--context` names companion documents the reading audits receive alongside
-the target. `--attack` (repeatable; default all three) runs a subset — the fresh-eyes
-second pass is `--attack fresh-eyes --problem-statement <variant>`, and a
-failed audit reruns without repeating the others. `--runtime` (repeatable,
-`claude` or `codex`; default both) does the same for runtimes: a rerun of the
-one agent that failed is this run's command with `--attack <audit> --runtime
-<runtime>` as its only `--attack` and `--runtime`, and the runner prints that
-command whole under the agent's `FAILED:` line when a rerun is what the
+the target. `--adversarial-prompt` (repeatable; default all three) runs a
+subset — the fresh-eyes second pass is `--adversarial-prompt fresh-eyes
+--problem-statement <variant>`, and a failed audit reruns without repeating
+the others. `--runtime` (repeatable, `claude` or `codex`; default both) does
+the same for runtimes: a rerun of the one agent that failed is this run's
+command with `--adversarial-prompt <audit> --runtime <runtime>` as its only
+`--adversarial-prompt` and `--runtime`, and the runner prints that command
+whole under the agent's `FAILED:` line when a rerun is what the
 failure calls for (see below).
 
 `--print` writes a review surface to stdout instead of running: `cut`,
@@ -336,6 +337,9 @@ RUN_STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 # How long the stopped agents' processes are given to end on SIGTERM before
 # they are sent SIGKILL.
 STOPPED_PROCESS_GRACE_SECONDS = 10.0
+# How long the main thread waits for a cell at a time, and so the longest a
+# stop signal can wait for its handler: see run_cells_in_review_copy.
+MAIN_THREAD_WAIT_STEP_SECONDS = 0.25
 # Set by the first stop signal, and read by every thread before it launches an
 # agent-binary: a cell stopped with its run is not relaunched, and the claude
 # chain does not go on to its next model.
@@ -368,7 +372,7 @@ RETRYING_PREFIX = "RETRYING:"
 # Two cause classes of this runner's own, beside the ones
 # common.classify_failed_attempt names: a launch cut off at
 # CELL_TIMEOUT_SECONDS, and a launch that exited 0 with text lacking a section
-# its attack's prompt requires (ATTACK_REPORT_REQUIRED_PHRASES).
+# its adversarial prompt requires (ADVERSARIAL_PROMPT_REPORT_REQUIRED_PHRASES).
 CAUSE_CLASS_TIMEOUT = "timeout"
 CAUSE_CLASS_NOT_A_REPORT = "not-a-report"
 # How much of a Codex launch's own output is printed when the launch fails or
@@ -450,16 +454,16 @@ PROMPT_BODY_FIRST_LINE = "## Your assignment"
 # rather than launching a cell that was never told where it may write.
 PROMPT_SCRATCH_DIRECTORY_PLACEHOLDER = "SANITY-CHECK-SCRATCH-DIRECTORY-PATH"
 
-ATTACKS = ("cut", "mechanization", "fresh-eyes")
+ADVERSARIAL_PROMPTS = ("cut", "mechanization", "fresh-eyes")
 RUNTIMES = ("claude", "codex")
 
-ATTACK_PROMPT_FILES = {
-    "cut": REPO_ROOT / "docs/agents/sanity-checker-cut-attack-prompt.md",
-    "mechanization": REPO_ROOT / "docs/agents/sanity-checker-mechanization-attack-prompt.md",
-    "fresh-eyes": REPO_ROOT / "docs/agents/sanity-checker-fresh-eyes-attack-prompt.md",
+ADVERSARIAL_PROMPT_FILES = {
+    "cut": REPO_ROOT / "docs/agents/sanity-checker-cut-adversarial-prompt.md",
+    "mechanization": REPO_ROOT / "docs/agents/sanity-checker-mechanization-adversarial-prompt.md",
+    "fresh-eyes": REPO_ROOT / "docs/agents/sanity-checker-fresh-eyes-adversarial-prompt.md",
 }
 
-# What every genuine report of an attack contains, matched case-insensitively
+# What every genuine report of an adversarial prompt contains, matched case-insensitively
 # anywhere in the captured text; a text missing any of them is refused, never
 # saved. The prompts are the source: each phrase names a section its prompt
 # requires — cut's Questions and leanness certification, mechanization's
@@ -468,7 +472,7 @@ ATTACK_PROMPT_FILES = {
 # section's reports carry, not heading syntax, which the models reshape.
 # Without this check, a cell that replies to a Stop hook's note in place of its
 # review has that reply saved, and the runner prints `saved:` for it.
-ATTACK_REPORT_REQUIRED_PHRASES = {
+ADVERSARIAL_PROMPT_REPORT_REQUIRED_PHRASES = {
     "cut": ("questions", "leanness"),
     "mechanization": ("prompts-to-code", "coverage"),
     "fresh-eyes": ("sketch", "hard parts", "late discoveries", "assumptions",
@@ -476,7 +480,7 @@ ATTACK_REPORT_REQUIRED_PHRASES = {
 }
 
 
-def prompt_body(attack: str) -> str:
+def prompt_body(adversarial_prompt: str) -> str:
     """The prompt below the file's body marker, its scratch placeholder intact.
 
     The marker is a line no ordinary edit produces. A boundary of `---` would be
@@ -494,7 +498,7 @@ def prompt_body(attack: str) -> str:
     header — a header that explains the token must not be mistaken for a body
     that carries it, the same distinction the marker search makes.
     """
-    path = ATTACK_PROMPT_FILES[attack]
+    path = ADVERSARIAL_PROMPT_FILES[adversarial_prompt]
     lines = path.read_text(encoding="utf-8").splitlines()
     # A line that IS the marker, not a line that spells it inside a sentence.
     # The shipped headers say "everything below the marker", which names the
@@ -504,25 +508,25 @@ def prompt_body(attack: str) -> str:
     marker_lines = [i for i, line in enumerate(lines)
                     if line.strip() == PROMPT_BODY_MARKER]
     if len(marker_lines) != 1:
-        print(f"attack prompt needs exactly one {PROMPT_BODY_MARKER} line, "
+        print(f"adversarial prompt needs exactly one {PROMPT_BODY_MARKER} line, "
               f"found {len(marker_lines)}: {path}", file=sys.stderr)
         raise SystemExit(2)
     body = "\n".join(lines[marker_lines[0] + 1:]).strip()
     first_line = body.split("\n", 1)[0].strip()
     if first_line != PROMPT_BODY_FIRST_LINE:
-        print(f"attack prompt body must open with {PROMPT_BODY_FIRST_LINE!r}, "
+        print(f"adversarial prompt body must open with {PROMPT_BODY_FIRST_LINE!r}, "
               f"found {first_line!r}: {path}", file=sys.stderr)
         raise SystemExit(2)
     placeholder_count = body.count(PROMPT_SCRATCH_DIRECTORY_PLACEHOLDER)
     if placeholder_count != 1:
-        print(f"attack prompt body needs exactly one "
+        print(f"adversarial prompt body needs exactly one "
               f"{PROMPT_SCRATCH_DIRECTORY_PLACEHOLDER} placeholder, found "
               f"{placeholder_count}: {path}", file=sys.stderr)
         raise SystemExit(2)
     return body
 
 
-def assemble_prompt(attack: str, target: str, context: list,
+def assemble_prompt(adversarial_prompt: str, target: str, context: list,
                     problem_statement: pathlib.Path,
                     scratch_directory: str) -> str:
     # Data only below the rule: every instruction lives in the prompt MDs,
@@ -531,9 +535,9 @@ def assemble_prompt(attack: str, target: str, context: list,
     # can be reviewed, and only the path — data, and different for every cell
     # — comes from here. Absolute, not repo-relative: a cell resolves it the
     # same wherever its own working directory ends up.
-    body = prompt_body(attack).replace(PROMPT_SCRATCH_DIRECTORY_PLACEHOLDER,
+    body = prompt_body(adversarial_prompt).replace(PROMPT_SCRATCH_DIRECTORY_PLACEHOLDER,
                                        scratch_directory)
-    if attack == "fresh-eyes":
+    if adversarial_prompt == "fresh-eyes":
         problem = problem_statement.read_text(encoding="utf-8")
         return body + "\n\n---\n\n" + problem
     request_lines = [f"Document under review: `{target}`"]
@@ -704,7 +708,7 @@ def run_codex(prompt: str, checkout: pathlib.Path = None) -> tuple:
     # `:workspace` with network on, which also denies every credential file:
     # the builder the cold-read Codex cell uses, in
     # nc-systems/cold-read/cold-read-cell-common.py.
-    last_message_path = pathlib.Path(tempfile.mkstemp(suffix=".md", prefix="attack-cell-")[1])
+    last_message_path = pathlib.Path(tempfile.mkstemp(suffix=".md", prefix="adversarial-prompt-cell-")[1])
     command = [
         "codex", "exec",
         *common.codex_credential_denying_permission_profile_arguments(
@@ -908,13 +912,13 @@ def quote_scan(corpus: tuple, report: str, cell: str) -> None:
                       f'"{fragment[:60]}"', flush=True)
 
 
-def missing_report_phrases(attack: str, text: str) -> list:
-    """The phrases in ATTACK_REPORT_REQUIRED_PHRASES[attack] that text lacks,
+def missing_report_phrases(adversarial_prompt: str, text: str) -> list:
+    """The phrases in ADVERSARIAL_PROMPT_REPORT_REQUIRED_PHRASES[adversarial_prompt] that text lacks,
     matched case-insensitively. Empty means the text has the shape of that
-    attack's report; anything else means it is not one — a gate, unlike the
+    adversarial prompt's report; anything else means it is not one — a gate, unlike the
     quote scan: a text saved as a review that is not one is lost silently."""
     lowered = text.lower()
-    return [phrase for phrase in ATTACK_REPORT_REQUIRED_PHRASES[attack]
+    return [phrase for phrase in ADVERSARIAL_PROMPT_REPORT_REQUIRED_PHRASES[adversarial_prompt]
             if phrase not in lowered]
 
 
@@ -953,7 +957,7 @@ def runtime_cli_version(runtime: str) -> str:
     return CLI_VERSION_CACHE[runtime]
 
 
-def provenance_line(runtime: str, model: str, attack: str, target: str,
+def provenance_line(runtime: str, model: str, adversarial_prompt: str, target: str,
                     fresh_eyes: bool, revision: str,
                     fallback_from: str = "", relaunched_after: str = "") -> str:
     """The provenance comment a saved report opens with — one line, one token
@@ -966,7 +970,7 @@ def provenance_line(runtime: str, model: str, attack: str, target: str,
     (stamp_provenance in nc-systems/cold-read/cold-read-cell-common.py), and so does the
     order of the line's first four fields: `runtime=`, `model=`,
     `fallback_from=` when present, `effort=`. After those the two stamps
-    differ: `cli=`, `attack=` and `isolation=` are this runner's own;
+    differ: `cli=`, `adversarial_prompt=` and `isolation=` are this runner's own;
     `target=` is in both but is not last here as it is there; and the
     checkout is recorded differently: the cold-read stamp writes
     `checkout=<hash>`, with `-dirty` appended when the tree is dirty, where
@@ -986,7 +990,7 @@ def provenance_line(runtime: str, model: str, attack: str, target: str,
         f"<!-- provenance: runtime={runtime} model={model} {fallback_note}"
         f"effort={REASONING_EFFORT} "
         f"cli={runtime_cli_version(runtime)} {relaunch_note}"
-        f"attack={attack} target={target} "
+        f"adversarial_prompt={adversarial_prompt} target={target} "
         f"isolation={'instructed-not-enforced' if fresh_eyes else 'repository-read-only'} "
         f"{revision} -->"
     )
@@ -1437,7 +1441,7 @@ class FailedLaunch(typing.NamedTuple):
     attempts: str = ""
 
 
-def launch_cell_once(cell: str, attack: str, runtime: str, prompt: str,
+def launch_cell_once(cell: str, adversarial_prompt: str, runtime: str, prompt: str,
                      target: str, out_dir: pathlib.Path, baseline_status: dict,
                      corpus: tuple, checkout: pathlib.Path,
                      scratch_record_dir: pathlib.Path, relaunched_after: str = ""):
@@ -1445,7 +1449,7 @@ def launch_cell_once(cell: str, attack: str, runtime: str, prompt: str,
     None when the report was saved, and the FailedLaunch otherwise; prints the
     agent-binary's own words and the launch's warnings, and neither the
     RETRYING: nor the FAILED: line, which are run_cell's."""
-    fresh_eyes = attack == "fresh-eyes"
+    fresh_eyes = adversarial_prompt == "fresh-eyes"
     runner = run_claude if runtime == "claude" else run_codex
     try:
         # A runner may return the four values this runner's launchers returned
@@ -1493,7 +1497,7 @@ def launch_cell_once(cell: str, attack: str, runtime: str, prompt: str,
     # compared whatever it returned; before the quote scan and the write, so a
     # text that is not a report raises no warnings to triage, never lands as a
     # report, and is printed so the runtime's words survive.
-    missing = missing_report_phrases(attack, output)
+    missing = missing_report_phrases(adversarial_prompt, output)
     if missing:
         print(output, flush=True)
         return FailedLaunch(CAUSE_CLASS_NOT_A_REPORT,
@@ -1504,7 +1508,7 @@ def launch_cell_once(cell: str, attack: str, runtime: str, prompt: str,
     out_path = out_dir / f"{cell}.md"
     overwrote_stray_write = write_report(
         out_path,
-        provenance_line(runtime, model, attack, target, fresh_eyes, revision,
+        provenance_line(runtime, model, adversarial_prompt, target, fresh_eyes, revision,
                         fallback_from, relaunched_after)
         + "\n\n" + output,
     )
@@ -1524,12 +1528,12 @@ def failed_launch_is_relaunched(cause_class: str) -> bool:
             and cause_class != CAUSE_CLASS_TIMEOUT)
 
 
-def rerun_command_for_cell(attack: str, runtime: str, target: str, context: list,
+def rerun_command_for_cell(adversarial_prompt: str, runtime: str, target: str, context: list,
                            problem_statement: pathlib.Path) -> str:
     """The command that runs this one cell again, as one line a shell takes
     as it stands: this run's target, every context document and the
-    sanity-check-request when one was passed, with the cell's attack and
-    runtime as the only `--attack` and `--runtime`. Both flags are repeatable,
+    sanity-check-request when one was passed, with the cell's adversarial prompt and
+    runtime as the only `--adversarial-prompt` and `--runtime`. Both flags are repeatable,
     so a command that kept the first run's would run more than the one cell.
     The program and the request are named by absolute path and the documents
     by their repository-relative names, which the program resolves against its
@@ -1539,17 +1543,17 @@ def rerun_command_for_cell(attack: str, runtime: str, target: str, context: list
         command += ["--context", path]
     if problem_statement is not None:
         command += ["--problem-statement", str(problem_statement.resolve())]
-    command += ["--attack", attack, "--runtime", runtime]
+    command += ["--adversarial-prompt", adversarial_prompt, "--runtime", runtime]
     return shlex.join(command)
 
 
-def failed_cell_lines(attack: str, runtime: str, failure: FailedLaunch,
+def failed_cell_lines(adversarial_prompt: str, runtime: str, failure: FailedLaunch,
                       relaunched: bool, rerun_command: str) -> list:
     """The lines a cell that saved no report ends on: its FAILED: line, and
     under it what the requesting agent does next. The lines after the first
     are instructions and nothing else; why each is what it is stands in the
     module docstring, under WHY THE RUNNER DECIDES THE RELAUNCH."""
-    cell = f"{attack}-{runtime}"
+    cell = f"{adversarial_prompt}-{runtime}"
     separator = common.CAUSE_SEPARATOR
     failed = f"FAILED: {cell}{separator}{failure.cause_class}{separator}{failure.detail}"
     if relaunched:
@@ -1563,17 +1567,18 @@ def failed_cell_lines(attack: str, runtime: str, failure: FailedLaunch,
             "After the user has cleared the cause, run the command on the next line.",
             rerun_command,
         ]
-    other_cell = "-".join((attack, *(name for name in RUNTIMES if name != runtime)))
+    other_cell = "-".join((adversarial_prompt, *(name for name in RUNTIMES if name != runtime)))
     return [
         failed,
         f"When a run of this sanity-check saved {other_cell}'s report, triage "
-        f"the {attack}-attack from that report.",
-        f"When no run of this sanity-check saved a report of the {attack}-attack, "
-        f"write in finding-dispositions.md that the {attack}-attack is unreviewed.",
+        f"the {adversarial_prompt}-adversarial-prompt from that report.",
+        f"When no run of this sanity-check saved a report of the "
+        f"{adversarial_prompt}-adversarial-prompt, write in finding-dispositions.md "
+        f"that the {adversarial_prompt}-adversarial-prompt is unreviewed.",
     ]
 
 
-def run_cell(attack: str, runtime: str, target: str, context: list,
+def run_cell(adversarial_prompt: str, runtime: str, target: str, context: list,
              problem_statement: pathlib.Path, out_dir: pathlib.Path,
              baseline_status: dict, corpus: tuple,
              checkout: pathlib.Path = None,
@@ -1588,13 +1593,13 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
     prompt, in the same copy and the same scratch directory, unless
     failed_launch_is_relaunched says the cause is not one a second launch can
     clear. A cell that ends with no report prints failed_cell_lines."""
-    cell = f"{attack}-{runtime}"
+    cell = f"{adversarial_prompt}-{runtime}"
     checkout = checkout or REPO_ROOT
-    prompt = assemble_prompt(attack, target, context, problem_statement,
+    prompt = assemble_prompt(adversarial_prompt, target, context, problem_statement,
                              str(cell_scratch_dir(scratch_record_dir or out_dir, cell)))
 
     def launch(relaunched_after: str = ""):
-        return launch_cell_once(cell, attack, runtime, prompt, target, out_dir,
+        return launch_cell_once(cell, adversarial_prompt, runtime, prompt, target, out_dir,
                                 baseline_status, corpus, checkout,
                                 scratch_record_dir or out_dir, relaunched_after)
 
@@ -1625,8 +1630,8 @@ def run_cell(attack: str, runtime: str, target: str, context: list,
     # cannot land between this cell's FAILED line and the instructions that
     # say "the FAILED line above".
     lines = failed_cell_lines(
-        attack, runtime, failure, relaunched,
-        rerun_command_for_cell(attack, runtime, target, context, problem_statement))
+        adversarial_prompt, runtime, failure, relaunched,
+        rerun_command_for_cell(adversarial_prompt, runtime, target, context, problem_statement))
     sys.stdout.write("".join(line + "\n" for line in lines))
     sys.stdout.flush()
     CELLS_FINISHED.add(cell)
@@ -1669,18 +1674,19 @@ def main() -> int:
     parser.add_argument("--problem-statement", type=pathlib.Path, default=None,
                         help="review-request file for the fresh-eyes audit; "
                              "without it the fresh-eyes agents are SKIPPED, loudly")
-    parser.add_argument("--attack", action="append", choices=list(ATTACKS), default=None,
+    parser.add_argument("--adversarial-prompt", action="append",
+                        choices=list(ADVERSARIAL_PROMPTS), default=None,
                         help="run only this audit (repeatable); default: all three")
     parser.add_argument("--runtime", action="append", choices=list(RUNTIMES), default=None,
                         help="run only this runtime's agents (repeatable); default: both")
     parser.add_argument("--print", dest="print_surface",
-                        choices=list(ATTACKS) + ["requester"], default=None,
+                        choices=list(ADVERSARIAL_PROMPTS) + ["requester"], default=None,
                         help="print a review surface to stdout instead of running: "
                              "an audit's assembled prompt, or the requester manual")
     args = parser.parse_args()
 
     if args.print_surface == "requester":
-        fresh_eyes_text = ATTACK_PROMPT_FILES["fresh-eyes"].read_text(encoding="utf-8")
+        fresh_eyes_text = ADVERSARIAL_PROMPT_FILES["fresh-eyes"].read_text(encoding="utf-8")
         heading = "## Writing the problem statement"
         start = fresh_eyes_text.find(heading)
         # Bounded by the marker on a line of its own, so a sentence that
@@ -1818,22 +1824,23 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
     """main()'s run, once the invocation is known to be usable: the cells in a
     review copy of the checkout's last commit, the reports and the run's log
     in its record, the record shipped. Returns the exit code."""
-    attacks = tuple(dict.fromkeys(args.attack)) if args.attack else ATTACKS
+    adversarial_prompts = (tuple(dict.fromkeys(args.adversarial_prompt))
+                           if args.adversarial_prompt else ADVERSARIAL_PROMPTS)
     runtimes = tuple(dict.fromkeys(args.runtime)) if args.runtime else RUNTIMES
     cells = []
-    for attack in attacks:
-        if attack == "fresh-eyes" and args.problem_statement is None:
+    for adversarial_prompt in adversarial_prompts:
+        if adversarial_prompt == "fresh-eyes" and args.problem_statement is None:
             for runtime in runtimes:
-                print(f"SKIPPED: {attack}-{runtime} (no --problem-statement)", flush=True)
+                print(f"SKIPPED: {adversarial_prompt}-{runtime} (no --problem-statement)", flush=True)
             continue
         for runtime in runtimes:
-            cells.append((attack, runtime))
+            cells.append((adversarial_prompt, runtime))
 
     # Validate every prompt this run will use before any cell launches, so a
     # broken boundary fails before model cost, as documented, rather than
     # lazily inside each cell.
-    for attack in dict.fromkeys(cell_attack for cell_attack, _ in cells):
-        prompt_body(attack)
+    for adversarial_prompt in dict.fromkeys(cell_prompt for cell_prompt, _ in cells):
+        prompt_body(adversarial_prompt)
 
     if not cells:
         print("sanity-check wrote no reports: every agent above failed or was "
@@ -1888,15 +1895,26 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(cells)) as pool:
                 futures = [
-                    pool.submit(run_cell, attack, runtime, args.target, args.context,
+                    pool.submit(run_cell, adversarial_prompt, runtime, args.target, args.context,
                                 args.problem_statement, out_dir, baseline_status, corpus,
                                 checkout, copy_record_dir)
-                    for attack, runtime in cells
+                    for adversarial_prompt, runtime in cells
                 ]
-                for future in concurrent.futures.as_completed(futures):
-                    _, cell_ok = future.result()
-                    ok = ok and cell_ok
-                    saved_count += 1 if cell_ok else 0
+                # Waited for in short steps, not with as_completed: Python runs
+                # stop_run_on_signal only in the main thread, and when Linux
+                # hands a stop signal to a cell's thread, a main thread blocked
+                # with no timeout runs the handler only when some cell
+                # finishes, which can be minutes later. Each step's end lets
+                # the handler run.
+                waiting = set(futures)
+                while waiting:
+                    finished, waiting = concurrent.futures.wait(
+                        waiting, timeout=MAIN_THREAD_WAIT_STEP_SECONDS,
+                        return_when=concurrent.futures.FIRST_COMPLETED)
+                    for future in finished:
+                        _, cell_ok = future.result()
+                        ok = ok and cell_ok
+                        saved_count += 1 if cell_ok else 0
                 run_log.reports_saved_once_cells_ended = saved_count
         except RunStoppedBySignal:
             # A stop that came after every cell had finished, saving its
@@ -1908,7 +1926,7 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
             if (run_log.reports_saved_once_cells_ended is None
                     and len(futures) == len(cells)
                     and CELLS_FINISHED_AT_THE_STOP is not None
-                    and {f"{attack}-{runtime}" for attack, runtime in cells}
+                    and {f"{adversarial_prompt}-{runtime}" for adversarial_prompt, runtime in cells}
                         <= CELLS_FINISHED_AT_THE_STOP
                     and all(future.done() and future.exception() is None
                             for future in futures)):

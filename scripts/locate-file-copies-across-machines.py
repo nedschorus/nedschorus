@@ -1006,9 +1006,11 @@ def run_backup_search_after_nothing_found(query, git_search_complete):
     program = (os.environ.get(BACKUP_SEARCH_PROGRAM_VARIABLE)
                or str(pathlib.Path(__file__).resolve().parent
                       / BACKUP_SEARCH_PROGRAM_NAME))
-    command = [sys.executable, program, query]
+    command = [sys.executable, program]
     for surface in BACKUP_SEARCH_SURFACES_ALREADY_SEARCHED:
         command += ["--skip", surface]
+    # Without "--", a query opening with a dash is read as an option.
+    command += ["--", query]
     covered = (", which the git search above covered" if git_search_complete
                else "")
     write_text("\nNo copy was found, so the backup search runs now, without "
@@ -1055,7 +1057,8 @@ def main(argv=None) -> int:
     parser.add_argument("query", help="a file name or a path, which may be "
                         "written in the scp form nedlern@ned-box:<path>; its "
                         "name's stem is matched, case-insensitively, anywhere "
-                        "in a file's name")
+                        "in a file's name. A name that opens with a dash goes after --, "
+                        "as in -- -nbd-test.py")
     parser.add_argument(THIS_MACHINE_JSON_FLAG, metavar="SURFACES_JSON",
                         help="search only this machine, over these surfaces, "
                              "and print the answer as JSON: what the program "

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for sanity-check-attacks.py — the worktree write detector, the record
+"""Tests for sanity-check-adversarial-prompts.py — the worktree write detector, the record
 directory claim, the cells' sanctioned scratch directories, the prompt-body
 boundary, the cells' launch flags, the refusal of a captured text that is
 not a report, the relaunch of a cell that saved no report with the
@@ -52,7 +52,7 @@ placeholder token, that a write inside the subtree is silent while the rest of
 the record directory stays watched, and that a claude cell launches with the
 Write tool the instruction needs.
 
-Run: python3 scripts/sanity-check-attacks-test.py
+Run: python3 scripts/sanity-check-adversarial-prompts-test.py
 """
 
 import contextlib
@@ -83,7 +83,7 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
-RUNNER_SCRIPT = pathlib.Path(__file__).with_name("sanity-check-attacks.py")
+RUNNER_SCRIPT = pathlib.Path(__file__).with_name("sanity-check-adversarial-prompts.py")
 SANITY_CHECK_RECORD_SHIPPER_SCRIPT = pathlib.Path(__file__).with_name(
     "sanity-check-record-ship.py")
 
@@ -106,7 +106,7 @@ SANITY_CHECK_RECORD_SHIPPER_SCRIPT = pathlib.Path(__file__).with_name(
 # and the checks at the head of main() pin it before the first case runs.
 RECORD_SHIP_DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 SUITE_SCRATCH_LOG_STORE = tempfile.TemporaryDirectory(
-    prefix="sanity-check-attacks-test-log-store-")
+    prefix="sanity-check-adversarial-prompts-test-log-store-")
 SUITE_SCRATCH_LOG_STORE_PATH = pathlib.Path(SUITE_SCRATCH_LOG_STORE.name)
 os.environ[RECORD_SHIP_DESTINATION_VARIABLE] = str(
     SUITE_SCRATCH_LOG_STORE_PATH / "cold-read-records")
@@ -122,7 +122,7 @@ os.environ[RECORD_SHIP_DESTINATION_VARIABLE] = str(
 # none was asked for more than its version. A case that runs the runner as a
 # process puts its own stand-ins first on that process's PATH.
 AGENT_BINARY_TRIPWIRES = tempfile.TemporaryDirectory(
-    prefix="sanity-check-attacks-test-agent-binary-tripwires-")
+    prefix="sanity-check-adversarial-prompts-test-agent-binary-tripwires-")
 AGENT_BINARY_TRIPWIRE_DIRECTORY = pathlib.Path(AGENT_BINARY_TRIPWIRES.name).resolve()
 AGENT_BINARY_TRIPWIRE_LOG = AGENT_BINARY_TRIPWIRE_DIRECTORY / "calls.log"
 for _tripwire_name in ("claude", "codex"):
@@ -147,7 +147,7 @@ def check(case_name, condition, detail=""):
 
 
 def load_runner():
-    spec = importlib.util.spec_from_file_location("sanity_check_attacks", RUNNER_SCRIPT)
+    spec = importlib.util.spec_from_file_location("sanity_check_adversarial_prompts", RUNNER_SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -469,7 +469,7 @@ def main():
         out_path.write_text("occupied", encoding="utf-8")
         with contextlib.redirect_stdout(buffer):
             runner_gate.run_cell(
-                "cut", "claude", "docs/agents/sanity-checker-cut-attack-prompt.md",
+                "cut", "claude", "docs/agents/sanity-checker-cut-adversarial-prompt.md",
                 [], pathlib.Path("unused-problem-statement.md"),
                 pathlib.Path(scratch), {}, ())
     output = buffer.getvalue()
@@ -675,8 +675,8 @@ def main():
             0, cut_report, "a-test-model", "")
         with tempfile.TemporaryDirectory() as scratch:
             runner_exit.RECORDS_ROOT = pathlib.Path(scratch) / "sanity-check-records"
-            sys.argv = [str(RUNNER_SCRIPT), "--attack", "cut", "--target",
-                        "docs/agents/sanity-checker-cut-attack-prompt.md"]
+            sys.argv = [str(RUNNER_SCRIPT), "--adversarial-prompt", "cut", "--target",
+                        "docs/agents/sanity-checker-cut-adversarial-prompt.md"]
             buffer = io.StringIO()
             try:
                 with contextlib.redirect_stdout(buffer):
@@ -821,7 +821,7 @@ def main():
         def prompt_file(name, text):
             path = scratch_dir / name
             path.write_text(text, encoding="utf-8")
-            runner.ATTACK_PROMPT_FILES["cut"] = path
+            runner.ADVERSARIAL_PROMPT_FILES["cut"] = path
             return path
 
         def split_fails(name, text):
@@ -908,7 +908,7 @@ def main():
           and "Writing the problem statement" in requester.stdout,
           f"rc={requester.returncode}")
     cell_view = sp.run([str(RUNNER_SCRIPT), "--print", "cut",
-                        "--target", "docs/agents/sanity-checker-cut-attack-prompt.md"],
+                        "--target", "docs/agents/sanity-checker-cut-adversarial-prompt.md"],
                        capture_output=True, text=True)
     check("--print cut emits the assembled cell prompt",
           cell_view.returncode == 0
@@ -918,26 +918,26 @@ def main():
 
     # The three standing prompts must each split cleanly.
     runner_fresh = load_runner()
-    for attack in runner_fresh.ATTACKS:
-        body = runner_fresh.prompt_body(attack)
-        check(f"the standing {attack} prompt splits at its marker",
+    for adversarial_prompt in runner_fresh.ADVERSARIAL_PROMPTS:
+        body = runner_fresh.prompt_body(adversarial_prompt)
+        check(f"the standing {adversarial_prompt} prompt splits at its marker",
               body.startswith(runner_fresh.PROMPT_BODY_FIRST_LINE),
               f"body began {body[:60]!r}")
 
     # The phrases a report must carry come from the prompts, so each must be
     # in its prompt's body: a section renamed there, or a phrase edited here,
-    # fails this rather than refusing every genuine report of that attack.
+    # fails this rather than refusing every genuine report of that adversarial prompt.
     # Looked up with a default, so a runner without the table reports this
     # case failing rather than crashing the cases after it.
-    required_phrases = getattr(runner_fresh, "ATTACK_REPORT_REQUIRED_PHRASES", {})
-    check("every attack has required report phrases",
-          set(required_phrases) == set(runner_fresh.ATTACKS),
+    required_phrases = getattr(runner_fresh, "ADVERSARIAL_PROMPT_REPORT_REQUIRED_PHRASES", {})
+    check("every adversarial prompt has required report phrases",
+          set(required_phrases) == set(runner_fresh.ADVERSARIAL_PROMPTS),
           sorted(required_phrases))
-    for attack in runner_fresh.ATTACKS:
-        body = runner_fresh.prompt_body(attack).lower()
-        absent = [phrase for phrase in required_phrases.get(attack, ())
+    for adversarial_prompt in runner_fresh.ADVERSARIAL_PROMPTS:
+        body = runner_fresh.prompt_body(adversarial_prompt).lower()
+        absent = [phrase for phrase in required_phrases.get(adversarial_prompt, ())
                   if phrase not in body]
-        check(f"every phrase a {attack} report must carry is in the {attack} prompt's body",
+        check(f"every phrase a {adversarial_prompt} report must carry is in the {adversarial_prompt} prompt's body",
               absent == [], f"not in the body: {absent}")
 
     # The codex cells must launch with Codex's machine-wide memory store off,
@@ -971,7 +971,7 @@ def main():
     (scratch_home / ".config" / "gh").mkdir(parents=True)
     login_canary = scratch_home / ".codex" / "auth.json"
     login_canary.parent.mkdir(parents=True)
-    login_canary.write_text("CANARY-NOT-A-SECRET-sanity-check-attacks-test\n", encoding="utf-8")
+    login_canary.write_text("CANARY-NOT-A-SECRET-sanity-check-adversarial-prompts-test\n", encoding="utf-8")
     shared = runner_memories.common
     real_lists = (shared.CREDENTIAL_DIRECTORIES, shared.REVIEWER_PROGRAM_LOGIN_FILES,
                   shared.credential_files_found_now)
@@ -1203,7 +1203,7 @@ def main():
         "commit=abc worktree=clean")
     check("the provenance line carries cli= alongside the existing facts",
           "cli=7.7.7-test" in line and "runtime=claude" in line
-          and "model=some-model" in line and "attack=cut" in line
+          and "model=some-model" in line and "adversarial_prompt=cut" in line
           and "target=docs/x.md" in line and "worktree=clean" in line,
           line)
 
@@ -1391,9 +1391,9 @@ def main():
           f"error {launch_error!r}, codex commands {codex_commands}")
 
     # Cases 29-33 drive main() over a scratch repository with the runtimes
-    # replaced, so no model is called. A text carrying every attack's required
-    # phrases stands in for a report of any attack.
-    any_attack_report = (
+    # replaced, so no model is called. A text carrying every adversarial prompt's required
+    # phrases stands in for a report of any adversarial prompt.
+    any_adversarial_prompt_report = (
         "## Questions\n\nNone.\n\n## Leanness certification\n\n- all of it\n\n"
         "## Prompts-to-code table\n\nNone.\n\n## Coverage\n\nAll of it.\n\n"
         "## Sketch\n\nA sketch.\n\n## Hard parts\n\nNone.\n\n"
@@ -1463,13 +1463,13 @@ def main():
                 note = pathlib.Path(scratch_path.rstrip(".`'\""))
                 if note.is_dir():
                     (note / "notes.md").write_text("working notes\n", encoding="utf-8")
-            return 0, any_attack_report, "a-test-model", ""
+            return 0, any_adversarial_prompt_report, "a-test-model", ""
 
         driven.run_claude = claude_cell
         driven.run_codex = lambda prompt, checkout=None: (
-            0, any_attack_report, "a-test-model", "")
+            0, any_adversarial_prompt_report, "a-test-model", "")
         code, out, err = drive_main(driven, [
-            "--target", "docs/design.md", "--attack", "cut", "--attack", "fresh-eyes",
+            "--target", "docs/design.md", "--adversarial-prompt", "cut", "--adversarial-prompt", "fresh-eyes",
             "--problem-statement", str(request)])
         records = sorted(driven.RECORDS_ROOT.glob("*"))
         record = records[0] if len(records) == 1 else None
@@ -1528,12 +1528,12 @@ def main():
             ("an edited target",
              lambda repo: (repo / "docs" / "design.md").write_text(
                  "# Design\n\nAn uncommitted edit.\n", encoding="utf-8"),
-             ["--target", "docs/design.md", "--attack", "cut"]),
+             ["--target", "docs/design.md", "--adversarial-prompt", "cut"]),
             ("an untracked context document",
              lambda repo: (repo / "docs" / "context.md").write_text(
                  "context\n", encoding="utf-8"),
              ["--target", "docs/design.md", "--context", "docs/context.md",
-              "--attack", "cut"])):
+              "--adversarial-prompt", "cut"])):
         with tempfile.TemporaryDirectory() as scratch:
             base = pathlib.Path(scratch)
             repo = scratch_repository_with_design(base)
@@ -1541,9 +1541,9 @@ def main():
             driven = runner_over(repo, base)
             launched = []
             driven.run_claude = lambda prompt, checkout=None: (
-                launched.append("claude") or (0, any_attack_report, "a-test-model", ""))
+                launched.append("claude") or (0, any_adversarial_prompt_report, "a-test-model", ""))
             driven.run_codex = lambda prompt, checkout=None: (
-                launched.append("codex") or (0, any_attack_report, "a-test-model", ""))
+                launched.append("codex") or (0, any_adversarial_prompt_report, "a-test-model", ""))
             code, out, err = drive_main(driven, arguments)
             check(f"{label} is refused, exit 2, with no cell launched and no record",
                   code == 2 and launched == []
@@ -1576,11 +1576,11 @@ def main():
         driven = runner_over(repo, base)
         launched = []
         driven.run_claude = lambda prompt, checkout=None: (
-            launched.append("claude") or (0, any_attack_report, "a-test-model", ""))
+            launched.append("claude") or (0, any_adversarial_prompt_report, "a-test-model", ""))
         driven.run_codex = lambda prompt, checkout=None: (
-            launched.append("codex") or (0, any_attack_report, "a-test-model", ""))
+            launched.append("codex") or (0, any_adversarial_prompt_report, "a-test-model", ""))
         code, out, err = drive_main(driven, [
-            "--target", ".claude/skills/widget/SKILL.md", "--attack", "cut",
+            "--target", ".claude/skills/widget/SKILL.md", "--adversarial-prompt", "cut",
             "--runtime", "codex"])
         records = [path.name for path in driven.RECORDS_ROOT.glob("*")]
         check("--runtime codex launches only the codex cell",
@@ -1608,7 +1608,7 @@ def main():
 
         def capturing_cell(prompt, checkout=None):
             prompts.append(prompt)
-            return 0, any_attack_report, "a-test-model", ""
+            return 0, any_adversarial_prompt_report, "a-test-model", ""
 
         driven.run_claude = capturing_cell
         driven.run_codex = capturing_cell
@@ -1639,7 +1639,7 @@ def main():
               f"exit {code}, request {out[-200:]!r}, stderr {err!r}")
         code, out, err = drive_main(driven, [
             "--target", absolute_target, "--context", absolute_context,
-            "--attack", "cut", "--runtime", "claude"])
+            "--adversarial-prompt", "cut", "--runtime", "claude"])
         records = sorted(driven.RECORDS_ROOT.glob("*"))
         report = (records[0] / "cut-claude.md").read_text(encoding="utf-8") \
             if len(records) == 1 and (records[0] / "cut-claude.md").is_file() else ""
@@ -1670,11 +1670,11 @@ def main():
         driven = runner_over(repo, base)
         launched = []
         driven.run_claude = lambda prompt, checkout=None: (
-            launched.append("claude") or (0, any_attack_report, "a-test-model", ""))
+            launched.append("claude") or (0, any_adversarial_prompt_report, "a-test-model", ""))
         driven.run_codex = lambda prompt, checkout=None: (
-            launched.append("codex") or (0, any_attack_report, "a-test-model", ""))
+            launched.append("codex") or (0, any_adversarial_prompt_report, "a-test-model", ""))
         code, out, err = drive_main(driven, [
-            "--target", str(repo / "docs" / "design.md"), "--attack", "cut"])
+            "--target", str(repo / "docs" / "design.md"), "--adversarial-prompt", "cut"])
         check("an edited target passed as an absolute path is refused under its "
               "repository-relative name",
               code == 2 and launched == [] and not driven.RECORDS_ROOT.exists()
@@ -1696,17 +1696,17 @@ def main():
 
     for label, prepare, arguments in (
             ("a relative target that climbs out of the checkout", outside_file,
-             lambda repo: ["--target", "../outside.md", "--attack", "cut"]),
+             lambda repo: ["--target", "../outside.md", "--adversarial-prompt", "cut"]),
             ("an absolute target outside the checkout", outside_file,
              lambda repo: ["--target", str(repo.parent / "outside.md"),
-                           "--attack", "cut"]),
+                           "--adversarial-prompt", "cut"]),
             ("a context document outside the checkout", outside_file,
              lambda repo: ["--target", "docs/design.md",
                            "--context", str(repo.parent / "outside.md"),
-                           "--attack", "cut"]),
+                           "--adversarial-prompt", "cut"]),
             ("a tracked symbolic link that leads out of the checkout",
              tracked_link_to_outside_file,
-             lambda repo: ["--target", "docs/link.md", "--attack", "cut"])):
+             lambda repo: ["--target", "docs/link.md", "--adversarial-prompt", "cut"])):
         with tempfile.TemporaryDirectory() as scratch:
             base = pathlib.Path(scratch)
             repo = scratch_repository_with_design(base)
@@ -1714,9 +1714,9 @@ def main():
             driven = runner_over(repo, base)
             launched = []
             driven.run_claude = lambda prompt, checkout=None: (
-                launched.append("claude") or (0, any_attack_report, "a-test-model", ""))
+                launched.append("claude") or (0, any_adversarial_prompt_report, "a-test-model", ""))
             driven.run_codex = lambda prompt, checkout=None: (
-                launched.append("codex") or (0, any_attack_report, "a-test-model", ""))
+                launched.append("codex") or (0, any_adversarial_prompt_report, "a-test-model", ""))
             code, out, err = drive_main(driven, arguments(repo))
             check(f"{label} is refused, exit 2, with no cell launched and no record",
                   code == 2 and launched == []
@@ -1791,10 +1791,10 @@ def main():
     def triage_lines(runtime):
         other = "codex" if runtime == "claude" else "claude"
         return (f"When a run of this sanity-check saved cut-{other}'s report, "
-                f"triage the cut-attack from that report.\n"
+                f"triage the cut-adversarial-prompt from that report.\n"
                 f"When no run of this sanity-check saved a report of the "
-                f"cut-attack, write in finding-dispositions.md that the "
-                f"cut-attack is unreviewed.\n")
+                f"cut-adversarial-prompt, write in finding-dispositions.md that the "
+                f"cut-adversarial-prompt is unreviewed.\n")
 
     runner_relaunch = load_runner()
     runner_relaunch.CLI_VERSION_CACHE.update({"claude": "1.1.1-test",
@@ -1847,7 +1847,7 @@ def main():
     # Case 39: the relaunch fails too. The cell is launched twice and no more,
     # its FAILED line carries the last launch's cause and says it was
     # relaunched, and the two lines under it send the agent to the other
-    # runtime's report or, without one, to record the attack as unreviewed.
+    # runtime's report or, without one, to record the adversarial prompt as unreviewed.
     # Neither line depends on which cell finished first. A launcher that
     # returns the four values of the older contract, with no cause, is
     # reported by its exit code.
@@ -1907,7 +1907,7 @@ def main():
     check("a failed cell's FAILED line and its instructions are printed as one write",
           len(failed_writes) == 1 and failed_writes[0].count("\n") == 4
           and failed_writes[0].startswith("FAILED: cut-codex — logged-out — ")
-          and failed_writes[0].endswith("--attack cut --runtime codex\n"),
+          and failed_writes[0].endswith("--adversarial-prompt cut --runtime codex\n"),
           f"writes were {recording.writes!r}")
 
     # Case 40: a cause only the user can clear is not relaunched. A logged-out
@@ -1915,7 +1915,7 @@ def main():
     # failed the first, so the cell is launched once, and the lines under its
     # FAILED line tell the agent to tell the user and give the command that
     # runs this one cell again: this run's target, each context document and
-    # the request, and the cell's attack and runtime as the only --attack and
+    # the request, and the cell's adversarial prompt and runtime as the only --adversarial-prompt and
     # --runtime, quoted so a shell takes the line as it stands.
     request_path = pathlib.Path("a request.md")
     for cause_class in sorted(runner_relaunch.common.USER_CLEARABLE_CAUSE_CLASSES):
@@ -1948,7 +1948,7 @@ def main():
                       str(RUNNER_SCRIPT.resolve()), "--target", "docs/a design.md",
                       "--context", "docs/c.md", "--context", "docs/d's notes.md",
                       "--problem-statement", str(request_path.resolve()),
-                      "--attack", "cut", "--runtime", runtime],
+                      "--adversarial-prompt", "cut", "--runtime", runtime],
                   f"command was {command}")
     with_launcher(runner_relaunch, answering_in_turn([
         (1, "", "", "", ("logged-out", "Not logged in"))]))
@@ -1956,7 +1956,7 @@ def main():
     check("a run with no request and no context documents prints a command without them",
           raised is None and words_of_command(output.splitlines()[-1]) == [
               str(RUNNER_SCRIPT.resolve()), "--target", "docs/x.md",
-              "--attack", "cut", "--runtime", "claude"],
+              "--adversarial-prompt", "cut", "--runtime", "claude"],
           f"raised={raised!r}, output was {output!r}")
 
     # The classes come from what each CLI really prints, through the real
@@ -2147,12 +2147,12 @@ def main():
 
         def claude_never(prompt, checkout=None):
             launched.append("claude")
-            return 0, any_attack_report, "a-test-model", "", None
+            return 0, any_adversarial_prompt_report, "a-test-model", "", None
 
         driven.run_codex = codex_failing_twice
         driven.run_claude = claude_never
         code, out, err = drive_main(driven, [
-            "--target", "docs/design.md", "--attack", "cut", "--runtime", "codex"])
+            "--target", "docs/design.md", "--adversarial-prompt", "cut", "--runtime", "codex"])
         failed_block = (f"FAILED: cut-codex — exit-1 — {capacity} (relaunched once)\n"
                         + triage_lines("codex"))
         check("a run limited to codex whose cell fails twice exits 1 with the "
@@ -2186,17 +2186,17 @@ def main():
             launched.append("codex")
             if "scratch/mechanization-codex" in prompt and mechanization_codex_logged_out[0]:
                 return 1, "", "a-test-model", "", ("logged-out", "401 Unauthorized")
-            return 0, any_attack_report, "a-test-model", "", None
+            return 0, any_adversarial_prompt_report, "a-test-model", "", None
 
         def claude_reporting(prompt, checkout=None):
             launched.append("claude")
-            return 0, any_attack_report, "a-test-model", "", None
+            return 0, any_adversarial_prompt_report, "a-test-model", "", None
 
         driven.run_codex = codex_logged_out_then_in
         driven.run_claude = claude_reporting
         code, out, err = drive_main(driven, [
             "--target", "docs/design.md", "--context", "docs/context notes.md",
-            "--attack", "cut", "--attack", "fresh-eyes", "--attack", "mechanization",
+            "--adversarial-prompt", "cut", "--adversarial-prompt", "fresh-eyes", "--adversarial-prompt", "mechanization",
             "--problem-statement", str(request), "--runtime", "claude",
             "--runtime", "codex"])
         out_lines = out.splitlines()
@@ -2212,7 +2212,7 @@ def main():
                   str(RUNNER_SCRIPT.resolve()), "--target", "docs/design.md",
                   "--context", "docs/context notes.md",
                   "--problem-statement", str(request.resolve()),
-                  "--attack", "mechanization", "--runtime", "codex"],
+                  "--adversarial-prompt", "mechanization", "--runtime", "codex"],
               f"exit {code}, launched {launched}, command {command}, "
               f"stdout {out!r}, stderr {err!r}")
         del launched[:]
@@ -2240,7 +2240,7 @@ import os, pathlib, subprocess, sys, time
 name = pathlib.Path(sys.argv[0]).name
 directory = pathlib.Path(os.environ["STAND_IN_DIRECTORY"])
 mode = os.environ.get("STAND_IN_" + name.upper() + "_MODE", "wait")
-report = {any_attack_report!r}
+report = {any_adversarial_prompt_report!r}
 if name == "claude":
     sys.stdin.read()
 last_message = (sys.argv[sys.argv.index("--output-last-message") + 1]
@@ -2311,13 +2311,17 @@ time.sleep(300)
         signal ends the hold (`<file>.held` again); and
         DRIVER_HOLD_LAST_REPORT_CHECK holds the second cell to finish, after
         its agent-binary has exited and before its report is saved, until that
-        file exists (`<file>.held` again). DRIVER_PROBE_VERSIONS, set to any
+        file exists (`<file>.held` again); with
+        DRIVER_HELD_CELL_SENDS_SIGTERM_TO_ITS_OWN_THREAD also set, that cell's thread waits
+        for the other cell to finish and then sends SIGTERM to itself, as Linux
+        may hand a signal sent to the process to any of its threads.
+        DRIVER_PROBE_VERSIONS, set to any
         value, leaves the CLI version cache empty, so a cell probes the
         stand-in's `--version` as a real run does."""
         driver = base / "run-the-runner.py"
         driver.write_text(f"""
 import importlib.util, os, pathlib, sys, time
-spec = importlib.util.spec_from_file_location("sanity_check_attacks", {str(RUNNER_SCRIPT)!r})
+spec = importlib.util.spec_from_file_location("sanity_check_adversarial_prompts", {str(RUNNER_SCRIPT)!r})
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 module.REPO_ROOT = pathlib.Path({str(repo)!r})
@@ -2359,6 +2363,16 @@ if report_check_hold:
     def last_report_check_held(*arguments, **keywords):
         reports_checked.append(1)
         if len(reports_checked) == 2:
+            if os.environ.get("DRIVER_HELD_CELL_SENDS_SIGTERM_TO_ITS_OWN_THREAD"):
+                import signal, threading
+                # Once the other cell has finished, so nothing but this
+                # held cell could wake a main thread waiting for the cells;
+                # the half second lets the main thread go back to waiting.
+                deadline = time.monotonic() + 30
+                while not module.CELLS_FINISHED and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                time.sleep(0.5)
+                signal.pthread_kill(threading.get_ident(), signal.SIGTERM)
             held_until(report_check_hold)
         return check_report(*arguments, **keywords)
     module.missing_report_phrases = last_report_check_held
@@ -2439,7 +2453,7 @@ sys.exit(module.main())
             programs, recorded = stand_in_agent_binaries(base)
             process = subprocess.Popen(
                 [sys.executable, "-B", str(runner_driver(base, repo)),
-                 "--target", target, "--attack", "cut"],
+                 "--target", target, "--adversarial-prompt", "cut"],
                 env=runner_process_environment(programs, recorded, codex="report"),
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
@@ -2528,7 +2542,7 @@ sys.exit(module.main())
         programs, recorded = stand_in_agent_binaries(base)
         process = subprocess.Popen(
             [sys.executable, "-B", str(runner_driver(base, repo)),
-             "--target", "docs/design.md", "--attack", "cut"],
+             "--target", "docs/design.md", "--adversarial-prompt", "cut"],
             env=runner_process_environment(programs, recorded),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             start_new_session=True)
@@ -2597,7 +2611,7 @@ sys.exit(module.main())
           f"launched {launched_after_stop}, returned {chain_result!r}, "
           f"printed {buffer.getvalue()!r}")
     runner_stopped.run_codex = lambda prompt, checkout=None: (
-        launched_after_stop.append("codex") or (0, any_attack_report, "a-test-model", "", None))
+        launched_after_stop.append("codex") or (0, any_adversarial_prompt_report, "a-test-model", "", None))
     cell_ok, output, raised, report = run_cell_capturing(runner_stopped, "codex")
     check("and a cell launches nothing, saves nothing and prints nothing",
           stopped_flag is not None and launched_after_stop == [] and cell_ok is False
@@ -2643,7 +2657,7 @@ sys.exit(module.main())
             check(f"a {name} launch that writes a byte that is not UTF-8 still "
                   f"returns its review",
                   isinstance(result, tuple) and result[0] == 0
-                  and result[1].startswith(any_attack_report),
+                  and result[1].startswith(any_adversarial_prompt_report),
                   f"returned {result!r}, printed {buffer.getvalue()!r}")
 
     # Case 48: a run in which every launched cell failed. It used to ship
@@ -2661,7 +2675,7 @@ sys.exit(module.main())
         driven.run_codex = lambda prompt, checkout=None: (
             1, "", "a-test-model", "", ("logged-out", "401 Unauthorized"))
         code, out, err = drive_main(driven, [
-            "--target", "docs/every-cell-failed.md", "--attack", "cut",
+            "--target", "docs/every-cell-failed.md", "--adversarial-prompt", "cut",
             "--runtime", "codex"])
         records = sorted(driven.RECORDS_ROOT.glob("*"))
         record = records[0] if len(records) == 1 else None
@@ -2705,7 +2719,7 @@ sys.exit(module.main())
         environment["DRIVER_STOP_WALK_DONE"] = str(walk_done)
         process = subprocess.Popen(
             [sys.executable, "-B", str(runner_driver(base, repo)),
-             "--target", target, "--attack", "cut", "--runtime", "codex"],
+             "--target", target, "--adversarial-prompt", "cut", "--runtime", "codex"],
             env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             held = wait_until(lambda: pathlib.Path(str(relaunch_hold) + ".held").exists())
@@ -2916,7 +2930,7 @@ sys.exit(module.main())
         environment["DRIVER_HOLD_FIRST_SHIP"] = str(ship_hold)
         process = subprocess.Popen(
             [sys.executable, "-B", str(runner_driver(base, repo)),
-             "--target", target, "--attack", "cut"],
+             "--target", target, "--adversarial-prompt", "cut"],
             env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             held = wait_until(lambda: pathlib.Path(str(ship_hold) + ".held").exists())
@@ -3028,7 +3042,7 @@ sys.exit(module.main())
         environment["DRIVER_STOP_WALK_DONE"] = str(walk_done)
         process = subprocess.Popen(
             [sys.executable, "-B", str(runner_driver(base, repo)),
-             "--target", target, "--attack", "cut"],
+             "--target", target, "--adversarial-prompt", "cut"],
             env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             held = wait_until(lambda: pathlib.Path(str(report_check_hold) + ".held").exists())
@@ -3060,16 +3074,61 @@ sys.exit(module.main())
                 process.communicate()
             end_stand_ins(recorded)
 
+    # Case 55, with the signal handed to a cell's thread rather than the main
+    # thread, as Linux does on a busy machine: the main thread, waiting for
+    # the cells, must still run the stop handler while the cell is held,
+    # not once the cell finishes. This is how cases 49 and 55 failed on
+    # merge-lane-2's busy test runs, with the handler held off for the hold.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-from-a-cell-thread.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        report_check_hold = base / "report-check-hold"
+        walk_done = base / "stop-walk-done"
+        environment = runner_process_environment(
+            programs, recorded, codex="report", claude="report")
+        environment["DRIVER_HOLD_LAST_REPORT_CHECK"] = str(report_check_hold)
+        environment["DRIVER_HELD_CELL_SENDS_SIGTERM_TO_ITS_OWN_THREAD"] = "1"
+        environment["DRIVER_STOP_WALK_DONE"] = str(walk_done)
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--adversarial-prompt", "cut"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            held = wait_until(lambda: pathlib.Path(str(report_check_hold) + ".held").exists())
+            # Well inside the driver's 60 s hold: before the fix, the handler
+            # ran only when the hold ended.
+            walked = wait_until(walk_done.exists, 20.0)
+            report_check_hold.write_text("", encoding="utf-8")
+            try:
+                out, err = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            check("a stop signal handed to a cell's thread runs the stop handler while "
+                  "the cell is held, and the run ends with its STOPPED line",
+                  held and walked and "STOPPED: SIGTERM ended this run" in out
+                  and process.returncode == -signal.SIGTERM
+                  and left_in_copies_root(base) == [],
+                  f"held {held}, walked {walked}, exit {process.returncode}, "
+                  f"copies root {left_in_copies_root(base)}, stdout {out!r}, stderr {err!r}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
     # A failed removal must prevent a successful exit and name the manual action.
     with tempfile.TemporaryDirectory() as scratch:
         base = pathlib.Path(scratch).resolve()
         repo = scratch_repository_with_design(base)
         runner_removal = runner_over(repo, base)
         runner_removal.run_claude = lambda prompt, checkout=None: (
-            0, any_attack_report, "a-test-model", "", None)
+            0, any_adversarial_prompt_report, "a-test-model", "", None)
         runner_removal.remove_directory_whatever_signal_arrives = lambda directory: None
         code, out, err = drive_main(runner_removal, [
-            "--target", "docs/design.md", "--attack", "cut", "--runtime", "claude"])
+            "--target", "docs/design.md", "--adversarial-prompt", "cut", "--runtime", "claude"])
         holders = list(runner_removal.REVIEW_COPIES_ROOT.iterdir())
         holder = holders[0] if len(holders) == 1 else None
         expected = (f"WARNING: the review copy could not be removed: {holder}\n"
@@ -3171,7 +3230,7 @@ sys.exit(module.main())
         environment["DRIVER_STOP_WALK_DONE"] = str(walk_done)
         process = subprocess.Popen(
             [sys.executable, "-B", str(runner_driver(base, repo)),
-             "--target", target, "--attack", "cut", "--runtime", "codex"],
+             "--target", target, "--adversarial-prompt", "cut", "--runtime", "codex"],
             env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             held = wait_until(lambda: pathlib.Path(str(git_hold) + ".held").exists())
@@ -3235,7 +3294,7 @@ sys.exit(module.main())
         environment["DRIVER_PROBE_VERSIONS"] = "1"
         process = subprocess.Popen(
             [sys.executable, "-B", str(runner_driver(base, repo)),
-             "--target", target, "--attack", "cut", "--runtime", "codex"],
+             "--target", target, "--adversarial-prompt", "cut", "--runtime", "codex"],
             env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             held = wait_until(lambda: pathlib.Path(str(probe_hold) + ".held").exists())

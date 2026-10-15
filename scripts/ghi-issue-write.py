@@ -225,8 +225,8 @@ read, for that reason — see `issue_title_after_this_edit`.
 
 THE CONFLICT THIS REFUSES ON IS THE FILE'S, NOT THE BODY'S. The user ruled
 on 2026-09-08 that a GHI edit checks for conflicts and refuses rather than
-merges; scripts/ghi-issue-body-edit.py is that ruling built, for the world
-where an author typed the body. For a link-only-GHI the body is computed from
+merges; that ruling was built for the world where an author typed the
+body. For a link-only-GHI the body is computed from
 main's file set, so two seats computing it reach the same answer and there
 is no body change to lose. The content is in the file, so the file is where
 the check belongs: main's copy is compared against the copy at `git
@@ -235,6 +235,15 @@ from, which is the base record they read — taken from git rather than asked
 for as a flag, since git already holds it. They differ, and another seat
 changed the file since: the tool prints that diff and writes nothing. No
 retry, no lock, no merge, as the ruling says.
+
+The main the check compares and the main the landing commit is cut from
+are one commit, resolved once after the fetch. They must be: this clone's
+worktrees share one origin/main, which other seats' fetches move while a run
+waits on ghi-info, and a landing commit cut from a newer main than the one
+checked writes the author's whole file over lines that landed in between,
+so its pull request reverts them. Cut from the checked commit, the pull
+request's diff is the author's change alone, and git merges it onto
+whatever main has become, or shows a conflict where the same lines moved.
 
 THE AUTHOR'S OWN SECOND EDIT IS THAT CONFLICT TOO, AND THAT CHECK CANNOT
 SEE IT. It compares main with the merge base, so an edit that has not
@@ -339,6 +348,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -352,6 +362,24 @@ _git_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
+
+
+def _load_sibling_script(module_name, file_name):
+    spec = importlib.util.spec_from_file_location(
+        module_name, Path(__file__).resolve().parent / file_name)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# The pre-push hook runs these two before git sends anything, so a push must
+# be given at least their time; see push_time_limit_seconds.
+pre_push_conflict_check = _load_sibling_script(
+    "git_client_side_hooks_pre_push_conflict_check",
+    "git-client-side-hooks-pre-push-conflict-check.py")
+pre_push_selective_test_run = _load_sibling_script(
+    "git_client_side_hooks_pre_push_selective_test_run",
+    "git-client-side-hooks-pre-push-selective-test-run.py")
 
 DEFAULT_REPO = "nedschorus/nedschorus"
 GHI_MD_DIRECTORY = "docs/issues"
@@ -368,6 +396,10 @@ RECONSIDERED_MARKER_NAME = ".ghi-issue-write-reconsidered"
 GH_NO_SUCH_ISSUE_STDERR_FRAGMENT = "could not resolve to an issue"
 SLUG_WORD_LIMIT = 8
 GH_TIMEOUT_SECONDS = 120
+# Beyond the pre-push hook's own limit: the hook's mutation-testing-worktree
+# check, the selective run's search for leftover processes after its budget,
+# and git sending the branch.
+PUSH_TIME_MARGIN_SECONDS = 120
 ADJUDICATION_TIMEOUT_SECONDS = 420
 # scripts/ghi-info-ask.py's EXIT_NOT_ABOUT_ISSUES and EXIT_RULING_QUESTION:
 # ghi-info answered, but with an `out-of-scope` or `escalate:` reply rather
@@ -455,6 +487,42 @@ def run(arguments, timeout=GH_TIMEOUT_SECONDS, cwd=None, check=True):
             f"{' '.join(arguments[:3])} failed: "
             f"{(completed.stderr or completed.stdout).strip()}", 1)
     return completed
+
+
+def push_time_limit_seconds(environment):
+    """How long a push may take: the pre-push hook's conflict check and
+    selective test run, each with its budget as the hook reads it from the
+    same environment and its grace period counted twice, since each one's
+    stop_process_group waits it after SIGTERM and again after SIGKILL, and a
+    margin that also covers the selective run's listing of descendants."""
+    return (pre_push_conflict_check.time_budget_seconds(environment)
+            + 2 * pre_push_conflict_check.TERMINATE_GRACE_SECONDS
+            + pre_push_selective_test_run.time_budget_seconds(environment)
+            + 2 * pre_push_selective_test_run.TERMINATE_GRACE_SECONDS
+            + PUSH_TIME_MARGIN_SECONDS)
+
+
+def push_branch(worktree, branch, runner, environment=None):
+    """Push the landing branch, refusing with what to do when the push is
+    stopped by its time limit. A rerun is safe whether or not the branch
+    reached origin, because both landings read origin before they push: a
+    branch already there gets its missing pull request opened, not a second
+    push (land_file, edit_landing_state)."""
+    environment = os.environ if environment is None else environment
+    seconds = push_time_limit_seconds(environment)
+    try:
+        runner(["git", "push", "--quiet", "origin",
+                f"HEAD:refs/heads/{branch}"], timeout=seconds, cwd=str(worktree))
+    except subprocess.TimeoutExpired:
+        raise Refused(
+            f"git push of branch {branch} was stopped after {seconds:.0f} "
+            "seconds, longer than the pre-push hook's own limit, so the push "
+            "did not finish.\n"
+            "Rerun the same command; a rerun is safe: it reads origin first, "
+            "and if the branch got there, it opens the pull request for it "
+            "instead of pushing again.\n"
+            "If it stops the same way again, tell the user the push hangs, "
+            "with this message.", 1) from None
 
 
 def pairing_key(file_text: str) -> str:
@@ -1130,12 +1198,14 @@ def blob_at(revision: str, relative: str, repository_root: Path, runner):
 def origin_main_commit_hash(repository_root: Path, runner) -> str:
     """The one commit `origin/main` names at this moment.
 
-    Every read of main in the check below is made at this hash rather than
-    at the ref. The ref moves: this clone's worktrees share one object store
+    Every read of main in create's already-landed check, and every read of
+    main in an edit, is made at this hash rather than at the ref; an edit
+    also cuts its landing commit from it. The ref moves: this clone's worktrees share one object store
     and one set of remote-tracking refs, so another seat's fetch can move
     origin/main between a listing and the reads that follow it, and a path
     listed from one commit is then read from another. Resolved once, the
-    listing and its reads are of the same tree.
+    listing and its reads are of the same tree, and an edit's landing
+    commit has as its parent the very main its conflict check compared.
 
     --verify, so the answer is one hash or a failure. Through the shared
     `run` with check on, so a failure to resolve is a refusal rather than an
@@ -1283,7 +1353,7 @@ def create_pull_request_for_branch(repo: str, branch: str, number: int,
             "issue's body is the links to its files, so this file has to "
             "be on main before the body can point at it. Prose under "
             "`docs/`, silent to reviewers by CLAUDE.md's review-scope "
-            "rule.\n")
+            "rule.\n\nNo defect fixed.\n")
     created = runner(
         ["gh", "pr", "create", "--repo", repo, "--base", "main",
          "--head", branch, "--title", f"GHI-MD for issue {number}: {title}",
@@ -1355,8 +1425,7 @@ def land_file(repo: str, number: int, title: str, source: Path,
                    "frontmatter line is written by the tool, not by its "
                    "author, who had no issue number when they wrote it.\n")
         runner(["git", "commit", "--quiet", "-m", message], cwd=str(worktree))
-        runner(["git", "push", "--quiet", "origin",
-                f"HEAD:refs/heads/{branch}"], cwd=str(worktree))
+        push_branch(worktree, branch, runner)
         create_pull_request_for_branch(repo, branch, number, title, worktree,
                                        runner, report)
     finally:
@@ -1389,7 +1458,8 @@ def source_path_on_main(source: Path, repository_root: Path, runner):
     return str(relative) if (listed.stdout or "").strip() else None
 
 
-def ghi_md_paths_for_issue(number: int, repository_root: Path, runner):
+def ghi_md_paths_for_issue(number: int, repository_root: Path, runner,
+                           revision="origin/main"):
     """Every file filed under this issue that is on main: the files named
     `<number>-*` DIRECTLY in docs/issues/, and the files named `<number>-*`
     DIRECTLY in a system's own directory under nc-systems/. Those are the
@@ -1442,7 +1512,7 @@ def ghi_md_paths_for_issue(number: int, repository_root: Path, runner):
     real failure — a bad revision or a path outside the checkout, both
     128 — and never means "nothing there"."""
     listed = runner(
-        ["git", "ls-tree", "-r", "--name-only", "-z", "origin/main",
+        ["git", "ls-tree", "-r", "--name-only", "-z", revision,
          f"{GHI_MD_DIRECTORY}/", f"{SYSTEM_DIRECTORY}/"],
         cwd=str(repository_root))
     prefix = f"{number}-"
@@ -1463,7 +1533,7 @@ def ghi_md_paths_for_issue(number: int, repository_root: Path, runner):
             # line is read from main's copy. Checked, so a read that fails
             # raises instead of dropping the file from the body, for the
             # reason the listing above raises.
-            shown = runner(["git", "show", f"origin/main:{line}"],
+            shown = runner(["git", "show", f"{revision}:{line}"],
                            cwd=str(repository_root))
             if issue_number_in_frontmatter(shown.stdout) == number:
                 selected.append(line)
@@ -1601,9 +1671,8 @@ def writable_relative_path(relative: str) -> bool:
 
 
 def normalized(text) -> str:
-    """The comparable form of an issue body — LF, no trailing newlines — the
-    same normalization `scripts/ghi-issue-body-edit.py` compares with, and
-    for its reason: `gh` returns a body with a newline that is not part of
+    """The comparable form of an issue body — LF, no trailing newlines —
+    because `gh` returns a body with a newline that is not part of
     it, so an un-normalized comparison finds a difference in every body and
     rewrites bodies that already say the right thing."""
     return (text or "").replace("\r\n", "\n").replace("\r", "\n").rstrip("\n")
@@ -1709,7 +1778,8 @@ def validate_edit(path: Path, repository_root: Path):
 
 
 def conflict_refusal(opening: str, fold: str, relative: str, revision: str,
-                     repository_root: Path, runner) -> Refused:
+                     main_commit: str, repository_root: Path,
+                     runner) -> Refused:
     """The 66 refusal, with the change it would have discarded shown under
     it. Both conflicts are built here so their instruction lines cannot
     drift apart: the opening names which path conflicted and what this run
@@ -1719,7 +1789,7 @@ def conflict_refusal(opening: str, fold: str, relative: str, revision: str,
     No reconsider line, on either: see the module docstring's last
     paragraph."""
     difference = runner(
-        ["git", "diff", revision, "origin/main", "--", relative],
+        ["git", "diff", revision, main_commit, "--", relative],
         cwd=str(repository_root), check=False)
     return Refused(
         f"{opening}\n\n"
@@ -1732,14 +1802,16 @@ def conflict_refusal(opening: str, fold: str, relative: str, revision: str,
 
 
 def refuse_on_conflict(relative: str, on_main, moved_from, moved_from_on_main,
-                       repository_root: Path, runner, report):
+                       main_commit: str, repository_root: Path, runner,
+                       report):
     """The 2026-09-08 conflict ruling applied to the file rather than the
     body (module docstring, THE CONFLICT THIS REFUSES ON). The base record
     is taken from git instead of asked for as a flag: the version the
     author's checkout started from is what they read.
 
-    Main's copies are passed in rather than read again, so every comparison
-    a run makes is against one reading of main.
+    Main's copies are passed in rather than read again, and `main_commit`
+    is the commit they were read at, so every comparison a run makes is
+    against one reading of main, the one the landing commit is cut from.
 
     TWO PATHS CAN CONFLICT ON A MOVE, NOT ONE. A move lands the file at the
     author's path and removes main's copy at the path it moved from, so the
@@ -1752,7 +1824,7 @@ def refuse_on_conflict(relative: str, on_main, moved_from, moved_from_on_main,
     the branch that run pushed did not hold the other seat's line at all. So
     the check covers the path the `git rm` names, or it does not cover the
     move."""
-    located = runner(["git", "merge-base", "HEAD", "origin/main"],
+    located = runner(["git", "merge-base", "HEAD", main_commit],
                      cwd=str(repository_root), check=False)
     revision = (located.stdout or "").strip()
     if not revision:
@@ -1768,7 +1840,7 @@ def refuse_on_conflict(relative: str, on_main, moved_from, moved_from_on_main,
             "started from it, and landing your copy would discard that "
             "change.",
             "Fold your edit into main's copy of the file.",
-            relative, revision, repository_root, runner)
+            relative, revision, main_commit, repository_root, runner)
     if moved_from is None:
         return
     if blob_at(revision, moved_from, repository_root,
@@ -1778,7 +1850,7 @@ def refuse_on_conflict(relative: str, on_main, moved_from, moved_from_on_main,
             "and main's copy there changed since your checkout started "
             "from it, so removing it would discard that change.",
             "Fold that change into the file you moved.",
-            moved_from, revision, repository_root, runner)
+            moved_from, revision, main_commit, repository_root, runner)
 
 
 def refuse_on_an_earlier_edit_still_open(repo: str, number: int,
@@ -1882,7 +1954,7 @@ def create_pull_request_for_edit_branch(repo: str, branch: str, number: int,
             "issue's title and body are derived from main's copy of its "
             "files, so this has to land before either follows. Prose "
             "under `docs/`, silent to reviewers by CLAUDE.md's "
-            "review-scope rule.\n")
+            "review-scope rule.\n\nNo defect fixed.\n")
     created = runner(
         ["gh", "pr", "create", "--repo", repo, "--base", "main",
          "--head", branch, "--title",
@@ -1891,7 +1963,7 @@ def create_pull_request_for_edit_branch(repo: str, branch: str, number: int,
     report((created.stdout or "").strip())
 
 
-def moved_from_path_on_main(number: int, relative: str,
+def moved_from_path_on_main(number: int, relative: str, main_commit: str,
                             repository_root: Path, runner):
     """The path main still holds this file at, when the author moved it out
     of docs/issues/ and into its system's directory — the move § Where the
@@ -1906,7 +1978,7 @@ def moved_from_path_on_main(number: int, relative: str,
     name = Path(relative).name
     return next((path
                  for path in ghi_md_paths_for_issue(number, repository_root,
-                                                    runner)
+                                                    runner, main_commit)
                  if path != relative and Path(path).name == name), None)
 
 
@@ -2003,7 +2075,8 @@ def edit_landing_state(number: int, staged: str, on_main,
 
 def refuse_to_land_edit(repo: str, number: int, relative: str, on_main,
                         moved_from, moved_from_on_main, branch,
-                        repository_root: Path, runner, report):
+                        main_commit: str, repository_root: Path, runner,
+                        report):
     """The two refusals of an edit with new content to land, run before a
     ruling question is recorded on the issue, so a draft they reject leaves
     the issue untouched. The earlier-edit refusal comes first of the two:
@@ -2012,12 +2085,13 @@ def refuse_to_land_edit(repo: str, number: int, relative: str, on_main,
     refuse_on_an_earlier_edit_still_open(repo, number, relative, moved_from,
                                          branch, repository_root, runner)
     refuse_on_conflict(relative, on_main, moved_from, moved_from_on_main,
-                       repository_root, runner, report)
+                       main_commit, repository_root, runner, report)
 
 
 def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
               on_main, moved_from, moved_from_on_main, state, branch,
-              repository_root: Path, runner, report) -> bool:
+              main_commit: str, repository_root: Path, runner,
+              report) -> bool:
     """Step 3. Returns True when a pull request is waiting on this edit.
 
     `state` and `branch` are `edit_landing_state`'s answer, resolved by the
@@ -2032,7 +2106,11 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
     `moved_from` is the path main still holds this document at when the
     author moved it, and `moved_from_on_main` is main's copy there. Both are
     resolved by the caller, which needs the same copy for the title: one
-    reading of main serves every comparison the run makes."""
+    reading of main serves every comparison the run makes.
+
+    `main_commit` is that reading, and the worktree is cut from it rather
+    than from the ref, so the commit pushed holds the author's change and
+    nothing else (module docstring, THE CONFLICT THIS REFUSES ON)."""
     if state == EDIT_LANDING_ALREADY_ON_MAIN:
         report(f"step 3 already done: main's copy of {relative} is this file")
         return False
@@ -2064,7 +2142,7 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
         # derived from the file's content, so every later run on that same
         # content walks into the name again.
         runner(["git", "worktree", "add", "--quiet", "--detach",
-                str(worktree), "origin/main"], cwd=str(repository_root))
+                str(worktree), main_commit], cwd=str(repository_root))
         target = worktree / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(staged, encoding="utf-8")
@@ -2086,8 +2164,7 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
                    "file's `issue:` frontmatter line is written by the "
                    "tool, not by its author.\n")
         runner(["git", "commit", "--quiet", "-m", message], cwd=str(worktree))
-        runner(["git", "push", "--quiet", "origin",
-                f"HEAD:refs/heads/{branch}"], cwd=str(worktree))
+        push_branch(worktree, branch, runner)
         create_pull_request_for_edit_branch(repo, branch, number, title,
                                             worktree, runner, report)
     finally:
@@ -2353,21 +2430,28 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
                            relative))
 
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
-    on_main = blob_at("origin/main", relative, repository_root, runner)
+    # Every read of main below, the conflict check and the commit the
+    # landing branch is cut from all use this one commit, never the ref:
+    # see `origin_main_commit_hash`. A landing cut from a newer main than
+    # the one checked carries main's newer lines back out as part of the
+    # author's change.
+    main_commit = origin_main_commit_hash(repository_root, runner)
+    on_main = blob_at(main_commit, relative, repository_root, runner)
     paths = issue_file_set_for_this_edit(
         number, relative, on_main,
-        ghi_md_paths_for_issue(number, repository_root, runner), report)
+        ghi_md_paths_for_issue(number, repository_root, runner, main_commit),
+        report)
     # Where main still holds this document when the author moved it, and
     # main's copy there. Asked only when main has nothing at the author's
     # path — where it does, this is an edit in place and a same-named file
     # elsewhere is another document. Resolved here rather than inside a
     # step, because step 3 deletes that path and step 4 measures the
     # heading change against that copy: one reading of main, two users.
-    moved_from = (moved_from_path_on_main(number, relative, repository_root,
-                                          runner)
+    moved_from = (moved_from_path_on_main(number, relative, main_commit,
+                                          repository_root, runner)
                   if on_main is None else None)
     moved_from_on_main = (
-        blob_at("origin/main", moved_from, repository_root, runner)
+        blob_at(main_commit, moved_from, repository_root, runner)
         if moved_from else None)
     if on_main is None and moved_from is None and paths:
         report_no_moved_from_match(number, relative, paths, report)
@@ -2405,14 +2489,14 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         conflict = adjudicate(repo, title, text, repository_root, runner,
                               report, exclude_issue=number)
         refuse_to_land_edit(repo, number, relative, on_main, moved_from,
-                            moved_from_on_main, branch, repository_root,
-                            runner, report)
+                            moved_from_on_main, branch, main_commit,
+                            repository_root, runner, report)
         if conflict is not None:
             record_ruling_conflict(repo, number, conflict, runner, report,
                                    edit_not_yet_landed=True)
     pending = land_edit(repo, number, title, relative, staged, on_main,
                         moved_from, moved_from_on_main, state, branch,
-                        repository_root, runner, report)
+                        main_commit, repository_root, runner, report)
 
     sync_title_on_heading_change(repo, number, document_before_this_edit,
                                  title, paths, issue, runner, report)
@@ -2447,8 +2531,7 @@ class BadInvocationArgumentParser(argparse.ArgumentParser):
     2: the exit codes it documents are 0, 1, 64 and 65, so a caller reading
     that list cannot place a 2 at all. 64 already means the caller's input is
     wrong, which a mistyped flag is. Usage text and message are argparse's,
-    unchanged; only the exit code moves. The form is
-    scripts/ghi-issue-body-edit.py's parser of the same name."""
+    unchanged; only the exit code moves."""
 
     def error(self, message):
         self.print_usage(sys.stderr)

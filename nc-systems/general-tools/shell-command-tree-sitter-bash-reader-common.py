@@ -19,7 +19,7 @@ safe: words keep expansions such as `$HOME` as written, and a command built at
 run time, by `eval` or a variable holding a program name, is not seen.
 
 tree-sitter and tree-sitter-bash are compiled libraries, installed per user
-from compiled-python-libraries-pinned-requirements.txt beside this file. When
+from python-libraries-pinned-requirements.txt beside this file. When
 they are missing, the first use installs them. ShellParserUnavailable means
 the install failed: the guard lets the command through and says so with
 parser_unavailable_hook_output, which says whom to tell: the user, or, in an
@@ -57,19 +57,19 @@ import sys
 import time
 from pathlib import Path
 
-_pinned_libraries_install_spec = importlib.util.spec_from_file_location(
-    "compiled_python_libraries_pinned_requirements_install_common",
-    Path(__file__).resolve().with_name("compiled-python-libraries-pinned-requirements-install-common.py"))
-pinned_libraries_install = importlib.util.module_from_spec(_pinned_libraries_install_spec)
-_pinned_libraries_install_spec.loader.exec_module(pinned_libraries_install)
+_python_libraries_pinned_requirements_install_if_missing_then_import_spec = importlib.util.spec_from_file_location(
+    "python_libraries_pinned_requirements_install_if_missing_then_import_common",
+    Path(__file__).resolve().with_name("python-libraries-pinned-requirements-install-if-missing-then-import-common.py"))
+python_libraries_pinned_requirements_install_if_missing_then_import_common = importlib.util.module_from_spec(_python_libraries_pinned_requirements_install_if_missing_then_import_spec)
+_python_libraries_pinned_requirements_install_if_missing_then_import_spec.loader.exec_module(python_libraries_pinned_requirements_install_if_missing_then_import_common)
 
-REQUIREMENTS_FILE = pinned_libraries_install.PINNED_REQUIREMENTS_FILE
+REQUIREMENTS_FILE = python_libraries_pinned_requirements_install_if_missing_then_import_common.PINNED_REQUIREMENTS_FILE
 # The Bash guards run in parallel with a 30-second hook timeout; a cached wheel installs in about a second.
 INSTALL_TIMEOUT_SECONDS = 8
-INSTALL_RETRY_SECONDS = pinned_libraries_install.INSTALL_RETRY_SECONDS
+INSTALL_RETRY_SECONDS = python_libraries_pinned_requirements_install_if_missing_then_import_common.INSTALL_RETRY_SECONDS
 STATE_DIRECTORY = Path.home() / ".cache" / "nedschorus-shell-command-reader"
-INSTALL_LOCK_FILE_NAME = pinned_libraries_install.INSTALL_LOCK_FILE_NAME
-INSTALL_FAILURE_FILE_NAME = pinned_libraries_install.INSTALL_FAILURE_FILE_NAME
+INSTALL_LOCK_FILE_NAME = python_libraries_pinned_requirements_install_if_missing_then_import_common.INSTALL_LOCK_FILE_NAME
+INSTALL_FAILURE_FILE_NAME = python_libraries_pinned_requirements_install_if_missing_then_import_common.INSTALL_FAILURE_FILE_NAME
 
 RECURSION_LIMIT_FOR_DEEP_NESTING = 100_000
 
@@ -111,7 +111,7 @@ def _shell_text_errors(error):
 codecs.register_error(SHELL_TEXT_ERRORS, _shell_text_errors)
 
 
-class ShellParserUnavailable(pinned_libraries_install.CompiledPythonLibrariesUnavailable):
+class ShellParserUnavailable(python_libraries_pinned_requirements_install_if_missing_then_import_common.PythonLibrariesPinnedRequirementsInstallOrImportFailed):
     """tree-sitter-bash could not be imported, and installing it failed.
 
     install_output holds what the install printed, or why it did not run.
@@ -314,9 +314,9 @@ def _index_after_options(words, index, wrapper, options):
     return index
 
 
-def install_compiled_libraries(runner=subprocess.run):
+def shell_reader_python_libraries_pinned_requirements_pip_install(runner=subprocess.run):
     """Install the pinned requirements per user; return what pip printed, or raise ShellParserUnavailable."""
-    return pinned_libraries_install.pinned_requirements_pip_install(
+    return python_libraries_pinned_requirements_install_if_missing_then_import_common.pinned_requirements_pip_install(
         INSTALL_TIMEOUT_SECONDS, runner, REQUIREMENTS_FILE, ShellParserUnavailable)
 
 
@@ -349,7 +349,7 @@ def imports_in_a_fresh_process(runner=subprocess.run):
     return completed.returncode == 0
 
 
-def load_parser(importer=import_tree_sitter_bash, installer=install_compiled_libraries,
+def load_parser(importer=import_tree_sitter_bash, installer=shell_reader_python_libraries_pinned_requirements_pip_install,
                 clock=time.time, fresh_process_check=imports_in_a_fresh_process):
     """Return a tree-sitter Parser for bash, installing the libraries when they are missing."""
     try:
@@ -360,17 +360,10 @@ def load_parser(importer=import_tree_sitter_bash, installer=install_compiled_lib
     return tree_sitter.Parser(tree_sitter.Language(tree_sitter_bash.language()))
 
 
-def _forget_loaded_copies():
-    # A copy that imported but could not be used stays cached and would be returned again.
-    for name in [name for name in sys.modules
-                 if name.split(".")[0] in ("tree_sitter", "tree_sitter_bash")]:
-        del sys.modules[name]
-
-
 def _install_then_import(importer, installer, clock, fresh_process_check):
     # The guards run in parallel on each command, so they take turns, and only the first installs.
-    return pinned_libraries_install.compiled_python_libraries_install_then_import(
-        importer, installer, clock, fresh_process_check, STATE_DIRECTORY, _forget_loaded_copies,
+    return python_libraries_pinned_requirements_install_if_missing_then_import_common.python_libraries_pinned_requirements_install_if_missing_then_import(
+        importer, installer, clock, fresh_process_check, STATE_DIRECTORY, ("tree_sitter", "tree_sitter_bash"),
         ShellParserUnavailable, ShellParserInstalledForANewProcess)
 
 
@@ -418,15 +411,19 @@ COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION = (
     "backticks, or of more backticks than the longest run of backticks in that command")
 
 
-def tree_sitter_bash_install_failure_report_words_build(host, install_output, consequence):
+def tree_sitter_bash_install_failure_report_words_build(host, install_output, consequence, python_version=None):
     """Return the words to report when tree-sitter-bash is missing on host and installing it failed.
 
     consequence says what goes undone because of it; the words end with what the install printed.
     """
-    install = f"python3 -m pip install --user --break-system-packages -r {REQUIREMENTS_FILE}"
-    # The user sits at the Mac, and reaches ned-box over ssh.
-    where, install = (("in a Terminal on your Mac", f"ssh nedlern@ned-box '{install}'")
-                      if host == "ned-box" else (f"on {host}", install))
+    where, install = python_libraries_pinned_requirements_install_if_missing_then_import_common.pinned_requirements_by_hand_install_command(
+        host, REQUIREMENTS_FILE, python_version)
+    if install is None:
+        instruction = python_libraries_pinned_requirements_install_if_missing_then_import_common.python_below_minimum_version_instruction(
+            host, python_version)
+        return (f"\"tree-sitter-bash is missing on {host} and could not be installed, so "
+                f"{consequence}. {instruction}\" "
+                f"Then pass on what the install printed, quoted as it is: {install_output}")
     return (f"\"tree-sitter-bash is missing on {host} and could not be installed, so "
             f"{consequence}. To install it by hand, run this command {where}:\" Then give the "
             f"install command on a line of its own:\n"
@@ -608,18 +605,21 @@ def _word_value_without_tilde_mark(node, glob_markers, restored):
 
 
 def _text_restored(node, restored):
-    """Return node's text with each case terminator the repair wrote inside it as it was written."""
+    """Return node's text with each repair the reader wrote inside it undone, as it was written."""
     return _bytes_restored(node.text, node.start_byte, restored)
 
 
 def _bytes_restored(text, start, restored):
-    """Return text, which starts at offset start of the text parsed, with its terminators restored.
+    """Return text, which starts at offset start of the text parsed, with its repairs undone.
 
-    restored maps an offset in the text parsed to the terminator written there before the repair.
+    restored maps an offset in the text parsed to (length, written): the repair
+    put length bytes there in place of written, a case terminator written as ;;
+    or a backslash put before a misread #.
     """
     for offset in sorted((offset for offset in restored or ()
                           if start <= offset < start + len(text)), reverse=True):
-        text = text[:offset - start] + restored[offset] + text[offset - start + 2:]
+        length, written = restored[offset]
+        text = text[:offset - start] + written + text[offset - start + length:]
     return text.decode("utf-8", SHELL_TEXT_ERRORS)
 
 
@@ -1134,7 +1134,12 @@ def _source_with_case_terminators_repaired(text, text_node_types, keep_first=Fal
     for offset, terminator in written:
         in_source = _offset_after_edits(offset, edits)
         if in_source is not None:
-            restored[in_source] = terminator
+            restored[in_source] = (2, terminator)
+    for index, (at, removed, inserted) in enumerate(edits):
+        if (removed, inserted) == (0, 1):
+            in_source = _offset_after_edits(at, edits[index + 1:])
+            if in_source is not None:
+                restored[in_source] = (1, b"")
     return source, tree, taken, restored
 
 
@@ -1409,6 +1414,32 @@ HEREDOC_START_WITH_DESCRIPTOR_PATTERN = re.compile(rb"([0-9]+)(<<-?)")
 MAX_HEREDOCS_TAKEN_OUT = 256
 
 
+def _escaped_by_backslashes(source, position):
+    """Return whether the byte at position is escaped by an odd run of backslashes before it."""
+    backslashes = 0
+    while position - 1 - backslashes >= 0 and source[position - 1 - backslashes] == ord("\\"):
+        backslashes += 1
+    return backslashes % 2 == 1
+
+
+def _comment_misread_after_an_escaped_blank(root, source):
+    """Return the offset of the earliest comment tree-sitter-bash starts right after an escaped blank, or None.
+
+    tree-sitter-bash starts a comment at a # that follows an escaped space or tab, as in
+    `echo \\ #word; rm x`; bash reads that # as part of the word, so the comment hides the
+    rest of the line, a command included.
+    """
+    stack, found = [root], []
+    while stack:
+        node = stack.pop()
+        start = node.start_byte
+        if node.type == "comment" and start > 0 and source[start - 1:start] in (b" ", b"\t") \
+                and _escaped_by_backslashes(source, start - 1):
+            found.append(start)
+        stack.extend(node.children)
+    return min(found, default=None)
+
+
 def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
     """Return (source, tree, {placeholder: _HeredocTakenOut}) with every heredoc's body taken out.
 
@@ -1424,16 +1455,31 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
     rules; `<<DELIMITER` becomes `<PLACEHOLDER`, a plain redirection
     tree-sitter-bash reads correctly, and the body lines are removed; then
     the next one, until none is left. keep_first leaves the earliest heredoc in
-    place. edits, when given, gets (offset, length removed, length inserted) for
-    each change, in the order made.
+    place. A # that tree-sitter-bash takes for a comment's start after an escaped
+    blank is written as \\#, which bash reads as the same word, when it comes
+    before the next heredoc operator: one after the operator may be a line of that
+    heredoc's body that tree-sitter-bash misplaced, and a body is kept as written.
+    A misread on the operator's own line is corrected where the body's start is
+    found, and in source once that heredoc is taken out. edits, when given, gets (offset, length removed, length inserted) for each
+    change, in the order made.
     """
     taken = {}
     original = source
     tree = parser().parse(source)
-    for index in range(MAX_HEREDOCS_TAKEN_OUT):
+    index = 0
+    for _ in range(MAX_HEREDOCS_TAKEN_OUT + source.count(b"#")):
         start = next(iter(_heredoc_starts(tree.root_node)[1 if keep_first else 0:]), None)
         operator = start.prev_sibling if start is not None else None
         if operator is None or operator.type not in ("<<", "<<-"):
+            operator = None
+        misread = _comment_misread_after_an_escaped_blank(tree.root_node, source)
+        if misread is not None and (operator is None or misread < operator.start_byte):
+            source = source[:misread] + b"\\" + source[misread:]
+            if edits is not None:
+                edits.append((misread, 0, 1))
+            tree = parser().parse(source)
+            continue
+        if operator is None or index == MAX_HEREDOCS_TAKEN_OUT:
             break
         operator_start, delimiter_start, dashed = (operator.start_byte, start.start_byte,
                                                    operator.type == "<<-")
@@ -1466,7 +1512,52 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
         source = (source[:operator_start] + replacement
                   + source[delimiter_end:body_start] + source[resume:])
         tree = parser().parse(source)
+        index += 1
     return source, tree, taken
+
+
+ShellSourceCommentsAndUnreadableSpans = collections.namedtuple(
+    "ShellSourceCommentsAndUnreadableSpans",
+    "comments unreadable_spans missing_tokens heredocs_never_closed")
+
+
+def shell_source_comments_and_unreadable_spans_after_reader_corrections(source):
+    """Return a shell script's comments as bash reads them, and what tree-sitter-bash could not read.
+
+    source is the script's bytes. The reader's corrections come first: heredoc
+    bodies are taken out as bash's lexer takes them, so a body line is never a
+    comment, and a # that tree-sitter-bash takes for a comment's start after an
+    escaped blank is read as part of its word, as bash reads it. Every offset is
+    in source as given.
+
+    comments: [(start, end)] for each comment, a #! first line included.
+    unreadable_spans: [(start, holds_a_hash)] for each span tree-sitter-bash
+    marks as an error; a comment inside one goes unread.
+    missing_tokens: [(token, line)] for each token a line needs that never comes.
+    heredocs_never_closed: [as written] for each heredoc whose body never reaches
+    its closing line.
+    """
+    edits = []
+    edited, tree, taken = _source_with_heredoc_bodies_taken_out(source, edits=edits)
+    comments, unreadable, missing = [], [], []
+    pending = [tree.root_node]
+    while pending:
+        node = pending.pop()
+        pending.extend(node.children)
+        if node.is_missing:
+            missing.append((node.type, node.start_point[0] + 1))
+        elif node.type == "ERROR":
+            at = _offset_before_edits(node.start_byte, edits)
+            unreadable.append((0 if at is None else at,
+                               b"#" in edited[node.start_byte:node.end_byte]))
+        elif node.type == "comment":
+            start = _offset_before_edits(node.start_byte, edits)
+            end = _offset_before_edits(node.end_byte, edits)
+            if start is not None and end is not None:
+                comments.append((start, end))
+    return ShellSourceCommentsAndUnreadableSpans(
+        sorted(comments), sorted(unreadable), sorted(missing, key=lambda token: token[1]),
+        [heredoc.written for heredoc in taken.values() if not heredoc.ending])
 
 
 def _delimiter_word(source, position):
@@ -1539,10 +1630,28 @@ def _heredoc_body_start(source, delimiter_end):
     backslash continuations, as in `cat <<EOF && git commit -m "two` with the
     message's second line next. The rest of the command line is parsed on its
     own to find it; what follows that line end does not change how the text
-    before it is read.
+    before it is read. A comment tree-sitter-bash misreads after an escaped blank
+    is corrected in that parse first, since it would hide a quote that carries
+    the line on, as in `cat <<EOF; echo \\ #word"` with the quote closed on the
+    next line.
     """
     probe = b": " + source[delimiter_end:]
-    stack, inside, comments = [parser().parse(probe).root_node], [], []
+    inserted = []
+    tree = parser().parse(probe)
+    for _ in range(probe.count(b"#")):
+        misread = _comment_misread_after_an_escaped_blank(tree.root_node, probe)
+        if misread is None:
+            break
+        probe = probe[:misread] + b"\\" + probe[misread:]
+        inserted.append(misread)
+        tree = parser().parse(probe)
+
+    def in_source(offset):
+        for at in reversed(inserted):
+            if offset > at:
+                offset -= 1
+        return delimiter_end + offset - 2
+    stack, inside, comments = [tree.root_node], [], []
     while stack:
         node = stack.pop()
         if node.type == "comment":
@@ -1563,7 +1672,7 @@ def _heredoc_body_start(source, delimiter_end):
         continued = (len(probe[:line_end]) - len(probe[:line_end].rstrip(b"\\"))) % 2 == 1 \
             and not any(begin <= line_end - 1 < end for begin, end in comments)
         if not any(begin < line_end < end for begin, end in inside) and not continued:
-            return delimiter_end + line_end - 2 + 1
+            return in_source(line_end) + 1
         position = line_end + 1
 
 

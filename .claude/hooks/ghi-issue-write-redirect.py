@@ -29,7 +29,7 @@ THE RULINGS IT CARRIES.
 - Issues are never deleted; the record is append-forward (the design,
   § The GHI write path, "Delete is denied — close instead").
 
-THE BEHAVIOUR IT DEFENDS AGAINST, named per CLAUDE.md's reviewer rule: agents
+THE BEHAVIOUR IT DEFENDS AGAINST, named per CLAUDE.md's rule on guards: agents
 posting issue comments by hand. The /ghi-write skill tells them to do exactly
 that today — "until #46 builds the tool, plain `gh issue comment` naming the
 event kind is the interim path" — and the ghi seat's brief, since deleted,

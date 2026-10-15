@@ -146,6 +146,57 @@ check("a case's branches are commands and its patterns are not",
 check("$'...' ends at its unescaped quote, and a plain '...' at its first quote",
       words_of("a $'it\\'s' b; c 'x'") == [["a", "it's", "b"], ["c", "x"]],
       words_of("a $'it\\'s' b; c 'x'"))
+found = words_of("echo \\ #word; rm -rf x && git push --force")
+check("a # after an escaped space is part of its word, so the commands after it on the line are read",
+      [words[0] for words in found] == ["echo", "rm", "git"] and "#word" in found[0], found)
+check("a # after an escaped backslash still starts a comment, which hides the rest of its line",
+      words_of("echo \\\\ # rm -rf x\nls") == [["echo", "\\"], ["ls"]],
+      words_of("echo \\\\ # rm -rf x\nls"))
+found = reader.simple_commands("echo '\\ #q'; cat <<EOF\n\\ #body\nEOF\nls")
+check("a # after an escaped space inside quotes and in a here-document body is left as written",
+      [list(words) for words in found] == [["echo", "\\ #q"], ["cat"], ["ls"]]
+      and found[1].redirects == [("<<", "\\ #body\n")],
+      [(list(words), words.redirects) for words in found])
+found = words_of("echo \\\t#word; rm -rf x")
+check("a # after an escaped tab is part of its word, so the commands after it on the line are read",
+      [words[0] for words in found] == ["echo", "rm"], found)
+found = reader.simple_commands('cat <<EOF; echo \\ #word"\ninside"\nEOF\ntmux kill-server')
+check("a # after an escaped space on a here-document's opening line does not hide the quote that "
+      "carries the line on, so the body starts after it and the command after the body is read",
+      [words[0] for words in found] == ["cat", "echo", "tmux"] and found[0].redirects == [("<<", "")],
+      [(list(words), words.redirects) for words in found])
+found = words_of("cat <<EOF\n$(echo a \\ #x; rm y\n)\nEOF\n")
+check("a # after an escaped space in a substitution in a here-document body is part of its word, "
+      "so the commands after it in the substitution are read",
+      ["rm", "y"] in found, found)
+found = reader.simple_commands("cat <<EOF\nEOFX\n\\ #x\nEOF\necho after")
+check("a # after an escaped space on a body line that only starts with the delimiter is left as written",
+      found[0].redirects == [("<<", "EOFX\n\\ #x\n")] and list(found[1]) == ["echo", "after"],
+      [(list(words), words.redirects) for words in found])
+found = words_of('echo "$(echo \\ #x)" `echo \\ #y` ${v:-\\ #z}')
+check("a word holding a substitution or an expansion reads as written, with no backslash added before its #",
+      ["echo", "$(echo \\ #x)", "`echo \\ #y`", "${v:-\\ #z}"] in found, found)
+script = b"#!/bin/sh\nx=`# PR 1\necho hi`\necho \\ #word;# PR 2\ncat <<EOF\n# body\nEOF\ncase $y in\n  *\"a\"*\"b\"*) ;;\nesac\n"
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(script)
+check("the comments of a script are tree-sitter-bash's own, after the reader's corrections, "
+      "in offsets of the script as given",
+      [script[start:end] for start, end in read.comments] == [b"#!/bin/sh", b"# PR 1", b"# PR 2"],
+      [script[start:end] for start, end in read.comments])
+check("a span tree-sitter-bash cannot read is reported with whether it holds a #, "
+      "and a script whose quotes and here-documents close has nothing missing",
+      read.unreadable_spans and not any(holds for _, holds in read.unreadable_spans)
+      and read.missing_tokens == [] and read.heredocs_never_closed == [], read)
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(
+    b'case "$x" in\n  *"a#"*"b"*) echo hit ;;\nesac\n')
+check("a span tree-sitter-bash cannot read that holds a # is reported as holding one",
+      read.unreadable_spans == [(15, True)], read)
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(
+    b"cat <<EOF\nno end\n")
+check("a here-document that never closes is reported as written",
+      read.heredocs_never_closed == ["<<EOF"], read)
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(b"if true; then echo hi\n")
+check("a token a line needs that never comes is reported with its line",
+      read.missing_tokens == [("fi", 2)], read)
 check("export and unset are read as commands with their words",
       words_of("export A=1; unset B") == [["export", "A=1"], ["unset", "B"]],
       words_of("export A=1; unset B"))
@@ -1181,7 +1232,7 @@ except r.ShellParserUnavailable as error:
         return run
 
     run = runner_exiting(0, "Successfully installed tree-sitter-0.25.2")
-    printed = reader.install_compiled_libraries(run)
+    printed = reader.shell_reader_python_libraries_pinned_requirements_pip_install(run)
     check("the install runs pip per user, from the pinned requirements file, within its timeout",
           run.command[1:7] == ["-m", "pip", "install", "--user", "--break-system-packages",
                                "--disable-pip-version-check"]
@@ -1189,7 +1240,7 @@ except r.ShellParserUnavailable as error:
           and run.kwargs["timeout"] == reader.INSTALL_TIMEOUT_SECONDS
           and "Successfully installed" in printed, (run.command, run.kwargs))
     try:
-        reader.install_compiled_libraries(runner_exiting(1, "", "ERROR: No matching distribution"))
+        reader.shell_reader_python_libraries_pinned_requirements_pip_install(runner_exiting(1, "", "ERROR: No matching distribution"))
         raised = None
     except reader.ShellParserUnavailable as error:
         raised = error
@@ -1200,7 +1251,7 @@ except r.ShellParserUnavailable as error:
     def runner_timing_out(command, **kwargs):
         raise subprocess.TimeoutExpired(command, kwargs["timeout"])
     try:
-        reader.install_compiled_libraries(runner_timing_out)
+        reader.shell_reader_python_libraries_pinned_requirements_pip_install(runner_timing_out)
         raised = None
     except reader.ShellParserUnavailable as error:
         raised = error
@@ -1208,7 +1259,7 @@ except r.ShellParserUnavailable as error:
           raised is not None and "did not finish" in raised.install_output, raised)
     check("the pinned requirements file pins tree-sitter and tree-sitter-bash",
           {line.split("==")[0] for line in reader.REQUIREMENTS_FILE.read_text().splitlines()
-           if "==" in line} == {"tree-sitter", "tree-sitter-bash"})
+           if "==" in line} >= {"tree-sitter", "tree-sitter-bash"})
 
     # Failures of the state directory itself.
     real_state_directory = reader.STATE_DIRECTORY
@@ -1279,7 +1330,7 @@ except r.ShellParserUnavailable as error:
           words[0].endswith("so nothing is checked there. To install it by hand, run this command "
                             "in a Terminal on your Mac:\" Then give the install command on a line "
                             "of its own:")
-          and words[1] == f"ssh nedlern@ned-box 'python3 -m pip install --user "
+          and words[1] == f"ssh nedlern@ned-box '{sys.executable} -m pip install --user "
           f"--break-system-packages -r {reader.REQUIREMENTS_FILE}'", words)
     check("the words to report end with what the install printed, quoted as it is",
           words[2:] == ["Then pass on what the install printed, quoted as it is: pip: no network"],
@@ -1288,11 +1339,27 @@ except r.ShellParserUnavailable as error:
         "Neds-MacBook", "pip: no network", "nothing is checked there").splitlines()
     check("for any other machine, the install command is run on that machine as it is",
           "run this command on Neds-MacBook:" in words[0]
-          and words[1] == f"python3 -m pip install --user --break-system-packages "
+          and words[1] == f"{sys.executable} -m pip install --user --break-system-packages "
           f"-r {reader.REQUIREMENTS_FILE}", words)
+    real_executable = sys.executable
+    sys.executable = "/usr/bin/python3"
+    try:
+        words = reader.tree_sitter_bash_install_failure_report_words_build(
+            "Neds-MacBook", "pip: no network", "nothing is checked there").splitlines()
+    finally:
+        sys.executable = real_executable
+    check("the install command names the interpreter the guard runs under, not a bare python3",
+          words[1].startswith("/usr/bin/python3 -m pip install "), words)
+    words = reader.tree_sitter_bash_install_failure_report_words_build(
+        "Neds-MacBook", "nothing was installed", "nothing is checked there", (3, 9, 6))
+    check("below Python 3.11 the words give no pip command, and say how to put a newer Python first "
+          "on the PATH",
+          "pip" not in words.split("Then pass on")[0] and "Python 3.9.6" in words
+          and "Homebrew" in words and "next run" in words
+          and words.endswith("quoted as it is: nothing was installed"), words)
     on_ned_box = __import__("socket").gethostname().split(".")[0] == "ned-box"
     check("the install command for ned-box is given in the ssh form the user runs from the Mac",
-          on_ned_box == ("ssh nedlern@ned-box 'python3 -m pip install" in first), first)
+          on_ned_box == (f"ssh nedlern@ned-box '{sys.executable} -m pip install" in first), first)
     check("an agent-session no user attends is not told to tell the user",
           "Tell the user" not in unattended and "without checking it" in unattended
           and "No user attends" in unattended, unattended)

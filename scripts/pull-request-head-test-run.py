@@ -184,7 +184,7 @@ def parse_arguments(argv):
     return parser.parse_args(argv)
 
 
-def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
+def main(argv=None, now=None, monotonic=time.monotonic) -> int:
     arguments = parse_arguments(argv)
     now = now or datetime.now(timezone.utc)
     daily = daily_full_test_run_of_main
@@ -264,14 +264,10 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
             command += ["--recorded-inputs-directory", arguments.recorded_inputs_directory]
         completed, seconds_waiting_for_lock, lock_never_released = (
             daily.run_test_suite_runner_waiting_for_the_machine_lock(
-                command, checkout, wait, monotonic))
+                command, checkout, monotonic))
         if lock_never_released:
-            steps_failed.append((
-                f"not run — the lock was never released: {run_all_test_suites.PROGRAM} "
-                f"exited {run_all_test_suites.EXIT_LOCKED} on every attempt for "
-                f"{seconds_waiting_for_lock:.0f} s; its last refusal: "
-                f"{daily.first_stderr_line_or_no_detail(completed.stderr)}",
-                "Run this again after the run holding that lock has finished."))
+            steps_failed.append(
+                daily.lock_never_taken_step_failed(completed, seconds_waiting_for_lock))
         elif completed.returncode < 0:
             steps_failed.append((
                 f"{run_all_test_suites.PROGRAM} was "
@@ -317,6 +313,9 @@ def main(argv=None, now=None, wait=time.sleep, monotonic=time.monotonic) -> int:
         record_lines.append(f"runner exit code: {completed.returncode}")
     record_lines.append(
         f"seconds waiting for the machine's lock: {seconds_waiting_for_lock:.0f}")
+    admission_wait = daily.runner_output_line_on_seconds_suites_waited_for_admission(completed)
+    if admission_wait is not None:
+        record_lines.append(admission_wait)
     record_lines.append(f"wall-clock seconds: {monotonic() - run_started:.0f}")
     record_lines.append(f"logs: {logs} on {machine}")
     exit_code_once_the_record_is_written = (

@@ -1403,7 +1403,7 @@ with tempfile.TemporaryDirectory() as temporary:
         this_host, "pip exited 1: no network", "install-scheduled-jobs-on-this-machine did not run there")
     install = words.splitlines()[1]
     check("the install command stands on a line of its own, with nothing after it to copy by mistake",
-          install in unattended_lines and "python3 -m pip install" in install
+          install in unattended_lines and f"{sys.executable} -m pip install" in install
           and install.rstrip("'").endswith("requirements.txt"), unattended_lines)
     check("the install-failed refusal reports the words the Bash guards report, what the install "
           "printed included",

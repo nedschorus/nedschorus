@@ -84,14 +84,18 @@ sys.exit(subprocess.run(["sh", "-c", command]).returncode)
 # directory and every GIT_ variable it was given, then answers in the shape
 # the real one prints -- a header, a surface, a summary line -- with the exit
 # code FAKE_BACKUP_SEARCH_MODE asks for, or dies before its summary.
-STAND_IN_BACKUP_SEARCH = """import json, os, signal, sys
+STAND_IN_BACKUP_SEARCH = """import argparse, json, os, signal, sys
 with open(os.environ["FAKE_BACKUP_SEARCH_LOG"], "a") as log:
     log.write(json.dumps({
         "argv": sys.argv[1:], "cwd": os.getcwd(),
         "git_variables": sorted(key for key in os.environ
                                 if key.startswith("GIT_"))}) + "\\n")
+parser = argparse.ArgumentParser()
+parser.add_argument("path")
+parser.add_argument("--skip", action="append", default=[])
+arguments = parser.parse_args()
 mode = os.environ.get("FAKE_BACKUP_SEARCH_MODE", "not-found")
-print("Searching every history this fleet keeps for: " + sys.argv[1])
+print("Searching every history this fleet keeps for: " + arguments.path)
 print(flush=True)
 if mode == "killed":
     os.kill(os.getpid(), signal.SIGKILL)
@@ -279,12 +283,13 @@ def program_environment(base, mode="ok", plan=None, backup_mode="not-found"):
 
 
 def run(base, query, mode="ok", plan=None, cwd=None, backup_mode="not-found",
-        extra_environment=None):
+        extra_environment=None, double_dash=False):
     """(exit code, stdout, stderr) of one run of the program, from `cwd`
-    (`base` by default)."""
+    (`base` by default), with "--" before the query when `double_dash`."""
     environment = program_environment(base, mode, plan, backup_mode)
     environment.update(extra_environment or {})
-    result = subprocess.run([sys.executable, str(PROGRAM), query],
+    result = subprocess.run([sys.executable, str(PROGRAM),
+                             *(["--"] if double_dash else []), query],
                             capture_output=True, text=True, cwd=cwd or base,
                             env=environment, timeout=120)
     return result.returncode, result.stdout, result.stderr
@@ -574,7 +579,7 @@ with scratch() as directory:
           "half never runs it), on the bare name, without its git surfaces "
           "and without --repo, from /",
           [(one["argv"], one["cwd"]) for one in runs]
-          == [(["nothing-anywhere.md", "--skip", "git", "--skip", "reflog"],
+          == [(["--skip", "git", "--skip", "reflog", "--", "nothing-anywhere.md"],
                "/")], runs)
     order = [stdout.find(marker) for marker in (
         "\nTook ", "do not say the file does not exist", BACKUP_SEARCH_HEADER,
@@ -621,27 +626,37 @@ with scratch() as directory:
         code, stdout, stderr = run(base, query, plan=plan, **keywords)
         return code, stdout + stderr, backup_search_runs(base)
 
-    skips = ["--skip", "git", "--skip", "reflog"]
+    skips = ["--skip", "git", "--skip", "reflog", "--"]
     code, output, runs = handed(str(base / "mac" / "private" / "tmp" / "wt-gone"
                                     / "docs" / "gone-draft.md"))
     check("a path is handed to the backup search absolute, in its canonical "
           "spelling",
           code == 1 and [one["argv"] for one in runs]
-          == [[str(base / "mac" / "tmp" / "wt-gone" / "docs" / "gone-draft.md"),
-               *skips]], (runs, output))
+          == [[*skips,
+               str(base / "mac" / "tmp" / "wt-gone" / "docs" / "gone-draft.md")]], (runs, output))
     seat = base / "mac" / "agents" / "seat-a"
     code, output, runs = handed("docs/never-written.md", cwd=seat)
     check("a relative query is handed to it as the absolute path it names, "
           "never relative to a repository",
           code == 1 and [one["argv"] for one in runs]
-          == [[os.path.join(os.path.realpath(seat), "docs", "never-written.md"),
-               *skips]], (runs, output))
+          == [[*skips,
+               os.path.join(os.path.realpath(seat), "docs", "never-written.md")]], (runs, output))
     log_store_path = base / "box" / "logs" / "seats" / "x" / "gone-record.md"
     code, output, runs = handed(str(log_store_path))
     check("a log-store path is handed to it as it is, with git and its reflog "
           "left out",
           code == 1 and [one["argv"] for one in runs]
-          == [[str(log_store_path), *skips]], (runs, output))
+          == [[*skips, str(log_store_path)]], (runs, output))
+    code, output, runs = handed("-dash-led-never-anywhere.md", double_dash=True)
+    check("a name that opens with a dash, given after --, is handed to the "
+          "backup search after its options and --, so the search reads it as "
+          "the path and finishes",
+          code == 1 and [one["argv"] for one in runs]
+          == [[*skips, "-dash-led-never-anywhere.md"]]
+          and "Searching every history this fleet keeps for: "
+              "-dash-led-never-anywhere.md" in output
+          and "No surface that could be searched has it." in output
+          and "did not finish" not in output, (runs, output))
     code, output, runs = handed("never-anywhere.md", extra_environment={
         "GIT_DIR": str(base / "no-such-git-dir"),
         "GIT_COMMON_DIR": str(base / "no-such-git-dir"),

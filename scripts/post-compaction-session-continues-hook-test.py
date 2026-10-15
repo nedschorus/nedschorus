@@ -455,6 +455,13 @@ with tempfile.TemporaryDirectory() as workspace:
           context is not None and "post-compaction-session-continues-hook: loading "
           "handoff-context-threshold-hook.py failed" in context,
           f"injected context was {context!r}")
+    check("an absent threshold hook: the marker line names the session and says why no path",
+          context is not None and (
+              "Tell the user that the fired marker for session s-siblings was not deleted. Its "
+              "path cannot be named here, because only handoff-context-threshold-hook.py "
+              "defines it and that file could not be loaded. The marker is safe to delete by "
+              "hand.") in context,
+          f"injected context was {context!r}")
 
     # ---- the last-resort handler, which no end-to-end case can reach -----
 
@@ -514,6 +521,20 @@ with tempfile.TemporaryDirectory() as workspace:
     finally:
         hook.injected_context = original_injected_context
         hook.hook_payload_from_stdin = original_payload_reader
+
+    threshold_module = hook.sibling_module(hook.THRESHOLD_SCRIPT, "handoff_context_threshold_hook")
+    original_marker_path = threshold_module.fired_marker_path
+    try:
+        threshold_module.fired_marker_path = raise_instead
+        marker_fault = hook.clear_fired_marker("s-path-fails")
+    finally:
+        threshold_module.fired_marker_path = original_marker_path
+    check("a marker path that cannot be computed: the line names the session and says why no path",
+          "clearing the fired marker failed" in marker_fault
+          and "Tell the user that the fired marker for session s-path-fails was not deleted. "
+              "Its path cannot be named here, because only handoff-context-threshold-hook.py "
+              "defines it and its fired_marker_path() failed." in marker_fault,
+          marker_fault)
 
     # ---- the marker name has one definition ------------------------------
 
