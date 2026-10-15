@@ -270,9 +270,20 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
             "--log-dir", str(logs)]
         if arguments.recorded_inputs_directory:
             command += ["--recorded-inputs-directory", arguments.recorded_inputs_directory]
-        completed, seconds_waiting_for_lock, lock_never_released = (
-            daily.run_test_suite_runner_waiting_for_the_machine_lock(
-                command, checkout, monotonic, stream_to=stream_for_the_runners_output()))
+        try:
+            completed, seconds_waiting_for_lock, lock_never_released = (
+                daily.run_test_suite_runner_waiting_for_the_machine_lock(
+                    command, checkout, monotonic, stream_to=stream_for_the_runners_output()))
+            copy_failure = None
+        except daily.RunnerOutputCopyFailed as failure:
+            completed, lock_never_released, copy_failure = failure.completed, False, failure.reason
+        if copy_failure is not None:
+            steps_failed.append((
+                f"writing {run_all_test_suites.PROGRAM}'s output to this program's stderr "
+                f"failed ({copy_failure}); the runner ran to its end and its output is in "
+                "the record, but a run whose output was lost on the way is no verdict",
+                "Run this again with a stderr that can be written, such as a file or a "
+                "terminal that stays open."))
         if lock_never_released:
             steps_failed.append(
                 daily.lock_never_taken_step_failed(completed, seconds_waiting_for_lock))

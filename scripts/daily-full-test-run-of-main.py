@@ -282,31 +282,64 @@ def remove_worktree_of_main(clone: Path, worktree: Path):
     return None
 
 
+class RunnerOutputCopyFailed(Exception):
+    """Writing a runner's line to stream_to failed; the runner still ran to its end.
+
+    completed holds everything the runner printed and its exit code, as subprocess.run
+    would."""
+
+    def __init__(self, reason: str, completed: subprocess.CompletedProcess):
+        super().__init__(reason)
+        self.reason = reason
+        self.completed = completed
+
+
 def subprocess_run_copying_each_output_line_as_it_arrives(arguments, worktree: Path,
                                                           environment, stream_to):
-    """subprocess.run with captured text output, each line also written to stream_to."""
+    """subprocess.run with captured text output, each line also written to stream_to.
+
+    When a write to stream_to fails, copying stops but reading goes on, so the runner
+    is never blocked on a full pipe and every line is kept; RunnerOutputCopyFailed is
+    raised once the runner has exited."""
     process = subprocess.Popen(
         arguments, cwd=str(worktree), env=environment, stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
     captured = {"stdout": [], "stderr": []}
+    copy_failures = []
     stream_lock = threading.Lock()
 
     def copy(pipe, kept):
         for line in pipe:
             kept.append(line)
             with stream_lock:
-                stream_to.write(line)
-                stream_to.flush()
+                if copy_failures:
+                    continue
+                try:
+                    stream_to.write(line)
+                    stream_to.flush()
+                except (OSError, ValueError) as error:
+                    copy_failures.append(f"{type(error).__name__}: {error}")
 
     copiers = [threading.Thread(target=copy, args=(process.stdout, captured["stdout"])),
                threading.Thread(target=copy, args=(process.stderr, captured["stderr"]))]
     for copier in copiers:
         copier.start()
-    for copier in copiers:
-        copier.join()
-    return subprocess.CompletedProcess(arguments, process.wait(),
-                                       stdout="".join(captured["stdout"]),
-                                       stderr="".join(captured["stderr"]))
+    try:
+        for copier in copiers:
+            copier.join()
+    except BaseException:
+        # An interrupt must not leave the runner running with nothing reading its pipes.
+        process.kill()
+        process.wait()
+        for copier in copiers:
+            copier.join()
+        raise
+    completed = subprocess.CompletedProcess(arguments, process.wait(),
+                                            stdout="".join(captured["stdout"]),
+                                            stderr="".join(captured["stderr"]))
+    if copy_failures:
+        raise RunnerOutputCopyFailed(copy_failures[0], completed)
+    return completed
 
 
 def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, monotonic,

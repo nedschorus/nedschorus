@@ -41,6 +41,8 @@ if go_on:
         time.sleep(0.05)
     if not os.path.exists(go_on):
         sys.exit(9)
+for _ in range(int(os.environ.get("MERGE_LANE_HEAD_TEST_RUN_TEST_EXTRA_STDERR_LINES", "0"))):
+    print("y" * 200, file=sys.stderr)
 print(f"SUMMARY: fake summary for {os.path.basename(checkout)}")
 print("a line on stderr", file=sys.stderr)
 sys.exit(exit_code)
@@ -152,6 +154,34 @@ def main():
               first == "a progress line on stderr\n" and live.returncode == 0
               and stdout == "PR 7 head test run: exit 0; SUMMARY: fake summary for pr7-merged\n",
               f"exit {live.returncode}\n{first!r}\n{stdout}{rest}")
+
+        # The program's stderr is a pipe whose reading end is closed, so each write to it
+        # fails; the run prints far more than a pipe holds.
+        unread = subprocess.Popen(
+            [sys.executable, str(PROGRAM), "7",
+             "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+             "--review-tools-worktree-at-main", str(scratch / "main-checkout")],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env={**os.environ, "MERGE_LANE_HEAD_TEST_RUN_TEST_LOG": str(scratch / "unread.log"),
+                 "MERGE_LANE_HEAD_TEST_RUN_TEST_EXITS": "{}",
+                 "MERGE_LANE_HEAD_TEST_RUN_TEST_EXTRA_STDERR_LINES": "2001"})
+        unread.stderr.close()
+        try:
+            stdout = unread.stdout.read()
+            unread.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            unread.kill()
+            stdout = "still running after 60 s"
+        lines = stdout.splitlines()
+        check("when writing the run's stderr to the program's stderr fails, the run still "
+              "goes to its end, its stderr file is whole, and the program says so with the "
+              "run's process id, keeps the summary line unchanged, and exits 2",
+              unread.returncode == 2 and len(lines) == 2
+              and lines[0].startswith("PR 7 head test run, process ")
+              and "writing its stderr to stderr failed (BrokenPipeError" in lines[0]
+              and lines[1] == "PR 7 head test run: exit 0; SUMMARY: fake summary for pr7-merged"
+              and len((helpers / "hr" / "pr7" / "stderr").read_text().splitlines()) == 2002,
+              f"exit {unread.returncode}\n{stdout}")
 
         shutil.rmtree(helpers / "tripwire-bin")
         completed, calls = run_program(scratch, helpers, {}, "7")

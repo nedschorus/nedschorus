@@ -1061,6 +1061,30 @@ def run_cases_on_ned_box(workspace: Path):
           and any(line.startswith(f"runner: {runner_beside_the_program}, ")
                   for line in record_lines), f"{commands_run!r}\n{result!r}")
 
+    def runner_whose_output_could_not_be_copied(command, run_from, monotonic, stream_to=None):
+        raise daily.RunnerOutputCopyFailed(
+            "OSError: [Errno 32] Broken pipe",
+            subprocess.CompletedProcess(
+                command, 0, stdout=f"{fixture.runner_first_line()}\n{PASSING_SUMMARY_LINE}\n",
+                stderr=""))
+
+    daily.run_test_suite_runner_waiting_for_the_machine_lock = (
+        runner_whose_output_could_not_be_copied)
+    try:
+        result = fixture.run(runner_program=None)
+    finally:
+        daily.run_test_suite_runner_waiting_for_the_machine_lock = saved_function
+    record_lines = (fixture.record("ned-box") or "").splitlines()
+    check("when writing the runner's output to stderr fails, the run gives no verdict "
+          "even though the runner passed: exit 4, and the record says the copy failed and "
+          "still holds the runner's SUMMARY line",
+          result.code == 4
+          and any("output to this program's stderr failed (OSError: [Errno 32] Broken "
+                  "pipe); the runner ran to its end" in line for line in record_lines)
+          and PASSING_SUMMARY_LINE in record_lines
+          and record_lines[-1:] == ["pull-request-head-test-run exit code: 4"],
+          f"{result!r}\n{record_lines!r}")
+
     result = fixture.run(runner_program=Path("scripts") / "run-all-test-suites.py",
                          started_in=fixture.reference)
     record_lines = (fixture.record("ned-box") or "").splitlines()

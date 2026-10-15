@@ -85,12 +85,29 @@ def main(argv=None):
                  "--recorded-inputs-directory", str(helpers / "hr" / "store")],
                 cwd=helpers, env=environment, stdin=subprocess.DEVNULL,
                 stdout=stdout, stderr=subprocess.PIPE, text=True, errors="replace")
+            copy_failures = {}
+            # A failed write stops copying to that target only; the pipe is still read
+            # to its end, so the run is never left blocked on it.
             for line in run.stderr:
-                stderr.write(line)
-                stderr.flush()
-                sys.stderr.write(line)
-                sys.stderr.flush()
+                for target, name in ((stderr, f"{outputs}/stderr"), (sys.stderr, "stderr")):
+                    if name in copy_failures:
+                        continue
+                    try:
+                        target.write(line)
+                        target.flush()
+                    except (OSError, ValueError) as error:
+                        copy_failures[name] = f"{type(error).__name__}: {error}"
+                        if target is sys.stderr:
+                            # Python flushes sys.stderr again at exit, and a failure there
+                            # would replace this program's exit code with 120.
+                            sys.stderr = open(os.devnull, "w")
             completed = subprocess.CompletedProcess(run.args, run.wait())
+        for name, failure in copy_failures.items():
+            print(f"PR {number} head test run, process {run.pid}: writing its stderr to "
+                  f"{name} failed ({failure}); the run went on to its end, and its stderr "
+                  "from that line on is not there.", flush=True)
+            if first_failure == 0:
+                first_failure = 2
         summaries = [line for line in (outputs / "stdout").read_text().splitlines()
                      if line.startswith(SUMMARY_LINE_PREFIX)]
         summary = summaries[-1] if summaries else f"no SUMMARY line; see {outputs}/stderr"

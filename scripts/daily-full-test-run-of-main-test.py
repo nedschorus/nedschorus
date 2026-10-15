@@ -27,10 +27,12 @@ import io
 import json
 import os
 import re
+import signal
 import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -978,6 +980,97 @@ def run_line_copying_cases(workspace: Path):
           "would keep them",
           completed.stdout == "first on stdout\nafter\n"
           and completed.stderr == "first on stderr\n", repr(completed))
+
+    class StreamThatCannotBeWritten:
+        def write(self, text):
+            raise BrokenPipeError(32, "Broken pipe")
+
+        def flush(self):
+            pass
+
+    def run_bounded(child, stream):
+        """Return what the call raised or returned, or a note that it was still running."""
+        outcomes = []
+
+        def call():
+            try:
+                outcomes.append(program.subprocess_run_copying_each_output_line_as_it_arrives(
+                    [sys.executable, "-c", child], workspace, os.environ.copy(), stream))
+            except program.RunnerOutputCopyFailed as failure:
+                outcomes.append(failure)
+
+        # In a thread with a bound, so a runner blocked on a pipe nobody reads fails
+        # the case instead of hanging the suite.
+        caller = threading.Thread(target=call, daemon=True)
+        caller.start()
+        caller.join(30)
+        return outcomes[0] if outcomes else "still running after 30 s"
+
+    ten_lines_and_a_summary = ("for number in range(10):\n"
+                               "    print(f'line {number}', flush=True)\n"
+                               "print('SUMMARY: done', flush=True)\n")
+    outcome = run_bounded(ten_lines_and_a_summary, StreamThatCannotBeWritten())
+    check("when a write to stream_to fails, the failure is passed up as "
+          "RunnerOutputCopyFailed naming the error, and the runner's 11 lines, SUMMARY "
+          "line included, and its exit code 0 are all kept",
+          isinstance(outcome, program.RunnerOutputCopyFailed)
+          and "Broken pipe" in outcome.reason and outcome.completed.returncode == 0
+          and len(outcome.completed.stdout.splitlines()) == 11
+          and outcome.completed.stdout.endswith("SUMMARY: done\n"), repr(outcome))
+
+    two_thousand_and_one_lines = ("import sys\n"
+                                  "for number in range(2001):\n"
+                                  "    print('x' * 200, flush=True)\n"
+                                  "    print('y' * 200, file=sys.stderr, flush=True)\n")
+    outcome = run_bounded(two_thousand_and_one_lines, StreamThatCannotBeWritten())
+    check("after a failed write the pipes are still read, so a runner printing far more "
+          "than a pipe holds runs to its end instead of blocking",
+          isinstance(outcome, program.RunnerOutputCopyFailed)
+          and outcome.completed.returncode == 0
+          and len(outcome.completed.stdout.splitlines()) == 2001
+          and len(outcome.completed.stderr.splitlines()) == 2001,
+          outcome if isinstance(outcome, str) else repr(outcome.completed.returncode))
+
+    # A runner that would print for a minute, so only an interrupt ends it early.
+    pid_file = workspace / "line-copying" / "runner-pid"
+    noisy_child = ("import os, pathlib, sys, time\n"
+                   f"pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+                   "deadline = time.monotonic() + 60\n"
+                   "while time.monotonic() < deadline:\n"
+                   "    print('x' * 200, flush=True)\n")
+
+    class StreamThatInterruptsThisProgram:
+        def __init__(self):
+            self.sent = False
+
+        def write(self, text):
+            if not self.sent:
+                self.sent = True
+                os.kill(os.getpid(), signal.SIGINT)
+
+        def flush(self):
+            pass
+
+    try:
+        program.subprocess_run_copying_each_output_line_as_it_arrives(
+            [sys.executable, "-c", noisy_child], workspace, os.environ.copy(),
+            StreamThatInterruptsThisProgram())
+        outcome = "returned"
+    except KeyboardInterrupt:
+        outcome = "interrupted"
+    check("an interrupt while waiting for the runner is passed on, and the runner is "
+          "stopped and reaped, not left running with nothing reading its output",
+          outcome == "interrupted" and pid_file.is_file()
+          and not pid_is_running(int(pid_file.read_text())),
+          f"{outcome} {pid_file.read_text() if pid_file.is_file() else 'no pid file'}")
+
+
+def pid_is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
 
 
 with tempfile.TemporaryDirectory() as temporary_directory:
