@@ -887,9 +887,16 @@ DO_NOT_MERGE_DELETED = (
     "Do not merge origin/main into the branch: origin/main removed the file(s) "
     "above, so a hand-merge would either bring a removed file back or drop the "
     "branch's change to it.")
-FIND_DELETING_COMMIT = (
-    "If a deleting commit is not named above, find it with git log "
-    "--diff-filter=D origin/main -- <file>.")
+
+
+def unnamed_check(path):
+    """The RENAME CHECK line for a file whose deleting commit git did not name."""
+    return ("RENAME CHECK: git did not name the commit on origin/main that "
+            "deleted %s, so %s may have been renamed to a name this run could "
+            "not find; check with git log --full-history --diff-filter=D "
+            "--name-status %s..%s -- %s."
+            % (path, path, RESOLVED_HEAD[:12], RESOLVED_BASE[:12], path))
+
 CLOSE_NAMING_DELETION = (
     "If the branch has a pull request, close it with a comment naming the "
     "commit that deleted each file.")
@@ -928,8 +935,8 @@ HAND_MERGE_STEPS = (
     "description.")
 CLOSE_IF_ANY_DELETED = (
     "If any file marked DELETED ON or DELETED OR RENAMED was deleted, do not "
-    "merge: close the pull request with a comment naming the commit that "
-    "deleted it, and carry what origin/main still lacks on a new topic branch "
+    "merge: close the pull request with a comment naming, for each deleted "
+    "file, the commit that deleted it, and carry what origin/main still lacks on a new topic branch "
     "cut from current origin/main, in a new pull request that names the "
     "closed one; on that branch, carry the branch's change to each renamed "
     "file onto its new name.")
@@ -954,24 +961,45 @@ status, lines = run(fake_runner(
 case("a path with only the head's version is an ordinary hand-merge",
      status == CHECK.EXIT_CONFLICT and lines == conflict_block())
 
-# The base deleted the file, but the deleting commit cannot be found: the file
-# is still named, and the agent is told how to find the commit.
+# The base deleted the file, but git does not name the deleting commit, so no
+# rename lookup runs: the file is named, with a RENAME CHECK that gives the
+# exact command, and the one block, never the plain close.
 log = []
 status, lines = run(fake_runner(
     merge_tree_status=1, log=log,
     merge_tree_output=merge_tree_z(("1", "gone"), ("3", "gone"))))
 case("a file the base deleted exits 1", status == CHECK.EXIT_CONFLICT)
-case("a file the base deleted, its commit not found, is still named, with "
-     "how to find the commit", lines == [
+case("a file the base deleted, its commit not found, is named with a RENAME "
+     "CHECK that gives the exact command, and gets the one block", lines == [
          "VERDICT: CONFLICT -- %s conflicts with origin/main, and origin/main "
          "deleted 1 file(s) the branch changes." % HEAD_LABEL,
          "DELETED ON origin/main: gone, by a commit this run could not find",
-         DO_NOT_MERGE_DELETED, FIND_DELETING_COMMIT, CLOSE_NAMING_DELETION,
-         CARRY_WHAT_MAIN_LACKS,
-     ])
+         unnamed_check("gone"),
+     ] + RENAME_BLOCK)
 case("the deleting commit is looked up only among commits the branch lacks",
      ["git", "log", "-1", "--format=%H", "--diff-filter=D",
       "%s..%s" % (RESOLVED_HEAD, RESOLVED_BASE), "--", "gone"] in log)
+
+DELETING_COMMIT_FOR_PAIR = "c" * 40
+
+
+def with_deleting_diff_for(deleting_logs, diff, **fake):
+    """A fake whose deleting-commit lookup answers per path from deleting_logs
+    (a path not in it gets git log's empty answer), and whose diff-tree gives
+    diff."""
+    inner = fake_runner(**fake)
+
+    def runner(command):
+        if command[:2] == ["git", "diff-tree"]:
+            return diff
+        if command[:2] == ["git", "log"] and "--diff-filter=D" in command \
+                and "--reverse" not in command:
+            return deleting_logs.get(command[-1], (0, ""))
+        if command[:2] == ["git", "log"] and "--reverse" in command:
+            return 0, ""
+        return inner(command)
+    return runner
+
 
 # git log exits 0 and prints nothing when no commit in the range deleted the
 # path: that is "not found" too, never a commit with no hash.
@@ -982,7 +1010,24 @@ case("a deleting-commit lookup that exits 0 with no output is not found",
      status == CHECK.EXIT_CONFLICT and len(lines) > 1
      and lines[1] == "DELETED ON origin/main: gone, by a commit this run "
                      "could not find"
-     and FIND_DELETING_COMMIT in lines)
+     and unnamed_check("gone") in lines
+     and not any(line in OLD_CLOSE_LINES for line in lines))
+
+# One file with no deleting commit found, beside one renamed: each keeps its
+# own line, the unnamed one its RENAME CHECK, under the one block.
+status, lines = run(with_deleting_diff_for(
+    {"a.txt": (0, DELETING_COMMIT_FOR_PAIR)},
+    (0, "R020\0a.txt\0a2.txt\0"),
+    merge_tree_status=1, merge_tree_output=merge_tree_z(
+        ("1", "a.txt"), ("3", "a.txt"), ("1", "gone"), ("3", "gone"))))
+case("a file whose deleting commit git did not name, beside a renamed file, "
+     "gets its RENAME CHECK under the one block, and no placeholder <file>",
+     status == CHECK.EXIT_CONFLICT
+     and "DELETED ON origin/main: gone, by a commit this run could not find"
+         in lines
+     and unnamed_check("gone") in lines
+     and lines[-5:] == RENAME_BLOCK
+     and not any("<file>" in line for line in lines))
 
 
 # A rename git missed: the deleting commit's own diff, read with a low
@@ -1031,7 +1076,8 @@ case("a deleting commit whose files git cannot list is reported, and the one "
 LATER_COMMIT = "d" * 40
 
 
-def with_two_renames(later_log, later_diff, log=None, later_diffs=None, **fake):
+def with_two_renames(later_log, later_diff, log=None, later_diffs=None,
+                     deleting_diff=(0, "R020\0a.txt\0a2.txt\0"), **fake):
     inner = fake_runner(**fake)
 
     def runner(command):
@@ -1039,7 +1085,7 @@ def with_two_renames(later_log, later_diff, log=None, later_diffs=None, **fake):
             log.append(command)
         if command[:2] == ["git", "diff-tree"]:
             if DELETING_COMMIT in command[-1]:
-                return 0, "R020\0a.txt\0a2.txt\0"
+                return deleting_diff
             return (later_diffs or {}).get(command[-1], later_diff)
         if command[:2] == ["git", "log"] and "--diff-filter=D" in command:
             return (later_log if "--reverse" in command
@@ -1148,6 +1194,38 @@ case("a candidate git cannot look up at the base is reported on a RENAME CHECK "
          "a.txt may have been renamed to it; check with git ls-tree --full-tree "
          "--name-only %s -- a2.txt." % RESOLVED_BASE[:12] in lines
      and lines[-5:] == RENAME_BLOCK)
+
+status, lines = run(fake_runner(
+    merge_tree_status=1, deleting_log=(128, ""),
+    merge_tree_output=merge_tree_z(("1", "gone"), ("3", "gone"))))
+case("a deleting-commit lookup git fails is reported on a RENAME CHECK line, "
+     "not read as a plain deletion", status == CHECK.EXIT_CONFLICT
+     and unnamed_check("gone") in lines and lines[-5:] == RENAME_BLOCK
+     and not any(line in OLD_CLOSE_LINES for line in lines))
+
+# Two candidates of one file, both gone from the base and both deleted later by
+# one commit whose files git cannot list: that commit gets one RENAME CHECK.
+status, lines = run(with_two_renames(
+    (0, LATER_COMMIT), (128, ""), merge_tree_status=1,
+    merge_tree_output=merge_tree_z(("1", "foo-bar.txt"), ("3", "foo-bar.txt")),
+    deleting_diff=(0, "R020\0foo-bar.txt\0foo-bar-2.txt\0A\0foo-bar-3.txt\0"),
+    missing_at_base=("foo-bar-2.txt", "foo-bar-3.txt")))
+case("a later commit two candidates lead to, whose files git cannot list, gets "
+     "one RENAME CHECK line, not two",
+     sum(line.startswith("RENAME CHECK: git could not list the files commit %s"
+                         % LATER_COMMIT[:12]) for line in lines) == 1)
+
+# A candidate reached through two commits that git cannot look up at the base
+# gets one RENAME CHECK line.
+status, lines = run(with_two_renames(
+    (0, LATER_COMMIT), (0, "R100\0a2.txt\0x.txt\0"), merge_tree_status=1,
+    merge_tree_output=ONE_DELETED,
+    deleting_diff=(0, "R020\0a.txt\0a2.txt\0R020\0a.txt\0x.txt\0"),
+    missing_at_base=("a2.txt",), unlookable_at_base=("x.txt",)))
+case("a candidate git cannot look up, reached through two commits, gets one "
+     "RENAME CHECK line, not two",
+     sum(line.startswith("RENAME CHECK: git could not tell whether origin/main "
+                         "holds x.txt") for line in lines) == 1)
 
 status, lines = run(with_deleting_diff(
     (0, "R020\0a.txt\0a2.txt\0"), merge_tree_status=1,

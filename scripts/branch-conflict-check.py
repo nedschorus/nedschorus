@@ -137,7 +137,8 @@ def paths_deleted_on_base(stages):
 
 
 def deleting_commit(path, base_hash, head_hash, runner=run):
-    """Return the base-side commit that deleted path, or None."""
+    """Return the base-side commit that deleted path, or None when git failed
+    or named none."""
     status, out = runner(["git", "log", "-1", "--format=%H", "--diff-filter=D",
                           "%s..%s" % (head_hash, base_hash), "--", path])
     return out if status == 0 and out else None
@@ -272,16 +273,22 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
         "the branch changes." % (commit_label(head_hash, runner), base, base,
                                  len(deleted)),
     ]
-    unnamed = False
     renamed = 0
     checks = []
     for staged in deleted:
         path = own_path(staged, messages, RENAMES_FOR_A_FILE_THE_BASE_DELETED)
         commit = deleting_commit(path, base_hash, head_hash, runner)
         if commit is None:
-            unnamed = True
+            # Without the deleting commit no rename lookup runs, so the file
+            # may have been renamed as much as deleted.
             lines.append("DELETED ON %s: %s, by a commit this run could not find"
                          % (base, path))
+            checks.append(
+                "RENAME CHECK: git did not name the commit on %s that deleted "
+                "%s, so %s may have been renamed to a name this run could not "
+                "find; check with git log --full-history --diff-filter=D "
+                "--name-status %s..%s -- %s."
+                % (base, path, path, head_hash[:12], base_hash[:12], path))
             continue
         found, unlisted, unfollowed, unchecked = candidates_at_base(
             path, commit, base_hash, runner)
@@ -311,7 +318,7 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
             "could not find; check with git log --full-history --diff-filter=D "
             "%s..%s -- %s." % (base, commit_label(after, runner), candidate, path,
                                after[:12], base_hash[:12], candidate)
-            for candidate, after in dict.fromkeys(unfollowed)]
+            for candidate, after in unfollowed]
         checks += [
             "RENAME CHECK: git could not tell whether %s holds %s, so %s may "
             "have been renamed to it; check with git ls-tree --full-tree "
@@ -338,10 +345,6 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
             "RENAME CHECK that names it. A file with no \"possibly\" on its line and "
             "no RENAME CHECK naming it was deleted."
             % (marked, base, base))
-        if unnamed:
-            lines.append(
-                "If a deleting commit is not named above, find it with git log "
-                "--diff-filter=D %s -- <file>." % base)
         lines += [
             "If every file marked DELETED ON or DELETED OR RENAMED was renamed, "
             "merge %s into the branch by hand, with the frozen head as first "
@@ -354,8 +357,8 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
             "commit once, naming the files you resolved in the merge's commit "
             "message and in the pull request's description.",
             "If any file marked DELETED ON or DELETED OR RENAMED was deleted, do "
-            "not merge: close the pull request with a comment naming the commit "
-            "that deleted it, and carry what %s still lacks on a new topic "
+            "not merge: close the pull request with a comment naming, for each "
+            "deleted file, the commit that deleted it, and carry what %s still lacks on a new topic "
             "branch cut from current %s, in a new pull request that names the "
             "closed one; on that branch, carry the branch's change to each "
             "renamed file onto its new name%s."
@@ -369,10 +372,6 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
         "Do not merge %s into the branch: %s removed the file(s) above, so a "
         "hand-merge would either bring a removed file back or drop the "
         "branch's change to it." % (base, base))
-    if unnamed:
-        lines.append(
-            "If a deleting commit is not named above, find it with git log "
-            "--diff-filter=D %s -- <file>." % base)
     lines += [
         "If the branch has a pull request, close it with a comment naming the "
         "commit that deleted each file.",
