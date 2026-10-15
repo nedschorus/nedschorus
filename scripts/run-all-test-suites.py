@@ -84,7 +84,8 @@ reachable; a private /dev and System V IPC; the home directory, an empty
 tmpfs the suite may write, into which only the paths in
 TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY are bound, read-only, each with the
 reason suites need it, so no credential in the home directory is there; the
-checkout under test, bound writable, so what the suite writes there stays;
+checkout under test, a copy-on-write overlay the suite may write, so nothing
+it writes there survives the suite;
 and the suite's own input record and strace traces, which this program reads
 after the suite ends. An interpreter given with --python from inside the home
 directory is shown read-only too. The directories in
@@ -1683,8 +1684,8 @@ class MachineWideTestSuiteAdmission:
             self.last_report = now
             reasons = sorted(set(self.waiting.values()))
             count = len(self.waiting)
-        self.say(f"{count} suite{'s' if count != 1 else ''} of this run wait to start: "
-                 + "; ".join(reasons))
+        self.say(f"{count} suite{'s' if count != 1 else ''} of this run "
+                 f"{'wait' if count != 1 else 'waits'} to start: " + "; ".join(reasons))
 
     def cancel(self):
         """Stop admitting: every suite still waiting raises MachineWideTestSuiteAdmissionCancelled."""
@@ -2107,8 +2108,8 @@ def directories_this_account_can_create_files_in_hidden_in_test_sandbox():
     if unhidden:
         raise SignalSandboxCouldNotStart(
             f"{', '.join(unhidden)}, which the scan for directories this account can write "
-            f"never walks, would not be hidden whole in the test sandbox, so what they hold "
-            f"would show inside it")
+            f"never walks, would not be hidden whole in the test sandbox, so what "
+            f"{'it holds' if len(unhidden) == 1 else 'they hold'} would show inside it")
     pruned = tuple(dict.fromkeys(
         (*pruned, *TEST_SANDBOX_DIRECTORIES_THE_WRITABLE_DIRECTORY_SCAN_NEVER_WALKS)))
     expression = []
@@ -2394,7 +2395,8 @@ def uncovered_listening_sockets_report_line_or_none(proc_net_unix="/proc/net/uni
     if not unreachable:
         return None
     return ("listening sockets left uncovered in each test sandbox, because this program "
-            "cannot reach them and so neither can a suite: " + ", ".join(sorted(set(unreachable))))
+            "cannot reach them and so neither can a suite: " + ", ".join(sorted(set(unreachable)))
+            + "; the run goes on, and nothing needs doing")
 
 
 def command_prefix_starting_one_suite_in_its_test_sandbox(sandbox_prefix, checkout, writable_paths=(),

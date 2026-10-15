@@ -526,6 +526,32 @@ with tempfile.TemporaryDirectory() as scratch_name:
             refused = True
         check(f"a suite path outside the checkout is refused: {outside}", refused)
 
+# --- What the launch shows read-only in the test sandbox ----------------------
+
+class LaunchPathsRecorded(Exception):
+    pass
+
+
+with tempfile.TemporaryDirectory() as scratch_name:
+    top = pathlib.Path(scratch_name).resolve()
+    asked = []
+    original_paths = program.runner.paths_one_suite_launch_needs_shown_read_only_in_test_sandbox
+
+    def record_paths_asked(interpreters, program_files, checkout=None):
+        asked.append(checkout)
+        raise LaunchPathsRecorded()
+    program.runner.paths_one_suite_launch_needs_shown_read_only_in_test_sandbox = record_paths_asked
+    try:
+        program.run_suite_confined(top, "a-test.py", sys.executable, (), top / "proof",
+                                   platform="linux")
+    except LaunchPathsRecorded:
+        pass
+    finally:
+        program.runner.paths_one_suite_launch_needs_shown_read_only_in_test_sandbox = original_paths
+    check("on Linux, the launch names the checkout under test, so a program file inside it "
+          "gets no read-only directory over the writable checkout",
+          asked == [top], asked)
+
 # --- Refusals that run nothing ------------------------------------------------
 
 with tempfile.TemporaryDirectory() as scratch_name:

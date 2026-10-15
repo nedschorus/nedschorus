@@ -460,8 +460,10 @@ if linux_only_cases_run_here("the covers over listening sockets, and a test sand
             check("a listening socket this program cannot reach is named as uncovered, with its error",
                   any(entry.startswith(unreachable_path + " (") for entry in unreachable), unreachable)
             line = runner.uncovered_listening_sockets_report_line_or_none(str(listing))
-            check("the run's report names a listening socket left uncovered because it cannot be reached",
-                  line is not None and unreachable_path in line and vanished not in line, line)
+            check("the run's report names a listening socket left uncovered because it cannot be "
+                  "reached, and says the run goes on",
+                  line is not None and unreachable_path in line and vanished not in line
+                  and "the run goes on" in line, line)
         else:
             print("SKIP  an unreachable socket: root can reach every path")
         listing.write_text(proc_net_unix_listing([vanished]))
@@ -1042,6 +1044,29 @@ if linux_only_cases_run_here("the run of the runner's test files as if on a Mac"
                   code == 0 and not failed and lines == ["loaded"],
                   (code, failed, lines[1:] if lines[:1] == ["loaded"] else lines,
                    output[-800:] if code else ""))
+
+# --- The refusal naming directories the writable-directory scan never walks ----------
+with tempfile.TemporaryDirectory() as scratch_name:
+    never_walked = [os.path.join(scratch_name, name) for name in ("first", "second")]
+    for path in never_walked:
+        os.mkdir(path)
+    original_never_walked = runner.TEST_SANDBOX_DIRECTORIES_THE_WRITABLE_DIRECTORY_SCAN_NEVER_WALKS
+    for named, pronoun in ((never_walked[:1], "what it holds"), (never_walked, "what they hold")):
+        runner.TEST_SANDBOX_DIRECTORIES_THE_WRITABLE_DIRECTORY_SCAN_NEVER_WALKS = tuple(named)
+        runner.directories_this_account_can_create_files_in_hidden_in_test_sandbox.cache_clear()
+        try:
+            runner.directories_this_account_can_create_files_in_hidden_in_test_sandbox()
+            refusal = None
+        except runner.SignalSandboxCouldNotStart as error:
+            refusal = str(error)
+        finally:
+            runner.TEST_SANDBOX_DIRECTORIES_THE_WRITABLE_DIRECTORY_SCAN_NEVER_WALKS = \
+                original_never_walked
+            runner.directories_this_account_can_create_files_in_hidden_in_test_sandbox.cache_clear()
+        check(f"the refusal naming {len(named)} directory(ies) the scan never walks says "
+              f"\"{pronoun}\"",
+              refusal is not None and all(path in refusal for path in named)
+              and f"so {pronoun} would show inside it" in refusal, refusal)
 
 print()
 print(f"{cases_run} cases run")
