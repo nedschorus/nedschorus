@@ -733,8 +733,9 @@ def main(argv=None):
         # stopped; the innermost frame is often inside the standard library.
         where = [frame for frame in traceback.extract_tb(error.__traceback__)
                  if os.path.realpath(frame.filename) == os.path.realpath(__file__)][-1]
-        print(f"REPLAY FAILED: {type(error).__name__}: {error}\n  raised at {Path(where.filename).name}:"
-              f"{where.lineno}: {where.line}", file=sys.stderr)
+        this_file = Path(os.path.realpath(__file__))
+        print(f"REPLAY FAILED: {type(error).__name__}: {error}\n  raised at "
+              f"{this_file.relative_to(this_file.parents[2])}:{where.lineno}: {where.line}", file=sys.stderr)
         return 2
 
 

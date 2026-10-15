@@ -74,6 +74,14 @@ def commit_with_guard_changed(guard_path, appended_code, scratch):
     return commit_with_change(append, scratch)
 
 
+def scratch_directory_removal_failures(directory):
+    """Remove directory and return one line per path that could not be removed."""
+    import shutil
+    could_not_remove = []
+    shutil.rmtree(directory, onexc=lambda _, path, error: could_not_remove.append(f"{path}: {error}"))
+    return could_not_remove
+
+
 def worktrees_registered_under(directory):
     # git lists resolved paths; on macOS the scratch directory is named through the /var symlink.
     resolved = os.path.realpath(directory)
@@ -277,6 +285,8 @@ try:
           status == 2 and "REPLAY FAILED: FileNotFoundError" in errors.getvalue(), f"status {status}\n{errors.getvalue()}")
     check("a replay failure from an unforeseen error names the line that raised it",
           "raised at " in errors.getvalue() and "read_text()" in errors.getvalue(), errors.getvalue())
+    check("the line that raised is named by its path from the repository root, so a reader can open it",
+          f"raised at {SCRIPT_PATH.relative_to(REPOSITORY_ROOT)}:" in errors.getvalue(), errors.getvalue())
 
     remove_checkouts_as_written = replay.remove_checkouts
     replay.remove_checkouts = lambda repository, checkouts: (
@@ -579,10 +589,21 @@ try:
         replay.os.killpg = killpg_as_written
     check("a step whose process group macOS will not signal once it has exited: exit 0, not a replay failure",
           status == 0 and "NO VERDICT CHANGED" in out, f"status {status}\n{out}\n{err}")
+
+    unremovable = Path(scratch) / "unremovable"
+    (unremovable / "locked").mkdir(parents=True)
+    (unremovable / "locked" / "file").write_text("x")
+    (unremovable / "locked").chmod(0o500)
+    try:
+        could_not_remove = scratch_directory_removal_failures(unremovable)
+    finally:
+        (unremovable / "locked").chmod(0o700)
+    check("a scratch directory that cannot be removed is reported, naming the path",
+          could_not_remove and str(unremovable / "locked" / "file") in could_not_remove[0], could_not_remove)
 finally:
     # The test's checkouts are registered only in its own clone, which goes with the scratch directory.
-    import shutil
-    shutil.rmtree(scratch, ignore_errors=True)
+    could_not_remove = scratch_directory_removal_failures(scratch)
+    check("the scratch directory is removed after the run", not could_not_remove, "\n".join(could_not_remove))
 
 if failures:
     print(f"{len(failures)} failed")
