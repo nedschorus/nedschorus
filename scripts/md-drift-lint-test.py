@@ -697,6 +697,11 @@ with tempfile.TemporaryDirectory() as overview_workspace:
         asked.clear()
         problems_for(f"## Components\n\n- GHI [Open one]({url}1)\n", root, OVERVIEW_NAME)
         check("a GHI outside Planned work is not asked about", asked == [], str(asked))
+        findings = problems_for(
+            f"## Planned work\n\n```\n- GHI [Old title]({url}9)\n```\n",
+            root, OVERVIEW_NAME)
+        check("a GHI in a fenced code block under Planned work is neither checked nor asked about",
+              findings == [] and asked == [], f"{findings} {asked}")
     finally:
         lint.github_issue_states_and_titles = real_query
 
