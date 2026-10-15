@@ -640,9 +640,10 @@ def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers)
     check("a kill-session that got no answer says the kill's outcome is unknown and how to check",
           code == 1 and errors == ("resupervise-seat: it is unknown whether the stale tmux "
                                    "session dryprobe (tmux socket name dryprobe) was killed: "
-                                   "tmux could not be run, or did not answer within 30 seconds; "
-                                   "check with: tmux -L dryprobe has-session -t '=dryprobe'. "
-                                   "No agent was started\n"),
+                                   "tmux could not be run, or did not answer within 30 seconds. "
+                                   "To check, run the command on the next line. "
+                                   "No agent was started\n"
+                                   "tmux -L dryprobe has-session -t '=dryprobe'\n"),
           f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
     stub_answers({("has-session", "dryprobe"): (0, ""),
@@ -665,8 +666,9 @@ def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers)
                                    "session dryprobe (tmux socket name default) was killed: "
                                    "tmux could not be run, or did not answer within 30 seconds; "
                                    "before that, the tmux session dryprobe was killed on tmux "
-                                   "socket name dryprobe; check with: tmux -L default "
-                                   "has-session -t '=dryprobe'. No agent was started\n"),
+                                   "socket name dryprobe. To check, run the command on the next "
+                                   "line. No agent was started\n"
+                                   "tmux -L default has-session -t '=dryprobe'\n"),
           f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
 
