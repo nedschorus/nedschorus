@@ -157,7 +157,8 @@ def main(arguments) -> int:
         claude_json_agent_seat_folder_trust_and_onboarding_presets_write(path, arguments[0])
     except (ClaudeJsonNotAJsonObjectError, OSError) as error:
         print(f"claude-json-agent-seat-folder-trust-and-onboarding-presets-write: {error}. "
-              f"{path} was left unchanged, so the agent-session may stop at Claude Code's "
+              f"{path} was left unchanged, and no agent-session was started, because one "
+              "started without these presets could stop unattended at Claude Code's "
               "folder-trust dialog or onboarding screens.\n"
               + claude_json_presets_failure_remedy(error, path, "launch again"),
               file=sys.stderr)

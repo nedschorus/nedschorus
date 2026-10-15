@@ -185,7 +185,9 @@ def main() -> int:
             after = state.stat()
             check(f"{case_name}: as a program, exit 1 with the cause and what to do on stderr",
                   completed.returncode == 1 and str(state) in completed.stderr
-                  and "left unchanged" in completed.stderr,
+                  and "left unchanged" in completed.stderr
+                  and "no agent-session was started" in completed.stderr
+                  and "may stop at" not in completed.stderr,
                   (completed.returncode, completed.stderr))
             check(f"{case_name}: the one remedy that fits, naming {home}/.claude/backups/",
                   f"{home}/.claude/backups/ {remedy}" in completed.stderr
