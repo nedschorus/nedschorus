@@ -448,7 +448,7 @@ class AddedLineNumbersThatCanOnlyBeLookedUp:
 
 
 try:
-    kept = hook.broken_paragraph_line_ranges_holding_an_added_line(
+    kept = hook.markdown_broken_paragraph_line_ranges_filter_to_ranges_holding_edit_added_lines(
         [(0, 2), (4, 6), (8, 10)], AddedLineNumbersThatCanOnlyBeLookedUp({5, 10}))
 except AssertionError as error:
     kept = str(error)

@@ -293,7 +293,7 @@ def edit_added_line_numbers(tool_response, text_after: str) -> set:
     return added
 
 
-def broken_paragraph_line_ranges_holding_an_added_line(broken_ranges, added_line_numbers) -> list:
+def markdown_broken_paragraph_line_ranges_filter_to_ranges_holding_edit_added_lines(broken_ranges, added_line_numbers) -> list:
     """The [start, end) ranges among broken_ranges that hold a line of added_line_numbers.
     The ranges do not overlap, so looking each of their lines up costs one pass over the file."""
     return [(start, end) for start, end in broken_ranges
@@ -349,7 +349,7 @@ def main() -> int:
             print(f"markdown-edit-hard-wrapped-paragraph-reminder: {error}, so no reminder check was made.",
                   file=sys.stderr)
             return 1
-        broken_ranges = broken_paragraph_line_ranges_holding_an_added_line(broken_ranges, added)
+        broken_ranges = markdown_broken_paragraph_line_ranges_filter_to_ranges_holding_edit_added_lines(broken_ranges, added)
     if not broken_ranges:
         return 0
 
