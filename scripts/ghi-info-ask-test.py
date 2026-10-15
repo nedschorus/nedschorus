@@ -582,7 +582,7 @@ EXPECTED_OPEN_ISSUES_ONLY_HINT = (
     "ghi-info-ask: this answer covers open issues only.\n"
     "To search closed issues as well, such as for precedent or before saying no issue "
     'covers a subject, ask again with --include-closed: scripts/ghi-info-ask.py '
-    '"<question>" --include-closed\n')
+    'q --repo x/y --include-closed\n')
 
 
 def main_with_reply(seat, reply_text, extra_arguments=()):
@@ -658,6 +658,15 @@ try:
               "the hint naming the flag, and leaves stdout the reading list alone",
               exit_code == 0 and out == "read #1\n"
               and err.endswith(EXPECTED_OPEN_ISSUES_ONLY_HINT), (exit_code, out, err))
+
+        check("the hint's command quotes a question with spaces and quotes for the shell, "
+              "and leaves out --repo when the repository is the default",
+              ghi_ask.open_issues_only_include_closed_hint_message(
+                  "Which issues cover Bob's hook?", ghi_ask.DEFAULT_REPO).endswith(
+                  "scripts/ghi-info-ask.py 'Which issues cover Bob'\"'\"'s hook?' "
+                  "--include-closed"),
+              ghi_ask.open_issues_only_include_closed_hint_message(
+                  "Which issues cover Bob's hook?", ghi_ask.DEFAULT_REPO))
 
         seat_closed = root / "seat-reading-list-with-flag"
         seat_closed.mkdir()
