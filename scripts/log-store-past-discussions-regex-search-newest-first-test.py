@@ -171,6 +171,15 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a pattern anchored to a whole message finds that message in the transcripts",
           result.returncode == 0 and "USER: yes" in result.stdout, result.stdout + result.stderr)
 
+    spoken = root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s10.jsonl"
+    write(spoken, transcript_records(agent("heron words of the agent", "2026-10-03T00:00:00Z"),
+                                     typed("heron words of the user", "2026-10-03T00:01:00Z")))
+    finding = run(root, "heron words", "--kind", "user-messages")
+    spoken.unlink()
+    check("user-messages finds the user's words in a transcript and not the agent's",
+          finding.returncode == 0 and "USER: heron words of the user" in finding.stdout
+          and "of the agent" not in finding.stdout, finding.stdout + finding.stderr)
+
     wide = write(root / "walk" / "wide-2026-10-02.md", "é" * 400 + " heron tail\n")
     result = run(root, "heron tail", "--kind", "walk")
     wide.unlink()
