@@ -130,6 +130,7 @@ SUITES_RUN_WITH_GIT_DIR = {
 SUITE_RUN_WITH_EVERY_VARIABLE = "scripts/code-review-codex-cell-test.py"
 FILES_THE_SUITE_RUN_WITH_EVERY_VARIABLE_READS = (
     "scripts/code-review-codex-cell.py",
+    "docs/agents/pr-reviewer-instructions.md",
     "nc-systems/cold-read/cold-read-cell-common.py",
     "nc-systems/cold-read/cold-read-record-names.py",
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
