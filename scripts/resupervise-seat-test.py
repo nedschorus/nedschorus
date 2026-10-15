@@ -612,6 +612,7 @@ def run_main_capturing(resupervise, arguments):
 def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers):
     """A probe that got no answer refuses, rather than promising or making a clean launch."""
     resupervise.shutil.which = lambda program: "/usr/bin/tmux"
+    resupervise.this_machine_host_name = lambda: "testhost"
     seat_arguments = ["dryprobe", "--handoff-dir", str(workspace),
                       "--agents-root", str(workspace / "agents"), "--prepare-only"]
     no_answer_refusal = ("resupervise-seat: could not tell whether the tmux session dryprobe "
@@ -642,8 +643,8 @@ def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers)
                                    "session dryprobe (tmux socket name dryprobe) was killed: "
                                    "tmux could not be run, or did not answer within 30 seconds. "
                                    "No agent was started. To check, run the command on the next "
-                                   "line: exit 0 means the session still exists, and \"can't find "
-                                   "session\" means it is gone\n"
+                                   "line on testhost: exit 0 means the session still exists, and "
+                                   "\"can't find session\" means it is gone\n"
                                    "tmux -L dryprobe has-session -t '=dryprobe'\n"),
           f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
@@ -668,8 +669,8 @@ def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers)
                                    "tmux could not be run, or did not answer within 30 seconds; "
                                    "before that, the tmux session dryprobe was killed on tmux "
                                    "socket name dryprobe. No agent was started. To check, run the "
-                                   "command on the next line: exit 0 means the session still "
-                                   "exists, and \"can't find session\" means it is gone\n"
+                                   "command on the next line on testhost: exit 0 means the session "
+                                   "still exists, and \"can't find session\" means it is gone\n"
                                    "tmux -L default has-session -t '=dryprobe'\n"),
           f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
@@ -688,6 +689,18 @@ def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers)
                                    "means the session still exists, and \"can't find session\" "
                                    "means it is gone\n"
                                    "ssh testbox \"tmux -L dryprobe has-session -t '=dryprobe'\"\n"),
+          f"exit {code}; stdout {output!r}; stderr {errors!r}")
+
+    stub_answers({("has-session", "dryprobe"): (0, ""),
+                  ("has-session", "default"): (1, "can't find session: dryprobe\n")})
+    local_arguments = [argument for argument in seat_arguments if argument != "--prepare-only"]
+    code, output, errors = run_main_capturing(
+        resupervise, [*local_arguments, "--agent-box", "testbox"])
+    check("without --prepare-only the kill ran here, so an explicit --agent-box still gives "
+          "the check as a command for this machine, not through ssh",
+          code == 1 and errors.endswith("line on testhost: exit 0 means the session still "
+                                        "exists, and \"can't find session\" means it is gone\n"
+                                        "tmux -L dryprobe has-session -t '=dryprobe'\n"),
           f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
 

@@ -85,6 +85,7 @@ import argparse
 import importlib.util
 import os
 import shlex
+import socket
 import shutil
 import subprocess
 import sys
@@ -250,6 +251,10 @@ def tmux_sessions_killed_before_clause(name: str, killed_sockets) -> str:
             f"{', '.join(killed_sockets)}")
 
 
+def this_machine_host_name() -> str:
+    return socket.gethostname()
+
+
 def retire_seat_tmux_session(name: str, check_ssh_alias=None):
     """Retire every session named for the seat; return (killed_sockets, failure_detail, check).
 
@@ -269,7 +274,8 @@ def retire_seat_tmux_session(name: str, check_ssh_alias=None):
         if killed is None:
             # tmux may have killed the session before its client timed out.
             command = f"tmux -L {socket_name} has-session -t '={name}'"
-            where = ""
+            # Name the machine: a caller who reached this one over ssh would otherwise check its own tmux.
+            where = f" on {this_machine_host_name()}"
             if check_ssh_alias:
                 command = f'ssh {check_ssh_alias} "{command}"'
                 where = " from the machine you ran resupervise-seat on"
