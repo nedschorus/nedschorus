@@ -119,7 +119,7 @@ with tempfile.TemporaryDirectory(prefix="git-redirecting-removal-") as scratch:
         left = leaked_from(runner.environment_without_git_redirecting_variables())
         check("scripts/run-all-test-suites.py launches suites and runs git without any of the six",
               not left, left)
-        left = leaked_from(runner.test_suite_launch_environment_without_git_redirecting_and_agent_session_attendance_variables())
+        left = leaked_from(runner.launch_environment_for_a_test_suite_with_git_redirecting_agent_session_attendance_and_credential_variables_removed())
         check("scripts/run-all-test-suites.py's suite launch environment has none of the six",
               not left, left)
 

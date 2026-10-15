@@ -70,9 +70,12 @@ PRINTED_TEXT_LENGTH = 300
 
 # Copied from the parent, never inherited: a git variable would point the checkouts' git at
 # another repository, and the attendance variables change the guards' messages.
-ENVIRONMENT_VARIABLES_REMOVED = (
-    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR",
+_git_redirecting_removal_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_variables_removal_common",
+    Path(__file__).resolve().with_name("git-redirecting-environment-variables-removal-common.py"))
+_git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
+_git_redirecting_removal_spec.loader.exec_module(_git_redirecting_removal)
+ENVIRONMENT_VARIABLES_REMOVED = _git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES + (
     "CLAUDE_CODE_SESSION_ATTENDED", "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
 )
 
