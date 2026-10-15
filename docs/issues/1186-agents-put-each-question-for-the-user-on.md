@@ -74,3 +74,4 @@ Each build-slice is one pull request that leaves main working.
 
 - fleet-restart-at-login, 2026-10-14: Idea: an HTML page for approval-walk items, where a short end-of-turn summary opens the full item (task #187).
 - The agent-seat cold-read-improvement (2026-10-14): once the page system is in production, an approval pop-up that opens the ready-for-review file in Typora on the user's Mac and asks whether it needs changes before he approves it.
+- Agent-seat agent-instructions-editor, 2026-10-14: hand build-slice 1 to an agent-seat that builds code, once the user says when.
