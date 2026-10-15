@@ -640,7 +640,7 @@ def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers)
           code == 1 and errors == ("resupervise-seat: it is unknown whether the stale tmux "
                                    "session dryprobe (tmux socket name dryprobe) was killed: "
                                    "tmux could not be run, or did not answer within 30 seconds; "
-                                   "check with: tmux -L dryprobe has-session -t =dryprobe. "
+                                   "check with: tmux -L dryprobe has-session -t '=dryprobe'. "
                                    "No agent was started\n"),
           f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
@@ -665,9 +665,22 @@ def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers)
                                    "tmux could not be run, or did not answer within 30 seconds; "
                                    "before that, the tmux session dryprobe was killed on tmux "
                                    "socket name dryprobe; check with: tmux -L default "
-                                   "has-session -t =dryprobe. No agent was started\n"),
+                                   "has-session -t '=dryprobe'. No agent was started\n"),
           f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
+
+    stub_answers({("has-session", "dryprobe"): (0, ""),
+                  ("kill-session", "dryprobe"): (0, ""),
+                  ("has-session", "default"): (0, ""),
+                  ("kill-session", "default"): (1, "permission denied\n")})
+    code, output, errors = run_main_capturing(resupervise, seat_arguments)
+    check("a second kill-session tmux answered with a failure names the session already "
+          "killed, and does not say none was",
+          code == 1 and errors == ("resupervise-seat: could not kill the stale tmux session "
+                                   "dryprobe (tmux socket name default): permission denied; "
+                                   "before that, the tmux session dryprobe was killed on tmux "
+                                   "socket name dryprobe. No agent was started\n"),
+          f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
 def check_tmux_probe_failure_cases(resupervise, calls, stub_answers):
     resupervise.shutil.which = lambda program: "/usr/bin/tmux"

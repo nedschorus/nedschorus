@@ -268,7 +268,7 @@ def retire_seat_tmux_session(name: str):
             return killed_sockets, (
                 f"it is unknown whether the stale tmux session {name} (tmux socket name "
                 f"{socket_name}) was killed: {TMUX_GAVE_NO_ANSWER}{before}; check with: "
-                f"tmux -L {socket_name} has-session -t ={name}")
+                f"tmux -L {socket_name} has-session -t '={name}'")
         if killed.returncode != 0:
             return killed_sockets, (
                 f"could not kill the stale tmux session {name} (tmux socket name "
