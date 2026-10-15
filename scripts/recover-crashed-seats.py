@@ -1055,9 +1055,9 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                 return f"{name}: REFUSED — {liveness_detail}"
             if session_still_there:
                 return f"{name}: {LEFTOVER_IDLE_SHELL_NOT_PROVEN_AGAIN_REPORT}"
-        killed_sockets, retire_failure = resupervise.retire_seat_tmux_session(name)
+        killed_sockets, retire_failure, check = resupervise.retire_seat_tmux_session(name)
         if retire_failure is not None:
-            return f"{name}: REFUSED — {retire_failure}"
+            return f"{name}: REFUSED — {retire_failure}" + (f". {check}" if check else "")
         if killed_sockets:
             closed = ("closed the leftover shell — retired the tmux session on socket"
                       f"{'s' if len(killed_sockets) > 1 else ''} "

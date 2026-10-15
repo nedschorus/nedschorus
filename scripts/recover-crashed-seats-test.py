@@ -281,7 +281,7 @@ def capture_retires(retired, killed_sockets=("seat-a",), failure=None,
         retired.append(name)
         if failure is None and the_session_then_dies:
             patch("tmux_session_alive_anywhere", lambda name: (False, ""))
-        return list(killed_sockets), failure
+        return list(killed_sockets), failure, None
     recovery.resupervise.retire_seat_tmux_session = fake_retire
 
 
@@ -4665,7 +4665,7 @@ with tempfile.TemporaryDirectory() as temporary:
         def fake_retire(name):
             events.append("retire")
             patch("tmux_session_alive_anywhere", lambda name: (False, ""))
-            return ["seat-a"], None
+            return ["seat-a"], None, None
 
         patch("tmux_session_is_a_leftover_idle_shell", the_proof)
         if rooted_before_and_after_the_question is not None:

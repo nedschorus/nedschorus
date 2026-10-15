@@ -641,8 +641,9 @@ def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers)
           code == 1 and errors == ("resupervise-seat: it is unknown whether the stale tmux "
                                    "session dryprobe (tmux socket name dryprobe) was killed: "
                                    "tmux could not be run, or did not answer within 30 seconds. "
-                                   "To check, run the command on the next line. "
-                                   "No agent was started\n"
+                                   "No agent was started. To check, run the command on the next "
+                                   "line: exit 0 means the session still exists, and \"can't find "
+                                   "session\" means it is gone\n"
                                    "tmux -L dryprobe has-session -t '=dryprobe'\n"),
           f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
@@ -666,9 +667,27 @@ def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers)
                                    "session dryprobe (tmux socket name default) was killed: "
                                    "tmux could not be run, or did not answer within 30 seconds; "
                                    "before that, the tmux session dryprobe was killed on tmux "
-                                   "socket name dryprobe. To check, run the command on the next "
-                                   "line. No agent was started\n"
+                                   "socket name dryprobe. No agent was started. To check, run the "
+                                   "command on the next line: exit 0 means the session still "
+                                   "exists, and \"can't find session\" means it is gone\n"
                                    "tmux -L default has-session -t '=dryprobe'\n"),
+          f"exit {code}; stdout {output!r}; stderr {errors!r}")
+
+    stub_answers({("has-session", "dryprobe"): (0, ""),
+                  ("has-session", "default"): (1, "can't find session: dryprobe\n")})
+    code, output, errors = run_main_capturing(
+        resupervise, [*seat_arguments, "--agent-box", "testbox"])
+    check("with --prepare-only reached through --agent-box, as the box half of --machine "
+          "ubuntu is, the unknown-kill check runs through ssh from the caller's machine, "
+          "which never held the session",
+          code == 1 and errors == ("resupervise-seat: it is unknown whether the stale tmux "
+                                   "session dryprobe (tmux socket name dryprobe) was killed: "
+                                   "tmux could not be run, or did not answer within 30 seconds. "
+                                   "No agent was started. To check, run the command on the next "
+                                   "line from the machine you ran resupervise-seat on: exit 0 "
+                                   "means the session still exists, and \"can't find session\" "
+                                   "means it is gone\n"
+                                   "ssh testbox \"tmux -L dryprobe has-session -t '=dryprobe'\"\n"),
           f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
 
@@ -692,13 +711,13 @@ def check_tmux_probe_failure_cases(resupervise, calls, stub_answers):
 
     calls.clear()
     stub_answers(absent_on_both)
-    killed, failure = resupervise.retire_seat_tmux_session("probeseat")
+    killed, failure, _ = resupervise.retire_seat_tmux_session("probeseat")
     check("tmux's absent answers on both servers retire nothing and report no failure",
           killed == [] and failure is None, f"killed={killed} failure={failure}")
 
     calls.clear()
     stub_answers({("has-session", "probeseat"): (1, "no server running on /tmp/x\n")})
-    killed, failure = resupervise.retire_seat_tmux_session("probeseat")
+    killed, failure, _ = resupervise.retire_seat_tmux_session("probeseat")
     check("a has-session that does not answer refuses instead of reading as no session",
           failure is not None and "tmux could not be run, or did not answer within 30 seconds"
           in failure and killed == [],
@@ -709,7 +728,7 @@ def check_tmux_probe_failure_cases(resupervise, calls, stub_answers):
     calls.clear()
     stub_answers({("has-session", "probeseat"): (1, "error connecting to /tmp/x (Permission denied)\n"),
                   ("has-session", "default"): (1, "can't find session: probeseat\n")})
-    killed, failure = resupervise.retire_seat_tmux_session("probeseat")
+    killed, failure, _ = resupervise.retire_seat_tmux_session("probeseat")
     check("a has-session error that is not an absent answer refuses, quoting tmux",
           failure is not None and "Permission denied" in failure and killed == [],
           f"killed={killed} failure={failure}")
@@ -718,7 +737,7 @@ def check_tmux_probe_failure_cases(resupervise, calls, stub_answers):
     stub_answers({("has-session", "probeseat"): (0, ""),
                   ("kill-session", "probeseat"): (0, ""),
                   ("has-session", "default"): (1, "can't find session: probeseat\n")})
-    killed, failure = resupervise.retire_seat_tmux_session("probeseat")
+    killed, failure, _ = resupervise.retire_seat_tmux_session("probeseat")
     check("a session on the seat's own server is killed when the default server says absent",
           killed == ["probeseat"] and failure is None, f"killed={killed} failure={failure}")
 
@@ -731,7 +750,7 @@ def check_tmux_probe_failure_cases(resupervise, calls, stub_answers):
 
     resupervise.shutil.which = lambda program: None
     calls.clear()
-    killed, failure = resupervise.retire_seat_tmux_session("probeseat")
+    killed, failure, _ = resupervise.retire_seat_tmux_session("probeseat")
     check("a machine without tmux holds no tmux session to retire",
           killed == [] and failure is None and calls == [],
           f"killed={killed} failure={failure} calls={calls}")
@@ -848,6 +867,10 @@ def run_box_forwarding_case(workspace: Path):
     remote_tokens = shlex.split(remote_command)  # parsed as the box shell will
     check("the box-side checks are given the handoff override, verbatim",
           "/box/handoffs" in remote_tokens and "--handoff-dir" in remote_tokens,
+          remote_command)
+    check("the box-side checks are told the alias the Mac reached the box through",
+          remote_tokens[remote_tokens.index("--agent-box") + 1] == "testbox"
+          if "--agent-box" in remote_tokens else False,
           remote_command)
     _, _, environment = execve_calls[0]
     check("the ubuntu launch carries the handoff override in its environment",
