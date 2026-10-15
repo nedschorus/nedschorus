@@ -46,3 +46,4 @@ Put points 1 to 4 to the user, with the table above, in an approval-walk. From h
 ## Provisional additions (not yet vetted by the user)
 
 - The agent-seat cold-read-improvement (2026-10-14): an audit of `CLAUDE.md` for instructions that belong in a skill, a program's output or a hook, cutting `CLAUDE.md` from 2,593 words; it is being walked with the user in approval-walk open-decisions-unpushed-branches-memory-claude-md-root-cause-and-cold-read-2026-10-14, Part 3.
+- reboot-test, 2026-10-14: input to points 2 and 3. In a side discussion of item 2 of approval-walk move-mechanical-agent-chores-ghi-1036-rework-2026-10-09-draft-2026-10-09-3, on 2026-10-10, the user proposed that instructions for a whole agent-session go in `CLAUDE.md` or `CLAUDE.local.md`, which are kept through compaction, and that instructions that only start an agent-session are handed in as its first prompt, which compaction summarizes.
