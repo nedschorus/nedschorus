@@ -6,6 +6,9 @@ a change made and reverted during the suites remains undetectable.
 
 A partial append can leave a torn record that prevents subsequent records from being read.
 
+The runner's output is copied to stderr line by line as it arrives, so a run stopped before
+it ends still shows its progress; stdout keeps only the SUMMARY line and where the record went.
+
 Exit codes: 0 suites passed, 1 suite failed, 2 refused or unable to start, 4 failed step,
 5 record not written, 7 uncaught exception. Local logs and the record remain available for recovery."""
 
@@ -168,6 +171,11 @@ def bytes_of_text_sent_to_a_command(text: str) -> int:
     return len(text.encode(locale.getpreferredencoding(False)))
 
 
+def stream_for_the_runners_output():
+    """Where the runner's lines are copied as they arrive: this program's stderr."""
+    return sys.stderr
+
+
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         prog=PROGRAM,
@@ -264,7 +272,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
             command += ["--recorded-inputs-directory", arguments.recorded_inputs_directory]
         completed, seconds_waiting_for_lock, lock_never_released = (
             daily.run_test_suite_runner_waiting_for_the_machine_lock(
-                command, checkout, monotonic))
+                command, checkout, monotonic, stream_to=stream_for_the_runners_output()))
         if lock_never_released:
             steps_failed.append(
                 daily.lock_never_taken_step_failed(completed, seconds_waiting_for_lock))

@@ -255,6 +255,37 @@ with tempfile.TemporaryDirectory() as scratch_name:
           and any("run without any sandbox" in line for line in said),
           (slots_while_waiting, said))
 
+    directory = scratch / "outside-busy"
+    lock_path = directory / runner.SUITES_RUN_WITHOUT_ANY_SANDBOX_LOCK_FILE_NAME
+    busy = Readings(cpu=99.0)
+    said = []
+    admission, clock = admission_in(directory, busy, said)
+    lock_free_while_waiting = []
+
+    def probe_lock_then_give_room():
+        with open(lock_path, "a") as probe:
+            try:
+                fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_free_while_waiting.append(True)
+            except BlockingIOError:
+                lock_free_while_waiting.append(False)
+        if len(lock_free_while_waiting) >= 3:
+            busy.cpu = 10.0
+
+    clock.on_sleep = probe_lock_then_give_room
+    with admission.admitted("outside-test.py", without_any_sandbox=True):
+        with open(lock_path, "a") as probe:
+            try:
+                fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_held_while_running = False
+            except BlockingIOError:
+                lock_held_while_running = True
+    check("a suite run without any sandbox that waits for room on the machine lets the "
+          "lock those suites share go while it waits, and holds it once it runs",
+          lock_free_while_waiting == [True, True, True] and lock_held_while_running
+          and any("CPU" in line for line in said),
+          (lock_free_while_waiting, lock_held_while_running, said))
+
     # --- Once a minute, what the suites wait for -----------------------------
     directory = scratch / "report-interval"
     said = []

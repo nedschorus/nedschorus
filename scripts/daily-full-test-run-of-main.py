@@ -166,6 +166,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -281,18 +282,53 @@ def remove_worktree_of_main(clone: Path, worktree: Path):
     return None
 
 
-def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, monotonic):
+def subprocess_run_copying_each_output_line_as_it_arrives(arguments, worktree: Path,
+                                                          environment, stream_to):
+    """subprocess.run with captured text output, each line also written to stream_to."""
+    process = subprocess.Popen(
+        arguments, cwd=str(worktree), env=environment, stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace")
+    captured = {"stdout": [], "stderr": []}
+    stream_lock = threading.Lock()
+
+    def copy(pipe, kept):
+        for line in pipe:
+            kept.append(line)
+            with stream_lock:
+                stream_to.write(line)
+                stream_to.flush()
+
+    copiers = [threading.Thread(target=copy, args=(process.stdout, captured["stdout"])),
+               threading.Thread(target=copy, args=(process.stderr, captured["stderr"]))]
+    for copier in copiers:
+        copier.start()
+    for copier in copiers:
+        copier.join()
+    return subprocess.CompletedProcess(arguments, process.wait(),
+                                       stdout="".join(captured["stdout"]),
+                                       stderr="".join(captured["stderr"]))
+
+
+def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, monotonic,
+                                                       stream_to=None):
     """Return (process result, seconds waiting for the lock, whether the lock was never taken).
 
     The runner waits for the lock itself, in the kernel's queue; retrying the runner
-    instead loses the lock to every process blocked on it."""
+    instead loses the lock to every process blocked on it. With stream_to, a text file
+    such as sys.stderr, every line the runner prints, on stdout or stderr, is also written
+    there as it arrives, so a run killed before the runner exits has shown how far it got."""
     started = monotonic()
-    completed = subprocess.run(
-        [*command, "--wait-for-lock-seconds", f"{DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS:g}"],
-        cwd=str(worktree),
-        env=run_all_test_suites.environment_without_git_redirecting_variables(),
-        stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
-        check=False)
+    arguments = [*command, "--wait-for-lock-seconds",
+                 f"{DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS:g}"]
+    environment = run_all_test_suites.environment_without_git_redirecting_variables()
+    if stream_to is None:
+        completed = subprocess.run(
+            arguments, cwd=str(worktree), env=environment,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
+            check=False)
+    else:
+        completed = subprocess_run_copying_each_output_line_as_it_arrives(
+            arguments, worktree, environment, stream_to)
     if completed.returncode == run_all_test_suites.EXIT_LOCKED:
         return completed, monotonic() - started, True
     waited = [line[len(run_all_test_suites.MACHINE_LOCK_WAITED_LINE_PREFIX):]

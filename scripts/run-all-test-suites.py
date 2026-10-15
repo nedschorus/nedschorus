@@ -1575,7 +1575,9 @@ class MachineWideTestSuiteAdmission:
     one of TEST_SUITE_ADMISSION_SUITES_RUNNING_AT_ONCE_CEILING slots is free. A slot
     is an flock on a slot file, so the kernel frees the slot of a run that is killed.
     A suite run without any sandbox first takes the lock those suites share,
-    and only then a slot, so it never holds a slot while it waits for that lock.
+    and only then a slot, so it never holds a slot while it waits for that lock;
+    when no slot is free, it lets the lock go before it waits, so it never holds
+    the lock while it waits for room.
     A suite that cannot start waits, with no time limit; once a minute the run
     reports what the suites wait for."""
 
@@ -1706,24 +1708,32 @@ class MachineWideTestSuiteAdmission:
         started = self.clock()
         held = []
         try:
-            if without_any_sandbox:
-                path = self.directory / SUITES_RUN_WITHOUT_ANY_SANDBOX_LOCK_FILE_NAME
-                # Polled rather than a blocking flock, so a cancel reaches a suite waiting here.
-                while True:
-                    self.raise_if_cancelled(suite)
-                    outside_lock = self.open_locked(path, blocking=False)
-                    if outside_lock is not None:
-                        held.append(outside_lock)
-                        break
-                    self.report_waiting(suite, "another run's suite run without any sandbox "
-                                               "holds the lock those suites share")
-                    self.sleep(TEST_SUITE_ADMISSION_RETRY_SECONDS)
+            # Polled rather than a blocking flock, so a cancel reaches a suite waiting here.
             while True:
                 self.raise_if_cancelled(suite)
-                slot, why = self.take_a_start_and_a_slot()
+                outside_lock = None
+                if without_any_sandbox:
+                    outside_lock = self.open_locked(
+                        self.directory / SUITES_RUN_WITHOUT_ANY_SANDBOX_LOCK_FILE_NAME,
+                        blocking=False)
+                    if outside_lock is None:
+                        self.report_waiting(suite, "another run's suite run without any sandbox "
+                                                   "holds the lock those suites share")
+                        self.sleep(TEST_SUITE_ADMISSION_RETRY_SECONDS)
+                        continue
+                try:
+                    slot, why = self.take_a_start_and_a_slot()
+                except BaseException:
+                    if outside_lock is not None:
+                        outside_lock.close()
+                    raise
                 if slot is not None:
-                    held.append(slot)
+                    held.extend(handle for handle in (outside_lock, slot) if handle is not None)
                     break
+                # Held through a wait for room, the lock would keep every other run's
+                # suites run without any sandbox waiting while this one runs nothing.
+                if outside_lock is not None:
+                    outside_lock.close()
                 self.report_waiting(suite, why)
                 self.sleep(TEST_SUITE_ADMISSION_RETRY_SECONDS)
             with self.lock:

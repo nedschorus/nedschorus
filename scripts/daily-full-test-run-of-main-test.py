@@ -940,6 +940,46 @@ def run_log_store_readme_cases():
           and "`scripts/daily-full-test-run-of-main.py`" in readme, readme)
 
 
+def run_line_copying_cases(workspace: Path):
+    """A line the runner prints reaches stream_to while the runner still runs."""
+    go_on = workspace / "line-copying" / "go-on"
+    go_on.parent.mkdir(parents=True)
+    child = ("import pathlib, sys, time\n"
+             "print('first on stdout', flush=True)\n"
+             "print('first on stderr', file=sys.stderr, flush=True)\n"
+             f"go_on = pathlib.Path({str(go_on)!r})\n"
+             "deadline = time.monotonic() + 20\n"
+             "while not go_on.exists() and time.monotonic() < deadline:\n"
+             "    time.sleep(0.05)\n"
+             "print('after' if go_on.exists() else 'never copied while running')\n"
+             "sys.exit(0 if go_on.exists() else 9)\n")
+
+    class StreamThatLetsTheChildGoOn:
+        def __init__(self):
+            self.lines = []
+
+        def write(self, text):
+            self.lines.append(text)
+            if {"first on stdout\n", "first on stderr\n"} <= set(self.lines):
+                go_on.touch()
+
+        def flush(self):
+            pass
+
+    stream = StreamThatLetsTheChildGoOn()
+    completed = program.subprocess_run_copying_each_output_line_as_it_arrives(
+        [sys.executable, "-c", child], workspace, os.environ.copy(), stream)
+    check("each line the runner prints, on stdout and on stderr, is copied while the "
+          "runner still runs, so a run stopped early has shown how far it got",
+          completed.returncode == 0
+          and sorted(stream.lines) == ["after\n", "first on stderr\n", "first on stdout\n"],
+          f"{completed!r} {stream.lines!r}")
+    check("the copied lines are also kept, stdout and stderr apart, as subprocess.run "
+          "would keep them",
+          completed.stdout == "first on stdout\nafter\n"
+          and completed.stderr == "first on stderr\n", repr(completed))
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     # Resolved, because the program resolves the paths it is given and the
     # Mac's temporary directory is reached through a symbolic link.
@@ -948,6 +988,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_cases_on_the_mac(workspace_root)
     run_cases_as_a_program(workspace_root)
     run_log_store_readme_cases()
+    run_line_copying_cases(workspace_root)
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

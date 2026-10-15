@@ -273,6 +273,7 @@ class RunResult:
         self.stderr = stderr
         self.ssh_calls = ssh_calls
         self.runner_calls = runner_calls
+        self.runner_output_copied = ""
 
     def __repr__(self):
         return (f"exit {self.code}\nstdout: {self.stdout}\nstderr: {self.stderr}\n"
@@ -430,6 +431,10 @@ class Fixture:
         os.environ["PATH"] = f"{fake_ssh}{os.pathsep}{original_path}"
         os.environ[STAND_IN_RUNNER_BEHAVIOUR_FILE_VARIABLE] = str(behaviour_file)
         stdout, stderr = io.StringIO(), io.StringIO()
+        # Kept apart from stderr, so the cases read the program's own lines there.
+        runner_output_copied = io.StringIO()
+        saved_stream = program.stream_for_the_runners_output
+        program.stream_for_the_runners_output = lambda: runner_output_copied
         directory_before = os.getcwd()
         if started_in is not None:
             os.chdir(started_in)
@@ -440,6 +445,7 @@ class Fixture:
                     now=moment, monotonic=lambda: clock[0])
         finally:
             os.chdir(directory_before)
+            program.stream_for_the_runners_output = saved_stream
             os.environ["PATH"] = original_path
             os.environ.pop(STAND_IN_RUNNER_BEHAVIOUR_FILE_VARIABLE, None)
             os.getpid = saved_getpid
@@ -454,7 +460,9 @@ class Fixture:
         if cited is not None:
             self.runs_that_cited[cited.group(1)] = (
                 self.runs_that_cited.get(cited.group(1), 0) + 1)
-        return RunResult(code, stdout.getvalue(), stderr.getvalue(), ssh_calls, runner_calls)
+        result = RunResult(code, stdout.getvalue(), stderr.getvalue(), ssh_calls, runner_calls)
+        result.runner_output_copied = runner_output_copied.getvalue()
+        return result
 
     def record_files(self):
         """Every file under the log-store root, relative to it."""
@@ -500,6 +508,17 @@ def run_cases_on_ned_box(workspace: Path):
     record = fixture.record("ned-box")
     call = result.runner_calls[0] if result.runner_calls else {}
     check("a passing run exits 0", result.code == 0, repr(result))
+    check("every line the runner printed is copied, in order, to the stream for the "
+          "runner's output, and none of them reaches this program's stdout or stderr",
+          result.runner_output_copied == "\n".join(
+              [fixture.runner_first_line(), INPUTS_RECORDED_LINE,
+               *PASSING_RUNNER_LINES]) + "\n"
+          and not any(line in result.stdout + result.stderr
+                      for line in PASSING_RUNNER_LINES
+                      if line and not line.startswith("SUMMARY:")),
+          f"{result.runner_output_copied!r}\n{result!r}")
+    check("the stream for the runner's output is this program's stderr",
+          program.stream_for_the_runners_output() is sys.stderr)
     check("on ned-box the record is written locally, with no ssh, as "
           "pull-request-head-test-runs/ned-box/<the head's full hash>.txt",
           fixture.record_files() == [record_path] and len(fixture.head) == 40
@@ -778,11 +797,21 @@ def run_cases_on_ned_box(workspace: Path):
             runs_of_the_runner.append(keywords)
         return subprocess_run(command, *positional, **keywords)
 
+    subprocess_popen = subprocess.Popen
+
+    def subprocess_popen_that_writes_down_each_run_of_the_runner(command, *positional,
+                                                                 **keywords):
+        if list(command[:2]) == [sys.executable, str(fixture.runner)]:
+            runs_of_the_runner.append(keywords)
+        return subprocess_popen(command, *positional, **keywords)
+
     subprocess.run = subprocess_run_that_writes_down_each_run_of_the_runner
+    subprocess.Popen = subprocess_popen_that_writes_down_each_run_of_the_runner
     try:
         result = fixture.run()
     finally:
         subprocess.run = subprocess_run
+        subprocess.Popen = subprocess_popen
     check("the daily run's function starts the runner with no descriptor to hold, since "
           "this program takes no lock",
           result.code == 0 and len(result.runner_calls) == 1 and len(runs_of_the_runner) == 1
@@ -1007,7 +1036,7 @@ def run_cases_on_ned_box(workspace: Path):
           and not recorded_inputs.exists(), repr(result))
     commands_run = []
 
-    def runner_that_is_not_started(command, run_from, monotonic):
+    def runner_that_is_not_started(command, run_from, monotonic, stream_to=None):
         commands_run.append((command, run_from))
         return (subprocess.CompletedProcess(
             command, 0, stdout=f"{fixture.runner_first_line()}\n{PASSING_SUMMARY_LINE}\n",

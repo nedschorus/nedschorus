@@ -11,7 +11,9 @@ request cannot pass by changing its runner. Under the worktrees and outputs
 directory it tests wt/pr<n>-merged, files the record under
 hr/pr<n>/log-store, uses hr/pr<n>/tmp as its temporary directory and
 hr/store as the recorded inputs, and writes its output to hr/pr<n>/stdout and
-hr/pr<n>/stderr. tripwire-bin/ goes first on PATH: its claude and codex log
+hr/pr<n>/stderr; each line of the run's stderr, where it copies the
+runner's progress, is also printed on this program's stderr as it arrives,
+so a run stopped before it ends has shown how far it got. tripwire-bin/ goes first on PATH: its claude and codex log
 the call and exit 1, so no suite starts a real agent.
 
 pull-request-head-test-run.py waits for the machine's test lock itself, so
@@ -75,14 +77,20 @@ def main(argv=None):
         (outputs / "log-store").mkdir(parents=True, exist_ok=True)
         (outputs / "tmp").mkdir(parents=True, exist_ok=True)
         with open(outputs / "stdout", "w") as stdout, open(outputs / "stderr", "w") as stderr:
-            completed = subprocess.run(
+            run = subprocess.Popen(
                 [sys.executable, str(review_tools_worktree / HEAD_TEST_RUNNER),
                  "--checkout", str(helpers / "wt" / f"pr{number}-merged"),
                  "--log-store-root", str(outputs / "log-store"),
                  "--temporary-directory", str(outputs / "tmp"),
                  "--recorded-inputs-directory", str(helpers / "hr" / "store")],
                 cwd=helpers, env=environment, stdin=subprocess.DEVNULL,
-                stdout=stdout, stderr=stderr)
+                stdout=stdout, stderr=subprocess.PIPE, text=True, errors="replace")
+            for line in run.stderr:
+                stderr.write(line)
+                stderr.flush()
+                sys.stderr.write(line)
+                sys.stderr.flush()
+            completed = subprocess.CompletedProcess(run.args, run.wait())
         summaries = [line for line in (outputs / "stdout").read_text().splitlines()
                      if line.startswith(SUMMARY_LINE_PREFIX)]
         summary = summaries[-1] if summaries else f"no SUMMARY line; see {outputs}/stderr"

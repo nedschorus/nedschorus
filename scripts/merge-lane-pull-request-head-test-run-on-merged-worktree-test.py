@@ -32,6 +32,15 @@ with open(os.environ["MERGE_LANE_HEAD_TEST_RUN_TEST_LOG"], "a") as log:
 exit_code = json.loads(os.environ["MERGE_LANE_HEAD_TEST_RUN_TEST_EXITS"]).get(
     os.path.basename(checkout), 0)
 print("pull-request-head-test-run: starting")
+go_on = os.environ.get("MERGE_LANE_HEAD_TEST_RUN_TEST_GO_ON")
+if go_on:
+    import time
+    print("a progress line on stderr", file=sys.stderr, flush=True)
+    deadline = time.monotonic() + 20
+    while not os.path.exists(go_on) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if not os.path.exists(go_on):
+        sys.exit(9)
 print(f"SUMMARY: fake summary for {os.path.basename(checkout)}")
 print("a line on stderr", file=sys.stderr)
 sys.exit(exit_code)
@@ -100,6 +109,8 @@ def main():
               in (helpers / "hr" / "pr7" / "stdout").read_text()
               and (helpers / "hr" / "pr7" / "stderr").read_text() == "a line on stderr\n",
               detail)
+        check("the run's stderr is also printed on the program's stderr",
+              completed.stderr == "a line on stderr\na line on stderr\n", detail)
         check("one line per pull request with its exit code and SUMMARY line",
               completed.stdout.splitlines() == [
                   "PR 7 head test run: exit 0; SUMMARY: fake summary for pr7-merged",
@@ -123,6 +134,24 @@ def main():
         check("relative directory options still put an absolute tripwire-bin first on PATH",
               calls and calls[0]["first_path_entry"] == str(helpers / "tripwire-bin"),
               json.dumps(calls))
+
+        go_on = scratch / "go-on"
+        live = subprocess.Popen(
+            [sys.executable, str(PROGRAM), "7",
+             "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+             "--review-tools-worktree-at-main", str(scratch / "main-checkout")],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            env={**os.environ, "MERGE_LANE_HEAD_TEST_RUN_TEST_LOG": str(scratch / "live.log"),
+                 "MERGE_LANE_HEAD_TEST_RUN_TEST_EXITS": "{}",
+                 "MERGE_LANE_HEAD_TEST_RUN_TEST_GO_ON": str(go_on)})
+        first = live.stderr.readline()
+        go_on.touch()
+        stdout, rest = live.communicate(timeout=60)
+        check("a line the run prints on stderr reaches the program's stderr while the run "
+              "still runs, so a run stopped early has shown how far it got",
+              first == "a progress line on stderr\n" and live.returncode == 0
+              and stdout == "PR 7 head test run: exit 0; SUMMARY: fake summary for pr7-merged\n",
+              f"exit {live.returncode}\n{first!r}\n{stdout}{rest}")
 
         shutil.rmtree(helpers / "tripwire-bin")
         completed, calls = run_program(scratch, helpers, {}, "7")
