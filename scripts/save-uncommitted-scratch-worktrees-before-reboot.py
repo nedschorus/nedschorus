@@ -31,8 +31,9 @@ ned-box:
    lists, by its full command line, is a test run going. On ned-box test
    runs overlap and take no machine lock, so a free
    ~/.claude/.run-all-test-suites.lock does not mean no run is going.
-   Run `pgrep -fl 'git push|codex exec'` for pushes and Codex runs in
-   flight. Tell the user what you found. If anything is busy, wait for it to
+   Run `pgrep -af 'git push|codex exec'` on ned-box (`pgrep -lf` with the
+   same pattern on the Mac) for pushes and Codex runs in flight; Linux's
+   `pgrep -fl` would print only process names, not the command lines. Tell the user what you found. If anything is busy, wait for it to
    finish or let the user decide; do not stop another agent's work yourself.
    Wait for the user's go-ahead before going on.
 2. Make sure no retired agent-seat will come back. A retired agent-seat

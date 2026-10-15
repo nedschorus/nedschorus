@@ -423,7 +423,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
     # --- A start-times file that cannot be read stops admission -----------------------
     for label, damage in (
             ("holds a line that is not a time", lambda path: path.write_text("12.5\nnot-a-time\n")),
-            ("cannot be opened", lambda path: (path.write_text("12.5\n"), path.chmod(0)))):
+            ("cannot be opened", lambda path: (path.write_text("12.5\n"), path.chmod(0o200)))):
         directory = scratch / f"start-times-{label.replace(' ', '-')}"
         admission, clock = admission_in(directory, Readings())
         times_file = directory / runner.TEST_SUITE_ADMISSION_START_TIMES_FILE_NAME
@@ -1031,6 +1031,20 @@ with tempfile.TemporaryDirectory() as scratch_name:
           runner.suites_run_at_once(None, 144, 16, admission_decides=True) == 64
           and runner.suites_run_at_once(None, 10, 16, admission_decides=True) == 10
           and runner.suites_run_at_once(3, 144, 16, admission_decides=True) == 3)
+
+# --- The waiting line agrees with its count ---------------------------------------
+with tempfile.TemporaryDirectory() as scratch_name:
+    for suites, verb in ((["a-test.py"], "waits"), (["a-test.py", "b-test.py"], "wait")):
+        said = []
+        admission, clock = admission_in(pathlib.Path(scratch_name) / str(len(suites)), Readings(),
+                                        said)
+        for suite in suites:
+            # The line is said at most once per interval, so each report comes after one.
+            clock.sleep(runner.TEST_SUITE_ADMISSION_WAIT_REPORT_INTERVAL_SECONDS)
+            admission.report_waiting(suite, "the machine is busy")
+        check(f"with {len(suites)} suite(s) waiting, the waiting line says \"{verb}\"",
+              said[-1:] == [f"{len(suites)} suite{'s' if len(suites) != 1 else ''} of this run "
+                            f"{verb} to start: the machine is busy"], said)
 
 print(f"{len(failures)} failed" if failures else "all cases passed")
 sys.exit(1 if failures else 0)
