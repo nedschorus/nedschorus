@@ -66,3 +66,8 @@ Each step is a build-slice on its own topic branch, tested, and merged before th
 ## Next action
 
 Build step 2: the shell module on tree-sitter-bash, with the install that open question 1 settles, and the programs that move onto it, after telling the owner of each file it touches. Step 1 merged in PR [Shared git-output module: 21 programs read git's -z output instead of splitting it by hand](https://github.com/nedschorus/nedschorus/pull/1210).
+
+## Provisional additions (not yet vetted by the user)
+
+- reboot-test, 2026-10-14: a defect in the shell module: a backticked command inside a `${v:-...}` default that also holds a `$( )` substitution is lost; in `${v:-`xb $(xc)`}` the command `xb` is never seen.
+- reboot-test, 2026-10-14: an unattended agent-session told to skip the report that a Bash guard's parser is missing leaves no record that the Bash guards are off; where that is recorded is not designed (merge-lane-2's note on PR [Parser-missing report words shared by the Bash guards and the installer; the report ends every message; a reader test case fails instead of raising](https://github.com/nedschorus/nedschorus/pull/1263)).
