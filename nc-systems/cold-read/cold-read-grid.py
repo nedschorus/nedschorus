@@ -49,9 +49,11 @@ directory, because only the document itself is copied and a link such as
 `../issues/x.md` has nothing beside the copy to reach -- the reference
 pre-pass resolves those links against the original too, so the record and the
 reviewers agree on what a link names (asked for by both reviews of 2026-09-23);
-and the run fingerprints BOTH the copy and the original at the end, because
-the records tree is gitignored and an edit to the copy would otherwise be
-invisible to the cold-read-cell's `git status` stray-write detector. At the
+and the run fingerprints the copy, because the records tree is gitignored and
+an edit to the copy would otherwise be invisible to the cold-read-cell's
+`git status` stray-write detector. Each report's provenance stamp carries the
+copy's sha256 (`target_sha256=`), so the bytes a report reviewed are named in
+the report itself. At the
 end of the run the cold-read-record is shipped to the log-store on ned-box by
 nc-systems/cold-read/cold-read-record-ship.py, whatever the run's outcome, and the shipper's
 one line is printed as `record:`; a shipping failure is reported, never fatal
@@ -82,30 +84,35 @@ decided: the retry, the absence, the closing text and the exit code turn
 only on whether a report landed. No timeout: a cold-read-cell that hangs
 holds the run (user-ruled 2026-09-17: add one if a hang is ever seen).
 
-A RUN STOPS AS SOON AS ITS COLD-READ-TARGET MOVES (user-ruled 2026-09-23, walk
+AN EDIT TO THE ORIGINAL STOPS NOTHING.
+Every cold-read-cell reads the frozen copy, so an edit to the original leaves
+each report a review of bytes that are still in the record: the run finishes,
+exits as it would have, and prints one ORIGINAL CHANGED DURING RUN: line
+naming the copy the set reviewed, so the triage reads findings against the
+copy and carries each fix to the document as it now stands.
+
+A RUN STOPS AS SOON AS ITS FROZEN COPY MOVES (user-ruled 2026-09-23, walk
 cold-read-research-decisions-waiting-on-the-user-2026-09-23, item 6: "n, and
-yes abort early"). A set read against a document that has since changed is
-discarded and the document read again, so a reviewer still reading after the
-move is spending the rest of a 10-20 minute read on a review nobody will
-triage. Both fingerprints are therefore taken at every poll, not only at the
-end: the first poll that sees either the original or the frozen copy differ
-while any cold-read-cell is still running stops every running cold-read-cell
-with its children, marks what the set holds, and exits 3. Every poll, which
-is every 5 seconds, because hashing a Markdown file costs microseconds: a
-slower cadence would buy nothing and add a timer. The end-of-run comparison
-stays, for a move after the last cold-read-cell has finished, which stops
-nothing. A cold-read-cell is stopped with its children because it is a launcher
-whose model CLI runs as a child process: stopping the launcher alone would
-leave the CLI reading, spending tokens, and free to write its report into the
-record after the marker went on.
+yes abort early"). An edit to the copy means no report can say which text it
+read, so a reviewer still reading is spending the rest of a 10-20 minute read
+on a review nobody will triage. The copy's fingerprint is therefore taken at
+every poll, not only at the end: the first poll that sees it differ while any
+cold-read-cell is still running stops every running cold-read-cell with its
+children, marks what the set holds, and exits 3. Every poll, which is every 5
+seconds, because hashing a Markdown file costs microseconds: a slower cadence
+would buy nothing and add a timer. The end-of-run comparison stays, for a move
+after the last cold-read-cell has finished, which stops nothing. A
+cold-read-cell is stopped with its children because it is a launcher whose
+model CLI runs as a child process: stopping the launcher alone would leave the
+CLI reading, spending tokens, and free to write its report into the record
+after the marker went on.
 
 Exit codes: 0 all cold-read-cells ran, 1 one or more reports are absent, 2 no
 cold-read-cell was launched (a bad invocation, a cold-read-target this
 instrument refuses to review, or a cold-read-target that could not be frozen
-into the cold-read-record), 3 the cold-read-target changed while the
-cold-read-cells were
-running, so every report in the set describes a document that no longer
-exists in the form reviewed.
+into the cold-read-record), 3 the frozen copy changed while the
+cold-read-cells were running, so no report in the set can say which text it
+reviewed. An edit to the original alone changes no exit code.
 """
 
 import argparse
@@ -485,16 +492,29 @@ def target_content_fingerprint(target: pathlib.Path) -> str:
         return ""
 
 
-def moved_target(target: pathlib.Path, frozen_target: pathlib.Path,
-                 before: str) -> typing.Optional[tuple]:
-    """Return (path, current hash) for a changed file, preferring the frozen copy, or None."""
+def moved_frozen_copy(frozen_target: pathlib.Path,
+                      before: str) -> typing.Optional[tuple]:
+    """Return (path, current hash) when the frozen copy changed, or None."""
     frozen_now = target_content_fingerprint(frozen_target)
     if frozen_now != before:
         return frozen_target, frozen_now
-    target_now = target_content_fingerprint(target)
-    if target_now != before:
-        return target, target_now
     return None
+
+
+ORIGINAL_CHANGED_PREFIX = "ORIGINAL CHANGED DURING RUN:"
+
+
+def original_changed_line(target: pathlib.Path, frozen_target: pathlib.Path,
+                          before: str) -> str:
+    """Return the line naming the copy reviewed when the original changed, or ""."""
+    after = target_content_fingerprint(target)
+    if after == before:
+        return ""
+    return (f"{ORIGINAL_CHANGED_PREFIX} {target}'s bytes changed after the cells "
+            f"launched — sha256 {before[:12]} then {after[:12] or 'unreadable'}. "
+            f"Every report reviews the frozen copy {frozen_target} (sha256 "
+            f"{before[:12]}), which did not change, so the set stands: triage it "
+            f"against that copy, then carry each fix to the document as it now stands.")
 
 
 WINDOW_SEEN_AT_END = ("differed between the moment the cells launched and the "
@@ -504,11 +524,11 @@ WINDOW_SEEN_MID_RUN = ("changed while the cells were still running, and the run 
 
 
 TARGET_CHANGED_INSTRUCTIONS = """\
-The reports are in {record_dir}, and every one of them is marked: the document's
-bytes {window}, so this set is not a review of the document as it now stands.
+The reports are in {record_dir}, and every one of them is marked: the frozen
+copy's bytes {window}, so no report can say which text it reviewed.
 
-Do not triage this set as a review of the document. Stop editing the document
-and start a new cold-read run against the settled text.
+Do not triage this set as a review of the document. Find what edited the
+frozen copy, and start a new cold-read run.
 
 Keep the set. Each report still records truthfully what one reviewer read, which
 is evidence of what the reviewers saw — not of how the file now stands.
@@ -519,28 +539,19 @@ def mark_reports_target_changed(
     record_dir: pathlib.Path, target: pathlib.Path, before: str, after: str,
     seen_mid_run: bool = False,
 ) -> str:
-    """Mark reports as describing a changed target and return the marker."""
+    """Mark reports as reviewing a frozen copy that changed and return the marker."""
     # Fingerprints establish differing bytes, not when the edit occurred.
-    # A changed original leaves the frozen review intact; a changed copy makes reviewed bytes uncertain.
-    changed_path_is_the_frozen_copy = record_dir in target.parents
-    if changed_path_is_the_frozen_copy:
-        what_the_reports_describe = (
-            "Which text any one report in this directory describes is unknown: "
-            "the edit may have landed before a given reviewer opened the file "
-            "or after."
-        )
-    else:
-        what_the_reports_describe = (
-            "Every report in this directory describes the frozen copy under "
-            "target/, which did not move; what moved is the document in the "
-            "repository."
-        )
+    what_the_reports_describe = (
+        "Which text any one report in this directory describes is unknown: "
+        "the edit may have landed before a given reviewer opened the file "
+        "or after."
+    )
     window = WINDOW_SEEN_MID_RUN if seen_mid_run else WINDOW_SEEN_AT_END
     detail = (
         f"{target}'s bytes {window} — sha256 {before[:12] or 'unreadable'} then "
         f"{after[:12] or 'unreadable'}. {what_the_reports_describe} Treat this set "
-        f"as evidence of what reviewers saw, not as a review of the current file; "
-        f"start a new cold-read run against the settled document."
+        f"as evidence of what reviewers saw, not as a review of the document; "
+        f"start a new cold-read run."
     )
     mark_every_report(record_dir, f"{TARGET_CHANGED_MARKER_PREFIX} {detail} -->")
     return detail
@@ -939,13 +950,12 @@ def main() -> int:
 
     outcome = wait_for_cells(
         launch_cells(frozen_target, record_dir, target),
-        lambda: moved_target(target, frozen_target, target_before),
+        lambda: moved_frozen_copy(frozen_target, target_before),
         float(os.environ.get(TARGET_CHECK_INTERVAL_OVERRIDE_VARIABLE) or 0),
         float(os.environ.get(CELL_POLL_INTERVAL_OVERRIDE_VARIABLE)
               or CELL_POLL_INTERVAL_DEFAULT_SECONDS))
-    # Prefer the final comparison: the frozen copy may change after a poll detects a changed original.
     # Retain the poll result if the changed bytes were restored before the final comparison.
-    move = moved_target(target, frozen_target, target_before) or outcome.moved_mid_run
+    move = moved_frozen_copy(frozen_target, target_before) or outcome.moved_mid_run
     target_changed = move is not None
     if target_changed:
         changed_path, changed_after = move
@@ -953,6 +963,9 @@ def main() -> int:
             record_dir, changed_path, target_before, changed_after,
             seen_mid_run=outcome.moved_mid_run is not None)
         print(f"TARGET CHANGED DURING RUN: {detail}", flush=True)
+    original_line = original_changed_line(target, frozen_target, target_before)
+    if original_line:
+        print(original_line, flush=True)
 
     launched = len(CELL_LAUNCHERS) * len(GRID_CELL_ROSTER)
     if outcome.absent:
