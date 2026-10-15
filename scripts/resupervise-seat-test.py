@@ -35,6 +35,14 @@ SUPERVISOR_SCRIPT = (RESUPERVISE_SCRIPT.resolve().parent.parent
                      / "nc-systems" / "handoff" / "handoff-supervisor.py")
 
 failures = []
+# The unknown-kill check's answer lines, written out so a change to the shared tmux
+# pattern's answers shows up here as a changed message.
+GONE_ANSWERS_AND_OTHER_OUTPUT_LINES = (
+    "\"can't find session\" or \"can't find window\" or \"can't find pane\" or "
+    "\"no current target\" or \"no server running\" or "
+    "\"error connecting to ... (No such file or directory)\" means it is gone.\n"
+    "Any other output, or a check that does not return, leaves the outcome unknown: "
+    "start no agent, and report the output to the user.\n")
 
 # Variables Claude Code sets for an agent-session's commands, and one supervisor variable naming
 # the calling agent-seat. TMUX is left out: the script reads it to find the session it runs in.
@@ -644,7 +652,7 @@ def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers)
                                    "tmux could not be run, or did not answer within 30 seconds. "
                                    "No agent was started. To check, run the command on the next "
                                    "line on testhost: exit 0 means the session still exists; "
-                                   "\"can't find session\", \"no server running\", \"server exited unexpectedly\" or \"error connecting\" means it is gone\n"
+                                   + GONE_ANSWERS_AND_OTHER_OUTPUT_LINES +
                                    "tmux -L dryprobe has-session -t '=dryprobe'\n"),
           f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
@@ -670,7 +678,7 @@ def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers)
                                    "before that, the tmux session dryprobe was killed on tmux "
                                    "socket name dryprobe. No agent was started. To check, run the "
                                    "command on the next line on testhost: exit 0 means the session still exists; "
-                                   "\"can't find session\", \"no server running\", \"server exited unexpectedly\" or \"error connecting\" means it is gone\n"
+                                   + GONE_ANSWERS_AND_OTHER_OUTPUT_LINES +
                                    "tmux -L default has-session -t '=dryprobe'\n"),
           f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
@@ -687,7 +695,7 @@ def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers)
                                    "No agent was started. To check, run the command on the next "
                                    "line from the machine you ran resupervise-seat on: exit 0 "
                                    "means the session still exists; "
-                                   "\"can't find session\", \"no server running\", \"server exited unexpectedly\" or \"error connecting\" means it is gone\n"
+                                   + GONE_ANSWERS_AND_OTHER_OUTPUT_LINES +
                                    "ssh testbox \"tmux -L dryprobe has-session -t '=dryprobe'\"\n"),
           f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
@@ -699,7 +707,7 @@ def check_dry_run_probe_failure_case(workspace: Path, resupervise, stub_answers)
     check("without --prepare-only the kill ran here, so an explicit --agent-box still gives "
           "the check as a command for this machine, not through ssh",
           code == 1 and errors.endswith("line on testhost: exit 0 means the session still "
-                                        "exists; \"can't find session\", \"no server running\", \"server exited unexpectedly\" or \"error connecting\" means it is gone\n"
+                                        + "exists; " + GONE_ANSWERS_AND_OTHER_OUTPUT_LINES +
                                         "tmux -L dryprobe has-session -t '=dryprobe'\n"),
           f"exit {code}; stdout {output!r}; stderr {errors!r}")
 
