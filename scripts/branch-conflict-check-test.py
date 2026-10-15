@@ -934,6 +934,62 @@ case("a deleting-commit lookup that exits 0 with no output is not found",
      and FIND_DELETING_COMMIT in lines)
 
 
+# A rename git missed: the deleting commit's own diff, read with a low
+# similarity threshold, offers a likely new name. The fake answers that diff.
+DELETING_COMMIT = "c" * 40
+
+
+def with_deleting_diff(answer, **fake):
+    inner = fake_runner(deleting_log=(0, DELETING_COMMIT), **fake)
+
+    def runner(command):
+        if command[:2] == ["git", "diff-tree"]:
+            return answer
+        return inner(command)
+    return runner
+
+
+TWO_DELETED = merge_tree_z(("1", "a.txt"), ("3", "a.txt"),
+                           ("1", "b.txt"), ("3", "b.txt"))
+status, lines = run(with_deleting_diff(
+    (0, "R020\0a.txt\0a2.txt\0A\0unrelated.md\0"),
+    merge_tree_status=1, merge_tree_output=TWO_DELETED))
+case("a rename beside a real deletion still closes, and says to carry the "
+     "change onto the new name", status == CHECK.EXIT_CONFLICT
+     and "DELETED OR RENAMED ON origin/main: a.txt -> possibly a2.txt, by "
+         "commit %s" % DELETING_COMMIT[:12] in lines
+     and "DELETED ON origin/main: b.txt, by commit %s" % DELETING_COMMIT[:12]
+         in lines
+     and any(line.startswith("A file marked DELETED OR RENAMED may have been "
+                             "renamed") for line in lines)
+     and lines[-3:] == [DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION,
+                        CARRY_WHAT_MAIN_LACKS])
+
+status, lines = run(with_deleting_diff(
+    (128, ""), merge_tree_status=1,
+    merge_tree_output=merge_tree_z(("1", "a.txt"), ("3", "a.txt"))))
+case("a deleting commit whose files git cannot list is reported, and the file "
+     "is still treated as deleted", status == CHECK.EXIT_CONFLICT
+     and "DELETED ON origin/main: a.txt, by commit %s" % DELETING_COMMIT[:12]
+         in lines
+     and any(line.startswith("RENAME CHECK: git could not list the files")
+             for line in lines)
+     and DO_NOT_MERGE_DELETED in lines)
+
+for old, new, expected in (
+        ("compiled-python-libraries-pinned-requirements.txt",
+         "python-libraries-pinned-requirements.txt", True),
+        ("tool-settings.txt", "tool-settings-list.txt", True),
+        ("x/a-b.txt", "y/a-b.txt", True),
+        ("a-b.txt", "a-b.md", False),
+        ("notes.txt", "test-notes.txt", False),
+        ("a-b-c.txt", "b-c-d.txt", False),
+        ("a-x-b.txt", "a-b.txt", False)):
+    case("names %s and %s %s by leading or trailing words only"
+         % (old, new, "differ" if expected else "do not differ"),
+         CHECK.names_differ_by_end_words(old, new) is expected)
+
+
 # merge-tree -z output for a branch that renamed old.py to new.py, which the
 # base deleted, beside a directory/file conflict at x: stages under new.py and
 # x~main, and message records naming each file's own path second.
@@ -1084,6 +1140,16 @@ def real_repository_cases(root):
         commit_in(origin, "dir1/f%d" % n,
                   "".join("file %d line %d\n" % (n, i) for i in range(8)),
                   "base adds dir1/f%d" % n)
+    # Files main renames and changes in the same commit, below git's 50%
+    # rename threshold, and one main deletes while adding an unrelated file.
+    commit_in(origin, "alpha.cfg",
+              "".join("alpha setting %d = value %d\n" % (i, i) for i in range(10)),
+              "base adds the file main renames and rewrites in part")
+    commit_in(origin, "compiled-tool-settings-list.txt",
+              "first pinned entry\nsecond pinned entry\n",
+              "base adds the file main renames and rewrites whole")
+    commit_in(origin, "doomed-notes.txt", "notes nobody keeps\n",
+              "base adds the file main deletes beside an unrelated addition")
     git_in(root, "clone", "-q", str(origin), str(work))
     git_in(work, "checkout", "-q", "-b", "clean-topic")
     clean_head = commit_in(work, "g", "new file\n", "clean topic")
@@ -1112,6 +1178,19 @@ def real_repository_cases(root):
     commit_in(work, "d", "doomed, topic\n", "deleted topic, part one")
     mixed_head = commit_in(work, "f", "one\ntwo, topic\n",
                            "deleted topic, part two")
+    git_in(work, "checkout", "-q", "-b", "similar-rename-topic", "main")
+    similar_rename_head = commit_in(
+        work, "alpha.cfg",
+        "".join("alpha setting %d = value %d\n" % (i, i) for i in range(9))
+        + "alpha setting 9 = topic value\n", "similar-rename topic")
+    git_in(work, "checkout", "-q", "-b", "name-rename-topic", "main")
+    name_rename_head = commit_in(work, "compiled-tool-settings-list.txt",
+                                 "first pinned entry\nsecond pinned entry, topic\n",
+                                 "name-rename topic")
+    git_in(work, "checkout", "-q", "-b", "deleted-beside-addition-topic", "main")
+    deleted_beside_addition_head = commit_in(
+        work, "doomed-notes.txt", "notes nobody keeps, topic\n",
+        "deleted-beside-addition topic")
     git_in(work, "checkout", "-q", "--orphan", "unrelated-topic")
     git_in(work, "rm", "-q", "-r", "-f", ".")
     commit_in(work, "h", "unrelated\n", "unrelated history")
@@ -1121,6 +1200,32 @@ def real_repository_cases(root):
     git_in(origin, "mv", "moved.py", "moved-on-main.py")
     git_in(origin, "mv", "dir1", "dir2")
     git_in(origin, "commit", "-q", "-m", "main renames moved.py and dir1")
+    git_in(origin, "rm", "-q", "alpha.cfg")
+    (origin / "omega.ini").write_text(
+        "".join("alpha setting %d = value %d\n" % (i, i) for i in range(3))
+        + "".join("omega option %d is now spelled differently\n" % i
+                  for i in range(7)))
+    git_in(origin, "add", "omega.ini")
+    git_in(origin, "commit", "-q", "-m", "main renames alpha.cfg and rewrites it")
+    similar_rename_label = real_label(git_in(origin, "rev-parse", "HEAD"),
+                                      "main renames alpha.cfg and rewrites it")
+    git_in(origin, "rm", "-q", "compiled-tool-settings-list.txt")
+    (origin / "tool-settings-list.txt").write_text(
+        "an entirely new format\nwith nothing kept\nfrom before\n")
+    git_in(origin, "add", "tool-settings-list.txt")
+    git_in(origin, "commit", "-q", "-m",
+           "main renames compiled-tool-settings-list.txt and rewrites it whole")
+    name_rename_label = real_label(
+        git_in(origin, "rev-parse", "HEAD"),
+        "main renames compiled-tool-settings-list.txt and rewrites it whole")
+    git_in(origin, "rm", "-q", "doomed-notes.txt")
+    (origin / "unrelated-report.md").write_text("# A report\n\nAbout other things.\n")
+    git_in(origin, "add", "unrelated-report.md")
+    git_in(origin, "commit", "-q", "-m",
+           "main deletes doomed-notes.txt and adds a report")
+    deleted_beside_addition_label = real_label(
+        git_in(origin, "rev-parse", "HEAD"),
+        "main deletes doomed-notes.txt and adds a report")
     git_in(origin, "rm", "-q", "old.py")
     git_in(origin, "commit", "-q", "-m", "main deletes old.py")
     renamed_deleting_label = real_label(git_in(origin, "rev-parse", "HEAD"),
@@ -1214,6 +1319,61 @@ def real_repository_cases(root):
              "ALSO CONFLICTS: dir2/new",
              DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
              REAPPLY_ALSO_CONFLICTS,
+         ])
+
+    # main renamed a file and changed it so much that git saw a deletion. The
+    # program names the likely new file and sends the agent to check and
+    # hand-merge, not to close: by content similar enough for -M10%, and by
+    # a name that only lost a leading word, even with nothing in common.
+    def rename_advice():
+        return [
+            "origin/main may have renamed each file marked DELETED OR RENAMED and "
+            "changed it in the same commit, so much that git did not pair the "
+            "two names.",
+            "Check each one: compare the branch's version of the old file with "
+            "origin/main's version of each file named after \"possibly\".",
+            "If every one was renamed, merge origin/main into the branch by hand, "
+            "with the frozen head as first parent, and carry the branch's change "
+            "to each old file onto its new name.",
+            "In that hand-merge, resolve any ALSO CONFLICTS file too, change "
+            "nothing else, put any edit the resolution forces beyond the "
+            "conflicting lines in one ordinary commit after the merge, rerun the "
+            "test suites for what the merge touched, and push the merge and that "
+            "commit once, naming the files you resolved in the merge's commit "
+            "message and in the pull request's description.",
+            "If any one was deleted rather than renamed, do not merge: close the "
+            "pull request with a comment naming the commit that deleted it, and "
+            "carry what origin/main still lacks on a new topic branch cut from "
+            "current origin/main.",
+        ]
+
+    for topic, head, old, new, label, why in (
+            ("similar-rename-topic", similar_rename_head, "alpha.cfg",
+             "omega.ini", similar_rename_label, "by content below 50%"),
+            ("name-rename-topic", name_rename_head,
+             "compiled-tool-settings-list.txt", "tool-settings-list.txt",
+             name_rename_label, "by name alone")):
+        status, lines, _ = run_here("--head", topic)
+        case("real: a file main renamed and rewrote %s is named with its likely "
+             "new name and a hand-merge, not a close" % why,
+             status == CHECK.EXIT_CONFLICT and lines == [
+                 "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
+                 "origin/main deleted 1 file(s) the branch changes."
+                 % real_label(head, topic.replace("-topic", " topic")),
+                 "DELETED OR RENAMED ON origin/main: %s -> possibly %s, by %s"
+                 % (old, new, label),
+             ] + rename_advice())
+
+    status, lines, _ = run_here("--head", "deleted-beside-addition-topic")
+    case("real: a file main deleted while adding an unrelated file still gets "
+         "close-and-carry-forward", status == CHECK.EXIT_CONFLICT and lines == [
+             "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
+             "origin/main deleted 1 file(s) the branch changes."
+             % real_label(deleted_beside_addition_head,
+                          "deleted-beside-addition topic"),
+             "DELETED ON origin/main: doomed-notes.txt, by %s"
+             % deleted_beside_addition_label,
+             DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
          ])
 
     # Both kinds at once: the deletion decides, and the ordinary conflict is
