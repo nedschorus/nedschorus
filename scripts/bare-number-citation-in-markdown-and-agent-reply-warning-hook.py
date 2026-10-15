@@ -39,7 +39,11 @@ barrier character no match can cross, so `PR [title](url) 2 hours` is not read
 as "PR 2". A reference followed at once by its name, a complete quoted name or
 a complete Markdown link, as the project's citation form for a task gives it
 (task #<number>, "<subject>"), is not reported; a quote that closes a quotation
-around the reference, or a bracket that starts no link, names nothing.
+around the reference, or a bracket that starts no link, names nothing. Emphasis
+markers may stand on either side of the separator, so a bold label such as
+`**GHI <n>:** [title](url)` names its item. A quoted name that names a
+reference is not scanned itself, so a task subject that mentions another item
+is not reported; a bare reference after the name still is.
 
 A LINK TITLE is checked for a Markdown link outside code whose target is
 https://github.com/nedschorus/nedschorus/pull/<n> or .../issues/<n>, not a
@@ -65,6 +69,20 @@ hookSpecificOutput.additionalContext with the hook's event name, listing up to
 HIT_LINES_LISTED_AT_MOST hits. The UserPromptSubmit half stays silent in a
 headless `claude -p` child, told apart as agent-seat-due-task-raise-hook.py
 does, where the prompt comes from a program, not from a reader of the reply.
+
+ONE NOTE PER REPLY. A reply is the assistant message Claude Code assembles
+from transcript records sharing one message id. The UserPromptSubmit half
+keeps, per agent-session, a record in the temporary directory of the last
+reply it noted, and does not note that reply again: a task notification or a
+message from another session submits a prompt with no reply in between. A
+reply with no message id is always noted, so no two replies can share a key.
+The bare-number part of the note is sent in full once per agent-session, and
+again after each compaction, which may drop it from the agent's context; after
+that its instructions shrink to one line, and the hits are listed as before.
+The link-title part is always sent in full. A record that cannot be read or
+written leaves the note as it would be without the record and adds a line
+saying so. A reply with nothing to note reports no record failure: no note is
+lost, and the next reply that has a note reports the failure.
 Nothing found: nothing printed, exit 0. A fault: one line naming it on stderr,
 nothing on stdout, exit 1. Claude Code records a hook's exit 1 as a
 non-blocking error and keeps the write and the prompt; stderr after exit 0 is
@@ -77,11 +95,11 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 MARKDOWN_SUFFIXES = (".md", ".markdown")
 HIT_LINES_LISTED_AT_MOST = 10
-GIT_TIMEOUT_SECONDS = 10
 GH_TIMEOUT_SECONDS = 5
 GITHUB_REPOSITORY_OWNER = "nedschorus"
 GITHUB_REPOSITORY_NAME = "nedschorus"
@@ -90,6 +108,8 @@ EXCERPT_CHARACTERS_EACH_SIDE = 40
 REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
 SESSION_ATTENDED_VARIABLE = "CLAUDE_CODE_SESSION_ATTENDED"
 SESSION_UNATTENDED_VALUE = "0"
+SESSION_ID_SAFE_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+NOTE_RECORD_DIRECTORY_NAME = "bare-number-citation-in-markdown-and-agent-reply-warning-hook-state"
 
 ID_TYPE_WORD_FOLLOWED_BY_NUMBER = (
     r"\b(?:PRs?|pull\s+requests?|issues?|GHIs?|tasks?)(?:\s+#?|\s*#)\d+(?!\w)")
@@ -118,7 +138,9 @@ MARKDOWN_LINK_PATTERN = re.compile(
 # A double quote ends a URL, so a quoted URL's closing double quote stays in the line and is counted; an apostrophe is legal inside a URL.
 BARE_URL_PATTERN = re.compile(r"<?\b[a-z][a-z0-9+.-]*://[^\s>\"]+>?", re.IGNORECASE)
 # What may stand between a reference and its name.
-NAME_SEPARATOR_PATTERN = re.compile(r"[ \t]*[,:\u2014\u2013-]?[ \t]*")
+EMPHASIS_MARKER = r"(?:\*\*|__|\*|_)?"
+NAME_SEPARATOR_PATTERN = re.compile(
+    r"[ \t]*" + EMPHASIS_MARKER + r"[ \t]*[,:\u2014\u2013-]?[ \t]*" + EMPHASIS_MARKER + r"[ \t]*")
 STRAIGHT_QUOTED_NAME_PATTERN = re.compile(r"\"[^\"\n]+\"")
 CURLY_QUOTED_NAME_PATTERN = re.compile(r"\u201c[^\u201d\n]+\u201d")
 LINK_TEXT_AND_TARGET_PATTERN = re.compile(
@@ -165,9 +187,20 @@ PREVIOUS_REPLY_OPENING_LINES = (
     "Where your previous reply showed the bare form as an example of what not to write, "
     "such as 'not PR #<number>', nothing needs doing.",
 )
+# After the full note has been sent once in the agent-session, and since the last compaction.
+PREVIOUS_REPLY_SHORT_OPENING_LINES = (
+    PREVIOUS_REPLY_OPENING_LINES[0],
+    "Cite each one by its ID-type and its name, as this hook's earlier note in this agent-session "
+    "said. In your next reply, cite in full each one listed below that you mention again.",
+)
+NOTE_RECORD_FAILED_LINE = (
+    "bare-number-citation-in-markdown-and-agent-reply-warning-hook: its record of the replies it "
+    "has noted, {record}, could not be {action} ({reason}), so this note may be sent again for the "
+    "same reply, and in full. Nothing needs doing about the record.")
 MARKDOWN_TITLE_OPENING_LINES = (
     "bare-number-citation-in-markdown-and-agent-reply-warning-hook: the text just written to {path} links {count} pull "
-    "request(s) or GitHub issue(s) under link text that is not the title GitHub reports. A reader "
+    "request(s) or GitHub issue(s) under link text that is not the title GitHub reports, or "
+    "whose number is not the link's. A reader "
     "takes link text written as a title to be the linked item's title, so a different title points "
     "the reader at the wrong item.",
     "For each link listed below whose text was meant as the item's title, change the text to "
@@ -176,7 +209,8 @@ MARKDOWN_TITLE_OPENING_LINES = (
 )
 PREVIOUS_REPLY_TITLE_OPENING_LINES = (
     "bare-number-citation-in-markdown-and-agent-reply-warning-hook: your previous reply to the user linked {count} pull "
-    "request(s) or GitHub issue(s) under link text that is not the title GitHub reports. A reader "
+    "request(s) or GitHub issue(s) under link text that is not the title GitHub reports, or "
+    "whose number is not the link's. A reader "
     "takes link text written as a title to be the linked item's title, so a different title points "
     "the reader at the wrong item.",
     "This note asks for no correction now. If a later reply of yours mentions an item listed below "
@@ -184,41 +218,42 @@ PREVIOUS_REPLY_TITLE_OPENING_LINES = (
     "prefix such as PR <number>.",
     "For a link whose text described the item in your own words instead, nothing needs doing.",
 )
-WRONG_NUMBER_LINE_OPENING = (
+WRONG_NUMBER_LINE_OPENING_INSTRUCTION = (
     "For each link listed below whose line ends by saying the number in the link text is not the "
     "link's number, ")
 # Present only when the title lines are, so the two never contradict.
-WRONG_NUMBER_TITLE_LINES_OVERRIDE = "the two instruction lines above do not apply to it: "
+WRONG_NUMBER_TITLE_LINES_OVERRIDE_INSTRUCTION = "the two instruction lines above do not apply to that link: "
 # Present only when the title lines, which already say it, are left out.
-NO_CORRECTION_NOW_SENTENCE = "This note asks for no correction now. "
+NO_CORRECTION_NOW_INSTRUCTION = "This note asks for no correction now. "
 MARKDOWN_WRONG_NUMBER_LINE = (
-    WRONG_NUMBER_LINE_OPENING + "{override}the URL may be the part that is wrong, so do not change "
-    "the link text to fit the URL. Decide from the text around the link which item was meant, and "
-    "point the link's URL at that item. Then, if the link text was meant as a title, write the link "
-    "text as that item's ID prefix and title, such as PR <number>, \"<title>\"; gh issue view "
-    "<that item's number> --json title --jq .title prints the title, for a pull request too. If "
-    "the link text was your own words, keep the words, and make any number in them that item's "
-    "number; words with no number stay as written.")
+    WRONG_NUMBER_LINE_OPENING_INSTRUCTION + "{override}the URL may be the part that is wrong, so "
+    "do not change the link text to fit the URL. Decide from the text around the link which item "
+    "was meant, and point the link's URL at that item. Then, if the link text was meant as a "
+    "title, write the link text as that item's ID prefix and title, such as PR <number>, "
+    "\"<title>\" or GHI <number>: <title>; gh issue view <that item's number> --json title --jq "
+    ".title prints the title, for a pull request too. If the link text was your own words, keep "
+    "the words, and make the number in them that item's number.")
 PREVIOUS_REPLY_WRONG_NUMBER_LINE = (
-    "{no_correction}" + WRONG_NUMBER_LINE_OPENING + "{override}the URL may be the part that is "
-    "wrong, so do not change the link text to fit the URL. If a later reply of yours cites the "
-    "item again, first decide from your earlier reply which item was meant, and point the link's "
-    "URL at that item. Then, if the link text was meant as a title, write the link text as that "
-    "item's ID prefix and title, such as PR <number>, \"<title>\"; gh issue view <that item's "
-    "number> --json title --jq .title prints the title, for a pull request too. If the link text "
-    "was your own words, keep the words, and make any number in them that item's number; words "
-    "with no number stay as written.")
+    "{no_correction}" + WRONG_NUMBER_LINE_OPENING_INSTRUCTION + "{override}the URL may be the "
+    "part that is wrong, so do not change the link text to fit the URL. If a later reply of yours "
+    "cites the item again, first decide from your earlier reply which item was meant, and point "
+    "the link's URL at that item. Then, if the link text was meant as a title, write the link "
+    "text as that item's ID prefix and title, such as PR <number>, \"<title>\" or GHI <number>: "
+    "<title>; gh issue view <that item's number> --json title --jq .title prints the title, for a "
+    "pull request too. If the link text was your own words, keep the words, and make the number "
+    "in them that item's number.")
 TITLES_NOT_CHECKED_LINE = (
     "bare-number-citation-in-markdown-and-agent-reply-warning-hook: the text of {count} link(s) to pull "
     "requests or GitHub issues was not checked against their titles on GitHub, because gh could not "
     "report the titles: {reason}. Nothing needs doing; the check runs again next time.")
 WRITE_TITLE_HIT_LINE = '{path}:{line}: "{text}" links {url}; the title on GitHub is "{title}"{number_note}'
 EXCERPT_TITLE_HIT_LINE = '"{text}" links {url}; the title on GitHub is "{title}"{number_note}'
-WRONG_NUMBER_NOTE = "; the number {prefix_number} in the link text is not the link's number {number}"
+WRONG_NUMBER_NOTE_TEMPLATE = "; the number {prefix_number} in the link text is not the link's number {number}"
 WRITE_HIT_LINE = '{path}:{line}: "{reference}" in "{excerpt}"'
 EXCERPT_HIT_LINE = '"{reference}" in "{excerpt}"'
 MORE_TITLE_HITS_LINE = ("{count} more not listed: reread the rest of the same text for links to "
-                        "pull requests or GitHub issues under text that is not their title.")
+                        "pull requests or GitHub issues under text that is not their title, or "
+                        "whose number is not the link's.")
 MORE_HITS_LINE = ("{count} more not listed: reread the rest of the same text for "
                   "numbers cited the same way.")
 
@@ -294,19 +329,21 @@ def excerpt_around(line: str, start: int, end: int) -> str:
     return excerpt
 
 
-def name_follows(line: str, masked_line: str, start: int, end: int) -> bool:
-    """Whether the reference at line[start:end] is followed at once by its
-    name: a complete quoted name or a complete Markdown link. A straight quote
-    after an odd number of straight quotes closes a quotation, so it names
-    nothing; the quotes are counted in masked_line, so a quote inside a code
-    span does not count."""
+def name_follows(line: str, masked_line: str, start: int, end: int):
+    """Where the name ends when the reference at line[start:end] is followed
+    at once by its name, a complete quoted name or a complete Markdown link;
+    else None. A straight quote after an odd number of straight quotes closes
+    a quotation, so it names nothing; the quotes are counted in masked_line,
+    so a quote inside a code span does not count."""
     position = NAME_SEPARATOR_PATTERN.match(line, end).end()
-    if MARKDOWN_LINK_PATTERN.match(line, position):
-        return True
-    if CURLY_QUOTED_NAME_PATTERN.match(line, position):
-        return True
-    return (masked_line.count('"', 0, start) % 2 == 0
-            and STRAIGHT_QUOTED_NAME_PATTERN.match(line, position) is not None)
+    for name_pattern in (MARKDOWN_LINK_PATTERN, CURLY_QUOTED_NAME_PATTERN):
+        name = name_pattern.match(line, position)
+        if name:
+            return name.end()
+    if masked_line.count('"', 0, start) % 2 != 0:
+        return None
+    name = STRAIGHT_QUOTED_NAME_PATTERN.match(line, position)
+    return name.end() if name else None
 
 
 def bare_references_in(text: str, line_numbers_to_report=None):
@@ -318,8 +355,15 @@ def bare_references_in(text: str, line_numbers_to_report=None):
         line_number = index + 1
         if line_numbers_to_report is not None and line_number not in line_numbers_to_report:
             continue
+        # The finditer below scans the line as it was, so a name already
+        # accepted is skipped by position, not by changing the line.
+        name_end = -1
         for match in BARE_REFERENCE_PATTERN.finditer(line):
-            if name_follows(original_lines[index], line, match.start(), match.end()):
+            if match.start() < name_end:
+                continue
+            accepted_name_end = name_follows(original_lines[index], line, match.start(), match.end())
+            if accepted_name_end is not None:
+                name_end = accepted_name_end
                 continue
             found.append(BareReference(
                 line_number, match.group(0),
@@ -455,8 +499,8 @@ def link_title_mismatches_in(text: str, line_numbers_to_report=None):
 
 def wrong_number_line_text(template, title_lines_shown):
     return template.format(
-        override=WRONG_NUMBER_TITLE_LINES_OVERRIDE if title_lines_shown else "",
-        no_correction="" if title_lines_shown else NO_CORRECTION_NOW_SENTENCE)
+        override=WRONG_NUMBER_TITLE_LINES_OVERRIDE_INSTRUCTION if title_lines_shown else "",
+        no_correction="" if title_lines_shown else NO_CORRECTION_NOW_INSTRUCTION)
 
 
 def title_note_lines(opening_lines, wrong_number_line, checked, path=None,
@@ -478,7 +522,7 @@ def title_note_lines(opening_lines, wrong_number_line, checked, path=None,
         lines.append(wrong_number_line_text(wrong_number_line, title_lines_shown))
     for mismatch in listed:
         hit_line = WRITE_TITLE_HIT_LINE if with_line_numbers else EXCERPT_TITLE_HIT_LINE
-        number_note = "" if mismatch.prefix_number is None else WRONG_NUMBER_NOTE.format(
+        number_note = "" if mismatch.prefix_number is None else WRONG_NUMBER_NOTE_TEMPLATE.format(
             prefix_number=mismatch.prefix_number, number=mismatch.number)
         lines.append(hit_line.format(path=path, line=mismatch.line_number, text=mismatch.text,
                                      url=mismatch.url, title=mismatch.title,
@@ -510,43 +554,15 @@ def hook_output(event_name: str, text: str) -> str:
 
 # --- PostToolUse: the Markdown file just written ---------------------------
 
-def run_git(arguments, working_directory: Path):
-    return subprocess.run(["git", *arguments], cwd=str(working_directory),
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=GIT_TIMEOUT_SECONDS, check=False)
-
-
-def enclosing_checkout_root(directory: Path):
-    """Return the nearest checkout root at or above directory, or None."""
-    for candidate in (directory, *directory.parents):
-        git_marker = candidate / ".git"
-        try:
-            if git_marker.is_file() or (git_marker / "HEAD").is_file():
-                return candidate
-        except OSError:
-            continue
-    return None
-
-
-def checkout_relative_path(file_path: str, working_directory: Path):
-    """Return (checkout root, Git-relative path), or None outside the session checkout."""
-    # Resolve both paths so macOS /tmp and /private/tmp compare equal.
-    try:
-        root = enclosing_checkout_root(working_directory.resolve())
-        if root is None:
-            return None
-        return root, Path(file_path).resolve().relative_to(root).as_posix()
-    except (ValueError, OSError, RuntimeError):
-        return None
-
-
-def git_would_track(root: Path, relative_path: str) -> bool:
-    # check-ignore exits 0 for ignored, 1 for trackable, and 128 for failure; tracked files are never ignored.
-    completed = run_git(["check-ignore", "-q", "--", relative_path], root)
-    if completed.returncode not in (0, 1):
-        first_line = (completed.stderr.strip().splitlines() or [""])[0]
-        raise RuntimeError(f"git check-ignore exited {completed.returncode} in {root}: {first_line}")
-    return completed.returncode == 1
+def _load_edited_file_path_within_checkout_root_and_git_check_ignore():
+    """Return the shared checkout and git-tracking helpers, loaded by path; raises when they will not load."""
+    specification = importlib.util.spec_from_file_location(
+        "edited_file_path_within_checkout_root_and_git_check_ignore_common",
+        Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+        / "edited-file-path-within-checkout-root-and-git-check-ignore-common.py")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
 
 
 def markdown_edit_note(payload: dict):
@@ -560,7 +576,8 @@ def markdown_edit_note(payload: dict):
     working_directory = payload.get("cwd")
     if not isinstance(working_directory, str) or not Path(working_directory).is_dir():
         return None
-    located = checkout_relative_path(file_path, Path(working_directory))
+    checks = _load_edited_file_path_within_checkout_root_and_git_check_ignore()
+    located = checks.checkout_relative_path(file_path, Path(working_directory))
     if located is None:
         return None
     root, relative_path = located
@@ -569,7 +586,7 @@ def markdown_edit_note(payload: dict):
         new_string = tool_input.get("new_string")
         if not isinstance(new_string, str) or not new_string.strip():
             return None
-        if not git_would_track(root, relative_path):
+        if not checks.git_would_track(root, relative_path):
             return None
         references = bare_references_in(new_string)
         checked = link_title_mismatches_in(new_string)
@@ -578,12 +595,8 @@ def markdown_edit_note(payload: dict):
         content = tool_input.get("content")
         if not isinstance(content, str) or not content.strip():
             return None
-        committed = run_git(["show", "HEAD:" + relative_path], root)
-        if committed.returncode == 0:
-            committed_lines = set(line.rstrip() for line in committed.stdout.split("\n"))
-        elif git_would_track(root, relative_path):
-            committed_lines = set()
-        else:
+        committed_lines = checks.file_lines_at_head_unless_git_ignores_file(root, relative_path)
+        if committed_lines is None:
             return None
         new_line_numbers = set(
             index + 1 for index, line in enumerate(content.split("\n"))
@@ -612,10 +625,7 @@ def _load_absence_claim_hook():
     return module
 
 
-def previous_reply(transcript_path: Path, is_turn_start) -> str:
-    """The text of the agent's last message in the transcript's last turn,
-    which, while the prompt being submitted is not yet written, is the
-    previous turn."""
+def transcript_records(transcript_path: Path):
     records = []
     with open(transcript_path, encoding="utf-8") as transcript:
         for line in transcript:
@@ -625,6 +635,18 @@ def previous_reply(transcript_path: Path, is_turn_start) -> str:
                 continue
             if isinstance(record, dict):
                 records.append(record)
+    return records
+
+
+def compaction_count(records) -> int:
+    return sum(1 for record in records
+               if record.get("type") == "system" and record.get("subtype") == "compact_boundary")
+
+
+def previous_reply(records, is_turn_start):
+    """(the text of the agent's last message in the transcript's last turn,
+    that message's id or None), which, while the prompt being submitted is not
+    yet written, is the previous turn."""
     starts = [index for index, record in enumerate(records) if is_turn_start(record)]
     turn = records[starts[-1] + 1:] if starts else records
     last_text_message_id = None
@@ -638,10 +660,47 @@ def previous_reply(transcript_path: Path, is_turn_start) -> str:
             continue
         for block in content:
             if isinstance(block, dict) and block.get("type") == "text":
+                # A record with no id is a message of its own; its id(), a key
+                # for this call only, is never returned as the message's id.
                 message_id = message.get("id") or id(record)
                 texts_by_message.setdefault(message_id, []).append(block.get("text", ""))
                 last_text_message_id = message_id
-    return "\n".join(texts_by_message.get(last_text_message_id, []))
+    reply = "\n".join(texts_by_message.get(last_text_message_id, []))
+    return reply, (last_text_message_id if isinstance(last_text_message_id, str) else None)
+
+
+def note_record_path_for(session_id):
+    """The agent-session's record of the replies noted, or None when the
+    payload names no session this hook can use as a file name."""
+    if not isinstance(session_id, str) or not SESSION_ID_SAFE_PATTERN.match(session_id):
+        return None
+    return Path(tempfile.gettempdir()) / NOTE_RECORD_DIRECTORY_NAME / f"{session_id}.json"
+
+
+def note_record_read(record_path):
+    """(record, None) or ({}, the reason it could not be read); a record not
+    yet written is empty."""
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}, None
+    except (OSError, ValueError) as error:
+        return {}, f"{type(error).__name__}: {error}"
+    if not isinstance(record, dict):
+        return {}, f"a JSON {type(record).__name__}, not an object"
+    return record, None
+
+
+def note_record_write(record_path, record):
+    """None, or the reason the record could not be written."""
+    try:
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = record_path.with_name(record_path.name + ".tmp")
+        temporary.write_text(json.dumps(record), encoding="utf-8")
+        os.replace(temporary, record_path)
+    except OSError as error:
+        return f"{type(error).__name__}: {error}"
+    return None
 
 
 def previous_reply_note(payload: dict, environment):
@@ -654,17 +713,40 @@ def previous_reply_note(payload: dict, environment):
     transcript_file = Path(transcript_path).expanduser()
     if not transcript_file.exists():
         return None
-    reply = previous_reply(transcript_file, _load_absence_claim_hook().is_human_or_parent_message)
+    records = transcript_records(transcript_file)
+    reply, message_id = previous_reply(records, _load_absence_claim_hook().is_human_or_parent_message)
     if not reply.strip():
+        return None
+    record_path = note_record_path_for(payload.get("session_id"))
+    record, read_failure = note_record_read(record_path) if record_path else ({}, None)
+    if message_id is not None and record.get("noted_message_id") == message_id:
         return None
     references = bare_references_in(reply)
     sections = title_note_lines(PREVIOUS_REPLY_TITLE_OPENING_LINES, PREVIOUS_REPLY_WRONG_NUMBER_LINE,
                                 link_title_mismatches_in(reply))
-    if references:
-        sections.insert(0, note_text(PREVIOUS_REPLY_OPENING_LINES, references))
-    if not sections:
+    if not references and not sections:
         return None
-    return hook_output("UserPromptSubmit", "\n".join(sections))
+    compactions = compaction_count(records)
+    full_note_sent = record.get("full_note_sent_after_compactions") == compactions
+    failures = []
+    if record_path is not None:
+        if references:
+            record["full_note_sent_after_compactions"] = compactions
+        record["noted_message_id"] = message_id
+        if read_failure is not None:
+            failures.append(NOTE_RECORD_FAILED_LINE.format(record=record_path, action="read",
+                                                           reason=read_failure))
+        write_failure = note_record_write(record_path, record)
+        if write_failure is not None:
+            # A record that cannot be written counts as no record: the full note is sent.
+            full_note_sent = False
+            failures.append(NOTE_RECORD_FAILED_LINE.format(record=record_path, action="written",
+                                                           reason=write_failure))
+    if references:
+        sections.insert(0, note_text(
+            PREVIOUS_REPLY_SHORT_OPENING_LINES if full_note_sent else PREVIOUS_REPLY_OPENING_LINES,
+            references))
+    return hook_output("UserPromptSubmit", "\n".join(sections + failures))
 
 
 def run(stdin_text: str, environment):

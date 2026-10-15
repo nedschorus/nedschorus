@@ -20,6 +20,7 @@ repository at its own path before any case writes to it.
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -540,7 +541,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = write_then_run(broken_checkout, broken_checkout / "notes.md", BROKEN_TEXT)
     check("when git check-ignore exits 128 the hook reports git's failure and exits 1",
           result.returncode == 1 and result.stdout.strip() == ""
-          and "git check-ignore exited 128" in result.stderr,
+          and "git check-ignore -q -- notes.md in" in result.stderr
+          and "failed (exit 128" in result.stderr,
           f"exit {result.returncode}: {result.stdout + result.stderr}")
 
     # git missing from PATH: the hook runs by absolute path, so only git is absent.
@@ -553,7 +555,23 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         env={**CLEAN_ENVIRONMENT, "PATH": str(tmp / "empty-path-directory")})
     check("when git is missing the hook reports it and exits 1",
           result.returncode == 1 and result.stdout.strip() == ""
-          and "git check-ignore could not run" in result.stderr,
+          and "git check-ignore -q -- " in result.stderr
+          and "could not start git" in result.stderr,
+          f"exit {result.returncode}: {result.stdout + result.stderr}")
+
+    # The hook without the shared module it loads its git helpers from.
+    hook_without_shared_module = tmp / "hook-without-its-git-helpers" / "scripts" / HOOK_PATH.name
+    hook_without_shared_module.parent.mkdir(parents=True)
+    shutil.copy(str(HOOK_PATH), str(hook_without_shared_module))
+    lone_file = checkout / "docs" / "lone-hook.md"
+    lone_file.write_text(BROKEN_TEXT, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(hook_without_shared_module)],
+        input=json.dumps(payload_for(checkout, "Write", lone_file, {"content": BROKEN_TEXT})),
+        capture_output=True, text=True, check=False, env=CLEAN_ENVIRONMENT)
+    check("a shared git-helper module that fails to load is reported on stderr, exit 1",
+          reported(result, "FileNotFoundError")
+          and "edited-file-path-within-checkout-root-and-git-check-ignore-common.py" in result.stderr,
           f"exit {result.returncode}: {result.stdout + result.stderr}")
 
     outside_file = tmp / "outside" / "elsewhere.md"

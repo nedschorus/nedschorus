@@ -29,6 +29,7 @@ Load it by path, under the snake_case form of its file name:
 from __future__ import annotations
 
 import importlib
+import shlex
 import site
 import subprocess
 import sys
@@ -56,16 +57,31 @@ class CompiledPythonLibrariesInstalledForANewProcess(CompiledPythonLibrariesUnav
     """The install succeeded, but this process still holds the unusable copy it loaded first."""
 
 
-def pinned_requirements_pip_install_command(requirements_file=PINNED_REQUIREMENTS_FILE):
+def pinned_requirements_pip_install_command(requirements_file=PINNED_REQUIREMENTS_FILE, *quiet_options):
+    """Return the pip command that installs the pinned file per user for this process's interpreter."""
     return [sys.executable, "-m", "pip", "install", "--user", "--break-system-packages",
-            "--disable-pip-version-check", "--quiet", "-r", str(requirements_file)]
+            *quiet_options, "-r", str(requirements_file)]
+
+
+def pinned_requirements_by_hand_install_command(host, requirements_file=PINNED_REQUIREMENTS_FILE):
+    """Return (where, command): where the user runs the pinned file's install by hand, and the command.
+
+    The command names this process's own interpreter, which is the one the libraries must be
+    installed for; a bare `python3` on the user's PATH may be another one.
+    """
+    install = shlex.join(pinned_requirements_pip_install_command(requirements_file))
+    # The user sits at the Mac, and reaches ned-box over ssh.
+    if host == "ned-box":
+        return "in a Terminal on your Mac", f"ssh nedlern@ned-box {shlex.quote(install)}"
+    return f"on {host}", install
 
 
 def pinned_requirements_pip_install(timeout_seconds, runner=subprocess.run,
                                     requirements_file=PINNED_REQUIREMENTS_FILE,
                                     unavailable_error=CompiledPythonLibrariesUnavailable):
     """Install the pinned requirements per user; return what pip printed, or raise unavailable_error."""
-    command = pinned_requirements_pip_install_command(requirements_file)
+    command = pinned_requirements_pip_install_command(requirements_file, "--disable-pip-version-check",
+                                                      "--quiet")
     try:
         completed = runner(command, capture_output=True, text=True, timeout=timeout_seconds,
                            stdin=subprocess.DEVNULL)

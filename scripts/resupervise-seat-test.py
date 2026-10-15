@@ -311,10 +311,14 @@ def run_missing_launcher_case(workspace: Path):
     # uncommitted-work-snapshots.py reads git's output with the shared module.
     general_tools_home = workspace / "nc-systems" / "general-tools"
     general_tools_home.mkdir(parents=True)
-    git_output_module = "git-machine-readable-output-runner-and-parser-common.py"
-    (general_tools_home / git_output_module).write_text(
-        (SUPERVISOR_SCRIPT.parents[1] / "general-tools" / git_output_module)
-        .read_text(encoding="utf-8"), encoding="utf-8")
+    # The Stop hooks the supervisor loads from scripts/ load from here the
+    # shared rule that Stop hooks stay silent while the agent answers a Stop hook.
+    for general_tools_module in (
+            "git-machine-readable-output-runner-and-parser-common.py",
+            "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py"):
+        (general_tools_home / general_tools_module).write_text(
+            (SUPERVISOR_SCRIPT.parents[1] / "general-tools" / general_tools_module)
+            .read_text(encoding="utf-8"), encoding="utf-8")
     scripts_home = workspace / "scripts"
     scripts_home.mkdir(parents=True, exist_ok=True)
     for supervisor_import in re.findall(

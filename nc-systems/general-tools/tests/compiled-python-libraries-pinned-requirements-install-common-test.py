@@ -230,5 +230,22 @@ except install.CompiledPythonLibrariesUnavailable as error:
 check("pip timing out raises CompiledPythonLibrariesUnavailable saying it did not finish",
       raised is not None and "did not finish" in raised.install_output, raised)
 
+import shlex
+where, command = install.pinned_requirements_by_hand_install_command(
+    "ned-box", Path("/tmp/a dir/it's-requirements.txt"))
+ssh_words = shlex.split(command)
+check("the ssh form quotes the install so the remote shell reads the same words, a path with a "
+      "space and a quote included",
+      where == "in a Terminal on your Mac" and ssh_words[:2] == ["ssh", "nedlern@ned-box"]
+      and len(ssh_words) == 3
+      and shlex.split(ssh_words[2]) == [sys.executable, "-m", "pip", "install", "--user",
+                                        "--break-system-packages", "-r", "/tmp/a dir/it's-requirements.txt"],
+      (where, command))
+where, command = install.pinned_requirements_by_hand_install_command(
+    "Neds-MacBook-Pro", Path("/tmp/a dir/it's-requirements.txt"))
+check("the local form is quoted for the user's shell",
+      where == "on Neds-MacBook-Pro"
+      and shlex.split(command)[-1] == "/tmp/a dir/it's-requirements.txt", (where, command))
+
 print("all cases passed" if not failures else f"{failures} case(s) failed")
 sys.exit(1 if failures else 0)

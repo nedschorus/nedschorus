@@ -74,6 +74,12 @@ nc-systems/cold-read/cold-read-record-ship.py, whose one line is printed on stde
 The cold-read-cell launcher pre-clears the report path, so a suggestions file
 left by an earlier read is replaced, never appended to.
 
+On either route, a read that finishes while CLAUDE_CODE_SESSION_ID is set
+writes `<report name>.agent-session.json` beside its report, holding that
+agent-session ID and the resolved cold-read-target path. The Stop hook
+scripts/cold-read-fast-read-due-for-linked-document-reminder-hook.py reads it
+to tell this agent-session's reads from other agent-sessions'.
+
 THE REVIEWER'S INSTRUCTIONS LIVE IN THIS FILE (user ruling): the text the
 model receives is FAST_CLARIFY_PROMPT_TEMPLATE below, fed to the launcher
 through --prompt-file from a temporary file, with --cell fast-clarify naming
@@ -756,6 +762,9 @@ def main() -> int:
                 if bare_references is not None:
                     attached += bare_references_section(bare_references)
                 report.write_text(attached, encoding="utf-8")
+                record_names.cold_read_fast_read_report_agent_session_id_file_write_or_remove(
+                    report, target,
+                    os.environ.get(record_names.AGENT_SESSION_ID_ENVIRONMENT_VARIABLE))
                 if bare_references:
                     print(f"{PROGRAM}: bare issue, pull request or task numbers in "
                           f"this walk draft: {len(bare_references)}; the suggestions "

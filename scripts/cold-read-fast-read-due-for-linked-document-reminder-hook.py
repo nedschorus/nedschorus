@@ -40,8 +40,27 @@ carries the time of the read. git runs without the variables that redirect
 it, which scripts/run-all-test-suites.py lists, so a leaked GIT_DIR cannot
 name the wrong checkout.
 
-SILENT when nothing is due, when stop_hook_active is set (the agent is
-already continuing because of a Stop hook), when the agent-session is a
+ONCE PER AGENT-SESSION FOR ITS OWN READS. A document this agent-session
+fast-read is not due again in this agent-session, whatever the document's own
+time: applying a fast read's findings changes the document, which would
+otherwise make it due again every time the agent linked it. A read is this
+agent-session's own when the file a finished fast read writes beside its
+report (nc-systems/cold-read/cold-read-record-names.py,
+cold_read_fast_read_report_agent_session_id_file_path) names the payload's session_id and the
+document's resolved path. The fast read takes the ID from
+CLAUDE_CODE_SESSION_ID, which a subagent's Bash shares with its parent, so a
+fast read a subagent runs counts as its parent agent-session's own. A record
+without that file, as older reads and reads run without the variable leave,
+or naming another agent-session, counts only by the file-time rule above, so
+this agent-session is reminded about its own later change to a document
+someone else read. The hook keeps no list of its own: a reminder the agent
+ignores comes back, because no read ran. When the transcript cannot be read,
+the hook checks nothing and tells the agent so, in additionalContext and on
+stderr.
+
+SILENT when nothing is due, when this Stop ends the agent's answer to a Stop
+hook's output (the shared rule of
+nc-systems/general-tools/claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py), when the agent-session is a
 headless `claude -p` child (its last words are its caller's answer), when the
 transcript file does not exist, and when the log-store's cold-read-records
 directory does not exist, as on the Mac, because without it every document
@@ -64,6 +83,14 @@ import sys
 from pathlib import Path
 from urllib.parse import unquote
 
+# Every Stop hook obeys this rule first: see the module's docstring.
+_stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
+    "claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
+_stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
+
 LOG_STORE_DIRECTORY = Path("/home/nedlern/nedschorus-logs")
 LOG_STORE_COLD_READ_RECORDS_ENVIRONMENT_VARIABLE = "NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY"
 MAC_MOUNT_OF_NED_BOX_HOME = "/Volumes/nedhome/"
@@ -73,6 +100,14 @@ WALK_DRAFT_SUFFIX = "-draft.md"
 WALK_SUGGESTIONS_SUFFIX = "-suggestions.md"
 GIT_TIMEOUT_SECONDS = 5
 FAST_READ_PROGRAM = "nc-systems/cold-read/cold-read-fast-read.py"
+TRANSCRIPT_UNREADABLE_LINES = (
+    "cold-read-fast-read due check skipped: this hook could not read this "
+    "agent-session's transcript ({reason}), so it did not check the documents "
+    "your last reply linked.",
+    "If your last reply linked a document you changed since its last "
+    "cold-read-fast-read, run on it, from your checkout: python3 " + FAST_READ_PROGRAM
+    + " --target <document path>",
+)
 
 TRANSCRIPT_READER_FILE = Path(__file__).with_name("absence-claim-locator-reminder-hook.py")
 SUITE_RUNNER_FILE = Path(__file__).with_name("run-all-test-suites.py")
@@ -206,11 +241,19 @@ def walk_draft_suggestions_path(document):
     return None
 
 
-def document_is_due(document, record_directories, document_top, record_names):
+def read_by_agent_session(report, document, session_id, record_names):
+    return record_names.cold_read_fast_read_target_path_if_run_by_given_agent_session(report, session_id) == document
+
+
+def document_is_due(document, record_directories, document_top, record_names,
+                    session_id=None):
     suggestions = walk_draft_suggestions_path(document)
-    if (suggestions is not None and suggestions.is_file()
-            and suggestions.stat().st_mtime >= document.stat().st_mtime):
-        return False
+    if suggestions is not None and suggestions.is_file():
+        # Read the agent-session file first, so a malformed one is reported here as on the records route.
+        read_by_this_agent_session = read_by_agent_session(suggestions, document, session_id, record_names)
+        if (suggestions.stat().st_mtime >= document.stat().st_mtime
+                or read_by_this_agent_session):
+            return False
     pattern = record_names.record_directory_name_pattern_for_target(document)
     current_bytes = document.read_bytes()
     newest_record_time = None
@@ -223,6 +266,10 @@ def document_is_due(document, record_directories, document_top, record_names):
             if (not pattern.match(record.name) or not record.is_dir()
                     or not record_names.record_holds_completed_report(record)):
                 continue
+            if any(read_by_agent_session(report, document, session_id, record_names)
+                   for report in record.iterdir()
+                   if record_names.COMPLETED_REPORT_NAME_PATTERN.match(report.name)):
+                return False
             if (record / record_names.FROZEN_TARGET_DIRECTORY_NAME).is_dir():
                 frozen = next((candidate for candidate in
                                record_names.frozen_target_candidate_paths(
@@ -247,7 +294,7 @@ def document_is_due(document, record_directories, document_top, record_names):
 def run(stdin_text, environment):
     """Return the text to print, or None."""
     payload = json.loads(stdin_text)
-    if payload.get("stop_hook_active"):
+    if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
     if (environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
             or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0"):
@@ -261,11 +308,20 @@ def run(stdin_text, environment):
     if not store.is_dir():
         return None
     log_store_directory = store.resolve().parent
-    reply = last_reply_text(Path(transcript_path).expanduser())
+    cwd = Path(payload["cwd"]) if payload.get("cwd") else None
+    try:
+        reply = last_reply_text(Path(transcript_path).expanduser())
+    except (OSError, UnicodeDecodeError) as error:
+        lines = [line.format(reason=error) for line in TRANSCRIPT_UNREADABLE_LINES]
+        print(f"cold-read-fast-read-due-for-linked-document-reminder-hook: {lines[0]}",
+              file=sys.stderr)
+        return json.dumps({"hookSpecificOutput": {
+            "hookEventName": "Stop",
+            "additionalContext": "\n".join(lines),
+        }}, ensure_ascii=False)
     if not reply:
         return None
     git_environment = environment_without_git_redirection()
-    cwd = Path(payload["cwd"]) if payload.get("cwd") else None
     session_top = checkout_top(cwd, git_environment) if cwd else None
     due = []
     documents = find_markdown_file_paths_linked_or_named_in_agent_reply(
@@ -277,7 +333,8 @@ def run(stdin_text, environment):
         for top in (document_top, session_top):
             if top is not None and top / record_names.RECORDS_DIRECTORY_NAME not in stores:
                 stores.append(top / record_names.RECORDS_DIRECTORY_NAME)
-        if document_is_due(document, stores, document_top, record_names):
+        if document_is_due(document, stores, document_top, record_names,
+                           payload.get("session_id")):
             due.append(document)
     if not due:
         return None

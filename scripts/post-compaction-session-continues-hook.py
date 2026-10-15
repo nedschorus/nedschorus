@@ -59,8 +59,11 @@ FAULT_LINE = PROGRAM + ": {what} failed, so {cost}: {error}"
 MARKER_NOT_CLEARED_COST = ("the handoff threshold hook's fired marker for this session"
                            " was not cleared and that hook will not ask for a handoff again"
                            " in this session")
-MARKER_NOT_CLEARED_INSTRUCTION = ("Tell the user, so that the marker can be removed by hand;"
-                                  " it is safe to delete.")
+# The marker's path is defined only in the threshold hook, so without it the line names the session.
+MARKER_PATH_UNKNOWN_INSTRUCTION = (
+    "Tell the user that the fired marker for session {session_id} was not deleted. Its path"
+    " cannot be named here, because only " + THRESHOLD_SCRIPT + " defines it and {reason}."
+    " The marker is safe to delete by hand.")
 MARKER_PATH_NOT_CLEARED_INSTRUCTION = ("Tell the user that {path} was not deleted; it is safe to"
                                        " delete by hand.")
 TAIL_NOT_RECOVERED_COST = "no tail of this session's dialog is given below"
@@ -99,7 +102,8 @@ def clear_fired_marker(session_id: str) -> str:
         threshold = sibling_module(THRESHOLD_SCRIPT, "handoff_context_threshold_hook")
     except Exception as error:
         return (fault_line(f"loading {THRESHOLD_SCRIPT}", MARKER_NOT_CLEARED_COST, error)
-                + "\n" + MARKER_NOT_CLEARED_INSTRUCTION)
+                + "\n" + MARKER_PATH_UNKNOWN_INSTRUCTION.format(
+                    session_id=session_id, reason="that file could not be loaded"))
     marker = None
     try:
         marker = threshold.fired_marker_path(session_id)
@@ -107,8 +111,10 @@ def clear_fired_marker(session_id: str) -> str:
     except FileNotFoundError:
         return ""
     except Exception as error:
-        instruction = (MARKER_NOT_CLEARED_INSTRUCTION if marker is None
-                       else MARKER_PATH_NOT_CLEARED_INSTRUCTION.format(path=marker))
+        instruction = (
+            MARKER_PATH_UNKNOWN_INSTRUCTION.format(
+                session_id=session_id, reason="its fired_marker_path() failed")
+            if marker is None else MARKER_PATH_NOT_CLEARED_INSTRUCTION.format(path=marker))
         return (fault_line("clearing the fired marker", MARKER_NOT_CLEARED_COST, error)
                 + "\n" + instruction)
     return ""

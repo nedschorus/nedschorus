@@ -609,13 +609,13 @@ def run_reach_clause_cases(root: Path):
 
 
 def run_seat_listing_cases(root: Path):
-    """--all and the crash watcher list only directories that ever held a seat."""
+    """--all and the crash watcher list only directories with a supervisor state or a handoff."""
     agents_root = root / "listing-agents"
     handoff_directory = root / "listing-handoffs"
     projects_root = root / "listing-projects"
     for directory in (agents_root / "never-ran", agents_root / "had-a-supervisor",
                       agents_root / "had-a-handoff", agents_root / "had-transcripts",
-                      handoff_directory, projects_root):
+                      agents_root / "topic-worktree", handoff_directory, projects_root):
         directory.mkdir(parents=True, exist_ok=True)
     recovery.supervisor.supervisor_state_path(handoff_directory, "had-a-supervisor").write_text(
         "{}", encoding="utf-8")
@@ -623,11 +623,17 @@ def run_seat_listing_cases(root: Path):
         "restart-counter: 1\n", encoding="utf-8")
     recovery.harness_project_directory(agents_root / "had-transcripts", projects_root).mkdir(
         parents=True)
+    (agents_root / "topic-worktree" / ".git").write_text(
+        "gitdir: /elsewhere/.git/worktrees/topic-worktree\n", encoding="utf-8")
+    write_transcript(recovery.harness_project_directory(
+        agents_root / "topic-worktree", projects_root),
+        "reviewer-session", "Read the target in full", records=4)
     listed = recovery.list_agent_seat_names_with_agent_session_records(
-        agents_root, handoff_directory, projects_root)
-    check("the seat listing leaves out a directory that never held a seat, and keeps one with a "
-          "supervisor state, a handoff or transcripts",
-          listed == ["had-a-handoff", "had-a-supervisor", "had-transcripts"], repr(listed))
+        agents_root, handoff_directory)
+    check("the seat listing keeps a directory with a supervisor state or a handoff, and leaves "
+          "out one that never held a seat, one with transcripts only, and a topic worktree "
+          "where a Claude session ran",
+          listed == ["had-a-handoff", "had-a-supervisor"], repr(listed))
 
 
 def run_tmux_has_session_answer_cases(root: Path):
@@ -3285,14 +3291,27 @@ with tempfile.TemporaryDirectory() as temporary:
     # supervisor of it confirmed by ps — its lock names process 5000 plus the
     # seat's position — so it is ALREADY RUNNING (user-ruled 2026-09-16);
     # selection is what main is given in place of the names, so --all and
-    # --dry-run can be driven too.
-    def main_on_seats(case_directory, names, failing, running=frozenset(), selection=None):
+    # --dry-run can be driven too. topic_worktrees are directories beside the
+    # seats that hold transcripts but no supervisor state, as a topic worktree
+    # where a cold-read reviewer ran does.
+    def main_on_seats(case_directory, names, failing, running=frozenset(), selection=None,
+                      topic_worktrees=()):
         workspace = Workspace(case_directory, name=names[0])
         for name in names:
             (workspace.agents_root / name).mkdir(parents=True, exist_ok=True)
             write_transcript(recovery.harness_project_directory(
                 workspace.agents_root / name, workspace.projects),
                 f"resume-{name}", "real work", records=4)
+            # A state with no agent-exit record: --all lists the seat, and the verdict stays resume.
+            recovery.supervisor.supervisor_state_path(workspace.handoffs, name).write_text(
+                "{}", encoding="utf-8")
+        for name in topic_worktrees:
+            (workspace.agents_root / name).mkdir(parents=True, exist_ok=True)
+            (workspace.agents_root / name / ".git").write_text(
+                f"gitdir: /elsewhere/.git/worktrees/{name}\n", encoding="utf-8")
+            write_transcript(recovery.harness_project_directory(
+                workspace.agents_root / name, workspace.projects),
+                f"reviewer-{name}", "Read the target in full", records=4)
         all_dead()
         patch("tmux_session_alive_anywhere",
               lambda name: ((True, f"tmux session '{name}' is alive on socket '{name}'")
@@ -3393,7 +3412,7 @@ with tempfile.TemporaryDirectory() as temporary:
           and every_seat_reported(names, failing, printed, logged, launches, running),
           (exit_code, printed, logged, launches))
 
-    # The reviewer's own probe: --all lists every seat that ever ran, live ones
+    # The reviewer's own probe: --all lists every seat a supervisor ran, live ones
     # included, so one live seat used to fail the whole run, dry run and all.
     names = ("all-seat-already-running", "all-seat-crashed")
     running = {"all-seat-already-running"}
@@ -3414,6 +3433,17 @@ with tempfile.TemporaryDirectory() as temporary:
               "'all-seat-already-running', and process 5000 is the supervisor of "
               "all-seat-already-running — this tool recovers crashes, it never touches "
               "live seats",
+              "recover-crashed-seats: all-seat-crashed: would resume session "
+              "resume-all-seat-crashed (0KB transcript) under a supervisor"],
+          (exit_code, printed, logged, launches))
+    exit_code, printed, logged, launches = main_on_seats(
+        root / "exit-all-dry-run-topic-worktree-beside-a-crashed-seat", ("all-seat-crashed",),
+        set(), selection=["--all", "--dry-run"],
+        topic_worktrees=("wt-topic-worktree-with-reviewer-transcripts",))
+    check("--all --dry-run prints no line for a topic worktree that holds transcripts but no "
+          "supervisor state or handoff",
+          exit_code == 0 and launches == []
+          and printed.splitlines() == [
               "recover-crashed-seats: all-seat-crashed: would resume session "
               "resume-all-seat-crashed (0KB transcript) under a supervisor"],
           (exit_code, printed, logged, launches))
@@ -3625,6 +3655,8 @@ with tempfile.TemporaryDirectory() as temporary:
         write_transcript(recovery.harness_project_directory(
             workspace.agents_root / name, workspace.projects),
             f"resume-{name}", "real work", records=4)
+    recovery.supervisor.supervisor_state_path(workspace.handoffs, "all-seat-crashed").write_text(
+        "{}", encoding="utf-8")
     all_dead()
     capture_launches(workspace)
     record_an_agent_exit(workspace, 0)
