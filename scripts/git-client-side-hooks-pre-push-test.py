@@ -207,9 +207,12 @@ FAKE_LOG_DIRECTORY = "/fake/run-all-test-suites-logs"
 FAKE_FAILING_SUITE_LINE = "FAIL scripts/fake-failing-test.py exit 1 — log /fake/fake-failing-test.log"
 FAKE_FAILED_SUMMARY = "SUMMARY: 2 passed, 1 failed, 3 total; 0 cases skipped in 0 suites"
 FAKE_PASSED_SUMMARY = "SUMMARY: 3 passed, 0 failed, 3 total; 0 cases skipped in 0 suites"
-FAKE_LOCK_HOLDER_LINE = ("run-all-test-suites: not run — waited 60 s for /fake/lock, the lock "
-                         "that keeps test runs on one machine apart, and it was still held by "
+# The real runner's refusal when told to wait 0 seconds for a held lock: the
+# holder on the first line, then advice to the runner's own caller.
+FAKE_LOCK_HOLDER_LINE = ("run-all-test-suites: not run — another run holds /fake/lock: "
                          "process 4242, checkout /fake/other.")
+FAKE_LOCK_ADVICE_LINE = ("To wait for the lock, run this again with --wait-for-lock-seconds 600, "
+                         "instead of retrying in a loop.")
 
 FAKE_TEST_SUITES_RUNNER_PREAMBLE = """\
 import json, os, sys
@@ -237,11 +240,10 @@ sys.exit(1)
 """ % (FAKE_FAILING_SUITE_LINE, FAKE_FAILED_SUMMARY)
 
 FAKE_TEST_SUITES_RUNNER_LOCKED = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
-print("run-all-test-suites: waiting up to 60 s for /fake/lock", file=sys.stderr)
 print(%r, file=sys.stderr)
-print("Otherwise, tell the user which process holds the lock.", file=sys.stderr)
+print(%r, file=sys.stderr)
 sys.exit(3)
-""" % FAKE_LOCK_HOLDER_LINE
+""" % (FAKE_LOCK_HOLDER_LINE, FAKE_LOCK_ADVICE_LINE)
 
 FAKE_TEST_SUITES_RUNNER_CANNOT_START = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
 print("run-all-test-suites: not run — /fake is not a checkout's top directory", file=sys.stderr)
@@ -254,16 +256,44 @@ os.kill(os.getpid(), signal.SIGKILL)
 """
 
 # The shape a real overrun takes: the suites the run started keep running, so
-# stopping the run alone would leave them. The child's pid is written beside
-# the log, so the case can see that the whole process group was stopped.
+# stopping the run alone would leave them. One child stays in the run's process
+# group; the other starts its own session, as scripts/run-codex-task-from-brief-test.py's
+# children do, so stopping the group alone would miss it. Each child's pid is
+# written beside the log, so the case can see that both were stopped.
 FAKE_TEST_SUITES_RUNNER_HANGS_WITH_CHILD = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
 import subprocess, time
-_child = subprocess.Popen([sys.executable, "-c",
-                           "import time; time.sleep(%d)" % FAKE_HANG_SECONDS])
+_sleeper = [sys.executable, "-c", "import time; time.sleep(%d)" % FAKE_HANG_SECONDS]
+_child = subprocess.Popen(_sleeper)
+_detached = subprocess.Popen(_sleeper, start_new_session=True, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
 with open(_log + ".child-pid", "w") as _handle:
     _handle.write(str(_child.pid))
+with open(_log + ".detached-child-pid", "w") as _handle:
+    _handle.write(str(_detached.pid))
 time.sleep(FAKE_HANG_SECONDS)
 """
+
+# An uncaught exception after the run has started: Python exits 1, as a failed
+# suite does, but the run prints no SUMMARY line.
+FAKE_RUNNER_CRASH_ERROR = "OSError: [Errno 28] No space left on device: '/fake/logs'"
+FAKE_TEST_SUITES_RUNNER_CRASHES = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+raise OSError(28, "No space left on device", "/fake/logs")
+"""
+
+# The real runner's refusal when the signal sandbox cannot start: the cause is
+# on the first line, and the lines after it advise the runner's own caller.
+FAKE_SANDBOX_REFUSAL_FIRST_LINE = ("run-all-test-suites: not run — the signal sandbox could not "
+                                   "start: bwrap missing from PATH")
+FAKE_SANDBOX_REFUSAL_LAST_LINE = ("On macOS, report the reason above to the user: the suites need "
+                                  "sandbox-exec to refuse their signals to processes outside the "
+                                  "sandbox.")
+FAKE_TEST_SUITES_RUNNER_SANDBOX_CANNOT_START = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+print(%r, file=sys.stderr)
+print("Each suite runs inside the signal sandbox (bwrap on Linux, sandbox-exec on macOS).",
+      file=sys.stderr)
+print(%r, file=sys.stderr)
+sys.exit(2)
+""" % (FAKE_SANDBOX_REFUSAL_FIRST_LINE, FAKE_SANDBOX_REFUSAL_LAST_LINE)
 
 
 # --- Layouts and repositories ---------------------------------------------
@@ -1000,11 +1030,11 @@ def run_selective_test_run_cases(scratch):
           and SELECTIVE_TEST_RUN_PASSED + FAKE_PASSED_SUMMARY in result.stderr.splitlines(),
           result.describe())
     calls = scenario.fake_test_suites_runner_calls()
-    check("the run is the selective test run on the clone's top directory, waiting 60 seconds "
+    check("the run is the selective test run on the clone's top directory, waiting 0 seconds "
           "for the lock",
           calls == [["--checkout", str(scenario.clone),
                      "--only-suites-whose-recorded-inputs-changed-since", "origin/main",
-                     "--wait-for-lock-seconds", "60"]], repr(calls))
+                     "--wait-for-lock-seconds", "0"]], repr(calls))
 
     help_text = subprocess.run([sys.executable, str(REAL_TEST_SUITES_RUNNER), "--help"],
                                capture_output=True, text=True, timeout=60).stdout
@@ -1093,13 +1123,30 @@ def run_selective_test_run_cases(scratch):
 
     _, outcome = not_run_case(
         "lock held", FAKE_TEST_SUITES_RUNNER_LOCKED,
-        "another run of the test suites still held this machine's test lock after 60 seconds: "
-        + FAKE_LOCK_HOLDER_LINE, tell_user=False)
+        "another run of the test suites held this machine's test lock: " + FAKE_LOCK_HOLDER_LINE,
+        tell_user=False)
     check("lock held: the runner's advice to its own caller is not passed on",
-          "Otherwise, tell the user" not in outcome.stderr, outcome.describe())
+          FAKE_LOCK_ADVICE_LINE not in outcome.stderr, outcome.describe())
     not_run_case("cannot start", FAKE_TEST_SUITES_RUNNER_CANNOT_START,
                  "the selective test run gave no verdict, because it exited 2: run-all-test-"
                  "suites: not run — /fake is not a checkout's top directory", tell_user=True)
+    _, outcome = not_run_case(
+        "runner crashes", FAKE_TEST_SUITES_RUNNER_CRASHES,
+        "the selective test run gave no verdict, because it exited 1: " + FAKE_RUNNER_CRASH_ERROR,
+        tell_user=True)
+    check("runner crashes: the runner's traceback is shown above the message",
+          "pre-push: the test runner printed on stderr:" in outcome.stderr
+          and "Traceback (most recent call last):" in outcome.stderr
+          and outcome.stderr.index("Traceback") < outcome.stderr.index(
+              "the selective test run gave no verdict"), outcome.describe())
+    check("runner crashes: the push is not reported as a failed suite",
+          SELECTIVE_TEST_RUN_REFUSED not in outcome.stderr, outcome.describe())
+    _, outcome = not_run_case(
+        "sandbox cannot start", FAKE_TEST_SUITES_RUNNER_SANDBOX_CANNOT_START,
+        "the selective test run gave no verdict, because it exited 2: "
+        + FAKE_SANDBOX_REFUSAL_FIRST_LINE, tell_user=True)
+    check("sandbox cannot start: everything the runner printed on stderr is shown",
+          FAKE_SANDBOX_REFUSAL_LAST_LINE in outcome.stderr.splitlines(), outcome.describe())
     not_run_case("killed", FAKE_TEST_SUITES_RUNNER_KILLED,
                  "the selective test run gave no verdict, because it was killed by signal 9",
                  tell_user=True)
@@ -1116,9 +1163,6 @@ def run_selective_test_run_cases(scratch):
         tell_user=False, budget=HANGING_CHECK_BUDGET_SECONDS)
     check("overrun: the push is not held for long",
           outcome.seconds < HANGING_CASE_WALL_CLOCK_LIMIT_SECONDS, "%.1f seconds" % outcome.seconds)
-    calls = hanging.fake_test_suites_runner_calls()
-    check("overrun: the lock wait is cut to fit a budget shorter than 60 seconds",
-          len(calls) == 1 and calls[0][-2:] == ["--wait-for-lock-seconds", "1"], repr(calls))
     child_pid_file = Path(str(hanging.fake_test_suites_runner_log) + ".child-pid")
     child_pid = int(child_pid_file.read_text()) if child_pid_file.exists() else None
     check("(setup) the overrunning run's child recorded its pid", child_pid is not None)
@@ -1126,6 +1170,15 @@ def run_selective_test_run_cases(scratch):
         check("overrun: the run's child, a suite, was stopped too",
               process_gone_within(child_pid, seconds=5), "pid %d still running" % child_pid)
         stop_leftover_process(child_pid)
+    detached_pid_file = Path(str(hanging.fake_test_suites_runner_log) + ".detached-child-pid")
+    detached_pid = (int(detached_pid_file.read_text()) if detached_pid_file.exists() else None)
+    check("(setup) the overrunning run's child in its own session recorded its pid",
+          detached_pid is not None)
+    if detached_pid is not None:
+        check("overrun: a child the run started in its own session was stopped too",
+              process_gone_within(detached_pid, seconds=5),
+              "pid %d still running" % detached_pid)
+        stop_leftover_process(detached_pid)
 
     # The shell hook in front of the check.
     for label, options, expected in (
@@ -1154,10 +1207,17 @@ def run_selective_test_run_cases(scratch):
               outcome.describe())
 
     # A missing conflict check does not end the hook before the selective test run.
-    hooks = make_layout(scratch, "layout-selective-conflict-check-missing", conflict_check=None,
+    # include_runner=False removes the file the hook itself tests for, so the hook's own
+    # "is missing" branch runs, not the Python check's.
+    hooks = make_layout(scratch, "layout-selective-conflict-check-missing", conflict_check=None, include_runner=False,
                         test_suites_runner_text=FAKE_TEST_SUITES_RUNNER_FAILS)
     missing = Scenario(scratch, "selective-conflict-check-missing", hooks)
     outcome = missing.push("origin", "clean")
+    said = [line for line in outcome.stderr.splitlines()
+            if line.startswith("pre-push: the pre-push conflict check did not run, because ")]
+    check("with the conflict check missing, the hook's own branch says so",
+          len(said) == 1 and ("/%s is missing" % CONFLICT_CHECK_RUNNER.name) in said[0],
+          outcome.describe())
     check("with the conflict check missing, the selective test run still runs and refuses",
           was_refused(outcome) and SELECTIVE_TEST_RUN_REFUSED in outcome.stderr,
           outcome.describe())
@@ -1173,6 +1233,36 @@ def run_selective_test_run_cases(scratch):
               got == expected, repr(got))
     check("a time budget left unconfigured is 480 seconds",
           selective.time_budget_seconds({}) == 480.0)
+
+    # A ps that fails: the descendants cannot be listed, and the stop says so.
+    failing_ps_directory = scratch / "failing-ps-bin"
+    failing_ps_directory.mkdir()
+    failing_ps = failing_ps_directory / "ps"
+    failing_ps.write_text("#!/bin/sh\necho 'ps: cannot read the process table' >&2\nexit 1\n")
+    failing_ps.chmod(0o755)
+    saved_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = "%s%s%s" % (failing_ps_directory, os.pathsep, saved_path)
+    try:
+        try:
+            selective.descendant_process_ids(os.getpid())
+            listing_raised = None
+        except RuntimeError as error:
+            listing_raised = str(error)
+        sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                                   start_new_session=True, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True)
+        try:
+            _stdout, _stderr, stop_error = selective.stop_process_group(sleeper)
+        finally:
+            stop_leftover_process(sleeper.pid)
+    finally:
+        os.environ["PATH"] = saved_path
+    check("a ps that fails: listing the run's descendants raises, naming ps and its error",
+          listing_raised is not None and "ps -A -o pid=,ppid= exited 1" in listing_raised
+          and "cannot read the process table" in listing_raised, repr(listing_raised))
+    check("a ps that fails: the run is still stopped, and the stop returns the listing error",
+          sleeper.returncode is not None and stop_error is not None
+          and "cannot read the process table" in stop_error, repr((sleeper.returncode, stop_error)))
 
 
 # --- Pushes from a mutation-testing worktree ------------------------------
