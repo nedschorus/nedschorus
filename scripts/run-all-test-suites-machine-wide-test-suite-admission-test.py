@@ -249,10 +249,10 @@ with tempfile.TemporaryDirectory() as scratch_name:
                     slots_while_waiting.append(probe.name)
     other.close()
     waiter.join(10)
-    check("while another run's suite run without any sandbox holds that lock, a suite "
+    check("while another run's suite that has no sandbox holds that lock, a suite "
           "outside waits for it holding no slot, and says what it waits for",
           not slots_while_waiting and not waiter.is_alive()
-          and any("run without any sandbox" in line for line in said),
+          and any("has no sandbox" in line for line in said),
           (slots_while_waiting, said))
 
     directory = scratch / "outside-busy"

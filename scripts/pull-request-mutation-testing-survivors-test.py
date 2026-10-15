@@ -850,7 +850,7 @@ def run_cases():
                                    dropped_variables=(inside_variable,))
             config = ((control / "config.toml").read_text()
                       if (control / "config.toml").exists() else "")
-            check("with the sandbox on, the run says each suite runs in its own PID namespace",
+            check("with the sandbox on, the run says each suite runs in its own test sandbox, named by the bwrap program",
                   f"each suite runs in its own test sandbox: {fake_bin / 'bwrap'}"
                   in completed.stdout, f"rc={completed.returncode} out={completed.stdout}")
             check("a suite listed to run outside the sandbox is named in a NO SANDBOX line",

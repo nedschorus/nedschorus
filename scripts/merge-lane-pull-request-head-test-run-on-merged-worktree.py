@@ -104,8 +104,12 @@ def main(argv=None):
             completed = subprocess.CompletedProcess(run.args, run.wait())
         for name, failure in copy_failures.items():
             print(f"PR {number} head test run, process {run.pid}: writing its stderr to "
-                  f"{name} failed ({failure}); the run went on to its end, and its stderr "
-                  "from that line on is not there.", flush=True)
+                  f"{name} failed ({failure}); the run went on to its end, "
+                  "and its stderr from that line on is not in that copy.\n"
+                  f"The run's verdict still stands: the SUMMARY line below comes from the run's "
+                  f"stdout, not from this copy; this program exits 2 to show the copy failed.\n"
+                  f"When you need the stderr after that line, run the head test run for PR "
+                  f"{number} again with a stderr that can be written.", flush=True)
             if first_failure == 0:
                 first_failure = 2
         summaries = [line for line in (outputs / "stdout").read_text().splitlines()

@@ -1085,6 +1085,20 @@ def run_cases_on_ned_box(workspace: Path):
           and record_lines[-1:] == ["pull-request-head-test-run exit code: 4"],
           f"{result!r}\n{record_lines!r}")
 
+    exact_command = shlex.join([sys.executable, str(Path(program.__file__).resolve()),
+                                *fixture.arguments(None, None)])
+    check("when writing the runner's output to stderr fails, the message names the record's "
+          "local copy, and the instruction gives the exact command to run again",
+          f"whose local copy is {fixture.local_copy()}, but a run" in result.stderr
+          and f"such as a file or a terminal that stays open: {exact_command}\n"
+          in result.stderr + "\n",
+          result.stderr)
+    check("when writing the runner's output to stderr fails, the SUMMARY line on stdout says "
+          "the output copy failed and no verdict is given",
+          f"{PASSING_SUMMARY_LINE}; output copy failed, verdict not given\n" in result.stdout
+          and result.stdout.count("SUMMARY") == 1,
+          result.stdout)
+
     # A really closed stderr pipe, as when the program is run piped to `head` or over an ssh
     # session that closed: the program runs as its own process, with the pipe's reader gone.
     local_copies_before = set(fixture.temporary.rglob(

@@ -1720,8 +1720,8 @@ class MachineWideTestSuiteAdmission:
                         self.directory / SUITES_RUN_WITHOUT_ANY_SANDBOX_LOCK_FILE_NAME,
                         blocking=False)
                     if outside_lock is None:
-                        self.report_waiting(suite, "another run's suite run without any sandbox "
-                                                   "holds the lock those suites share")
+                        self.report_waiting(suite, "another run is running a suite that has no sandbox, "
+                                                   "and that run holds the lock all such suites share")
                         self.sleep(TEST_SUITE_ADMISSION_RETRY_SECONDS)
                         continue
                 try:
@@ -2414,7 +2414,7 @@ def listening_unix_sockets_the_test_sandbox_would_show(proc_net_unix="/proc/net/
 
 
 def uncovered_listening_sockets_report_line_or_none(proc_net_unix="/proc/net/unix"):
-    """The report's line naming listening sockets left uncovered because this program cannot reach them."""
+    """The report's line naming listening sockets the test sandbox does not hide, because this program cannot reach them."""
     unreachable = []
     listening_unix_sockets_the_test_sandbox_would_show(
         proc_net_unix, unreachable, hidden=directories_hidden_whole_in_test_sandbox())
@@ -2422,9 +2422,9 @@ def uncovered_listening_sockets_report_line_or_none(proc_net_unix="/proc/net/uni
         return None
     names = sorted(set(unreachable))
     if len(names) == 1:
-        start = "a listening socket left uncovered in each test sandbox, because this program cannot reach it"
+        start = "a listening socket that the test sandbox does not hide, because this program cannot reach it"
     else:
-        start = "listening sockets left uncovered in each test sandbox, because this program cannot reach them"
+        start = "listening sockets that the test sandbox does not hide, because this program cannot reach them"
     return f"{start} and so neither can a suite: {', '.join(names)}; the run goes on, and nothing needs doing"
 
 
