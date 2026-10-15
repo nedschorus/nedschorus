@@ -1933,6 +1933,11 @@ def run_edit_cases(scratch: Path):
           not landing.ran("gh issue comment")
           and not landing.ran("conflicts-with-a-ruling"),
           str(landing.commands()))
+    check("the issue's file set is listed at the main commit the conflict "
+          "check read, not at the ref a later fetch may have moved",
+          landing.ran(GHI_MD_LISTING_CALL)
+          and not landing.ran("git ls-tree -r --name-only -z origin/main"),
+          str(landing.commands()))
 
     conflicting_edit = Recorder({
         ASK: Completed("", returncode=3, stderr=(
@@ -2186,6 +2191,11 @@ def run_edit_cases(scratch: Path):
           "move, is left where it is",
           not ran_with(moved, "git rm", "570-test-design.md"),
           str(moved.calls))
+    check("and the path main still holds the moved file at is looked up in "
+          "the file set at the checked main commit, not at the ref",
+          moved.count(GHI_MD_LISTING_CALL) >= 2
+          and not moved.ran("git ls-tree -r --name-only -z origin/main"),
+          str(moved.commands()))
     check("and the path the removal names is read on main and at the "
           "author's base before any of it, the removal being a deletion",
           moved.ran(f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}")
@@ -3369,6 +3379,24 @@ def run_landed_design_cases(scratch: Path):
     for_subsystem = tool.ghi_md_paths_for_issue(284, scratch, listing)
     check("a subsystem's landed design is found for its own issue",
           for_subsystem == [SUBSYSTEM_DESIGN], str(for_subsystem))
+
+    # Read at a resolved commit, the listing and each landed design's
+    # issue: line both come from that commit: here only the commit's copy
+    # names issue 120, and the ref's names none, so a read at the ref
+    # would drop the design from the issue's files.
+    at_commit = Recorder({
+        f"git ls-tree -r --name-only -z {MAIN_COMMIT}": Completed(
+            f"{LANDED_DESIGN}\0"),
+        f"git show {MAIN_COMMIT}:{LANDED_DESIGN}": Completed(landed_form()),
+        f"git show origin/main:{LANDED_DESIGN}": Completed(LANDED_TEXT),
+    })
+    found_at_commit = tool.ghi_md_paths_for_issue(120, scratch, at_commit,
+                                                  MAIN_COMMIT)
+    check("given a commit, the issue's files are listed at that commit and "
+          "a landed design's issue: line is read from that commit's copy",
+          found_at_commit == [LANDED_DESIGN]
+          and not at_commit.ran("origin/main"),
+          f"{found_at_commit} {at_commit.commands()}")
 
     # A read that fails is not "names no issue". Dropped silently, the file
     # would fall out of the issue's body, which is the empty answer the
