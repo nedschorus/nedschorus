@@ -11,13 +11,6 @@ handoff-supervisor-session-launch-and-seat-lock-test.py and
 handoff-supervisor-session-end-and-resume-test.py, beside this file.
 
 Run: python3 nc-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py
-The two live pinned-task-list canaries, run_preseed_canaries, launch real
-headless sessions. Task-list pinning rides undocumented harness state; an
-upgrade breaking it shows up as a successor finding its predecessor's tasks
-missing (the queues are the backstop), and these two cases are the
-diagnosis to run when that fires. --canary does not run them: the shared
-fixture's scratch HOME has no Claude login, so they would fail on
-authentication. They are skipped with that reason printed.
 
 Prints one line per case and exits non-zero if any case fails.
 """
@@ -774,77 +767,6 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     check("queue status reports an empty queue", "docs/nedschorus-wiki/queue: empty" in line, line)
 
 
-def run_preseed_canaries() -> None:
-    """Live canaries: does a fresh session read the seat's pinned task list?
-
-    Canary 1: a fresh session launched with the seat's pinned list id reads
-    task records that were on disk before it booted — the successor half of
-    a reincarnation, which is how the fleet carries tasks since nedschorus#141.
-    Canary 2: a task that session creates allocates above the existing ids,
-    leaving the earlier records untouched.
-
-    Two variables, because either alone proves nothing here.
-    CLAUDE_CODE_ENABLE_TODO_TOOLS=1 is what makes the task tools exist at
-    all from Claude Code 2.1.233 onward; without it the canary would report
-    a failure that is only the tools being absent.
-    CLAUDE_CODE_TASK_LIST_ID is the binding under test.
-
-    The store is a throwaway id, created and removed by this function. No
-    seat's real list is read or written.
-    """
-    session_id = str(uuid.uuid4())
-    pinned_list_id = f"handoff-supervisor-canary-{uuid.uuid4().hex[:8]}-tasks"
-    task_directory = Path.home() / ".claude" / "tasks" / pinned_list_id
-    task_directory.mkdir(parents=True, exist_ok=True)
-    # The record shape is the harness's own, read from live task stores: the
-    # id is a STRING, and blocks/blockedBy are present. A record with an
-    # integer id is silently dropped by TaskList while still counting toward
-    # the next allocated id — measured 2026-08-06, and the reason this
-    # fixture is written out longhand rather than approximated.
-    for task_id, subject in (("1", "carried task alpha"), ("2", "carried task beta")):
-        (task_directory / f"{task_id}.json").write_text(
-            json.dumps(
-                {
-                    "id": task_id,
-                    "subject": subject,
-                    "description": f"seeded by the canary: {subject}",
-                    "status": "pending",
-                    "blocks": [],
-                    "blockedBy": [],
-                }
-            ),
-            encoding="utf-8",
-        )
-
-    try:
-        result = subprocess.run(
-            [
-                "claude", "-p", "--session-id", session_id,
-                "List your current tasks with the TaskList tool, then create one new task "
-                "titled 'canary successor task'. Report the subjects you saw and the new task's id.",
-            ],
-            capture_output=True, text=True, timeout=300, check=False,
-            env={**os.environ,
-                 "CLAUDE_CODE_TASK_LIST_ID": pinned_list_id,
-                 "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"},
-        )
-        transcript = result.stdout
-
-        check("canary 1: successor reads the seat's pinned tasks",
-              "alpha" in transcript and "beta" in transcript, transcript[:400])
-
-        seeded_intact = all((task_directory / f"{n}.json").is_file() for n in (1, 2))
-        new_files = sorted(int(p.stem) for p in task_directory.glob("*.json") if p.stem.isdigit())
-        check("canary 2: seeded records are untouched", seeded_intact, str(new_files))
-        check("canary 2: new task ids allocate above the seeded maximum", max(new_files) >= 3, str(new_files))
-    finally:
-        # The throwaway store goes even when a check above failed, so a red
-        # run does not strand a directory beside the fleet's real lists.
-        shutil.rmtree(task_directory, ignore_errors=True)
-        print(f"(canary store {task_directory} removed: "
-              f"{'gone' if not task_directory.exists() else 'STILL PRESENT'})")
-
-
 def run_branch_sync_cases(workspace: Path):
     """Every branch of sync_working_branch_with_main, against real repositories.
 
@@ -1140,9 +1062,9 @@ def run_overview_check_git_output_cases(workspace: Path):
     repository.mkdir()
     git_in(["init", "--quiet", "--initial-branch=main"], repository)
 
-    def raised_by(arguments, **options):
+    def raised_by(arguments):
         try:
-            return helper(arguments, repository, **options)
+            return helper(arguments, repository)
         except failure as error:
             return error
 
@@ -3136,17 +3058,5 @@ check("the appended-system-prompt default resolves under docs/agents",
       supervisor.DEFAULT_APPENDED_SYSTEM_PROMPT_PATH.is_file(),
       str(supervisor.DEFAULT_APPENDED_SYSTEM_PROMPT_PATH))
 
-
-if "--canary" in sys.argv:
-    # The canaries' `claude` would need the real HOME for its login, and a real
-    # `claude` writes ~/.claude.json under whatever HOME it is given.
-    print("\nSKIP  real-Claude pinned-task-list canaries: handoff-supervisor-test-fixture.py "
-          "gives this suite a scratch HOME so that no case writes the real ~/.claude.json, "
-          "and under that HOME `claude` has no login, so the canaries would fail on "
-          "authentication, not on task-list pinning. Running them needs a test file of "
-          "their own that does not load that fixture.")
-else:
-    print("\n(skipped the live pinned-task-list canaries: under this suite's scratch HOME "
-          "`claude` has no login; the module docstring says why)")
 
 fixture.print_summary_and_exit_nonzero_if_any_case_failed()
