@@ -985,20 +985,26 @@ else:
               work_directories_left(scratch, "terminated"))
 
         # --- An interrupted run leaves no process of the suite running ---------
-        # In the checkout, the one place a suite in a test sandbox writes that stays outside.
-        heartbeat = repository / "heartbeat"
-        (repository / "heartbeat-child.py").write_text(
+        # Looked for by a marker in the command line, from outside: a suite in a test sandbox
+        # of its own writes nowhere this test can read.
+        marker = f"left-behind-by-the-interrupted-suite-{os.getpid()}"
+
+        def processes_carrying_marker():
+            listing = subprocess.run(["ps", "-A", "-o", "args="], capture_output=True,
+                                     text=True, check=True).stdout
+            return [line for line in listing.splitlines()
+                    if marker in line and "ps -A" not in line]
+
+        (repository / "lingering-child.py").write_text(
             "import sys, time\n"
-            "while True:\n"
-            "    with open(sys.argv[1], 'w') as beat:\n"
-            "        beat.write(repr(time.time()))\n"
-            "    time.sleep(0.1)\n")
+            "with open('child-started', 'w'):\n"
+            "    pass\n"
+            "time.sleep(600)\n")
         (repository / "spawns-test.py").write_text(
             "import os, subprocess, sys, time\n"
-            f"heartbeat = {str(heartbeat)!r}\n"
-            "subprocess.Popen([sys.executable, 'heartbeat-child.py', heartbeat],\n"
+            f"subprocess.Popen([sys.executable, 'lingering-child.py', {marker!r}],\n"
             "                 start_new_session=True)\n"
-            "while not os.path.exists(heartbeat):\n"
+            "while not os.path.exists('child-started'):\n"
             "    time.sleep(0.05)\n"
             "print('suite started', flush=True)\n"
             "time.sleep(60)\n")
@@ -1009,8 +1015,11 @@ else:
             stdin=subprocess.DEVNULL)
         for output_line in process.stdout:
             if "suite started" in output_line:
+                running_before = processes_carrying_marker()
                 process.send_signal(signal.SIGTERM)
                 break
+        else:
+            running_before = []
         try:
             # A process left running keeps the output pipe open, and this waits for it.
             process.communicate(timeout=30)
@@ -1019,14 +1028,17 @@ else:
             process.kill()
             exited = False
         time.sleep(0.5)
-        beat_after_exit = heartbeat.read_text()
-        time.sleep(1.0)
+        left = processes_carrying_marker()
         check("terminated, the program leaves no process the suite started running, even one "
-              "in a session of its own", exited and heartbeat.read_text() == beat_after_exit
-              and process.returncode == 2, (exited, process.returncode, beat_after_exit))
+              "in a session of its own",
+              exited and running_before and left == [] and process.returncode == 2,
+              (exited, process.returncode, running_before, left))
+        if left:
+            # Not to outlive this test if the program failed to end it.
+            subprocess.run(["pkill", "-f", marker], check=False)
         (repository / "spawns-test.py").unlink()
-        (repository / "heartbeat-child.py").unlink()
-        heartbeat.unlink(missing_ok=True)
+        (repository / "lingering-child.py").unlink()
+        (repository / "child-started").unlink(missing_ok=True)
 
         # --- Each failure while making, filling or removing the copy -----------
         def main_in_this_process(*arguments, git_fails_on=None, fill=None):

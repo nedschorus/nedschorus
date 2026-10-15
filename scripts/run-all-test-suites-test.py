@@ -49,6 +49,14 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 PROGRAM = SCRIPTS_DIR / "run-all-test-suites.py"
 RAN_FILE_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_RAN_FILE"
+
+# Every fixture run behaves as it does inside a full run, whose signal sandbox sets this:
+# its suites run unconfined, sharing the scratch directory's ran.txt, under the run.lock
+# this file reads. Run on its own on Linux, a fixture run would otherwise give each fixture
+# suite a test sandbox, whose private writes ran.txt never sees. The test sandbox itself is
+# tested in run-all-test-suites-signal-sandbox-test.py and
+# run-all-test-suites-machine-wide-test-suite-admission-test.py.
+os.environ["RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX"] = "1"
 RENDEZVOUS_WAIT_VARIABLE = "RUN_ALL_TEST_SUITES_TEST_RENDEZVOUS_SECONDS"
 
 failures = []
@@ -725,6 +733,10 @@ with tempfile.TemporaryDirectory() as scratch:
 # deciding against them was a measured decision and widening the list later
 # should trip a case.
 module = load_program_module()
+check("the variable this file sets, so its fixture runs run as in a full run, is the one the "
+      "program's signal sandbox sets",
+      module.SIGNAL_SANDBOX_INSIDE_VARIABLE == "RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX",
+      module.SIGNAL_SANDBOX_INSIDE_VARIABLE)
 every_variable = {
     "GIT_DIR": "/elsewhere/.git", "GIT_WORK_TREE": "/elsewhere",
     "GIT_INDEX_FILE": "/elsewhere/.git/index",

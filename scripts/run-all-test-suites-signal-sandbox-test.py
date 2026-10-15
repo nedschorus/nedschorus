@@ -635,7 +635,38 @@ if linux_only_cases_run_here("what a suite's test sandbox shows and hides"):
         check("a program file run inside the sandbox from the hidden home directory, such as the "
               "launcher that checks the sandbox from inside, has its directory shown",
               launch == [os.path.realpath(launcher.parent)], launch)
+        runner.directories_hidden_whole_in_test_sandbox = lambda: home_hidden
+        try:
+            launch_in_checkout = runner.paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(
+                ["/usr/bin/python3"], [launcher], checkout=launcher.parent.parent)
+        finally:
+            runner.directories_hidden_whole_in_test_sandbox = original_hidden
+        check("a program file inside the checkout under test has nothing shown, so no read-only "
+              "directory covers the checkout's writable copy",
+              launch_in_checkout == [], launch_in_checkout)
         shown.cache_clear()
+    with tempfile.TemporaryDirectory() as path_name:
+        on_path = pathlib.Path(path_name) / "bin"
+        on_path.mkdir()
+        (on_path / "python-on-path-only").symlink_to(sys.executable)
+        elsewhere = pathlib.Path(path_name) / "elsewhere"
+        elsewhere.mkdir()
+        saved_path, saved_directory = os.environ.get("PATH", ""), os.getcwd()
+        os.environ["PATH"] = f"{on_path}{os.pathsep}{saved_path}"
+        os.chdir(elsewhere)
+        try:
+            runner.interpreter_directories_shown_read_only_in_test_sandbox.cache_clear()
+            runner.interpreter_directories_shown_read_only_in_test_sandbox(
+                "python-on-path-only", ("/no-directory-is-hidden-for-this-case",))
+            raised = None
+        except runner.SignalSandboxCouldNotStart as error:
+            raised = str(error)
+        finally:
+            os.chdir(saved_directory)
+            os.environ["PATH"] = saved_path
+            runner.interpreter_directories_shown_read_only_in_test_sandbox.cache_clear()
+        check("an interpreter given by a bare name, as --python python3, is the one PATH finds, "
+              "not a file of that name in the current directory", raised is None, raised)
     if os.path.exists("/usr/bin/python3"):
         check("an interpreter outside the home directory needs nothing shown",
               runner.interpreter_directories_shown_read_only_in_test_sandbox(

@@ -1477,6 +1477,10 @@ class MachineWideTestSuiteAdmissionCouldNotDecide(Exception):
     """Admission could not be decided, such as a slot file that cannot be opened."""
 
 
+class MachineWideTestSuiteAdmissionCancelled(Exception):
+    """The run stopped admitting suites, so a suite still waiting does not start."""
+
+
 class TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler:
     """The machine's CPU use, available memory and load, read every second by a thread.
 
@@ -1535,6 +1539,11 @@ class TestSuiteAdmissionMachineCpuAndMemoryReadingsSampler:
         if self.thread is not None:
             self.thread.join()
 
+    def failure_or_none(self):
+        """What stopped the readings, or None while they ran to the end."""
+        with self.lock:
+            return self.failure
+
     def cpu_percent_average(self):
         with self.lock:
             if self.failure is not None:
@@ -1581,6 +1590,7 @@ class MachineWideTestSuiteAdmission:
         self.lock = threading.Lock()
         self.waiting = {}
         self.last_report = None
+        self.cancelled = threading.Event()
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
         except OSError as error:
@@ -1640,8 +1650,12 @@ class MachineWideTestSuiteAdmission:
             try:
                 recent = [float(line) for line in times_file.read_text().split()
                           if 0.0 <= now - float(line) < 1.0]
-            except (OSError, ValueError):
+            except FileNotFoundError:
                 recent = []
+            except (OSError, ValueError) as error:
+                # Read as empty, it would lift the start-rate limit and overwrite the history.
+                raise MachineWideTestSuiteAdmissionCouldNotDecide(
+                    f"{times_file} could not be read: {error}") from error
             if len(recent) >= TEST_SUITE_ADMISSION_STARTS_PER_SECOND:
                 return None, (f"{TEST_SUITE_ADMISSION_STARTS_PER_SECOND} suites started on this "
                               f"machine in the last second, the most allowed")
@@ -1672,24 +1686,38 @@ class MachineWideTestSuiteAdmission:
         self.say(f"{count} suite{'s' if count != 1 else ''} of this run wait to start: "
                  + "; ".join(reasons))
 
+    def cancel(self):
+        """Stop admitting: every suite still waiting raises MachineWideTestSuiteAdmissionCancelled."""
+        self.cancelled.set()
+
+    def raise_if_cancelled(self, suite):
+        if self.cancelled.is_set():
+            raise MachineWideTestSuiteAdmissionCancelled(
+                f"{suite} was not started: the run stopped admitting suites")
+
     @contextlib.contextmanager
     def admitted(self, suite, outside_the_test_sandbox=False):
         """Hold a slot, and for a suite outside the test sandbox that lock first, while the suite runs.
 
-        Yields the seconds the suite waited."""
+        Yields the seconds the suite waited. Raises MachineWideTestSuiteAdmissionCancelled
+        once cancel() is called while the suite waits."""
         started = self.clock()
-        outside_lock = None
         held = []
         try:
             if outside_the_test_sandbox:
                 path = self.directory / SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX_LOCK_FILE_NAME
-                outside_lock = self.open_locked(path, blocking=False)
-                if outside_lock is None:
+                # Polled rather than a blocking flock, so a cancel reaches a suite waiting here.
+                while True:
+                    self.raise_if_cancelled(suite)
+                    outside_lock = self.open_locked(path, blocking=False)
+                    if outside_lock is not None:
+                        held.append(outside_lock)
+                        break
                     self.report_waiting(suite, "another run's suite outside the test sandbox "
                                                "holds the lock those suites share")
-                    outside_lock = self.open_locked(path, blocking=True)
-                held.append(outside_lock)
+                    self.sleep(TEST_SUITE_ADMISSION_RETRY_SECONDS)
             while True:
+                self.raise_if_cancelled(suite)
                 slot, why = self.take_a_start_and_a_slot()
                 if slot is not None:
                     held.append(slot)
@@ -2136,7 +2164,9 @@ def interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden=
     of them is or holds a directory the sandbox hides whole, since showing it would show
     that directory."""
     hidden = directories_hidden_whole_in_test_sandbox() if hidden is None else hidden
-    given = os.path.abspath(interpreter)
+    # A bare name, such as python3, is the one PATH finds, as the suite's command finds it.
+    given = os.path.abspath(interpreter if os.sep in interpreter
+                            else shutil.which(interpreter) or interpreter)
     try:
         answer = subprocess.run([given, "-I", "-c", INTERPRETER_LOADED_PATHS_SOURCE],
                                 capture_output=True, text=True, stdin=subprocess.DEVNULL,
@@ -2172,11 +2202,15 @@ def interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden=
             if not any(path.startswith(other.rstrip("/") + "/") for other in shown)]
 
 
-def paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(interpreters, program_files=()):
+def paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(interpreters, program_files=(),
+                                                                checkout=None):
     """Every path a suite's launch reads that a test sandbox would hide: each interpreter's
     directories, and the directory of each program file run inside the sandbox, such as the
-    launcher that checks the sandbox from inside it."""
+    launcher that checks the sandbox from inside it. A program file in the checkout needs
+    nothing shown: the sandbox shows the checkout writable, and a read-only directory bound
+    over it would make the suite's writes there fail."""
     hidden = directories_hidden_whole_in_test_sandbox()
+    inside_checkout = os.path.realpath(checkout) if checkout is not None else None
     shown = []
     for interpreter in interpreters:
         for path in interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden):
@@ -2184,6 +2218,9 @@ def paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(interpreters, p
                 shown.append(path)
     for program_file in program_files:
         directory = os.path.dirname(os.path.realpath(program_file))
+        if inside_checkout is not None and (directory == inside_checkout
+                                            or directory.startswith(inside_checkout + "/")):
+            continue
         if any(directory == top or directory.startswith(top + "/") for top in hidden) and \
                 directory not in shown:
             shown.append(directory)
@@ -3358,6 +3395,9 @@ def main(argv=None, platform=None):
                         OSError) as error:
                     for waiting in running:
                         waiting.cancel()
+                    # A suite already waiting for admission is running as far as its future knows.
+                    if admission is not None:
+                        admission.cancel()
                     what = ("admission failed" if isinstance(error, MachineWideTestSuiteAdmissionCouldNotDecide)
                             else "a suite's test sandbox could not be built"
                             if isinstance(error, SignalSandboxCouldNotStart)
@@ -3387,12 +3427,23 @@ def main(argv=None, platform=None):
             for result in skipping:
                 for skip in result["skips"]:
                     report.line(f"{result['suite']}: {skip}")
+        records_failed = False
         if admission is not None:
             waits = [result["admission_wait"] for result in results]
             report.line(f"{ADMISSION_WAITED_LINE_PREFIX}{sum(waits):.0f} in all, the longest "
                         f"{max(waits, default=0.0):.0f}")
+            # A reading that fails after the last admission reaches no admission decision.
+            readings.stop()
+            stopped_by = readings.failure_or_none()
+            if stopped_by is not None:
+                records_failed = True
+                report.line(f"{PROGRAM}: the machine's readings stopped before the run ended: "
+                            f"{stopped_by!r}")
+                report.line(f"The suites' verdicts below stand, but "
+                            f"{log_dir / MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME} is cut "
+                            f"short, so this run exits 2 if every suite passed, and 1 if any "
+                            f"failed. Fix what it names, then run this again.")
         # The case times, suite resources and failure history come with the test sandboxes.
-        records_failed = False
         if admission is not None:
             try:
                 write_case_times_suite_resources_and_junit_xml_of_run(log_dir, results)

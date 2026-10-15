@@ -415,7 +415,7 @@ def run_suite_confined(top, suite, interpreter, sandbox_prefix, proof_file, byte
         sandbox_prefix = runner.command_prefix_starting_one_suite_in_its_test_sandbox(
             sandbox_prefix, top, writable, suite,
             read_only_paths=runner.paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(
-                [sys.executable, interpreter], [Path(__file__).resolve()]))
+                [sys.executable, interpreter], [Path(__file__).resolve()], checkout=top))
     command = [*sandbox_prefix,
                sys.executable, str(Path(__file__).resolve()),
                INSIDE_CHECK_OPTION, str(proof_file), "--",

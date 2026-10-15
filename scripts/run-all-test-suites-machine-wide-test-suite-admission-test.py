@@ -420,6 +420,71 @@ with tempfile.TemporaryDirectory() as scratch_name:
     if slot is not None:
         slot.close()
 
+    # --- A start-times file that cannot be read stops admission -----------------------
+    for label, damage in (
+            ("holds a line that is not a time", lambda path: path.write_text("12.5\nnot-a-time\n")),
+            ("cannot be opened", lambda path: (path.write_text("12.5\n"), path.chmod(0)))):
+        directory = scratch / f"start-times-{label.replace(' ', '-')}"
+        admission, clock = admission_in(directory, Readings())
+        times_file = directory / runner.TEST_SUITE_ADMISSION_START_TIMES_FILE_NAME
+        damage(times_file)
+        unreadable = label == "cannot be opened" and os.access(times_file, os.R_OK)
+        try:
+            slot, why = admission.take_a_start_and_a_slot()
+            raised = None
+            if slot is not None:
+                slot.close()
+        except runner.MachineWideTestSuiteAdmissionCouldNotDecide as error:
+            raised = str(error)
+        times_file.chmod(0o644)
+        if unreadable:
+            print(f"SKIP  a start-times file that {label}: this account reads it anyway")
+            continue
+        check(f"a start-times file that {label} stops admission, naming the file, rather than "
+              f"lift the start-rate limit and overwrite the history",
+              raised is not None and str(times_file) in raised
+              and times_file.read_text().startswith("12.5\n"), raised)
+    directory = scratch / "start-times-missing"
+    admission, clock = admission_in(directory, Readings())
+    slot, why = admission.take_a_start_and_a_slot()
+    check("a start-times file not made yet, as at a machine's first run, admits",
+          slot is not None, why)
+    if slot is not None:
+        slot.close()
+
+    # --- A run that stops admitting releases the suites still waiting ------------------
+    for outside in (False, True):
+        where = "for the outside-suite lock" if outside else "for room on the machine"
+        directory = scratch / f"cancel-{'outside' if outside else 'room'}"
+        busy = Readings(cpu=99.0)
+        admission = runner.MachineWideTestSuiteAdmission(directory, busy, [].append)
+        holder = None
+        if outside:
+            busy.cpu = 10.0
+            holder = admission.open_locked(
+                directory / runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX_LOCK_FILE_NAME,
+                blocking=False)
+        outcome = []
+
+        def wait_for_admission(admission=admission, outside=outside, outcome=outcome):
+            try:
+                with admission.admitted("waiting-test.py", outside_the_test_sandbox=outside):
+                    outcome.append("started")
+            except runner.MachineWideTestSuiteAdmissionCancelled as error:
+                outcome.append(str(error))
+
+        waiter = threading.Thread(target=wait_for_admission, daemon=True)
+        waiter.start()
+        time.sleep(0.6)
+        admission.cancel()
+        waiter.join(timeout=5)
+        if holder is not None:
+            holder.close()
+        check(f"a suite waiting {where} when the run stops admitting does not start, and "
+              f"its wait ends",
+              not waiter.is_alive() and len(outcome) == 1 and "not started" in outcome[0],
+              (waiter.is_alive(), outcome))
+
     # --- psutil missing ----------------------------------------------------------
     hidden = scratch / "no-psutil"
     hidden.mkdir()
@@ -820,6 +885,73 @@ with tempfile.TemporaryDirectory() as scratch_name:
         check("records that cannot be written while every suite passed end the run with exit 2, "
               "the SUMMARY still printed",
               code == runner.EXIT_COULD_NOT_RUN and "could not be written" in printed
+              and "SUMMARY: 1 passed" in printed, (code, printed[-800:]))
+
+        two_suites = scratch / "two-suites-repository"
+        two_suites.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=two_suites, check=True)
+        for name in ("a-test.py", "b-test.py"):
+            (two_suites / name).write_text("print('PASS  only case')\n")
+        subprocess.run(["git", "add", "."], cwd=two_suites, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                        "-m", "start"], cwd=two_suites, check=True)
+        started_suites = []
+
+        def first_fails_to_start(top, interpreter, suite, *arguments, **options):
+            started_suites.append(suite)
+            if len(started_suites) == 1:
+                # Holding the one slot until the other suite waits for it, between retries.
+                time.sleep(0.5)
+                raise OSError(2, "No such file or directory", "bwrap")
+            return suite_passes(top, interpreter, suite, *arguments, **options)
+
+        run_scratch = scratch / "main-cancel"
+        run_scratch.mkdir()
+        with replaced(run_one_suite=first_fails_to_start,
+                      TEST_SUITE_ADMISSION_SUITES_RUNNING_AT_ONCE_CEILING=1,
+                      TEST_SUITE_ADMISSION_RETRY_SECONDS=2, **as_if_bwrap), \
+                contextlib.redirect_stdout(io.StringIO()) as printed_out, \
+                contextlib.redirect_stderr(io.StringIO()):
+            # Two at once, so the second suite is already waiting for the one slot.
+            code = runner.main(["--checkout", str(two_suites), "-j", "2",
+                                "--lock-file", str(run_scratch / "run.lock"),
+                                "--log-dir", str(run_scratch / "logs"),
+                                "--recorded-inputs-directory", str(run_scratch / "recorded")])
+        check("when a suite cannot be started, the suite waiting for admission is not started "
+              "after the run reports the failure",
+              code == runner.EXIT_COULD_NOT_RUN and len(started_suites) == 1,
+              (code, started_suites, printed_out.getvalue()[-600:]))
+
+        readings_fail = threading.Event()
+        samplers = []
+        real_read_once = sampler_class.read_once
+
+        def read_once_failing_on_cue(self, blocking_seconds=None):
+            if self not in samplers:
+                samplers.append(self)
+            if readings_fail.is_set():
+                raise RuntimeError("the CPU counters vanished after the last admission")
+            return real_read_once(self, blocking_seconds)
+
+        def suite_passes_then_readings_stop(*arguments, **options):
+            result = suite_passes(*arguments, **options)
+            readings_fail.set()
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and not any(
+                    sampler.failure_or_none() for sampler in samplers):
+                time.sleep(0.05)
+            return result
+
+        sampler_class.read_once = read_once_failing_on_cue
+        try:
+            code, printed, _ = main_with("readings-stop-after-admission", **as_if_bwrap,
+                                         run_one_suite=suite_passes_then_readings_stop)
+        finally:
+            sampler_class.read_once = real_read_once
+        check("machine readings that stop after the last suite was admitted end a run whose "
+              "suites all passed with exit 2, naming the error, the SUMMARY still printed",
+              code == runner.EXIT_COULD_NOT_RUN and "readings stopped" in printed
+              and "vanished after the last admission" in printed
               and "SUMMARY: 1 passed" in printed, (code, printed[-800:]))
 
         history_paths = []
