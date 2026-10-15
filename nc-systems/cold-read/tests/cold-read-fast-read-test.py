@@ -1240,9 +1240,63 @@ with tempfile.TemporaryDirectory() as git_failure_scratch:
           "dubious ownership" in git_failure_raised, repr(git_failure_raised))
     check("the read fails and says why when git cannot place the target",
           git_failure_run.returncode == 1
-          and "FAILED (could not tell which checkout holds" in git_failure_run.stdout
+          and "FAILED (no fast read ran and no report was written: could not tell which checkout holds" in git_failure_run.stdout
           and "dubious ownership" in git_failure_run.stderr,
           f"exit {git_failure_run.returncode}; {git_failure_run.stdout!r}; {git_failure_run.stderr!r}")
+
+# A worktree whose .git file names a missing git directory, as a ned-box
+# worktree read from the Mac through /Volumes/nedhome does, is a git failure
+# to report: git's words begin like "no worktree", and taking them so would
+# send its walk draft to the records route unsaid.
+with tempfile.TemporaryDirectory() as missing_git_directory_scratch:
+    missing_git_directory_scratch = Path(missing_git_directory_scratch).resolve()
+    worktree_with_missing_git_directory = missing_git_directory_scratch / "a-worktree"
+    (worktree_with_missing_git_directory / "docs" / "walk").mkdir(parents=True)
+    (worktree_with_missing_git_directory / ".git").write_text(
+        f"gitdir: {missing_git_directory_scratch / 'gone' / '.git' / 'worktrees' / 'a-worktree'}\n",
+        encoding="utf-8")
+    draft_in_worktree_with_missing_git_directory = (
+        worktree_with_missing_git_directory / "docs" / "walk" / "a-walk-item-draft.md")
+    draft_in_worktree_with_missing_git_directory.write_text("## Item 1 of 1\n", encoding="utf-8")
+    try:
+        warning_module.checkout_root_holding(draft_in_worktree_with_missing_git_directory)
+        missing_git_directory_raised = ""
+    except warning_module.CheckoutRootUnreadable as error:
+        missing_git_directory_raised = str(error)
+    check("a worktree whose .git file names a missing git directory is raised, not read as no worktree",
+          "names a git directory that does not exist" in missing_git_directory_raised,
+          repr(missing_git_directory_raised))
+
+    # A bare repository has no worktree; git says so in words that are not the
+    # no-worktree words, so the read fails rather than guessing a checkout.
+    bare_repository = missing_git_directory_scratch / "a-bare-repository.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare_repository)], check=True)
+    document_in_bare_repository = bare_repository / "a-walk-item-draft.md"
+    document_in_bare_repository.write_text("## Item 1 of 1\n", encoding="utf-8")
+    try:
+        warning_module.checkout_root_holding(document_in_bare_repository)
+        bare_repository_raised = ""
+    except warning_module.CheckoutRootUnreadable as error:
+        bare_repository_raised = str(error)
+    check("a target in a bare repository is raised, as the docstring says",
+          "must be run in a work tree" in bare_repository_raised,
+          repr(bare_repository_raised))
+
+    # A directory in no repository still answers this checkout.
+    no_repository_directory = missing_git_directory_scratch / "no-repository"
+    no_repository_directory.mkdir()
+    environment_before = os.environ.get("GIT_CEILING_DIRECTORIES")
+    os.environ["GIT_CEILING_DIRECTORIES"] = str(missing_git_directory_scratch)
+    try:
+        no_repository_root = warning_module.checkout_root_holding(
+            no_repository_directory / "a-walk-item-draft.md")
+    finally:
+        if environment_before is None:
+            del os.environ["GIT_CEILING_DIRECTORIES"]
+        else:
+            os.environ["GIT_CEILING_DIRECTORIES"] = environment_before
+    check("a directory in no repository answers this checkout",
+          no_repository_root == warning_module.REPO_ROOT, repr(no_repository_root))
 
 print()
 if failures:
