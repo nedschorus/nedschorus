@@ -219,9 +219,8 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
 
     resolved = daily.git(checkout, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
     if resolved.returncode != 0 or not resolved.stdout.strip():
-        print(f"{PROGRAM}: not run — git cannot resolve HEAD to a commit in {checkout}.\n"
-              f"Pass --checkout the top directory of a checkout at the commit to test.",
-              file=sys.stderr)
+        write_to_stderr(f"{PROGRAM}: not run — git cannot resolve HEAD to a commit in {checkout}.\n"
+                        f"Pass --checkout the top directory of a checkout at the commit to test.")
         return EXIT_CHECKOUT_REFUSED
     head = resolved.stdout.strip()
     differing, why_status_failed = first_tracked_file_that_differs(checkout)
@@ -292,7 +291,6 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
         except daily.RunnerOutputCopyFailed as failure:
             completed, lock_never_released, copy_failure = failure.completed, False, failure.reason
         if copy_failure is not None:
-            stop_using_stderr()
             steps_failed.append((
                 f"writing {run_all_test_suites.PROGRAM}'s output to this program's stderr "
                 f"failed ({copy_failure}); the runner ran to its end and its output is in "
@@ -404,10 +402,9 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
             return daily.EXIT_RECORD_NOT_WRITTEN
         when = ("When ned-box answers ssh again" if ssh_target
                 else "When the cause is fixed")
-        print(f"{PROGRAM}: the record was not written to {citation} ({error}).\n"
-              f"Tell the user what the line above says, and the remedy in the line below.\n"
-              f"{when}, write the record by running on this machine: {append_by_hand}",
-              file=sys.stderr)
+        write_to_stderr(f"{PROGRAM}: the record was not written to {citation} ({error}).\n"
+                        f"Tell the user what the line above says, and the remedy in the line below.\n"
+                        f"{when}, write the record by running on this machine: {append_by_hand}")
         return daily.EXIT_RECORD_NOT_WRITTEN
 
     if summary is not None and verdict_is_on_the_head:
