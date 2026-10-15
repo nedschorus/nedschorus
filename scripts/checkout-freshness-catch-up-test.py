@@ -1563,7 +1563,10 @@ with tempfile.TemporaryDirectory() as merge_scratch:
         return directory
 
     for shim_name, match, command in (
+            ("main-ref-fails", " --verify --quiet origin/main ",
+             "git rev-parse --verify --quiet origin/main"),
             ("rev-list-fails", " --merges ", "git rev-list --merges origin/main..HEAD"),
+            ("second-parent-fails", "^2 ", "git rev-parse --verify --quiet "),
             ("merge-base-fails", " --is-ancestor ", "git merge-base --is-ancestor")):
         failing_origin, failing_seat = seat_on_main(f"merge-check-{shim_name}")
         commit_file(failing_seat, "seat-own.txt", "mine\n", "the seat's own work")
@@ -1615,6 +1618,27 @@ with tempfile.TemporaryDirectory() as merge_scratch:
     check("a merge of a branch that is not on main is not reported",
           "merge commit(s) from main" not in agent_text(other_result),
           other_result.stdout)
+    check("a merge of a branch that is not on main is not a failed check either: "
+          "no one is told the repository may be damaged",
+          "could not be checked for merges from main" not in agent_text(other_result)
+          and "The repository may be damaged" not in agent_text(other_result)
+          and "the check for merges from main failed" not in display_text(other_result),
+          agent_text(other_result) + display_text(other_result))
+
+    # --- no origin/main at all: nothing to compare with, not damage ---------
+    bare_origin, bare_seat = seat_on_main("no-origin-main")
+    commit_file(bare_seat, "seat-own.txt", "mine\n", "the seat's own work")
+    git(["remote", "remove", "origin"], bare_seat)
+    bare_result = run_catch_up(["--cwd", str(bare_seat)])
+    check("a checkout with no origin/main is not told the repository may be damaged",
+          "The repository may be damaged" not in agent_text(bare_result)
+          and "the check for merges from main failed" not in display_text(bare_result),
+          agent_text(bare_result) + display_text(bare_result))
+    check("a checkout with no origin/main is told there is no origin/main, with the "
+          "fetch to run",
+          "there is no origin/main" in agent_text(bare_result)
+          and "git fetch origin" in agent_text(bare_result),
+          agent_text(bare_result))
 
 
 # ---------------------------------------------------------------------------

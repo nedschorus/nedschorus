@@ -700,12 +700,13 @@ def run_push_cases(scratch):
           and "Do not merge origin/main into this branch" in result.stderr,
           result.describe())
     check("and carries the line on cutting a new topic branch",
-          "Otherwise, cut a new topic branch from current origin/main and apply "
-          "this branch's change to it, resolving the conflict." in result.stderr,
+          "Otherwise, cut a new topic branch from current origin/main and apply to "
+          "it the part of this branch's change that origin/main lacks, resolving "
+          "the conflict." in result.stderr,
           result.describe())
     check("and carries the line on closing the old pull request",
-          "Close the old pull request with a comment linking the new one."
-          in result.stderr, result.describe())
+          "Then close the old pull request with one comment that links the new "
+          "pull request" in result.stderr, result.describe())
     check("and ends with the instruction to push the branch the report names",
           CLOSING_INSTRUCTION in result.stderr, result.describe())
     check("and does not offer --no-verify", "--no-verify" not in result.stderr,

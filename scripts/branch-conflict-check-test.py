@@ -415,21 +415,24 @@ case("CONFLICT text is one instruction per line, naming the commit", lines == [
     "never cleared by a merge.",
     "If this branch has never been pushed, rebase it onto current origin/main, "
     "resolving the conflict, rerun the test suites for what the change "
-    "touches, and push it.",
+    "touches, and push it; the lines below do not apply.",
     "If it has been pushed, do not push it again: its pull request is "
-    "replaced by a new one cut from current origin/main. First see what the "
-    "conflict is with.",
-    "If origin/main has already replaced this branch's work, close the pull "
+    "closed, and replaced by a new one only if origin/main still lacks some "
+    "of its work. To see which commits on origin/main changed each "
+    "conflicting file, run git log --oneline HEAD..origin/main -- <file>.",
+    "If origin/main already holds all of this branch's work, close the pull "
     "request with a comment naming the commit or pull request on origin/main "
-    "that replaced it, and open a new pull request only for what origin/main "
-    "still lacks.",
-    "Otherwise, cut a new topic branch from current origin/main and apply "
-    "this branch's change to it, resolving the conflict.",
+    "that holds it, and open no new pull request.",
+    "Otherwise, cut a new topic branch from current origin/main and apply to "
+    "it the part of this branch's change that origin/main lacks, resolving "
+    "the conflict.",
     "Before pushing the new branch, rerun the test suites for what the change "
     "touches.",
     "Push the new branch once, and open a new pull request from it whose "
     "description links the old pull request.",
-    "Close the old pull request with a comment linking the new one.",
+    "Then close the old pull request with one comment that links the new "
+    "pull request and names any commit or pull request on origin/main that "
+    "already holds part of the work.",
 ])
 
 status, lines = run(fake_runner(merge_tree_status=128))
@@ -457,8 +460,7 @@ status, lines = run(
     pull_request=353, reads=3)
 case("the CONFLICT block stays contiguous ahead of GitHub's lines",
      len(lines) >= 10
-     and lines[8] == "Close the old pull request with a comment linking the "
-                     "new one."
+     and lines[8].startswith("Then close the old pull request with one comment")
      and lines[9].startswith("GITHUB:"))
 
 # A commit git cannot read the subject of -- GitHub's pushed head, never
@@ -602,21 +604,24 @@ def conflict_block(base="origin/main", label=HEAD_LABEL):
         "cleared by a merge." % (base, base),
         "If this branch has never been pushed, rebase it onto current %s, "
         "resolving the conflict, rerun the test suites for what the change "
-        "touches, and push it." % base,
+        "touches, and push it; the lines below do not apply." % base,
         "If it has been pushed, do not push it again: its pull request is "
-        "replaced by a new one cut from current %s. First see what the "
-        "conflict is with." % base,
-        "If %s has already replaced this branch's work, close the pull "
-        "request with a comment naming the commit or pull request on %s that "
-        "replaced it, and open a new pull request only for what %s still "
-        "lacks." % (base, base, base),
-        "Otherwise, cut a new topic branch from current %s and apply this "
-        "branch's change to it, resolving the conflict." % base,
+        "closed, and replaced by a new one only if %s still lacks some of its "
+        "work. To see which commits on %s changed each conflicting file, run "
+        "git log --oneline HEAD..%s -- <file>." % (base, base, base),
+        "If %s already holds all of this branch's work, close the pull request "
+        "with a comment naming the commit or pull request on %s that holds it, "
+        "and open no new pull request." % (base, base),
+        "Otherwise, cut a new topic branch from current %s and apply to it the "
+        "part of this branch's change that %s lacks, resolving the conflict."
+        % (base, base),
         "Before pushing the new branch, rerun the test suites for what the "
         "change touches.",
         "Push the new branch once, and open a new pull request from it whose "
         "description links the old pull request.",
-        "Close the old pull request with a comment linking the new one.",
+        "Then close the old pull request with one comment that links the new "
+        "pull request and names any commit or pull request on %s that already "
+        "holds part of the work." % base,
     ]
 
 

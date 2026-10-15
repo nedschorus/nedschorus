@@ -992,13 +992,22 @@ def merges_from_main(checkout: Path):
     rather than every merge being flagged. A branch that carries older merges
     from main is flagged once, which is correct: those merges are real and the
     agent has not been told of them. A list cut short by a failed git command
-    is not an answer, so a failure returns no list at all.
+    is not an answer, so a failure returns no list at all. With no origin/main
+    there is nothing to compare with, which is not a failure: (None, None).
     """
     def failure(arguments, done):
         error = (done.stderr or "").strip().splitlines()
         return None, ("git " + " ".join(arguments),
                       error[0] if error else f"exit {done.returncode}")
 
+    arguments = ["rev-parse", "--verify", "--quiet", "origin/main"]
+    main = run_git(arguments, checkout, timeout=15)
+    if main.returncode == 1 and not main.stderr.strip():
+        # No origin/main to compare with: the count of drift tells the agent
+        # to fetch, so this check gives no answer rather than a failure.
+        return None, None
+    if main.returncode != 0:
+        return failure(arguments, main)
     arguments = ["rev-list", "--merges", "origin/main..HEAD"]
     merges = run_git(arguments, checkout, timeout=30)
     if merges.returncode != 0:
