@@ -8,7 +8,10 @@ Usage:
   ghi-info-ask.py "<question>" [--include-closed]
 
 Exit codes:
-  0  the reading list ghi-info returns, printed to stdout
+  0  the reading list ghi-info returns, printed to stdout; without
+     --include-closed, OPEN_ISSUES_ONLY_INCLUDE_CLOSED_HINT_MESSAGE follows
+     on stderr, so the caller learns the flag when the answer omits closed
+     issues
   1  a failed ask — gh unreachable, the box unreachable, ghi-info's own run
      erroring or timing out: one line on stderr. A failed ask never blocks a
      write (design's own words): the caller's job is to fall down the
@@ -330,6 +333,13 @@ RULING_QUESTION_MESSAGE_TEMPLATE = (
     "ghi-info found a ruling of the user's that it cannot tell still applies: {sentence}\n"
     "Ask the user whether that ruling still applies, and put the question on your task list.\n"
     "Do not file or edit the issue until he answers.")
+# Printed on stderr after an answer asked without --include-closed. stderr,
+# because stdout is the answer that callers such as ghi-issue-write.py parse.
+OPEN_ISSUES_ONLY_INCLUDE_CLOSED_HINT_MESSAGE = (
+    "ghi-info-ask: this answer covers open issues only.\n"
+    "To search closed issues as well, such as for precedent or before saying no issue "
+    'covers a subject, ask again with --include-closed: scripts/ghi-info-ask.py '
+    '"<question>" --include-closed')
 
 
 def caller_message_for_passthrough_reply(text: str):
@@ -929,6 +939,8 @@ def main(argv=None) -> int:
         print(message, file=sys.stderr)
         return exit_code
     print(answer)
+    if not arguments.include_closed:
+        print(OPEN_ISSUES_ONLY_INCLUDE_CLOSED_HINT_MESSAGE, file=sys.stderr)
     return 0
 
 
