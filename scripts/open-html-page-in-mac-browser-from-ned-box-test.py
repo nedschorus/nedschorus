@@ -79,7 +79,7 @@ for arguments, case_name in (([], "no path"), ([str(page), str(page)], "two path
 
 result, sent, _ = run_caller([str(page)], home, ssh_body="echo 'opened it'; exit 0")
 check("the request travels as one remote-command argument: the verb and the absolute path",
-      sent is not None and sent[-1] == f"open-in-browser {page}" and sent[-2] == "el@10.0.1.23" and sent[-3] == "--", sent)
+      sent is not None and sent[-1] == f"open-in-browser {page}" and sent[-2] == "el@edwards-macbook-air.local" and sent[-3] == "--", sent)
 check("a page the Mac opened exits 0 and passes the Mac's output on", result.returncode == 0 and "opened it" in result.stdout, result)
 
 result, sent, _ = run_caller(["notice.html"], home, cwd=str(pages))
@@ -97,7 +97,7 @@ for arguments, case_name, expected in (
           result.returncode == 2 and sent is None and "no request was sent, because" in result.stderr and expected in result.stderr,
           (result.returncode, sent, result.stderr))
 
-result, sent, _ = run_caller([str(page)], home, ssh_body="echo 'ssh: connect to host 10.0.1.23 port 22: Operation timed out' >&2; exit 255")
+result, sent, _ = run_caller([str(page)], home, ssh_body="echo 'ssh: connect to host edwards-macbook-air.local port 22: Operation timed out' >&2; exit 255")
 check("an unreachable Mac exits 1 and says so, with the page's path on the Mac to tell the user",
       result.returncode == 1 and "could not reach the Mac" in result.stderr and "so the page was not opened" in result.stderr
       and f"which is /Volumes/nedhome/{page.relative_to(home)} on the Mac" in result.stderr, result.stderr)
