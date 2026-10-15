@@ -161,7 +161,14 @@ def main():
         for command in ("git status && git push origin markdown-branch",
                         "git branch -v && git push origin markdown-branch",
                         "git branch --merged && git push origin markdown-branch",
-                        "git fetch -q origin && git push origin markdown-branch"):
+                        "git fetch -q origin && git push origin markdown-branch",
+                        "git fetch https://host/x.git && git push origin markdown-branch",
+                        "git fetch git@host:x.git main && git push origin markdown-branch",
+                        "git fetch --multiple origin https://host/x.git && git push origin markdown-branch",
+                        "git fetch --depth 1 origin && git push origin markdown-branch",
+                        "git branch --sort -committerdate && git push origin markdown-branch",
+                        "git branch --contains -m && git push origin markdown-branch",
+                        "git branch -uorigin/main && git push origin markdown-branch"):
             text = run_main(command, repository)
             check(f"a git command that moves no ref, earlier in the call, leaves the push reminded: {command}",
                   is_reminder(text, top), repr(text))
@@ -173,7 +180,10 @@ def main():
                 ("git branch -f code-branch markdown-branch && git push origin code-branch", "branch"),
                 ("git branch --force code-branch markdown-branch && git push origin code-branch", "branch"),
                 ("git branch -M code-branch && git push origin code-branch", "branch"),
-                ("git fetch -q . markdown-branch:code-branch && git push origin code-branch", "fetch")):
+                ("git fetch -q . markdown-branch:code-branch && git push origin code-branch", "fetch"),
+                ("git fetch https://host/x.git main:code-branch && git push origin code-branch", "fetch"),
+                ("git branch --sort -committerdate -f code-branch markdown-branch && git push origin code-branch", "branch"),
+                ("git branch -vf code-branch markdown-branch && git push origin code-branch", "branch")):
             text = run_main(command, repository)
             check(f"a push after a git {subcommand} in the same call gives the failure line naming it: {command}",
                   is_failure_line(text, f"an earlier command in this call, git {subcommand}, can change what"),
