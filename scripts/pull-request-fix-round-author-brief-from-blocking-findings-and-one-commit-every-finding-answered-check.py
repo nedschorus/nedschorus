@@ -3,7 +3,7 @@
 
 Usage:
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number>
-  scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --check --answers FILE [--commit REV] [--after-conflict-merge]
+  scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --check [--answers FILE] [--commit REV] [--after-conflict-merge]
 
 The round is set by merge-lane-2's latest review of the pull request, which must request changes.
 Its commit is the frozen-head. Its blocking findings are its inline comments whose body starts
@@ -15,8 +15,9 @@ the brief: the frozen-head, each blocking finding word for word, the round's rul
 
 With --check, run in the author's checkout: the commits from the frozen-head to --commit (default
 HEAD) must be none, or one non-merge commit, or with --after-conflict-merge a merge of origin/main
-followed by at most one non-merge commit. --answers holds one entry per blocking finding, each
-starting "<n>. " on its own line. It prints the files the fix commit changes that no blocking
+followed by at most one non-merge commit. The answers file holds one entry per blocking finding,
+each starting "<n>. " on its own line; by default it is ANSWERS_FILE_NAME_FORMAT inside the
+checkout's own git directory, where git never commits it. It prints the files the fix commit changes that no blocking
 finding names, and, once GitHub's head is the checked commit or the frozen-head, the message for
 merge-lane-2, which the agent sends with SendMessage, since a program cannot.
 
@@ -45,6 +46,9 @@ BLOCKING_COUNT_PATTERN = re.compile(r"\*\*Blocking:\s*(\d+)\*\*")
 ANSWER_START_PATTERN = re.compile(r"^(\d+)\.\s+(\S.*)$")
 GH_TIMEOUT_SECONDS = 60
 PROGRAM = "scripts/" + Path(__file__).name
+ANSWERS_FILE_NAME_FORMAT = "fix-round-answers-pull-request-{number}.md"
+PRE_PUSH_TEST_COMMAND = ("python3 scripts/run-all-test-suites.py "
+                         "--only-suites-whose-recorded-inputs-changed-since origin/main")
 
 
 class Refused(Exception):
@@ -122,7 +126,7 @@ def latest_review(number, reviewer_login):
         raise Refused(f"merge-lane-2's latest review of pull request {number} ({review.get('html_url')}) "
                       f"is {review.get('state')}, not CHANGES_REQUESTED, so there is no fix-round to brief.\n"
                       "If that review lists follow-ups, answer them in a new pull request or tell "
-                      "merge-lane-2 why not.")
+                      "merge-lane-2 why not, with SendMessage.")
     return review
 
 
@@ -178,25 +182,48 @@ def print_brief(number, reviewer_login):
     for index, finding in enumerate(findings, 1):
         lines += ["", f"{index}. {finding_place(finding)} ({finding.get('html_url')})",
                   (finding.get("body") or "").strip()]
+    answers_path = default_answers_path(number)
+    check_command = f"python3 {PROGRAM} {number} --check"
     lines += [
         "",
-        "Rules of the round:",
-        "- Check each finding against the code. Fix each one that holds, root cause included, "
+        "Rules of the round, in order:",
+        f"1. Before changing anything, run: python3 scripts/branch-conflict-check.py --pull-request {number}",
+        "   Only if it reports VERDICT: CONFLICT, merge origin/main as its report says. "
+        "Otherwise merge nothing.",
+        "2. Check each finding against the code. Fix each one that holds, root cause included, "
         "with a test that fails without the fix.",
-        "- Change nothing else, apart from the tests, callers, documents and citations that "
-        "keep the pull request atomic.",
-        "- Make at most one commit, on top of the frozen-head. If branch-conflict-check.py "
-        "reported VERDICT: CONFLICT, merge origin/main first as its report says, then make "
-        "the one commit.",
-        "- Write an answers file with one entry per finding, each starting \"<n>. \" on its own "
-        "line: what you fixed, or why the finding does not hold.",
-        "- Before pushing, run:",
-        f"  python3 {PROGRAM} {number} --check --answers <answers file>"
-        " [--after-conflict-merge]",
-        "  Push once when it passes, run it again, and send merge-lane-2 the message it prints, "
-        "with SendMessage.",
+        "3. Change nothing else, apart from the tests, callers, documents and citations that "
+        "keep the pull request atomic. Findings that do not block, in this review or any other, "
+        "are not part of this round: merge-lane-2 sends them after the merge.",
+        "4. Put every change in one commit on top of the frozen-head, or of the merge from step 1. "
+        "If no finding holds, make no commit.",
+        f"5. Write the answers file {answers_path}, one entry per finding above, each starting "
+        "\"<n>. \" on its own line, with any further lines of the entry after it: what you fixed, "
+        "or why the finding does not hold. It is inside git's own directory, so it is never "
+        "committed.",
+        f"6. Run the affected test suites: {PRE_PUSH_TEST_COMMAND}",
+        f"7. Run the check: {check_command}",
+        "   adding --after-conflict-merge if step 1 merged origin/main. If it refuses, change the "
+        "answers file or the unpushed commit as it says (git commit --amend is allowed before the "
+        "push) and run the check again.",
+        "8. When it passes with a commit not yet pushed, push once and run the same check command "
+        "again. When it passes and prints a message for merge-lane-2, which it does at once if you "
+        "made no commit, send that message to merge-lane-2 with SendMessage.",
+        "9. If anything fails after the push, do not push again or rewrite the branch: tell "
+        "merge-lane-2 with SendMessage what failed, and the next fix-round takes it.",
     ]
     print("\n".join(lines))
+
+
+def default_answers_path(number):
+    """The answers file inside the checkout's own git directory, which git never commits."""
+    try:
+        git_directory = git(["rev-parse", "--absolute-git-dir"]).strip()
+    except StepFailed as failure:
+        raise Refused(f"This must run in your checkout of pull request {number}'s branch, whose "
+                      f"git directory holds the answers file, but git could not find one: {failure}.\n"
+                      "Change to that checkout and run this again.") from None
+    return str(Path(git_directory) / ANSWERS_FILE_NAME_FORMAT.format(number=number))
 
 
 def read_answers(path, finding_count):
@@ -246,7 +273,8 @@ def commits_since(frozen_head, commit):
 
 def fix_commit_range(frozen_head, commits, after_conflict_merge):
     """Check the shape of the round; return (base, fix commit) for its file list, or None."""
-    described = ", ".join(f"{sha[:12]} ({len(parents)} parents)" for sha, parents in commits)
+    described = ", ".join(f"{sha[:12]} ({len(parents)} parent{'' if len(parents) == 1 else 's'})"
+                          for sha, parents in commits)
     if not commits:
         return None
     if after_conflict_merge:
@@ -285,7 +313,7 @@ def unnamed_files(base, fix_commit, findings):
 
 def check_round(number, reviewer_login, answers_path, commit_name, after_conflict_merge):
     url, head, review, frozen_head, findings = round_facts(number, reviewer_login)
-    answers = read_answers(answers_path, len(findings))
+    answers = read_answers(answers_path or default_answers_path(number), len(findings))
     commit = git(["rev-parse", "--verify", f"{commit_name}^{{commit}}"]).strip()
     git(["cat-file", "-e", f"{frozen_head}^{{commit}}"])
     fix_range = fix_commit_range(frozen_head, commits_since(frozen_head, commit), after_conflict_merge)
@@ -301,7 +329,8 @@ def check_round(number, reviewer_login, answers_path, commit_name, after_conflic
                       "Check --commit names what you pushed; if someone else pushed, tell "
                       "merge-lane-2 with SendMessage.")
     if head == frozen_head and commit != frozen_head:
-        lines += ["Not pushed yet. Push once, then run this again to get the message for merge-lane-2."]
+        lines += ["Not pushed yet. Push once, then run this same command again to get the message "
+                  "for merge-lane-2."]
         print("\n".join(lines))
         return
     pushed = (f"New head {commit}, one fix-round on top of the frozen-head {frozen_head}."
@@ -325,7 +354,10 @@ def main(argv=None):
     parser.add_argument("number", type=int, help="the pull request's number")
     parser.add_argument("--check", action="store_true",
                         help="check the round in this checkout instead of printing the brief")
-    parser.add_argument("--answers", help="with --check: the answers file, one \"<n>. \" entry per finding")
+    parser.add_argument("--answers",
+                        help="with --check: the answers file, one \"<n>. \" entry per finding "
+                             "(default: " + ANSWERS_FILE_NAME_FORMAT.format(number="<number>")
+                             + " in the checkout's git directory)")
     parser.add_argument("--commit", default="HEAD",
                         help="with --check: the round's last commit (default: HEAD)")
     parser.add_argument("--after-conflict-merge", action="store_true",
@@ -334,8 +366,6 @@ def main(argv=None):
     parser.add_argument("--reviewer-login", default=MERGE_LANE_2_REVIEWER_LOGIN,
                         help=f"merge-lane-2's GitHub account (default: {MERGE_LANE_2_REVIEWER_LOGIN})")
     arguments = parser.parse_args(argv)
-    if arguments.check and not arguments.answers:
-        parser.error("--check needs --answers")
     try:
         if arguments.check:
             check_round(arguments.number, arguments.reviewer_login, arguments.answers,
@@ -347,8 +377,9 @@ def main(argv=None):
         return 1
     except StepFailed as failure:
         print(f"FAILED: {failure}\n"
-              "If the failure names a cause you can fix, such as gh being logged out or a commit "
-              "not fetched, fix it and run this again.\n"
+              "If it names a commit or ref this checkout does not have, run git fetch origin and "
+              "run this again.\n"
+              "If gh is not logged in, tell the user: only the user can log gh in.\n"
               "Otherwise, tell the user this message.", file=sys.stderr)
         return 2
     return 0

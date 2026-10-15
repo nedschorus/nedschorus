@@ -156,7 +156,22 @@ def brief_cases(root, repository, base, frozen_head):
     check("brief: carries both blocking findings word for word, in order, and not the note",
           out.index("hook.py swallows") < out.index("no case for the timeout")
           and "A non-blocking note" not in out and "1. hook.py:12" in out and "2. test.py (" in out, out)
-    check("brief: ends with the --check command", f"{NUMBER} --check --answers" in out, out)
+    git_directory = git(repository, "rev-parse", "--absolute-git-dir")
+    check("brief: names the answers file inside the checkout's git directory",
+          f"{git_directory}/fix-round-answers-pull-request-{NUMBER}.md" in out, out)
+    check("brief: names the conflict check, the pre-push test run and the check command, in order",
+          out.index(f"branch-conflict-check.py --pull-request {NUMBER}")
+          < out.index("run-all-test-suites.py --only-suites-whose-recorded-inputs-changed-since origin/main")
+          < out.index(f"{NUMBER} --check"), out)
+    check("brief: says what to do when the check refuses and when a step fails after the push",
+          "git commit --amend is allowed before the push" in out
+          and "do not push again or rewrite the branch" in out, out)
+
+    outside = root / "not-a-checkout"
+    outside.mkdir()
+    code, out, err = run(root, outside, routes_for(frozen_head, [review(commit_id=frozen_head)]))
+    check("brief: outside a git checkout refuses with exit 1, naming the checkout to use",
+          code == 1 and "must run in your checkout of pull request 7's branch" in err, err)
 
     code, out, err = run(root, repository, routes_for(
         frozen_head, [review(commit_id=frozen_head),
@@ -175,7 +190,8 @@ def brief_cases(root, repository, base, frozen_head):
         frozen_head, [review(commit_id=frozen_head),
                       review(state="APPROVED", commit_id=frozen_head, review_id=12)]))
     check("brief: a later approval means no fix-round, exit 1",
-          code == 1 and "is APPROVED, not CHANGES_REQUESTED" in err, err)
+          code == 1 and "is APPROVED, not CHANGES_REQUESTED" in err
+          and "tell merge-lane-2 why not, with SendMessage" in err, err)
 
     code, out, err = run(root, repository, routes_for(base, [review(commit_id=frozen_head)]))
     check("brief: a head that moved past the reviewed commit refuses with exit 1",
@@ -203,7 +219,8 @@ def brief_cases(root, repository, base, frozen_head):
     routes[REVIEWS] = {"exit": 1, "stderr": "HTTP 502"}
     code, out, err = run(root, repository, routes)
     check("brief: a gh failure fails with exit 2 and gh's message",
-          code == 2 and "HTTP 502" in err and "tell the user" in err, err)
+          code == 2 and "HTTP 502" in err and "only the user can log gh in" in err
+          and "Otherwise, tell the user this message" in err, err)
 
     routes = routes_for(frozen_head, [review(commit_id=frozen_head)])
     routes[REVIEWS] = {"stdout": "not json\n"}
@@ -259,8 +276,9 @@ def check_cases(root, repository, base, frozen_head):
     second = commit_file(repository, "hook.py", "three\n", "second")
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers)
-    check("check: two commits refuse with exit 1", code == 1 and "has 2 commits" in err
-          and "squash them" in err, err)
+    check("check: two commits refuse with exit 1, each described with one parent",
+          code == 1 and "has 2 commits" in err and "squash them" in err
+          and "(1 parent)" in err and "1 parents" not in err, err)
 
     git(repository, "reset", "-q", "--hard", frozen_head)
     git(repository, "merge", "-q", "--no-edit", "origin/main")
@@ -326,9 +344,18 @@ def check_cases(root, repository, base, frozen_head):
     check("check: an unreadable answers file fails with exit 2", code == 2
           and "could not read the answers file" in err, err)
 
+    default_answers = Path(git(repository, "rev-parse", "--absolute-git-dir")) / \
+        f"fix-round-answers-pull-request-{NUMBER}.md"
+    default_answers.write_text(GOOD_ANSWERS)
     code, out, err = run(root, repository, routes_for(frozen_head, reviews), "--check")
-    check("check: --check without --answers is a usage error", code == 2
-          and "--check needs --answers" in err, err)
+    check("check: without --answers it reads the answers file in the checkout's git directory",
+          code == 0 and "Nothing pushed" in out, out + err)
+    check("check: the default answers file is not seen by git status",
+          git(repository, "status", "--porcelain") == "", git(repository, "status", "--porcelain"))
+    default_answers.unlink()
+    code, out, err = run(root, repository, routes_for(frozen_head, reviews), "--check")
+    check("check: a missing default answers file fails with exit 2, naming it",
+          code == 2 and str(default_answers) in err, err)
 
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers_file(root, GOOD_ANSWERS), "--commit", "no-such-ref")
