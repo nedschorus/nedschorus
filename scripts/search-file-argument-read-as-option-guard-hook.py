@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Refuse search globs that expand to option-like filenames before --.
 
-Variables, remote commands, shell launchers, braces, and git pathspecs are not expanded,
-nor is the value of an option that takes one, such as grep -f's pattern file.
+Variables, remote commands, shell launchers, braces, and git pathspecs are not expanded.
+The value of an option that takes one, such as grep -f's pattern file, is not a file to search,
+but a value that expands to two or more names, one beginning with -, is refused: the shell
+passes only one of them as the value.
 A refusal gives the agent's whole command with -- put in; when no place for -- is found,
 it gives the search alone only if the command is that search, and otherwise no command.
 Bare subshell cwd boundaries and bash without globstar may produce false positives.
@@ -27,9 +29,6 @@ _shell_reader_spec.loader.exec_module(shell_reader)
 is_program = shell_reader.is_program
 
 SEARCH_PROGRAMS = ("grep", "egrep", "fgrep", "rg", "ugrep")
-
-# tree-sitter-bash keeps the time keyword as the first word of the command it times.
-LEADING_SHELL_KEYWORDS = {"time"}
 
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
@@ -72,6 +71,12 @@ REFUSAL_WITH_COMMAND_TEMPLATE = (
     "Refused: {glob_word} expands to names beginning with -, such as {name}, "
     "which {program} reads as options, not as files. Put -- before the file "
     "names and run: {accepted_command}"
+)
+REFUSAL_OF_OPTION_VALUE_TEMPLATE = (
+    "Refused: {glob_word}, the value of {option}, expands to two or more names, such as "
+    "{name}. The shell passes only the first name as {option}'s value; {program} reads the "
+    "others as more words, and a name beginning with - as an option. -- cannot fix this. "
+    "Quote {glob_word}, or write the one name you meant, then run the command again."
 )
 REFUSAL_WITHOUT_COMMAND_TEMPLATE = (
     "Refused: {glob_word} expands to names beginning with -, such as {name}, "
@@ -123,13 +128,16 @@ def shell_spelling_of_word(word):
     return "".join(pieces)
 
 
-def first_expansion_beginning_with_dash(word, directory, deadline, clock):
-    """Return the first expansion beginning with -, or None; raise when the budget expires."""
+def expansions_that_can_begin_with_dash(word, directory, deadline, clock):
+    """Yield the names word expands to in directory, or nothing when none can begin with -.
+
+    Raise when the budget expires.
+    """
     # Only the first path component can make the expanded filename begin with -.
     first_component = word.split("/", 1)[0]
     if (not word_holds_unquoted_glob(first_component)
             and not first_component.startswith("-")):
-        return None
+        return
     if clock() > deadline:
         raise ExpansionBudgetSpent()
     base = os.path.normpath(directory)
@@ -138,11 +146,30 @@ def first_expansion_beginning_with_dash(word, directory, deadline, clock):
     pattern_prefix = glob.escape(base) + ("" if base.endswith(os.sep) else os.sep)
     for count, path in enumerate(
             glob.iglob(pattern_prefix + glob_pattern_for_word(word), recursive=True)):
-        relative = path[len(literal_prefix):]
-        if relative.startswith("-"):
-            return relative
+        yield path[len(literal_prefix):]
         if count % 256 == 255 and clock() > deadline:
             raise ExpansionBudgetSpent()
+
+
+def first_expansion_beginning_with_dash(word, directory, deadline, clock):
+    """Return the first expansion beginning with -, or None; raise when the budget expires."""
+    for name in expansions_that_can_begin_with_dash(word, directory, deadline, clock):
+        if name.startswith("-"):
+            return name
+    return None
+
+
+def dash_name_among_two_or_more_expansions(word, directory, deadline, clock):
+    """Return a name beginning with - when word expands to two or more names, else None."""
+    # Which name the shell puts first depends on its sort order and locale, so a dash name
+    # anywhere among two or more may be one the program reads as an option.
+    count, dash_name = 0, None
+    for name in expansions_that_can_begin_with_dash(word, directory, deadline, clock):
+        count += 1
+        if dash_name is None and name.startswith("-"):
+            dash_name = name
+        if count >= 2 and dash_name is not None:
+            return dash_name
     return None
 
 
@@ -206,6 +233,14 @@ def refused_search(command, commands, command_index, program_index,
         if word == "--":
             return None
         if option_takes_the_next_word_as_its_value(program, plain_word(word)):
+            value = arguments[index + 1] if index + 1 < len(arguments) else None
+            if value is not None and word_holds_unquoted_glob(value):
+                name = dash_name_among_two_or_more_expansions(value, directory,
+                                                              deadline, clock)
+                if name is not None:
+                    return ({"glob_word": plain_word(value), "name": name,
+                             "program": program, "option": plain_word(word)},
+                            None, None)
             index += 2
             continue
         if not word_holds_unquoted_glob(word):
@@ -225,22 +260,42 @@ def refused_search(command, commands, command_index, program_index,
         whole_command = command_with_double_dash_before_word(
             command, commands, command_index, program_index + 1 + index,
             deadline, clock)
-        # Omit leading shell keywords: a suggestion starting with do grep would be invalid shell syntax.
-        first_word = 0
-        while words[first_word] in LEADING_SHELL_KEYWORDS:
-            first_word += 1
-        respelled = (words[first_word:program_index + 1] + arguments[:index]
-                     + ["--"] + arguments[index:])
-        # The search alone runs elsewhere, or does less, when other commands stood around it,
-        # such as a cd before it or a pipe after it; then the refusal gives no command.
         respelled_search = None
-        if len(commands) == 1:
-            respelled_search = " ".join(
-                [item if item == "--" else shell_spelling_of_word(item) for item in respelled]
-                + [operator + shell_spelling_of_word(target)
-                   for operator, target in words.redirects if operator != "<<"])
+        if command_is_this_search_alone(command, commands, words):
+            respelled_search = search_spelled(
+                words[:program_index + 1] + arguments[:index] + ["--"] + arguments[index:],
+                words.redirects)
         return details, whole_command, respelled_search
     return None
+
+
+def search_spelled(words, redirects):
+    """Return shell text for the search's words and redirections, -- left unquoted."""
+    return " ".join(
+        [word if word == "--" else shell_spelling_of_word(word) for word in words]
+        + [operator + shell_spelling_of_word(target) for operator, target in redirects])
+
+
+def shell_tokens(text):
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    return list(lexer)
+
+
+def command_is_this_search_alone(command, commands, words):
+    """Return whether command is the one search and nothing else.
+
+    The search alone runs elsewhere, or does less, when anything stood around it: a cd before
+    it, a pipe after it, a loop, a group's redirection, or an & that runs it in the background.
+    """
+    if len(commands) != 1:
+        return False
+    # Spelled from the same words, the two differ in tokens only where the command holds more.
+    try:
+        return shell_tokens(command) == shell_tokens(search_spelled(words, words.redirects))
+    except ValueError:
+        return False
 
 
 def resolve_directory(base, target):
@@ -296,6 +351,8 @@ def analyze_command_text(command, payload_cwd, clock=time.monotonic):
     if refused is None:
         return None
     details, whole_command, respelled_search = refused
+    if "option" in details:
+        return REFUSAL_OF_OPTION_VALUE_TEMPLATE.format(**details)
     if whole_command is None:
         if respelled_search is None:
             return REFUSAL_WITHOUT_COMMAND_TEMPLATE.format(**details)
