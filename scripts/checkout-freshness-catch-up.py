@@ -253,9 +253,10 @@ UNKNOWN_ADVICE = ("Your head state could not be determined (a git command failed
                   "was changed. Check `git status` before working.")
 AFTER_REBASE_ADVICE = f"Run `{SELECTIVE_TEST_RUN_COMMAND}`: your work now sits on newer code."
 
-# Appended to EVERY note the agent receives, by tell() itself, so no note can
-# forget it. Without it, agents relay these notes to the user, who does not
-# need to hear what other agents merged.
+# Appended by tell() itself to every note the agent receives except one that
+# tells the agent to tell the user, so no other note can forget it. Without
+# it, agents relay these notes to the user, who does not need to hear what
+# other agents merged.
 NOT_FOR_THE_USER_ADVICE = (
     "Do not report this to the user: he does not need to hear that main moved, or "
     "what other agents merged, unless it changes the work you are doing with him."
@@ -452,8 +453,7 @@ COUNT_FAILED_NOTE = (
     "Run `git fetch origin` and then `git rev-list --count HEAD..origin/main` to see the "
     "count, or git's message.\n"
     "If git cannot make the count either, tell the user what git said: a checkout that "
-    "cannot be compared with main changes the work you are doing with him, so the line "
-    "below that begins 'Do not report' does not forbid telling him."
+    "cannot be compared with main changes the work you are doing with him."
 )
 NOTES_NOT_CLEARED_LINE = (
     "checkout-freshness: these notes could not be cleared from {path} ({error}), so they "
@@ -492,13 +492,16 @@ def report(line: str) -> None:
     REPORT_LINES.append(line)
 
 
-def tell(text: str, kind: str = NOTE_KIND_MOVED, short: str = None) -> None:
+def tell(text: str, kind: str = NOTE_KIND_MOVED, short: str = None,
+         for_the_user_too: bool = False) -> None:
     """Queue a note for the AGENT, ending with the line that says it is not
-    for the user — here, the one place every note passes through. `short` is
-    the form used when the delivery would be too long."""
-    note = {"kind": kind, "text": f"{text}\n{NOT_FOR_THE_USER_ADVICE}"}
+    for the user — here, the one place every note passes through — unless
+    `for_the_user_too`, for a note that tells the agent to tell the user.
+    `short` is the form used when the delivery would be too long."""
+    tail = "" if for_the_user_too else f"\n{NOT_FOR_THE_USER_ADVICE}"
+    note = {"kind": kind, "text": f"{text}{tail}"}
     if short is not None:
-        note["short"] = f"{short}\n{NOT_FOR_THE_USER_ADVICE}"
+        note["short"] = f"{short}{tail}"
     AGENT_NOTES.append(note)
 
 
@@ -964,7 +967,7 @@ def drift_facts(checkout: Path, stamp: dict, branch: str, state_key: str, state_
         stamp["behind"] = stamp["ahead"] = None
         if stamp.get("last_count_error") != error:
             tell(COUNT_FAILED_NOTE.format(branch=branch or "detached HEAD", error=error),
-                 kind=NOTE_KIND_COUNT_FAILED)
+                 kind=NOTE_KIND_COUNT_FAILED, for_the_user_too=True)
         stamp["last_count_error"] = error
         return None, None
     if stamp.pop("last_count_error", None) is not None:
@@ -1268,9 +1271,10 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     branch = run_git(["rev-parse", "--abbrev-ref", "HEAD"], checkout, timeout=15).stdout.strip()
     state_key, state_text = head_state(checkout, branch)
 
-    # 1. Misbehaviour, to the agent, once per distinct finding.
-    # A check git could not make is not an answer: the last finding stands,
-    # so its queued note is neither dropped nor told again.
+    # 1. Misbehaviour, to the agent, once per distinct finding of each
+    # detector: a change in one detector's finding does not tell the other's
+    # again. A check git could not make is not an answer: the last finding
+    # stands, so its queued note is neither dropped nor told again.
     found = {}
     last_found = stamp.get("last_misbehaviour")
     last_found = last_found if isinstance(last_found, dict) else {}
@@ -1289,22 +1293,23 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
         drop_queued_notes_of_kinds(NOTE_KIND_MERGES_FROM_MAIN)
     if "rewritten_head" not in found:
         drop_queued_notes_of_kinds(NOTE_KIND_REWRITTEN_HEAD)
-    if found and stamp.get("last_misbehaviour") != found:
-        if "merges_from_main" in found:
-            merged = found["merges_from_main"]
-            tell(f"checkout-freshness: {branch} carries {len(merged)} merge commit(s) from "
-                 f"main ({', '.join(merged)}). This project brings a branch up to date by "
-                 f"rebasing it onto main, not by merging main into it. If the branch was "
-                 f"never pushed, rebase it onto origin/main. If it was pushed, leave its "
-                 f"history and tell the agent-seat merge-lane-2, with SendMessage, which "
-                 f"merge commits it carries.", kind=NOTE_KIND_MERGES_FROM_MAIN)
-        if "rewritten_head" in found:
-            head, remote = found["rewritten_head"]
-            tell(f"checkout-freshness: {branch}'s HEAD ({head}) no longer contains its pushed "
-                 f"head origin/{branch} ({remote}): an amend or a rebase rewrote pushed "
-                 f"commits, which moves the code under its reviewer. Do not push this HEAD. "
-                 f"Put your change back as one commit on top of origin/{branch}, then push.",
-                 kind=NOTE_KIND_REWRITTEN_HEAD)
+    if "merges_from_main" in found and found["merges_from_main"] != last_found.get(
+            "merges_from_main"):
+        merged = found["merges_from_main"]
+        tell(f"checkout-freshness: {branch} carries {len(merged)} merge commit(s) from "
+             f"main ({', '.join(merged)}). This project brings a branch up to date by "
+             f"rebasing it onto main, not by merging main into it. If the branch was "
+             f"never pushed, rebase it onto origin/main. If it was pushed, leave its "
+             f"history and tell the agent-seat merge-lane-2, with SendMessage, which "
+             f"merge commits it carries.", kind=NOTE_KIND_MERGES_FROM_MAIN)
+    if "rewritten_head" in found and found["rewritten_head"] != last_found.get(
+            "rewritten_head"):
+        head, remote = found["rewritten_head"]
+        tell(f"checkout-freshness: {branch}'s HEAD ({head}) no longer contains its pushed "
+             f"head origin/{branch} ({remote}): an amend or a rebase rewrote pushed "
+             f"commits, which moves the code under its reviewer. Do not push this HEAD. "
+             f"Put your change back as one commit on top of origin/{branch}, then push.",
+             kind=NOTE_KIND_REWRITTEN_HEAD)
     if found:
         stamp["last_misbehaviour"] = found
     else:

@@ -2119,9 +2119,12 @@ with tempfile.TemporaryDirectory() as notes_scratch:
               "Run `git fetch origin` and then `git rev-list --count HEAD..origin/main` to see "
               "the count, or git's message.\n"
               "If git cannot make the count either, tell the user what git said: a checkout that "
-              "cannot be compared with main changes the work you are doing with him, so the line "
-              "below that begins 'Do not report' does not forbid telling him.\n")
-          and count_failed_text.endswith("\n" + NOT_FOR_THE_USER_LINE), count_failed_text)
+              "cannot be compared with main changes the work you are doing with him.")
+          and count_failed_text.endswith("changes the work you are doing with him."),
+          count_failed_text)
+    check("the count-failed note, which tells the agent to tell the user, does not end with "
+          "the line saying it is not for the user",
+          NOT_FOR_THE_USER_LINE not in count_failed_text, count_failed_text)
     deliver(notes_seat)
     again = stop_only(notes_seat, path_prefix=str(count_fails))
     check("the same count failure is told once, not at every turn's end",
@@ -2358,12 +2361,10 @@ with tempfile.TemporaryDirectory() as notes_scratch:
     git(["commit", "-q", "--amend", "-m", "the merge, amended"], notes_seat)
     carried_run = stop_only(notes_seat, path_prefix=merges_unlisted)
     carried_kinds = sorted(note.get("kind") for note in queued_notes(notes_seat))
-    check("when git cannot list the merges and the rewritten head changes, the carried "
-          "merges are told again with their count, without a crash",
+    check("when git cannot list the merges and the head is rewritten, only the rewritten "
+          "head is told: the merges note already delivered is not queued again, and nothing crashes",
           carried_run.returncode == 0 and "Traceback" not in carried_run.stderr
-          and carried_kinds == ["merges-from-main", "rewritten-head"]
-          and "seat carries 1 merge commit(s) from main"
-          in " ".join(note["text"] for note in queued_notes(notes_seat)),
+          and carried_kinds == ["rewritten-head"],
           carried_run.stderr + str(queued_notes(notes_seat)))
 
     def write_stamp_notes(path, notes):
