@@ -963,8 +963,8 @@ status, lines = run(with_deleting_diff(
     merge_tree_status=1, merge_tree_output=TWO_DELETED))
 case("a rename beside a real deletion still closes, and says to carry the "
      "change onto the new name", status == CHECK.EXIT_CONFLICT
-     and "DELETED OR RENAMED ON origin/main: a.txt -> possibly a2.txt, by "
-         "commit %s" % DELETING_COMMIT[:12] in lines
+     and "DELETED OR RENAMED ON origin/main: a.txt, deleted by commit %s -> "
+         "possibly a2.txt" % DELETING_COMMIT[:12] in lines
      and "DELETED ON origin/main: b.txt, by commit %s" % DELETING_COMMIT[:12]
          in lines
      and any(line.startswith("A file marked DELETED OR RENAMED may have been "
@@ -1013,8 +1013,9 @@ status, lines = run(with_two_renames(
     missing_at_base=("a2.txt",)))
 case("a file main renamed twice is named by the name the base holds",
      status == CHECK.EXIT_CONFLICT
-     and "DELETED OR RENAMED ON origin/main: a.txt -> possibly a3.txt, by "
-         "commit %s" % DELETING_COMMIT[:12] in lines
+     and "DELETED OR RENAMED ON origin/main: a.txt, deleted by commit %s -> "
+         "possibly a3.txt (the name commit %s gave it)"
+         % (DELETING_COMMIT[:12], LATER_COMMIT[:12]) in lines
      and not any("a2.txt" in line for line in lines))
 case("the later rename is looked for only after the first one, on the base",
      ["git", "log", "--full-history", "--reverse", "--format=%H",
@@ -1033,8 +1034,9 @@ status, lines = run(with_two_renames(
         LATER_COMMIT: (0, "R100\0a2.txt\0a3.txt\0"),
         LAST_COMMIT: (0, "R100\0a2.txt\0a9.txt\0")}))
 case("a candidate deleted more than once later is followed through its first "
-     "deletion", "DELETED OR RENAMED ON origin/main: a.txt -> possibly a3.txt, "
-                 "by commit %s" % DELETING_COMMIT[:12] in lines)
+     "deletion", "DELETED OR RENAMED ON origin/main: a.txt, deleted by commit "
+                 "%s -> possibly a3.txt (the name commit %s gave it)"
+                 % (DELETING_COMMIT[:12], LATER_COMMIT[:12]) in lines)
 
 status, lines = run(with_two_renames(
     (0, ""), (0, ""), merge_tree_status=1, merge_tree_output=ONE_DELETED,
@@ -1055,6 +1057,80 @@ case("a later renaming commit whose files git cannot list is named in the "
      in lines
      and any(line.startswith("RENAME CHECK:") and LATER_COMMIT[:12] in line
              for line in lines))
+
+status, lines = run(with_two_renames(
+    (128, ""), (0, ""), merge_tree_status=1, merge_tree_output=ONE_DELETED,
+    missing_at_base=("a2.txt",)))
+case("a git log that cannot list a candidate's later deletions is reported "
+     "on a RENAME CHECK line naming the file, not read as no later rename",
+     status == CHECK.EXIT_CONFLICT
+     and "RENAME CHECK: git could not list the commits on origin/main after "
+         "commit %s that deleted a2.txt, so a.txt may have been renamed again, "
+         "to a name this run could not find; check with git log --full-history "
+         "--diff-filter=D %s..%s -- a2.txt."
+         % (DELETING_COMMIT[:12], DELETING_COMMIT[:12], RESOLVED_BASE[:12])
+         in lines
+     and any(line.startswith("Do each RENAME CHECK before the advice below.")
+             for line in lines))
+
+def with_b_unlisted(**fake):
+    inner = fake_runner(**fake)
+
+    def runner(command):
+        if command[:2] == ["git", "diff-tree"]:
+            return ((0, "R020\0a.txt\0a2.txt\0") if DELETING_COMMIT in command[-1]
+                    else (128, ""))
+        if command[:2] == ["git", "log"] and "--diff-filter=D" in command:
+            return 0, DELETING_COMMIT if command[-1] == "a.txt" else LATER_COMMIT
+        return inner(command)
+    return runner
+
+
+status, lines = run(with_b_unlisted(merge_tree_status=1,
+                                    merge_tree_output=TWO_DELETED))
+case("a RENAME CHECK beside a renamed file keeps the mixed line from saying "
+     "the DELETED ON file was surely deleted",
+     any(line.startswith("A file marked DELETED OR RENAMED may have been "
+                         "renamed, but each file marked DELETED ON was deleted "
+                         "unless a RENAME CHECK above shows otherwise")
+         for line in lines)
+     and any(line.startswith("RENAME CHECK: git could not list the files "
+                             "commit %s added, so b.txt" % LATER_COMMIT[:12])
+             for line in lines))
+
+# A name can come back: p.txt became b.txt, then a.txt, then b.txt again, then
+# c.txt, which the base holds. Following b.txt only once would lose c.txt.
+CHAIN = ["%d" % n * 40 for n in range(1, 5)]
+
+
+def with_rename_chain(**fake):
+    inner = fake_runner(**fake)
+    diffs = {CHAIN[0]: "R020\0p.txt\0b.txt\0", CHAIN[1]: "R100\0b.txt\0a.txt\0",
+             CHAIN[2]: "R100\0a.txt\0b.txt\0", CHAIN[3]: "R100\0b.txt\0c.txt\0"}
+    later = {("b.txt", CHAIN[0]): CHAIN[1], ("a.txt", CHAIN[1]): CHAIN[2],
+             ("b.txt", CHAIN[2]): CHAIN[3]}
+
+    def runner(command):
+        if command[:2] == ["git", "diff-tree"]:
+            return 0, diffs[command[-1]]
+        if command[:2] == ["git", "log"] and "--diff-filter=D" in command:
+            if "--reverse" not in command:
+                return 0, CHAIN[0]
+            after = command[-3].split("..")[0]
+            return 0, later.get((command[-1], after), "")
+        return inner(command)
+    return runner
+
+
+status, lines = run(with_rename_chain(
+    merge_tree_status=1,
+    merge_tree_output=merge_tree_z(("1", "p.txt"), ("3", "p.txt")),
+    missing_at_base=("b.txt", "a.txt")))
+case("a name that comes back in a chain of renames is followed again, to the "
+     "name the base holds",
+     "DELETED OR RENAMED ON origin/main: p.txt, deleted by commit %s -> "
+     "possibly c.txt (the name commit %s gave it)"
+     % (CHAIN[0][:12], CHAIN[3][:12]) in lines)
 
 for old, new, expected in (
         ("compiled-python-libraries-pinned-requirements.txt",
@@ -1307,8 +1383,11 @@ def real_repository_cases(root):
         git_in(origin, "rev-parse", "HEAD"),
         "main renames compiled-tool-settings-list.txt and rewrites it whole")
     # The first rename rewrites the file whole, so only its name pairs it; the
-    # second is a plain git mv on a side branch merged with a merge commit, as
-    # a pull request lands, so the first new name is gone from the base.
+    # second is a plain git mv. Both land on one side branch merged with a
+    # merge commit after main moved on, as a pull request and its fix round
+    # land: main never held the first new name, so git log finds the second
+    # rename only with --full-history.
+    git_in(origin, "checkout", "-q", "-b", "two-renames")
     git_in(origin, "rm", "-q", "compiled-twice-renamed-notes.txt")
     (origin / "twice-renamed-notes.txt").write_text("a new format entirely\n")
     git_in(origin, "add", "twice-renamed-notes.txt")
@@ -1317,12 +1396,16 @@ def real_repository_cases(root):
     twice_renamed_label = real_label(
         git_in(origin, "rev-parse", "HEAD"),
         "main renames compiled-twice-renamed-notes.txt and rewrites it")
-    git_in(origin, "checkout", "-q", "-b", "second-rename")
     git_in(origin, "mv", "twice-renamed-notes.txt", "twice-renamed-notes-kept.txt")
     git_in(origin, "commit", "-q", "-m", "main renames twice-renamed-notes.txt")
+    second_rename_label = real_label(git_in(origin, "rev-parse", "HEAD"),
+                                     "main renames twice-renamed-notes.txt")
     git_in(origin, "checkout", "-q", "main")
-    git_in(origin, "merge", "-q", "--no-ff", "-m", "merge the second rename",
-           "second-rename")
+    (origin / "work-while-renames-were-reviewed.txt").write_text("other work\n")
+    git_in(origin, "add", "work-while-renames-were-reviewed.txt")
+    git_in(origin, "commit", "-q", "-m", "main moves on while the renames wait")
+    git_in(origin, "merge", "-q", "--no-ff", "-m", "merge the two renames",
+           "two-renames")
     git_in(origin, "rm", "-q", "doomed-notes.txt")
     (origin / "unrelated-report.md").write_text("# A report\n\nAbout other things.\n")
     git_in(origin, "add", "unrelated-report.md")
@@ -1435,21 +1518,24 @@ def real_repository_cases(root):
             "origin/main may have renamed each file marked DELETED OR RENAMED and "
             "changed it in the same commit, so much that git did not pair the "
             "two names.",
-            "Check each one: compare the branch's version of the old file with "
-            "origin/main's version of each file named after \"possibly\".",
-            "If every one was renamed, merge origin/main into the branch by hand, "
-            "with the frozen head as first parent, and carry the branch's change "
-            "to each old file onto its new name.",
+            "Check each file marked DELETED OR RENAMED: compare the branch's "
+            "version of it with origin/main's version of each file named after "
+            "\"possibly\" on its line.",
+            "If each file marked DELETED OR RENAMED was renamed to one of the "
+            "files named after \"possibly\" on its line, merge origin/main into "
+            "the branch by hand, with the frozen head as first parent, and carry "
+            "the branch's change to each old file onto its new name.",
             "In that hand-merge, resolve any ALSO CONFLICTS file too, change "
             "nothing else, put any edit the resolution forces beyond the "
             "conflicting lines in one ordinary commit after the merge, rerun the "
             "test suites for what the merge touched, and push the merge and that "
             "commit once, naming the files you resolved in the merge's commit "
             "message and in the pull request's description.",
-            "If any one was deleted rather than renamed, do not merge: close the "
-            "pull request with a comment naming the commit that deleted it, and "
-            "carry what origin/main still lacks on a new topic branch cut from "
-            "current origin/main.",
+            "If any file marked DELETED OR RENAMED was deleted rather than renamed "
+            "to one of the files named after \"possibly\" on its line, do not "
+            "merge: close the pull request with a comment naming the commit that "
+            "deleted it, and carry what origin/main still lacks on a new topic "
+            "branch cut from current origin/main.",
         ]
 
     for topic, head, old, new, label, why in (
@@ -1465,8 +1551,8 @@ def real_repository_cases(root):
                  "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
                  "origin/main deleted 1 file(s) the branch changes."
                  % real_label(head, topic.replace("-topic", " topic")),
-                 "DELETED OR RENAMED ON origin/main: %s -> possibly %s, by %s"
-                 % (old, new, label),
+                 "DELETED OR RENAMED ON origin/main: %s, deleted by %s -> "
+                 "possibly %s" % (old, label, new),
              ] + rename_advice())
 
     status, lines, _ = run_here("--head", "twice-renamed-topic")
@@ -1476,8 +1562,9 @@ def real_repository_cases(root):
              "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
              "origin/main deleted 1 file(s) the branch changes."
              % real_label(twice_renamed_head, "twice-renamed topic"),
-             "DELETED OR RENAMED ON origin/main: compiled-twice-renamed-notes.txt "
-             "-> possibly twice-renamed-notes-kept.txt, by %s" % twice_renamed_label,
+             "DELETED OR RENAMED ON origin/main: compiled-twice-renamed-notes.txt, "
+             "deleted by %s -> possibly twice-renamed-notes-kept.txt (the name %s "
+             "gave it)" % (twice_renamed_label, second_rename_label),
          ] + rename_advice())
 
     status, lines, _ = run_here("--head", "deleted-beside-addition-topic")

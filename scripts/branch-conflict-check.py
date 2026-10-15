@@ -204,25 +204,30 @@ def path_exists_at(commit, path, runner=run):
 
 
 def later_deleting_commit(path, after, base_hash, runner=run):
-    """Return the first commit after `after` on the base that deleted path, or None."""
+    """Return (whether git listed the commits, the first commit after `after`
+    on the base that deleted path, or None)."""
     # A rename made on a side branch and merged leaves the path unchanged
     # between the merge and its first parent, and git log's default history
     # simplification then never visits the side branch.
     status, out = runner(["git", "log", "--full-history", "--reverse",
                           "--format=%H", "--diff-filter=D",
                           "%s..%s" % (after, base_hash), "--", path])
-    hashes = out.split() if status == 0 else []
-    return hashes[0] if hashes else None
+    if status != 0:
+        return False, None
+    hashes = out.split()
+    return True, (hashes[0] if hashes else None)
 
 
 def candidates_at_base(path, commit, base_hash, runner=run):
-    """Return (names at the base path may now have, commits git could not list).
+    """Return ((name at the base, commit that gave that name) pairs, commits
+    git could not list, (candidate, commit) pairs whose later deletions git
+    could not list).
 
     A file the deleting commit renamed may have been renamed or deleted again
     later on the base, so each candidate is kept only under a name the base
     holds: one it has, or the one a later rename gave it.
     """
-    found, unlisted, seen = [], [], set()
+    found, unlisted, unfollowed, seen = [], [], [], set()
     pending = [(path, commit)]
     while pending:
         old, deleting = pending.pop(0)
@@ -231,16 +236,21 @@ def candidates_at_base(path, commit, base_hash, runner=run):
             unlisted.append(deleting)
             continue
         for candidate in candidates:
-            if candidate in seen:
+            # A name can come back after a later rename, so the same name
+            # reached through a different commit is followed again.
+            if (candidate, deleting) in seen:
                 continue
-            seen.add(candidate)
+            seen.add((candidate, deleting))
             if path_exists_at(base_hash, candidate, runner):
-                found.append(candidate)
+                found.append((candidate, deleting))
                 continue
-            later = later_deleting_commit(candidate, deleting, base_hash, runner)
-            if later is not None:
+            listed, later = later_deleting_commit(candidate, deleting,
+                                                  base_hash, runner)
+            if not listed:
+                unfollowed.append((candidate, deleting))
+            elif later is not None:
                 pending.append((candidate, later))
-    return found, unlisted
+    return found, unlisted, unfollowed
 
 
 def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
@@ -255,6 +265,7 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
     unnamed = False
     renamed = 0
     unlisted = []
+    unfollowed = []
     for staged in deleted:
         path = own_path(staged, messages, RENAMES_FOR_A_FILE_THE_BASE_DELETED)
         commit = deleting_commit(path, base_hash, head_hash, runner)
@@ -263,14 +274,22 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
             lines.append("DELETED ON %s: %s, by a commit this run could not find"
                          % (base, path))
             continue
-        candidates, not_listed = candidates_at_base(path, commit, base_hash,
-                                                    runner)
-        unlisted += [c for c in not_listed if c not in unlisted]
-        if candidates:
+        found, not_listed, not_followed = candidates_at_base(
+            path, commit, base_hash, runner)
+        unlisted += [(path, c) for c in not_listed if (path, c) not in unlisted]
+        unfollowed += [(path, candidate, after) for candidate, after in not_followed
+                       if (path, candidate, after) not in unfollowed]
+        if found:
             renamed += 1
-            lines.append("DELETED OR RENAMED ON %s: %s -> possibly %s, by %s"
-                         % (base, path, " or ".join(candidates),
-                            commit_label(commit, runner)))
+            # A name a later commit gave says which commit holds it, so a
+            # reader does not look for it in the deleting commit.
+            named = [candidate if naming == commit
+                     else "%s (the name %s gave it)"
+                     % (candidate, commit_label(naming, runner))
+                     for candidate, naming in found]
+            lines.append("DELETED OR RENAMED ON %s: %s, deleted by %s -> "
+                         "possibly %s" % (base, path, commit_label(commit, runner),
+                                          " or ".join(named)))
         else:
             lines.append("DELETED ON %s: %s, by %s"
                          % (base, path, commit_label(commit, runner)))
@@ -278,38 +297,61 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
     for path in others:
         lines.append("ALSO CONFLICTS: %s"
                      % own_path(path, messages, RENAMES_FOR_ANY_OTHER_CONFLICT))
-    for commit in unlisted:
+    for path, commit in unlisted:
         lines.append(
-            "RENAME CHECK: git could not list the files %s added, so a file "
-            "marked DELETED ON may have been renamed; check that commit with "
-            "git show --stat %s." % (commit_label(commit, runner), commit[:12]))
+            "RENAME CHECK: git could not list the files %s added, so %s may "
+            "have been renamed to a name this run could not find; check that "
+            "commit with git show --stat %s."
+            % (commit_label(commit, runner), path, commit[:12]))
+    for path, candidate, after in unfollowed:
+        lines.append(
+            "RENAME CHECK: git could not list the commits on %s after %s that "
+            "deleted %s, so %s may have been renamed again, to a name this run "
+            "could not find; check with git log --full-history --diff-filter=D "
+            "%s..%s -- %s." % (base, commit_label(after, runner), candidate, path,
+                               after[:12], base_hash[:12], candidate))
+    if unlisted or unfollowed:
+        lines.append(
+            "Do each RENAME CHECK before the advice below. If the checks show "
+            "that every file this run reports as deleted was renamed, the advice "
+            "below does not apply: compare the branch's version of each old file "
+            "with %s's version under its new name, and if each is a rename, merge "
+            "%s into the branch by hand, with the frozen head as first parent, "
+            "carrying the branch's change to each old file onto its new name."
+            % (base, base))
     if renamed and renamed == len(deleted):
         return lines + [
             "%s may have renamed each file marked DELETED OR RENAMED and changed "
             "it in the same commit, so much that git did not pair the two names."
             % base,
-            "Check each one: compare the branch's version of the old file with "
-            "%s's version of each file named after \"possibly\"." % base,
-            "If every one was renamed, merge %s into the branch by hand, with "
-            "the frozen head as first parent, and carry the branch's change to "
-            "each old file onto its new name." % base,
+            "Check each file marked DELETED OR RENAMED: compare the branch's "
+            "version of it with %s's version of each file named after "
+            "\"possibly\" on its line." % base,
+            "If each file marked DELETED OR RENAMED was renamed to one of the "
+            "files named after \"possibly\" on its line, merge %s into the "
+            "branch by hand, with the frozen head as first parent, and carry the "
+            "branch's change to each old file onto its new name." % base,
             "In that hand-merge, resolve any ALSO CONFLICTS file too, change "
             "nothing else, put any edit the resolution forces beyond the "
             "conflicting lines in one ordinary commit after the merge, rerun the "
             "test suites for what the merge touched, and push the merge and that "
             "commit once, naming the files you resolved in the merge's commit "
             "message and in the pull request's description.",
-            "If any one was deleted rather than renamed, do not merge: close the "
-            "pull request with a comment naming the commit that deleted it, and "
+            "If any file marked DELETED OR RENAMED was deleted rather than renamed "
+            "to one of the files named after \"possibly\" on its line, do not "
+            "merge: close the pull request with a comment naming the commit that "
+            "deleted it, and "
             "carry what %s still lacks on a new topic branch cut from current %s."
             % (base, base),
         ]
     if renamed:
         lines.append(
-            "A file marked DELETED OR RENAMED may have been renamed, but the "
-            "file(s) marked DELETED ON were deleted, so the branch closes either "
+            "A file marked DELETED OR RENAMED may have been renamed, but each "
+            "file marked DELETED ON was deleted%s, so the branch closes either "
             "way; on the new topic branch, carry the branch's change to each "
-            "renamed file onto its new name.")
+            "renamed file onto its new name."
+            % (" unless a RENAME CHECK above shows otherwise"
+               if unlisted or unfollowed else ""))
     lines.append(
         "Do not merge %s into the branch: %s removed the file(s) above, so a "
         "hand-merge would either bring a removed file back or drop the "
