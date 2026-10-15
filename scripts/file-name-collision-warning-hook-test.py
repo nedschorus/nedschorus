@@ -199,7 +199,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("line 4 points at the naming page instead of restating it",
           padded_warning_lines[3].startswith(
               "If both files are meant to exist and the file you wrote is not a draft, "
-              "rename the file you wrote by docs/nedschorus-wiki/"
+              "rename the file you wrote following the rules in docs/nedschorus-wiki/"
               "nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md")
           and "3 or 4 parts" not in warning and "three or four" not in warning,
           repr(padded_warning_lines[3]))

@@ -379,8 +379,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("and told its next topic starts from origin/main",
           "git checkout -b <name> origin/main" in pushed_warning, pushed_warning)
     # A conflict with main is the one case a commit on top cannot clear; the
-    # advice sends it to the hand-merge (CLAUDE.md, "How a change reaches main",
-    # worded 2026-09-30). The whole advice is pinned.
+    # advice sends it to the hand-merge that the VERDICT: CONFLICT report of
+    # scripts/branch-conflict-check.py describes. The whole advice is pinned.
     check("the pushed advice is word for word, the hand-merge for a conflict included",
           "This branch is pushed, so its review may be running: do not rebase or amend "
           "it. A fix for this topic is a new commit on top. If it conflicts with main, "
