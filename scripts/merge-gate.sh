@@ -318,6 +318,18 @@ NEW_ACTIVITY_RECORD="When nothing is left open, post a review as the merge accou
 [ "$reviews" -eq 0 ] || fail "$reviews review(s) posted or edited since $SINCE -- read them before merging" \
   "$NEW_ACTIVITY_READ" "$NEW_ACTIVITY_FINDING" "$NEW_ACTIVITY_RECORD"
 
+# The gate checks only that a labelled line is there. Whether the line is true
+# is a reviewer's judgement, not the gate's.
+body_read=$(gh pr view "$PR" --repo "$REPO" --json body)
+[ $? -eq 0 ] || cannot "could not read pull request $PR's description; any error gh printed is just above this line." "$RERUN_ONCE_GH"
+has_defect_line=$(jq -r '.body
+  | split("\n")
+  | any(test("^\\s*(?:[-*+]\\s+)?(?:\\*\\*|__)?(?:Root cause(?: not fixed)?(?:\\*\\*|__)?:|No defect fixed(?:\\*\\*|__)?\\.)"))' <<<"$body_read")
+[ $? -eq 0 ] || cannot "could not parse pull request $PR's description" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+[ "$has_defect_line" = "true" ] || fail "the pull request's description has no line beginning \"Root cause:\", \"Root cause not fixed:\" or \"No defect fixed.\", so it does not say whether the pull request fixes a defect and, if it does, whether the change removes the defect's root cause." \
+  "Have the pull request's author add one of these lines to the description, starting the line with the label, which may follow a bullet and may be in bold type: \"Root cause:\" and the root cause the change removes; \"Root cause not fixed:\" and the root cause that stays, or that none was found, with the reason; or \"No defect fixed.\" when the pull request fixes no defect." \
+  "Editing the description needs no new commit. Once the description has the line, run the gate again."
+
 echo "gate passed (#$PR): approved commit $approved_sha by $approver at $approval_at, $decision, $merge_state, no new channel activity since $SINCE"
 # The pin (--match-head-commit) is what makes the approval binding: GitHub
 # refuses the merge if the head has moved since the approval.

@@ -1331,6 +1331,9 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     session_environment[HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE] = handoff_supervisor_agent_name
     session_environment[HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE] = str(working_directory)
     session_environment[HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE] = session_id
+    # Claude Code's demo mode skips its first-run onboarding screens, such as the theme picker,
+    # which can reappear even when ~/.claude.json records them done and would stop the session.
+    session_environment["IS_DEMO"] = "1"
     return subprocess.Popen(command, cwd=str(working_directory), env=session_environment)
 
 

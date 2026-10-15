@@ -27,3 +27,8 @@ A root-cause analysis document, a template beyond the one line, or a separate re
 ## Next action
 
 Items 1 and 2 are done. Item 1 is the section "A pull request that fixes a defect" in `docs/agents/pr-reviewer-instructions.md`, added by pull request [PR reviewer instructions: a pull request that fixes a defect carries a Root cause line](https://github.com/nedschorus/nedschorus/pull/1166); merge-lane-2's review asks item 2's question. Item 3 waits on the two conditions in item 3 above. The agent-seat cold-read-improvement checks them weekly and, when both hold, builds item 3 with merge-lane-2, which owns `scripts/merge-gate.sh`.
+
+## Provisional additions (not yet vetted by the user)
+
+- The agent-seat cold-read-improvement (2026-10-14): the research into kinds of root cause (process, infrastructure, code), item 3's second condition: internal evidence first, then external best-practice research; its proposal is being walked with the user.
+- The agent-seat cold-read-improvement (2026-10-14): checks item 3's two conditions weekly.

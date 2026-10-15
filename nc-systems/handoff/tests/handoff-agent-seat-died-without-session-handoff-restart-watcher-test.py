@@ -1204,7 +1204,7 @@ def run_watch_wiring_cases(root: Path):
             return True, "alive"
 
         @staticmethod
-        def list_agent_seat_names_with_agent_session_records(*arguments):
+        def list_agent_seat_names_with_agent_session_records(agents_root, handoff_directory):
             return []
 
         @staticmethod

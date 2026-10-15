@@ -13,6 +13,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **/pull-request-review-write** — a skill used before writing or revising a review on a pull request.
 - **/sanity-check** — a skill used to improve designs.
 - **/walk-me-through** — a skill that presents complex material to the user one item or step at a time.
+- **-common** — a filename suffix for a module whose functions several programs import; the module is not run on its own.
 - **-draft** — the filename suffix of a document still being written and not yet put to review, such as `docs/drafts/<subject>-draft.md`.
 - **-nbd** — the end of the name of a file whose whole content is nice-but-dirty, just before any extension, such as `scripts/log-store-session-dialogs-refresh-nbd.py`; no file without the suffix holds nice-but-dirty code.
 - **agent-arbitrator** — a fresh-agent, used to resolve conflicts between agents.

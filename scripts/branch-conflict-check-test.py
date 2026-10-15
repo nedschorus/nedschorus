@@ -407,7 +407,11 @@ case("CONFLICT text is one instruction per line, naming the commit", lines == [
     "Merge origin/main into the branch by hand, with the frozen head as "
     "first parent.",
     "Resolve the conflict and change nothing else in the merge.",
+    "If the resolution forces an edit beyond the conflicting lines, put that "
+    "edit in one ordinary commit after the merge.",
     "Before pushing, rerun the test suites for what the merge touched.",
+    "Push the merge and that commit once, and name the files you resolved in "
+    "the merge's commit message and in the pull request's description.",
 ])
 
 status, lines = run(fake_runner(merge_tree_status=128))
@@ -434,9 +438,11 @@ status, lines = run(
     fake_runner(merge_tree_status=0, gh_results=[(0, "CONFLICTING")]),
     pull_request=353, reads=3)
 case("the CONFLICT block stays contiguous ahead of GitHub's lines",
-     len(lines) >= 6
-     and lines[4] == "Before pushing, rerun the test suites for what the merge "
-                     "touched." and lines[5].startswith("GITHUB:"))
+     len(lines) >= 8
+     and lines[6] == "Push the merge and that commit once, and name the files "
+                     "you resolved in the merge's commit message and in the "
+                     "pull request's description."
+     and lines[7].startswith("GITHUB:"))
 
 # A commit git cannot read the subject of -- GitHub's pushed head, never
 # fetched -- is named by its hash alone; the run's verdict is unchanged.
@@ -581,7 +587,11 @@ def conflict_block(base="origin/main", label=HEAD_LABEL):
         "Merge %s into the branch by hand, with the frozen head as first "
         "parent." % base,
         "Resolve the conflict and change nothing else in the merge.",
+        "If the resolution forces an edit beyond the conflicting lines, put "
+        "that edit in one ordinary commit after the merge.",
         "Before pushing, rerun the test suites for what the merge touched.",
+        "Push the merge and that commit once, and name the files you resolved "
+        "in the merge's commit message and in the pull request's description.",
     ]
 
 

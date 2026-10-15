@@ -397,7 +397,12 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
             "Merge %s into the branch by hand, with the frozen head as first "
             "parent." % base,
             "Resolve the conflict and change nothing else in the merge.",
+            "If the resolution forces an edit beyond the conflicting lines, put "
+            "that edit in one ordinary commit after the merge.",
             "Before pushing, rerun the test suites for what the merge touched.",
+            "Push the merge and that commit once, and name the files you "
+            "resolved in the merge's commit message and in the pull request's "
+            "description.",
         ]
         return EXIT_CONFLICT, lines
 
