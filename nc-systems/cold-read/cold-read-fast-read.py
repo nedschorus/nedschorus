@@ -218,6 +218,11 @@ FAST_READ_ONLY_NAMES = ("CLAUDE.md", "CLAUDE.local.md")
 
 # git's own words when it finds no worktree; LC_ALL=C keeps them in English.
 GIT_FOUND_NO_WORKTREE_MESSAGES = ("not a git repository", "cannot change to")
+# git's words when a worktree's .git file names a git directory that does not
+# exist, such as a ned-box worktree read from the Mac through /Volumes/nedhome.
+# They begin like the no-worktree words above, so they are checked first: the
+# target is in a worktree whose top git cannot reach.
+GIT_WORKTREE_GIT_DIRECTORY_MISSING_MESSAGE = "not a git repository: "
 
 
 class CheckoutRootUnreadable(RuntimeError):
@@ -225,10 +230,13 @@ class CheckoutRootUnreadable(RuntimeError):
 
 
 def checkout_root_holding(target: pathlib.Path) -> pathlib.Path:
-    """The top of the git worktree holding `target`, or REPO_ROOT when git
-    finds none (the target's directory is missing or in no repository).
-    Any other git failure raises CheckoutRootUnreadable: answering REPO_ROOT
-    then would send a walk draft to the records route without saying why.
+    """The top of the git worktree holding `target`, or REPO_ROOT when the
+    target's directory is missing or in no repository. Any other git failure
+    raises CheckoutRootUnreadable: answering REPO_ROOT then would send a walk
+    draft to the records route without saying why. That includes a worktree
+    whose .git file names a missing git directory, and a target in a bare
+    repository or under a .git directory, where git finds a repository but
+    no worktree.
     GIT_DIR and GIT_WORK_TREE are dropped for this one call: set in the
     environment they override -C and would name the wrong worktree."""
     environment = {name: value for name, value in os.environ.items()
@@ -241,6 +249,10 @@ def checkout_root_holding(target: pathlib.Path) -> pathlib.Path:
     top = completed.stdout.strip()
     if completed.returncode == 0 and top:
         return pathlib.Path(top).resolve()
+    if GIT_WORKTREE_GIT_DIRECTORY_MISSING_MESSAGE in completed.stderr:
+        raise CheckoutRootUnreadable(
+            f"{target.parent} is in a git worktree whose .git file names a git "
+            f"directory that does not exist: {completed.stderr.strip()}")
     if any(message in completed.stderr for message in GIT_FOUND_NO_WORKTREE_MESSAGES):
         return REPO_ROOT
     raise CheckoutRootUnreadable(
@@ -738,9 +750,11 @@ def main() -> int:
         full_run_class_name = full_run_class_of_target(target)
         report = fast_read_report_path_for_target(target, record_clock_reading())
     except CheckoutRootUnreadable as error:
-        print(f"{PROGRAM}: could not tell which checkout holds the target, so "
-              f"could not tell where its report goes: {error}", file=sys.stderr)
-        print(f"FAILED (could not tell which checkout holds {target})")
+        print(f"{PROGRAM}: no fast read ran and no report was written: could "
+              f"not tell which checkout holds the target, so could not tell "
+              f"where its report goes: {error}", file=sys.stderr)
+        print(f"FAILED (no fast read ran and no report was written: could not "
+              f"tell which checkout holds {target})")
         return 1
     if full_run_class_name is not None:
         print(f"{PROGRAM}: {full_run_required_line(full_run_class_name)}",
