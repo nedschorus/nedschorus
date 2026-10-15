@@ -4645,13 +4645,14 @@ with tempfile.TemporaryDirectory() as temporary:
           (retired, workspace.launches, report_failed))
     workspace = a_seat_behind_a_leftover_shell("leftover-shell-kill-outcome-unknown")
     retired = []
-    check_instruction = ("To check, run the command on the next line on ned-box: exit 0 means "
-                         "the session still exists; "
-                         "\"can't find session\" or \"can't find window\" or \"can't find pane\" or "
-                         "\"no current target\" or \"no server running\" or "
-                         "\"error connecting to ... (No such file or directory)\" means it is gone.\n"
-                         "Any other output, or a check that does not return, leaves the outcome unknown: "
-                         "start no agent, and report the output to the user."
+    check_instruction = ("If the check exits 0, the session still exists: start no agent, and "
+                         "report to the user. If it prints \"can't find session\" or \"can't find "
+                         "window\" or \"can't find pane\" or \"no current target\" or \"no server "
+                         "running\" or \"error connecting to ... (No such file or directory)\", the "
+                         "session is gone: run resupervise-seat again. Any other output, or a check "
+                         "that does not return, leaves the outcome unknown: start no agent, and "
+                         "report the output to the user.\n"
+                         "To check, run the command on the next line on ned-box:"
                          "\ntmux -L seat-a has-session -t '=seat-a'")
     capture_retires(retired, killed_sockets=(),
                     failure="it is unknown whether the stale tmux session seat-a (tmux socket "
