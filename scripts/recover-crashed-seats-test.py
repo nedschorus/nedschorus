@@ -4626,7 +4626,7 @@ with tempfile.TemporaryDirectory() as temporary:
     retired = []
     check_instruction = ("To check, run the command on the next line on ned-box: exit 0 means "
                          "the session still exists; "
-                         "\"can't find session\", \"no server running\" or \"error connecting\" means it is gone"
+                         "\"can't find session\", \"no server running\", \"server exited unexpectedly\" or \"error connecting\" means it is gone"
                          "\ntmux -L seat-a has-session -t '=seat-a'")
     capture_retires(retired, killed_sockets=(),
                     failure="it is unknown whether the stale tmux session seat-a (tmux socket "

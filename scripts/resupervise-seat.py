@@ -284,7 +284,8 @@ def retire_seat_tmux_session(name: str, check_ssh_alias=None):
                 f"{socket_name}) was killed: {TMUX_GAVE_NO_ANSWER}{before}"), (
                 f"To check, run the command on the next line{where}: "
                 f"exit 0 means the session still exists; \"can't find session\", "
-                f"\"no server running\" or \"error connecting\" means it is gone\n{command}")
+                f"\"no server running\", \"server exited unexpectedly\" or "
+                f"\"error connecting\" means it is gone\n{command}")
         if killed.returncode != 0:
             return killed_sockets, (
                 f"could not kill the stale tmux session {name} (tmux socket name "
