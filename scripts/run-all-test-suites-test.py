@@ -65,6 +65,18 @@ def check(case_name, condition, detail=""):
             print(f"      {detail!r}"[:1200])
 
 
+def linux_only_cases_run_here(cases):
+    """True on Linux; elsewhere prints why the cases are skipped and returns False.
+
+    Every case that builds or inspects a test sandbox, runs bwrap or reads /proc goes
+    through this, since only Linux has them.
+    """
+    if sys.platform.startswith("linux"):
+        return True
+    print(f"SKIP  {cases}: test sandboxes, bwrap and /proc exist only on Linux")
+    return False
+
+
 # Each fixture suite records its own path, relative to the checkout, then
 # does what its BODY says.
 SUITE_PREAMBLE = f'''import os, sys, time, signal, pathlib
@@ -1622,7 +1634,7 @@ def killed_run_logs(root):
     return killed_logs, left, hook_log
 
 
-if sys.platform.startswith("linux"):
+if linux_only_cases_run_here("the removal of what a killed run left, decided from /proc"):
     with tempfile.TemporaryDirectory() as scratch:
         root = pathlib.Path(scratch)
         make_repo(root, {"a-test.py": PASSES})

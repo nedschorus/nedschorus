@@ -14,6 +14,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,19 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
         if detail:
             print(f"      {detail!r}"[:1200])
+
+
+def linux_only_cases_run_here(cases):
+    """True on Linux; elsewhere prints why the cases are skipped and returns False.
+
+    Every case that builds or inspects a test sandbox, runs bwrap or reads /proc goes
+    through this, since only Linux has them. scripts/run-all-test-suites-signal-sandbox-test.py
+    runs this file as if on a Mac, and fails a case that does not.
+    """
+    if sys.platform.startswith("linux"):
+        return True
+    print(f"SKIP  {cases}: test sandboxes, bwrap and /proc exist only on Linux")
+    return False
 
 
 def load(name, path):
@@ -425,6 +439,10 @@ with tempfile.TemporaryDirectory() as scratch_name:
           answer.stdout.startswith("True")
           and "check-and-install.py" in answer.stdout and "not run" in answer.stdout,
           answer.stdout + answer.stderr)
+    named = re.findall(r"`python3 (\S+check-and-install\.py)`", answer.stdout)
+    check("the install program the refusal names is in this checkout",
+          len(named) == 1 and (RUNNER_PATH.parent.parent / named[0]).is_file(),
+          (named, answer.stdout))
 
     # --- The cgroup scope ------------------------------------------------------
     why = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none(which=lambda name: None)
@@ -681,18 +699,19 @@ with tempfile.TemporaryDirectory() as scratch_name:
           sorted(name for name in saved if name in environment))
 
     # --- A checkout whose git directory cannot be found gets no test sandbox ---------
-    original_common = runner.git_common_directory_of_checkout
-    runner.git_common_directory_of_checkout = lambda top: None
-    try:
-        runner.bwrap_arguments_for_one_suites_test_sandbox(repository)
-        raised = None
-    except runner.SignalSandboxCouldNotStart as error:
-        raised = str(error)
-    finally:
-        runner.git_common_directory_of_checkout = original_common
-    check("when the checkout's git common directory cannot be found, the test sandbox is "
-          "refused rather than built without its read-only git directory",
-          raised is not None and "git common directory" in raised, raised)
+    if linux_only_cases_run_here("a test sandbox for a checkout with no git common directory"):
+        original_common = runner.git_common_directory_of_checkout
+        runner.git_common_directory_of_checkout = lambda top: None
+        try:
+            runner.bwrap_arguments_for_one_suites_test_sandbox(repository)
+            raised = None
+        except runner.SignalSandboxCouldNotStart as error:
+            raised = str(error)
+        finally:
+            runner.git_common_directory_of_checkout = original_common
+        check("when the checkout's git common directory cannot be found, the test sandbox is "
+              "refused rather than built without its read-only git directory",
+              raised is not None and "git common directory" in raised, raised)
 
     # --- Every failure of admission or of a test sandbox ends the run with exit 2 ---
     run_repository = scratch / "run-repository"
@@ -734,8 +753,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
         return None
 
     # These drive the run path taken where suites run in test sandboxes, which reads
-    # psutil and /proc, so they run only on Linux.
-    if sys.platform.startswith("linux"):
+    # psutil and /proc.
+    if linux_only_cases_run_here("the exit-2 cases of a run in test sandboxes"):
         code, printed, _ = main_with("no-git-directory", git_common_directory_of_checkout=no_git_directory,
                                      **as_if_bwrap)
         check("a test sandbox that cannot be built for the checkout stops the run before any "
@@ -827,8 +846,6 @@ with tempfile.TemporaryDirectory() as scratch_name:
               "the home directory, as the recorded inputs are",
               history_paths == [tilde_home / "recorded-for-this-case"
                                 / runner.TEST_CASE_FAILURE_HISTORY_FILE_NAME], history_paths)
-    else:
-        print("SKIP  the exit-2 cases of a run in test sandboxes: test sandboxes exist only on Linux")
 
     code, printed, logs = main_with(
         "no-bwrap", signal_sandbox=lambda **options: ((), "bwrap is not on PATH"))

@@ -52,6 +52,19 @@ def check(case_name, condition, detail=""):
             print(f"      {detail!r}"[:1500])
 
 
+def linux_only_cases_run_here(cases):
+    """True on Linux; elsewhere prints why the cases are skipped and returns False.
+
+    Every case that builds or inspects a test sandbox, runs bwrap or reads /proc goes
+    through this, since only Linux has them. scripts/run-all-test-suites-signal-sandbox-test.py
+    runs this file as if on a Mac, and fails a case that does not.
+    """
+    if sys.platform.startswith("linux"):
+        return True
+    print(f"SKIP  {cases}: test sandboxes, bwrap and /proc exist only on Linux")
+    return False
+
+
 spec = importlib.util.spec_from_file_location("run_suite_in_signal_sandbox", PROGRAM_PATH)
 program = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(program)
@@ -219,9 +232,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
           not program.pid_one_is_bwrap(scratch / "missing"))
 
     # The inside check, run outside any sandbox, must refuse and leave the proof empty.
-    if not sys.platform.startswith("linux"):
-        print("SKIP  the inside check's process-1 refusals: they read /proc/1/comm, "
-              "which only Linux has")
+    if not linux_only_cases_run_here("the inside check's process-1 refusals"):
+        pass
     elif not program.pid_one_is_bwrap():
         proof = scratch / "proof"
         proof.write_text("")
@@ -338,10 +350,7 @@ def process_alive(pid):
     return state != "Z"
 
 
-if not sys.platform.startswith("linux"):
-    print("SKIP  the process-group stop case: it checks that the leftover is gone through "
-          "/proc, which only Linux has")
-else:
+if linux_only_cases_run_here("the process-group stop case"):
     with tempfile.TemporaryDirectory() as scratch_name:
         leftover_file = pathlib.Path(scratch_name).resolve() / "leftover-pid"
         # The leader starts a sleeper in its own process group, records it, and exits 5.
@@ -638,16 +647,13 @@ with tempfile.TemporaryDirectory() as scratch_name:
           code == program.EXIT_PASSED_OR_KILLED and len(ran) == 1 and ran[0][3] == ()
           and ran[0][5] == "darwin", (code, output, ran))
     # Under a bwrap prefix the suite runs in its test sandbox, admitted by readings of
-    # this machine that only Linux gives, so this case runs only on Linux.
-    if sys.platform.startswith("linux"):
+    # this machine that only Linux gives.
+    if linux_only_cases_run_here("the child subreaper on Linux"):
         bwrap_prefix = ("/usr/bin/bwrap",)
         code, output, ran = main_with_nothing_run("linux", sandbox=(bwrap_prefix, None))
         check("on Linux, the program becomes the child subreaper before the suite runs",
               code == program.EXIT_PASSED_OR_KILLED and "linux" in subreaper_calls,
               (code, output, subreaper_calls))
-    else:
-        print("SKIP  the child subreaper on Linux: it runs the suite in a test sandbox, which "
-              "exists only on Linux")
 
     def sandbox_exec_missing(platform=None):
         raise program.runner.SignalSandboxCouldNotStart("/usr/bin/sandbox-exec is not on this Mac")
@@ -662,10 +668,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
           code == program.EXIT_NOT_RUN and ran == [] and "bwrap is not on PATH" in output,
           (code, output, ran))
 
-    if not sys.platform.startswith("linux"):
-        print("SKIP  the cases that run the inside check through run_suite_confined: "
-              "it stops the suite's leftover processes through /proc, which only Linux has")
-    else:
+    if linux_only_cases_run_here("the cases that run the inside check through run_suite_confined"):
         # A sandbox in which the inside check refuses: the suite must not start, and the
         # program must not report the suite's verdict.
         proof = scratch / "proof"
@@ -721,7 +724,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
           (code, output, ran))
 
 # --- In a test sandbox the suite runs at low priority, in a cgroup scope of its own ---
-if sys.platform.startswith("linux"):
+if linux_only_cases_run_here("the low-priority cgroup scope of a suite in a test sandbox"):
     with tempfile.TemporaryDirectory() as scratch_name:
         scratch = pathlib.Path(scratch_name).resolve()
         repository = scratch_checkout(scratch)
@@ -767,7 +770,9 @@ if sys.platform.startswith("linux"):
         check("where no cgroup scope can be made, the suite still runs at low priority",
               len(launched) == 2 and launched[1][:3] == nice, launched[1:])
 
-if not sys.platform.startswith("linux") or not bwrap_usable():
+if not linux_only_cases_run_here("the cases that run a suite"):
+    pass
+elif not bwrap_usable():
     print("SKIP  the cases that run a suite: no usable bwrap here")
 else:
     # --- Runs without a mutant ------------------------------------------------

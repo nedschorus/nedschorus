@@ -543,7 +543,7 @@ def run(arguments, platform):
             raise NotRun(f"{sys.executable} cannot import psutil, which reads the machine's "
                          f"CPU use and memory before the suite starts; install the pinned "
                          f"libraries with `python3 nc-systems/general-tools/"
-                         f"compiled-python-libraries-pinned-requirements-check-and-install.py`, "
+                         f"python-libraries-pinned-requirements-check-and-install.py`, "
                          f"then run this again")
     else:
         if arguments.wait_for_lock_seconds > 0:

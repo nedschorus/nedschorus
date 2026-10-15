@@ -1716,7 +1716,7 @@ def psutil_imported_or_why_not():
             f"this program needs on Linux to read the machine's CPU use and available memory "
             f"before it starts each suite.\n"
             f"Install the pinned libraries, psutil among them, by running "
-            f"`python3 nc-systems/general-tools/compiled-python-libraries-pinned-requirements-check-and-install.py`, "
+            f"`python3 nc-systems/general-tools/python-libraries-pinned-requirements-check-and-install.py`, "
             f"then run this again.\n"
             f"If that install fails, tell the user what it printed.")
     return psutil, None
