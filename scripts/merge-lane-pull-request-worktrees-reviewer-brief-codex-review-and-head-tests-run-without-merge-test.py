@@ -200,6 +200,9 @@ def main():
         check("a head named in the file is replaced by its full commit in the filled-in copy",
               filled_in[0]["head"] == head_commit and filled_in[0]["main"] == main_commit,
               f"{filled_in}")
+        check("an abbreviated reviewed_before is written into the filled-in copy as the full "
+              "commit the Codex review runs from",
+              filled_in[0]["reviewed_before"] == head_reviewed_before, f"{filled_in}")
 
         for position, step in enumerate(STEPS, start=1):
             completed, calls, _ = run_program(scratch, checkout, helpers, [first_round],
@@ -216,6 +219,23 @@ def main():
         generic_instruction = ("If the message above names a cause you can fix, fix it and "
                                "run this again.\nOtherwise, tell the user this message.")
         correct_the_file = "Correct the file and run this again."
+        file_or_flag = ("Correct whichever of the two is wrong, the file's entry or the "
+                        "--head-commit-reviewed-before option, which a first round leaves out, "
+                        "and run this again.")
+        def rewrite_or_delete(field, commit):
+            return (f"If the entry's judgments hold for {commit}, delete {field} from the "
+                    f"entry, and this program fills it in.\n"
+                    f"If they do not, rewrite the judgments for {commit} and delete {field} "
+                    f"from the entry.\nThen run this again.")
+        # The instruction each refusal over the file must end with, when not correct_the_file.
+        refusal_instructions = {
+            "a head that is not origin's head": rewrite_or_delete("head", head_commit),
+            "a head that names no commit": rewrite_or_delete("head", head_commit),
+            "a main that is not origin's main": rewrite_or_delete("main", main_commit),
+            "a fix-round entry without --head-commit-reviewed-before": file_or_flag,
+            "--head-commit-reviewed-before with a first-round entry": file_or_flag,
+            "a reviewed_before that differs from --head-commit-reviewed-before": file_or_flag,
+        }
         specification_refusals = [
             ("a head that is not origin's head", [{**first_round, "head": head_reviewed_before}],
              [], f"its head is {head_reviewed_before}, but origin's head commit is "
@@ -275,8 +295,9 @@ def main():
                   and head_of(checkout) == merge_base and not filled_in_file.exists(),
                   f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}")
             if (name, specifications, options, expected) in specification_refusals:
-                check(f"{name} ends with the one instruction to correct the file",
-                      completed.stdout.rstrip().endswith(correct_the_file)
+                instruction = refusal_instructions.get(name, correct_the_file)
+                check(f"{name} ends with its one instruction and not the generic one",
+                      completed.stdout.rstrip().endswith(instruction)
                       and generic_instruction not in completed.stdout, completed.stdout)
 
         completed, _, _ = run_program(scratch, checkout, helpers, [fix_round],
@@ -321,17 +342,52 @@ def main():
         in_the_way.write_text("not main's content\n")
         completed, calls, _ = run_program(scratch, checkout, helpers, [first_round])
         in_the_way.unlink()
-        check("a review tools worktree that cannot be moved to main exits 2 before any step "
-              "runs, saying not to discard changes in the worktree",
+        check("a checkout that would overwrite changes in the review tools worktree exits 2 "
+              "before any step runs, with the one instruction to tell the user and keep the "
+              "changes, and not the generic one",
               completed.returncode == 2 and calls == []
               and f"git checkout -q --detach {main_commit} in {checkout} exited"
                   in completed.stdout
-              and f"If git names changes in {checkout} that the checkout would overwrite, "
-                  f"tell the user this message instead of discarding the changes"
-                  in completed.stdout
-              and completed.stdout.rstrip().endswith(generic_instruction)
+              and completed.stdout.rstrip().endswith(
+                  f"Tell the user this message and wait for the user's answer. Leave the "
+                  f"changes in {checkout} as they are, whatever git suggests above: do not "
+                  f"move, remove, discard, stash or overwrite them, because they may be "
+                  f"someone's unsaved work.")
+              and generic_instruction not in completed.stdout
               and head_of(checkout) == merge_base,
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}")
+
+        # A held index lock makes the checkout fail for a reason other than local changes.
+        index_lock = Path(git(checkout, "rev-parse", "--absolute-git-dir")) / "index.lock"
+        index_lock.write_text("")
+        completed, calls, _ = run_program(scratch, checkout, helpers, [first_round])
+        index_lock.unlink()
+        check("a checkout that fails for another reason exits 2 with the generic instruction "
+              "alone",
+              completed.returncode == 2 and calls == []
+              and f"git checkout -q --detach {main_commit} in {checkout} exited"
+                  in completed.stdout
+              and completed.stdout.rstrip().endswith(generic_instruction)
+              and "leave the changes" not in completed.stdout
+              and head_of(checkout) == merge_base,
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}")
+
+        completed, calls, _ = run_program(scratch, scratch / "no-such-worktree", helpers,
+                                          [first_round])
+        check("a review tools worktree that does not exist exits 2 before git runs, with the "
+              "missing-tool instructions",
+              completed.returncode == 2 and calls == []
+              and f"{STEPS[0]} is missing" in completed.stdout
+              and "worktree add --detach" in completed.stdout
+              and completed.stdout.rstrip().endswith("Then run this again.")
+              and generic_instruction not in completed.stdout,
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}")
+
+        completed = subprocess.run([sys.executable, str(PROGRAM), "--help"],
+                                   capture_output=True, text=True, env=GIT_ENVIRONMENT)
+        check("--help says runs at the same time need separate review tools worktrees",
+              "Runs at the same time need separate --review-tools-worktree-at-main worktrees"
+              in " ".join(completed.stdout.split()), completed.stdout)
 
         for step in STEPS:
             stub = checkout / "scripts" / step
@@ -345,6 +401,25 @@ def main():
                   and completed.stdout.rstrip().endswith("Then run this again.")
                   and generic_instruction not in completed.stdout,
                   f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}")
+
+        # Last, because it moves origin's main: main gains a step script that the review
+        # tools worktree's older commit lacks, so the scripts are looked for only after
+        # the worktree is checked out at main.
+        author = scratch / "author"
+        (author / "scripts").mkdir()
+        (author / "scripts" / STEPS[3]).write_text(STUB_STEP)
+        git(author, "add", ".")
+        git(author, "commit", "-q", "-m", "a step script on main")
+        main_with_step = git(author, "rev-parse", "HEAD")
+        git(author, "push", "-q", str(scratch / "origin.git"), "main:refs/heads/main")
+        git(checkout, "checkout", "-q", "--detach", merge_base)
+        (checkout / "scripts" / STEPS[3]).unlink()
+        completed, calls, _ = run_program(scratch, checkout, helpers, [first_round])
+        check("a step script that only main has is found after the worktree is moved to main, "
+              "and all four steps run",
+              completed.returncode == 0 and [call["step"] for call in calls] == list(STEPS)
+              and head_of(checkout) == main_with_step,
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
