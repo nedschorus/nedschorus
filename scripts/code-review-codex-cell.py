@@ -319,8 +319,10 @@ a defect in this repository's code.
          EXIT 0 DOES NOT PROMISE below before gating on it.
   64     this wrapper refused the invocation and never launched codex: a
          --repo that is not a checkout, a --base/--commit that does not
-         resolve, an --output that is not a regular file, or a command-line
-         error argparse caught (missing or unknown option). 64 is
+         resolve, an --output that is not a regular file, an
+         --instructions-file that cannot be read, is not UTF-8, or holds
+         only whitespace, or a command-line error argparse caught (missing
+         or unknown option). 64 is
          sysexits.h's EX_USAGE, "command line usage error", and it is used
          here rather than the conventional 2 because it sits outside every
          band codex plausibly returns: clap pins its own usage errors at 2,
