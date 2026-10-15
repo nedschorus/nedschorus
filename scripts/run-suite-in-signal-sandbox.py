@@ -41,7 +41,7 @@ proves it is confined: on Linux, that process 1 there is bwrap; on macOS, that
 a signal to a process outside the sandbox is refused. If the check fails, the
 suite is not run. This program never runs a suite unconfined: without the
 sandbox, on a platform other than Linux and macOS, or for a suite listed in
-SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX, it refuses. Started inside a sandbox
+SUITES_RUN_WITHOUT_ANY_SANDBOX, it refuses. Started inside a sandbox
 already, it runs the suite there, after the same check. When the suite ends or
 the run is interrupted, it kills every process the suite left behind: on Linux
 every descendant, as the end of the sandbox's PID namespace does otherwise; on
@@ -512,9 +512,9 @@ def run(arguments, platform):
     if not (top / suite).is_file():
         raise NotRun(f"{suite} is not a file in {top}; pass the suite's path relative to "
                      f"the checkout's top directory")
-    if suite in runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX:
+    if suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX:
         raise NotRun(f"{suite} cannot run inside the signal sandbox: "
-                     f"{runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX[suite]}")
+                     f"{runner.SUITES_RUN_WITHOUT_ANY_SANDBOX[suite]}")
     patch = Path(arguments.mutant).resolve() if arguments.mutant else None
     if patch is not None and not patch.is_file():
         raise NotRun(f"the mutant {arguments.mutant} is not a file")

@@ -16,7 +16,7 @@ The lists of what must be hidden are written out here, not read from the
 runner, so dropping an entry from one of the runner's lists fails a case.
 
 bwrap cannot start inside bwrap, so the runner runs this suite outside its
-sandbox (SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX); run anywhere bwrap cannot
+sandbox (SUITES_RUN_WITHOUT_ANY_SANDBOX); run anywhere bwrap cannot
 start, it prints SKIP.
 
 Run: python3 scripts/run-all-test-suites-test-sandbox-escape-test.py   (exit 0 = all passed)

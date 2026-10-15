@@ -723,7 +723,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
               stale_proof_refused and not ran_marker.exists())
         marker_suite.unlink()
 
-    outside_suite = next(iter(program.runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX))
+    outside_suite = next(iter(program.runner.SUITES_RUN_WITHOUT_ANY_SANDBOX))
     (repository / outside_suite).parent.mkdir(parents=True, exist_ok=True)
     (repository / outside_suite).write_text("print('ran')\n")
     completed, last = run_program(scratch, repository, outside_suite)
