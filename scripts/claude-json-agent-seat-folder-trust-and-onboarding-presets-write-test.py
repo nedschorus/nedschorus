@@ -164,15 +164,18 @@ def main() -> int:
 
         # A file that is not a JSON object is never overwritten: it holds credentials.
         # Each case prints only the remedy that fits it, naming the backups by absolute path.
-        for case_name, content, remedy, other_remedy in (
-                ("not valid JSON", '{"oauthAccount": {"accountU',
-                 "that is valid JSON, then launch again", "holds a JSON object"),
-                ("a JSON array, not an object", "[]",
-                 "that holds a JSON object, then launch again", "that is valid JSON")):
-            home = root / f"unreadable-{len(content)}"
+        # A file that is not UTF-8 is reported as not valid JSON, not raised past the caller.
+        for case_number, (case_name, content, wanted, other_wanted) in enumerate((
+                ("not valid JSON", b'{"oauthAccount": {"accountU',
+                 "is valid JSON", "holds a JSON object"),
+                ("not valid UTF-8", b'{"oauthAccount": \xff\xfe}',
+                 "is valid JSON", "holds a JSON object"),
+                ("a JSON array, not an object", b"[]",
+                 "holds a JSON object", "is valid JSON"))):
+            home = root / f"unreadable-{case_number}"
             home.mkdir()
             state = home / ".claude.json"
-            state.write_text(content, encoding="utf-8")
+            state.write_bytes(content)
             before = state.stat()
             try:
                 write(state, "/seats/one")
@@ -190,18 +193,23 @@ def main() -> int:
                   and "may stop at" not in completed.stderr,
                   (completed.returncode, completed.stderr))
             check(f"{case_name}: the one remedy that fits, naming {home}/.claude/backups/",
-                  f"{home}/.claude/backups/ {remedy}" in completed.stderr
-                  and other_remedy not in completed.stderr
+                  f"{home}/.claude/backups/ that {wanted}, then launch again" in completed.stderr
+                  and other_wanted not in completed.stderr
                   and "~/.claude/backups/" not in completed.stderr
                   and "Otherwise" not in completed.stderr
                   and "Fix the cause" not in completed.stderr,
                   completed.stderr)
+            check(f"{case_name}: what to do when no backup fits, also naming the backups",
+                  f"If no copy in {home}/.claude/backups/ {wanted}: "
+                  f"move {state} aside, such as to {state}.unreadable, then launch again"
+                  in completed.stderr,
+                  completed.stderr)
             check(f"{case_name}: the file is byte-identical and its inode unchanged, "
                   "with no temporary left",
-                  state.read_text(encoding="utf-8") == content
+                  state.read_bytes() == content
                   and after.st_ino == before.st_ino
                   and temporary_leftovers(home) == [],
-                  (state.read_text(encoding="utf-8"), temporary_leftovers(home)))
+                  (state.read_bytes(), temporary_leftovers(home)))
 
         # The onboarding-only write, which the handoff-supervisor makes before every
         # agent-session it launches: onboarding and theme, never a trust preset.
@@ -259,8 +267,11 @@ def main() -> int:
                   completed.returncode == 1 and "Permission denied" in completed.stderr
                   and "Traceback" not in completed.stderr,
                   (completed.returncode, completed.stderr))
-            check("unwritable HOME: the remedy is to fix the cause, not to restore a backup",
+            check("unwritable HOME: the remedy is to fix the cause, naming the file and its "
+                  "folder, not to restore a backup",
                   "Fix the cause named above, then launch again." in completed.stderr
+                  and f"make {home}/.claude.json and its folder {home}/ writable by the account"
+                  in completed.stderr
                   and "Restore" not in completed.stderr,
                   completed.stderr)
 

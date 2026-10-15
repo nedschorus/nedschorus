@@ -971,6 +971,27 @@ def run_claude_json_presets_cases(root: Path):
               CLAUDE_JSON_SCRATCH_PATH.read_text(encoding="utf-8") == unparseable,
               CLAUDE_JSON_SCRATCH_PATH.read_text(encoding="utf-8"))
 
+        # A file that is not UTF-8 is reported the same way, not raised past recovery.
+        not_utf_8 = b'{"oauthAccount": \xff\xfe}'
+        CLAUDE_JSON_SCRATCH_PATH.write_bytes(not_utf_8)
+        tmux_calls.clear()
+        stderr = io.StringIO()
+        try:
+            with redirect_stderr(stderr):
+                exit_code = real_launch_seat(workspace.name, workspace.seat_directory,
+                                             workspace.handoffs, "")
+        except Exception as error:
+            exit_code = f"raised {error!r}"
+        check("CLAUDE.JSON PRESETS: a ~/.claude.json that is not valid UTF-8 stops the launch "
+              "with exit 1, before tmux, and gives the not-valid-JSON remedy",
+              exit_code == 1 and tmux_calls == []
+              and "not launched" in stderr.getvalue()
+              and "that is valid JSON, then run this recovery again" in stderr.getvalue(),
+              (exit_code, tmux_calls, stderr.getvalue()))
+        check("CLAUDE.JSON PRESETS: and leaves that file as it was",
+              CLAUDE_JSON_SCRATCH_PATH.read_bytes() == not_utf_8,
+              CLAUDE_JSON_SCRATCH_PATH.read_bytes())
+
         # The report a failed launch_seat gives: the seat is still down.
         CLAUDE_JSON_SCRATCH_PATH.write_text(unparseable, encoding="utf-8")
         all_dead()

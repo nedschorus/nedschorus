@@ -57,9 +57,10 @@ def claude_json_settings_read(claude_json: pathlib.Path) -> dict:
     """Return claude_json's settings, or {} when the file does not exist."""
     if not claude_json.exists():
         return {}
-    text = claude_json.read_text(encoding="utf-8")
+    # A file that is not UTF-8 raises UnicodeDecodeError, a ValueError, so it is
+    # reported like any other file that is not valid JSON.
     try:
-        settings = json.loads(text)
+        settings = json.loads(claude_json.read_text(encoding="utf-8"))
     except ValueError as error:
         raise ClaudeJsonNotValidJsonError(
             f"{claude_json} is not valid JSON ({error})") from error
@@ -128,16 +129,28 @@ def claude_json_onboarding_presets_write(claude_json: pathlib.Path) -> bool:
 
 
 def claude_json_presets_failure_remedy(error: Exception, claude_json: pathlib.Path,
-                                       run_again: str) -> str:
-    """The one remedy that fits the failure the presets write raised."""
+                                       run_again: str = "") -> str:
+    """The one remedy that fits the failure the presets write raised.
+
+    run_again, such as "launch again", is added to each instruction as
+    ", then <run_again>"; a caller that has nothing to run again passes nothing.
+    """
+    then = f", then {run_again}" if run_again else ""
     backups = claude_json.parent / ".claude" / "backups"
     if isinstance(error, ClaudeJsonNotValidJsonError):
-        return (f"Restore {claude_json} from the newest copy in {backups}/ that is valid JSON, "
-                f"then {run_again}.")
-    if isinstance(error, ClaudeJsonNotAJsonObjectError):
-        return (f"Restore {claude_json} from the newest copy in {backups}/ that holds a JSON "
-                f"object, then {run_again}.")
-    return f"Fix the cause named above, then {run_again}."
+        wanted = "is valid JSON"
+    elif isinstance(error, ClaudeJsonNotAJsonObjectError):
+        wanted = "holds a JSON object"
+    else:
+        # The write makes a temporary file beside claude_json and replaces claude_json
+        # with it, so both the file and its folder must be writable.
+        return (f"Fix the cause named above{then}. For a permission error, make {claude_json} "
+                f"and its folder {claude_json.parent}/ writable by the account this program "
+                f"runs as; for a full disk, free space on the disk that holds {claude_json}.")
+    return (f"Restore {claude_json} from the newest copy in {backups}/ that {wanted}{then}.\n"
+            f"If no copy in {backups}/ {wanted}: move {claude_json} aside, such as to "
+            f"{claude_json}.unreadable{then}; the next launch writes a new {claude_json}, "
+            "and the user may have to log in to Claude Code again.")
 
 
 USAGE = "usage: claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py AGENT_SEAT_FOLDER"
