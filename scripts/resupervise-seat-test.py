@@ -319,7 +319,8 @@ def run_missing_launcher_case(workspace: Path):
         (supervisor_home / supervisor_file).write_text(
             SUPERVISOR_SCRIPT.with_name(supervisor_file).read_text(encoding="utf-8"),
             encoding="utf-8")
-    # uncommitted-work-snapshots.py reads git's output with the shared module.
+    # uncommitted-work-snapshots.py reads git's output with the shared module,
+    # and the supervisor strips the variables that redirect git with another.
     general_tools_home = workspace / "nc-systems" / "general-tools"
     general_tools_home.mkdir(parents=True)
     # resupervise-seat.py reads tmux's absent-session answers with the shared
@@ -328,6 +329,7 @@ def run_missing_launcher_case(workspace: Path):
     # answers a Stop hook.
     for general_tools_module in (
             "git-machine-readable-output-runner-and-parser-common.py",
+            "git-redirecting-environment-variables-removal-common.py",
             "tmux-target-or-server-does-not-exist-error-pattern-common.py",
             "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py"):
         (general_tools_home / general_tools_module).write_text(

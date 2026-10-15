@@ -129,6 +129,12 @@ _record_names_spec = importlib.util.spec_from_file_location(
     pathlib.Path(__file__).with_name("cold-read-record-names.py"))
 record_names = importlib.util.module_from_spec(_record_names_spec)
 _record_names_spec.loader.exec_module(record_names)
+_git_redirecting_removal_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_variables_removal_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "git-redirecting-environment-variables-removal-common.py")
+git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
+_git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
 WALK_DIRECTORY_RELATIVE = pathlib.Path("docs") / "walk"
 RECORDS_DIR = record_names.RECORDS_DIR
 
@@ -237,10 +243,9 @@ def checkout_root_holding(target: pathlib.Path) -> pathlib.Path:
     whose .git file names a missing git directory, and a target in a bare
     repository or under a .git directory, where git finds a repository but
     no worktree.
-    GIT_DIR and GIT_WORK_TREE are dropped for this one call: set in the
-    environment they override -C and would name the wrong worktree."""
-    environment = {name: value for name, value in os.environ.items()
-                   if name not in ("GIT_DIR", "GIT_WORK_TREE")}
+    The variables that redirect git are dropped for this one call: set in
+    the environment they override -C and would name the wrong worktree."""
+    environment = git_redirecting_removal.environment_without_git_redirecting_variables()
     environment["LC_ALL"] = "C"
     completed = subprocess.run(
         ["git", "-C", str(target.parent), "rev-parse", "--show-toplevel"],

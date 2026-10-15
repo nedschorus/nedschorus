@@ -212,7 +212,8 @@ launched by this program and is not protected by this. Such a suite protects
 itself: a suite or fixture that runs `git init` first takes the variables
 listed above out of its own process, through
 scripts/git-redirecting-environment-removal-test-fixture.py, which reads
-GIT_REDIRECTING_ENVIRONMENT_VARIABLES from this file, and
+GIT_REDIRECTING_ENVIRONMENT_VARIABLES from the module this file reads it
+from, nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py, and
 scripts/test-suites-run-directly-ignore-git-redirecting-environment-test.py
 checks that each one does. That is nedschorus#639's "Next action" item 2.
 
@@ -511,6 +512,7 @@ import fcntl
 import fnmatch
 import functools
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -534,15 +536,14 @@ SHELL_TEST_SUITE_PATHSPEC = "*-test.sh"
 SKIPPED_CASE_LINE = re.compile(r"^SKIP\s")
 
 # Git redirection variables can send scratch-repository writes into a live repository.
-# Keep GIT_CEILING_DIRECTORIES: removing it widens repository discovery.
-GIT_REDIRECTING_ENVIRONMENT_VARIABLES = (
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_COMMON_DIR",
-)
+# The list is the shared module's; programs that load this runner read it here too.
+_git_redirecting_removal_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_variables_removal_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-redirecting-environment-variables-removal-common.py")
+git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
+_git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
+GIT_REDIRECTING_ENVIRONMENT_VARIABLES = git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
 
 # Whether a user attends the agent-session changes what some messages under test say, so a suite
 # is launched without them and each test sets them itself.
@@ -1973,11 +1974,8 @@ def skipped_case_lines(log_file):
 
 
 def environment_without_git_redirecting_variables():
-    # Use a fresh dict because suites launch concurrently.
-    environment = dict(os.environ)
-    for variable in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:
-        environment.pop(variable, None)
-    return environment
+    # A fresh dict each call, because suites launch concurrently.
+    return git_redirecting_removal.environment_without_git_redirecting_variables()
 
 
 def is_credential_environment_variable(name):
@@ -2209,10 +2207,13 @@ def interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden=
 def paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(interpreters, program_files=(),
                                                                 checkout=None):
     """Every path a suite's launch reads that a test sandbox would hide: each interpreter's
-    directories, and the directory of each program file run inside the sandbox, such as the
-    launcher that checks the sandbox from inside it. A program file in the checkout needs
-    nothing shown: the sandbox shows the checkout writable, and a read-only directory bound
-    over it would make the suite's writes there fail."""
+    directories, and for each program file run inside the sandbox, such as the launcher that
+    checks the sandbox from inside it, the git checkout holding it, since the program loads
+    repository modules from beside and above its own directory. A program file in the
+    checkout under test needs nothing shown: the sandbox shows the checkout writable, and a
+    read-only directory bound over it would make the suite's writes there fail. For the same
+    reason, a program's checkout that holds the checkout under test shows only the program's
+    own directory."""
     hidden = directories_hidden_whole_in_test_sandbox()
     inside_checkout = os.path.realpath(checkout) if checkout is not None else None
     shown = []
@@ -2225,10 +2226,22 @@ def paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(interpreters, p
         if inside_checkout is not None and (directory == inside_checkout
                                             or directory.startswith(inside_checkout + "/")):
             continue
+        program_checkout = git_checkout_holding_directory_or_none(directory) or directory
+        if inside_checkout is None or not (inside_checkout == program_checkout
+                                           or inside_checkout.startswith(program_checkout + "/")):
+            directory = program_checkout
         if any(directory == top or directory.startswith(top + "/") for top in hidden) and \
                 directory not in shown:
             shown.append(directory)
     return shown
+
+
+def git_checkout_holding_directory_or_none(directory):
+    """The nearest directory at or above directory that holds a .git entry, or None."""
+    for candidate in (directory, *map(str, Path(directory).parents)):
+        if os.path.lexists(os.path.join(candidate, ".git")):
+            return candidate
+    return None
 
 
 def directories_hidden_whole_in_test_sandbox():

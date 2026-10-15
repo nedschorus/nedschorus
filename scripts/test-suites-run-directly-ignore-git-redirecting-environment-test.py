@@ -84,6 +84,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNER_PATH = "scripts/run-all-test-suites.py"
 FIXTURE_PATH = "scripts/git-redirecting-environment-removal-test-fixture.py"
+# The runner and the fixture both read the list from this module.
+REMOVAL_MODULE_PATH = "nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py"
 REMOVAL_CALL = "remove_git_redirecting_environment_variables_from_this_process()"
 
 # A git `init` argument as the suites write it, in a list or as a helper's
@@ -118,7 +120,7 @@ REMOVE_THE_VARIABLES_ANOTHER_WAY = {
 }
 
 # Each suite this one runs directly, with the other files it reads. Only
-# these, the fixture and the runner are copied, so this suite's recorded
+# these, the fixture, the runner and the module they read the list from are copied, so this suite's recorded
 # inputs are these files and not the whole checkout. A suite here that comes
 # to read another file fails its "exits 0" case until the file is listed.
 SUITES_RUN_WITH_GIT_DIR = {
@@ -260,7 +262,7 @@ runs = [(suite, "GIT_DIR") for suite in SUITES_RUN_WITH_GIT_DIR]
 runs += [(SUITE_RUN_WITH_EVERY_VARIABLE, variable)
          for variable in NAMED_REPOSITORY_PATH_FOR_VARIABLE]
 
-files_to_copy = [RUNNER_PATH, FIXTURE_PATH, SUITE_RUN_WITH_EVERY_VARIABLE,
+files_to_copy = [RUNNER_PATH, FIXTURE_PATH, REMOVAL_MODULE_PATH, SUITE_RUN_WITH_EVERY_VARIABLE,
                  *FILES_THE_SUITE_RUN_WITH_EVERY_VARIABLE_READS]
 for suite, files_it_reads in SUITES_RUN_WITH_GIT_DIR.items():
     files_to_copy += [suite, *files_it_reads]

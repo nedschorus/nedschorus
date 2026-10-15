@@ -40,9 +40,10 @@ makes the repository where it was told to, and there is nothing left for the
 check to catch.
 
 WHICH VARIABLES. The list is GIT_REDIRECTING_ENVIRONMENT_VARIABLES in
-scripts/run-all-test-suites.py, read from that file and not copied here, so
-a suite run directly and a suite the runner launches have the same ones
-removed.
+nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py,
+read from that module and not copied here; scripts/run-all-test-suites.py
+reads the same module, so a suite run directly and a suite the runner
+launches have the same ones removed.
 scripts/test-suites-run-directly-ignore-git-redirecting-environment-test.py
 checks that every suite and fixture that runs `git init` calls this first.
 """
@@ -51,17 +52,14 @@ import importlib.util
 import os
 from pathlib import Path
 
-RUNNER_PATH = Path(__file__).resolve().with_name("run-all-test-suites.py")
+_removal_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_variables_removal_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "git-redirecting-environment-variables-removal-common.py")
+_removal = importlib.util.module_from_spec(_removal_spec)
+_removal_spec.loader.exec_module(_removal)
 
-
-def _load_runner():
-    spec = importlib.util.spec_from_file_location("run_all_test_suites", RUNNER_PATH)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-GIT_REDIRECTING_ENVIRONMENT_VARIABLES = _load_runner().GIT_REDIRECTING_ENVIRONMENT_VARIABLES
+GIT_REDIRECTING_ENVIRONMENT_VARIABLES = _removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
 
 
 def remove_git_redirecting_environment_variables_from_this_process():

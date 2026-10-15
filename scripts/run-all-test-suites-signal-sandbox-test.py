@@ -654,6 +654,31 @@ if linux_only_cases_run_here("what a suite's test sandbox shows and hides"):
         check("a program file inside the checkout under test has nothing shown, so no read-only "
               "directory covers the checkout's writable copy",
               launch_in_checkout == [], launch_in_checkout)
+        program_checkout = home_scratch / "program-checkout"
+        (program_checkout / ".git").mkdir(parents=True)
+        (program_checkout / "nc-systems" / "general-tools").mkdir(parents=True)
+        launcher_in_checkout = program_checkout / "scripts" / "run-suite-in-signal-sandbox.py"
+        launcher_in_checkout.parent.mkdir(parents=True)
+        launcher_in_checkout.write_text("")
+        suite_checkout_elsewhere = home_scratch / "suite-checkout"
+        suite_checkout_elsewhere.mkdir()
+        suite_checkout_inside = program_checkout / "worktrees" / "suite-checkout"
+        suite_checkout_inside.mkdir(parents=True)
+        runner.directories_hidden_whole_in_test_sandbox = lambda: home_hidden
+        try:
+            launch_from_checkout = runner.paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(
+                ["/usr/bin/python3"], [launcher_in_checkout], checkout=suite_checkout_elsewhere)
+            launch_around_checkout = runner.paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(
+                ["/usr/bin/python3"], [launcher_in_checkout], checkout=suite_checkout_inside)
+        finally:
+            runner.directories_hidden_whole_in_test_sandbox = original_hidden
+        check("a program file in another git checkout has that whole checkout shown, so the "
+              "modules it loads from outside its own directory, such as nc-systems/, are there",
+              launch_from_checkout == [os.path.realpath(program_checkout)], launch_from_checkout)
+        check("a program's checkout that holds the checkout under test shows only the program's "
+              "directory, so no read-only directory covers the checkout's writable copy",
+              launch_around_checkout == [os.path.realpath(launcher_in_checkout.parent)],
+              launch_around_checkout)
         shown.cache_clear()
     with tempfile.TemporaryDirectory() as path_name:
         on_path = pathlib.Path(path_name) / "bin"
