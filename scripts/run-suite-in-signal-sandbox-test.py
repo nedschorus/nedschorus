@@ -52,6 +52,19 @@ def check(case_name, condition, detail=""):
             print(f"      {detail!r}"[:1500])
 
 
+def linux_only_cases_run_here(cases):
+    """True on Linux; elsewhere prints why the cases are skipped and returns False.
+
+    Every case that builds or inspects a test sandbox, runs bwrap or reads /proc goes
+    through this, since only Linux has them. scripts/run-all-test-suites-signal-sandbox-test.py
+    runs this file as if on a Mac, and fails a case that does not.
+    """
+    if sys.platform.startswith("linux"):
+        return True
+    print(f"SKIP  {cases}: test sandboxes, bwrap and /proc exist only on Linux")
+    return False
+
+
 spec = importlib.util.spec_from_file_location("run_suite_in_signal_sandbox", PROGRAM_PATH)
 program = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(program)
@@ -219,9 +232,8 @@ with tempfile.TemporaryDirectory() as scratch_name:
           not program.pid_one_is_bwrap(scratch / "missing"))
 
     # The inside check, run outside any sandbox, must refuse and leave the proof empty.
-    if not sys.platform.startswith("linux"):
-        print("SKIP  the inside check's process-1 refusals: they read /proc/1/comm, "
-              "which only Linux has")
+    if not linux_only_cases_run_here("the inside check's process-1 refusals"):
+        pass
     elif not program.pid_one_is_bwrap():
         proof = scratch / "proof"
         proof.write_text("")
@@ -338,10 +350,7 @@ def process_alive(pid):
     return state != "Z"
 
 
-if not sys.platform.startswith("linux"):
-    print("SKIP  the process-group stop case: it checks that the leftover is gone through "
-          "/proc, which only Linux has")
-else:
+if linux_only_cases_run_here("the process-group stop case"):
     with tempfile.TemporaryDirectory() as scratch_name:
         leftover_file = pathlib.Path(scratch_name).resolve() / "leftover-pid"
         # The leader starts a sleeper in its own process group, records it, and exits 5.
@@ -637,11 +646,14 @@ with tempfile.TemporaryDirectory() as scratch_name:
           "runs with no prefix, and the inside check still proves the inherited sandbox",
           code == program.EXIT_PASSED_OR_KILLED and len(ran) == 1 and ran[0][3] == ()
           and ran[0][5] == "darwin", (code, output, ran))
-    bwrap_prefix = ("/usr/bin/bwrap",)
-    code, output, ran = main_with_nothing_run("linux", sandbox=(bwrap_prefix, None))
-    check("on Linux, the program becomes the child subreaper before the suite runs",
-          code == program.EXIT_PASSED_OR_KILLED and "linux" in subreaper_calls,
-          (code, output, subreaper_calls))
+    # Under a bwrap prefix the suite runs in its test sandbox, admitted by readings of
+    # this machine that only Linux gives.
+    if linux_only_cases_run_here("the child subreaper on Linux"):
+        bwrap_prefix = ("/usr/bin/bwrap",)
+        code, output, ran = main_with_nothing_run("linux", sandbox=(bwrap_prefix, None))
+        check("on Linux, the program becomes the child subreaper before the suite runs",
+              code == program.EXIT_PASSED_OR_KILLED and "linux" in subreaper_calls,
+              (code, output, subreaper_calls))
 
     def sandbox_exec_missing(platform=None):
         raise program.runner.SignalSandboxCouldNotStart("/usr/bin/sandbox-exec is not on this Mac")
@@ -656,10 +668,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
           code == program.EXIT_NOT_RUN and ran == [] and "bwrap is not on PATH" in output,
           (code, output, ran))
 
-    if not sys.platform.startswith("linux"):
-        print("SKIP  the cases that run the inside check through run_suite_confined: "
-              "it stops the suite's leftover processes through /proc, which only Linux has")
-    else:
+    if linux_only_cases_run_here("the cases that run the inside check through run_suite_confined"):
         # A sandbox in which the inside check refuses: the suite must not start, and the
         # program must not report the suite's verdict.
         proof = scratch / "proof"
@@ -714,7 +723,56 @@ with tempfile.TemporaryDirectory() as scratch_name:
           code == program.EXIT_NOT_RUN and ran == [] and "not a file" in output,
           (code, output, ran))
 
-if not sys.platform.startswith("linux") or not bwrap_usable():
+# --- In a test sandbox the suite runs at low priority, in a cgroup scope of its own ---
+if linux_only_cases_run_here("the low-priority cgroup scope of a suite in a test sandbox"):
+    with tempfile.TemporaryDirectory() as scratch_name:
+        scratch = pathlib.Path(scratch_name).resolve()
+        repository = scratch_checkout(scratch)
+        launched = []
+
+        class LaunchedNothing:
+            returncode = 0
+
+            def wait(self):
+                return 0
+
+        real_popen = program.subprocess.Popen
+
+        def noting_popen(command, *arguments, **options):
+            # Only the suite's launch is noted; git and the rest run as usual.
+            if not any("doubling-test.py" in str(part) for part in command):
+                return real_popen(command, *arguments, **options)
+            launched.append(list(command))
+            return LaunchedNothing()
+
+        originals = (program.subprocess.Popen, program.stop_descendants,
+                     program.runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none)
+        program.subprocess.Popen = noting_popen
+        program.stop_descendants = lambda: None
+        for cgroup_reason in (None, "systemd-run is not on PATH"):
+            program.runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none = \
+                lambda reason=cgroup_reason: reason
+            try:
+                program.run_suite_confined(repository, "doubling-test.py", sys.executable,
+                                           ("/usr/bin/bwrap",), scratch / "proof")
+            except program.NotRun:
+                pass
+        (program.subprocess.Popen, program.stop_descendants,
+         program.runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none) = originals
+        nice = ["nice", "-n", str(program.runner.TEST_SUITE_NICE_INCREMENT)]
+        check("in a test sandbox, the suite runs in a cgroup scope of its own and at low "
+              "priority, as the runner's suites do",
+              len(launched) == 2
+              and launched[0][:len(program.runner.TEST_SUITE_CGROUP_SCOPE_COMMAND)]
+              == list(program.runner.TEST_SUITE_CGROUP_SCOPE_COMMAND)
+              and any(launched[0][index:index + 3] == nice for index in range(len(launched[0]))),
+              launched[:1])
+        check("where no cgroup scope can be made, the suite still runs at low priority",
+              len(launched) == 2 and launched[1][:3] == nice, launched[1:])
+
+if not linux_only_cases_run_here("the cases that run a suite"):
+    pass
+elif not bwrap_usable():
     print("SKIP  the cases that run a suite: no usable bwrap here")
 else:
     # --- Runs without a mutant ------------------------------------------------
@@ -927,19 +985,26 @@ else:
               work_directories_left(scratch, "terminated"))
 
         # --- An interrupted run leaves no process of the suite running ---------
-        heartbeat = scratch / "heartbeat"
-        (repository / "heartbeat-child.py").write_text(
+        # Looked for by a marker in the command line, from outside: a suite in a test sandbox
+        # of its own writes nowhere this test can read.
+        marker = f"left-behind-by-the-interrupted-suite-{os.getpid()}"
+
+        def processes_carrying_marker():
+            listing = subprocess.run(["ps", "-A", "-o", "args="], capture_output=True,
+                                     text=True, check=True).stdout
+            return [line for line in listing.splitlines()
+                    if marker in line and "ps -A" not in line]
+
+        (repository / "lingering-child.py").write_text(
             "import sys, time\n"
-            "while True:\n"
-            "    with open(sys.argv[1], 'w') as beat:\n"
-            "        beat.write(repr(time.time()))\n"
-            "    time.sleep(0.1)\n")
+            "with open('child-started', 'w'):\n"
+            "    pass\n"
+            "time.sleep(600)\n")
         (repository / "spawns-test.py").write_text(
             "import os, subprocess, sys, time\n"
-            f"heartbeat = {str(heartbeat)!r}\n"
-            "subprocess.Popen([sys.executable, 'heartbeat-child.py', heartbeat],\n"
+            f"subprocess.Popen([sys.executable, 'lingering-child.py', {marker!r}],\n"
             "                 start_new_session=True)\n"
-            "while not os.path.exists(heartbeat):\n"
+            "while not os.path.exists('child-started'):\n"
             "    time.sleep(0.05)\n"
             "print('suite started', flush=True)\n"
             "time.sleep(60)\n")
@@ -950,8 +1015,11 @@ else:
             stdin=subprocess.DEVNULL)
         for output_line in process.stdout:
             if "suite started" in output_line:
+                running_before = processes_carrying_marker()
                 process.send_signal(signal.SIGTERM)
                 break
+        else:
+            running_before = []
         try:
             # A process left running keeps the output pipe open, and this waits for it.
             process.communicate(timeout=30)
@@ -960,13 +1028,17 @@ else:
             process.kill()
             exited = False
         time.sleep(0.5)
-        beat_after_exit = heartbeat.read_text()
-        time.sleep(1.0)
+        left = processes_carrying_marker()
         check("terminated, the program leaves no process the suite started running, even one "
-              "in a session of its own", exited and heartbeat.read_text() == beat_after_exit
-              and process.returncode == 2, (exited, process.returncode, beat_after_exit))
+              "in a session of its own",
+              exited and running_before and left == [] and process.returncode == 2,
+              (exited, process.returncode, running_before, left))
+        if left:
+            # Not to outlive this test if the program failed to end it.
+            subprocess.run(["pkill", "-f", marker], check=False)
         (repository / "spawns-test.py").unlink()
-        (repository / "heartbeat-child.py").unlink()
+        (repository / "lingering-child.py").unlink()
+        (repository / "child-started").unlink(missing_ok=True)
 
         # --- Each failure while making, filling or removing the copy -----------
         def main_in_this_process(*arguments, git_fails_on=None, fill=None):
@@ -1084,9 +1156,12 @@ else:
             holder.write("pid 1, checkout elsewhere, started then\n")
             holder.flush()
             started = time.monotonic()
-            completed, last = run_program(scratch, repository, "doubling-test.py",
-                                          "--mutant", str(killing),
-                                          "--wait-for-lock-seconds", "1")
+            # The lock is taken only where the suite gets no test sandbox, so the program
+            # is told it already runs inside a sandbox; it refuses before running anything.
+            completed, last = run_program(
+                scratch, repository, "doubling-test.py", "--mutant", str(killing),
+                "--wait-for-lock-seconds", "1",
+                environment=dict(os.environ, **{program.runner.SIGNAL_SANDBOX_INSIDE_VARIABLE: "1"}))
             waited = time.monotonic() - started
         check("while another run holds the lock past the wait, nothing runs, nothing is "
               "mutated, exit 3, and the verdict names the wait and the holder",

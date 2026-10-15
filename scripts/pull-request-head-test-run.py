@@ -313,6 +313,9 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
         record_lines.append(f"runner exit code: {completed.returncode}")
     record_lines.append(
         f"seconds waiting for the machine's lock: {seconds_waiting_for_lock:.0f}")
+    admission_wait = daily.runner_output_line_on_seconds_suites_waited_for_admission(completed)
+    if admission_wait is not None:
+        record_lines.append(admission_wait)
     record_lines.append(f"wall-clock seconds: {monotonic() - run_started:.0f}")
     record_lines.append(f"logs: {logs} on {machine}")
     exit_code_once_the_record_is_written = (

@@ -76,7 +76,8 @@ name, the machine, the date and the UTC time the run started; origin/main's
 commit; the runner's first line (checkout, commit, suite count, Python);
 every line the runner printed that opens `FAIL`; every line for a skipped
 case, which the runner prints as `<suite>: SKIP ...`; the `SUMMARY:` line; the
-runner's exit code; the seconds spent waiting for the machine's lock; the
+runner's exit code; the seconds spent waiting for the machine's lock; on
+Linux, the runner's line on the seconds its suites waited for admission; the
 wall-clock seconds from the fetch to the worktree's removal; and the
 directory holding the run's logs. A step that failed is a line of the record
 too: a failed fetch, a worktree that could not be made or removed, a lock
@@ -325,6 +326,15 @@ def runner_summary_line(completed):
     return summary[-1] if summary else None
 
 
+def runner_output_line_on_seconds_suites_waited_for_admission(completed):
+    """The runner's line on how long its suites waited for admission, or None without one."""
+    if completed is None:
+        return None
+    found = [line for line in completed.stdout.splitlines()
+             if line.startswith(run_all_test_suites.ADMISSION_WAITED_LINE_PREFIX)]
+    return found[-1] if found else None
+
+
 def runner_output_lines_for_the_record(completed):
     printed = completed.stdout.splitlines()
     kept = []
@@ -473,6 +483,9 @@ def daily_full_test_run_under_lock(arguments, now, monotonic, on_ned_box, machin
         record_lines.append(f"runner exit code: {completed.returncode}")
     record_lines.append(
         f"seconds waiting for the machine's lock: {seconds_waiting_for_lock:.0f}")
+    admission_wait = runner_output_line_on_seconds_suites_waited_for_admission(completed)
+    if admission_wait is not None:
+        record_lines.append(admission_wait)
     record_lines.append(f"wall-clock seconds: {monotonic() - run_started:.0f}")
     record_lines.append(f"logs: {logs} on {machine}")
     record = "\n".join(record_lines)

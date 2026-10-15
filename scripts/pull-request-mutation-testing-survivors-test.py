@@ -60,10 +60,24 @@ if (control / "machine.lock").exists():
             lock_free = True
         except OSError:
             lock_free = False
+# Which of admission's locks another process holds at this call.
+def held_by_another(path):
+    with open(path, "a") as probe:
+        try:
+            fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return False
+        except OSError:
+            return True
+admission = control / "machine.lock.test-suite-admission"
+slots_held = (sum(held_by_another(path) for path in admission.glob("slot-*"))
+              if admission.is_dir() else 0)
+outside = admission / "suites-run-outside-the-signal-sandbox.lock"
+outside_lock_held = outside.exists() and held_by_another(outside)
 with (control / "calls.log").open("a") as log:
     log.write(json.dumps({{"tool": tool, "arguments": arguments,
                           "cwd": os.getcwd(), "head": head,
-                          "lock_free": lock_free,
+                          "lock_free": lock_free, "niceness": os.nice(0),
+                          "slots_held": slots_held, "outside_lock_held": outside_lock_held,
                           "session_attended": os.environ.get("CLAUDE_CODE_SESSION_ATTENDED")}}) + "\\n")
 if tool == "cr-filter-git":
     sys.exit(plan.get("filter_exit", 0))
@@ -160,17 +174,41 @@ def calls(control):
             (control / "calls.log").read_text().splitlines() if line]
 
 
+ADMISSION_OPENED_DRIVER = r'''
+import importlib.util, sys
+program_path, *arguments = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("pull_request_mutation_testing_survivors", program_path)
+program = importlib.util.module_from_spec(spec)
+sys.argv = [program_path, *arguments]
+spec.loader.exec_module(program)
+load_runner = program.load_test_suite_runner
+def load_runner_with_admission_opened():
+    runner = load_runner()
+    runner.TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 101
+    runner.TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE = -1
+    return runner
+program.load_test_suite_runner = load_runner_with_admission_opened
+sys.exit(program.main(arguments))
+'''
+
+
 def run_script(repository, control, *flags, path_override=None,
                extra_environment=None, dropped_variables=()):
     environment = {name: value for name, value in os.environ.items()
                    if name not in dropped_variables}
     environment[CONTROL_DIRECTORY_VARIABLE] = str(control)
+    # As inside the suite runner's sandbox, so a case takes the same path whether this file
+    # runs there or directly: the machine lock and no sandbox. The sandbox cases drop it.
+    inside_variable = load_test_suite_runner().SIGNAL_SANDBOX_INSIDE_VARIABLE
+    if inside_variable not in dropped_variables:
+        environment[inside_variable] = "1"
     if path_override is not None:
         environment["PATH"] = path_override
     environment.update(extra_environment or {})
     # Never the real machine lock: the suite runner holds that one while this file runs.
+    # Admission's thresholds are opened wide, so a case does not wait on a busy machine.
     return subprocess.run(
-        [sys.executable, str(SCRIPT), "--checkout", str(repository),
+        [sys.executable, "-c", ADMISSION_OPENED_DRIVER, str(SCRIPT), "--checkout", str(repository),
          "--recorded-inputs-directory", str(control / "recordings"),
          "--lock-file", str(control / "machine.lock"), *flags],
         capture_output=True, text=True, check=False, env=environment, timeout=120)
@@ -231,7 +269,10 @@ def run_cases():
         check("the config names the changed file as the module path",
               'module-path = "scripts/thing.py"' in config, config)
         test_suite_runner = load_test_suite_runner()
-        sandbox_prefix, _ = test_suite_runner.signal_sandbox()
+        # The script runs as inside the runner's sandbox (run_script), so it builds the
+        # prefix the runner builds there; the sandbox cases below cover the bwrap prefix.
+        sandbox_prefix, _ = test_suite_runner.signal_sandbox(environment={
+            **os.environ, test_suite_runner.SIGNAL_SANDBOX_INSIDE_VARIABLE: "1"})
         launch = shlex.join([*sandbox_prefix, "/usr/bin/python3", "-u", "scripts/thing-test.py"])
         # On macOS the prefix names the process that built it, which differs between
         # this file and the script it runs.
@@ -819,6 +860,55 @@ def run_cases():
                   "the mutant's test command",
                   outside_suite in config and str(fake_bin / "bwrap") not in config,
                   config)
+            cosmic_ray_calls = [call for call in calls(control) if call["tool"] == "cosmic-ray"]
+            check("in test sandboxes, cosmic-ray, and so every suite it runs, holds an admission "
+                  "slot and runs at low priority",
+                  cosmic_ray_calls
+                  and all(call["slots_held"] >= 1 for call in cosmic_ray_calls)
+                  and all(call["niceness"] >= 10 for call in cosmic_ray_calls),
+                  json.dumps(cosmic_ray_calls)[:800])
+            check("with a suite that runs outside the sandbox, cosmic-ray holds the lock those "
+                  "suites share with every other run",
+                  cosmic_ray_calls
+                  and all(call["outside_lock_held"] for call in cosmic_ray_calls),
+                  json.dumps(cosmic_ray_calls)[:800])
+            check("in test sandboxes, no machine lock is taken",
+                  not (control / "machine.lock").exists()
+                  and all(call["lock_free"] is None for call in cosmic_ray_calls),
+                  json.dumps(cosmic_ray_calls)[:800])
+
+        # An interpreter the test sandbox would hide, as `--python ~/venv/bin/python` names
+        # one: its installation is shown read-only in each mutant's sandbox.
+        with tempfile.TemporaryDirectory() as scratch_name, tempfile.TemporaryDirectory(
+                dir=Path.home()) as home_name:
+            repository, base, head = scratch_repository(scratch_name, {
+                "scripts/doubler.py": "def double(x):\n    return x + x\n",
+                "scripts/doubler-test.py": "import sys\nsys.exit(0)\n"})
+            venv, control = fake_venv(scratch_name, {"dump": []})
+            fake_bin = Path(scratch_name) / "bin"
+            fake_bin.mkdir()
+            (fake_bin / "bwrap").write_text("#!/bin/sh\nexit 0\n")
+            (fake_bin / "bwrap").chmod(0o755)
+            installation = Path(home_name).resolve() / "python-installation"
+            (installation / "bin").mkdir(parents=True)
+            standard_library = installation / "lib" / "python3.99"
+            standard_library.mkdir(parents=True)
+            home_python = installation / "bin" / "python3"
+            # Answers the question of what it loads as a real interpreter installed there would.
+            home_python.write_text("#!/bin/sh\nprintf " + shlex.quote("\\0".join(
+                [str(home_python)] * 2 + [str(standard_library)] * 4)) + "\n")
+            home_python.chmod(0o755)
+            completed = run_script(repository, control, "--head", head, "--base", base,
+                                   "--cosmic-ray-venv", str(venv), "--python", str(home_python),
+                                   path_override=f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+                                   dropped_variables=(inside_variable,))
+            config = ((control / "config.toml").read_text()
+                      if (control / "config.toml").exists() else "")
+            check("an interpreter in the hidden home directory has what it loads shown "
+                  "read-only in each mutant's test sandbox",
+                  f"--ro-bind {standard_library} {standard_library}" in config
+                  and f"--ro-bind {home_python} {home_python}" in config,
+                  f"rc={completed.returncode} out={completed.stdout[-600:]} config={config[:1500]}")
     else:
         print("SKIP  the signal sandbox cases: bwrap is used only on Linux")
 
@@ -829,6 +919,36 @@ def run_cases():
                                                   SCRIPT)
     survivors = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(survivors)
+
+    # A test sandbox that does not start: cosmic-ray would count the failing exit as a
+    # killed mutant, so the suite's proof stays empty and the run stops instead.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        scratch = Path(scratch_name)
+        (scratch / "a-test.py").write_text("print('ran')\n")
+        proof, did_not_start = scratch / "a.started", scratch / "did-not-start"
+        for label, prefix, expected_exit, named in (
+                ("a sandbox that starts", ("env",), 0, False),
+                ("a sandbox that fails before the suite", ("sh", "-c", "exit 1", "stand-in"), 1,
+                 True)):
+            did_not_start.unlink(missing_ok=True)
+            command = survivors.test_command_for(["a-test.py"], sys.executable, prefix, (),
+                                                 {"a-test.py": proof}, did_not_start)
+            completed = subprocess.run(shlex.split(command), cwd=scratch, capture_output=True,
+                                       text=True, timeout=60)
+            check(f"{label}: the test command exits {expected_exit}, and names the suite as "
+                  f"not started {'' if named else 'not '}at all",
+                  completed.returncode == expected_exit
+                  and did_not_start.exists() == named
+                  and (not named or did_not_start.read_text().split() == ["a-test.py"]),
+                  (completed.returncode, did_not_start.exists(), completed.stderr))
+            try:
+                survivors.raise_when_a_test_sandbox_did_not_start(did_not_start, "a.py", "baseline")
+                raised = None
+            except survivors.CouldNotRun as error:
+                raised = str(error)
+            check(f"{label}: the run {'stops, naming the suite' if named else 'goes on'}",
+                  (raised is not None and "a-test.py" in raised and "did not start" in raised)
+                  if named else raised is None, raised)
     with tempfile.TemporaryDirectory() as scratch_name:
         repository, base, head = scratch_repository(scratch_name, {
             "scripts/tést.py": "VALUE = 1\n",
