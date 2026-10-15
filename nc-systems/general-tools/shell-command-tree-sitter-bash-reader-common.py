@@ -975,7 +975,11 @@ class _Collector:
     def simple_command(self, node, children, child_shell, heredocs, redirects, trailing_words):
         words, own_redirects, own_heredocs = [], [], []
         joined = None
+        previous_end = None
         for child in children:
+            gap_words, prefix = (_escaped_blank_words_in_gap(self.source[previous_end:child.start_byte])
+                                 if previous_end is not None else ([], ""))
+            previous_end = child.end_byte
             if joined is not None and child.type == "process_substitution" \
                     and child.start_byte == joined.end_byte:
                 # bash passes 0<(cmd) as one word, the 0 joined to the substitution's path.
@@ -986,11 +990,19 @@ class _Collector:
             if joined is not None:
                 words.append(word_value(joined, self.glob_markers, self.restored))
                 joined = None
+            words.extend(gap_words)
+            if prefix and child.type in REDIRECT_NODE_TYPES:
+                # An operator ends the word the escaped blanks start, so they are a word of their own.
+                words.append(prefix)
+                prefix = ""
             if child.type == "number" and self.source[child.end_byte + 1:child.end_byte + 2] == b"(" \
                     and self.source[child.end_byte:child.end_byte + 1] in (b"<", b">"):
                 joined = child
                 continue
+            count = len(words)
             self._read_command_part(child, child_shell, words, own_redirects, own_heredocs)
+            if prefix and len(words) > count:
+                words[count] = prefix + words[count]
         if joined is not None:
             words.append(word_value(joined, self.glob_markers, self.restored))
         words.extend(trailing_words)
@@ -1025,6 +1037,33 @@ class _Collector:
             words.append(word_value(child, self.glob_markers, self.restored))
         elif not child.is_named and kind_is_keyword(child):
             words.append(_text(child))
+
+
+def _escaped_blank_words_in_gap(gap):
+    """Return (words, prefix) for the escaped blanks tree-sitter-bash skipped between two words.
+
+    tree-sitter-bash reads a backslash before a space or tab at a word's start
+    as space between words, so `echo \\ x` loses the space bash passes in
+    " x". words are the ones made only of escaped blanks; prefix is the escaped
+    blanks that run into the next word and start it. A gap holding anything but
+    blanks, escaped blanks and line continuations is left alone.
+    """
+    words, current, index = [], "", 0
+    while index < len(gap):
+        pair = gap[index:index + 2]
+        if pair in (b"\\ ", b"\\\t"):
+            current += pair[1:].decode()
+            index += 2
+        elif pair == b"\\\n":
+            index += 2
+        elif gap[index:index + 1] in (b" ", b"\t", b"\n"):
+            if current:
+                words.append(current)
+            current = ""
+            index += 1
+        else:
+            return [], ""
+    return words, current
 
 
 def _separates_commands(gap):
@@ -1440,6 +1479,39 @@ def _comment_misread_after_an_escaped_blank(root, source):
     return min(found, default=None)
 
 
+def _comment_running_past_its_closing_backtick(root, source):
+    """Return the offset of the earliest backtick a comment inside a backticked command runs past, or None.
+
+    tree-sitter-bash runs a comment in `echo a # c` to the end of the line, past
+    the closing backtick, so `echo `echo a # c`; rm z` loses rm z; bash ends the
+    comment and the substitution at that backtick. Inside double quotes,
+    tree-sitter-bash leaves the opening backtick in an error just before the
+    comment instead.
+    """
+    stack, found = [(root, False, None)], []
+    while stack:
+        node, in_backticks, before = stack.pop()
+        if node.type == "comment" and before is not None and before.type == "ERROR" \
+                and sum(child.type == "`" for child in before.children) % 2 == 1:
+            in_backticks = True
+        if node.type == "comment" and in_backticks:
+            text = node.text
+            index = text.find(b"`")
+            while index != -1 and _escaped_by_backslashes(text, index):
+                index = text.find(b"`", index + 1)
+            if index != -1:
+                found.append(node.start_byte + index)
+            continue
+        if node.type == "command_substitution":
+            in_backticks = bool(node.children) and node.children[0].type == "`"
+        children = node.children
+        # prev_sibling walks the parent's children from the start, so a long script would take
+        # time that grows with the square of its length.
+        stack.extend((child, in_backticks, children[index - 1] if index else None)
+                     for index, child in enumerate(children))
+    return min(found, default=None)
+
+
 def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
     """Return (source, tree, {placeholder: _HeredocTakenOut}) with every heredoc's body taken out.
 
@@ -1473,8 +1545,13 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
         if operator is None or operator.type not in ("<<", "<<-"):
             operator = None
         misread = _comment_misread_after_an_escaped_blank(tree.root_node, source)
+        past_backtick = _comment_running_past_its_closing_backtick(tree.root_node, source)
+        if past_backtick is not None and (misread is None or past_backtick < misread):
+            misread, inserted = past_backtick, b"\n"
+        else:
+            inserted = b"\\"
         if misread is not None and (operator is None or misread < operator.start_byte):
-            source = source[:misread] + b"\\" + source[misread:]
+            source = source[:misread] + inserted + source[misread:]
             if edits is not None:
                 edits.append((misread, 0, 1))
             tree = parser().parse(source)
@@ -1552,9 +1629,10 @@ def shell_source_comments_and_unreadable_spans_after_reader_corrections(source):
                                b"#" in edited[node.start_byte:node.end_byte]))
         elif node.type == "comment":
             start = _offset_before_edits(node.start_byte, edits)
-            end = _offset_before_edits(node.end_byte, edits)
-            if start is not None and end is not None:
-                comments.append((start, end))
+            # The end is just past the comment, where a correction may have put a byte.
+            last = _offset_before_edits(node.end_byte - 1, edits)
+            if start is not None and last is not None:
+                comments.append((start, last + 1))
     return ShellSourceCommentsAndUnreadableSpans(
         sorted(comments), sorted(unreadable), sorted(missing, key=lambda token: token[1]),
         [heredoc.written for heredoc in taken.values() if not heredoc.ending])
@@ -1638,20 +1716,27 @@ def _heredoc_body_start(source, delimiter_end):
     probe = b": " + source[delimiter_end:]
     inserted = []
     tree = parser().parse(probe)
-    for _ in range(probe.count(b"#")):
+    for _ in range(probe.count(b"#") + 1):
+        line_end = _opening_line_end(tree.root_node, probe)
         misread = _comment_misread_after_an_escaped_blank(tree.root_node, probe)
-        if misread is None:
+        # A misread in the body cannot move the opening line's end, and correcting
+        # each one costs a parse of the whole body.
+        if misread is None or (line_end is not None and misread > line_end):
             break
         probe = probe[:misread] + b"\\" + probe[misread:]
         inserted.append(misread)
         tree = parser().parse(probe)
+    if line_end is None:
+        return len(source)
+    for at in reversed(inserted):
+        if line_end > at:
+            line_end -= 1
+    return delimiter_end + line_end - 2 + 1
 
-    def in_source(offset):
-        for at in reversed(inserted):
-            if offset > at:
-                offset -= 1
-        return delimiter_end + offset - 2
-    stack, inside, comments = [tree.root_node], [], []
+
+def _opening_line_end(root, probe):
+    """Return the offset in probe of the first line end outside quotes, substitutions and continuations, or None."""
+    stack, inside, comments = [root], [], []
     while stack:
         node = stack.pop()
         if node.type == "comment":
@@ -1667,12 +1752,12 @@ def _heredoc_body_start(source, delimiter_end):
     while True:
         line_end = probe.find(b"\n", position)
         if line_end == -1:
-            return len(source)
+            return None
         # A backslash continues a line, except at the end of a comment.
-        continued = (len(probe[:line_end]) - len(probe[:line_end].rstrip(b"\\"))) % 2 == 1 \
+        continued = _escaped_by_backslashes(probe, line_end) \
             and not any(begin <= line_end - 1 < end for begin, end in comments)
         if not any(begin < line_end < end for begin, end in inside) and not continued:
-            return in_source(line_end) + 1
+            return line_end
         position = line_end + 1
 
 

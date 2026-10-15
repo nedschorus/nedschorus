@@ -148,7 +148,7 @@ check("$'...' ends at its unescaped quote, and a plain '...' at its first quote"
       words_of("a $'it\\'s' b; c 'x'"))
 found = words_of("echo \\ #word; rm -rf x && git push --force")
 check("a # after an escaped space is part of its word, so the commands after it on the line are read",
-      [words[0] for words in found] == ["echo", "rm", "git"] and "#word" in found[0], found)
+      [words[0] for words in found] == ["echo", "rm", "git"] and " #word" in found[0], found)
 check("a # after an escaped backslash still starts a comment, which hides the rest of its line",
       words_of("echo \\\\ # rm -rf x\nls") == [["echo", "\\"], ["ls"]],
       words_of("echo \\\\ # rm -rf x\nls"))
@@ -165,6 +165,43 @@ check("a # after an escaped space on a here-document's opening line does not hid
       "carries the line on, so the body starts after it and the command after the body is read",
       [words[0] for words in found] == ["cat", "echo", "tmux"] and found[0].redirects == [("<<", "")],
       [(list(words), words.redirects) for words in found])
+for command, expected in [("echo \\ x", ["echo", " x"]), ("echo \\  x", ["echo", " ", "x"]),
+                          ("echo \\ \\ x", ["echo", "  x"]), ("echo \\\tx", ["echo", "\tx"]),
+                          ('echo \\ "q"', ["echo", " q"]), ("echo a\\ b \\ c", ["echo", "a b", " c"])]:
+    check(f"escaped blanks at a word's start stay in the word, as bash passes it: {command!r}",
+          words_of(command) == [expected], words_of(command))
+found = reader.simple_commands("ls \\ ~/x")
+check("a word that starts with an escaped space is not a word whose ~ bash expands",
+      list(found[0]) == ["ls", " ~/x"]
+      and not isinstance(found[0][1], reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand),
+      [(word, type(word).__name__) for word in found[0]])
+for command, expected in [
+        ("echo `echo a # c`; rm z", [["echo", "a"], ["echo", "`echo a # c`"], ["rm", "z"]]),
+        ('echo "x `a # c` y"; rm z', [["a"], ["echo", "x `a # c` y"], ["rm", "z"]]),
+        ("echo `a # c` `b`; d", [["a"], ["b"], ["echo", "`a # c`", "`b`"], ["d"]])]:
+    check(f"a comment inside a one-line backticked command ends at its closing backtick: {command!r}",
+          words_of(command) == expected, words_of(command))
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(b"echo `a # c`; rm z")
+check("a comment inside a one-line backticked command is found, ending at the backtick",
+      read.comments == [(8, 11)] and not read.unreadable_spans, read)
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(b"echo \\ #w; ls # c")
+check("a comment after a corrected misread is found with its whole span",
+      read.comments == [(14, 17)], read)
+# Run in its own process under a deadline: correcting each body line would take minutes.
+timing_code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+               "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); "
+               "print(list(r.simple_commands('cat <<EOF\\n' + 'line \\\\ #x\\n' * 4000 "
+               "+ 'EOF\\ntmux kill-server')[-1]))")
+try:
+    started = time.monotonic()
+    last = subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=60, check=True,
+                          capture_output=True, text=True).stdout.strip()
+    timing = time.monotonic() - started
+except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
+    last, timing = None, repr(problem)
+check("a 4,000-line here-document whose lines each hold a # after an escaped space is read well inside "
+      "a guard's 30 s, and the command after it is read",
+      isinstance(timing, float) and timing < 10 and last == "['tmux', 'kill-server']", (timing, last))
 found = words_of("cat <<EOF\n$(echo a \\ #x; rm y\n)\nEOF\n")
 check("a # after an escaped space in a substitution in a here-document body is part of its word, "
       "so the commands after it in the substitution are read",
