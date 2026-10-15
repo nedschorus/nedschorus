@@ -3,7 +3,8 @@
 
 A fake `gh` first on PATH logs its arguments and the GH_TOKEN it saw and
 prints a description, or fails when the case says so. A scratch --review-tools-worktree-at-main
-holds a fake scripts/code-review-codex-cell.py that logs its arguments and
+holds docs/agents/pr-reviewer-instructions.md and a fake
+scripts/code-review-codex-cell.py that logs its arguments and
 whether GIT_DIR or GH_TOKEN reached it, writes a report, and exits with the
 case's code. The program runs with GIT_DIR set.
 
@@ -89,6 +90,9 @@ def main():
         (scratch / "main-checkout" / "scripts").mkdir(parents=True)
         (scratch / "main-checkout" / "scripts" / "code-review-codex-cell.py").write_text(
             FAKE_CODEX_CELL)
+        instructions = scratch / "main-checkout" / "docs" / "agents" / "pr-reviewer-instructions.md"
+        instructions.parent.mkdir(parents=True)
+        instructions.write_text("# PR reviewer instructions\n")
         token_directory = scratch / "home" / ".config" / "nedschorus"
         token_directory.mkdir(parents=True)
         (token_directory / "ned-review-merge.token").write_text(TOKEN + "\n")
@@ -103,9 +107,11 @@ def main():
               json.dumps(gh_calls))
         check("the description is saved under cx/pr<n>-<base>",
               (outputs / "description.md").read_text() == DESCRIPTION, detail)
-        check("main's review runs on wt/pr<n>-head from the base commit",
+        check("main's review runs on wt/pr<n>-head from the base commit, with main's "
+              "PR reviewer instructions",
               cell_calls and cell_calls[0]["argv"] == [
                   "--base", BASE, "--repo", str(helpers / "wt" / "pr7-head"),
+                  "--instructions-file", str(instructions),
                   "--pull-request-description-file", str(outputs / "description.md"),
                   "--output", str(outputs / "report.md")], json.dumps(cell_calls))
         check("neither GIT_DIR nor the token reaches the review",
@@ -154,6 +160,15 @@ def main():
         check("a review tools worktree without code-review-codex-cell.py exits 2 before gh runs",
               completed.returncode == 2 and gh_calls == [] and cell_calls == []
               and "code-review-codex-cell.py is missing" in completed.stdout,
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+
+        instructions.rename(instructions.with_suffix(".away"))
+        completed, gh_calls, cell_calls = run_program(scratch, helpers)
+        instructions.with_suffix(".away").rename(instructions)
+        check("a review tools worktree without pr-reviewer-instructions.md exits 2 before gh "
+              "or the review runs",
+              completed.returncode == 2 and gh_calls == [] and cell_calls == []
+              and "pr-reviewer-instructions.md is missing" in completed.stdout,
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

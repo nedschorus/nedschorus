@@ -114,6 +114,12 @@ agent_binary_update_under_lock = importlib.util.module_from_spec(
     _agent_binary_update_under_lock_spec)
 _agent_binary_update_under_lock_spec.loader.exec_module(agent_binary_update_under_lock)
 
+_claude_json_presets_spec = importlib.util.spec_from_file_location(
+    "claude_json_agent_seat_folder_trust_and_onboarding_presets_write",
+    SCRIPTS_DIRECTORY / "claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py")
+claude_json_presets = importlib.util.module_from_spec(_claude_json_presets_spec)
+_claude_json_presets_spec.loader.exec_module(claude_json_presets)
+
 _architecture_overview_path_template_and_checked_against_commit_reader_spec = importlib.util.spec_from_file_location(
     "architecture_overview_path_template_and_checked_against_commit_reader",
     SCRIPTS_DIRECTORY / "architecture-overview-path-template-and-checked-against-commit-reader.py")
@@ -227,8 +233,10 @@ def handoff_supervisor_environment_copy_without_calling_agent_session_variables(
 def agent_seat_launch_environment_without_calling_agent_session_tmux_and_supervisor_variables(environment) -> dict:
     """Return the environment to start an agent-seat's launcher or tmux server with."""
     # A new tmux server copies its starter's environment into every window, the after-exit shell
-    # included, so the caller's tmux and supervisor variables are dropped here too.
-    caller_only = {"TMUX", "TMUX_PANE",
+    # included, so the caller's tmux and supervisor variables are dropped here too. IS_DEMO is
+    # dropped because launch_agent_session sets it for the agent-sessions it starts; a claude
+    # typed in the after-exit shell would otherwise start in Claude Code's demo mode.
+    caller_only = {"TMUX", "TMUX_PANE", "IS_DEMO",
                    HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE,
                    HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE,
                    HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE}
@@ -1304,6 +1312,27 @@ def update_agent_binary(agent_command: str, timeout_seconds: int) -> None:
         [agent_command, "update"], timeout_seconds, "handoff-supervisor")
 
 
+def claude_json_onboarding_presets_write_or_report() -> None:
+    """Record Claude Code's onboarding as done in ~/.claude.json, or print why it could not."""
+    # Written before every launch, relaunches included, because a /logout can clear
+    # hasCompletedOnboarding while this supervisor runs. Folder trust is the launchers'.
+    # A failure is printed, not raised: IS_DEMO may still keep the onboarding screens off,
+    # and an agent-seat that is not launched helps no one.
+    claude_json = claude_json_presets.claude_json_path()
+    try:
+        claude_json_presets.claude_json_onboarding_presets_write(claude_json)
+    except (claude_json_presets.ClaudeJsonNotAJsonObjectError, OSError) as error:
+        print(f"handoff-supervisor: Claude Code's onboarding was not recorded as done in "
+              f"{claude_json}: {error}. The agent-session is launched anyway, and may stop at "
+              "Claude Code's welcome or theme screen.\n"
+              f"If {claude_json} is not valid JSON: restore it from the newest copy in "
+              "~/.claude/backups/ that is valid JSON.\n"
+              "Otherwise: fix the cause named above.\n"
+              "If the agent-session stopped at a welcome or theme screen: answer the screen "
+              "in the agent-seat's terminal window.",
+              file=sys.stderr)
+
+
 def launch_agent_session(agent_command: str, session_id: str, working_directory: Path,
                          prompt: str, resume: bool = False,
                          remote_control_name: str = "",
@@ -1332,8 +1361,9 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     session_environment[HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE] = str(working_directory)
     session_environment[HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE] = session_id
     # Claude Code's demo mode skips its first-run onboarding screens, such as the theme picker,
-    # which can reappear even when ~/.claude.json records them done and would stop the session.
+    # which would stop the session with no one to answer them.
     session_environment["IS_DEMO"] = "1"
+    claude_json_onboarding_presets_write_or_report()
     return subprocess.Popen(command, cwd=str(working_directory), env=session_environment)
 
 

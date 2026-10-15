@@ -14,6 +14,7 @@ shell scripts, each naming a path the move had emptied.
 Run: python3 scripts/dangling-path-citation-check-test.py
 """
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
@@ -32,6 +33,8 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 CHECK_SCRIPT = Path(__file__).with_name("dangling-path-citation-check.py")
 LINT_SCRIPT = Path(__file__).with_name("md-drift-lint.py")
+LINT_OVERVIEW_PATH_MODULE = Path(__file__).with_name(
+    "architecture-overview-path-template-and-checked-against-commit-reader.py")
 GIT_OUTPUT_MODULE = (Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
                      / "git-machine-readable-output-runner-and-parser-common.py")
 
@@ -54,15 +57,15 @@ def git(root, *arguments, check_exit=True):
 
 
 def build_repository(root: Path):
-    """A repository whose scripts/ holds this program and the lint it calls,
-    so the copy under test resolves its sibling import the way it will in
-    the real tree."""
+    """A repository whose scripts/ holds this program, the lint it calls and
+    the module the lint loads, so the copy under test resolves its sibling
+    imports the way it will in the real tree."""
     git(root, "init", "-q")
     git(root, "config", "user.email", "test@nedschorus.invalid")
     git(root, "config", "user.name", "test")
     (root / "scripts").mkdir()
     (root / "docs").mkdir()
-    for source in (CHECK_SCRIPT, LINT_SCRIPT):
+    for source in (CHECK_SCRIPT, LINT_SCRIPT, LINT_OVERVIEW_PATH_MODULE):
         (root / "scripts" / source.name).write_text(source.read_text(encoding="utf-8"),
                                                    encoding="utf-8")
     (root / "nc-systems" / "general-tools").mkdir(parents=True)
@@ -975,6 +978,38 @@ with tempfile.TemporaryDirectory() as workspace:
           "which this change removed" in out, f"{code} {out!r} {err!r}")
     check("a non-ASCII directory that still holds a file is not reported as removed",
           "notes/naïve-dir" not in out, out)
+
+
+# --- an architecture overview is checked for paths only ---------------------
+# md-drift-lint's overview checks query GitHub; this program reads only path
+# findings, so a changed overview must make no GitHub call.
+with tempfile.TemporaryDirectory() as workspace:
+    root = Path(workspace) / "repo"
+    root.mkdir()
+    (root / "nc-systems" / "demo").mkdir(parents=True)
+    (root / "nc-systems" / "demo" / "demo.py").write_text("print()\n", encoding="utf-8")
+    base = build_repository(root)
+    fake_bin = Path(workspace) / "fake-bin"
+    fake_bin.mkdir()
+    gh_called = Path(workspace) / "gh-called"
+    (fake_bin / "gh").write_text(
+        f"#!{sys.executable}\nimport pathlib, sys\n"
+        f"pathlib.Path({str(gh_called)!r}).write_text('called')\n"
+        "sys.stdout.write('{\"data\": {\"repository\": {\"n7\": null}}, '\n"
+        "                 '\"errors\": [{\"type\": \"NOT_FOUND\"}]}')\nsys.exit(1)\n",
+        encoding="utf-8")
+    (fake_bin / "gh").chmod(0o755)
+    commit_change(root, "docs/nedschorus-wiki/nedschorus-demo-architecture-overview.md",
+                  "## Planned work\n\n"
+                  "- GHI [Gone](https://github.com/nedschorus/nedschorus/issues/7)\n")
+    environment = dict(os.environ, PATH=f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+    completed = subprocess.run(
+        [sys.executable, str(root / "scripts" / CHECK_SCRIPT.name), "--base", base],
+        cwd=root, env=environment, capture_output=True, text=True, check=False)
+    check("a changed architecture overview makes no GitHub call",
+          not gh_called.exists() and completed.returncode == 0
+          and "GHI" not in completed.stdout,
+          f"{completed.returncode} {completed.stdout!r} {completed.stderr!r}")
 
 
 if failures:
