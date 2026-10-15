@@ -108,3 +108,6 @@ At commit `4ed4e4918122f3a9e56c811c58a6ac4137330801`, over the output of `git ls
 ## Provisional additions (not yet vetted by the user)
 
 - MD-skills, 2026-10-14: Once this issue's bare-name resolution and basename uniqueness checks are on main, add CLAUDE.md's sentences on citing a file by its bare name; the candidate text is `docs/drafts/claude-md-file-citation-bullet-candidate.md` in the MD-skills agent-home on ned-box, to be rebuilt onto CLAUDE.md as it then stands (MD-skills task #121).
+- fleet-restart-at-login, 2026-10-14: Bring this GHI-MD in line with the user's bare-name ruling (task #102).
+- fleet-restart-at-login, 2026-10-14: Teach the reference checks, `dangling-path-citation-check` and the cold-read grid's reference check, to resolve a bare file name, and to fail when a bare name names no file (task #103).
+- fleet-restart-at-login, 2026-10-14: When both of this issue's checks are on main, the bare-name resolution above and a uniqueness check that fails on a second file with an existing name, tell the MD-skills agent-seat (task #118).
