@@ -1,6 +1,6 @@
 # How to choose a name for files, code and glossary terms
 
-This page says how to choose every name this project invents: file and directory names, script names, the names of functions, classes, constants and states used from other files, branch names, and the terms the glossaries define, project-terms and system-terms alike. CLAUDE.md states the naming rule in brief and points here; where the two differ, this page governs.
+This page says how to choose every name this project invents: file and directory names, script names, the names of functions, classes, constants and states used from other files, branch names, and the terms the glossaries define, project-terms and system-terms alike. CLAUDE.md points here.
 
 Two kinds of name are partly decided elsewhere, and this page fills in the rest:
 

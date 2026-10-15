@@ -189,7 +189,7 @@ A re-registration was attempted and deliberately reverted (PR [guard and catch-u
 records all three forms and their evidence. The closing ruling: a
 registration line carries no more machinery, because the forked-session
 wrong-copy failure this would guard against has never been observed —
-per the reviewer rule in CLAUDE.md, hardening needs a named behavior.
+per CLAUDE.md's rule on guards, hardening needs a named behavior.
 Reopen trigger: that failure actually observed — a guard demonstrably
 running as another checkout's copy, with effect.
 
@@ -278,7 +278,7 @@ shell-route bypass. A periodic drift sweep was rejected: it
 false-positives on agent-seats legitimately carrying approved-but-unmerged
 changes. Codex's instruction file — `AGENTS.md` at the repository root,
 added 2026-08-20 — is not in this guard's list: a known fact, not a
-decision, and consistent with the reviewer rule that landed alongside it
+decision, and consistent with CLAUDE.md's rule on guards, which landed alongside it
 (no recorded incident, no guard).
 
 **R11. Backup stores are read-only to agents — built-live; lane removed
