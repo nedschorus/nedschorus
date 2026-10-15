@@ -184,6 +184,51 @@ try:
     check("the search-alone suggestion keeps the search's redirections",
           (refusal or "").endswith("run: grep -l needle -- */*.jsonl 2>/dev/null"), refusal)
 
+    # The search alone would run in another folder without its cd, or print more without its
+    # pipe, so with other commands around the search the refusal gives no command at all.
+    without_command_ending = ("Put -- after the last option and before the file names, "
+                              "then run the command again.")
+    guard.command_with_double_dash_before_word = lambda *arguments: None
+    try:
+        for command, cwd in [
+                (f"cd {scratch} && grep -l needle */*.jsonl 2>/dev/null", scratch / "plain"),
+                ("grep -l needle */*.jsonl | head -5", scratch)]:
+            refusal = run_main(command, cwd)
+            check(f"with no place found for --, {command!r} is refused with no command given",
+                  (refusal or "").endswith(without_command_ending)
+                  and "run:" not in (refusal or ""), refusal)
+    finally:
+        guard.command_with_double_dash_before_word = real_whole_command
+
+    # A cwd whose name holds a glob character is escaped in the pattern; the matches start
+    # with the name as written, so the name a match is checked by is cut at the right place.
+    for folder_name, file_name, refused_expected in [
+            ("ab[c]", "xy-foo/a.jsonl", False),
+            ("proj[1]", "-d/a.jsonl", True)]:
+        glob_named = scratch / "glob-named" / folder_name
+        (glob_named / file_name).parent.mkdir(parents=True)
+        (glob_named / file_name).write_text('{"text": "needle"}\n')
+        refusal = run_main("grep -l needle */*.jsonl", glob_named)
+        check(f"in a folder named {folder_name} holding {file_name}, the search is "
+              + ("refused" if refused_expected else "passed"),
+              (refusal is not None) == refused_expected, repr(refusal))
+    shutil.rmtree(scratch / "glob-named")
+
+    # The word after an option that takes a value, such as grep -f's pattern file, is that
+    # option's value, not a file to search, even when it expands to a name beginning with -.
+    option_values = scratch / "option-values"
+    option_values.mkdir()
+    (option_values / "-n").write_text("needle\n")
+    (option_values / "notes.txt").write_text("needle\n")
+    for command in ["grep -f -? notes.txt", "grep -lf -? notes.txt",
+                    "grep --file -? notes.txt", "rg -g -? needle notes.txt"]:
+        check(f"passes: {command}, whose -? is an option's value",
+              run_main(command, option_values) is None)
+    for command in ["grep -e needle -?", "grep -fpatterns -?", "grep -fl needle -?"]:
+        check(f"refused: {command}, whose -? is a file to search",
+              run_main(command, option_values) is not None)
+    shutil.rmtree(option_values)
+
     elsewhere = scratch / "plain"
     check("refused after a literal cd into the folder from elsewhere",
           run_main(f"cd {scratch} && grep -l needle */*.jsonl", elsewhere) is not None)
