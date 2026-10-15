@@ -432,6 +432,29 @@ if PARSER_AVAILABLE:
 else:
     print("the detector's cases were not run: markdown-it-py is missing")
 
+
+class AddedLineNumbersThatCanOnlyBeLookedUp:
+    """Added line numbers a filter may test lines against but not walk through:
+    walking them for every broken paragraph costs paragraphs times added lines."""
+
+    def __init__(self, numbers):
+        self.numbers = set(numbers)
+
+    def __contains__(self, number):
+        return number in self.numbers
+
+    def __iter__(self):
+        raise AssertionError("the filter walked through the added lines")
+
+
+try:
+    kept = hook.broken_paragraph_line_ranges_holding_an_added_line(
+        [(0, 2), (4, 6), (8, 10)], AddedLineNumbersThatCanOnlyBeLookedUp({5, 10}))
+except AssertionError as error:
+    kept = str(error)
+check("the overlap filter looks each paragraph line up in the added lines, and keeps only "
+      "the paragraphs holding one", kept == [(4, 6)], kept)
+
 # ---------------------------------------------------------------------------
 # The hook, run as a subprocess against a scratch repository.
 # ---------------------------------------------------------------------------
@@ -463,12 +486,20 @@ def write_then_run(cwd, file_path, content):
     return run_hook(payload_for(cwd, "Write", file_path, {"content": content}))
 
 
+def leading_tabs_as_two_spaces(text):
+    return "\n".join("  " * (len(line) - len(line.lstrip("\t"))) + line.lstrip("\t")
+                     for line in text.split("\n"))
+
+
 def structured_patch(before, after):
-    """A structuredPatch in the shape Claude Code 2.1.296 puts in an Edit's
+    """A structuredPatch in the shape Claude Code 2.1.300 puts in an Edit's
     tool_response: one hunk per changed region with three lines of context,
-    newStart counted from 1, and each line prefixed " ", "-" or "+"."""
+    newStart counted from 1, each line prefixed " ", "-" or "+", and every leading
+    tab turned into two spaces before the diff. The hook does not read it; it is here
+    so that each payload carries what a real one carries."""
     import difflib
-    old_lines, new_lines = before.splitlines(), after.splitlines()
+    old_lines = leading_tabs_as_two_spaces(before).splitlines()
+    new_lines = leading_tabs_as_two_spaces(after).splitlines()
     hunks = []
     for group in difflib.SequenceMatcher(None, old_lines, new_lines).get_grouped_opcodes(3):
         lines = []
@@ -484,12 +515,18 @@ def structured_patch(before, after):
     return hunks
 
 
-def edit_then_run(cwd, file_path, before, old_string, new_string, replace_all=False):
+def edit_then_run(cwd, file_path, before, old_string, new_string, replace_all=False,
+                  written_new_string=None, line_end="\n"):
     """What the Edit tool leaves behind, then the hook that follows it, with the
-    tool_response keys a captured Claude Code 2.1.296 Edit payload carries."""
-    after = before.replace(old_string, new_string) if replace_all else before.replace(old_string, new_string, 1)
+    tool_response keys a captured Claude Code 2.1.300 Edit payload carries.
+    written_new_string stands for what Claude Code wrote when it differs from the
+    new_string the agent typed, as when it writes curly quotes the file used; line_end
+    is the file's line end on disk, while originalFile always holds LF, as Claude Code
+    hands it over."""
+    written = new_string if written_new_string is None else written_new_string
+    after = before.replace(old_string, written) if replace_all else before.replace(old_string, written, 1)
     file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_text(after, encoding="utf-8")
+    file_path.write_bytes(after.replace("\n", line_end).encode("utf-8"))
     payload = payload_for(cwd, "Edit", file_path, {"old_string": old_string, "new_string": new_string,
                                                    "replace_all": replace_all})
     payload["tool_response"] = {"filePath": str(file_path), "oldString": old_string,
@@ -585,30 +622,78 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         check("a replace_all Edit whose second hunk wrote into a broken paragraph gets the reminder",
               agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
 
+        result = edit_then_run(checkout, edited_file, "# Notes\n\nThe first paragraph.\n\nThe second one.\n",
+                               "paragraph.\n\nThe second", "paragraph.\nThe second")
+        check("an Edit that only deleted the blank line joining two paragraphs into a broken one "
+              "gets no reminder", silent(result), result.stdout + result.stderr)
+        tab_code_block = "# Notes\n\n\tcode line one\n\tcode line two\n\nOther text.\n"
+        result = edit_then_run(checkout, edited_file, tab_code_block, "\tcode line one\n\tcode line two",
+                               "  code line one\n  code line two")
+        check("an Edit that turned leading tabs into two spaces, making a code block a broken paragraph, "
+              "gets the reminder, though its structuredPatch is empty",
+              agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file, "# Notes\n\nIntro.\n\n\tcode line one\n\tcode line two\n",
+                               "Intro.\n\n\tcode line one\n\tcode line two",
+                               "Intro, longer.\n\n  code line one\n  code line two")
+        check("an Edit whose lines changed only in their leading tabs, beside a line changed in its text, "
+              "gets the reminder, though its structuredPatch shows them as context",
+              agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file, "# Notes\n\nOther text.\n", "# Notes",
+                               "# Notes\n\nA new first half\nand a new second half.")
+        check("an Edit that wrote a broken paragraph below an unchanged line of its old_string gets the reminder",
+              agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file, "# Notes\n\nThe first half\nand the second half.\n\nNext.\n",
+                               "and the second half.\n\nNext.", "and the second half.\n\nNext, changed.")
+        check("an Edit whose new_string repeats an untouched broken paragraph's line as context "
+              "gets no reminder", silent(result), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file, broken_before, "the second part", "the second half",
+                               line_end="\r\n")
+        check("an Edit into a broken paragraph of a CRLF file, whose originalFile holds LF, gets the reminder",
+              agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file, "# Notes\n\nThe first half\nand the second half.\n\nNext.\n",
+                               "and the second half.\n\nNext.", "and the second half.\n\nNext, changed.",
+                               line_end="\r\n")
+        check("an Edit of a CRLF file whose new_string repeats an untouched broken paragraph's line "
+              "as context gets no reminder", silent(result), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file,
+                               "# mark\n\nFiller one.\n\nFiller two.\n\nThe mark\nand the second half.\n",
+                               "mark", "M\n\nAdded.", replace_all=True)
+        check("a replace_all Edit whose replacements add lines, and whose second one wrote into "
+              "a broken paragraph, gets the reminder",
+              agent_text(result).startswith(reminded_prefix), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file,
+                               "# Notes\n\nHe said \u201chi\u201d\nand left.\n\nOther text.\n",
+                               "Other text.", "Other \"text\".", written_new_string="Other \u201ctext\u201d.")
+        check("an Edit Claude Code wrote with curly quotes where new_string had straight ones, "
+              "outside the broken paragraph, gets no reminder", silent(result), result.stdout + result.stderr)
+
         edited_file.write_text(CLEAN_TEXT, encoding="utf-8")
         result = run_hook(payload_for(checkout, "Edit", edited_file,
                                       {"old_string": "x", "new_string": "A whole paragraph",
                                        "replace_all": False}))
-        check("an Edit of a file holding no broken paragraph needs no structuredPatch: silent, exit 0",
+        check("an Edit of a file holding no broken paragraph needs no originalFile: silent, exit 0",
               silent(result), result.stdout + result.stderr)
 
         edited_file.write_text(BROKEN_TEXT, encoding="utf-8")
         result = run_hook(payload_for(checkout, "Edit", edited_file,
                                       {"old_string": "x", "new_string": "the second half",
                                        "replace_all": False}))
-        check("an Edit whose payload has no structuredPatch is reported as a check not made, exit 1",
+        check("an Edit whose payload has no originalFile is reported as a check not made, exit 1",
               result.returncode == 1 and result.stdout == ""
-              and "carries no tool_response.structuredPatch" in result.stderr,
+              and "lacks tool_response's originalFile" in result.stderr,
               result.stdout + result.stderr)
         payload = payload_for(checkout, "Edit", edited_file, {"old_string": "x", "new_string": "y"})
-        payload["tool_response"] = {"structuredPatch": [{"oldStart": 1, "lines": ["+y"]}]}
+        payload["tool_response"] = {"originalFile": BROKEN_TEXT, "oldString": "absent",
+                                    "newString": "y", "replaceAll": False}
         result = run_hook(payload)
-        check("a structuredPatch hunk without newStart is reported as a check not made, exit 1",
-              result.returncode == 1 and "has no newStart" in result.stderr, result.stdout + result.stderr)
-        payload["tool_response"] = {"structuredPatch": [{"newStart": 1, "lines": [7]}]}
+        check("an Edit whose oldString is not in originalFile is reported as a check not made, exit 1",
+              result.returncode == 1 and "does not occur" in result.stderr, result.stdout + result.stderr)
+        payload["tool_response"] = {"originalFile": BROKEN_TEXT, "oldString": "# Notes",
+                                    "newString": "# Notes\n\nMore", "replaceAll": False}
         result = run_hook(payload)
-        check("a structuredPatch line that is not text is reported as a check not made, exit 1",
-              result.returncode == 1 and "not text" in result.stderr, result.stdout + result.stderr)
+        check("an Edit whose file on disk lacks the line count its replacements give is reported "
+              "as a check not made, exit 1",
+              result.returncode == 1 and "line count" in result.stderr, result.stdout + result.stderr)
 
 
     result = write_then_run(checkout, checkout / "docs" / "clean.md", CLEAN_TEXT)
