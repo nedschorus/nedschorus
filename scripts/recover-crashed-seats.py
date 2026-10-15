@@ -201,12 +201,11 @@ _resupervise_spec = importlib.util.spec_from_file_location(
 resupervise = importlib.util.module_from_spec(_resupervise_spec)
 _resupervise_spec.loader.exec_module(resupervise)
 
-_tmux_error_pattern_spec = importlib.util.spec_from_file_location(
-    "tmux_target_or_server_does_not_exist_error_pattern_common",
-    Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
-    / "tmux-target-or-server-does-not-exist-error-pattern-common.py")
-tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
-_tmux_error_pattern_spec.loader.exec_module(tmux_error_pattern)
+_claude_json_presets_spec = importlib.util.spec_from_file_location(
+    "claude_json_agent_seat_folder_trust_and_onboarding_presets_write",
+    Path(__file__).with_name("claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py"))
+claude_json_presets = importlib.util.module_from_spec(_claude_json_presets_spec)
+_claude_json_presets_spec.loader.exec_module(claude_json_presets)
 
 # A shared module avoids circular loading between recovery and the supervisor.
 # Re-export the names for callers that reach them through this module.
@@ -267,16 +266,8 @@ def run_tmux(*arguments_after_tmux, socket_name=None, environment=None):
 
 def tmux_has_session(name: str, socket_name: str):
     """Return (held, detail), with held None when tmux cannot answer."""
-    completed = run_tmux("has-session", "-t", f"={name}", socket_name=socket_name)
-    if completed is None:
-        return None, "tmux cannot be run here"
-    if completed.returncode == 0:
-        return True, ""
-    reason = (completed.stderr or completed.stdout or "").strip()
-    if tmux_error_pattern.tmux_error_text_says_target_or_server_does_not_exist(reason):
-        return False, reason
-    return None, (f"tmux has-session on socket '{socket_name}' exited "
-                  f"{completed.returncode}: {reason or 'with no output'}")
+    # One probe for recovery and retirement; this module's run_tmux is passed so tests can stub it here.
+    return resupervise.tmux_has_session(name, socket_name, run=run_tmux)
 
 
 def tmux_session_alive_anywhere(name: str):
@@ -690,7 +681,21 @@ def launch_seat(name: str, seat_directory: Path, handoff_directory: Path,
             command += ["--first-prompt-file", str(first_prompt_file)]
         return subprocess.run(command, env=environment, check=False).returncode
 
-    # This branch bypasses the launcher: preserve its task-store migration and binding.
+    # This branch bypasses the launcher: preserve its task-store migration and binding,
+    # and its presets. The supervisor starts agent-sessions with IS_DEMO=1, which skips
+    # the folder-trust dialog, so the seat's folder is trusted here on purpose.
+    claude_json = claude_json_presets.claude_json_path()
+    try:
+        claude_json_presets.claude_json_agent_seat_folder_trust_and_onboarding_presets_write(
+            claude_json, str(seat_directory))
+    except (claude_json_presets.ClaudeJsonNotAJsonObjectError, OSError) as error:
+        print(f"recover-crashed-seats: {name}: not launched, because the folder-trust and "
+              f"onboarding presets could not be written to {claude_json}: {error}.\n"
+              f"If {claude_json} is not valid JSON: restore it from the newest copy in "
+              "~/.claude/backups/ that is valid JSON, then run this recovery again.\n"
+              "Otherwise: fix the cause named above, then run this recovery again.",
+              file=sys.stderr)
+        return 1
     # Export the seat’s own git identity, since tmux otherwise inherits the recovering seat’s identity.
     supervisor_command = (
         'export PATH="$HOME/.local/bin:$PATH"; '
@@ -1044,7 +1049,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             pane_process_ids = rechecked_pane_process_ids
         else:
             # A failed idle proof does not prove the session exists; a vanished session holds no work.
-            # Ask tmux explicitly, since retirement treats an unanswered socket as empty.
+            # Ask tmux explicitly: a session still there was not proven idle again, so it must not be retired.
             session_still_there, liveness_detail = tmux_session_alive_anywhere(name)
             if session_still_there is None:
                 return f"{name}: REFUSED — {liveness_detail}"
@@ -1234,18 +1239,19 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             f"{reach_clause_for_a_running_seat(name)}")
 
 
-def list_agent_seat_names_with_agent_session_records(agents_root: Path, handoff_directory: Path,
-                             projects_root: Path) -> list:
-    """Return, sorted, the directories under agents_root that ever held a seat."""
-    # A never-run directory is not a crashed seat; explicit names may still recover one.
-    def ever_ran(name: str) -> bool:
+def list_agent_seat_names_with_agent_session_records(agents_root: Path,
+                                                     handoff_directory: Path) -> list:
+    """Return, sorted, the directories under agents_root that hold a supervisor
+    state file or a session-handoff file, the records only an agent-seat leaves."""
+    # Transcripts do not mark an agent-seat: any Claude session run in a topic
+    # worktree under agents_root leaves them. Explicit names may still recover any directory.
+    def supervisor_or_handoff_recorded(name: str) -> bool:
         return (supervisor.supervisor_state_path(handoff_directory, name).is_file()
-                or supervisor.handoff_file_path(handoff_directory, name).is_file()
-                or harness_project_directory(agents_root / name, projects_root).is_dir())
+                or supervisor.handoff_file_path(handoff_directory, name).is_file())
     if not agents_root.is_dir():
         return []
     return sorted(entry.name for entry in agents_root.iterdir()
-                  if entry.is_dir() and ever_ran(entry.name))
+                  if entry.is_dir() and supervisor_or_handoff_recorded(entry.name))
 
 
 def append_to_recovery_log(handoff_directory: Path, report: str):
@@ -1321,7 +1327,7 @@ def main(argv=None) -> int:
                              f"an apostrophe into an iTerm window: {path}")
 
     if arguments.all:
-        names = list_agent_seat_names_with_agent_session_records(agents_root, handoff_directory, projects_root)
+        names = list_agent_seat_names_with_agent_session_records(agents_root, handoff_directory)
         if not names:
             print(f"recover-crashed-seats: no seat directories under {agents_root}")
             return 1
