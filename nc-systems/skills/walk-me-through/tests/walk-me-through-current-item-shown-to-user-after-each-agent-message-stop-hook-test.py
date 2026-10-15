@@ -174,16 +174,33 @@ def check_silent(case_name, result):
 ANSWERS_LINE = "Answer Y, N, D to defer, or R to repeat the item."
 
 
-def check_shown(case_name, result, *units):
+def without_bold_marks_outside_code_spans(line):
+    """The line's `**` left out, except inside `code` spans; the fixtures' spans use one backtick."""
+    pieces = line.split("`")
+    return "`".join(piece if index % 2 else piece.replace("**", "")
+                    for index, piece in enumerate(pieces))
+
+
+def check_shown(case_name, result, *units, wanted_text=None):
     """The hook shows the user the units' walk-document text, then the answers.
 
-    Heading and bold marks are left out, because Claude Code shows them as written.
+    Heading and bold marks and separator lines are left out, because Claude Code shows
+    them as written; lines inside a ``` fence and text inside a `code` span stay as written.
+    wanted_text, when given, is the shown text itself, for fixtures the rule above cannot derive.
     """
-    text = "\n".join(unit.strip("\n") for unit in units)
-    text = "\n".join(line[line.index(" ") + 1:] if line.startswith("#") else line
-                     for line in text.splitlines())
-    text = "\n".join(line for line in text.splitlines() if line.strip() != "---")
-    wanted = text.replace("**", "").strip("\n") + "\n\n" + ANSWERS_LINE
+    if wanted_text is None:
+        shown_lines, in_fence = [], False
+        for line in "\n".join(unit.strip("\n") for unit in units).splitlines():
+            if line.startswith("```"):
+                in_fence = not in_fence
+                shown_lines.append(line)
+            elif in_fence:
+                shown_lines.append(line)
+            elif line.strip() != "---":
+                line = line[line.index(" ") + 1:] if line.startswith("#") else line
+                shown_lines.append(without_bold_marks_outside_code_spans(line))
+        wanted_text = "\n".join(shown_lines).strip("\n")
+    wanted = wanted_text + "\n\n" + ANSWERS_LINE
     output = json.loads(result.stdout) if result.returncode == 0 and result.stdout.strip() else {}
     check(case_name, output == {"systemMessage": wanted},
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
@@ -211,6 +228,72 @@ def test_shows_current_item_whatever_the_reply_says():
     check("the item is shown from its heading's words, without Markdown marks",
           shown.startswith("Item 2 of 9: where the poem page lives\n") and "**" not in shown
           and shown.endswith("Recommendation: Y.\n\n" + ANSWERS_LINE), repr(shown))
+
+
+CODE_WALK_DOCUMENT = """# A walk with code
+
+## Item 1 of 2: the log-store path
+
+The search reads `/home/nedlern/**` and **every** record under it. The steps:
+
+```bash
+# list the walks
+ls docs/walk/**/*-minutes.md
+```
+
+The settings file opens:
+
+```yaml
+---
+name: x
+```
+
+    ## an indented **code** line stays
+
+**Recommendation: Y.**
+
+---
+
+## Item 2 of 2: done
+
+Nothing.
+"""
+CODE_ITEM_SHOWN = """Item 1 of 2: the log-store path
+
+The search reads `/home/nedlern/**` and every record under it. The steps:
+
+```bash
+# list the walks
+ls docs/walk/**/*-minutes.md
+```
+
+The settings file opens:
+
+```yaml
+---
+name: x
+```
+
+    ## an indented **code** line stays
+
+Recommendation: Y."""
+
+
+def test_code_is_shown_as_written():
+    case = Case()
+    case.walk_files(minutes="Next to present: item 1 of 2.", document=CODE_WALK_DOCUMENT)
+    case.reply("Recorded.")
+    result = case.run()
+    check_shown("marks inside code spans, fenced blocks and indented code are shown as written",
+                result, wanted_text=CODE_ITEM_SHOWN)
+    shown = json.loads(result.stdout)["systemMessage"] if result.returncode == 0 and result.stdout else ""
+    check("a code span keeps its **", "`/home/nedlern/**`" in shown, repr(shown))
+    check("a fenced bash comment keeps its #", "\n# list the walks\n" in shown, repr(shown))
+    check("an indented code line keeps its ## and **", "    ## an indented **code** line stays" in shown,
+          repr(shown))
+    check("a fenced line keeps its **", "ls docs/walk/**/*-minutes.md" in shown, repr(shown))
+    check("a fenced yaml --- line is kept", "```yaml\n---\nname: x" in shown, repr(shown))
+    check("bold marks outside code are still left out", "and every record" in shown, repr(shown))
 
 
 def test_items_shown_together():

@@ -34,7 +34,8 @@ heading that names several items is one unit.
 WHAT IS SHOWN is the text of the units the minutes name, taken from the
 walk-document in the walk-document's order, without heading marks, bold marks
 and separator lines, which Claude Code would show as written, followed by
-ANSWERS_LINE. So an
+ANSWERS_LINE. Code spans and code blocks are shown as written: a `#` or `**`
+there is part of the code. So an
 agent that rewords an item edits the walk-document first, or the user is shown
 the old text.
 
@@ -64,6 +65,12 @@ REPOSITORY_TOP = Path(__file__).resolve().parents[3]
 SUITE_RUNNER_FILE = REPOSITORY_TOP / "scripts" / "run-all-test-suites.py"
 GIT_MODULE_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
                    / "git-machine-readable-output-runner-and-parser-common.py")
+STOP_HOOKS_STAY_SILENT_RULE_FILE = (
+    REPOSITORY_TOP / "nc-systems" / "general-tools"
+    / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+# The hard-wrap hook already installs the pinned markdown-it-py when it is missing; its parser is reused.
+MARKDOWN_PARSER_MODULE_FILE = REPOSITORY_TOP / "scripts" / "markdown-edit-hard-wrapped-paragraph-reminder-hook.py"
+CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 WALK_DIRECTORY = Path("docs") / "walk"
 MINUTES_SUFFIX = "-minutes.md"
 NEXT_LINE = re.compile(r"^\s*Next to present:\s*(.*?)\s*$", re.M)
@@ -197,10 +204,39 @@ def item_units(document_text, total):
     return units
 
 
-def without_heading_and_bold_marks(text):
-    text = re.sub(r"^[ \t]{0,3}#{1,6}[ \t]+", "", text, flags=re.M)
-    text = re.sub(r"^[ \t]*(?:[-*_][ \t]*){3,}$", "", text, flags=re.M)
-    return text.replace("**", "").strip("\n")
+def without_bold_marks_outside_code_spans(line):
+    pieces, end = [], 0
+    for span in CODE_SPAN.finditer(line):
+        pieces += [line[end:span.start()].replace("**", ""), span[0]]
+        end = span.end()
+    return "".join(pieces + [line[end:].replace("**", "")])
+
+
+def without_heading_and_bold_marks(text, parser):
+    """Return text without heading marks, bold marks and separator lines, code left as written."""
+    lines = text.split("\n")
+    code_lines, heading_lines, separator_lines = set(), set(), set()
+    for token in parser.parse(text):
+        if token.map is None:
+            continue
+        span = range(*token.map)
+        if token.type in ("fence", "code_block"):
+            code_lines.update(span)
+        elif token.type == "heading_open" and token.markup.startswith("#"):
+            heading_lines.update(span)
+        elif token.type == "hr":
+            separator_lines.update(span)
+    shown = []
+    for number, line in enumerate(lines):
+        if number in code_lines:
+            shown.append(line)
+            continue
+        if number in separator_lines:
+            line = ""
+        elif number in heading_lines:
+            line = re.sub(r"^[ \t]{0,3}#{1,6}(?:[ \t]+|$)", "", line)
+        shown.append(without_bold_marks_outside_code_spans(line))
+    return "\n".join(shown).strip("\n")
 
 
 def block(opening, instructions, **values):
@@ -211,7 +247,9 @@ def block(opening, instructions, **values):
 def run(stdin_text, environment):
     """Return the text to print, or None."""
     payload = json.loads(stdin_text)
-    if payload.get("stop_hook_active"):
+    rule = load_module("claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
+                       STOP_HOOKS_STAY_SILENT_RULE_FILE)
+    if rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
     if (environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
             or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0"):
@@ -250,7 +288,10 @@ def run(stdin_text, environment):
         named = ", ".join(f"`Item {number} of {total}`" for number in missing)
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
             f"its walk-document has no heading {named}, which the minutes name."), **values)
-    shown = without_heading_and_bold_marks("\n".join(unit_text.strip("\n") for _, unit_text in units))
+    parser = load_module("markdown_edit_hard_wrapped_paragraph_reminder_hook",
+                         MARKDOWN_PARSER_MODULE_FILE).markdown_parser()
+    shown = without_heading_and_bold_marks(
+        "\n".join(unit_text.strip("\n") for _, unit_text in units), parser)
     return json.dumps({"systemMessage": shown + "\n\n" + ANSWERS_LINE}, ensure_ascii=False)
 
 
