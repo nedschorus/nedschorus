@@ -9,11 +9,15 @@ holds only some of the variables lets the others point that program's git at
 another repository. So every Python file git lists, tracked or untracked and
 not ignored, is read, and a tuple, list or set literal that names at least
 MINIMUM_NAMES_THAT_MAKE_A_COPY of the variables fails here, unless its file is
-in ALLOWED_COPIES with the reason it cannot load the module.
+in ALLOWED_COPIES with the reason it cannot load the module. Outside the tests,
+a literal of two or more names that holds nothing but the variables fails too,
+since a short copy falls behind the module the same way.
 
 Not counted: a dict literal, which in the suites gives each variable a decoy
-value to set rather than defining the list; and a literal of fewer names, such
-as a test's choice of two variables to set for one case.
+value to set rather than defining the list; a test's literal of fewer names,
+such as its choice of two variables to set for one case; and a literal that
+names a few of the variables among other strings, such as the keys a program
+reads from a recorded git call.
 
 Run: python3 scripts/git-redirecting-environment-variables-defined-once-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -64,15 +68,22 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
+def is_a_test_file(filename):
+    return filename.endswith("-test.py") or "/tests/" in filename
+
+
 def copies_of_the_list(source, filename):
     """Line numbers of the collection literals in `source` that copy the list."""
     variables = set(removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES)
     lines = []
     for node in ast.walk(ast.parse(source, filename=filename)):
         if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-            named = {element.value for element in node.elts
-                     if isinstance(element, ast.Constant) and isinstance(element.value, str)}
-            if len(named & variables) >= MINIMUM_NAMES_THAT_MAKE_A_COPY:
+            strings = [element.value for element in node.elts
+                       if isinstance(element, ast.Constant) and isinstance(element.value, str)]
+            named = set(strings) & variables
+            short_copy = (not is_a_test_file(filename) and len(named) >= 2
+                          and len(strings) == len(node.elts) and set(strings) <= variables)
+            if len(named) >= MINIMUM_NAMES_THAT_MAKE_A_COPY or short_copy:
                 lines.append(node.lineno)
     return sorted(lines)
 
@@ -98,11 +109,17 @@ check("a planted tuple of the six is found",
 check("a planted list missing two of the six is found",
       copies_of_the_list('X = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"]\n',
                          "<planted>") == [1])
-check("a pair of the six, and a dict of all six, are not counted",
+check("a program's short copy of three of the six is found",
+      copies_of_the_list('X = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")\n',
+                         "scripts/planted.py") == [1])
+check("a program's tuple naming two of the six among other keys is not counted",
+      copies_of_the_list('X = ("arguments", "directory", "GIT_DIR", "GIT_WORK_TREE")\n',
+                         "scripts/planted.py") == [])
+check("a test's pair of the six, and a dict of all six, are not counted",
       copies_of_the_list('X = ("GIT_DIR", "GIT_WORK_TREE")\n'
                          'Y = {"GIT_DIR": 1, "GIT_WORK_TREE": 2, "GIT_INDEX_FILE": 3,\n'
                          '     "GIT_OBJECT_DIRECTORY": 4, "GIT_ALTERNATE_OBJECT_DIRECTORIES": 5,\n'
-                         '     "GIT_COMMON_DIR": 6}\n', "<planted>") == [])
+                         '     "GIT_COMMON_DIR": 6}\n', "scripts/planted-test.py") == [])
 
 # --- No file outside ALLOWED_COPIES writes the list out ----------------------
 copies_found = {}
