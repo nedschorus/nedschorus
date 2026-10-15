@@ -2,9 +2,10 @@
 
 This page says how to choose every name this project invents: file and directory names, script names, the names of functions, classes, constants and states used from other files, branch names, and the terms the glossaries define, project-terms and system-terms alike. CLAUDE.md states the naming rule in brief and points here; where the two differ, this page governs.
 
-Two kinds of name are partly decided elsewhere, and this page fills in the rest:
+Three kinds of name are partly decided elsewhere, and this page fills in the rest:
 
 - **Names set outside the project.** `CLAUDE.md`, `SKILL.md`, `AGENTS.md`, a test framework's `test_` prefix, and the flags another program accepts are fixed by the tools that read them. Keep what is fixed; choose the remaining words by this page.
+- **Skill names.** A skill's name, its directory under `.claude/skills/`, is what the user types as a slash command, so it is one to three words that say the skill's job: `find-it`, `handoff`, `cold-read`. The skill's `description` says when to use the skill; the name does not have to. Every other rule on this page still applies to the name, such as using a glossary's existing term and checking for a collision.
 - **Names that follow a pattern in the file naming standards.** `docs/nedschorus-wiki/nedschorus-file-naming-and-location-standards.md` gives patterns for kinds of file, such as `nedschorus-<subject>.md` for a wiki page or `<what it does>.py` for a hook, and filename suffixes such as `-draft`. Follow the pattern exactly, and use this page to choose the words that fill each slot in it.
 
 ## Why names matter so much in this project
