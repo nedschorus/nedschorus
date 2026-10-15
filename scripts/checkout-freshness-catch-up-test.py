@@ -1546,6 +1546,64 @@ with tempfile.TemporaryDirectory() as merge_scratch:
           "carries 1 merge commit(s) from main" in agent_text(conflict_result),
           conflict_result.stdout)
 
+    # --- a git command the check needs fails: a failure, told to both ------
+    real_git_path = shutil.which("git")
+
+    def failing_git_shim(name: str, match: str) -> Path:
+        """A `git` first on PATH that fails the one command whose arguments
+        contain `match`, and passes every other call through."""
+        directory = merge_tmp / name
+        directory.mkdir()
+        script = directory / "git"
+        script.write_text(
+            "#!/bin/sh\n"
+            f'case " $* " in *"{match}"*) echo "fatal: shimmed {name}" >&2; exit 128;; esac\n'
+            f'exec "{real_git_path}" "$@"\n', encoding="utf-8")
+        script.chmod(0o755)
+        return directory
+
+    for shim_name, match, command in (
+            ("rev-list-fails", " --merges ", "git rev-list --merges origin/main..HEAD"),
+            ("merge-base-fails", " --is-ancestor ", "git merge-base --is-ancestor")):
+        failing_origin, failing_seat = seat_on_main(f"merge-check-{shim_name}")
+        commit_file(failing_seat, "seat-own.txt", "mine\n", "the seat's own work")
+        commit_file(failing_origin, "scripts/unrelated.py", "main's\n", "main advances")
+        merge_main_into(failing_seat)
+        shim = failing_git_shim(shim_name, match)
+        failed = run_catch_up(["--cwd", str(failing_seat)], path_prefix=str(shim))
+        told = agent_text(failed)
+        check(f"({shim_name}) a failed git command is told to the agent as a failure, "
+              "naming the command and git's error, not as a forbidden merge",
+              f"seat could not be checked for merges from main, because `{command}"
+              in told and f"fatal: shimmed {shim_name}" in told
+              and "merge commit(s) from main" not in told, told)
+        check(f"({shim_name}) the agent is told the repository may be damaged and to run "
+              "git fsck before pushing again, and to tell the user",
+              "The repository may be damaged.\nRun `git fsck` before you push again, and "
+              "tell the user what it reports." in told
+              and not told.endswith(NOT_FOR_THE_USER_LINE), told)
+        check(f"({shim_name}) the user is told too, naming the command and git's error",
+              "the check for merges from main failed" in display_text(failed)
+              and f"fatal: shimmed {shim_name}" in display_text(failed),
+              display_text(failed))
+        check(f"({shim_name}) the hook exits 0 and blocks no turn",
+              failed.returncode == 0 and never_blocks(failed), str(failed.returncode))
+        again = run_catch_up(["--cwd", str(failing_seat)], path_prefix=str(shim))
+        check(f"({shim_name}) the same failure is not told again at the next turn's end",
+              "could not be checked for merges from main" not in agent_text(again)
+              and "the check for merges from main failed" not in display_text(again),
+              again.stdout)
+        recovered = run_catch_up(["--cwd", str(failing_seat)])
+        check(f"({shim_name}) once git works again, the merge is reported",
+              "carries 1 merge commit(s) from main" in agent_text(recovered),
+              recovered.stdout)
+
+    # --- a merge of main is told how a conflict is cleared ------------------
+    check("the merge note sends a conflict to a new pull request from current main",
+          "If it conflicts with main, run scripts/branch-conflict-check.py and do what its "
+          "report says: the pull request is replaced by a new one cut from current main."
+          in agent_text(clean_result), agent_text(clean_result))
+
     # --- a merge of another branch is not a merge from main -----------------
     other_origin, other_seat = seat_on_main("merge-of-another-branch")
     git(["checkout", "-q", "-b", "side"], other_seat)
@@ -2098,10 +2156,11 @@ with tempfile.TemporaryDirectory() as notes_scratch:
     git(["commit", "-q", "--amend", "-m", "the merge, amended"], notes_seat)
     carried_run = stop_only(notes_seat, path_prefix=merges_unlisted)
     carried_kinds = sorted(note.get("kind") for note in queued_notes(notes_seat))
-    check("when git cannot list the merges and the head is rewritten, only the rewritten "
-          "head is told: the merges note already delivered is not queued again, and nothing crashes",
+    check("when git cannot list the merges and the head is rewritten, the failed check and "
+          "the rewritten head are told: the merges note already delivered is not queued again, "
+          "and nothing crashes",
           carried_run.returncode == 0 and "Traceback" not in carried_run.stderr
-          and carried_kinds == ["rewritten-head"],
+          and carried_kinds == ["merge-check-failed", "rewritten-head"],
           carried_run.stderr + str(queued_notes(notes_seat)))
 
     origin_repo, notes_seat = notes_fixture()

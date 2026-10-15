@@ -462,10 +462,11 @@ NOTE_KIND_PUSHED = "pushed"
 NOTE_KIND_MERGES_FROM_MAIN = "merges-from-main"
 NOTE_KIND_REWRITTEN_HEAD = "rewritten-head"
 NOTE_KIND_COUNT_FAILED = "count-failed"
+NOTE_KIND_MERGE_CHECK_FAILED = "merge-check-failed"
 NOTE_KINDS_DROPPED_WHEN_LEVEL_WITH_MAIN = (NOTE_KIND_BLOCKED, NOTE_KIND_PUSHED)
 NOTE_KINDS_REPLACED_BY_NEWER = (NOTE_KIND_BLOCKED, NOTE_KIND_PUSHED,
                                 NOTE_KIND_MERGES_FROM_MAIN, NOTE_KIND_REWRITTEN_HEAD,
-                                NOTE_KIND_COUNT_FAILED)
+                                NOTE_KIND_COUNT_FAILED, NOTE_KIND_MERGE_CHECK_FAILED)
 
 # Two queues, two audiences. The user's lines are shown at Stop; the agent's
 # notes are queued in the stamp for its next prompt.
@@ -980,8 +981,9 @@ def drift_facts(checkout: Path, stamp: dict, branch: str, state_key: str, state_
 
 
 def merges_from_main(checkout: Path):
-    """Short SHAs of merge commits on this branch whose second parent lies on
-    origin/main, or None when git could not list the branch's merges.
+    """(short SHAs of merge commits on this branch whose second parent lies on
+    origin/main, None), or (None, (the git command, git's error)) when a git
+    command the check needs failed.
 
     No merge of main into a topic branch is allowed: a branch is brought up to
     date by rebasing it before it is pushed, and a pushed branch that conflicts
@@ -989,22 +991,33 @@ def merges_from_main(checkout: Path):
     topic branch is not that, so the second parent is tested for being on main
     rather than every merge being flagged. A branch that carries older merges
     from main is flagged once, which is correct: those merges are real and the
-    agent has not been told of them.
+    agent has not been told of them. A list cut short by a failed git command
+    is not an answer, so a failure returns no list at all.
     """
-    merges = run_git(["rev-list", "--merges", "origin/main..HEAD"], checkout, timeout=30)
+    def failure(arguments, done):
+        error = (done.stderr or "").strip().splitlines()
+        return None, ("git " + " ".join(arguments),
+                      error[0] if error else f"exit {done.returncode}")
+
+    arguments = ["rev-list", "--merges", "origin/main..HEAD"]
+    merges = run_git(arguments, checkout, timeout=30)
     if merges.returncode != 0:
-        return None
+        return failure(arguments, merges)
     flagged = []
     for sha in merges.stdout.split():
-        second = run_git(["rev-parse", "--verify", "--quiet", f"{sha}^2"], checkout, timeout=15)
+        arguments = ["rev-parse", "--verify", "--quiet", f"{sha}^2"]
+        second = run_git(arguments, checkout, timeout=15)
         if second.returncode != 0:
+            return failure(arguments, second)
+        arguments = ["merge-base", "--is-ancestor", second.stdout.strip(), "origin/main"]
+        on_main = run_git(arguments, checkout, timeout=15)
+        # --is-ancestor exits 1 for "not an ancestor"; anything else is an error.
+        if on_main.returncode == 1:
             continue
-        on_main = run_git(["merge-base", "--is-ancestor", second.stdout.strip(), "origin/main"],
-                          checkout, timeout=15)
         if on_main.returncode != 0:
-            continue
+            return failure(arguments, on_main)
         flagged.append(sha[:12])
-    return flagged
+    return flagged, None
 
 
 def rebase_never_pushed_branch(checkout: Path, git_dir: Path):
@@ -1165,7 +1178,20 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     found = {}
     last_found = stamp.get("last_misbehaviour")
     last_found = last_found if isinstance(last_found, dict) else {}
-    merged = merges_from_main(checkout)
+    merged, merge_check_failure = merges_from_main(checkout)
+    if merge_check_failure is None:
+        stamp.pop("last_merge_check_failure", None)
+        drop_queued_notes_of_kinds(NOTE_KIND_MERGE_CHECK_FAILED)
+    elif stamp.get("last_merge_check_failure") != list(merge_check_failure):
+        stamp["last_merge_check_failure"] = list(merge_check_failure)
+        command, error = merge_check_failure
+        report(f"catch-up: {checkout}: the check for merges from main failed, because "
+               f"`{command}` failed: {error}. The repository may be damaged.")
+        tell(f"checkout-freshness: {branch} could not be checked for merges from main, "
+             f"because `{command}` failed: {error}.\n"
+             f"The repository may be damaged.\n"
+             f"Run `git fsck` before you push again, and tell the user what it reports.",
+             kind=NOTE_KIND_MERGE_CHECK_FAILED, for_the_user_too=True)
     if merged:
         found["merges_from_main"] = merged
     elif merged is None and "merges_from_main" in last_found:
@@ -1188,7 +1214,10 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
              f"rebasing it onto main, not by merging main into it. If the branch was "
              f"never pushed, rebase it onto origin/main. If it was pushed, leave its "
              f"history and tell the agent-seat merge-lane-2, with SendMessage, which "
-             f"merge commits it carries.", kind=NOTE_KIND_MERGES_FROM_MAIN)
+             f"merge commits it carries. If it conflicts with main, run "
+             f"scripts/branch-conflict-check.py and do what its report says: the pull "
+             f"request is replaced by a new one cut from current main.",
+             kind=NOTE_KIND_MERGES_FROM_MAIN)
     if "rewritten_head" in found and found["rewritten_head"] != last_found.get(
             "rewritten_head"):
         head, remote = found["rewritten_head"]
