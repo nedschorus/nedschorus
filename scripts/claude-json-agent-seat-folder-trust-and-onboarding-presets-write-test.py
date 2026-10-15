@@ -163,8 +163,12 @@ def main() -> int:
               (completed.returncode, completed.stderr, list(empty_home.iterdir())))
 
         # A file that is not a JSON object is never overwritten: it holds credentials.
-        for case_name, content in (("not valid JSON", '{"oauthAccount": {"accountU'),
-                                   ("a JSON array, not an object", "[]")):
+        # Each case prints only the remedy that fits it, naming the backups by absolute path.
+        for case_name, content, remedy, other_remedy in (
+                ("not valid JSON", '{"oauthAccount": {"accountU',
+                 "that is valid JSON, then launch again", "holds a JSON object"),
+                ("a JSON array, not an object", "[]",
+                 "that holds a JSON object, then launch again", "that is valid JSON")):
             home = root / f"unreadable-{len(content)}"
             home.mkdir()
             state = home / ".claude.json"
@@ -182,8 +186,16 @@ def main() -> int:
             check(f"{case_name}: as a program, exit 1 with the cause and what to do on stderr",
                   completed.returncode == 1 and str(state) in completed.stderr
                   and "left unchanged" in completed.stderr
-                  and "~/.claude/backups/" in completed.stderr,
+                  and "no agent-session was started" in completed.stderr
+                  and "may stop at" not in completed.stderr,
                   (completed.returncode, completed.stderr))
+            check(f"{case_name}: the one remedy that fits, naming {home}/.claude/backups/",
+                  f"{home}/.claude/backups/ {remedy}" in completed.stderr
+                  and other_remedy not in completed.stderr
+                  and "~/.claude/backups/" not in completed.stderr
+                  and "Otherwise" not in completed.stderr
+                  and "Fix the cause" not in completed.stderr,
+                  completed.stderr)
             check(f"{case_name}: the file is byte-identical and its inode unchanged, "
                   "with no temporary left",
                   state.read_text(encoding="utf-8") == content
@@ -247,6 +259,10 @@ def main() -> int:
                   completed.returncode == 1 and "Permission denied" in completed.stderr
                   and "Traceback" not in completed.stderr,
                   (completed.returncode, completed.stderr))
+            check("unwritable HOME: the remedy is to fix the cause, not to restore a backup",
+                  "Fix the cause named above, then launch again." in completed.stderr
+                  and "Restore" not in completed.stderr,
+                  completed.stderr)
 
     print()
     if failures:

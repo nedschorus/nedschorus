@@ -337,15 +337,7 @@ echo 'launch-claude-ubuntu: checking for a Claude Code update'; \
 --timeout-seconds \${LAUNCH_CLAUDE_UPDATE_TIMEOUT_SECONDS:-120} \
 -- claude update || true; }"
 
-# Pre-answer, on the box, the screens that would stop the session at start:
-# Claude's one-time folder-trust dialog for the agent directory, and its
-# onboarding screens. A detached launch can never answer them, and an attached
-# one should not have to. The script runs from the box's own checkout, writes
-# the box's ~/.claude.json only when a preset is missing, and exits nonzero
-# without touching a file it cannot parse, which stops the launch here.
-# The twin does the same locally, at scripts/launch-claude-mac.
-PREPARE_COMMAND="$UPDATE_COMMAND && mkdir -p \"$AGENT_DIRECTORY_REMOTE\" && \
-python3 \$HOME/Projects/nedschorus/scripts/claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py \"$AGENT_DIRECTORY_REMOTE\""
+PREPARE_COMMAND="$UPDATE_COMMAND && mkdir -p \"$AGENT_DIRECTORY_REMOTE\""
 
 # The agent's home must be a CHECKOUT before the session starts, not after.
 # Project settings — the status line, the reincarnation Stop hook, the
@@ -374,6 +366,18 @@ PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/script
 # (ff-only, never a merge). A stale copy of this script freshens the
 # checkout that carries its replacement, so the next launch runs current.
 PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/scripts/checkout-freshness-catch-up.py --reference-pull --repo \$HOME/Projects/nedschorus 2>/dev/null || true; }"
+
+# Pre-answer, on the box, the screens that would stop the session at start:
+# Claude's one-time folder-trust dialog for the agent directory, and its
+# onboarding screens. A detached launch can never answer them, and an attached
+# one should not have to. The script runs from the box's own checkout, so it
+# comes after the fast-forward above: a box checkout older than the script
+# would otherwise fail on a file it does not have yet. It writes the box's
+# ~/.claude.json only when a preset is missing, and exits nonzero without
+# touching a file it cannot parse, which stops the launch here.
+# The twin does the same locally, at scripts/launch-claude-mac.
+PREPARE_COMMAND="$PREPARE_COMMAND && \
+python3 \$HOME/Projects/nedschorus/scripts/claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py \"$AGENT_DIRECTORY_REMOTE\""
 
 # A missing token file WARNS and launches anyway, rather than refusing: the
 # box holds no `ubuntu-claude.token` today, and
