@@ -201,6 +201,47 @@ def brief_cases(root, repository, base, frozen_head):
           code == 1 and "is APPROVED, not CHANGES_REQUESTED" in err
           and "tell merge-lane-2 why not, with SendMessage" in err, err)
 
+    def comments_route(review_id, comments):
+        return {f"api --paginate repos/{{owner}}/{{repo}}/pulls/{NUMBER}/reviews/{review_id}/comments --jq .[]":
+                {"stdout": lines(comments)}}
+
+    reposted = dict(routes_for(frozen_head, [review(commit_id=frozen_head, body="Two blockers."),
+                                             review(state="COMMENTED", commit_id=frozen_head, review_id=12,
+                                                    body="**Blocking: 2**, now inline.")],
+                               comments=[BLOCKING_COMMENTS[1]]),
+                    **comments_route(12, [BLOCKING_COMMENTS[0], BLOCKING_COMMENTS[2]]))
+    code, out, err = run(root, repository, reposted)
+    check("brief: blockers re-posted in a later comment-only review of the same commit are read",
+          code == 0 and "Blocking findings (2)" in out and "hook.py swallows the error" in out
+          and "no case for the timeout" in out and f"Frozen-head: {frozen_head}" in out, err + out)
+    check("brief: names the changes-requested review and the later one",
+          f"{URL}#pullrequestreview-11 and {URL}#pullrequestreview-12" in out, out)
+
+    miscounted = dict(reposted, **{REVIEWS: {"stdout": lines([
+        review(commit_id=frozen_head, body="Two blockers."),
+        review(state="COMMENTED", commit_id=frozen_head, review_id=12, body="**Blocking: 3**")])}})
+    code, out, err = run(root, repository, miscounted)
+    check("brief: a later review's stated count is checked against the round's marked comments",
+          code == 1 and "says **Blocking: 3**" in err and "2 of their inline comments" in err, err)
+
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, [review(commit_id=frozen_head),
+                      review(state="COMMENTED", commit_id=base, review_id=12)]))
+    check("brief: a later comment-only review of another commit means no fix-round, exit 1",
+          code == 1 and f"is COMMENTED of commit {base}, not CHANGES_REQUESTED" in err, err)
+
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, [review(commit_id=frozen_head),
+                      review(state="COMMENTED", commit_id=frozen_head, review_id=12),
+                      review(state="APPROVED", commit_id=frozen_head, review_id=13)]))
+    check("brief: an approval after a comment-only review still means no fix-round, exit 1",
+          code == 1 and "is APPROVED, not CHANGES_REQUESTED" in err, err)
+
+    code, out, err = run(root, repository, routes_for(
+        frozen_head, [review(state="COMMENTED", commit_id=frozen_head)]))
+    check("brief: comment-only reviews with no changes-requested review mean no fix-round, exit 1",
+          code == 1 and "is COMMENTED of commit" in err, err)
+
     code, out, err = run(root, repository, routes_for(base, [review(commit_id=frozen_head)]))
     check("brief: a head that moved past the reviewed commit refuses with exit 1",
           code == 1 and "already pushed" in err, err)
