@@ -8,16 +8,17 @@ Read cwd from the payload; CLAUDE_PROJECT_DIR can name a different checkout in a
 The whole file is read from disk after the tool ran, for Edit as for Write, so an
 Edit inside a fenced code block is judged with the fence visible. Only a broken
 paragraph the tool wrote is reported: for a Write, any in the file; for an Edit, one
-whose lines overlap a line the Edit added, read from the payload's
-tool_response.structuredPatch (each hunk's "+" lines, counted from its newStart; a
-search for new_string in the file would also find copies the Edit did not write). A
-broken paragraph the agent did not touch is left alone, because in a file the
-instruction-file guard protects, rejoining it would need the user's approval for
-whitespace. An Edit that only deleted lines adds none and gets no reminder. An Edit
-of a file holding a broken paragraph, whose payload carries no structuredPatch list,
+whose lines overlap a line the Edit added. The added lines come from a line diff of each
+replacement the Edit made in the payload's tool_response.originalFile (see
+edit_added_line_numbers): a search for new_string in the file would also find copies the
+Edit did not write, and tool_response.structuredPatch is built after leading tabs are
+turned into spaces, so it drops a line whose only change is a tab. A broken paragraph
+the agent did not touch is left alone, because in a file the instruction-file guard
+protects, rejoining it would need the user's approval for whitespace. An Edit that only deleted lines adds none and gets no reminder. An Edit
+of a file holding a broken paragraph, whose added lines cannot be found that way,
 gets one line on stderr and exit 1, a non-blocking hook error, so the agent is told the
-check was not made. An Edit of a file holding no broken paragraph needs no patch to be
-judged, so a missing patch there is not reported.
+check was not made. An Edit of a file holding no broken paragraph needs no diff to be
+judged, so a payload lacking that text there is not reported.
 The reminder carries no line numbers: the agent is to rejoin each broken
 paragraph it wrote, and to write later Markdown files the same way.
 
@@ -41,6 +42,7 @@ exit 1. Claude Code records a PostToolUse exit 1 as a non-blocking error and kee
 write; exit 0 would read as "no broken paragraph found". A file that is not UTF-8 is
 not a fault: the hook judges only UTF-8 text, and stays silent on other bytes."""
 
+import difflib
 import functools
 import importlib.util
 import json
@@ -240,26 +242,62 @@ class EditedLinesUnknown(Exception):
     pass
 
 
-def edit_added_line_numbers(tool_response) -> set:
-    """The 0-based line numbers, in the file after the Edit, of the lines the Edit
-    added, from tool_response.structuredPatch; raise EditedLinesUnknown without one."""
-    patch = tool_response.get("structuredPatch") if isinstance(tool_response, dict) else None
-    if not isinstance(patch, list):
-        raise EditedLinesUnknown("the Edit's payload carries no tool_response.structuredPatch")
+def edit_added_line_numbers(tool_response, text_after: str) -> set:
+    """The 0-based line numbers, in text_after, of the lines the Edit added.
+
+    Each replacement of oldString by newString in tool_response.originalFile is found
+    where str.replace finds it, and the lines it spans before and after the Edit are
+    line-diffed; a line the diff marks inserted or replaced is added. Diffing only these
+    spans keeps a replace_all Edit linear in the file's length, and leaves out lines
+    new_string repeats from old_string as context. The spans are placed by line counts,
+    not by rebuilding the file: Claude Code hands over originalFile with CRLF line ends
+    turned into LF, and newString as typed when the Edit matched straight quotes to curly
+    ones but wrote curly ones. Raise EditedLinesUnknown when the payload lacks the text
+    this needs, or when text_after's line count is not the one the replacements give."""
+    if not isinstance(tool_response, dict):
+        raise EditedLinesUnknown("the Edit's payload carries no tool_response object")
+    original = tool_response.get("originalFile")
+    old, new = tool_response.get("oldString"), tool_response.get("newString")
+    replace_all = tool_response.get("replaceAll")
+    if not (isinstance(original, str) and isinstance(old, str) and isinstance(new, str)
+            and isinstance(replace_all, bool)):
+        raise EditedLinesUnknown("the Edit's payload lacks tool_response's originalFile, oldString, "
+                                 "newString or replaceAll")
+    after_lines = text_after.replace("\r\n", "\n").split("\n")
+    if not old:
+        return set(range(len(after_lines)))
+    before_lines = original.split("\n")
+    old_line_breaks, new_line_breaks = old.count("\n"), new.count("\n")
+    replacements = original.count(old) if replace_all else min(original.count(old), 1)
+    if not replacements:
+        raise EditedLinesUnknown("tool_response.oldString does not occur in tool_response.originalFile")
+    if len(after_lines) != len(before_lines) + replacements * (new_line_breaks - old_line_breaks):
+        raise EditedLinesUnknown("the file as read does not have the line count the Edit's "
+                                 "replacements in tool_response.originalFile give")
     added = set()
-    for hunk in patch:
-        if not isinstance(hunk, dict) or not isinstance(hunk.get("newStart"), int):
-            raise EditedLinesUnknown("a structuredPatch hunk has no newStart")
-        line_number = hunk["newStart"] - 1
-        for line in hunk.get("lines") or []:
-            if not isinstance(line, str):
-                raise EditedLinesUnknown("a structuredPatch hunk holds a line that is not text")
-            if line.startswith("+"):
-                added.add(line_number)
-                line_number += 1
-            elif line.startswith(" "):
-                line_number += 1
+    offset = original.find(old)
+    line, counted_to, replaced = 0, 0, 0
+    while offset >= 0:
+        line += original.count("\n", counted_to, offset)
+        counted_to = offset
+        new_line = line + replaced * (new_line_breaks - old_line_breaks)
+        matcher = difflib.SequenceMatcher(None, before_lines[line:line + old_line_breaks + 1],
+                                          after_lines[new_line:new_line + new_line_breaks + 1], autojunk=False)
+        for tag, _, _, start, end in matcher.get_opcodes():
+            if tag in ("replace", "insert"):
+                added.update(range(new_line + start, new_line + end))
+        replaced += 1
+        if not replace_all:
+            break
+        offset = original.find(old, offset + len(old))
     return added
+
+
+def broken_paragraph_line_ranges_holding_an_added_line(broken_ranges, added_line_numbers) -> list:
+    """The [start, end) ranges among broken_ranges that hold a line of added_line_numbers.
+    The ranges do not overlap, so looking each of their lines up costs one pass over the file."""
+    return [(start, end) for start, end in broken_ranges
+            if any(line in added_line_numbers for line in range(start, end))]
 
 
 def markdown_has_hard_wrapped_paragraph(text: str) -> bool:
@@ -306,13 +344,12 @@ def main() -> int:
         return 1
     if tool_name == "Edit" and broken_ranges:
         try:
-            added = edit_added_line_numbers(payload.get("tool_response"))
+            added = edit_added_line_numbers(payload.get("tool_response"), text)
         except EditedLinesUnknown as error:
             print(f"markdown-edit-hard-wrapped-paragraph-reminder: {error}, so no reminder check was made.",
                   file=sys.stderr)
             return 1
-        broken_ranges = [(start, end) for start, end in broken_ranges
-                         if any(start <= line < end for line in added)]
+        broken_ranges = broken_paragraph_line_ranges_holding_an_added_line(broken_ranges, added)
     if not broken_ranges:
         return 0
 
