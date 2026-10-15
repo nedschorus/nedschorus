@@ -721,25 +721,63 @@ def cases(scratch):
 
     # -- a pending ask for a file that is no longer guarded is dropped, not reported as deleted
     world = fresh(scratch, "formerly-guarded-file")
-    lock = world.repo / ".claude" / "scheduled_tasks.lock"
-    lock.parent.mkdir()
-    lock.write_text('{"pid": 1}\n')
+    settings_file = world.repo / ".claude" / "settings.json"
+    settings_file.parent.mkdir()
+    settings_file.write_text('{"a": 1}\n')
     world.run()
-    lock.write_text('{"pid": 2}\n')
-    check("a changed untracked .claude file is asked about", str(lock) in world.run(), "")
-    (world.repo / ".git" / "info" / "exclude").write_text("**/.claude/scheduled_tasks.lock\n")
+    settings_file.write_text('{"a": 2}\n')
+    check("a changed untracked .claude file is asked about", str(settings_file) in world.run(), "")
+    (world.repo / ".git" / "info" / "exclude").write_text("**/.claude/settings.json\n")
     message = world.run()
     check("a file that git now ignores draws no further ask or reminder",
           message == "" and world.run() == "", message)
+    state_file = next((world.repo / ".git").glob("*-state.json"))
+    check("the state file no longer names a file that git now ignores",
+          str(settings_file) not in state_file.read_text(), "")
+    settings_file.unlink()
+    message = world.run()
+    check("deleting a file that git ignores, after it was dropped, draws no ask",
+          message == "" and world.run() == "", message)
 
     # -- a git-ignored CLAUDE.local.md is still guarded
+    (world.repo / ".git" / "info" / "exclude").write_text(
+        "**/.claude/scheduled_tasks.lock\nCLAUDE.local.md\n")
     ignored_local = world.repo / "CLAUDE.local.md"
     ignored_local.write_text("seat v1\n")
     world.run()
     ignored_local.write_text("seat v2\n")
     message = world.run()
+    ignored = subprocess.run(["git", "-C", str(world.repo), "check-ignore", "-q", "CLAUDE.local.md"],
+                             env=world.environment()).returncode == 0
     check("a changed git-ignored CLAUDE.local.md is still asked about",
-          str(ignored_local) in message and "has not approved" in message, message)
+          ignored and str(ignored_local) in message and "has not approved" in message,
+          (ignored, message))
+
+    # -- a git-ignored .claude/settings.local.json is still guarded
+    world = fresh(scratch, "ignored-settings-local")
+    (world.repo / ".git" / "info" / "exclude").write_text("**/.claude/settings.local.json\n")
+    settings_local = world.repo / ".claude" / "settings.local.json"
+    settings_local.parent.mkdir(exist_ok=True)
+    settings_local.write_text('{"a": 1}\n')
+    world.run()
+    settings_local.write_text('{"a": 2}\n')
+    message = world.run()
+    ignored = subprocess.run(["git", "-C", str(world.repo), "check-ignore", "-q",
+                              ".claude/settings.local.json"], env=world.environment()).returncode == 0
+    check("a changed git-ignored .claude/settings.local.json is still asked about",
+          ignored and str(settings_local) in message and "has not approved" in message,
+          (ignored, message))
+
+    # -- Claude Code's scheduler lock is never guarded, even where no exclude line ignores it
+    world = fresh(scratch, "unignored-runtime-lock")
+    lock = world.repo / ".claude" / "scheduled_tasks.lock"
+    lock.parent.mkdir(exist_ok=True)
+    lock.write_text('{"pid": 1}\n')
+    world.run()
+    lock.write_text('{"pid": 2}\n')
+    message = world.run()
+    check("a changed .claude/scheduled_tasks.lock that git does not ignore is not asked about",
+          message == "" and world.versions(lock) == [] and world.run() == "", message)
 
     # -- speed, on a copy of main
     if sys.platform != "linux":

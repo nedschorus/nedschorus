@@ -507,6 +507,9 @@ def could_be_guarded(relative: str):
         # instruct no one.
         return False
     name = relative.rsplit("/", 1)[-1]
+    if name == "scheduled_tasks.lock" and ".claude/" in "/" + relative:
+        # Claude Code's own scheduler lock is rewritten by Claude Code, whether git ignores it or not.
+        return False
     return (name in ("CLAUDE.md", "CLAUDE.local.md") or ".claude/" in "/" + relative
             or name.endswith(".md"))
 
@@ -519,17 +522,19 @@ def is_guarded(path: str):
 
 def checkout_files(checkout: Path, decisions: dict):
     """Every guarded file in the checkout: tracked files, untracked files that git does not
-    ignore, and ignored CLAUDE.local.md files. Other ignored files are never listed, since
+    ignore, and ignored CLAUDE.local.md and .claude/settings.local.json files. Other ignored files are never listed, since
     Claude Code's own runtime files under .claude/, such as scheduled_tasks.lock, are ignored
     and rewritten by Claude Code itself.
 
     decisions caches the guard's answer for each listed path between runs, since deciding takes
     most of a run's time; it is dropped when instruction-file-guard.py changes."""
     listed = git_text(checkout, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
-    # An ignored file can be an instruction only as CLAUDE.local.md; listing ignored files under
-    # .claude/ would catch Claude Code's runtime files, and large ignored trees are never read.
+    # An ignored file can be an instruction only as CLAUDE.local.md or .claude/settings.local.json
+    # (usually ignored); listing all ignored files under .claude/ would catch Claude Code's runtime
+    # files, and large ignored trees are never read.
     ignored = git_text(checkout, "ls-files", "-z", "--others", "--ignored", "--exclude-standard",
-                       "--", ":(glob)**/CLAUDE.local.md")
+                       "--", ":(glob)**/CLAUDE.local.md",
+                       ":(glob)**/.claude/settings.local.json")
     guard_version = str(stat_data(str(HOOK_PATH.parent / "instruction-file-guard.py")))
     if decisions.get("") != guard_version:
         decisions.clear()
@@ -884,6 +889,7 @@ def run_hook(payload):
     for kind, state_path, state, files, repository, stocking in groups:
         hash_function = ((lambda paths, checkout=repository[0]: hashes_in_checkout(checkout, paths))
                          if repository else (lambda paths: {}))
+        listed_before = set(state["files"])
         changed, unsettled = scan(files, state["files"], hash_function)
         approvals, quiet, new_position = [], False, None
         if repository is not None:
@@ -900,7 +906,7 @@ def run_hook(payload):
             elif window:
                 approvals = git_own_work(checkout, window, state, changed)
         plans.append([kind, state_path, state, files, changed, unsettled, approvals, quiet,
-                      new_position, stocking])
+                      new_position, stocking, set(state["files"]) != listed_before])
 
     stocking_machine = outside_stocking
     nothing_to_do = all(not plan[4] and not plan[5] and not plan[6] and not plan[9]
@@ -908,7 +914,8 @@ def run_hook(payload):
     if nothing_to_do:
         for plan in plans:
             moved = plan[8] is not None and plan[2].get("reflog") != plan[8]
-            if moved or (plan[0] == "checkout" and plan[2].get("guarded") != decisions_before):
+            if moved or plan[10] or (plan[0] == "checkout"
+                                     and plan[2].get("guarded") != decisions_before):
                 if moved:
                     plan[2]["reflog"] = plan[8]
                 write_state(plan[1], plan[2])
@@ -925,7 +932,7 @@ def run_hook(payload):
                     store.approve(path, key)
                     log_seen(store, path, session, owner(), key, key, HOW_STOCK)
         for plan in plans:
-            kind, state_path, state, files, changed, unsettled, approvals, quiet, _, stocking = plan
+            kind, state_path, state, files, changed, unsettled, approvals, quiet, _, stocking, _ = plan
             checks = []
             for path, (now, data, key, copy_hash) in changed.items():
                 how = ""
