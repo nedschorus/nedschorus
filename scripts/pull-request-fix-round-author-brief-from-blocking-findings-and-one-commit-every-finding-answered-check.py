@@ -188,22 +188,23 @@ def print_brief(number, reviewer_login):
         "",
         "Rules of the round, in order:",
         f"1. Before changing anything, run: python3 scripts/branch-conflict-check.py --pull-request {number}",
-        "   Only if it reports VERDICT: CONFLICT, merge origin/main as its report says. "
-        "Otherwise merge nothing.",
+        "   If it reports VERDICT: CONFLICT, do what its report says.",
         "2. Check each finding against the code. Fix each one that holds, root cause included, "
         "with a test that fails without the fix.",
         "3. Change nothing else, apart from the tests, callers, documents and citations that "
         "keep the pull request atomic. Findings that do not block, in this review or any other, "
         "are not part of this round: merge-lane-2 sends them after the merge.",
-        "4. Put every change in one commit on top of the frozen-head, or of the merge from step 1. "
+        "4. Put every change in one commit on top of the branch as step 1 left it. "
         "If no finding holds, make no commit.",
         f"5. Write the answers file {answers_path}, one entry per finding above, each starting "
         "\"<n>. \" on its own line, with any further lines of the entry after it: what you fixed, "
         "or why the finding does not hold. It is inside git's own directory, so it is never "
         "committed.",
         f"6. Run the affected test suites: {PRE_PUSH_TEST_COMMAND}",
+        "   If a suite fails because of this round's change, fix it in the same commit; if it "
+        "fails for another cause, tell merge-lane-2 with SendMessage before pushing.",
         f"7. Run the check: {check_command}",
-        "   adding --after-conflict-merge if step 1 merged origin/main. If it refuses, change the "
+        "   adding --after-conflict-merge if step 1's report had you merge origin/main. If it refuses, change the "
         "answers file or the unpushed commit as it says (git commit --amend is allowed before the "
         "push) and run the check again.",
         "8. When it passes with a commit not yet pushed, push once and run the same check command "
@@ -211,6 +212,8 @@ def print_brief(number, reviewer_login):
         "made no commit, send that message to merge-lane-2 with SendMessage.",
         "9. If anything fails after the push, do not push again or rewrite the branch: tell "
         "merge-lane-2 with SendMessage what failed, and the next fix-round takes it.",
+        "   If the push itself fails, do not retry it by force or rewrite the branch: tell "
+        "merge-lane-2 with SendMessage what git printed.",
     ]
     print("\n".join(lines))
 

@@ -166,6 +166,14 @@ def brief_cases(root, repository, base, frozen_head):
     check("brief: says what to do when the check refuses and when a step fails after the push",
           "git commit --amend is allowed before the push" in out
           and "do not push again or rewrite the branch" in out, out)
+    check("brief: a conflict defers to the conflict check's report, and asks for no merge itself",
+          "If it reports VERDICT: CONFLICT, do what its report says." in out
+          and "merge origin/main as its report says" not in out and "merge nothing" not in out, out)
+    check("brief: says what to do when a suite fails and when the push itself fails",
+          "fix it in the same commit; if it fails for another cause, tell merge-lane-2 with "
+          "SendMessage before pushing" in out
+          and "If the push itself fails, do not retry it by force or rewrite the branch: tell "
+          "merge-lane-2 with SendMessage what git printed." in out, out)
 
     outside = root / "not-a-checkout"
     outside.mkdir()
