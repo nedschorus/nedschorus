@@ -78,3 +78,4 @@ Reproduce both cases under load, with the hold kept long enough to see when the 
 ## Provisional additions (not yet vetted by the user)
 
 - ned-box-helper, 2026-10-14: ask the user about the "Next action for case 3" paragraph of this GHI-MD, which ned-box-helper could not settle alone.
+- fleet-restart-at-login, 2026-10-14: Fix or quarantine the timing test cases that failed merge-lane-2's head test runs on pull requests 1032, 1071 and 1075 and passed on rerun (task #168).
