@@ -9,13 +9,17 @@ CLAUDE.md, SKILL.md, *-instructions.md and *-prompt.md.
 
 Links and paths are not checked: a date inside a markdown link target, a URL,
 or a path or file name such as `docs/walk/x-YYYY-MM-DD.md` is a pointer an
-agent may follow, so it stays. A date that is itself an instruction, such as
-the example in a citation's form, goes in EXCEPTIONS with its reason.
+agent may follow, so it stays. A timestamp such as `YYYY-MM-DDThh:mm:ssZ` and a
+range of days such as `YYYY-MM-DD/DD` or `YYYY-MM-DD-DD` are dates, and are
+found. A marker of either kind that is itself an instruction, such as the
+example in a citation's form, goes in EXCEPTIONS with its reason.
 
 Run: python3 scripts/standing-instructions-carry-no-citations-test.py
 Prints one line per case and exits 1 if any case fails.
 """
+import contextlib
 import importlib.util
+import io
 import os
 import re
 import subprocess
@@ -38,10 +42,13 @@ SUITE = "scripts/standing-instructions-carry-no-citations-test.py"
 STANDING_INSTRUCTION_PATHSPECS = ("CLAUDE.md", "*/CLAUDE.md", "SKILL.md", "*/SKILL.md",
                                   "*-instructions.md", "*-prompt.md")
 
-# A date joined to a path or file name, such as `x-YYYY-MM-DD.md` or
-# `logs/YYYY-MM-DD/`, is a pointer, so the lookarounds leave it out.
+# A date joined to a path or file name, such as `x-YYYY-MM-DD.md`,
+# `logs/YYYY-MM-DD/` or `YYYY-MM-DD-minutes.md`, is a pointer, so the lookarounds
+# leave it out. The optional group takes a timestamp's time or a range's last day
+# into the date, so the lookahead judges what follows the whole date.
 MARKER_PATTERNS = {
-    "date": re.compile(r"(?<![\w/.-])\d{4}-[01]\d-[0-3]\d(?![\w/-]|\.\w)"),
+    "date": re.compile(r"(?<![\w/.-])\d{4}-[01]\d-[0-3]\d"
+                       r"(?:T[\d:]+(?:\.\d+)?Z?|[/-]\d\d?)?(?![\w/-]|\.\w)"),
     "user-ruled": re.compile(r"\buser-ruled\b", re.IGNORECASE),
 }
 
@@ -94,13 +101,13 @@ def stale_exceptions(sources, exceptions=EXCEPTIONS):
         if not any(snippet in line for line in sources.get(path, "").splitlines()))
 
 
-def scan_tree(repository):
+def scan_tree(repository, exceptions=EXCEPTIONS):
     """Return ({path: markers} for files with markers, stale exceptions, files listed)."""
     paths = standing_instruction_paths(repository)
     sources = {path: (repository / path).read_text(encoding="utf-8") for path in paths}
     failures = {path: found for path, source in sources.items()
-                if (found := markers_in(path, source))}
-    return failures, stale_exceptions(sources), len(paths)
+                if (found := markers_in(path, source, exceptions))}
+    return failures, stale_exceptions(sources, exceptions), len(paths)
 
 
 def the_file_listing_takes_exactly_the_standing_instruction_files():
@@ -128,29 +135,81 @@ def the_suite_run_with_git_dir_set_still_scans_this_repository():
     return "PASS  git ls-files lists this repository's standing instruction files" in child.stdout
 
 
+def scratch_repository_checks(files, exceptions):
+    """Run repository_checks on a scratch repository holding files {name: text};
+    return (its results, what it printed)."""
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch = Path(scratch)
+        subprocess.run(["git", "init", "-q", str(scratch)], check=True)
+        for name, text in files.items():
+            (scratch / name).write_text(text, encoding="utf-8")
+        subprocess.run(["git", "-C", str(scratch), "add", "--", *files], check=True)
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            results = repository_checks(scratch, exceptions)
+    return results, printed.getvalue()
+
+
+def a_scanned_marker_or_stale_exception_fails_the_suite_and_names_the_remedy():
+    clean, _ = scratch_repository_checks({"CLAUDE.md": "Do the work.\n"}, {})
+    marked, marked_printed = scratch_repository_checks(
+        {"CLAUDE.md": "Adopted 2026-08-17.\n"}, {})
+    stale, stale_printed = scratch_repository_checks(
+        {"CLAUDE.md": "Do the work.\n"}, {("CLAUDE.md", "ruled 2026-09-15"): "r"})
+    return (clean == [True, True, True]
+            and marked == [True, True, False]
+            and "FAIL  no standing instruction file carries" in marked_printed
+            and "When the date or the word user-ruled records history, delete" in marked_printed
+            and stale == [True, False, True]
+            and "delete the entry from EXCEPTIONS" in stale_printed
+            and "update the entry's snippet" in stale_printed)
+
+
 def kinds(text, path="x/SKILL.md", exceptions=None):
     return [kind for _, kind, _, _ in markers_in(path, text, exceptions or {})]
 
 
 def report(failures):
     for path, found in sorted(failures.items()):
-        print(f"FAILED: {path} carries {len(found)} date or ruling markers; a standing instruction "
-              f"file holds instructions, and when the user ruled belongs in the commit message "
-              f"and the pull request.")
+        print(f"FAILED: {path} carries {len(found)} markers, each a date or the word user-ruled. A standing "
+              f"instruction file holds instructions only; history, such as the date the user "
+              f"ruled or the fact that the user ruled, belongs in the commit message and the "
+              f"pull request.")
         lines = {}
         for number, kind, marker, line in found:
             lines.setdefault((number, line), []).append(marker)
         for (number, line), markers in lines.items():
             print(f"  {path}:{number}: {', '.join(markers)}: {line.strip()}")
     if failures:
-        print("When the date or ruling is history, delete it, and keep any instruction on its line.")
-        print(f"When the date is an instruction, such as an example of a citation's form, add the "
-              f"file and a snippet of its line to EXCEPTIONS in {SUITE}, with the reason.")
+        print("When the date or the word user-ruled records history, delete the date or the "
+              "word, and keep any instruction on its line; when the line holds no instruction, "
+              "delete the line.")
+        print(f"When the date or the word user-ruled is itself an instruction, such as an example "
+              f"of a citation's form, add the file and a snippet of its line to EXCEPTIONS in "
+              f"{SUITE}, with the reason.")
 
 
 def check(name, condition):
     print(f"{'PASS' if condition else 'FAIL'}  {name}")
     return condition
+
+
+def repository_checks(repository, exceptions=EXCEPTIONS):
+    """Scan one repository and print its checks; return their results."""
+    failures, stale, listed = scan_tree(repository, exceptions)
+    results = [check("git ls-files lists this repository's standing instruction files",
+                     listed > 0)]
+    results.append(check("every exception still names a line in its file"
+                         + (f"; these do not: {stale}" if stale else ""), not stale))
+    if stale:
+        print(f"When an entry's line was deleted, or no longer holds the date or the word "
+              f"user-ruled, delete the entry from EXCEPTIONS in {SUITE}.")
+        print("When an entry's line was reworded and still holds the date or the word user-ruled "
+              "as an instruction, update the entry's snippet to text the line now holds.")
+    report(failures)
+    results.append(check("no standing instruction file carries a date or the word user-ruled",
+                         not failures))
+    return results
 
 
 def main():
@@ -159,6 +218,11 @@ def main():
               kinds("Adopted 2026-08-17 by the user.\n") == ["date"]),
         check("a date that ends a sentence is found",
               kinds("The user ruled on 2026-08-17.\n") == ["date"]),
+        check("a timestamp and a range of days are found",
+              kinds("At 2026-09-19T04:00:31Z, on 2026-09-07/08 and on 2026-08-10-11.\n")
+              == ["date", "date", "date"]),
+        check("a path or file name that starts with a date, a range or a timestamp is not checked",
+              kinds("Read 2026-10-14/x, 2026-08-10-11.md and 2026-09-19T04-00.log now.\n") == []),
         check("the word user-ruled is found, in any case",
               kinds("(user-ruled)\n(User-Ruled)\n") == ["user-ruled", "user-ruled"]),
         check("user-ruling, the glossary's noun, and a bare ruled are not markers",
@@ -187,14 +251,10 @@ def main():
         results.append(check("the listing takes every CLAUDE.md, SKILL.md, -instructions.md and "
                              "-prompt.md file, at any depth, and no other file",
                              the_file_listing_takes_exactly_the_standing_instruction_files()))
-    failures, stale, listed = scan_tree(REPOSITORY)
-    results.append(check("git ls-files lists this repository's standing instruction files",
-                         listed > 0))
-    results.append(check("every exception still names a line in its file"
-                         + (f"; these do not: {stale}" if stale else ""), not stale))
-    report(failures)
-    results.append(check("no standing instruction file carries a date or the word user-ruled",
-                         not failures))
+    results.append(check("a scanned marker or a stale exception fails the suite, and the "
+                         "failure names the remedy",
+                         a_scanned_marker_or_stale_exception_fails_the_suite_and_names_the_remedy()))
+    results.extend(repository_checks(REPOSITORY))
     if all(results):
         print("all cases passed")
         return 0
