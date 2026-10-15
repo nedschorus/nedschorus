@@ -3093,7 +3093,7 @@ sys.exit(module.main())
         environment["DRIVER_STOP_WALK_DONE"] = str(walk_done)
         process = subprocess.Popen(
             [sys.executable, "-B", str(runner_driver(base, repo)),
-             "--target", target, "--attack", "cut"],
+             "--target", target, "--adversarial-prompt", "cut"],
             env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             held = wait_until(lambda: pathlib.Path(str(report_check_hold) + ".held").exists())
