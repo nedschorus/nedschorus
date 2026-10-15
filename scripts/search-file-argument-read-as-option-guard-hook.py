@@ -73,10 +73,14 @@ REFUSAL_WITH_COMMAND_TEMPLATE = (
     "names and run: {accepted_command}"
 )
 REFUSAL_OF_OPTION_VALUE_TEMPLATE = (
-    "Refused: {glob_word}, the value of {option}, expands to two or more names, such as "
-    "{name}. The shell passes only the first name as {option}'s value; {program} reads the "
-    "others as more words, and a name beginning with - as an option. -- cannot fix this. "
-    "Quote {glob_word}, or write the one name you meant, then run the command again."
+    "Refused: {glob_word}, the value of {option}, expands to two or more names. The shell "
+    "passes only the first of them as {option}'s value, and {program} reads each of the "
+    "others as one more word, and a name beginning with - as an option, such as {name}. "
+    "-- cannot fix this.\n"
+    "If you meant one of the names, write that name in place of {glob_word}.\n"
+    "If you meant every name {glob_word} matches, give {option} once before each name.\n"
+    "If you meant a file named {glob_word} itself, quote {glob_word}.\n"
+    "Then run the command again."
 )
 REFUSAL_WITHOUT_COMMAND_TEMPLATE = (
     "Refused: {glob_word} expands to names beginning with -, such as {name}, "
@@ -146,7 +150,10 @@ def expansions_that_can_begin_with_dash(word, directory, deadline, clock):
     pattern_prefix = glob.escape(base) + ("" if base.endswith(os.sep) else os.sep)
     for count, path in enumerate(
             glob.iglob(pattern_prefix + glob_pattern_for_word(word), recursive=True)):
-        yield path[len(literal_prefix):]
+        name = path[len(literal_prefix):]
+        # A recursive ** also yields the directory itself, which the shell does not expand to.
+        if name:
+            yield name
         if count % 256 == 255 and clock() > deadline:
             raise ExpansionBudgetSpent()
 
@@ -160,17 +167,21 @@ def first_expansion_beginning_with_dash(word, directory, deadline, clock):
 
 
 def dash_name_among_two_or_more_expansions(word, directory, deadline, clock):
-    """Return a name beginning with - when word expands to two or more names, else None."""
-    # Which name the shell puts first depends on its sort order and locale, so a dash name
-    # anywhere among two or more may be one the program reads as an option.
-    count, dash_name = 0, None
-    for name in expansions_that_can_begin_with_dash(word, directory, deadline, clock):
-        count += 1
-        if dash_name is None and name.startswith("-"):
-            dash_name = name
-        if count >= 2 and dash_name is not None:
-            return dash_name
-    return None
+    """Return a name beginning with - that the program may read as an option, else None.
+
+    None when word expands to fewer than two names or to no name beginning with -. The name
+    returned is one the shell does not put first in byte order, when there is one.
+    """
+    names = list(expansions_that_can_begin_with_dash(word, directory, deadline, clock))
+    dash_names = sorted(name for name in names if name.startswith("-"))
+    if len(names) < 2 or not dash_names:
+        return None
+    # The shell sorts the names by the locale's collation, which can differ from byte order,
+    # so any dash name may come after the first; one that is not first in byte order comes
+    # after it in the common orders too. Sorting makes the name independent of listing order.
+    first_in_byte_order = min(names)
+    later_dash_names = [name for name in dash_names if name != first_in_byte_order]
+    return (later_dash_names or dash_names)[0]
 
 
 def option_takes_the_next_word_as_its_value(program, word):
@@ -345,7 +356,9 @@ def first_refused_search(command, payload_cwd, deadline, clock):
 
 def analyze_command_text(command, payload_cwd, clock=time.monotonic):
     """Return refusal text, or None when all searches pass."""
-    # Fix every unsafe search in the suggestion so running the suggestion does not trigger another refusal.
+    # A suggested command has every search fixed, so running it is not refused again; when a
+    # later search cannot be fixed by --, no command is given. When the budget runs out first,
+    # the suggestion keeps the fixes made so far.
     deadline = clock() + EXPANSION_BUDGET_SECONDS
     refused = first_refused_search(command, payload_cwd, deadline, clock)
     if refused is None:
@@ -364,8 +377,10 @@ def analyze_command_text(command, payload_cwd, clock=time.monotonic):
                                            deadline, clock)
         except (ExpansionBudgetSpent, OSError, ValueError, re.error):
             break  # Keep the existing refusal when the remaining budget cannot fix further searches.
-        if further is None or further[1] is None:
+        if further is None:
             break
+        if further[1] is None:
+            return REFUSAL_WITHOUT_COMMAND_TEMPLATE.format(**details)
         whole_command = further[1]
     return REFUSAL_WITH_COMMAND_TEMPLATE.format(
         accepted_command=whole_command, **details)
