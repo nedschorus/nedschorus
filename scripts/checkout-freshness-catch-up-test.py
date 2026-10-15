@@ -2367,6 +2367,25 @@ with tempfile.TemporaryDirectory() as notes_scratch:
           and carried_kinds == ["rewritten-head"],
           carried_run.stderr + str(queued_notes(notes_seat)))
 
+    origin_repo, notes_seat = notes_fixture()
+    commit_file(notes_seat, "own.txt", "mine\n", "the seat's own work")
+    commit_file(origin_repo, "a.txt", "a\n", "advance a")
+    git(["fetch", "-q", "origin"], notes_seat)
+    git(["merge", "-q", "--no-edit", "origin/main"], notes_seat)
+    git(["push", "-q", "-u", "origin", "seat"], notes_seat)
+    git(["commit", "-q", "--amend", "-m", "the merge, amended"], notes_seat)
+    stop_only(notes_seat)
+    both_told = delivered_text(deliver(notes_seat))
+    git(["reset", "-q", "--hard", "HEAD~1"], origin_repo)
+    git(["fetch", "-q", "origin"], notes_seat)
+    unmerged_run = stop_only(notes_seat)
+    unmerged_kinds = [note.get("kind") for note in queued_notes(notes_seat)]
+    check("when the merges finding changes while the head stays rewritten, the rewritten-head "
+          "note already delivered is not queued again",
+          "merge commit(s) from main" in both_told and "no longer contains its pushed head" in both_told
+          and unmerged_run.returncode == 0 and "rewritten-head" not in unmerged_kinds,
+          both_told + unmerged_run.stderr + str(queued_notes(notes_seat)))
+
     def write_stamp_notes(path, notes):
         path.write_text(json.dumps({"pending_agent_notes": notes}) + "\n", encoding="utf-8")
 
