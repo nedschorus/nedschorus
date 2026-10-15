@@ -21,6 +21,7 @@ import io
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -52,6 +53,15 @@ recovery.agents_root_is_movable_on_this_machine = lambda: True
 # one through --checkout.
 recovery.durable_checkout = SCRIPT_PATH.resolve().parent.parent
 
+# Off macOS, launch_seat writes the folder-trust and onboarding presets into
+# ~/.claude.json before it starts a supervisor. No case may write the real one:
+# every case writes this scratch file instead, and the "CLAUDE.JSON PRESETS:"
+# cases read it.
+CLAUDE_JSON_SCRATCH_DIRECTORY = Path(tempfile.mkdtemp(prefix="recover-crashed-seats-claude-json-"))
+atexit.register(shutil.rmtree, CLAUDE_JSON_SCRATCH_DIRECTORY, True)
+CLAUDE_JSON_SCRATCH_PATH = CLAUDE_JSON_SCRATCH_DIRECTORY / ".claude.json"
+recovery.claude_json_presets.claude_json_path = lambda: CLAUDE_JSON_SCRATCH_PATH
+
 # A real run on ned-box opens a window on the user's Mac after each seat it brings
 # up. No case may reach the Mac: every case records its window requests here, the
 # "MAC WINDOW:" cases put the real opener back on purpose behind a stub opener, and
@@ -79,6 +89,7 @@ CALLING_AGENT_SESSION_TEST_VARIABLES = {
     "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "calling-program",
     "TMUX": "/tmp/tmux-1000/calling-seat,1,0",
     "TMUX_PANE": "%0",
+    "IS_DEMO": "1",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "calling-seat",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "/calling/seat/directory",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": "calling-supervisor-session",
@@ -609,13 +620,13 @@ def run_reach_clause_cases(root: Path):
 
 
 def run_seat_listing_cases(root: Path):
-    """--all and the crash watcher list only directories that ever held a seat."""
+    """--all and the crash watcher list only directories with a supervisor state or a handoff."""
     agents_root = root / "listing-agents"
     handoff_directory = root / "listing-handoffs"
     projects_root = root / "listing-projects"
     for directory in (agents_root / "never-ran", agents_root / "had-a-supervisor",
                       agents_root / "had-a-handoff", agents_root / "had-transcripts",
-                      handoff_directory, projects_root):
+                      agents_root / "topic-worktree", handoff_directory, projects_root):
         directory.mkdir(parents=True, exist_ok=True)
     recovery.supervisor.supervisor_state_path(handoff_directory, "had-a-supervisor").write_text(
         "{}", encoding="utf-8")
@@ -623,11 +634,17 @@ def run_seat_listing_cases(root: Path):
         "restart-counter: 1\n", encoding="utf-8")
     recovery.harness_project_directory(agents_root / "had-transcripts", projects_root).mkdir(
         parents=True)
+    (agents_root / "topic-worktree" / ".git").write_text(
+        "gitdir: /elsewhere/.git/worktrees/topic-worktree\n", encoding="utf-8")
+    write_transcript(recovery.harness_project_directory(
+        agents_root / "topic-worktree", projects_root),
+        "reviewer-session", "Read the target in full", records=4)
     listed = recovery.list_agent_seat_names_with_agent_session_records(
-        agents_root, handoff_directory, projects_root)
-    check("the seat listing leaves out a directory that never held a seat, and keeps one with a "
-          "supervisor state, a handoff or transcripts",
-          listed == ["had-a-handoff", "had-a-supervisor", "had-transcripts"], repr(listed))
+        agents_root, handoff_directory)
+    check("the seat listing keeps a directory with a supervisor state or a handoff, and leaves "
+          "out one that never held a seat, one with transcripts only, and a topic worktree "
+          "where a Claude session ran",
+          listed == ["had-a-handoff", "had-a-supervisor"], repr(listed))
 
 
 def run_tmux_has_session_answer_cases(root: Path):
@@ -899,6 +916,74 @@ def run_mac_window_cases(root: Path):
         patch("agent_seat_mac_window_open_unless_tmux_client_already_attached",
               lambda name: mac_window_requests.append(name) or (True, "a window onto it opened on the Mac"))
         seat_comes_up()
+
+
+def run_claude_json_presets_cases(root: Path):
+    """Off macOS, launch_seat starts the supervisor in tmux itself, without a
+    launcher, so it writes the launchers' presets: the supervisor starts
+    agent-sessions with IS_DEMO=1, which skips the folder-trust dialog."""
+    real_launcher_path = recovery.launcher_path
+    real_run_tmux = recovery.run_tmux
+    launch_seat_before_these_cases = recovery.launch_seat
+    patch("launch_seat", real_launch_seat)
+    workspace = Workspace(root / "claude-json-presets")
+    tmux_calls = []
+
+    def capture_tmux(*arguments_after_tmux, socket_name=None, environment=None):
+        # What the file held when tmux was asked to start the supervisor.
+        tmux_calls.append(CLAUDE_JSON_SCRATCH_PATH.read_text(encoding="utf-8")
+                          if CLAUDE_JSON_SCRATCH_PATH.exists() else None)
+
+        class Done:
+            returncode = 0
+        return Done()
+
+    recovery.launcher_path = lambda: None
+    recovery.run_tmux = capture_tmux
+    try:
+        CLAUDE_JSON_SCRATCH_PATH.unlink(missing_ok=True)
+        exit_code = real_launch_seat(workspace.name, workspace.seat_directory,
+                                     workspace.handoffs, "")
+        held = json.loads(tmux_calls[0]) if tmux_calls and tmux_calls[0] else {}
+        check("CLAUDE.JSON PRESETS: the box branch trusts the seat's folder before tmux "
+              "starts its supervisor",
+              exit_code == 0 and held.get("projects", {}).get(
+                  str(workspace.seat_directory), {}).get("hasTrustDialogAccepted") is True,
+              (exit_code, held))
+        check("CLAUDE.JSON PRESETS: and records onboarding done, with a theme",
+              held.get("hasCompletedOnboarding") is True and held.get("theme") == "light",
+              held)
+
+        unparseable = '{"oauthAccount": {"accountUuid": "not-a-real'
+        CLAUDE_JSON_SCRATCH_PATH.write_text(unparseable, encoding="utf-8")
+        tmux_calls.clear()
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            exit_code = real_launch_seat(workspace.name, workspace.seat_directory,
+                                         workspace.handoffs, "")
+        check("CLAUDE.JSON PRESETS: a ~/.claude.json that is not valid JSON stops the launch "
+              "with exit 1, before tmux, and names the file",
+              exit_code == 1 and tmux_calls == []
+              and str(CLAUDE_JSON_SCRATCH_PATH) in stderr.getvalue()
+              and "not launched" in stderr.getvalue(),
+              (exit_code, tmux_calls, stderr.getvalue()))
+        check("CLAUDE.JSON PRESETS: and leaves that file as it was",
+              CLAUDE_JSON_SCRATCH_PATH.read_text(encoding="utf-8") == unparseable,
+              CLAUDE_JSON_SCRATCH_PATH.read_text(encoding="utf-8"))
+
+        # The report a failed launch_seat gives: the seat is still down.
+        CLAUDE_JSON_SCRATCH_PATH.write_text(unparseable, encoding="utf-8")
+        all_dead()
+        seat_comes_up(True, "")
+        with redirect_stderr(io.StringIO()):
+            report = workspace.recover()
+        check("CLAUDE.JSON PRESETS: recovery reports that launch as LAUNCH FAILED",
+              "LAUNCH FAILED" in report, report)
+    finally:
+        recovery.launcher_path = real_launcher_path
+        recovery.run_tmux = real_run_tmux
+        patch("launch_seat", launch_seat_before_these_cases)
+        CLAUDE_JSON_SCRATCH_PATH.unlink(missing_ok=True)
 
 
 def run_came_up_cases(root: Path):
@@ -1337,7 +1422,8 @@ with tempfile.TemporaryDirectory() as temporary:
             else:
                 os.environ[name] = value
     started = started_environments[0] if started_environments else {}
-    seat_owned = ("TMUX", "TMUX_PANE", "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
+    # IS_DEMO is the supervisor's own: launch_agent_session sets it for every agent-session.
+    seat_owned = ("TMUX", "TMUX_PANE", "IS_DEMO", "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME",
                   "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY",
                   "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID")
     leaked = sorted(name for name in CALLING_AGENT_SESSION_TEST_VARIABLES
@@ -2918,6 +3004,7 @@ with tempfile.TemporaryDirectory() as temporary:
           completed.returncode != 0 and "different recoveries" in completed.stderr,
           completed.stderr)
 
+    run_claude_json_presets_cases(root)
     run_came_up_cases(root)
     run_reach_clause_cases(root)
     run_seat_listing_cases(root)
@@ -3288,14 +3375,27 @@ with tempfile.TemporaryDirectory() as temporary:
     # supervisor of it confirmed by ps — its lock names process 5000 plus the
     # seat's position — so it is ALREADY RUNNING (user-ruled 2026-09-16);
     # selection is what main is given in place of the names, so --all and
-    # --dry-run can be driven too.
-    def main_on_seats(case_directory, names, failing, running=frozenset(), selection=None):
+    # --dry-run can be driven too. topic_worktrees are directories beside the
+    # seats that hold transcripts but no supervisor state, as a topic worktree
+    # where a cold-read reviewer ran does.
+    def main_on_seats(case_directory, names, failing, running=frozenset(), selection=None,
+                      topic_worktrees=()):
         workspace = Workspace(case_directory, name=names[0])
         for name in names:
             (workspace.agents_root / name).mkdir(parents=True, exist_ok=True)
             write_transcript(recovery.harness_project_directory(
                 workspace.agents_root / name, workspace.projects),
                 f"resume-{name}", "real work", records=4)
+            # A state with no agent-exit record: --all lists the seat, and the verdict stays resume.
+            recovery.supervisor.supervisor_state_path(workspace.handoffs, name).write_text(
+                "{}", encoding="utf-8")
+        for name in topic_worktrees:
+            (workspace.agents_root / name).mkdir(parents=True, exist_ok=True)
+            (workspace.agents_root / name / ".git").write_text(
+                f"gitdir: /elsewhere/.git/worktrees/{name}\n", encoding="utf-8")
+            write_transcript(recovery.harness_project_directory(
+                workspace.agents_root / name, workspace.projects),
+                f"reviewer-{name}", "Read the target in full", records=4)
         all_dead()
         patch("tmux_session_alive_anywhere",
               lambda name: ((True, f"tmux session '{name}' is alive on socket '{name}'")
@@ -3396,7 +3496,7 @@ with tempfile.TemporaryDirectory() as temporary:
           and every_seat_reported(names, failing, printed, logged, launches, running),
           (exit_code, printed, logged, launches))
 
-    # The reviewer's own probe: --all lists every seat that ever ran, live ones
+    # The reviewer's own probe: --all lists every seat a supervisor ran, live ones
     # included, so one live seat used to fail the whole run, dry run and all.
     names = ("all-seat-already-running", "all-seat-crashed")
     running = {"all-seat-already-running"}
@@ -3417,6 +3517,17 @@ with tempfile.TemporaryDirectory() as temporary:
               "'all-seat-already-running', and process 5000 is the supervisor of "
               "all-seat-already-running — this tool recovers crashes, it never touches "
               "live seats",
+              "recover-crashed-seats: all-seat-crashed: would resume session "
+              "resume-all-seat-crashed (0KB transcript) under a supervisor"],
+          (exit_code, printed, logged, launches))
+    exit_code, printed, logged, launches = main_on_seats(
+        root / "exit-all-dry-run-topic-worktree-beside-a-crashed-seat", ("all-seat-crashed",),
+        set(), selection=["--all", "--dry-run"],
+        topic_worktrees=("wt-topic-worktree-with-reviewer-transcripts",))
+    check("--all --dry-run prints no line for a topic worktree that holds transcripts but no "
+          "supervisor state or handoff",
+          exit_code == 0 and launches == []
+          and printed.splitlines() == [
               "recover-crashed-seats: all-seat-crashed: would resume session "
               "resume-all-seat-crashed (0KB transcript) under a supervisor"],
           (exit_code, printed, logged, launches))
@@ -3628,6 +3739,8 @@ with tempfile.TemporaryDirectory() as temporary:
         write_transcript(recovery.harness_project_directory(
             workspace.agents_root / name, workspace.projects),
             f"resume-{name}", "real work", records=4)
+    recovery.supervisor.supervisor_state_path(workspace.handoffs, "all-seat-crashed").write_text(
+        "{}", encoding="utf-8")
     all_dead()
     capture_launches(workspace)
     record_an_agent_exit(workspace, 0)

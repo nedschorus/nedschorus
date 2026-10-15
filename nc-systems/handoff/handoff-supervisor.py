@@ -227,8 +227,10 @@ def handoff_supervisor_environment_copy_without_calling_agent_session_variables(
 def agent_seat_launch_environment_without_calling_agent_session_tmux_and_supervisor_variables(environment) -> dict:
     """Return the environment to start an agent-seat's launcher or tmux server with."""
     # A new tmux server copies its starter's environment into every window, the after-exit shell
-    # included, so the caller's tmux and supervisor variables are dropped here too.
-    caller_only = {"TMUX", "TMUX_PANE",
+    # included, so the caller's tmux and supervisor variables are dropped here too. IS_DEMO is
+    # dropped because launch_agent_session sets it for the agent-sessions it starts; a claude
+    # typed in the after-exit shell would otherwise start in Claude Code's demo mode.
+    caller_only = {"TMUX", "TMUX_PANE", "IS_DEMO",
                    HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE,
                    HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE,
                    HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE}
@@ -1331,6 +1333,9 @@ def launch_agent_session(agent_command: str, session_id: str, working_directory:
     session_environment[HANDOFF_SUPERVISOR_AGENT_NAME_ENVIRONMENT_VARIABLE] = handoff_supervisor_agent_name
     session_environment[HANDOFF_SUPERVISOR_WORKING_DIRECTORY_ENVIRONMENT_VARIABLE] = str(working_directory)
     session_environment[HANDOFF_SUPERVISOR_SESSION_ID_ENVIRONMENT_VARIABLE] = session_id
+    # Claude Code's demo mode skips its first-run onboarding screens, such as the theme picker,
+    # which can reappear even when ~/.claude.json records them done and would stop the session.
+    session_environment["IS_DEMO"] = "1"
     return subprocess.Popen(command, cwd=str(working_directory), env=session_environment)
 
 

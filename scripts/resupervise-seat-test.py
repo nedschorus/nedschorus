@@ -45,6 +45,7 @@ CALLING_AGENT_SESSION_TEST_VARIABLES = {
     "CLAUDE_CODE_MESSAGING_SOCKET": "/run/user/1000/cc-socks/calling.sock",
     "CLAUDE_CODE_MESSAGING_TOKEN": "calling-token",
     "CLAUDE_CODE_SESSION_ATTENDED": "0",
+    "IS_DEMO": "1",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_AGENT_NAME": "calling-seat",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_WORKING_DIRECTORY": "/calling/seat/directory",
     "NEDSCHORUS_HANDOFF_SUPERVISOR_SESSION_ID": "calling-supervisor-session",

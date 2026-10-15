@@ -2,29 +2,24 @@
 # Refuses a commit made inside a Claude session when its author or its
 # committer is the user's own address or the unconfigured-agent tripwire.
 #
-# Why (user-approved 2026-09-22, the walk
-# ghi-write-session-open-rulings-and-concerns item 7, part 4 of the design;
-# re-confirmed 2026-09-23, the reboot-test meta-walk item 3). Every worktree
-# of a clone shares one .git/config, and any agent's `git config user.name`
-# rewrote the author for every seat at once. Measured 2026-09-22: one seat's
-# commits went out that day as identity-probe, as reviewer, and once as
-# `identity-probe <junk@lerner1.com>` — the user's own address, on an agent's
-# commit, on a public pull request. Parts 1 and 2 of the design move each
-# seat's identity into its launcher's environment (scripts/launch-claude-mac
-# and scripts/launch-claude-ubuntu export GIT_AUTHOR_* and GIT_COMMITTER_* as
-# <seat> and <seat>@nedschorus.invalid). Part 3 replaces the shared config's
-# identity with a tripwire, `unconfigured-agent
-# <unconfigured-agent@nedschorus.invalid>`, rather than stripping it: with no
-# identity in the clone's config, git falls back to the Mac's ~/.gitconfig,
-# which is the user's own name and junk@lerner1.com — the leak made worse.
-# This hook is part 4: whatever the environment or the config holds, an
+# Why: every worktree of a clone shares one .git/config, so any agent's
+# `git config user.name` rewrites the author for every seat at once, and an
+# agent's commit can go out under the user's own address on a public pull
+# request. So each seat's identity lives in its launcher's environment
+# (scripts/launch-claude-mac and scripts/launch-claude-ubuntu export
+# GIT_AUTHOR_* and GIT_COMMITTER_* as <seat> and <seat>@nedschorus.invalid),
+# and the shared config's identity is replaced with a tripwire,
+# `unconfigured-agent <unconfigured-agent@nedschorus.invalid>`, rather than
+# stripped: with no identity in the clone's config, git falls back to the
+# Mac's ~/.gitconfig, which is the user's own name and junk@lerner1.com.
+# This hook is the last safeguard: whatever the environment or the config holds, an
 # agent's commit never goes out under the user's address, and a session
 # started without the launcher is stopped at its first commit instead of
 # publishing under the tripwire.
 #
 # The refused addresses are the user's own, each seen on commits in this
-# repository's history: junk@lerner1.com (the Mac's ~/.gitconfig, and the
-# 2026-09-22 leak), ned@lerner1.com (commits by the reboot-test, merge-lane
+# repository's history: junk@lerner1.com (the Mac's ~/.gitconfig),
+# ned@lerner1.com (commits by the reboot-test, merge-lane
 # and nedlern identities), and nedlerner@yahoo.com (the merging account's
 # GitHub identity). GitHub's own merge commits carry that last address and
 # are right to: they are made on GitHub's servers and never pass through a
@@ -50,8 +45,8 @@
 #
 # THE TRIPWIRE IS A SEPARATE, LATER STEP, taken only on the user's go after
 # every live seat has been relaunched by a launcher that carries the exports
-# above (user-ruled 2026-09-27, the reboot-test meta-walk item 15: the seat
-# that holds the step asks him once more before writing either config). A seat launched before then commits with whatever the shared config
+# above; the seat that holds the step asks him once more before writing
+# either config. A seat launched before then commits with whatever the shared config
 # holds, so writing the tripwire first would stop every such seat at its
 # next commit. The step, once per clone:
 #   Mac:     git -C /Users/el/Projects/nedschorus config user.name unconfigured-agent
@@ -62,9 +57,7 @@
 # unconfigured-agent, since the clone's config outranks ~/.gitconfig, and
 # outside a session this hook does not run to catch it. So the refusal's last
 # line tells him to add `-c user.name=<name> -c user.email=<address>` after
-# git when the clone's identity is the tripwire (Codex P2 in merge-lane-2's
-# review 5298511609 of PR "The commit guard's refusal is instructions only",
-# https://github.com/nedschorus/nedschorus/pull/701). The -c form rather than
+# git when the clone's identity is the tripwire. The -c form rather than
 # --author because -c sets the committer too; --author alone would leave the
 # commit committed by unconfigured-agent. Before the tripwire is written the
 # line's condition is simply false, so the one wording holds on both sides.
@@ -72,31 +65,24 @@
 # The user's own commits inside a session are refused too. A commit the user
 # types into a Claude session with the `!` prefix runs in the session's
 # environment, carrying CLAUDE_CODE_SESSION_ID, so under his own address it is
-# refused like an agent's. The user ruled it stays that way, with no
-# exemption: he commits from a plain terminal (user-ruled 2026-09-27, the
-# reboot-test meta-walk item 16, after merge-lane-2's review of PR "Each seat
-# commits under its own name, and no agent commits as the user",
-# https://github.com/nedschorus/nedschorus/pull/694). Nothing marks a command
+# refused like an agent's, with no exemption, by the user's decision: he
+# commits from a plain terminal. Nothing marks a command
 # the user typed apart from one an agent ran, so an exemption would have
 # nothing to key on.
 #
 # Amending. `git commit --amend` keeps the amended commit's author unless
 # --reset-author is given, and git hands that author to this hook, so the
 # same-command identity alone is refused again when the commit being amended
-# carries the user's address (mac-claude's finding in the same review;
-# reproduced 2026-09-27 in a throwaway repository: refused without
-# --reset-author, committed as the seat for both author and committer with
-# it). Two cases need different instructions. A commit that went out under
-# the user's address by mistake, the 2026-09-22 leak's kind, is the agent's
+# carries the user's address; with --reset-author it is committed as the
+# seat for both author and committer. Two cases need different instructions.
+# A commit that went out under the user's address by mistake is the agent's
 # own work and --reset-author puts the right name on it. A commit the user
 # really wrote keeps his name, so the agent leaves it and commits on top.
 #
 # Why the refusal says to set the identity in the same command as the commit:
 # the agent's Bash tool starts every call in a fresh shell, so an `export` in
 # one call is gone by the next, and an agent that exports and then commits in
-# two calls is refused again (merge-lane-2's question in the same review;
-# measured 2026-09-24: a variable exported in one call read back unset in the
-# next).
+# two calls is refused again.
 #
 # The refusal printed below opens with what was refused and why, then gives
 # one instruction per line, each with the condition it applies under, and

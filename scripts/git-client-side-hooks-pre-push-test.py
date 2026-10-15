@@ -542,6 +542,14 @@ def run_push_cases(scratch):
           "VERDICT: CONFLICT" in result.stderr
           and "Merge origin/main into the branch by hand" in result.stderr,
           result.describe())
+    check("and carries the line on an edit beyond the conflicting lines",
+          "If the resolution forces an edit beyond the conflicting lines, put "
+          "that edit in one ordinary commit after the merge." in result.stderr,
+          result.describe())
+    check("and carries the line on pushing the merge and that commit once",
+          "Push the merge and that commit once, and name the files you "
+          "resolved in the merge's commit message and in the pull request's "
+          "description." in result.stderr, result.describe())
     check("and ends with the instruction to push again",
           CLOSING_INSTRUCTION in result.stderr, result.describe())
     check("and does not offer --no-verify", "--no-verify" not in result.stderr,

@@ -954,7 +954,7 @@ def watch(environment, state_directory: Path, log_directory: Path) -> int:
                 supervisor, recovery.records_reader, handoff_directory)))
     try:
         watcher.run(recovery.list_agent_seat_names_with_agent_session_records(
-            agents_root, handoff_directory, projects_root))
+            agents_root, handoff_directory))
     finally:
         write_state(state_path, state)
     return 0

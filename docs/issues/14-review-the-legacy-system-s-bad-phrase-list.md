@@ -89,3 +89,7 @@ A subagent of the agent-seat merge-lane-backlog builds the checker (user, 2026-1
 ## Trigger to close
 
 The style guide page is on main with entries the user approved, the word checker runs at the four places item 2 names, the promise check runs, and CLAUDE.md points to the page.
+
+## Provisional additions (not yet vetted by the user)
+
+- cold-read-research, 2026-10-14: the sanity-check of the /walk-me-through skill's draft concurs, in its mechanization-claude report's finding F3, that the cold-read-fast-read's walk route should gain the style-guide words section this GHI-MD designs for a document put to review. Its measurements: 437 hits in 39 of the 40 recent walk drafts at the checker's scope files; 45 hits in the 8 drafts since 2026-10-10; 1274 hits for the pronoun rows at the messages scope. Report: `nedlern@ned-box:/home/nedlern/nedschorus-logs/sanity-check-records/2026-10-11-walk-me-through-skill-draft/mechanization-claude.md`.

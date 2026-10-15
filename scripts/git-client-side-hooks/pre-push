@@ -11,7 +11,7 @@
 # every seat's worktree runs main's copy:
 #   Mac:      /Users/el/Projects/nedschorus/scripts/git-client-side-hooks
 #   ned-box:  /home/nedlern/Projects/nedschorus/scripts/git-client-side-hooks
-# (both set in the clone's own .git/config, not globally; checked 2026-09-23).
+# (both set in the clone's own .git/config, not globally).
 #
 # A pre-push hook that exits non-zero stops the push, and this one runs on
 # every push from every seat on the machine. So it fails open: it exits 1

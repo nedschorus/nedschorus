@@ -323,6 +323,17 @@ try:
           and replay.GUARDS[codex_path](codex_guard[codex_path], "ls -la", "/", "/")[0] == "passed",
           replay.GUARDS[codex_path](codex_guard[codex_path], 'codex exec -C /tmp/x "do the task"', "/", "/"))
 
+    markdown_path = ("nc-systems/general-tools/"
+                     "claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py")
+    # The reading's stubbed git names this checkout, which holds both citation programs.
+    replay.WORKER["checkout"] = str(REPOSITORY_ROOT)
+    markdown_push = replay.GUARDS[markdown_path](codex_guard[markdown_path], "git push origin topic", "/", "/")
+    markdown_ls = replay.GUARDS[markdown_path](codex_guard[markdown_path], "ls -la", "/", "/")
+    check("the Markdown push reminder's reading adds context for a push and passes ls",
+          markdown_push[0][0] == "added context" and "docs/changed-page.md" in markdown_push[1]
+          and markdown_ls == [["passed", []], None],
+          f"{markdown_push!r} {markdown_ls!r}")
+
     killed_on_ls = commit_with_guard_changed(TMUX_KILL_GUARD, (
         "_refusal_for_as_written = refusal_for\n"
         "def refusal_for(command):\n"

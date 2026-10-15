@@ -264,10 +264,13 @@ class LaunchHarness:
         return len(path.read_text(encoding="utf-8").splitlines()) if path.is_file() else 0
 
     def prepare_ran(self) -> bool:
-        """The prepare step's trust mark is a python3 -c call naming
-        hasTrustDialogAccepted; the supervisor call never does."""
+        """The prepare step's presets write is a python3 call naming
+        claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py;
+        the supervisor call never does."""
         calls = self.captures / "python3-calls.txt"
-        return calls.is_file() and "hasTrustDialogAccepted" in calls.read_text(encoding="utf-8")
+        return calls.is_file() and (
+            "claude-json-agent-seat-folder-trust-and-onboarding-presets-write.py"
+            in calls.read_text(encoding="utf-8"))
 
     def write_seat_token(self, account: str, token: str,
                          trailing_newline: bool = True) -> Path:
