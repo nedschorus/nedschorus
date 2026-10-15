@@ -45,7 +45,8 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def git(*arguments, cwd=REPOSITORY_ROOT, check=True):
+def git(*arguments, cwd=None, check=True):
+    cwd = TEST_REPOSITORY if cwd is None else cwd
     environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     completed = subprocess.run(["git", *arguments], cwd=cwd, capture_output=True, text=True, env=environment)
     if check and completed.returncode != 0:
@@ -92,7 +93,7 @@ FIXTURE_PAIRS = [
 def run_replay(head_ref, scratch, *extra, base_ref="HEAD", scratch_directory=True):
     pairs_file = Path(scratch) / "fixture-pairs.json"
     pairs_file.write_text(json.dumps(FIXTURE_PAIRS))
-    arguments = ["--repository", str(REPOSITORY_ROOT), "--base-ref", base_ref, "--head-ref", head_ref,
+    arguments = ["--repository", str(TEST_REPOSITORY), "--base-ref", base_ref, "--head-ref", head_ref,
                  "--pairs-file", str(pairs_file), "--jobs", "2"]
     if scratch_directory:
         arguments += ["--scratch-directory", str(Path(scratch) / f"run-{len(os.listdir(scratch))}")]
@@ -108,7 +109,13 @@ def stopped_by_sigterm(*_):
 
 signal.signal(signal.SIGTERM, stopped_by_sigterm)
 scratch = tempfile.mkdtemp(prefix="bash-guards-replay-test-")
+# The test's checkouts are registered in a clone of its own inside the scratch directory, never in the
+# clone this checkout belongs to, whose worktree list other agent-seats and concurrent runs share; a run
+# that is killed leaves its registrations in the scratch directory alone.
+TEST_REPOSITORY = Path(scratch) / "repository"
 try:
+    git("clone", "--quiet", "--shared", "--no-checkout", str(REPOSITORY_ROOT), str(TEST_REPOSITORY), cwd=scratch)
+    git("update-ref", "--no-deref", "HEAD", git("rev-parse", "HEAD", cwd=REPOSITORY_ROOT))
     status, out, err = run_replay("HEAD", scratch)
     check("the same commit at base and head: exit 0 and no verdict changed",
           status == 0 and "NO VERDICT CHANGED" in out, f"status {status}\n{out}\n{err}")
@@ -263,11 +270,13 @@ try:
 
     errors = io.StringIO()
     with contextlib.redirect_stderr(errors), contextlib.redirect_stdout(io.StringIO()):
-        status = replay.main(["--head-ref", "HEAD", "--repository", str(REPOSITORY_ROOT),
+        status = replay.main(["--head-ref", "HEAD", "--repository", str(TEST_REPOSITORY),
                               "--pairs-file", str(Path(scratch) / "no-such-pairs-file.json"),
                               "--scratch-directory", str(Path(scratch) / "run-no-pairs-file")])
     check("a pairs file that does not exist: exit 2, not the verdict status 1",
           status == 2 and "REPLAY FAILED: FileNotFoundError" in errors.getvalue(), f"status {status}\n{errors.getvalue()}")
+    check("a replay failure from an unforeseen error names the line that raised it",
+          "raised at " in errors.getvalue() and "read_text()" in errors.getvalue(), errors.getvalue())
 
     remove_checkouts_as_written = replay.remove_checkouts
     replay.remove_checkouts = lambda repository, checkouts: (
@@ -304,7 +313,7 @@ try:
     (Path(scratch) / "fixture-pairs.json").write_text(json.dumps(FIXTURE_PAIRS))
     try:
         exiting = subprocess.run(
-            [sys.executable, str(SCRIPT_PATH), "--repository", str(REPOSITORY_ROOT), "--base-ref", exiting_on_ls,
+            [sys.executable, str(SCRIPT_PATH), "--repository", str(TEST_REPOSITORY), "--base-ref", exiting_on_ls,
              "--head-ref", exiting_on_ls, "--pairs-file", str(Path(scratch) / "fixture-pairs.json"), "--jobs", "2",
              "--new-process-pairs", "none", "--scratch-directory", str(Path(scratch) / "run-exiting")],
             capture_output=True, text=True, timeout=180)
@@ -347,7 +356,7 @@ try:
     started = time.monotonic()
     try:
         killed = subprocess.run(
-            [sys.executable, str(SCRIPT_PATH), "--repository", str(REPOSITORY_ROOT), "--base-ref", killed_on_ls,
+            [sys.executable, str(SCRIPT_PATH), "--repository", str(TEST_REPOSITORY), "--base-ref", killed_on_ls,
              "--head-ref", killed_on_ls, "--pairs-file", str(Path(scratch) / "fixture-pairs.json"), "--jobs", "2",
              "--new-process-pairs", "none", "--scratch-directory", str(killed_scratch)],
             capture_output=True, text=True, timeout=180)
@@ -374,7 +383,7 @@ try:
         stopped_scratch = Path(scratch) / f"run-stopped-by-{stop_signal.name}"
         (Path(scratch) / "fixture-pairs.json").write_text(json.dumps(FIXTURE_PAIRS))
         stopped = subprocess.Popen(
-            [sys.executable, str(SCRIPT_PATH), "--repository", str(REPOSITORY_ROOT), "--base-ref", slow_on_ls,
+            [sys.executable, str(SCRIPT_PATH), "--repository", str(TEST_REPOSITORY), "--base-ref", slow_on_ls,
              "--head-ref", slow_on_ls, "--pairs-file", str(Path(scratch) / "fixture-pairs.json"), "--jobs", "2",
              "--per-pair-timeout-seconds", "300", "--scratch-directory", str(stopped_scratch)],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -434,7 +443,12 @@ try:
     locked = Path(scratch) / "locked-checkout"
     git("worktree", "add", "--detach", str(locked), "HEAD")
     git("worktree", "lock", str(locked))
-    not_removed = replay.remove_checkouts(str(REPOSITORY_ROOT), [locked])
+    shared_registrations = [line for line in git("worktree", "list", "--porcelain", cwd=REPOSITORY_ROOT).splitlines()
+                            if line.startswith("worktree ") and os.path.realpath(scratch) in line]
+    check("a checkout the test made is registered in the test's own clone, not in the clone this checkout belongs to",
+          worktrees_registered_under(locked) and not shared_registrations,
+          f"own clone {worktrees_registered_under(locked)}; shared clone {shared_registrations}")
+    not_removed = replay.remove_checkouts(str(TEST_REPOSITORY), [locked])
     git("worktree", "unlock", str(locked))
     check("a checkout git cannot remove is reported, with git's reason",
           len(not_removed) == 1 and str(locked) in not_removed[0] and "exited" in not_removed[0], not_removed)
@@ -446,14 +460,14 @@ try:
     locked_through_symlink = through_symlink / "locked-checkout-named-through-a-symlink"
     git("worktree", "add", "--detach", str(locked_through_symlink), "HEAD")
     git("worktree", "lock", str(locked_through_symlink))
-    not_removed = replay.remove_checkouts(str(REPOSITORY_ROOT), [locked_through_symlink])
+    not_removed = replay.remove_checkouts(str(TEST_REPOSITORY), [locked_through_symlink])
     git("worktree", "unlock", str(locked_through_symlink))
     check("a checkout named through a symlink that git cannot remove is reported, with git's reason",
           len(not_removed) == 1 and str(locked_through_symlink) in not_removed[0] and "exited" in not_removed[0],
           not_removed)
     removed_through_symlink = through_symlink / "checkout-named-through-a-symlink"
     git("worktree", "add", "--detach", str(removed_through_symlink), "HEAD")
-    not_removed = replay.remove_checkouts(str(REPOSITORY_ROOT), [removed_through_symlink])
+    not_removed = replay.remove_checkouts(str(TEST_REPOSITORY), [removed_through_symlink])
     check("a checkout named through a symlink is removed and left registered with git nowhere",
           not_removed == [] and not worktrees_registered_under(removed_through_symlink),
           f"{not_removed}; registered {worktrees_registered_under(scratch)}")
@@ -475,7 +489,7 @@ try:
 
     never_added = Path(scratch) / "never-added-checkout"
     check("a checkout whose add never started is no removal failure",
-          replay.remove_checkouts(str(REPOSITORY_ROOT), [never_added]) == [], never_added)
+          replay.remove_checkouts(str(TEST_REPOSITORY), [never_added]) == [], never_added)
 
     run_git_as_written = replay.run_git
     def run_git_stopped_after_the_add(repository, *arguments):
@@ -538,18 +552,37 @@ try:
 
     errors = io.StringIO()
     with contextlib.redirect_stderr(errors), contextlib.redirect_stdout(io.StringIO()):
-        status = replay.main(["--head-ref", "HEAD", "--repository", str(REPOSITORY_ROOT),
+        status = replay.main(["--head-ref", "HEAD", "--repository", str(TEST_REPOSITORY),
                               "--transcript-directory", str(Path(scratch) / "missing"),
                               "--scratch-directory", str(Path(scratch) / "run-missing")])
     check("a transcript directory that does not exist: exit 2, the replay failed",
           status == 2 and "does not exist" in errors.getvalue(), f"status {status}\n{errors.getvalue()}")
+
+    killpg_as_written = os.killpg
+    def killpg_as_on_macos(process_group, signal_number):
+        # A step's workers outlive it as orphans; Linux reaps them at once, so the group is empty by the time
+        # the replay signals it, but macOS may still hold them unreaped and then answers EPERM. Linux is made
+        # to answer as macOS does whenever no process in the group is still running.
+        members = []
+        for stat in Path("/proc").glob("[0-9]*/stat"):
+            with contextlib.suppress(OSError):
+                fields = stat.read_text().rsplit(")", 1)[1].split()
+                if int(fields[2]) == process_group:
+                    members.append(fields[0])
+        if all(state == "Z" for state in members):
+            raise PermissionError(1, "Operation not permitted")
+        return killpg_as_written(process_group, signal_number)
+    replay.os.killpg = killpg_as_on_macos
+    try:
+        status, out, err = run_replay("HEAD", scratch, "--new-process-pairs", "none")
+    finally:
+        replay.os.killpg = killpg_as_written
+    check("a step whose process group macOS will not signal once it has exited: exit 0, not a replay failure",
+          status == 0 and "NO VERDICT CHANGED" in out, f"status {status}\n{out}\n{err}")
 finally:
-    # Removes the worktrees a run left registered when it was stopped, or when a mutant of its cleanup ran.
-    for worktree in worktrees_registered_under(scratch):
-        git("worktree", "remove", "--force", "--force", worktree, check=False)
+    # The test's checkouts are registered only in its own clone, which goes with the scratch directory.
     import shutil
     shutil.rmtree(scratch, ignore_errors=True)
-    git("worktree", "prune", check=False)
 
 if failures:
     print(f"{len(failures)} failed")
