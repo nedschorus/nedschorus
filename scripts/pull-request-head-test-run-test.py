@@ -1085,6 +1085,42 @@ def run_cases_on_ned_box(workspace: Path):
           and record_lines[-1:] == ["pull-request-head-test-run exit code: 4"],
           f"{result!r}\n{record_lines!r}")
 
+    # A really closed stderr pipe, as when the program is run piped to `head` or over an ssh
+    # session that closed: the program runs as its own process, with the pipe's reader gone.
+    scratch = fixture.scratch_for_next_run()
+    behaviour_file = scratch / "stand-in-runner-behaviour.json"
+    behaviour_file.write_text(json.dumps(
+        {"exits": [0], "lines": PASSING_RUNNER_LINES,
+         "calls_file": str(scratch / "stand-in-runner-calls.json")}), encoding="utf-8")
+    fake_ssh = fixture.fake_ssh_directory(scratch, SSH_THAT_RUNS_THE_COMMAND_HERE)
+    local_copies_before = set(fixture.temporary.rglob(
+        program.PULL_REQUEST_HEAD_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME))
+    records_before = len(fixture.records("ned-box") or [])
+    reader, writer = os.pipe()
+    os.close(reader)
+    try:
+        closed_stderr_run = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), *fixture.arguments(runner_program=fixture.runner)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=writer, text=True,
+            timeout=120, env={**os.environ,
+                              "PATH": f"{fake_ssh}{os.pathsep}{os.environ.get('PATH', '')}",
+                              STAND_IN_RUNNER_BEHAVIOUR_FILE_VARIABLE: str(behaviour_file)})
+    finally:
+        os.close(writer)
+    local_copies = set(fixture.temporary.rglob(
+        program.PULL_REQUEST_HEAD_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME)) - local_copies_before
+    # The later case that counts the head's records counts this run too.
+    fixture.runs_that_cited[f"pull-request-head-test-runs/ned-box/{fixture.head}.txt"] = (
+        fixture.runs_that_cited.get(f"pull-request-head-test-runs/ned-box/{fixture.head}.txt", 0)
+        + 1)
+    check("with stderr a pipe whose reader is gone, the program exits 4 (the failed copy of "
+          "the runner's output), not 120, and writes the record to its local copy and to "
+          "the log-store",
+          closed_stderr_run.returncode == 4 and len(local_copies) == 1
+          and len(fixture.records("ned-box") or []) == records_before + 1
+          and "record written to" in closed_stderr_run.stdout,
+          f"{closed_stderr_run.returncode}\n{closed_stderr_run.stdout}\n{local_copies}")
+
     result = fixture.run(runner_program=Path("scripts") / "run-all-test-suites.py",
                          started_in=fixture.reference)
     record_lines = (fixture.record("ned-box") or "").splitlines()
