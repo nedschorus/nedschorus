@@ -77,6 +77,23 @@ The user asked for this job on 2026-10-14, in the same approval-walk of agent-se
 
 A task on an agent-seat's task list is invisible to other agents, so work on it is lost when the agent-seat stops or forgets it. Each day, a program collects every open task from every agent-seat's task list on both machines, `~/.claude/tasks/nedschorus-<agent-seat>-tasks/`, into one list; a machine whose lists cannot be read is reported as not checked. Each task is checked against the open issues when it is filed; this job checks only what that check could not see: a task whose check at filing failed, and a task filed before an open issue that was filed, or whose GHI-MD changed, since the task was last checked. The agent-session running the daily step asks ghi-info, with `scripts/ghi-info-ask.py`, which open issue each such task belongs to, at most 25 tasks to a question. It checks each match by reading the issue's GHI-MD, and skips a task that GHI-MD already records. It adds each match that holds to that GHI-MD with edit-GHI, under the heading "Provisional additions (not yet vetted by the user)", naming the agent-seat and the date, and changes the task's subject to work on that issue: by telling the agent-seat when it is running, and in the task's file when it is not. A task that matches no open issue stays a task, and no new issue is filed for it. The user sees one line per issue that gained additions; on a day with none, nothing is shown.
 
+## Checks at the moment of change
+
+The user approved this section on 2026-10-15, in the approval-walk cold-read-research-open-questions-and-skill-reviews-2026-10-14 of agent-seat cold-read-research, whose minutes are at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/cold-read-research-open-questions-and-skill-reviews-2026-10-14-minutes.md`. He set its goal: "My goal is to have many ASAP checks, and then some maint backups, or maybe maint backups for all, just in case something slips by."
+
+Each job is also checked, where it can be, at the moment the thing it checks changes, and the daily job stays as the backstop for what that check misses. For each job, the moment and what exists today:
+
+- **Wiki pages:** when a pull request merges that changes a file a wiki page names; no check runs then today. Facts about machines and accounts change with no commit, so they stay daily.
+- **Agent-seats far behind main:** every prompt in a running agent-seat, which `scripts/checkout-freshness-catch-up.py` already checks; the daily job covers stopped agent-seats.
+- **A pending ned-box reboot:** when Ubuntu writes `/var/run/reboot-required`, which a watcher on ned-box could report within the hour; no watcher exists today.
+- **A pending firmware update:** no event marks it, so it stays daily.
+- **A fast read due:** a push that changes a watched document by more than about 20 words; `scripts/cold-read-fast-read-due-for-linked-document-reminder-hook.py` covers part of this today.
+- **A missing pinned library:** when the pinned requirements file changes on main, each machine installs at its next pull of the main clone; programs already name the install command when an import fails.
+- **The hook and program measurement:** no single moment marks it, so it stays weekly.
+- **Open tasks that belong in an open issue:** at filing, by GHI [Check each new task against the open issues when it is filed, and add a match to that issue's GHI-MD](https://github.com/nedschorus/nedschorus/issues/1432).
+
+The full list of the project's check methods, and which of them need a daily backup, is to be compiled; the user asked for it on 2026-10-15.
+
 ## How a daily job is handed to the user and tracked (decided)
 
 The user ruled on this design on 2026-10-05, as item 9 of the approval-walk move-mechanical-agent-chores-into-programs-and-hooks-2026-10-04 in the reboot-test agent-seat, under chore 8 of GHI [Move mechanical agent chores into programs and hooks](https://github.com/nedschorus/nedschorus/issues/1036). He rejected a design in which the handoff-supervisor marks a daily reminder "started" by itself when it hands the reminder out, and approved the design below with "Y - make sure your notes are clear and complete." The walk-minutes, with his words in full, are at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/move-mechanical-agent-chores-into-programs-and-hooks-2026-10-04-minutes.md`.
