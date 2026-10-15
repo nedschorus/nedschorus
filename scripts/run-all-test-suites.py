@@ -2207,10 +2207,13 @@ def interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden=
 def paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(interpreters, program_files=(),
                                                                 checkout=None):
     """Every path a suite's launch reads that a test sandbox would hide: each interpreter's
-    directories, and the directory of each program file run inside the sandbox, such as the
-    launcher that checks the sandbox from inside it. A program file in the checkout needs
-    nothing shown: the sandbox shows the checkout writable, and a read-only directory bound
-    over it would make the suite's writes there fail."""
+    directories, and for each program file run inside the sandbox, such as the launcher that
+    checks the sandbox from inside it, the git checkout holding it, since the program loads
+    repository modules from beside and above its own directory. A program file in the
+    checkout under test needs nothing shown: the sandbox shows the checkout writable, and a
+    read-only directory bound over it would make the suite's writes there fail. For the same
+    reason, a program's checkout that holds the checkout under test shows only the program's
+    own directory."""
     hidden = directories_hidden_whole_in_test_sandbox()
     inside_checkout = os.path.realpath(checkout) if checkout is not None else None
     shown = []
@@ -2223,10 +2226,22 @@ def paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(interpreters, p
         if inside_checkout is not None and (directory == inside_checkout
                                             or directory.startswith(inside_checkout + "/")):
             continue
+        program_checkout = git_checkout_holding_directory_or_none(directory) or directory
+        if inside_checkout is None or not (inside_checkout == program_checkout
+                                           or inside_checkout.startswith(program_checkout + "/")):
+            directory = program_checkout
         if any(directory == top or directory.startswith(top + "/") for top in hidden) and \
                 directory not in shown:
             shown.append(directory)
     return shown
+
+
+def git_checkout_holding_directory_or_none(directory):
+    """The nearest directory at or above directory that holds a .git entry, or None."""
+    for candidate in (directory, *map(str, Path(directory).parents)):
+        if os.path.lexists(os.path.join(candidate, ".git")):
+            return candidate
+    return None
 
 
 def directories_hidden_whole_in_test_sandbox():
