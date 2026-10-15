@@ -273,7 +273,7 @@ def an_operator_terminal():
 
 
 def capture_retires(retired, killed_sockets=("seat-a",), failure=None,
-                    the_session_then_dies=True):
+                    the_session_then_dies=True, check=None):
     """Stand in for resupervise-seat.py's retire step, recording each call.
     With the_session_then_dies the tmux probe flips to dead afterwards, as a
     real kill leaves it."""
@@ -281,7 +281,7 @@ def capture_retires(retired, killed_sockets=("seat-a",), failure=None,
         retired.append(name)
         if failure is None and the_session_then_dies:
             patch("tmux_session_alive_anywhere", lambda name: (False, ""))
-        return list(killed_sockets), failure
+        return list(killed_sockets), failure, check
     recovery.resupervise.retire_seat_tmux_session = fake_retire
 
 
@@ -4622,6 +4622,24 @@ with tempfile.TemporaryDirectory() as temporary:
           and report_failed == ("seat-a: REFUSED — could not kill the stale tmux session "
                                 "seat-a (server socket seat-a): server exited"),
           (retired, workspace.launches, report_failed))
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-kill-outcome-unknown")
+    retired = []
+    check_instruction = ("To check, run the command on the next line on ned-box: exit 0 means "
+                         "the session still exists, and \"can't find session\" means it is gone"
+                         "\ntmux -L seat-a has-session -t '=seat-a'")
+    capture_retires(retired, killed_sockets=(),
+                    failure="it is unknown whether the stale tmux session seat-a (tmux socket "
+                            "name seat-a) was killed: tmux could not be run, or did not answer "
+                            "within 30 seconds",
+                    check=check_instruction)
+    report_unknown, seen = recover_with_an_operator_typing(workspace, "y")
+    check("LEFTOVER SHELL: a kill whose outcome is unknown refuses, naming the machine to check "
+          "on, with the check command alone on the last line",
+          retired == ["seat-a"] and workspace.launches == []
+          and report_unknown == ("seat-a: REFUSED — it is unknown whether the stale tmux session "
+                                 "seat-a (tmux socket name seat-a) was killed: tmux could not be "
+                                 "run, or did not answer within 30 seconds. " + check_instruction),
+          (retired, workspace.launches, report_unknown))
     workspace = a_seat_behind_a_leftover_shell("leftover-shell-survives-the-retire")
     retired = []
     capture_retires(retired, the_session_then_dies=False)
@@ -4667,7 +4685,7 @@ with tempfile.TemporaryDirectory() as temporary:
         def fake_retire(name):
             events.append("retire")
             patch("tmux_session_alive_anywhere", lambda name: (False, ""))
-            return ["seat-a"], None
+            return ["seat-a"], None, None
 
         patch("tmux_session_is_a_leftover_idle_shell", the_proof)
         if rooted_before_and_after_the_question is not None:
