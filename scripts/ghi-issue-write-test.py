@@ -1361,9 +1361,10 @@ def run_cases(scratch: Path):
               == ("# Proposed improvements or changes from ghi-info, "
                   "2026-10-03\n\n"
                   "ghi-info reviewed the GHI-MD beside this file when "
-                  "scripts/ghi-issue-write.py filed it. The agent that ran "
-                  "the tool dispatches a forked subagent to settle each "
-                  "entry by rules 3 to 7 of § The design in "
+                  "scripts/ghi-issue-write.py filed it. Once this file is "
+                  "on main, the agent that ran the tool dispatches a forked "
+                  "subagent to settle each entry by rules 3 to 7 of § The "
+                  "design in "
                   "docs/issues/1132-concerns-about-a-ghi-are-handled-by-"
                   "agents.md.\n\n"
                   "## E1 — possible problem: the GHI-MD's proposal may go "
@@ -1558,7 +1559,7 @@ def run_cases(scratch: Path):
         unfiled_name = ("a create rerun after filing failed asks ghi-info "
                         "nothing, writes no second file, lands the first, "
                         "deletes it from beside the draft once the pull "
-                        "request is open, and ends with the dispatch line")
+                        "request is open, and ends with the line to rerun after the merge")
         try:
             try:
                 tool.create(unfiled_source, REPO, scratch, unfiled_first,
@@ -1577,7 +1578,8 @@ def run_cases(scratch: Path):
                   and unfiled_source.is_file()
                   and bool(unfiled_lines)
                   and unfiled_lines[-1].startswith("Filed GHI 572.")
-                  and "Dispatch a forked subagent now" in unfiled_lines[-1],
+                  and "Once it merges, rerun this command" in unfiled_lines[-1]
+                  and "Dispatch a forked subagent now" not in unfiled_lines[-1],
                   (unfiled_rerun.commands(), sorted(unfiled_rerun.staged),
                    unfiled_lines[-1:]))
         except Exception as other:                    # noqa: BLE001
@@ -1709,7 +1711,7 @@ def run_cases(scratch: Path):
         clean_name = ("create with a ruling question lands the GHI-MD and its "
                       "file together, deletes that file and no other from "
                       "beside the draft, and ends the run with what "
-                      "conflicts, ghi-info's question and the dispatch line")
+                      "conflicts, ghi-info's question and the line to rerun after the merge")
         try:
             tool.create(clean_source, REPO, scratch, clean_create,
                         create_lines.append)
@@ -1729,15 +1731,16 @@ def run_cases(scratch: Path):
                       "nedschorus/issues/46).\n"
                       "ghi-info's question: closed issues are frozen\n"
                       "The question is entry E1 of "
-                      f"docs/issues/571-{proposed_name}, on this write's "
-                      "pull-request branch until that pull request merges.\n"
-                      "Dispatch a forked subagent now to settle entry E1 by "
-                      "rules 3 to 7 of § The design in docs/issues/1132-"
-                      "concerns-about-a-ghi-are-handled-by-agents.md; do not "
-                      "wait for the user's answer.\n"
-                      "If the subagent marks the entry as needing the user, "
-                      "bring the entry to him in your agent-seat's next "
-                      "approval-walk.")
+                      f"docs/issues/571-{proposed_name}, in this write's "
+                      "pull request.\n"
+                      "Do not settle the entry before that pull request "
+                      "merges: a commit pushed to it would move the head "
+                      "merge-lane-2 is reviewing.\n"
+                      "Once it merges, rerun this command; that run tells "
+                      "you to dispatch the forked subagent that settles the "
+                      "entry.")
+                  and "Dispatch a forked subagent now" not in "\n".join(
+                      create_lines)
                   and not clean_create.ran("gh issue comment"),
                   (clean_create.commands(), create_lines[-1:]))
         except Exception as other:                    # noqa: BLE001
@@ -2286,7 +2289,7 @@ def run_edit_cases(scratch: Path):
         rerun_lines = []
         rerun_name = ("the rerun after the failed push asks ghi-info nothing, "
                       "writes no second file, lands the file and the pointer "
-                      "line with the edit, and ends with the dispatch line")
+                      "line with the edit, and ends with the line to rerun after the merge")
         try:
             tool.edit(source, REPO, scratch, rerun, rerun_lines.append)
             check(rerun_name,
@@ -2307,7 +2310,8 @@ def run_edit_cases(scratch: Path):
                       "issues are frozen](")
                   and f"The question is entry E1 of {proposed_relative}, "
                   in rerun_lines[-1]
-                  and "Dispatch a forked subagent now" in rerun_lines[-1],
+                  and "Once it merges, rerun this command" in rerun_lines[-1]
+                  and "Dispatch a forked subagent now" not in rerun_lines[-1],
                   (rerun.commands(), rerun_lines[-1:]))
         except Exception as other:                    # noqa: BLE001
             check(rerun_name, False, f"escaped unreported: {other!r}")
@@ -3126,6 +3130,70 @@ def run_edit_cases(scratch: Path):
     check("and it opens no second pull request",
           not resumed.ran("git worktree add")
           and not resumed.ran("gh pr create"), str(resumed.commands()))
+
+    # The subagent that settles a ruling question starts only once the pull
+    # request that carried its file has merged, so it is this rerun, finding
+    # the entry open on main, that says to dispatch it.
+    open_entry_relative = (f"docs/issues/{EDIT_NAME[:-len('.md')]}-proposed-"
+                           "improvements-or-changes-ghi-info-2026-10-03.md")
+    open_entry_text = (
+        "# Proposed improvements or changes from ghi-info, 2026-10-03\n\n"
+        "## E1 — possible problem: the GHI-MD's proposal may go against a "
+        "user-ruling held in GHI [Closed issues are frozen](https://github."
+        "com/nedschorus/nedschorus/issues/46)\n"
+        "ghi-info's question: closed issues are frozen\n"
+        "Goes wrong when: the proposal is carried out while that user-ruling "
+        "still applies.\n"
+        "State: open\n")
+    entry_listing = f"git ls-tree --name-only -z {MAIN_COMMIT} docs/issues/"
+    for state_line, expect_dispatch in (("State: open", True),
+                                        ("State: settled, not worth doing",
+                                         False)):
+        merged = Recorder({
+            entry_listing: Completed(EDIT_RELATIVE + "\0"
+                                     + open_entry_relative + "\0"),
+            f"git show {MAIN_COMMIT}:{open_entry_relative}": Completed(
+                open_entry_text.replace("State: open", state_line)),
+            f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(
+                staged_form(title="Stale title")),
+            "gh issue view": issue_json("Stale title", one_link),
+            "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
+        })
+        merged_lines = []
+        _, merged_done = tool.edit(source, REPO, scratch, merged,
+                                   merged_lines.append)
+        dispatched = any(
+            line.startswith(f"GHI 570's GHI-MD is on main with a ruling "
+                            f"question from ghi-info still open, in "
+                            f"{open_entry_relative}.")
+            and "ghi-info's question: closed issues are frozen" in line
+            and "Dispatch a forked subagent now to settle each open entry "
+                "by rules 3 to 7 of § The design in docs/issues/1132-"
+                "concerns-about-a-ghi-are-handled-by-agents.md" in line
+            for line in merged_lines)
+        check(f"a rerun after the merge with an entry whose line is "
+              f"{state_line!r} on main "
+              + ("ends with the line to dispatch the subagent that settles it"
+                 if expect_dispatch else "says nothing about dispatching"),
+              merged_done and dispatched == expect_dispatch,
+              merged_lines[-2:])
+
+    unlisted = Recorder({
+        entry_listing: Completed("", returncode=128, stderr="bad object"),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(
+            staged_form(title="Stale title")),
+        "gh issue view": issue_json("Stale title", one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
+    })
+    unlisted_name = ("a rerun after the merge whose listing of the GHI-MD's "
+                     "folder fails stops and says so, rather than reading it "
+                     "as no open entry")
+    try:
+        tool.edit(source, REPO, scratch, unlisted, quiet)
+        check(unlisted_name, False, "the failed listing reported success")
+    except tool.Refused as refusal:
+        check(unlisted_name, "git ls-tree --name-only" in str(refusal),
+              str(refusal))
     check("a heading the edit did not change leaves the title alone, "
           "however far the title is from it",
           not ran_with(resumed, "gh issue edit", "--title"),

@@ -573,7 +573,7 @@ ESCALATE_SENTENCE = ("the 2026-09-19 body ruling in #46 may not hold after "
 APPROVED_RULING_QUESTION_MESSAGE = (
     "ghi-info found a ruling of the user's that it cannot tell still applies: "
     + ESCALATE_SENTENCE + "\n"
-    "If you file or edit the GHI, scripts/ghi-issue-write.py records this question beside the GHI-MD, and you dispatch a subagent to settle it.\n"
+    "If you file or edit the GHI, scripts/ghi-issue-write.py records this question beside the GHI-MD, and once that write's pull request merges, you dispatch a subagent to settle it.\n"
     "Otherwise, ask the user whether that ruling still applies, and put the question on your task list.\n")
 
 # Typed out rather than read from the module, like the two messages above, so

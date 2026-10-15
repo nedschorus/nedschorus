@@ -27,9 +27,13 @@ proposed-improvements-or-changes-file beside the GHI-MD,
 `<GHI-MD name>-proposed-improvements-or-changes-ghi-info-<YYYY-MM-DD>.md`,
 and puts PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE_TEMPLATE under the
 GHI-MD's first heading, so every agent that reads the GHI-MD is sent to it.
-Both reach main in the write's own pull request, and the run's last lines
-tell the agent to dispatch a subagent to settle the entry, by the rules of
-PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD. The file is written to disk before any step that reaches
+Both reach main in the write's own pull request. The subagent that settles
+the entry, by the rules of PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD,
+starts only after that pull request merges: a commit it pushed to the open
+pull request would move the head merge-lane-2 is reviewing. So the run that
+lands the file tells the agent to rerun once the pull request merges, and
+the rerun, finding the entry open on main, tells it to dispatch the
+subagent. The file is written to disk before any step that reaches
 GitHub, so a rerun after any failure finds it there, lands it, and does not
 ask ghi-info again: nothing about the question is held only in memory. A
 file of that name already present gets a numeric suffix rather than an
@@ -1161,9 +1165,10 @@ def proposed_improvements_or_changes_file_text(repo: str, conflict,
     return (
         f"# Proposed improvements or changes from ghi-info, {date}\n\n"
         "ghi-info reviewed the GHI-MD beside this file when "
-        f"scripts/ghi-issue-write.py {operation_done} it. The agent that ran "
-        "the tool dispatches a forked subagent to settle each entry by rules "
-        f"3 to 7 of § The design in {PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD}.\n\n"
+        f"scripts/ghi-issue-write.py {operation_done} it. Once this file is "
+        "on main, the agent that ran the tool dispatches a forked subagent to "
+        "settle each entry by rules 3 to 7 of § The design in "
+        f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD}.\n\n"
         f"{GHI_INFO_ENTRY_HEADING_OPENING}the GHI-MD's proposal may go "
         f"against {ruling}\n"
         f"{GHI_INFO_QUESTION_LINE_OPENING}{conflict.sentence}\n"
@@ -1283,25 +1288,67 @@ def with_pointer_line(text: str, prefix: str) -> str:
 
 def report_ruling_question(number: int, operation_done: str, landed: str,
                            text: str, report):
-    """The run's last lines when it landed a file from ghi-info: what
-    ghi-info thinks, its question, where the entry is, and the instruction
-    to dispatch the subagent that settles it. `operation_done` is "filed"
-    or "edited"; `landed` is the file's path beside the GHI-MD and `text`
-    its content."""
+    """The run's last lines when it put a file from ghi-info into a pull
+    request: what ghi-info thinks, its question, where the entry is, and
+    that the rerun after the merge says when to dispatch the subagent that
+    settles it. `operation_done` is "filed" or "edited"; `landed` is the
+    file's path beside the GHI-MD and `text` its content."""
     problem, question = ruling_question_lines(text)
     lines = [f"{operation_done.capitalize()} GHI {number}. ghi-info thinks "
              f"{problem or 'the GHI-MD may go against a user-ruling'}."]
     if question:
         lines.append(f"{GHI_INFO_QUESTION_LINE_OPENING}{question}")
     lines += [
-        f"The question is entry E1 of {landed}, on this write's pull-request "
-        "branch until that pull request merges.",
-        "Dispatch a forked subagent now to settle entry E1 by rules 3 to 7 of "
-        f"§ The design in {PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD}; do not wait for the user's "
-        "answer.",
-        "If the subagent marks the entry as needing the user, bring the "
-        "entry to him in your agent-seat's next approval-walk."]
+        f"The question is entry E1 of {landed}, in this write's pull request.",
+        "Do not settle the entry before that pull request merges: a commit "
+        "pushed to it would move the head merge-lane-2 is reviewing.",
+        "Once it merges, rerun this command; that run tells you to dispatch "
+        "the forked subagent that settles the entry."]
     report("\n".join(lines))
+
+
+def open_ghi_info_entries_on_main(relative: str, revision: str,
+                                  repository_root: Path, runner) -> list:
+    """(path, ghi-info's question) for each file from ghi-info beside the
+    GHI-MD at `relative` that main holds at `revision` with an entry still
+    open. A listing that fails is raised, not read as no file."""
+    parent = str(Path(relative).parent)
+    head = (Path(relative).name[:-len(".md")]
+            + PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX
+            + PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_INFO + "-")
+    listed = runner(["git", "ls-tree", "--name-only", "-z", revision,
+                     parent + "/"], cwd=str(repository_root))
+    found = []
+    for item in (listed.stdout or "").split("\0"):
+        if not (Path(item).name.startswith(head)
+                and is_proposed_improvements_or_changes_file(item)):
+            continue
+        item_text = blob_at(revision, item, repository_root, runner) or ""
+        if "State: open" in item_text.splitlines():
+            found.append((item, ruling_question_lines(item_text)[1]))
+    return found
+
+
+def report_open_ghi_info_entries(number: int, relative: str, revision: str,
+                                 repository_root: Path, runner, report):
+    """The run's last lines when the GHI-MD is on main beside a file from
+    ghi-info with an entry still open: the moment to dispatch the subagent
+    that settles it, since the pull request that carried the file has
+    merged."""
+    for item, question in open_ghi_info_entries_on_main(
+            relative, revision, repository_root, runner):
+        lines = [f"GHI {number}'s GHI-MD is on main with a ruling question "
+                 f"from ghi-info still open, in {item}."]
+        if question:
+            lines.append(f"{GHI_INFO_QUESTION_LINE_OPENING}{question}")
+        lines += [
+            "Dispatch a forked subagent now to settle each open entry by "
+            "rules 3 to 7 of § The design in "
+            f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD}; do "
+            "not wait for the user's answer.",
+            "If the subagent marks an entry as needing the user, bring the "
+            "entry to him in your agent-seat's next approval-walk."]
+        report("\n".join(lines))
 
 
 def file_issue(repo: str, title: str, key: str, runner, report) -> int:
@@ -1747,8 +1794,13 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
         report(f"resuming issue {filed_number} on its landed file: the "
                "issue's body still carries a pairing key, so an earlier run "
                "stopped before step 5")
-        return filed_number, link_body(repo, filed_number, repository_root,
-                                       runner, report, str(path))
+        finished = link_body(repo, filed_number, repository_root, runner,
+                             report, str(path))
+        if finished:
+            report_open_ghi_info_entries(
+                filed_number, relative_to_root(path, repository_root),
+                "origin/main", repository_root, runner, report)
+        return filed_number, finished
 
     text, title = validate(path)
     key = pairing_key(text)
@@ -1794,6 +1846,9 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
     finished = link_body(repo, number, repository_root, runner, report,
                          destination)
     report_ruling_questions_landed(number, "filed", landed_proposed, report)
+    if finished:
+        report_open_ghi_info_entries(number, destination, "origin/main",
+                                     repository_root, runner, report)
     return number, finished
 
 
@@ -2830,6 +2885,9 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         report_ruling_questions_landed(number, "edited", proposed, report)
     if waiting:
         return number, False
+    if finished:
+        report_open_ghi_info_entries(number, relative, main_commit,
+                                     repository_root, runner, report)
     return number, finished
 
 
