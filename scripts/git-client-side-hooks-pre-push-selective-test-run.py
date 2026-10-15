@@ -16,9 +16,13 @@ such a push goes ahead with the message for a run that could not start.
 Only a suite's failure refuses the push. Every way the run can end without a verdict lets the push
 through with a message saying how to run it by hand: another run holding the machine's test lock,
 which the run does not wait for, the run not finishing within the time budget, the run unable to start or
-ending in an uncaught exception, and this file failing. When the run gives no verdict, what it
-printed on stderr is shown above the message, so the cause is not lost. A wrong refusal stops an agent's work, and the pull request's head is tested
-again before it merges.
+ending in an uncaught exception, and this file failing. A run that exits 1 refuses the push only
+when its SUMMARY line counts a failed suite: the runner still writes its report and run record
+after printing SUMMARY, and a write that fails there exits 1 too. When the run gives no verdict,
+what it printed on stderr is shown above the message, so the cause is not lost; for a held lock
+only the line naming the holder is shown, because the runner's other lines there advise its own
+caller and the message gives the hand run instead. A wrong refusal stops an agent's work, and the
+pull request's head is tested again before it merges.
 
 The time budget is DEFAULT_TIME_BUDGET_SECONDS or the number of seconds in
 TIME_BUDGET_ENVIRONMENT_VARIABLE. With the conflict check's
@@ -58,6 +62,7 @@ REPORT_FILE_NAME = "report.txt"
 FAILED_SUITE_LINE_PREFIX = "FAIL "
 FAILED_SUITE_LINE_LOG_MARK = " — log "
 SUMMARY_LINE_PREFIX = "SUMMARY:"
+SUMMARY_FAILED_COUNT_PATTERN = re.compile(r"\b(\d+) failed\b")
 RUNNER_REFUSAL_LINE_PREFIX = "run-all-test-suites: not run"
 RUNNER_STDERR_LINES_SHOWN = 40
 
@@ -176,6 +181,12 @@ def log_directory_named_in(stdout):
                                                   stdout.splitlines()) if match), None)
 
 
+def summary_failed_count(summary):
+    """The number of failed suites the SUMMARY line counts, or 0 when it counts none."""
+    match = SUMMARY_FAILED_COUNT_PATTERN.search(summary)
+    return int(match.group(1)) if match else 0
+
+
 def say_not_run(stream, cause, tell_user):
     say(stream, MESSAGE_PREFIX + "%s, so this push goes ahead without the selective test run."
         % cause)
@@ -197,7 +208,7 @@ def say_refusal(stream, stdout):
     if log_directory:
         say(stream, "The whole report: %s" % os.path.join(log_directory, REPORT_FILE_NAME))
     say(stream, "Fix what each failing suite's log shows, commit the fix and push again; the "
-        "push runs the failing suites again.")
+        "next push runs the selective test run again.")
     say(stream, "If a failing suite's log shows the failure in code your change does not touch, "
         "push again once without changing anything, since some suites fail only when the "
         "machine is busy.")
@@ -221,7 +232,8 @@ def main(stream, environment):
     budget = time_budget_seconds(environment)
     say(stream, MESSAGE_PREFIX + "starting the selective test run on %s, which can take up to %d "
         "seconds. If your git push command times out before this hook finishes, run git push "
-        "again with a timeout of 10 minutes." % (top, budget))
+        "again and give that command a timeout of 10 minutes, such as Claude Code's Bash tool's "
+        "timeout of 600000 milliseconds." % (top, budget))
     try:
         process = subprocess.Popen(
             [sys.executable, str(runner), "--checkout", top, SELECTION_OPTION, BASE,
@@ -235,7 +247,7 @@ def main(stream, environment):
     try:
         stdout, stderr = process.communicate(timeout=budget)
     except subprocess.TimeoutExpired:
-        stdout, _stderr, listing_error = stop_process_group(process)
+        stdout, stderr, listing_error = stop_process_group(process)
         log_directory = log_directory_named_in(stdout)
         cause = ("the selective test run had not finished when the %d-second time budget ran "
                  "out, and was stopped" % budget)
@@ -244,6 +256,7 @@ def main(stream, environment):
         if listing_error:
             cause += ("; the processes its suites started in their own sessions could not be "
                       "listed, so some may still be running: %s" % listing_error)
+        say_runner_stderr(stream, stderr)
         say_not_run(stream, cause, tell_user=bool(listing_error))
         return EXIT_ALLOW_PUSH
 
@@ -253,9 +266,9 @@ def main(stream, environment):
     if status == RUNNER_EXIT_ALL_PASSED:
         say(stream, MESSAGE_PREFIX + "the selective test run passed. %s" % summary)
         return EXIT_ALLOW_PUSH
-    # The runner prints its SUMMARY line before it exits 1 for a failed suite; an exit 1 without
-    # one is an uncaught exception, which gives no verdict.
-    if status == RUNNER_EXIT_SOME_FAILED and summary:
+    # An exit 1 is a failed suite only when SUMMARY counts one: an uncaught exception also exits 1,
+    # before SUMMARY or after it, while the runner writes its report and run record.
+    if status == RUNNER_EXIT_SOME_FAILED and summary_failed_count(summary) > 0:
         say_refusal(stream, stdout)
         return EXIT_REFUSE_PUSH
     if status == RUNNER_EXIT_LOCKED:

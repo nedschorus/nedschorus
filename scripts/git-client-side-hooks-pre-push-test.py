@@ -255,12 +255,15 @@ import signal
 os.kill(os.getpid(), signal.SIGKILL)
 """
 
+FAKE_OVERRUN_STDERR_LINE = "run-all-test-suites: scripts/slow-test.py is still running"
+
 # The shape a real overrun takes: the suites the run started keep running, so
 # stopping the run alone would leave them. One child stays in the run's process
 # group; the other starts its own session, as scripts/run-codex-task-from-brief-test.py's
 # children do, so stopping the group alone would miss it. Each child's pid is
 # written beside the log, so the case can see that both were stopped.
-FAKE_TEST_SUITES_RUNNER_HANGS_WITH_CHILD = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+FAKE_TEST_SUITES_RUNNER_HANGS_WITH_CHILD = FAKE_TEST_SUITES_RUNNER_PREAMBLE + (
+    "print(%r, file=sys.stderr, flush=True)\n" % FAKE_OVERRUN_STDERR_LINE) + """\
 import subprocess, time
 _sleeper = [sys.executable, "-c", "import time; time.sleep(%d)" % FAKE_HANG_SECONDS]
 _child = subprocess.Popen(_sleeper)
@@ -279,6 +282,13 @@ FAKE_RUNNER_CRASH_ERROR = "OSError: [Errno 28] No space left on device: '/fake/l
 FAKE_TEST_SUITES_RUNNER_CRASHES = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
 raise OSError(28, "No space left on device", "/fake/logs")
 """
+
+# The real runner writes its report and run record after printing SUMMARY, so
+# a write that fails there exits 1 after a SUMMARY that counts no failure.
+FAKE_TEST_SUITES_RUNNER_CRASHES_AFTER_SUMMARY = FAKE_TEST_SUITES_RUNNER_PREAMBLE + """\
+print(%r, flush=True)
+raise OSError(28, "No space left on device", "/fake/logs")
+""" % FAKE_PASSED_SUMMARY
 
 # The real runner's refusal when the signal sandbox cannot start: the cause is
 # on the first line, and the lines after it advise the runner's own caller.
@@ -1097,13 +1107,14 @@ def run_selective_test_run_cases(scratch):
           "--no-verify" not in result.stderr, result.describe())
 
     def not_run_case(label, runner_text, expected_cause, tell_user, budget=None,
-                     include_test_suites_runner=True):
+                     include_test_suites_runner=True, extra_environment=None):
         hooks = make_layout(scratch, "layout-selective-" + label,
                             test_suites_runner_text=runner_text,
                             include_test_suites_runner=include_test_suites_runner)
         outcome_scenario = Scenario(scratch, "selective-" + label, hooks)
         if budget is not None:
             outcome_scenario.extra_environment[SELECTIVE_TEST_RUN_BUDGET_VARIABLE] = budget
+        outcome_scenario.extra_environment.update(extra_environment or {})
         outcome = outcome_scenario.push("origin", "clean")
         check("%s: the push goes through" % label,
               went_through(outcome)
@@ -1142,6 +1153,14 @@ def run_selective_test_run_cases(scratch):
     check("runner crashes: the push is not reported as a failed suite",
           SELECTIVE_TEST_RUN_REFUSED not in outcome.stderr, outcome.describe())
     _, outcome = not_run_case(
+        "runner crashes after a passing SUMMARY", FAKE_TEST_SUITES_RUNNER_CRASHES_AFTER_SUMMARY,
+        "the selective test run gave no verdict, because it exited 1: " + FAKE_RUNNER_CRASH_ERROR,
+        tell_user=True)
+    check("runner crashes after a passing SUMMARY: the push is not reported as a failed suite",
+          SELECTIVE_TEST_RUN_REFUSED not in outcome.stderr, outcome.describe())
+    check("runner crashes after a passing SUMMARY: the runner's traceback is shown",
+          "Traceback (most recent call last):" in outcome.stderr, outcome.describe())
+    _, outcome = not_run_case(
         "sandbox cannot start", FAKE_TEST_SUITES_RUNNER_SANDBOX_CANNOT_START,
         "the selective test run gave no verdict, because it exited 2: "
         + FAKE_SANDBOX_REFUSAL_FIRST_LINE, tell_user=True)
@@ -1161,6 +1180,11 @@ def run_selective_test_run_cases(scratch):
         "the selective test run had not finished when the 1-second time budget ran out, and "
         "was stopped; the logs of the suites it ran are in " + FAKE_LOG_DIRECTORY,
         tell_user=False, budget=HANGING_CHECK_BUDGET_SECONDS)
+    check("overrun: what the run printed on stderr is shown above the message",
+          "pre-push: the test runner printed on stderr:" in outcome.stderr
+          and FAKE_OVERRUN_STDERR_LINE in outcome.stderr.splitlines()
+          and outcome.stderr.index(FAKE_OVERRUN_STDERR_LINE) < outcome.stderr.index(
+              "the selective test run had not finished"), outcome.describe())
     check("overrun: the push is not held for long",
           outcome.seconds < HANGING_CASE_WALL_CLOCK_LIMIT_SECONDS, "%.1f seconds" % outcome.seconds)
     child_pid_file = Path(str(hanging.fake_test_suites_runner_log) + ".child-pid")
@@ -1179,6 +1203,27 @@ def run_selective_test_run_cases(scratch):
               process_gone_within(detached_pid, seconds=5),
               "pid %d still running" % detached_pid)
         stop_leftover_process(detached_pid)
+
+    # An overrun where ps fails: the run's descendants cannot be listed, so the message says
+    # some may still be running, and tells the user.
+    failing_ps_bin = scratch / "overrun-failing-ps-bin"
+    failing_ps_bin.mkdir()
+    (failing_ps_bin / "ps").write_text(
+        "#!/bin/sh\necho 'ps: cannot read the process table' >&2\nexit 1\n")
+    (failing_ps_bin / "ps").chmod(0o755)
+    unlisted, outcome = not_run_case(
+        "overrun with ps failing", FAKE_TEST_SUITES_RUNNER_HANGS_WITH_CHILD,
+        "the selective test run had not finished when the 1-second time budget ran out, and "
+        "was stopped; the logs of the suites it ran are in " + FAKE_LOG_DIRECTORY
+        + "; the processes its suites started in their own sessions could not be listed, so "
+        "some may still be running: ps -A -o pid=,ppid= exited 1: ps: cannot read the process "
+        "table", tell_user=True, budget=HANGING_CHECK_BUDGET_SECONDS,
+        extra_environment={"PATH": "%s%s%s" % (failing_ps_bin, os.pathsep,
+                                               os.environ.get("PATH", ""))})
+    for suffix in (".child-pid", ".detached-child-pid"):
+        leftover_file = Path(str(unlisted.fake_test_suites_runner_log) + suffix)
+        if leftover_file.exists():
+            stop_leftover_process(int(leftover_file.read_text()))
 
     # The shell hook in front of the check.
     for label, options, expected in (
@@ -1226,6 +1271,10 @@ def run_selective_test_run_cases(scratch):
     selective.__file__ = str(SELECTIVE_TEST_RUN_CHECK)
     exec(compile(SELECTIVE_TEST_RUN_CHECK.read_text(), str(SELECTIVE_TEST_RUN_CHECK), "exec"),
          selective.__dict__)
+    for summary, expected in ((FAKE_FAILED_SUMMARY, 1), (FAKE_PASSED_SUMMARY, 0), ("", 0),
+                              ("SUMMARY: 0 passed, 12 failed, 12 total", 12)):
+        check("the SUMMARY line %r counts %d failed suites" % (summary, expected),
+              selective.summary_failed_count(summary) == expected)
     for configured, expected in (("", 480.0), ("abc", 480.0), ("-5", 480.0), ("0", 480.0),
                                  ("90", 90.0)):
         got = selective.time_budget_seconds({SELECTIVE_TEST_RUN_BUDGET_VARIABLE: configured})
