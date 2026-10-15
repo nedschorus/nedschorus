@@ -9,15 +9,26 @@ Usage:
 Before any step runs, git in --review-tools-worktree-at-main fetches main and
 refs/pull/<n>/head from origin and reads the two commits once. The Codex
 review's base is the merge base of those two commits, or, for a fix-round,
-the commit given as --head-commit-reviewed-before. The brief specifications
-file must hold exactly one entry, for this pull request, whose head and main
-name those same commits, and whose reviewed_before is present exactly when
---head-commit-reviewed-before is given, naming the same commit.
+the commit given as --head-commit-reviewed-before.
+
+The brief specifications file holds merge-lane-2's judgments in exactly one
+entry, for this pull request: tag, number, title, author, tests and hazards,
+and optionally overlaps. A fix-round entry also has reviewed_before,
+previous_reviews, new_commits and answer; an entry is a fix-round exactly
+when --head-commit-reviewed-before is given, and its reviewed_before names
+that same commit. The entry need not name head or main; when it does, each
+must name the commit read from origin, so a push after the facts were written
+stops the run. The file given is never changed: a copy with head and main
+filled in is written to
+briefs/reviewer-brief-specifications-pr<n>-with-head-and-main-commits-from-origin.json under the
+worktrees and outputs directory, and step 2 reads that copy. Last,
+--review-tools-worktree-at-main is checked out, detached, at the main commit
+read from origin, so every step runs main's scripts.
 
 Then each step runs from --review-tools-worktree-at-main's scripts/, never
 the pull request's, with those commits and both directory options:
   1. merge-lane-pull-request-head-and-merged-worktrees-rebuild.py <n> <head> <main>
-  2. merge-lane-pull-request-reviewer-brief-compose-with-facts.py <brief specifications file>
+  2. merge-lane-pull-request-reviewer-brief-compose-with-facts.py <the filled-in copy>
   3. merge-lane-code-review-codex-cell-run-on-pull-request-head.py <n> <base>
   4. merge-lane-pull-request-head-test-run-on-merged-worktree.py <n>
 Each step's own output passes straight through. The steps run one after
@@ -26,8 +37,9 @@ merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retar
 
 Exit codes: 0 all four steps exited 0; 1 a step exited nonzero, named on
 stdout, and no later step ran; 2 refused before any step ran: a step script
-is missing, git could not fetch or read a commit, or the brief specifications
-file is unreadable or disagrees with the commits, named on stdout.
+is missing, git could not fetch, read or check out a commit, the brief
+specifications file is unreadable, lacks a field or disagrees with the
+commits, or the filled-in copy could not be written, named on stdout.
 """
 
 import argparse
@@ -43,6 +55,18 @@ CODEX_REVIEW_STEP = "merge-lane-code-review-codex-cell-run-on-pull-request-head.
 HEAD_TEST_RUN_STEP = "merge-lane-pull-request-head-test-run-on-merged-worktree.py"
 STEPS = (WORKTREES_REBUILD_STEP, REVIEWER_BRIEF_STEP, CODEX_REVIEW_STEP, HEAD_TEST_RUN_STEP)
 
+# The fields REVIEWER_BRIEF_STEP reads from every entry and from a fix-round
+# entry, apart from head and main, which this program fills in. Keep in step
+# with that script's compose().
+ENTRY_FIELDS = ("tag", "number", "title", "author", "tests", "hazards")
+FIX_ROUND_ENTRY_FIELDS = ("reviewed_before", "previous_reviews", "new_commits", "answer")
+FILLED_IN_BRIEF_SPECIFICATIONS_FILE_NAME = (
+    "reviewer-brief-specifications-pr{number}-with-head-and-main-commits-from-origin.json")
+
+GENERIC_INSTRUCTION = ("If the message above names a cause you can fix, fix it and run this "
+                       "again.\n"
+                       "Otherwise, tell the user this message.")
+
 _common_spec = importlib.util.spec_from_file_location(
     "merge_lane_pull_request_helpers_common", Path(__file__).resolve().with_name(
         "merge-lane-pull-request-helpers-common-options-paths-and-token.py"))
@@ -52,19 +76,24 @@ run_all_test_suites = common.run_all_test_suites
 
 
 class RefusedBeforeAnyStep(Exception):
-    pass
+    """What stopped the run; instruction is printed after it, or nothing when None."""
+
+    def __init__(self, what_stopped, instruction=GENERIC_INSTRUCTION):
+        super().__init__(what_stopped)
+        self.instruction = instruction
 
 
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
-        description="Rebuild a pull request's worktrees, compose its reviewer brief, run the "
-                    "Codex review and run the head tests, stopping at the first step that "
-                    "fails. Does not merge.")
+        description="Move the review tools worktree to main, then rebuild a pull request's "
+                    "worktrees, compose its reviewer brief, run the Codex review and run the "
+                    "head tests, stopping at the first step that fails. Does not merge.")
     parser.add_argument("pull_request", type=int, help="the pull request's number")
     parser.add_argument("brief_specifications_file", type=Path,
-                        help="the JSON brief specifications file for this pull request, "
-                             "as merge-lane-pull-request-reviewer-brief-compose-with-facts.py "
-                             "reads it")
+                        help="merge-lane-2's JSON brief specifications file for this pull "
+                             "request; head and main may be left out, because this program "
+                             "fills them in from origin; a head or main the file does name "
+                             "must be origin's commit for that field")
     parser.add_argument("--head-commit-reviewed-before",
                         help="for a fix-round, the head commit reviewed before; the Codex "
                              "review runs from it instead of from the merge base")
@@ -107,24 +136,29 @@ def brief_specification_disagreement(checkout, specifications, number, head, mai
     entry = specifications[0]
     if not isinstance(entry, dict) or entry.get("number") != number:
         return f"its one entry is not for pull request {number}"
-    for field, commit in (("head", head), ("main", main)):
-        if field not in entry:
-            return f"its entry has no {field}; write {commit}"
-        if resolved_commit(checkout, str(entry[field])) != commit:
-            return (f"its {field} is {entry[field]}, but origin's {field} commit is {commit}; "
-                    f"write {commit} if the facts in the entry hold for that commit")
     if head_reviewed_before is None and "reviewed_before" in entry:
         return (f"its entry is a fix-round, with reviewed_before {entry['reviewed_before']}, "
                 f"but --head-commit-reviewed-before was not given, so the Codex review would "
                 f"run from the merge base")
-    if head_reviewed_before is not None:
-        if "reviewed_before" not in entry:
-            return (f"--head-commit-reviewed-before {head_reviewed_before} makes this a "
-                    f"fix-round, but its entry has no reviewed_before, previous_reviews, "
-                    f"new_commits or answer, so the brief would describe a first round")
-        if resolved_commit(checkout, str(entry["reviewed_before"])) != head_reviewed_before:
-            return (f"its reviewed_before is {entry['reviewed_before']}, but "
-                    f"--head-commit-reviewed-before is {head_reviewed_before}")
+    if head_reviewed_before is not None and "reviewed_before" not in entry:
+        return (f"--head-commit-reviewed-before {head_reviewed_before} makes this a "
+                f"fix-round, but its entry has no reviewed_before, so the brief would "
+                f"describe a first round")
+    fields = ENTRY_FIELDS + (FIX_ROUND_ENTRY_FIELDS if head_reviewed_before is not None else ())
+    missing = [field for field in fields if field not in entry]
+    if missing:
+        return (f"its entry has no {', '.join(missing)}, which the brief step reads; "
+                f"an entry needs {', '.join(ENTRY_FIELDS)}, and a fix-round entry also "
+                f"needs {', '.join(FIX_ROUND_ENTRY_FIELDS)}")
+    for field, commit in (("head", head), ("main", main)):
+        if field in entry and resolved_commit(checkout, str(entry[field])) != commit:
+            return (f"its {field} is {entry[field]}, but origin's {field} commit is {commit}, "
+                    f"so the entry's judgments may be about another commit; if they hold for "
+                    f"{commit}, delete {field} from the entry, and this program fills it in")
+    if head_reviewed_before is not None and resolved_commit(
+            checkout, str(entry["reviewed_before"])) != head_reviewed_before:
+        return (f"its reviewed_before is {entry['reviewed_before']}, but "
+                f"--head-commit-reviewed-before is {head_reviewed_before}")
     return None
 
 
@@ -144,11 +178,14 @@ def main(argv=None):
     arguments = parse_arguments(argv)
     number = arguments.pull_request
     checkout = arguments.review_tools_worktree_at_main
+    filled_in_specifications_file = (
+        arguments.merge_lane_worktrees_and_outputs_directory / "briefs"
+        / FILLED_IN_BRIEF_SPECIFICATIONS_FILE_NAME.format(number=number))
     try:
         for step in STEPS:
             missing = common.review_tool_missing_message(arguments, Path("scripts") / step)
             if missing:
-                raise RefusedBeforeAnyStep(missing)
+                raise RefusedBeforeAnyStep(missing, instruction=None)
         main_commit = fetched_commit(checkout, "refs/heads/main")
         head_commit = fetched_commit(checkout, f"refs/pull/{number}/head")
         head_reviewed_before = None
@@ -157,8 +194,12 @@ def main(argv=None):
             if head_reviewed_before is None:
                 raise RefusedBeforeAnyStep(
                     f"--head-commit-reviewed-before {arguments.head_commit_reviewed_before} "
-                    f"is not a commit in {checkout}.\n"
-                    f"If the commit is right, fetch it into {checkout} and run this again.")
+                    f"is not a commit in {checkout}.",
+                    instruction=f"If the commit is right, fetch it into {checkout} and run "
+                                f"this again.\n"
+                                f"If the commit is wrong, run this again with "
+                                f"--head-commit-reviewed-before set to the head commit that "
+                                f"was reviewed before.")
             base, base_kind = head_reviewed_before, "head commit reviewed before"
         else:
             base, base_kind = git(checkout, "merge-base", main_commit, head_commit), "merge base"
@@ -172,19 +213,37 @@ def main(argv=None):
             checkout, specifications, number, head_commit, main_commit, head_reviewed_before)
         if disagreement:
             raise RefusedBeforeAnyStep(
-                f"the brief specifications file {arguments.brief_specifications_file} does "
-                f"not match the commits: {disagreement}.\n"
-                f"Correct the file and run this again.")
+                f"the brief specifications file {arguments.brief_specifications_file} "
+                f"cannot be used for this run: {disagreement}.",
+                instruction="Correct the file and run this again.")
+        try:
+            filled_in_specifications_file.parent.mkdir(parents=True, exist_ok=True)
+            filled_in_specifications_file.write_text(json.dumps(
+                [{**specifications[0], "head": head_commit, "main": main_commit}],
+                indent=2) + "\n")
+        except OSError as failure:
+            raise RefusedBeforeAnyStep(
+                f"could not write the brief specifications with head and main filled in to "
+                f"{filled_in_specifications_file}: {failure}") from failure
+        try:
+            git(checkout, "checkout", "-q", "--detach", main_commit)
+        except RefusedBeforeAnyStep as failure:
+            raise RefusedBeforeAnyStep(
+                str(failure),
+                instruction=f"If git names changes in {checkout} that the checkout would "
+                            f"overwrite, tell the user this message instead of discarding "
+                            f"the changes, because they may be someone's unsaved work.\n"
+                            + GENERIC_INSTRUCTION) from failure
     except RefusedBeforeAnyStep as refusal:
-        print(f"PR {number}: no step run: {refusal}\n"
-              f"If the message above names a cause you can fix, fix it and run this again.\n"
-              f"Otherwise, tell the user this message.", flush=True)
+        print(f"PR {number}: no step run: {refusal}", flush=True)
+        if refusal.instruction:
+            print(refusal.instruction, flush=True)
         return 2
 
     print(f"PR {number}: head {head_commit}, main {main_commit}, Codex review base {base} "
           f"({base_kind})", flush=True)
     steps = ((WORKTREES_REBUILD_STEP, [str(number), head_commit, main_commit]),
-             (REVIEWER_BRIEF_STEP, [str(arguments.brief_specifications_file)]),
+             (REVIEWER_BRIEF_STEP, [str(filled_in_specifications_file)]),
              (CODEX_REVIEW_STEP, [str(number), base]),
              (HEAD_TEST_RUN_STEP, [str(number)]))
     for position, (step, step_arguments) in enumerate(steps, start=1):
