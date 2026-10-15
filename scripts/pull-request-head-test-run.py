@@ -6,6 +6,9 @@ a change made and reverted during the suites remains undetectable.
 
 A partial append can leave a torn record that prevents subsequent records from being read.
 
+The runner's output is copied to stderr line by line as it arrives, so a run stopped before
+it ends still shows its progress; stdout keeps only the SUMMARY line and where the record went.
+
 Exit codes: 0 suites passed, 1 suite failed, 2 refused or unable to start, 4 failed step,
 5 record not written, 7 uncaught exception. Local logs and the record remain available for recovery."""
 
@@ -28,12 +31,26 @@ REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 EXIT_STOPPED_BY_AN_UNCAUGHT_EXCEPTION = 7
 
 
+def stop_using_stderr():
+    """Point sys.stderr at /dev/null, so a stream whose reader has gone cannot fail again."""
+    # Python flushes sys.stderr again at exit, and a failure there replaces the exit code with 120.
+    sys.stderr = open(os.devnull, "w")
+
+
+def write_to_stderr(message: str):
+    """Write every line of this program's stderr here: the first failed write must not stop the run."""
+    try:
+        print(message, file=sys.stderr, flush=True)
+    except (OSError, ValueError):
+        stop_using_stderr()
+
+
 def exit_code_after_reporting_the_uncaught_exception() -> int:
     """Report the active exception and return an exit code distinct from a failed suite."""
-    traceback.print_exc()
-    print(f"{PROGRAM}: not finished — the error above stopped this program, and this run "
+    write_to_stderr(traceback.format_exc())
+    write_to_stderr(f"{PROGRAM}: not finished — the error above stopped this program, and this run "
           f"gives no verdict.\n"
-          f"Tell the user what the error above says.", file=sys.stderr)
+          f"Tell the user what the error above says.")
     return EXIT_STOPPED_BY_AN_UNCAUGHT_EXCEPTION
 
 
@@ -168,6 +185,11 @@ def bytes_of_text_sent_to_a_command(text: str) -> int:
     return len(text.encode(locale.getpreferredencoding(False)))
 
 
+def stream_for_the_runners_output():
+    """Where the runner's lines are copied as they arrive: this program's stderr."""
+    return sys.stderr
+
+
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         prog=PROGRAM,
@@ -197,21 +219,20 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
 
     resolved = daily.git(checkout, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
     if resolved.returncode != 0 or not resolved.stdout.strip():
-        print(f"{PROGRAM}: not run — git cannot resolve HEAD to a commit in {checkout}.\n"
-              f"Pass --checkout the top directory of a checkout at the commit to test.",
-              file=sys.stderr)
+        write_to_stderr(f"{PROGRAM}: not run — git cannot resolve HEAD to a commit in {checkout}.\n"
+                        f"Pass --checkout the top directory of a checkout at the commit to test.")
         return EXIT_CHECKOUT_REFUSED
     head = resolved.stdout.strip()
     differing, why_status_failed = first_tracked_file_that_differs(checkout)
     if why_status_failed is not None:
-        print(f"{PROGRAM}: not run — git status failed in {checkout}: {why_status_failed}\n"
-              f"Fix what git reports, then run this again.", file=sys.stderr)
+        write_to_stderr(f"{PROGRAM}: not run — git status failed in {checkout}: {why_status_failed}\n"
+              f"Fix what git reports, then run this again.")
         return EXIT_CHECKOUT_REFUSED
     if differing is not None:
-        print(f"{PROGRAM}: not run — a tracked file in {checkout} differs from its commit "
+        write_to_stderr(f"{PROGRAM}: not run — a tracked file in {checkout} differs from its commit "
               f"{head}: {differing}\n"
               f"Pass --checkout a checkout whose tracked files match the commit to test, "
-              f"such as a detached worktree at that commit.", file=sys.stderr)
+              f"such as a detached worktree at that commit.")
         return EXIT_CHECKOUT_REFUSED
 
     steps_failed = []
@@ -262,9 +283,20 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
             "--log-dir", str(logs)]
         if arguments.recorded_inputs_directory:
             command += ["--recorded-inputs-directory", arguments.recorded_inputs_directory]
-        completed, seconds_waiting_for_lock, lock_never_released = (
-            daily.run_test_suite_runner_waiting_for_the_machine_lock(
-                command, checkout, monotonic))
+        try:
+            completed, seconds_waiting_for_lock, lock_never_released = (
+                daily.run_test_suite_runner_waiting_for_the_machine_lock(
+                    command, checkout, monotonic, stream_to=stream_for_the_runners_output()))
+            copy_failure = None
+        except daily.RunnerOutputCopyFailed as failure:
+            completed, lock_never_released, copy_failure = failure.completed, False, failure.reason
+        if copy_failure is not None:
+            steps_failed.append((
+                f"writing {run_all_test_suites.PROGRAM}'s output to this program's stderr "
+                f"failed ({copy_failure}); the runner ran to its end and its output is in "
+                "the record, but a run whose output was lost on the way is no verdict",
+                "Run this again with a stderr that can be written, such as a file or a "
+                "terminal that stays open."))
         if lock_never_released:
             steps_failed.append(
                 daily.lock_never_taken_step_failed(completed, seconds_waiting_for_lock))
@@ -327,7 +359,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
               f"{after_the_first_line.count(chr(10)) + 2} lines\n{after_the_first_line}")
 
     for what_failed, instruction in steps_failed:
-        print(f"{PROGRAM}: {what_failed}\n{instruction}", file=sys.stderr)
+        write_to_stderr(f"{PROGRAM}: {what_failed}\n{instruction}")
 
     file_name = f"{head}.txt"
     citation = (f"{mark.NED_BOX_SSH_TARGET}:{arguments.log_store_root}/"
@@ -337,10 +369,10 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
     try:
         local_copy.write_text(record + "\n", encoding="utf-8")
     except OSError as error:
-        print(f"{PROGRAM}: the record was not written: its local copy {local_copy} could "
+        write_to_stderr(f"{PROGRAM}: the record was not written: its local copy {local_copy} could "
               f"not be written ({type(error).__name__}: {error}).\n"
               f"Tell the user what the line above says.\n"
-              f"Fix what the error names, then run this again.", file=sys.stderr)
+              f"Fix what the error names, then run this again.")
         return daily.EXIT_RECORD_NOT_WRITTEN
     write_command = write_record_command(
         arguments.log_store_root, machine, file_name,
@@ -359,21 +391,20 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
         append_by_hand = (f"{' '.join(shlex.quote(part) for part in by_hand)} < "
                           f"{shlex.quote(str(local_copy))}")
         if TEST_LOG_TOOK_PART_OF_THE_RECORD in str(error):
-            print(f"{PROGRAM}: the record was not written to {citation} ({error}): "
+            write_to_stderr(f"{PROGRAM}: the record was not written to {citation} ({error}): "
                   f"a partial record now ends that test log, and appending the record "
                   f"again would leave it in the middle.\n"
                   f"Tell the user what the line above says, and the remedy in the lines "
                   f"below.\n"
                   f"Remove the partial record from the end of {citation} by hand.\n"
                   f"Once it is removed, write the record by running on this machine: "
-                  f"{append_by_hand}", file=sys.stderr)
+                  f"{append_by_hand}")
             return daily.EXIT_RECORD_NOT_WRITTEN
         when = ("When ned-box answers ssh again" if ssh_target
                 else "When the cause is fixed")
-        print(f"{PROGRAM}: the record was not written to {citation} ({error}).\n"
-              f"Tell the user what the line above says, and the remedy in the line below.\n"
-              f"{when}, write the record by running on this machine: {append_by_hand}",
-              file=sys.stderr)
+        write_to_stderr(f"{PROGRAM}: the record was not written to {citation} ({error}).\n"
+                        f"Tell the user what the line above says, and the remedy in the line below.\n"
+                        f"{when}, write the record by running on this machine: {append_by_hand}")
         return daily.EXIT_RECORD_NOT_WRITTEN
 
     if summary is not None and verdict_is_on_the_head:

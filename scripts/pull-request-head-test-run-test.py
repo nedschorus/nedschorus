@@ -273,6 +273,7 @@ class RunResult:
         self.stderr = stderr
         self.ssh_calls = ssh_calls
         self.runner_calls = runner_calls
+        self.runner_output_copied = ""
 
     def __repr__(self):
         return (f"exit {self.code}\nstdout: {self.stdout}\nstderr: {self.stderr}\n"
@@ -430,6 +431,10 @@ class Fixture:
         os.environ["PATH"] = f"{fake_ssh}{os.pathsep}{original_path}"
         os.environ[STAND_IN_RUNNER_BEHAVIOUR_FILE_VARIABLE] = str(behaviour_file)
         stdout, stderr = io.StringIO(), io.StringIO()
+        # Kept apart from stderr, so the cases read the program's own lines there.
+        runner_output_copied = io.StringIO()
+        saved_stream = program.stream_for_the_runners_output
+        program.stream_for_the_runners_output = lambda: runner_output_copied
         directory_before = os.getcwd()
         if started_in is not None:
             os.chdir(started_in)
@@ -440,6 +445,7 @@ class Fixture:
                     now=moment, monotonic=lambda: clock[0])
         finally:
             os.chdir(directory_before)
+            program.stream_for_the_runners_output = saved_stream
             os.environ["PATH"] = original_path
             os.environ.pop(STAND_IN_RUNNER_BEHAVIOUR_FILE_VARIABLE, None)
             os.getpid = saved_getpid
@@ -454,7 +460,9 @@ class Fixture:
         if cited is not None:
             self.runs_that_cited[cited.group(1)] = (
                 self.runs_that_cited.get(cited.group(1), 0) + 1)
-        return RunResult(code, stdout.getvalue(), stderr.getvalue(), ssh_calls, runner_calls)
+        result = RunResult(code, stdout.getvalue(), stderr.getvalue(), ssh_calls, runner_calls)
+        result.runner_output_copied = runner_output_copied.getvalue()
+        return result
 
     def record_files(self):
         """Every file under the log-store root, relative to it."""
@@ -500,6 +508,17 @@ def run_cases_on_ned_box(workspace: Path):
     record = fixture.record("ned-box")
     call = result.runner_calls[0] if result.runner_calls else {}
     check("a passing run exits 0", result.code == 0, repr(result))
+    check("every line the runner printed is copied, in order, to the stream for the "
+          "runner's output, and none of them reaches this program's stdout or stderr",
+          result.runner_output_copied == "\n".join(
+              [fixture.runner_first_line(), INPUTS_RECORDED_LINE,
+               *PASSING_RUNNER_LINES]) + "\n"
+          and not any(line in result.stdout + result.stderr
+                      for line in PASSING_RUNNER_LINES
+                      if line and not line.startswith("SUMMARY:")),
+          f"{result.runner_output_copied!r}\n{result!r}")
+    check("the stream for the runner's output is this program's stderr",
+          program.stream_for_the_runners_output() is sys.stderr)
     check("on ned-box the record is written locally, with no ssh, as "
           "pull-request-head-test-runs/ned-box/<the head's full hash>.txt",
           fixture.record_files() == [record_path] and len(fixture.head) == 40
@@ -778,11 +797,21 @@ def run_cases_on_ned_box(workspace: Path):
             runs_of_the_runner.append(keywords)
         return subprocess_run(command, *positional, **keywords)
 
+    subprocess_popen = subprocess.Popen
+
+    def subprocess_popen_that_writes_down_each_run_of_the_runner(command, *positional,
+                                                                 **keywords):
+        if list(command[:2]) == [sys.executable, str(fixture.runner)]:
+            runs_of_the_runner.append(keywords)
+        return subprocess_popen(command, *positional, **keywords)
+
     subprocess.run = subprocess_run_that_writes_down_each_run_of_the_runner
+    subprocess.Popen = subprocess_popen_that_writes_down_each_run_of_the_runner
     try:
         result = fixture.run()
     finally:
         subprocess.run = subprocess_run
+        subprocess.Popen = subprocess_popen
     check("the daily run's function starts the runner with no descriptor to hold, since "
           "this program takes no lock",
           result.code == 0 and len(result.runner_calls) == 1 and len(runs_of_the_runner) == 1
@@ -1007,7 +1036,7 @@ def run_cases_on_ned_box(workspace: Path):
           and not recorded_inputs.exists(), repr(result))
     commands_run = []
 
-    def runner_that_is_not_started(command, run_from, monotonic):
+    def runner_that_is_not_started(command, run_from, monotonic, stream_to=None):
         commands_run.append((command, run_from))
         return (subprocess.CompletedProcess(
             command, 0, stdout=f"{fixture.runner_first_line()}\n{PASSING_SUMMARY_LINE}\n",
@@ -1031,6 +1060,55 @@ def run_cases_on_ned_box(workspace: Path):
           and commands_run[0][1] == fixture.checkout
           and any(line.startswith(f"runner: {runner_beside_the_program}, ")
                   for line in record_lines), f"{commands_run!r}\n{result!r}")
+
+    def runner_whose_output_could_not_be_copied(command, run_from, monotonic, stream_to=None):
+        raise daily.RunnerOutputCopyFailed(
+            "OSError: [Errno 32] Broken pipe",
+            subprocess.CompletedProcess(
+                command, 0, stdout=f"{fixture.runner_first_line()}\n{PASSING_SUMMARY_LINE}\n",
+                stderr=""))
+
+    daily.run_test_suite_runner_waiting_for_the_machine_lock = (
+        runner_whose_output_could_not_be_copied)
+    try:
+        result = fixture.run(runner_program=None)
+    finally:
+        daily.run_test_suite_runner_waiting_for_the_machine_lock = saved_function
+    record_lines = (fixture.record("ned-box") or "").splitlines()
+    check("when writing the runner's output to stderr fails, the run gives no verdict "
+          "even though the runner passed: exit 4, and the record says the copy failed and "
+          "still holds the runner's SUMMARY line",
+          result.code == 4
+          and any("output to this program's stderr failed (OSError: [Errno 32] Broken "
+                  "pipe); the runner ran to its end" in line for line in record_lines)
+          and PASSING_SUMMARY_LINE in record_lines
+          and record_lines[-1:] == ["pull-request-head-test-run exit code: 4"],
+          f"{result!r}\n{record_lines!r}")
+
+    # A really closed stderr pipe, as when the program is run piped to `head` or over an ssh
+    # session that closed: the program runs as its own process, with the pipe's reader gone.
+    local_copies_before = set(fixture.temporary.rglob(
+        program.PULL_REQUEST_HEAD_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME))
+    counts_before = counts_of_records_by_file(fixture)
+    closed_stderr_run = run_as_a_program_with_stderr_a_closed_pipe(fixture)
+    local_copies = set(fixture.temporary.rglob(
+        program.PULL_REQUEST_HEAD_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME)) - local_copies_before
+    # The child process reads the machine's real name, not the fixture's, so its record is
+    # under either machine's directory.
+    counts_after = counts_of_records_by_file(fixture)
+    new_records = sorted(name for name, count in counts_after.items()
+                         if count > counts_before.get(name, 0))
+    for new_record in new_records:
+        fixture.runs_that_cited[new_record] = fixture.runs_that_cited.get(new_record, 0) + 1
+    check("with stderr a pipe whose reader is gone, the program exits 4 (the failed copy of "
+          "the runner's output), not 120, and writes the record to its local copy and to "
+          "the log-store",
+          closed_stderr_run.returncode == 4 and len(local_copies) == 1
+          and len(new_records) == 1
+          and re.fullmatch(rf"pull-request-head-test-runs/(ned-box|mac)/{fixture.head}\.txt",
+                           new_records[0]) is not None
+          and "record written to" in closed_stderr_run.stdout,
+          f"{closed_stderr_run.returncode}\n{closed_stderr_run.stdout}\n{local_copies}")
 
     result = fixture.run(runner_program=Path("scripts") / "run-all-test-suites.py",
                          started_in=fixture.reference)
@@ -1767,6 +1845,122 @@ def run_cases_as_a_program(workspace: Path):
           f"{not_loaded.returncode}\n{not_loaded.stdout}\n{not_loaded.stderr}")
 
 
+def counts_of_records_by_file(fixture) -> dict:
+    return {name: len(records_of_a_test_log((fixture.log_store / name).read_text(encoding="utf-8")))
+            for name in fixture.record_files()}
+
+
+def run_as_a_program_with_stderr_a_closed_pipe(fixture, extra_arguments=(), arguments=None,
+                                               temporary_directory=None):
+    """The program run as its own process with stderr a pipe whose reader is gone, the
+    fake ssh first on PATH and the stand-in runner passing. The process reads the
+    machine's real name, so its record lands under ned-box or mac."""
+    scratch = fixture.scratch_for_next_run()
+    behaviour_file = scratch / "stand-in-runner-behaviour.json"
+    behaviour_file.write_text(json.dumps(
+        {"exits": [0], "lines": PASSING_RUNNER_LINES,
+         "calls_file": str(scratch / "stand-in-runner-calls.json")}), encoding="utf-8")
+    fake_ssh = fixture.fake_ssh_directory(scratch, SSH_THAT_RUNS_THE_COMMAND_HERE)
+    reader, writer = os.pipe()
+    os.close(reader)
+    try:
+        return subprocess.run(
+            [sys.executable, str(SCRIPT_PATH),
+             *(arguments if arguments is not None
+               else fixture.arguments(runner_program=fixture.runner)), *extra_arguments],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=writer, text=True,
+            timeout=120, env={**os.environ,
+                              "PATH": f"{fake_ssh}{os.pathsep}{os.environ.get('PATH', '')}",
+                              STAND_IN_RUNNER_BEHAVIOUR_FILE_VARIABLE: str(behaviour_file)})
+    finally:
+        os.close(writer)
+
+
+def run_cases_of_stderr_that_cannot_be_written(workspace: Path):
+    """Each message the program writes to a stderr whose reader is gone still ends in the
+    exit code the message belongs to, and no line but write_to_stderr's writes to stderr."""
+    import ast
+    fixture = Fixture(workspace / "stderr-that-cannot-be-written")
+    not_a_checkout = fixture.scratch_for_next_run() / "not-a-checkout"
+    not_a_checkout.mkdir()
+    refused = run_as_a_program_with_stderr_a_closed_pipe(
+        fixture, arguments=[*fixture.arguments(checkout=not_a_checkout,
+                                               runner_program=fixture.runner)])
+    check("with stderr a closed pipe, a checkout git cannot resolve is refused with exit 2, "
+          "not 7",
+          refused.returncode == 2 and refused.stdout == "",
+          f"{refused.returncode}\n{refused.stdout}")
+
+    a_file = fixture.scratch_for_next_run() / "a-file-where-the-log-store-should-be"
+    a_file.write_text("not a directory\n", encoding="utf-8")
+    arguments = fixture.arguments(runner_program=fixture.runner)
+    arguments[arguments.index("--log-store-root") + 1] = str(a_file / "log-store")
+    not_written = run_as_a_program_with_stderr_a_closed_pipe(fixture, arguments=arguments)
+    check("with stderr a closed pipe, a record the log-store cannot take is exit 5, not 7",
+          not_written.returncode == 5,
+          f"{not_written.returncode}\n{not_written.stdout}")
+
+    a_temporary_file = fixture.scratch_for_next_run() / "a-file-where-the-temporary-directory-is"
+    a_temporary_file.write_text("not a directory\n", encoding="utf-8")
+    arguments = fixture.arguments(runner_program=fixture.runner)
+    arguments[arguments.index("--temporary-directory") + 1] = str(a_temporary_file)
+    stopped = run_as_a_program_with_stderr_a_closed_pipe(fixture, arguments=arguments)
+    check("with stderr a closed pipe, an exception nothing catches still exits 7, not 120",
+          stopped.returncode == 7 and stopped.stdout == "",
+          f"{stopped.returncode}\n{stopped.stdout}")
+
+    # write_to_stderr's own except branch: the first failed write stops further use of
+    # stderr. A write that cannot fail again is the proof the stream was replaced.
+    class StderrThatRefuses:
+        def write(self, text):
+            raise BrokenPipeError(32, "Broken pipe")
+
+        def flush(self):
+            raise BrokenPipeError(32, "Broken pipe")
+
+    saved_stderr = sys.stderr
+    sys.stderr = StderrThatRefuses()
+    try:
+        program.write_to_stderr("first")
+        replaced = not isinstance(sys.stderr, StderrThatRefuses)
+        program.write_to_stderr("second")
+    finally:
+        broken_stderr_after = sys.stderr
+        sys.stderr = saved_stderr
+        if broken_stderr_after is not saved_stderr and replaced:
+            broken_stderr_after.close()
+    check("write_to_stderr, on a failed write, replaces stderr so no later write fails",
+          replaced)
+
+    # The docstring of write_to_stderr: nothing else in the program writes to stderr.
+    tree = ast.parse(SCRIPT_PATH.read_text(encoding="utf-8"))
+    allowed = {"write_to_stderr", "stop_using_stderr", "stream_for_the_runners_output"}
+    offenders = []
+
+    def scan(node, inside):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            inside = node.name in allowed or inside
+        if (isinstance(node, ast.Attribute) and node.attr in ("stderr", "__stderr__")
+                and ast.unparse(node.value) == "sys" and not inside):
+            offenders.append(f"line {node.lineno}: {ast.unparse(node)}")
+        if isinstance(node, ast.Call):
+            called = ast.unparse(node.func)
+            if (re.fullmatch(r"(traceback\.)?print_(exc|exception|stack|tb|last)", called)
+                    or called in ("warnings.warn", "faulthandler.dump_traceback")):
+                offenders.append(f"line {node.lineno}: {called}")
+        if isinstance(node, ast.ImportFrom) and node.module in ("sys", "traceback") and any(
+                alias.name in ("stderr", "__stderr__", "print_exc", "print_exception",
+                               "print_stack", "print_tb", "print_last")
+                for alias in node.names):
+            offenders.append(f"line {node.lineno}: from {node.module} import ...")
+        for child in ast.iter_child_nodes(node):
+            scan(child, inside)
+
+    scan(tree, False)
+    check("nothing but write_to_stderr, stop_using_stderr and the runner-output stream "
+          "function reaches sys.stderr or prints a traceback", not offenders, str(offenders))
+
+
 def run_log_store_readme_cases():
     readme = record_shipper.STORE_README
     kind = program.PULL_REQUEST_HEAD_TEST_RUNS_KIND_DIRECTORY_NAME
@@ -1791,6 +1985,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_cases_of_the_two_byte_counts(workspace_root)
     run_cases_of_two_writers_at_once(workspace_root)
     run_cases_as_a_program(workspace_root)
+    run_cases_of_stderr_that_cannot_be_written(workspace_root)
     run_log_store_readme_cases()
 
 if failures:
