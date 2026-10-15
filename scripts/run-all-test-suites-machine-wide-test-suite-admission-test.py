@@ -204,7 +204,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
         if handle is not None:
             handle.close()
 
-    # --- Suites run outside the test sandbox ---------------------------------
+    # --- Suites run without any sandbox ---------------------------------------
     directory = scratch / "outside"
     order = []
     admission, clock = admission_in(directory, Readings())
@@ -215,16 +215,16 @@ with tempfile.TemporaryDirectory() as scratch_name:
         return original_open_locked(path, blocking)
 
     admission.open_locked = noting_open_locked
-    with admission.admitted("outside-test.py", outside_the_test_sandbox=True):
+    with admission.admitted("outside-test.py", without_any_sandbox=True):
         pass
-    check("a suite run outside the test sandbox takes the lock those suites share before "
+    check("a suite run without any sandbox takes the lock those suites share before "
           "it takes a slot",
-          order and order[0] == runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX_LOCK_FILE_NAME
+          order and order[0] == runner.SUITES_RUN_WITHOUT_ANY_SANDBOX_LOCK_FILE_NAME
           and any(name.startswith(runner.TEST_SUITE_ADMISSION_SLOT_FILE_PREFIX)
                   for name in order[1:]), order)
 
     directory = scratch / "outside-held"
-    lock_path = directory / runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX_LOCK_FILE_NAME
+    lock_path = directory / runner.SUITES_RUN_WITHOUT_ANY_SANDBOX_LOCK_FILE_NAME
     directory.mkdir()
     other = open(lock_path, "a")
     fcntl.flock(other.fileno(), fcntl.LOCK_EX)
@@ -233,7 +233,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
     slots_while_waiting = []
 
     def run_outside_suite():
-        with admission.admitted("outside-test.py", outside_the_test_sandbox=True):
+        with admission.admitted("outside-test.py", without_any_sandbox=True):
             pass
 
     waiter = threading.Thread(target=run_outside_suite)
@@ -249,10 +249,10 @@ with tempfile.TemporaryDirectory() as scratch_name:
                     slots_while_waiting.append(probe.name)
     other.close()
     waiter.join(10)
-    check("while another run's suite outside the test sandbox holds that lock, a suite "
+    check("while another run's suite run without any sandbox holds that lock, a suite "
           "outside waits for it holding no slot, and says what it waits for",
           not slots_while_waiting and not waiter.is_alive()
-          and any("outside the test sandbox" in line for line in said),
+          and any("run without any sandbox" in line for line in said),
           (slots_while_waiting, said))
 
     # --- Once a minute, what the suites wait for -----------------------------
@@ -462,13 +462,13 @@ with tempfile.TemporaryDirectory() as scratch_name:
         if outside:
             busy.cpu = 10.0
             holder = admission.open_locked(
-                directory / runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX_LOCK_FILE_NAME,
+                directory / runner.SUITES_RUN_WITHOUT_ANY_SANDBOX_LOCK_FILE_NAME,
                 blocking=False)
         outcome = []
 
         def wait_for_admission(admission=admission, outside=outside, outcome=outcome):
             try:
-                with admission.admitted("waiting-test.py", outside_the_test_sandbox=outside):
+                with admission.admitted("waiting-test.py", without_any_sandbox=outside):
                     outcome.append("started")
             except runner.MachineWideTestSuiteAdmissionCancelled as error:
                 outcome.append(str(error))

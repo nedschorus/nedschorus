@@ -8,7 +8,7 @@ process the killed run recorded has ended. These cases kill a real runner and
 look at what the next run removes.
 
 This suite runs outside the signal sandbox (it is listed in
-SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX): it starts the runner, which starts
+SUITES_RUN_WITHOUT_ANY_SANDBOX): it starts the runner, which starts
 bwrap, and bwrap cannot start inside bwrap. Outside the sandbox a signal sent
 to the wrong process can reach every process of this account, every agent
 included. So every signal this suite sends goes through
@@ -160,7 +160,7 @@ def start_run(root, repo, name):
     """Start the runner on repo with its own log directory; return (process, log dir)."""
     environment = dict(os.environ)
     environment.pop(module.SIGNAL_SANDBOX_INSIDE_VARIABLE, None)
-    # In the checkout, which a suite outside the test sandbox and this test share; inside
+    # In the checkout, which a suite run without any sandbox and this test share; inside
     # a test sandbox the checkout is a copy-on-write overlay, so a sandboxed suite reports
     # its start in its output instead.
     environment[STARTED_FILE_VARIABLE] = str(repo / f"{name}.started")
@@ -280,7 +280,7 @@ else:
     else:
         # A suite the runner starts outside the sandbox outlives a killed runner: that
         # is the case where a later run could delete traces still being written.
-        unconfined_suite = next(iter(module.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX))
+        unconfined_suite = next(iter(module.SUITES_RUN_WITHOUT_ANY_SANDBOX))
         with tempfile.TemporaryDirectory() as scratch:
             root = pathlib.Path(scratch)
             repo = make_repo(root, unconfined_suite)

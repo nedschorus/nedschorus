@@ -11,7 +11,7 @@ overlapping runs of scripts/resupervise-seat-test.py both exited 0 while
 silently dropping cases to SKIP, because they shared tmux sockets under /tmp.
 
 Linux with bwrap only; elsewhere every case is skipped. It starts bwrap, which
-cannot start inside bwrap, so the runner runs it outside the test sandbox; run
+cannot start inside bwrap, so the runner runs it without any sandbox; run
 inside a sandbox anyway, by a runner that does not list it, it skips.
 
 Run: python3 scripts/run-all-test-suites-overlapping-runs-real-process-test.py   (exit 0 = all passed)

@@ -20,7 +20,7 @@ On Linux with bwrap each mutant's suites run in test sandboxes of their own, as
 scripts/run-all-test-suites.py runs them, so the script takes no lock and
 overlaps other test runs; the admission scripts/run-all-test-suites.py uses
 decides when each file's mutants start, they hold one of its slots while they
-run, at low priority, and a suite that runs outside the test sandbox first
+run, at low priority, and a suite that runs without any sandbox first
 takes the lock those suites share with every other run. Elsewhere, while cosmic-ray runs, the script holds the
 lock scripts/run-all-test-suites.py takes (--lock-file, default
 ~/.claude/.run-all-test-suites.lock), because each mutant is a test run and two
@@ -501,7 +501,7 @@ def main(argv=None):
                                   f"has no sibling suite, so its changed lines are untested")
                             continue
                         print(f"MUTATING  {path} with {', '.join(suites)}", flush=True)
-                        outside = runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX
+                        outside = runner.SUITES_RUN_WITHOUT_ANY_SANDBOX
                         for suite in suites:
                             if sandbox_prefix and suite in outside:
                                 print(f"NO SANDBOX  {suite} runs WITHOUT the signal "
@@ -509,7 +509,7 @@ def main(argv=None):
                         admitted = (contextlib.nullcontext() if admission is None else
                                     admission.admitted(
                                         f"mutation testing of {path}",
-                                        outside_the_test_sandbox=any(
+                                        without_any_sandbox=any(
                                             suite in outside for suite in suites)))
                         started_proofs = {}
                         if in_test_sandboxes:

@@ -851,7 +851,7 @@ def run_cases():
             config = ((control / "config.toml").read_text()
                       if (control / "config.toml").exists() else "")
             check("with the sandbox on, the run says each suite runs in its own PID namespace",
-                  f"each suite runs in its own PID namespace: {fake_bin / 'bwrap'}"
+                  f"each suite runs in its own test sandbox: {fake_bin / 'bwrap'}"
                   in completed.stdout, f"rc={completed.returncode} out={completed.stdout}")
             check("a suite listed to run outside the sandbox is named in a NO SANDBOX line",
                   f"NO SANDBOX  {outside_suite} runs WITHOUT the signal sandbox"

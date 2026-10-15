@@ -70,7 +70,7 @@ stdout and stderr together into its own log file. A suite that starts
 `python3` itself gets whatever PATH finds, not --python.
 
 EACH SUITE RUNS IN A SIGNAL SANDBOX on Linux: bwrap with
-SIGNAL_SANDBOX_BWRAP_ARGUMENTS, so the suite and everything it starts sit in a
+TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE, so the suite and everything it starts sit in a
 PID namespace of their own. The suite runs as the same user, so a signal a
 suite sends can reach only the processes it started, never the agent-seats
 that run as the same account.
@@ -134,7 +134,7 @@ signals this program; the run stops with exit 2 when sandbox-exec is missing,
 cannot start, or lets that signal through. A run started
 inside the sandbox, such as one a suite of this program starts, does not
 start another: bwrap cannot start inside bwrap, and its suites are already
-confined. The suites listed in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX cannot
+confined. The suites listed in SUITES_RUN_WITHOUT_ANY_SANDBOX cannot
 work inside it and run unconfined, each named in the report with the reason.
 A suite bwrap reports as exiting 128+N is reported as killed by signal N;
 sandbox-exec replaces itself with the suite, so a suite's exit passes through.
@@ -265,7 +265,7 @@ Every run on the machine shares one admission, kept in the directory beside
 last 5 s is under 50% and its available memory is above 10 GB, read with
 psutil; at most 4 suites start per second and at most 64 run at once on the
 machine, each holding an flock on one of 64 slot files, so the kernel frees
-the slot of a killed run. A suite run outside the test sandbox first takes the
+the slot of a killed run. A suite run without any sandbox first takes the
 lock those suites share, then a slot, so it never holds a slot while it waits.
 A suite that cannot start waits with no time limit, and once a minute the run
 reports what its suites wait for. A failure to decide, such as a machine
@@ -610,7 +610,7 @@ TEST_SUITE_CREDENTIAL_ENVIRONMENT_VARIABLE_PATTERNS = (
     "*_TOKEN", "*_TOKEN_*", "*_API_KEY", "*_SECRET", "*_SECRET_*", "*PASSWORD*",
     "*_CREDENTIALS",
 )
-SIGNAL_SANDBOX_BWRAP_ARGUMENTS = (
+TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE = (
     "--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/dev/shm", "--proc", "/proc",
     "--tmpfs", "/tmp", "--tmpfs", "/run",
     *(("--tmpfs", XDG_RUNTIME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,
@@ -654,7 +654,7 @@ SIGNAL_SANDBOX_MACOS_TRIAL_SOURCE = (
     "sys.exit(f'a signal from inside the sandbox reached process {outside} outside it')\n")
 SIGNAL_NUMBER_LIMIT = 64
 # Suites that cannot work inside the sandbox run outside it, each named in the report.
-SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX = {
+SUITES_RUN_WITHOUT_ANY_SANDBOX = {
     "nc-systems/cold-read/tests/cold-read-agy-cell-test.py":
         "it starts the agy cell's own bwrap, which cannot start inside bwrap",
     "nc-systems/cold-read/tests/cold-read-fast-read-test.py":
@@ -697,7 +697,8 @@ TEST_SUITE_ADMISSION_RETRY_SECONDS = 0.25
 TEST_SUITE_ADMISSION_DIRECTORY_SUFFIX = ".test-suite-admission"
 TEST_SUITE_ADMISSION_START_TIMES_FILE_NAME = "start-times"
 TEST_SUITE_ADMISSION_SLOT_FILE_PREFIX = "slot-"
-SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX_LOCK_FILE_NAME = "suites-run-outside-the-signal-sandbox.lock"
+# The file keeps its earlier name because runners of different versions share the lock.
+SUITES_RUN_WITHOUT_ANY_SANDBOX_LOCK_FILE_NAME = "suites-run-outside-the-signal-sandbox.lock"
 TEST_SUITE_NICE_INCREMENT = 10
 MACHINE_READINGS_INTERVAL_SECONDS = 1
 MACHINE_CPU_AND_MEMORY_READINGS_FILE_NAME = "machine-cpu-and-memory-readings.tsv"
@@ -708,7 +709,7 @@ TEST_CASE_FAILURE_HISTORY_FILE_NAME = "test-case-failure-history.jsonl"
 ADMISSION_WAITED_LINE_PREFIX = "seconds suites waited for admission: "
 # The suites print one line per case opening PASS, FAIL or ok.
 TEST_CASE_LINE = re.compile(r"^\s*(?P<verdict>PASS|FAIL|ok)\b:?\s*(?P<text>.*)$")
-# A process a suite outside the test sandbox leaves running can hold its output open.
+# A process a suite run without any sandbox leaves running can hold its output open.
 TEST_SUITE_OUTPUT_DRAIN_SECONDS = 10
 # Runs inside the suite's own cgroup scope and reads the scope's counters just before
 # the scope ends, because systemd removes a scope's cgroup when its last process exits.
@@ -1573,7 +1574,7 @@ class MachineWideTestSuiteAdmission:
     TEST_SUITE_ADMISSION_STARTS_PER_SECOND suites started in the last second, and
     one of TEST_SUITE_ADMISSION_SUITES_RUNNING_AT_ONCE_CEILING slots is free. A slot
     is an flock on a slot file, so the kernel frees the slot of a run that is killed.
-    A suite run outside the test sandbox first takes the lock those suites share,
+    A suite run without any sandbox first takes the lock those suites share,
     and only then a slot, so it never holds a slot while it waits for that lock.
     A suite that cannot start waits, with no time limit; once a minute the run
     reports what the suites wait for."""
@@ -1697,16 +1698,16 @@ class MachineWideTestSuiteAdmission:
                 f"{suite} was not started: the run stopped admitting suites")
 
     @contextlib.contextmanager
-    def admitted(self, suite, outside_the_test_sandbox=False):
-        """Hold a slot, and for a suite outside the test sandbox that lock first, while the suite runs.
+    def admitted(self, suite, without_any_sandbox=False):
+        """Hold a slot, and for a suite run without any sandbox that lock first, while the suite runs.
 
         Yields the seconds the suite waited. Raises MachineWideTestSuiteAdmissionCancelled
         once cancel() is called while the suite waits."""
         started = self.clock()
         held = []
         try:
-            if outside_the_test_sandbox:
-                path = self.directory / SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX_LOCK_FILE_NAME
+            if without_any_sandbox:
+                path = self.directory / SUITES_RUN_WITHOUT_ANY_SANDBOX_LOCK_FILE_NAME
                 # Polled rather than a blocking flock, so a cancel reaches a suite waiting here.
                 while True:
                     self.raise_if_cancelled(suite)
@@ -1714,7 +1715,7 @@ class MachineWideTestSuiteAdmission:
                     if outside_lock is not None:
                         held.append(outside_lock)
                         break
-                    self.report_waiting(suite, "another run's suite outside the test sandbox "
+                    self.report_waiting(suite, "another run's suite run without any sandbox "
                                                "holds the lock those suites share")
                     self.sleep(TEST_SUITE_ADMISSION_RETRY_SECONDS)
             while True:
@@ -2064,7 +2065,7 @@ def signal_sandbox(platform=None, environment=None, which=shutil.which,
     bwrap = which("bwrap")
     if bwrap is None:
         return (), "bwrap is not on PATH (Ubuntu: sudo apt install bubblewrap)"
-    prefix = (bwrap, *SIGNAL_SANDBOX_BWRAP_ARGUMENTS,
+    prefix = (bwrap, *TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE,
               "--setenv", SIGNAL_SANDBOX_INSIDE_VARIABLE, "1")
     try:
         trial = runner([*prefix, "true"], stdin=subprocess.DEVNULL, capture_output=True,
@@ -2263,7 +2264,7 @@ def empty_file_bound_over_a_listening_socket_in_test_sandbox():
 
 def bwrap_arguments_for_one_suites_test_sandbox(checkout, writable_paths=(), suite=None,
                                                 read_only_paths=()):
-    """bwrap arguments, after SIGNAL_SANDBOX_BWRAP_ARGUMENTS, for one suite's environment.
+    """bwrap arguments, after TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE, for one suite's environment.
 
     The checkout under test is a copy-on-write overlay, so a suite can write in it but
     nothing it writes there survives it: a suite could otherwise leave code in the
@@ -2394,9 +2395,12 @@ def uncovered_listening_sockets_report_line_or_none(proc_net_unix="/proc/net/uni
         proc_net_unix, unreachable, hidden=directories_hidden_whole_in_test_sandbox())
     if not unreachable:
         return None
-    return ("listening sockets left uncovered in each test sandbox, because this program "
-            "cannot reach them and so neither can a suite: " + ", ".join(sorted(set(unreachable)))
-            + "; the run goes on, and nothing needs doing")
+    names = sorted(set(unreachable))
+    if len(names) == 1:
+        start = "a listening socket left uncovered in each test sandbox, because this program cannot reach it"
+    else:
+        start = "listening sockets left uncovered in each test sandbox, because this program cannot reach them"
+    return f"{start} and so neither can a suite: {', '.join(names)}; the run goes on, and nothing needs doing"
 
 
 def command_prefix_starting_one_suite_in_its_test_sandbox(sandbox_prefix, checkout, writable_paths=(),
@@ -2446,7 +2450,7 @@ def signal_sandbox_refusal(error, program=PROGRAM):
             f"the user the suites were not run and why, and ask the user to run "
             f"the same command from an ordinary shell on this machine.\n"
             f"On Linux, if this run is not inside another sandbox, check that "
-            f"`bwrap {' '.join(SIGNAL_SANDBOX_BWRAP_ARGUMENTS)} true` "
+            f"`bwrap {' '.join(TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE)} true` "
             f"works on this machine, and report what it prints to the user.\n"
             f"On macOS, report the reason above to the user: the suites need "
             f"{SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC} to refuse their signals to "
@@ -2455,7 +2459,7 @@ def signal_sandbox_refusal(error, program=PROGRAM):
 
 def signal_sandbox_line(prefix, unconfined_because):
     if does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(prefix):
-        return f"each suite runs in its own PID namespace: {' '.join(prefix)}"
+        return f"each suite runs in its own test sandbox: {' '.join(prefix)}"
     if prefix:
         return (f"each suite runs in a sandbox that refuses its signals to any process "
                 f"outside it: {' '.join(prefix)}")
@@ -2530,7 +2534,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
             command = [strace, "-f", "-ff", "--seccomp-bpf", "-z", "-qq", "-y", "-s", "4096",
                        "-e", "trace=%file", "-e", "signal=none",
                        "-o", str(strace_dir / "trace"), *command]
-    if suite in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX:
+    if suite in SUITES_RUN_WITHOUT_ANY_SANDBOX:
         sandbox_prefix = ()
     # The test sandbox is built from Linux's /proc and bwrap, so nothing of it is built
     # on another platform, whatever the prefix.
@@ -3091,7 +3095,7 @@ def suite_line(result):
     if result["skips"]:
         detail += f", {len(result['skips'])} skipped"
     if result.get("admitted"):
-        detail += (f", {'outside the test sandbox' if result['kind'] != 'test sandbox' else 'test sandbox'}"
+        detail += (f", {'without any sandbox' if result['kind'] != 'test sandbox' else 'test sandbox'}"
                    f", waited {result['admission_wait']:.1f}s to start")
         if result.get("cpu_seconds") is not None:
             detail += (f", {result['cpu_seconds']:.1f} CPU s, peak "
@@ -3286,9 +3290,9 @@ def main(argv=None, platform=None):
             report.line(f"{MACHINE_LOCK_WAITED_LINE_PREFIX}{seconds_waiting_for_lock:.0f}")
         if sandbox_prefix:
             for suite in chosen:
-                if suite in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX:
+                if suite in SUITES_RUN_WITHOUT_ANY_SANDBOX:
                     report.line(f"{suite} runs WITHOUT the signal sandbox: "
-                                f"{SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX[suite]}")
+                                f"{SUITES_RUN_WITHOUT_ANY_SANDBOX[suite]}")
         if in_test_sandboxes:
             uncovered = uncovered_listening_sockets_report_line_or_none()
             if uncovered is not None:
@@ -3330,8 +3334,8 @@ def main(argv=None, platform=None):
                 report.line(f"{'SELECTED' if selected else 'NOT SELECTED'} {suite}: {why}")
 
         def run_admitted(suite, **options):
-            outside = suite in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX
-            kind = (f"outside the test sandbox: {SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX[suite]}"
+            outside = suite in SUITES_RUN_WITHOUT_ANY_SANDBOX
+            kind = (f"without any sandbox: {SUITES_RUN_WITHOUT_ANY_SANDBOX[suite]}"
                     if outside and sandbox_prefix else
                     "test sandbox" if in_test_sandboxes else
                     "macOS sandbox" if platform == "darwin" and sandbox_prefix else
@@ -3343,7 +3347,7 @@ def main(argv=None, platform=None):
                                        platform=platform, **options)
                 result.update(kind=kind, admission_wait=0.0)
                 return result
-            with admission.admitted(suite, outside_the_test_sandbox=outside) as waited:
+            with admission.admitted(suite, without_any_sandbox=outside) as waited:
                 result = run_one_suite(top, interpreter, suite, log_dir,
                                        sandbox_prefix=sandbox_prefix,
                                        note_suite_process=note_suite_process,

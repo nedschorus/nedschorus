@@ -350,11 +350,11 @@ if linux_only_cases_run_here("the report's sandbox lines"):
             scratch, repository, f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
         check("with the sandbox on, report.txt says each suite runs in its own PID namespace",
               completed.returncode == 0
-              and f"each suite runs in its own PID namespace: {fake_bin / 'bwrap'}" in report,
+              and f"each suite runs in its own test sandbox: {fake_bin / 'bwrap'}" in report,
               (completed.returncode, report[-600:]))
         check("with the sandbox on, report.txt names a suite that runs outside it, and why",
               f"{OUTSIDE_SUITE} runs WITHOUT the signal sandbox: "
-              f"{runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX[OUTSIDE_SUITE]}" in report,
+              f"{runner.SUITES_RUN_WITHOUT_ANY_SANDBOX[OUTSIDE_SUITE]}" in report,
               report[-600:])
 
 # --- The mutation script's test command --------------------------------------
@@ -400,7 +400,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
                                   sandbox_prefix=marking_prefix)
     check("an ordinary suite runs under the sandbox prefix",
           "PREFIXED" in inside["log"].read_text(), inside["log"].read_text())
-    outside_suite = next(iter(runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX))
+    outside_suite = next(iter(runner.SUITES_RUN_WITHOUT_ANY_SANDBOX))
     (scratch / outside_suite).parent.mkdir(parents=True, exist_ok=True)
     (scratch / outside_suite).write_text("print('ran')\n")
     outside = runner.run_one_suite(scratch, sys.executable, outside_suite, scratch,
@@ -409,7 +409,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
           "PREFIXED" not in outside["log"].read_text()
           and "ran" in outside["log"].read_text(), outside["log"].read_text())
 
-for suite in runner.SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX:
+for suite in runner.SUITES_RUN_WITHOUT_ANY_SANDBOX:
     check(f"the suite listed to run outside the sandbox exists: {suite}",
           (SCRIPTS_DIR.parent / suite).is_file())
 
@@ -464,6 +464,14 @@ if linux_only_cases_run_here("the covers over listening sockets, and a test sand
                   "reached, and says the run goes on",
                   line is not None and unreachable_path in line and vanished not in line
                   and "the run goes on" in line, line)
+            check("one uncovered listening socket is named in the singular",
+                  line is not None and line.startswith("a listening socket left uncovered")
+                  and "cannot reach it and" in line, line)
+            listing.write_text(proc_net_unix_listing([unreachable_path, unreachable_path + "2"]))
+            line = runner.uncovered_listening_sockets_report_line_or_none(str(listing))
+            check("two uncovered listening sockets are named in the plural",
+                  line is not None and line.startswith("listening sockets left uncovered")
+                  and "cannot reach them and" in line, line)
         else:
             print("SKIP  an unreachable socket: root can reach every path")
         listing.write_text(proc_net_unix_listing([vanished]))
@@ -497,10 +505,10 @@ if linux_only_cases_run_here("the covers over listening sockets, and a test sand
 # Written out here, not read from the runner, so a runner that stops hiding one fails a case:
 # /mnt holds the backup drive's snapshots of the home directory, credentials included.
 if linux_only_cases_run_here("the fixed directories every test sandbox hides"):
-    fixed_pairs = list(zip(runner.SIGNAL_SANDBOX_BWRAP_ARGUMENTS, runner.SIGNAL_SANDBOX_BWRAP_ARGUMENTS[1:]))
+    fixed_pairs = list(zip(runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE, runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE[1:]))
     for directory in ("/mnt", "/media", "/var/snap"):
         check(f"every test sandbox hides {directory} whole with an empty tmpfs",
-              ("--tmpfs", directory) in fixed_pairs, runner.SIGNAL_SANDBOX_BWRAP_ARGUMENTS)
+              ("--tmpfs", directory) in fixed_pairs, runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE)
 
 # --- Hiding by default: writable directories, and sockets left visible ---------
 
