@@ -1462,7 +1462,7 @@ def _escaped_by_backslashes(source, position):
 
 
 def _comment_misread_after_an_escaped_blank(root, source):
-    """Return the offset of the earliest comment tree-sitter-bash starts right after an escaped blank, or None.
+    """Return the offsets of the comments tree-sitter-bash starts right after an escaped blank.
 
     tree-sitter-bash starts a comment at a # that follows an escaped space or tab, as in
     `echo \\ #word; rm x`; bash reads that # as part of the word, so the comment hides the
@@ -1476,11 +1476,11 @@ def _comment_misread_after_an_escaped_blank(root, source):
                 and _escaped_by_backslashes(source, start - 1):
             found.append(start)
         stack.extend(node.children)
-    return min(found, default=None)
+    return found
 
 
 def _comment_running_past_its_closing_backtick(root, source):
-    """Return the offset of the earliest backtick a comment inside a backticked command runs past, or None.
+    """Return the offsets of the backticks comments inside backticked commands run past.
 
     tree-sitter-bash runs a comment in `echo a # c` to the end of the line, past
     the closing backtick, so `echo `echo a # c`; rm z` loses rm z; bash ends the
@@ -1512,25 +1512,72 @@ def _comment_running_past_its_closing_backtick(root, source):
                 tick_open = not tick_open
             previous_error_open = child.type == "ERROR" and sum(
                 grandchild.type == "`" for grandchild in child.children) % 2 == 1
-    return min(found, default=None)
+    return found
 
 
-def _earliest_reader_correction(root, source):
+def _earliest_reader_correction(root, source, refused=()):
     """Return (offset, inserted) for the earliest misread of source to correct, or None.
 
     inserted is the byte to put at offset before parsing again: a backslash that
     ends a comment started after an escaped blank, or a line end that ends a
-    comment at its closing backtick. Everything that corrects a parse applies
-    this one function, so a new kind of correction is added here only.
+    comment at its closing backtick. A misread at an offset in refused, whose
+    correction _reader_correction_applied refused, is passed over. Everything
+    that corrects a parse applies this one function, so a new kind of correction
+    is added here only.
     """
-    misread = _comment_misread_after_an_escaped_blank(root, source)
-    past_backtick = _comment_running_past_its_closing_backtick(root, source)
-    if past_backtick is not None and (misread is None or past_backtick < misread):
-        return past_backtick, b"\n"
-    return None if misread is None else (misread, b"\\")
+    found = [(offset, b"\n") for offset in _comment_running_past_its_closing_backtick(root, source)]
+    found += [(offset, b"\\") for offset in _comment_misread_after_an_escaped_blank(root, source)]
+    return min((correction for correction in found if correction[0] not in refused), default=None)
 
 
-def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
+def _simple_command_starts(root):
+    starts, stack = set(), [root]
+    while stack:
+        node = stack.pop()
+        if node.type in SIMPLE_COMMAND_NODE_TYPES:
+            starts.add(node.start_byte)
+        stack.extend(node.children)
+    return starts
+
+
+QUOTED_STRING_NODE_TYPES = {"string", "raw_string", "ansi_c_string", "translated_string"}
+
+
+def _inside_a_string_outside_errors(root, byte):
+    node, quoted = root.descendant_for_byte_range(byte, byte + 1), False
+    while node is not None:
+        if node.type == "ERROR":
+            return False
+        quoted = quoted or node.type in QUOTED_STRING_NODE_TYPES
+        node = node.parent
+    return quoted
+
+
+def _reader_correction_applied(tree, source, correction):
+    """Return (source, tree) with correction made and parsed again, or None to keep the reading without it.
+
+    A correction is kept only when every simple command the reading without it
+    held is, in the reading with it, still a command or inside a quoted string
+    outside any error: a misread comment can hide an opening quote, and the
+    closing quote then reads as an opening one, so text bash reads as quoted is
+    read as a command. tree-sitter-bash can read a corrected text worse than the
+    text as written, and put commands bash runs inside an error where no command
+    is read; the guards need every command bash runs, so such a correction is
+    refused and the misread stays, read as tree-sitter-bash reads it. Every
+    correction kind is checked here, the same way.
+    """
+    at, inserted = correction
+    corrected = source[:at] + inserted + source[at:]
+    corrected_tree = parser().parse(corrected)
+    kept = _simple_command_starts(corrected_tree.root_node)
+    for start in _simple_command_starts(tree.root_node):
+        start += start >= at
+        if start not in kept and not _inside_a_string_outside_errors(corrected_tree.root_node, start):
+            return None
+    return corrected, corrected_tree
+
+
+def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None, refusals=None):
     """Return (source, tree, {placeholder: _HeredocTakenOut}) with every heredoc's body taken out.
 
     bash reads a heredoc's body in its lexer, line by line, after the line
@@ -1552,24 +1599,32 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
     A misread on the operator's own line is corrected, by the same function,
     where the body's start is found, and in source once that heredoc is taken
     out. edits, when given, gets (offset, length removed, length inserted) for each
-    change, in the order made.
+    change, in the order made. refusals, when given, gets the offset in source as
+    given of each misread whose correction _reader_correction_applied refused.
     """
     taken = {}
     original = source
     tree = parser().parse(source)
     index = 0
-    for _ in range(MAX_HEREDOCS_TAKEN_OUT + source.count(b"#")):
+    edits = [] if edits is None else edits
+    # Offsets in source of misreads whose correction was refused, as edited so far.
+    refused = set()
+    for _ in range(MAX_HEREDOCS_TAKEN_OUT + 2 * source.count(b"#")):
         start = next(iter(_heredoc_starts(tree.root_node)[1 if keep_first else 0:]), None)
         operator = start.prev_sibling if start is not None else None
         if operator is None or operator.type not in ("<<", "<<-"):
             operator = None
-        correction = _earliest_reader_correction(tree.root_node, source)
+        correction = _earliest_reader_correction(tree.root_node, source, refused)
         if correction is not None and (operator is None or correction[0] < operator.start_byte):
-            misread, inserted = correction
-            source = source[:misread] + inserted + source[misread:]
-            if edits is not None:
-                edits.append((misread, 0, 1))
-            tree = parser().parse(source)
+            applied = _reader_correction_applied(tree, source, correction)
+            if applied is None:
+                refused.add(correction[0])
+                if refusals is not None:
+                    refusals.append(_offset_before_edits(correction[0], edits))
+                continue
+            source, tree = applied
+            edits.append((correction[0], 0, 1))
+            refused = {_offset_after_edits(offset, edits[-1:]) for offset in refused}
             continue
         if operator is None or index == MAX_HEREDOCS_TAKEN_OUT:
             break
@@ -1597,10 +1652,10 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
             not any(mark in delimiter_as_written for mark in (b"'", b'"', b"\\")),
             source[body_end:resume].decode("utf-8", SHELL_TEXT_ERRORS), index)
         replacement = b"<" + placeholder.encode()
-        if edits is not None:
-            edits.append((operator_start, delimiter_end - operator_start, len(replacement)))
-            edits.append((body_start - (delimiter_end - operator_start) + len(replacement),
-                          resume - body_start, 0))
+        edits.append((operator_start, delimiter_end - operator_start, len(replacement)))
+        edits.append((body_start - (delimiter_end - operator_start) + len(replacement),
+                      resume - body_start, 0))
+        refused = {_offset_after_edits(offset, edits[-2:]) for offset in refused} - {None}
         source = (source[:operator_start] + replacement
                   + source[delimiter_end:body_start] + source[resume:])
         tree = parser().parse(source)
@@ -1624,14 +1679,17 @@ def shell_source_comments_and_unreadable_spans_after_reader_corrections(source):
 
     comments: [(start, end)] for each comment, a #! first line included.
     unreadable_spans: [(start, holds_a_hash)] for each span tree-sitter-bash
-    marks as an error; a comment inside one goes unread.
+    marks as an error, and for each misread whose correction was refused; a
+    comment inside one goes unread.
     missing_tokens: [(token, line)] for each token a line needs that never comes.
     heredocs_never_closed: [as written] for each heredoc whose body never reaches
     its closing line.
     """
-    edits = []
-    edited, tree, taken = _source_with_heredoc_bodies_taken_out(source, edits=edits)
-    comments, unreadable, missing = [], [], []
+    edits, refusals = [], []
+    edited, tree, taken = _source_with_heredoc_bodies_taken_out(source, edits=edits,
+                                                                refusals=refusals)
+    comments, missing = [], []
+    unreadable = [(at, True) for at in refusals if at is not None]
     pending = [tree.root_node]
     while pending:
         node = pending.pop()
@@ -1730,20 +1788,23 @@ def _heredoc_body_start(source, delimiter_end):
     not a line end of source and is skipped.
     """
     probe = b": " + source[delimiter_end:]
-    inserted = []
+    inserted, refused = [], set()
     tree = parser().parse(probe)
-    for _ in range(probe.count(b"#") + 1):
+    for _ in range(2 * probe.count(b"#") + 1):
         line_end = _opening_line_end(tree.root_node, probe, inserted)
-        correction = _earliest_reader_correction(tree.root_node, probe)
+        correction = _earliest_reader_correction(tree.root_node, probe, refused)
         # A misread in the body cannot move the opening line's end, and correcting
         # each one costs a parse of the whole body.
         if correction is None or (line_end is not None and correction[0] > line_end):
             break
-        at, byte = correction
-        probe = probe[:at] + byte + probe[at:]
+        applied = _reader_correction_applied(tree, probe, correction)
+        if applied is None:
+            refused.add(correction[0])
+            continue
+        (probe, tree), (at, byte) = applied, correction
         inserted = [(earlier + (earlier >= at), line) for earlier, line in inserted]
         inserted.append((at, byte == b"\n"))
-        tree = parser().parse(probe)
+        refused = {earlier + (earlier >= at) for earlier in refused}
     if line_end is None:
         return len(source)
     line_end -= sum(at < line_end for at, _ in inserted)

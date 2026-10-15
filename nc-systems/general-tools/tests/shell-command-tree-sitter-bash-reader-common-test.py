@@ -194,6 +194,20 @@ check("an escaped space before a here-string redirection leaves its blank as a w
 check("an escaped backtick inside a comment inside backticks does not end the comment",
       words_of("echo `a # c \\`b\\``; rm z")[-2:] == [["echo", "`a # c \\`b\\``"], ["rm", "z"]],
       words_of("echo `a # c \\`b\\``; rm z"))
+for command, expected in [
+        ('x "`# c`"\\\n y; tmux kill-server', ["tmux", "kill-server"]),
+        ('echo "$(tmux send-keys -t pane "`# c`"\\\n Enter)"', ["tmux", "send-keys", "-t", "pane"])]:
+    check(f"a correction is refused when tree-sitter-bash reads the corrected text with a command "
+          f"bash runs inside an error, so the command is still read: {command!r}",
+          expected in words_of(command), words_of(command))
+    read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(command.encode())
+    check(f"the misread whose correction is refused is an unreadable span: {command!r}",
+          (command.index("`", command.index("#")), True) in read.unreadable_spans, read)
+found = reader.simple_commands('cat <<EOF \\ #a "q\nr"\necho `a # c`\nEOF\nzq9 run')
+check("the earliest misread is corrected first, so a backticked comment in a here-document's body "
+      "is not corrected before the opening line's escaped blank releases the body",
+      [list(words) for words in found][-2:] == [["cat", "#a", "q\nr"], ["zq9", "run"]],
+      [list(words) for words in found])
 read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(b"echo `a # c`; rm z")
 check("a comment inside a one-line backticked command is found, ending at the backtick",
       read.comments == [(8, 11)] and not read.unreadable_spans, read)
