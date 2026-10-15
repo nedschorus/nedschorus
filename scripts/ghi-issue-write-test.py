@@ -3442,7 +3442,7 @@ def run_edit_cases(scratch: Path):
 
     # A draft the conflict refusal rejects must leave no file behind, ruling
     # question or not: the refusals run before the question is written, so
-    # a rerun after the author's hand-merge asks ghi-info about the new
+    # a rerun after the author clears the conflict asks ghi-info about the new
     # content rather than taking a stale file for an earlier run's.
     for case, extra in (
             ("a file that moved on main", {}),

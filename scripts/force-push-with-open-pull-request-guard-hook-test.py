@@ -190,12 +190,13 @@ check("the refusal teaches the remedy: a new commit on top, pushed without --for
       reason and "new commit on top" in reason and "without --force" in reason,
       reason)
 # A conflict with main cannot be cleared by a commit on top; the refusal sends
-# it to the hand-merge on a line of its own, the hand-merge that the
-# VERDICT: CONFLICT report of scripts/branch-conflict-check.py describes.
+# it, on a line of its own, to the VERDICT: CONFLICT report of
+# scripts/branch-conflict-check.py, which replaces the pull request.
 # Pinned by equality on the line.
-check("the refusal sends a conflict with main to the hand-merge, as a line of its own",
-      "If the branch conflicts with main, clear the conflict with the hand-merge "
-      "that scripts/branch-conflict-check.py describes, and push without --force."
+check("the refusal sends a conflict with main to the conflict check, as a line of its own",
+      "If the branch conflicts with main, run scripts/branch-conflict-check.py and "
+      "do what its report says: the pull request is replaced by a new one cut from "
+      "current main, and this branch is not pushed again."
       in lines, reason)
 check("the refusal no longer sends a fix for a conflict to a new commit on top",
       reason and "including any fix for a conflict with main" not in reason, reason)
