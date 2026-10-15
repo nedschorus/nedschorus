@@ -3608,8 +3608,33 @@ def run_real_git_listing_cases(scratch: Path):
           str(tool.ghi_md_paths_for_issue(12, repository, tool.run)))
 
 
+def run_pull_request_description_cases(directory):
+    """Both pull requests this tool opens carry a line scripts/merge-gate.sh
+    accepts, so the gate does not refuse every GHI-MD pull request."""
+    import re
+    # The gate's jq test, line for line, applied to each line of the body.
+    gate_line = re.compile(
+        r"^\s*(?:[-*+]\s+)?(?:\*\*|__)?(?:Root cause(?: not fixed)?(?:\*\*|__)?:"
+        r"|No defect fixed(?:\*\*|__)?\.)")
+    for name, function in (
+            ("create", tool.create_pull_request_for_branch),
+            ("edit", tool.create_pull_request_for_edit_branch)):
+        calls = []
+
+        def runner(command, cwd=None, calls=calls):
+            calls.append(command)
+            return Completed("https://github.com/x/y/pull/9\n")
+
+        function("x/y", "branch", 7, "Title", directory, runner, lambda line: None)
+        body = calls[0][calls[0].index("--body") + 1] if calls else ""
+        check(f"the {name} pull request's description carries a line the merge gate accepts",
+              any(gate_line.match(line) for line in body.splitlines()), repr(body))
+
+
 def main():
     import tempfile
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-pull-request-description-test-") as name:
+        run_pull_request_description_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-write-test-") as name:
         run_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-real-git-test-") as name:
