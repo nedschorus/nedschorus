@@ -55,3 +55,8 @@ How to measure the result, and a daily search for duplicates, which the user pro
 ## Next action
 
 Build what is decided, starting with the two shared modules of ruling 9, one pull request each; ruling 6's reviewer waits for its two conditions.
+
+## Provisional additions (not yet vetted by the user)
+
+- Agent-seat agent-instructions-editor, 2026-10-14: the log-store search program and its skill, of ruling 3, are open as PR [Search the log-store's records of past discussions for one pattern, newest first](https://github.com/nedschorus/nedschorus/pull/1380); the skill's text is to be shown to the user before the pull request merges.
+- Agent-seat agent-instructions-editor, 2026-10-14: two checks before rulings 3 and 7 are built: check that cosmic-ray, the Python mutation-testing package that `scripts/pull-request-mutation-testing-survivors.py` runs, is installed on the Mac, as it is on ned-box; and test whether a subagent loads a path-scoped rule in `.claude/rules/`, since ruling 7 relies on every agent, a subagent included, loading the rule there.
