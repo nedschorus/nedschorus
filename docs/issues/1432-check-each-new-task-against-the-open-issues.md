@@ -22,7 +22,7 @@ When the question fails or times out, the background question records the task's
 
 No hook on main reads a `TaskCreate` call: `git grep -n -i taskcreate origin/main -- '*.py' '.claude/*.json'` finds none. ghi-info found no open issue for this check; the nearest is GHI [Move mechanical agent chores into programs and hooks](https://github.com/nedschorus/nedschorus/issues/1036), whose eleven chores do not include it. In the sweep, `scripts/ghi-issue-write.py edit` replaced whole GHI-MDs with editors' older copies and deleted 4 lines other agent-seats had added; agent-seat reboot-test is building the tool's refusal of such an edit. This hook makes such edits frequent, so it waits for that fix.
 
-## What is not decided
+## Deferred-decisions
 
 1. The cost: one ghi-info question per new task, at the agent-seats' rate of filing tasks, against the day's model limit.
 2. Whether a task too vague to match, such as "check with the user", is skipped without a question.

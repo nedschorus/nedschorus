@@ -160,7 +160,8 @@ AGENT_BINARY_DOWN_PREFIX = "AGENT-BINARY DOWN:"
 STOPPED_CELL_WRITE_CHECK_LINE = (
     "this cell was stopped before its stray-write check ran, which is a failure "
     "to look, not a clean result. Before the new run, read `git status` against "
-    "the edits you know are your own and revert only what you did not write.")
+    "the edits you know are your own, revert only what a reviewer evidently wrote, "
+    "and ask the user about any other change you did not make.")
 
 ALL_LANDED_OPENING = "All six reports landed in {record_dir}, one file per reviewer."
 SOME_LANDED_OPENING = (
