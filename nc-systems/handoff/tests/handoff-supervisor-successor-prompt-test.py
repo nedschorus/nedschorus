@@ -11,11 +11,13 @@ handoff-supervisor-session-launch-and-seat-lock-test.py and
 handoff-supervisor-session-end-and-resume-test.py, beside this file.
 
 Run: python3 nc-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py
-Add --canary to also run the two live pinned-task-list canaries, which launch
-real headless sessions. Task-list pinning rides undocumented harness state; an
+The two live pinned-task-list canaries, run_preseed_canaries, launch real
+headless sessions. Task-list pinning rides undocumented harness state; an
 upgrade breaking it shows up as a successor finding its predecessor's tasks
 missing (the queues are the backstop), and these two cases are the
-diagnosis to run when that fires.
+diagnosis to run when that fires. --canary does not run them: the shared
+fixture's scratch HOME has no Claude login, so they would fail on
+authentication. They are skipped with that reason printed.
 
 Prints one line per case and exits non-zero if any case fails.
 """
@@ -3136,9 +3138,15 @@ check("the appended-system-prompt default resolves under docs/agents",
 
 
 if "--canary" in sys.argv:
-    print("\n-- live pinned-task-list canaries (launching real sessions) --")
-    run_preseed_canaries()
+    # The canaries' `claude` would need the real HOME for its login, and a real
+    # `claude` writes ~/.claude.json under whatever HOME it is given.
+    print("\nSKIP  real-Claude pinned-task-list canaries: handoff-supervisor-test-fixture.py "
+          "gives this suite a scratch HOME so that no case writes the real ~/.claude.json, "
+          "and under that HOME `claude` has no login, so the canaries would fail on "
+          "authentication, not on task-list pinning. Running them needs a test file of "
+          "their own that does not load that fixture.")
 else:
-    print("\n(skipped the live pinned-task-list canaries; pass --canary to run them)")
+    print("\n(skipped the live pinned-task-list canaries: under this suite's scratch HOME "
+          "`claude` has no login; the module docstring says why)")
 
 fixture.print_summary_and_exit_nonzero_if_any_case_failed()

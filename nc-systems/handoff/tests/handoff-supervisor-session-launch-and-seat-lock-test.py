@@ -1026,7 +1026,7 @@ with tempfile.TemporaryDirectory() as update_workspace:
 with tempfile.TemporaryDirectory() as onboarding_workspace:
     # A relaunch by a running supervisor writes the onboarding presets again: a
     # /logout between two launches can clear hasCompletedOnboarding, and the
-    # session would stop at the welcome screen. Folder trust is never written here.
+    # session would stop at the onboarding screens. Folder trust is never written here.
     # The stub agent copies ~/.claude.json as it starts, so what is proven is
     # what the launched session finds.
     seen_at_start = Path(onboarding_workspace) / "claude-json-at-start"
@@ -1054,25 +1054,51 @@ with tempfile.TemporaryDirectory() as onboarding_workspace:
               and seen == {**logged_out, "hasCompletedOnboarding": True},
               (invocations_of(onboarding_workspace), seen))
 
-        unparseable = '{"oauthAccount": {"accountUuid": "not-a-real'
-        claude_json.write_text(unparseable, encoding="utf-8")
-        seen_at_start.unlink(missing_ok=True)
-        captured = io.StringIO()
-        with contextlib.redirect_stderr(captured):
-            supervisor.launch_agent_session(
-                str(agent), "session-before-logout", Path(onboarding_workspace), "prompt",
-                resume=True, update_timeout_seconds=0).wait()
-        check("a ~/.claude.json that is not valid JSON: the cause is printed, naming the file",
-              str(claude_json) in captured.getvalue()
-              and "not valid JSON" in captured.getvalue()
-              and "launched anyway" in captured.getvalue(),
-              captured.getvalue())
-        check("a ~/.claude.json that is not valid JSON: the session is launched anyway",
-              len(invocations_of(onboarding_workspace)) == 3,
-              invocations_of(onboarding_workspace))
-        check("a ~/.claude.json that is not valid JSON is left as it was",
-              claude_json.read_text(encoding="utf-8") == unparseable,
-              claude_json.read_text(encoding="utf-8"))
+        # Each unreadable file is reported with the one remedy that fits it, and the
+        # agent-session is launched anyway. A file that is not UTF-8 is reported as not
+        # valid JSON rather than raised out of the supervisor, which would end it.
+        backups = claude_json.parent / ".claude" / "backups"
+        for case_name, content, wanted, other_wanted in (
+                ("not valid JSON", b'{"oauthAccount": {"accountUuid": "not-a-real',
+                 "is valid JSON", "holds a JSON object"),
+                ("not valid UTF-8", b'{"oauthAccount": \xff\xfe}',
+                 "is valid JSON", "holds a JSON object"),
+                ("a JSON array", b"[]", "holds a JSON object", "is valid JSON")):
+            claude_json.write_bytes(content)
+            seen_at_start.unlink(missing_ok=True)
+            launches_before = len(invocations_of(onboarding_workspace))
+            captured = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(captured):
+                    supervisor.launch_agent_session(
+                        str(agent), "session-before-logout", Path(onboarding_workspace),
+                        "prompt", resume=True, update_timeout_seconds=0).wait()
+            except Exception as error:
+                captured.write(f"RAISED {error!r}")
+            printed = captured.getvalue()
+            check(f"a ~/.claude.json that is {case_name}: the cause is printed, naming the file",
+                  str(claude_json) in printed and "launched anyway" in printed
+                  and "RAISED" not in printed,
+                  printed)
+            check(f"a ~/.claude.json that is {case_name}: the one remedy that fits, with what "
+                  "to do when no backup fits, and no 'then' clause",
+                  f"Restore {claude_json} from the newest copy in {backups}/ that {wanted}.\n"
+                  in printed
+                  and f"If no copy in {backups}/ {wanted}: move {claude_json} aside" in printed
+                  and other_wanted not in printed and ", then " not in printed,
+                  printed)
+            check(f"a ~/.claude.json that is {case_name}: the message says a fix helps only "
+                  "the next launch, and that answering an onboarding screen is the user's step",
+                  "helps only the next launch" in printed
+                  and "the user answers the screen in the terminal window that shows this message" in printed
+                  and "welcome" not in printed,
+                  printed)
+            check(f"a ~/.claude.json that is {case_name}: the agent-session is launched anyway",
+                  len(invocations_of(onboarding_workspace)) == launches_before + 1,
+                  invocations_of(onboarding_workspace))
+            check(f"a ~/.claude.json that is {case_name} is left as it was",
+                  claude_json.read_bytes() == content,
+                  claude_json.read_bytes())
     finally:
         claude_json.unlink(missing_ok=True)
 

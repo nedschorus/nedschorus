@@ -1324,12 +1324,13 @@ def claude_json_onboarding_presets_write_or_report() -> None:
     except (claude_json_presets.ClaudeJsonNotAJsonObjectError, OSError) as error:
         print(f"handoff-supervisor: Claude Code's onboarding was not recorded as done in "
               f"{claude_json}: {error}. The agent-session is launched anyway, and may stop at "
-              "Claude Code's welcome or theme screen.\n"
-              f"If {claude_json} is not valid JSON: restore it from the newest copy in "
-              "~/.claude/backups/ that is valid JSON.\n"
-              "Otherwise: fix the cause named above.\n"
-              "If the agent-session stopped at a welcome or theme screen: answer the screen "
-              "in the agent-seat's terminal window.",
+              "Claude Code's onboarding screens, the theme picker first.\n"
+              + claude_json_presets.claude_json_presets_failure_remedy(error, claude_json)
+              + f"\nA fix to {claude_json} helps only the next launch; an agent-session "
+              "already stopped at an onboarding screen stays there until the screen is answered.\n"
+              "If the agent-session stopped at an onboarding screen: the user answers the "
+              "screen in the terminal window that shows this message; an agent does not type "
+              "into another agent-seat's terminal.",
               file=sys.stderr)
 
 
