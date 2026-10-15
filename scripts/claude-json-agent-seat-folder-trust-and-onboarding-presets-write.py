@@ -39,6 +39,9 @@ import tempfile
 THEME_SET_WHEN_NONE_IS_SET = "light"
 TEMPORARY_FILE_PREFIX = ".claude.json."
 TEMPORARY_FILE_SUFFIX = ".launch-claude-writing"
+# Keyed on the exact type, because bool is a subclass of int.
+JSON_TYPE_NAME_BY_PYTHON_TYPE = {list: "array", str: "string", int: "number",
+                                 float: "number", bool: "boolean", type(None): "null"}
 
 
 class ClaudeJsonNotAJsonObjectError(ValueError):
@@ -66,7 +69,8 @@ def claude_json_settings_read(claude_json: pathlib.Path) -> dict:
             f"{claude_json} is not valid JSON ({error})") from error
     if not isinstance(settings, dict):
         raise ClaudeJsonNotAJsonObjectError(
-            f"{claude_json} holds JSON of type {type(settings).__name__}, not an object")
+            f"{claude_json} holds a JSON {JSON_TYPE_NAME_BY_PYTHON_TYPE[type(settings)]}, "
+            "not an object")
     return settings
 
 
@@ -147,7 +151,9 @@ def claude_json_presets_failure_remedy(error: Exception, claude_json: pathlib.Pa
         return (f"Fix the cause named above{then}. For a permission error, make {claude_json} "
                 f"and its folder {claude_json.parent}/ writable by the account this program "
                 f"runs as; for a full disk, free space on the disk that holds {claude_json}.")
-    return (f"Restore {claude_json} from the newest copy in {backups}/ that {wanted}{then}.\n"
+    return (f"{claude_json} holds the Claude Code login, so the user restores or moves it; "
+            "an agent that reads this tells the user and does not replace the file.\n"
+            f"Restore {claude_json} from the newest copy in {backups}/ that {wanted}{then}.\n"
             f"If no copy in {backups}/ {wanted}: move {claude_json} aside, such as to "
             f"{claude_json}.unreadable{then}; the next launch writes a new {claude_json}, "
             "and the user may have to log in to Claude Code again.")

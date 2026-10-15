@@ -1087,6 +1087,12 @@ with tempfile.TemporaryDirectory() as onboarding_workspace:
                   and f"If no copy in {backups}/ {wanted}: move {claude_json} aside" in printed
                   and other_wanted not in printed and ", then " not in printed,
                   printed)
+            check(f"a ~/.claude.json that is {case_name}: the remedy says the user restores or "
+                  "moves the file, because it holds the Claude Code login",
+                  f"{claude_json} holds the Claude Code login, so the user restores or moves it; "
+                  "an agent that reads this tells the user and does not replace the file.\n"
+                  f"Restore {claude_json}" in printed,
+                  printed)
             check(f"a ~/.claude.json that is {case_name}: the message says a fix helps only "
                   "the next launch, and that answering an onboarding screen is the user's step",
                   "helps only the next launch" in printed

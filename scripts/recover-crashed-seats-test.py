@@ -983,10 +983,13 @@ def run_claude_json_presets_cases(root: Path):
         except Exception as error:
             exit_code = f"raised {error!r}"
         check("CLAUDE.JSON PRESETS: a ~/.claude.json that is not valid UTF-8 stops the launch "
-              "with exit 1, before tmux, and gives the not-valid-JSON remedy",
+              "with exit 1, before tmux, and gives the not-valid-JSON remedy, which the user "
+              "carries out",
               exit_code == 1 and tmux_calls == []
               and "not launched" in stderr.getvalue()
-              and "that is valid JSON, then run this recovery again" in stderr.getvalue(),
+              and "that is valid JSON, then run this recovery again" in stderr.getvalue()
+              and "so the user restores or moves it; an agent that reads this tells the user "
+                  "and does not replace the file." in stderr.getvalue(),
               (exit_code, tmux_calls, stderr.getvalue()))
         check("CLAUDE.JSON PRESETS: and leaves that file as it was",
               CLAUDE_JSON_SCRATCH_PATH.read_bytes() == not_utf_8,
