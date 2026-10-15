@@ -44,9 +44,13 @@ in — the one caveat the PR #137/#139 reviews carried (user-directed
   ssh ned 'cd /tmp/x && chmod +x launch-claude-ubuntu && python3 launch-claude-ubuntu-test.py'
 """
 
+import errno
 import fcntl
 import os
+import pty
+import selectors
 import shlex
+import signal
 import shutil
 import subprocess
 import sys
@@ -57,6 +61,9 @@ from pathlib import Path
 LAUNCHER = Path(__file__).with_name("launch-claude-ubuntu")
 UPDATE_LOCK_HELPER_NAME = "agent-binary-update-under-lock.py"
 UPDATE_LOCK_HELPER = Path(__file__).with_name(UPDATE_LOCK_HELPER_NAME)
+# The bytes launch-claude-ubuntu writes to switch an iTerm2 session back to
+# the user's own profile: iTerm2's SetProfile sequence, OSC 1337 ... BEL.
+ITERM2_DEFAULT_PROFILE_SEQUENCE = "\x1b]1337;SetProfile=Default\x07"
 
 failures = []
 
@@ -296,17 +303,26 @@ class LaunchHarness:
         return token_file
 
     def run(self, launcher_arguments, mac_environment_agents_root=None,
-            extra_arguments=None, seat_github_account=None):
+            extra_arguments=None, seat_github_account=None,
+            term_program=None, stdout_on_terminal=False):
         """Launcher -> captured remote string -> P1 replay (-> P2 inside the
         tmux stub). Returns a dict of everything observable.
 
         mac_environment_agents_root sets NEDSCHORUS_AGENTS_ROOT in the
         launcher's own (Mac-side) environment, the way a Mac seat inherits
-        it, so a case can show the launcher ignores it."""
+        it, so a case can show the launcher ignores it.
+
+        term_program sets TERM_PROGRAM, which is otherwise stripped so the
+        terminal the suite runs in cannot decide a case. stdout_on_terminal
+        gives the launcher a pseudo-terminal as stdout in place of a pipe,
+        and puts what it wrote there in the launched result's stdout."""
         for leftover in self.captures.iterdir():
             leftover.unlink()
         environment = {key: value for key, value in os.environ.items()
-                       if not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_"))}
+                       if key != "TERM_PROGRAM"
+                       and not key.startswith(("NEDSCHORUS_", "LAUNCH_CLAUDE_"))}
+        if term_program is not None:
+            environment["TERM_PROGRAM"] = term_program
         environment["PATH"] = f"{self.stubs}:{environment.get('PATH', '')}"
         environment["LCU_TEST_DIR"] = str(self.captures)
         environment["NEDSCHORUS_AGENT_BOX"] = "stub-box"
@@ -316,10 +332,15 @@ class LaunchHarness:
             environment["LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS"] = extra_arguments
         if seat_github_account is not None:
             environment["NEDSCHORUS_SEAT_GITHUB_ACCOUNT"] = seat_github_account
-        launched = subprocess.run(
-            [str(LAUNCHER), *launcher_arguments],
-            capture_output=True, text=True, check=False, env=environment,
-            cwd=str(self.workdir))
+        if stdout_on_terminal:
+            launched = run_with_stdout_on_terminal(
+                [str(LAUNCHER), *launcher_arguments], str(self.workdir),
+                environment)
+        else:
+            launched = subprocess.run(
+                [str(LAUNCHER), *launcher_arguments],
+                capture_output=True, text=True, check=False, env=environment,
+                cwd=str(self.workdir))
         ssh_capture = self.captures / "ssh-argv.txt"
         remote = (ssh_capture.read_text(encoding="utf-8").splitlines()[-1]
                   if ssh_capture.is_file() else "")
@@ -390,6 +411,75 @@ class AnotherUpdateHoldsTheLock:
 
     def __exit__(self, *exception):
         self.lock_file.close()
+
+
+def run_with_stdout_on_terminal(command, working_directory, environment,
+                                timeout_seconds=60):
+    """Run command with a pseudo-terminal as its stdout, so `[ -t 1 ]` holds
+    in it, and return a CompletedProcess whose stdout is what it wrote
+    there.
+
+    The terminal and the stderr pipe are read together while the command
+    runs: a command blocked on either full buffer never closes the other,
+    so reading one to its end before the other can wait forever.
+    timeout_seconds bounds the whole read. When it runs out, the command's
+    process group is killed and subprocess.TimeoutExpired is raised, so a
+    hung case fails the suite instead of holding the machine's test lock.
+    The same helper is in scripts/launch-claude-mac-test.py; this suite
+    keeps its own copy because it must run on its own, copied to the box."""
+    controller, terminal = pty.openpty()
+    process = subprocess.Popen(
+        command, stdin=subprocess.DEVNULL, stdout=terminal,
+        stderr=subprocess.PIPE, cwd=working_directory, env=environment,
+        start_new_session=True)
+    os.close(terminal)
+    stderr_descriptor = process.stderr.fileno()
+    written = {controller: bytearray(), stderr_descriptor: bytearray()}
+    deadline = time.monotonic() + timeout_seconds
+
+    def stop_command_and_raise_timeout():
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        raise subprocess.TimeoutExpired(
+            command, timeout_seconds,
+            output=bytes(written[controller]),
+            stderr=bytes(written[stderr_descriptor]))
+
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(controller, selectors.EVENT_READ)
+            selector.register(stderr_descriptor, selectors.EVENT_READ)
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    stop_command_and_raise_timeout()
+                for key, _ in selector.select(remaining):
+                    try:
+                        chunk = os.read(key.fd, 65536)
+                    except OSError as error:
+                        # Linux reports the last writer closing the
+                        # terminal as EIO.
+                        if error.errno != errno.EIO:
+                            raise
+                        chunk = b""
+                    if chunk:
+                        written[key.fd].extend(chunk)
+                    else:
+                        selector.unregister(key.fd)
+        # A command can close both streams and keep running, so the wait
+        # is bounded by the same deadline and stopped the same way.
+        try:
+            returncode = process.wait(
+                timeout=max(deadline - time.monotonic(), 0.1))
+        except subprocess.TimeoutExpired:
+            stop_command_and_raise_timeout()
+    finally:
+        os.close(controller)
+        process.stderr.close()
+    return subprocess.CompletedProcess(
+        command, returncode,
+        written[controller].decode("utf-8", errors="replace"),
+        written[stderr_descriptor].decode("utf-8", errors="replace"))
 
 
 def tmux_argv_sets_mouse_mode_on(tmux_argv_text):
@@ -966,6 +1056,74 @@ def main() -> int:
               and elapsed < 15,
               (result["replay"].returncode, f"{elapsed:.1f}s",
                result["replay"].stderr[:300]))
+
+        # --- the pseudo-terminal helper: a command that closes its terminal
+        # and its stderr and then keeps running is stopped at the timeout
+        # too, and does not outlive the helper.
+        pid_file = root / "helper-closed-streams-command.pid"
+        started = time.monotonic()
+        try:
+            run_with_stdout_on_terminal(
+                [sys.executable, "-c",
+                 "import os, sys, time; "
+                 f"open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
+                 "os.close(1); os.close(2); time.sleep(600)"],
+                str(root), dict(os.environ), timeout_seconds=2)
+            closed_streams_timed_out = False
+        except subprocess.TimeoutExpired:
+            closed_streams_timed_out = True
+        elapsed = time.monotonic() - started
+        closed_streams_command_survived = False
+        if pid_file.is_file():
+            closed_streams_pid = int(pid_file.read_text(encoding="utf-8"))
+            try:
+                os.kill(closed_streams_pid, 0)
+                closed_streams_command_survived = True
+                os.kill(closed_streams_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        check("pseudo-terminal helper: a command that closes both streams "
+              "and keeps running is stopped at the timeout and does not "
+              "survive",
+              closed_streams_timed_out and elapsed < 15
+              and pid_file.is_file() and not closed_streams_command_survived,
+              (closed_streams_timed_out, f"{elapsed:.1f}s",
+               pid_file.is_file(), closed_streams_command_survived))
+
+        # --- the iTerm2 profile: an attached launch from an iTerm2 terminal
+        # switches the tab back to the user's own profile before ssh
+        # connects, so a tab a Mac seat coloured does not keep that colour.
+        # A pipe, another terminal program or a --no-attach launch must
+        # receive no escape bytes, and each must still reach ssh.
+        harness = LaunchHarness(root / "iterm2-profile-written")
+        result = harness.run(["seat-w"], term_program="iTerm.app",
+                             stdout_on_terminal=True)
+        check("iTerm2 profile: an attached launch in iTerm2 on a terminal "
+              "writes the SetProfile sequence for Default",
+              result["launched"].returncode == 0
+              and ITERM2_DEFAULT_PROFILE_SEQUENCE in result["launched"].stdout
+              and result["remote"],
+              (result["launched"].returncode,
+               repr(result["launched"].stdout[-300:]),
+               result["launched"].stderr[:300]))
+        for label, slug, term_program, stdout_on_terminal, arguments in (
+                ("TERM_PROGRAM is another terminal", "other-terminal",
+                 "Apple_Terminal", True, ["seat-w"]),
+                ("stdout is not a terminal", "stdout-pipe",
+                 "iTerm.app", False, ["seat-w"]),
+                ("--no-attach", "no-attach", "iTerm.app", True,
+                 ["seat-w", "--no-attach"])):
+            harness = LaunchHarness(root / f"iterm2-profile-not-written-{slug}")
+            result = harness.run(arguments, term_program=term_program,
+                                 stdout_on_terminal=stdout_on_terminal)
+            check(f"iTerm2 profile: no escape sequence when {label}, and the "
+                  "launch still reaches ssh",
+                  result["launched"].returncode == 0
+                  and "\x1b]1337;" not in result["launched"].stdout
+                  and result["remote"],
+                  (result["launched"].returncode,
+                   repr(result["launched"].stdout[-300:]),
+                   result["launched"].stderr[:300]))
 
         # --- 18. a detached launch whose prepare step fails reports the
         # failure and exits nonzero; only a seat that really exists gets the
