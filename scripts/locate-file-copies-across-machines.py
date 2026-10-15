@@ -1060,7 +1060,7 @@ def main(argv=None) -> int:
                         "anywhere in a file's name: report.md lists old-report.txt "
                         "as a candidate. For a name, only a file with the same name, in "
                         "any case, counts as found; for a path, only a file at the "
-                        "same path, in any case, and a file with the same name "
+                        "same path, in any case, counts as found, and a file with the same name "
                         "elsewhere is listed as a candidate. A query with no dot in "
                         "its name also counts a file whose name without its "
                         "extension is the same, so report finds report.md; a name "
