@@ -169,14 +169,12 @@ def paths_the_base_text_cites(base_text: str, base_name: str, lint,
     walk_as_markdown = citing_path.suffix == ".md"
     skipped_markers = lint.HISTORY_MARKERS + lint.FOREIGN_ROOT_MARKERS
     cited = set()
-    in_code_fence = False
-    for line in base_text.splitlines():
-        if walk_as_markdown:
-            if line.lstrip().startswith("```"):
-                in_code_fence = not in_code_fence
-                continue
-            if in_code_fence or any(marker in line for marker in skipped_markers):
-                continue
+    lines = base_text.splitlines()
+    walked = (lint.lines_outside_fenced_code_blocks(lines) if walk_as_markdown
+              else enumerate(lines, 1))
+    for _, line in walked:
+        if walk_as_markdown and any(marker in line for marker in skipped_markers):
+            continue
         cited.update(repository_paths_a_line_cites(line, citing_path, lint, repository_root))
     return cited
 
