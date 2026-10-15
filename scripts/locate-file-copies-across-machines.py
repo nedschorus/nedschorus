@@ -1052,10 +1052,13 @@ def main(argv=None) -> int:
                     "ned-box, newest first: checkouts, the log-store, the "
                     "handoffs, and git history including the reflog.")
     parser.add_argument("query", help="a file name or a path, which may be "
-                        "written in the scp form nedlern@ned-box:<path>; its "
-                        "name's stem is matched, case-insensitively, anywhere "
-                        "in a file's name. A name that opens with a dash goes after --, "
-                        "as in -- -nbd-test.py")
+                        "written in the scp form nedlern@ned-box:<path>. Its "
+                        "name without the extension is matched, case-insensitively, "
+                        "anywhere in a file's name: report.md lists old-report.txt "
+                        "as a candidate. Only a file with the same name, in any case, counts as "
+                        "found, or, for a query without an extension, a file whose "
+                        "name without its extension is the same. A name that opens "
+                        "with a dash goes after --, as in -- -nbd-test.py")
     parser.add_argument(THIS_MACHINE_JSON_FLAG, metavar="SURFACES_JSON",
                         help="search only this machine, over these surfaces, "
                              "and print the answer as JSON: what the program "
