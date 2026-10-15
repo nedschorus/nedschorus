@@ -88,7 +88,7 @@ checkout under test, bound writable, so what the suite writes there stays;
 and the suite's own input record and strace traces, which this program reads
 after the suite ends. An interpreter given with --python from inside the home
 directory is shown read-only too. The directories in
-TEST_SANDBOX_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS, such as /mnt, where the
+TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS, such as /mnt, where the
 backup drive holds copies of the home directory, are empty tmpfs, and so is
 every other directory this account can create a file in, such as /var/tmp,
 found by one scan of the machine per process: a socket or file a process
@@ -557,7 +557,10 @@ AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES = (
 # the sandbox, such as a suite that tests this program, runs its suites as they
 # are: they are already inside.
 #
-# The signal sandbox is also each suite's test sandbox, which hides by default: the
+# On Linux, each suite's test sandbox is these signal-sandbox arguments, shared by every
+# suite, plus the per-suite arguments of bwrap_arguments_for_one_suites_test_sandbox();
+# on macOS the signal sandbox is sandbox-exec alone and there is no test sandbox. The
+# test sandbox hides by default: the
 # file system read-only, a private /tmp, /dev and System V IPC, the home directory an
 # empty tmpfs into which only the paths in TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY are
 # bound, and /run hidden, since it holds the machine's sockets: Docker's, the system bus,
@@ -581,7 +584,7 @@ TEST_SANDBOX_HOME_PATHS_SHOWN_READ_ONLY = {
 }
 # Directories hidden whole, with why: each holds what no suite needs and a scan for
 # writable directories should not walk.
-TEST_SANDBOX_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS = {
+TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS = {
     "/mnt": "mounted file systems such as the backup drive, whose snapshots hold copies "
             "of the home directory, credentials included",
     "/media": "removable media",
@@ -618,7 +621,7 @@ SIGNAL_SANDBOX_BWRAP_ARGUMENTS = (
       for argument in ("--ro-bind-try",
                        os.path.join(REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX, relative),
                        os.path.join(REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX, relative))),
-    *(argument for directory in TEST_SANDBOX_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS
+    *(argument for directory in TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS
       if os.path.isdir(directory) for argument in ("--tmpfs", directory)),
     "--unshare-pid", "--unshare-ipc", "--die-with-parent",
     "--setenv", "TMPDIR", "/tmp", "--setenv", "TMUX_TMPDIR", "/tmp",
@@ -2048,7 +2051,16 @@ def signal_sandbox(platform=None, environment=None, which=shutil.which,
 
 # Directories the test sandbox already makes private or hides, which the scan for
 # writable directories does not walk.
-TEST_SANDBOX_PRIVATE_DIRECTORIES_NOT_SCANNED = ("/proc", "/sys", "/dev", "/tmp", "/run")
+TEST_SANDBOX_PRIVATE_DIRECTORY_PATHS_NOT_SCANNED_FOR_WRITABLE_DIRECTORIES = ("/proc", "/sys", "/dev", "/tmp", "/run")
+
+
+# The scan never walks these, whatever the lists of hidden directories say, since walking
+# one is slow (the backup drive under /mnt holds the home directory many times over) or
+# meaningless; each must be hidden whole, or the scan refuses, so that a change to those
+# lists cannot make the scan crawl them instead.
+TEST_SANDBOX_DIRECTORIES_THE_WRITABLE_DIRECTORY_SCAN_NEVER_WALKS = (
+    "/proc", "/sys", "/dev", "/tmp", "/run", "/mnt", "/media", "/var/snap",
+    REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX)
 
 
 @functools.cache
@@ -2059,9 +2071,18 @@ def directories_this_account_can_create_files_in_hidden_in_test_sandbox():
     makes after the suite starts, so each is hidden whole by an empty tmpfs. A directory
     made later sits inside one of these, so a scan once per process is enough. Raises
     SignalSandboxCouldNotStart when the scan cannot run."""
-    pruned = (*TEST_SANDBOX_PRIVATE_DIRECTORIES_NOT_SCANNED,
+    pruned = (*TEST_SANDBOX_PRIVATE_DIRECTORY_PATHS_NOT_SCANNED_FOR_WRITABLE_DIRECTORIES,
               REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,
-              *TEST_SANDBOX_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS)
+              *TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS)
+    unhidden = [path for path in TEST_SANDBOX_DIRECTORIES_THE_WRITABLE_DIRECTORY_SCAN_NEVER_WALKS
+                if path not in pruned and os.path.isdir(path)]
+    if unhidden:
+        raise SignalSandboxCouldNotStart(
+            f"{', '.join(unhidden)}, which the scan for directories this account can write "
+            f"never walks, would not be hidden whole in the test sandbox, so what they hold "
+            f"would show inside it")
+    pruned = tuple(dict.fromkeys(
+        (*pruned, *TEST_SANDBOX_DIRECTORIES_THE_WRITABLE_DIRECTORY_SCAN_NEVER_WALKS)))
     expression = []
     for path in pruned:
         expression += (["-o"] if expression else []) + ["-path", path]
@@ -2084,31 +2105,106 @@ def directories_this_account_can_create_files_in_hidden_in_test_sandbox():
     return tuple(line for line in answer.stdout.splitlines() if line.startswith("/"))
 
 
-def interpreter_directories_shown_read_only_in_test_sandbox(interpreter):
-    """The directories an interpreter in the hidden home directory needs, such as a virtual
-    environment's; none for one outside it."""
-    location = Path(os.path.abspath(interpreter))
-    if not location.is_relative_to(REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX):
-        return []
-    environment = location.parent.parent
-    return [environment if (environment / "pyvenv.cfg").is_file() else location.parent]
+# Asked of the interpreter itself: exactly the files and directories it loads, never a whole
+# installation prefix, since a prefix in the home directory such as ~/.local also holds
+# credentials. In a virtual environment, sysconfig names the base installation's standard
+# library and the environment's own site-packages.
+INTERPRETER_LOADED_PATHS_SOURCE = (
+    "import os, sys, sysconfig\n"
+    "paths = sysconfig.get_paths()\n"
+    "loaded = [sys.executable, os.path.realpath(sys.executable)]\n"
+    "loaded += [paths[name] for name in ('stdlib', 'platstdlib', 'purelib', 'platlib')]\n"
+    "configuration = os.path.join(sys.prefix, 'pyvenv.cfg')\n"
+    "if os.path.isfile(configuration):\n"
+    "    loaded.append(configuration)\n"
+    "library = os.path.join(sysconfig.get_config_var('LIBDIR') or '',\n"
+    "                       sysconfig.get_config_var('LDLIBRARY') or '')\n"
+    "if os.path.isfile(library):\n"
+    "    loaded.append(library)\n"
+    "print(chr(0).join(loaded))\n")
+INTERPRETER_LOADED_PATHS_TIMEOUT_SECONDS = 60
+
+
+@functools.lru_cache(maxsize=None)
+def interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden=None):
+    """The paths an interpreter loads that a test sandbox would hide: its executable under
+    the name given and its real one, its standard library, its site-packages, a virtual
+    environment's pyvenv.cfg and its shared libpython, each as the interpreter reports it;
+    none for an interpreter that loads nothing hidden.
+
+    Raises SignalSandboxCouldNotStart when the interpreter cannot report them, or when one
+    of them is or holds a directory the sandbox hides whole, since showing it would show
+    that directory."""
+    hidden = directories_hidden_whole_in_test_sandbox() if hidden is None else hidden
+    given = os.path.abspath(interpreter)
+    try:
+        answer = subprocess.run([given, "-I", "-c", INTERPRETER_LOADED_PATHS_SOURCE],
+                                capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                                timeout=INTERPRETER_LOADED_PATHS_TIMEOUT_SECONDS, check=False)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SignalSandboxCouldNotStart(
+            f"the interpreter {given} could not report the paths it loads, so what it needs "
+            f"inside the test sandbox is not known: {error}") from error
+    loaded = answer.stdout.strip().split("\0")
+    if answer.returncode != 0 or len(loaded) < 6 or not all(map(os.path.isabs, loaded)):
+        raise SignalSandboxCouldNotStart(
+            f"the interpreter {given} could not report the paths it loads, so what it needs "
+            f"inside the test sandbox is not known: exit {answer.returncode}: "
+            f"{(answer.stderr or answer.stdout).strip()}")
+    shown = []
+    for path in [given, *loaded]:
+        if not os.path.lexists(path):
+            continue
+        real = os.path.realpath(path)
+        for candidate in dict.fromkeys((os.path.abspath(path), real)):
+            if not any(candidate == top or candidate.startswith(top + "/") for top in hidden):
+                continue
+            if any(top == candidate or top.startswith(candidate.rstrip("/") + "/")
+                   for top in hidden):
+                raise SignalSandboxCouldNotStart(
+                    f"the interpreter {given} loads {candidate}, which is or holds a "
+                    f"directory the test sandbox hides whole, so showing it would show that "
+                    f"directory; run the suites with an interpreter installed elsewhere")
+            if candidate not in shown:
+                shown.append(candidate)
+    # A path inside another one shown is shown with it.
+    return [path for path in shown
+            if not any(path.startswith(other.rstrip("/") + "/") for other in shown)]
+
+
+def paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(interpreters, program_files=()):
+    """Every path a suite's launch reads that a test sandbox would hide: each interpreter's
+    directories, and the directory of each program file run inside the sandbox, such as the
+    launcher that checks the sandbox from inside it."""
+    hidden = directories_hidden_whole_in_test_sandbox()
+    shown = []
+    for interpreter in interpreters:
+        for path in interpreter_directories_shown_read_only_in_test_sandbox(interpreter, hidden):
+            if path not in shown:
+                shown.append(path)
+    for program_file in program_files:
+        directory = os.path.dirname(os.path.realpath(program_file))
+        if any(directory == top or directory.startswith(top + "/") for top in hidden) and \
+                directory not in shown:
+            shown.append(directory)
+    return shown
 
 
 def directories_hidden_whole_in_test_sandbox():
     """Every directory a test sandbox shows as private or empty, the scanned ones included."""
-    return (*TEST_SANDBOX_PRIVATE_DIRECTORIES_NOT_SCANNED,
+    return (*TEST_SANDBOX_PRIVATE_DIRECTORY_PATHS_NOT_SCANNED_FOR_WRITABLE_DIRECTORIES,
             REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,
-            *TEST_SANDBOX_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS,
+            *TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS,
             *directories_this_account_can_create_files_in_hidden_in_test_sandbox())
 
 
 # A directory whose hiding would hide what every program needs; a socket directly in one
 # is covered by an empty file instead, which a re-created socket would escape.
-TEST_SANDBOX_DIRECTORIES_NEVER_HIDDEN_FOR_A_SOCKET = (
+TEST_SANDBOX_DIRECTORIES_WHERE_A_LISTENING_SOCKET_IS_COVERED_BY_AN_EMPTY_FILE_NOT_HIDDEN_WHOLE = (
     "/", "/bin", "/boot", "/etc", "/lib", "/lib64", "/opt", "/sbin", "/srv", "/usr", "/var")
 
 
-def empty_file_bound_over_each_listening_socket_in_test_sandbox():
+def empty_file_bound_over_a_listening_socket_in_test_sandbox():
     """An empty, read-only regular file to bind over a listening socket.
 
     Fails rather than return a file that is not empty, which would hand a suite that
@@ -2131,9 +2227,11 @@ def bwrap_arguments_for_one_suites_test_sandbox(checkout, writable_paths=(), sui
                                                 read_only_paths=()):
     """bwrap arguments, after SIGNAL_SANDBOX_BWRAP_ARGUMENTS, for one suite's environment.
 
-    The checkout under test and writable_paths, files or directories, are bound writable,
-    so what a suite writes there stays after it ends; read_only_paths are bound
-    read-only. Above them the checkout's git common directory is bound read-only, since
+    The checkout under test is a copy-on-write overlay, so a suite can write in it but
+    nothing it writes there survives it: a suite could otherwise leave code in the
+    checkout that a suite outside the sandbox, or an agent's next command there, would
+    run. writable_paths, files or directories, are bound writable, so what a suite writes
+    there stays after it ends; read_only_paths are bound read-only. Above them the checkout's git common directory is bound read-only, since
     every worktree of the repository shares it, or for a suite in
     SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY is a
     copy-on-write overlay, and so is a linked worktree's `.git` file, which names the
@@ -2147,14 +2245,26 @@ def bwrap_arguments_for_one_suites_test_sandbox(checkout, writable_paths=(), sui
     arguments = []
     if suite not in SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK:
         arguments.append("--unshare-net")
-    for paths, bind in (((checkout, *writable_paths), "--bind"),
+    # bwrap mounts in order and a later mount hides what an earlier one put beneath it, so
+    # every broad cover comes first; then each path the suite reads or writes, a path
+    # before any path inside it, so a read-only path inside a writable one stays read-only
+    # and a writable one inside a read-only one stays writable; then the git directory's
+    # protection over the checkout.
+    arguments += broad_covers_of_one_suites_test_sandbox()
+    binds = []
+    for paths, bind in (((checkout,), "--tmp-overlay"), (writable_paths, "--bind"),
                         (read_only_paths, "--ro-bind")):
         for path in paths:
             real = os.path.realpath(path)
-            arguments += [bind, real, real]
+            binds.append((bind, real, real))
             given = os.path.abspath(path)
             if given != real:
-                arguments += [bind, real, given]
+                binds.append((bind, real, given))
+    for bind, source, place in sorted(binds, key=lambda entry: len(Path(entry[2]).parts)):
+        # A checkout reached under two names gets one overlay under each, so a write under
+        # one name is not seen under the other; both are gone after the suite.
+        arguments += (["--overlay-src", source, "--tmp-overlay", place]
+                      if bind == "--tmp-overlay" else [bind, source, place])
     real_checkout = Path(os.path.realpath(checkout))
     common = git_common_directory_of_checkout(real_checkout)
     if common is None or not os.path.isdir(common):
@@ -2182,6 +2292,13 @@ def bwrap_arguments_for_one_suites_test_sandbox(checkout, writable_paths=(), sui
     if git_file.is_file() and not git_file.is_symlink():
         for place in under_each_name(git_file):
             arguments += ["--ro-bind", str(git_file), place]
+    return arguments
+
+
+def broad_covers_of_one_suites_test_sandbox():
+    """The bwrap arguments that hide whole directories and listening sockets in a test
+    sandbox, to come before every bind of a path the suite needs."""
+    arguments = []
     for directory in directories_this_account_can_create_files_in_hidden_in_test_sandbox():
         arguments += ["--tmpfs", directory]
     # A socket left visible, made by a service in a directory this account cannot write,
@@ -2189,8 +2306,8 @@ def bwrap_arguments_for_one_suites_test_sandbox(checkout, writable_paths=(), sui
     for path in listening_unix_sockets_the_test_sandbox_would_show(
             hidden=directories_hidden_whole_in_test_sandbox()):
         directory = os.path.dirname(path)
-        if directory in TEST_SANDBOX_DIRECTORIES_NEVER_HIDDEN_FOR_A_SOCKET:
-            arguments += ["--ro-bind", empty_file_bound_over_each_listening_socket_in_test_sandbox(),
+        if directory in TEST_SANDBOX_DIRECTORIES_WHERE_A_LISTENING_SOCKET_IS_COVERED_BY_AN_EMPTY_FILE_NOT_HIDDEN_WHOLE:
+            arguments += ["--ro-bind", empty_file_bound_over_a_listening_socket_in_test_sandbox(),
                           path]
         else:
             arguments += ["--tmpfs", directory]
@@ -2199,7 +2316,7 @@ def bwrap_arguments_for_one_suites_test_sandbox(checkout, writable_paths=(), sui
 
 def listening_unix_sockets_the_test_sandbox_would_show(proc_net_unix="/proc/net/unix",
                                                       unreachable=None,
-                                                      hidden=TEST_SANDBOX_PRIVATE_DIRECTORIES_NOT_SCANNED):
+                                                      hidden=TEST_SANDBOX_PRIVATE_DIRECTORY_PATHS_NOT_SCANNED_FOR_WRITABLE_DIRECTORIES):
     """Each listening Unix socket on this machine outside the directories in hidden.
 
     A read-only mount does not stop a connection to a socket, so each left visible is
@@ -2376,10 +2493,12 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                        "-o", str(strace_dir / "trace"), *command]
     if suite in SUITES_RUN_OUTSIDE_THE_SIGNAL_SANDBOX:
         sandbox_prefix = ()
-    read_only_paths += interpreter_directories_shown_read_only_in_test_sandbox(interpreter)
     # The test sandbox is built from Linux's /proc and bwrap, so nothing of it is built
     # on another platform, whatever the prefix.
     if platform.startswith("linux"):
+        if does_signal_sandbox_report_killed_suite_as_exit_code_128_plus_signal(sandbox_prefix):
+            read_only_paths += paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(
+                [interpreter])
         sandbox_prefix = command_prefix_starting_one_suite_in_its_test_sandbox(
             sandbox_prefix, top, writable_paths, suite, read_only_paths)
     status_read = status_write = None
@@ -3286,8 +3405,8 @@ def main(argv=None, platform=None):
                 report.line(f"{PROGRAM}: the run's case times, suite resources, JUnit XML or "
                             f"failure history could not be written: {error}")
                 report.line("The suites' verdicts below stand, but their records are "
-                            "missing, so this run exits 2. Fix what it names, then run "
-                            "this again.")
+                            "missing, so this run exits 2 if every suite passed, and 1 if "
+                            "any failed. Fix what it names, then run this again.")
             else:
                 report.line(f"case times, suite resources and JUnit XML in {log_dir}")
         skip_count = sum(len(result["skips"]) for result in results)
@@ -3300,9 +3419,11 @@ def main(argv=None, platform=None):
         report.close()
         if run_record is not None:
             run_record.finish()
-        if records_failed:
-            return EXIT_COULD_NOT_RUN
-        return EXIT_SOME_FAILED if failed else EXIT_ALL_PASSED
+        # A failing suite outranks missing records, since a caller that reads exit 2 as
+        # "no verdict" would otherwise let a failure through.
+        if failed:
+            return EXIT_SOME_FAILED
+        return EXIT_COULD_NOT_RUN if records_failed else EXIT_ALL_PASSED
     finally:
         if readings is not None:
             readings.stop()

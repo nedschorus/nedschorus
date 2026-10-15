@@ -18,6 +18,7 @@ import os
 import pathlib
 import signal
 import socket
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -34,6 +35,19 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 RUNNER_PATH = SCRIPTS_DIR / "run-all-test-suites.py"
+# Runs the runner with admission's CPU and memory thresholds opened wide, so a case does
+# not wait on how busy the machine is.
+ADMISSION_OPENED_DRIVER = r'''
+import importlib.util, sys
+program_path, *arguments = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("run_all_test_suites", program_path)
+program = importlib.util.module_from_spec(spec)
+sys.argv = [program_path, *arguments]
+spec.loader.exec_module(program)
+program.TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 101
+program.TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE = -1
+sys.exit(program.main(arguments))
+'''
 MUTATION_SCRIPT_PATH = SCRIPTS_DIR / "pull-request-mutation-testing-survivors.py"
 
 failures = []
@@ -225,7 +239,7 @@ with tempfile.TemporaryDirectory() as scratch_name:
         subprocess.run(["git", "-C", str(repository), *git_arguments], env=environment,
                        capture_output=True, check=True)
     completed = subprocess.run(
-        [sys.executable, str(RUNNER_PATH), "--checkout", str(repository),
+        [sys.executable, "-c", ADMISSION_OPENED_DRIVER, str(RUNNER_PATH), "--checkout", str(repository),
          "--log-dir", str(scratch / "logs"),
          "--lock-file", str(scratch / "run.lock"),
          "--recorded-inputs-directory", str(scratch / "recordings")],
@@ -261,7 +275,7 @@ def run_runner(scratch, repository, path):
                    if name != runner.SIGNAL_SANDBOX_INSIDE_VARIABLE}
     environment["PATH"] = path
     completed = subprocess.run(
-        [sys.executable, str(RUNNER_PATH), "--checkout", str(repository),
+        [sys.executable, "-c", ADMISSION_OPENED_DRIVER, str(RUNNER_PATH), "--checkout", str(repository),
          "--log-dir", str(scratch / "logs"),
          "--lock-file", str(scratch / "run.lock"),
          "--recorded-inputs-directory", str(scratch / "recordings")],
@@ -416,7 +430,9 @@ with tempfile.TemporaryDirectory(dir=pathlib.Path.home()) as home_scratch_name, 
     listening.bind(reachable)
     listening.listen()
     vanished = str(home_scratch / "vanished.sock")
-    # /root is closed to every account but root, so this program cannot lstat inside it.
+    # /root is closed to every account but root, so this program cannot lstat inside it. A
+    # directory this account makes with mode 000 would not do: the scan leaves out every
+    # directory this account can write in, as hidden.
     unreachable_path = "/root/nedschorus-run-all-test-suites-test.sock"
     listing = scratch / "unix"
     listing.write_text(proc_net_unix_listing([reachable, vanished, unreachable_path]))
@@ -428,7 +444,10 @@ with tempfile.TemporaryDirectory(dir=pathlib.Path.home()) as home_scratch_name, 
     check("a listening socket this program can reach is covered", reachable in found, found)
     check("a listening socket gone before the scan's lstat is left out of the covers, "
           "so bwrap is not asked to bind over a missing path", vanished not in found, found)
-    if os.geteuid() != 0:
+    if not sys.platform.startswith("linux"):
+        print("SKIP  an unreachable socket: this platform has no /root, and the test sandbox "
+              "the covers are for is Linux-only")
+    elif os.geteuid() != 0:
         check("a listening socket this program cannot reach is left out of the covers, "
               "so bwrap's start does not fail on it", unreachable_path not in found, found)
         check("a listening socket this program cannot reach is named as uncovered, with its error",
@@ -464,6 +483,15 @@ with tempfile.TemporaryDirectory() as scratch_name:
           and "run the suite again" in text, text)
 
 
+# --- Hiding by default: fixed directories ----------------------------------------
+
+# Written out here, not read from the runner, so a runner that stops hiding one fails a case:
+# /mnt holds the backup drive's snapshots of the home directory, credentials included.
+fixed_pairs = list(zip(runner.SIGNAL_SANDBOX_BWRAP_ARGUMENTS, runner.SIGNAL_SANDBOX_BWRAP_ARGUMENTS[1:]))
+for directory in ("/mnt", "/media", "/var/snap"):
+    check(f"every test sandbox hides {directory} whole with an empty tmpfs",
+          ("--tmpfs", directory) in fixed_pairs, runner.SIGNAL_SANDBOX_BWRAP_ARGUMENTS)
+
 # --- Hiding by default: writable directories, and sockets left visible ---------
 
 if sys.platform.startswith("linux"):
@@ -475,10 +503,31 @@ if sys.platform.startswith("linux"):
     check("the scan walks none of the directories the sandbox already makes private or empty",
           not any(path == top or path.startswith(top + "/")
                   for path in scanned for top in (
-                      *runner.TEST_SANDBOX_PRIVATE_DIRECTORIES_NOT_SCANNED,
+                      *runner.TEST_SANDBOX_PRIVATE_DIRECTORY_PATHS_NOT_SCANNED_FOR_WRITABLE_DIRECTORIES,
                       runner.REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,
-                      *runner.TEST_SANDBOX_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS)), scanned)
+                      *runner.TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS)), scanned)
+    # A change that stops hiding one of them must not make the scan walk it: /mnt holds the
+    # backup drive, which a walk would crawl for as long as its timeout allows.
+    walked = []
     real_run = runner.subprocess.run
+    original_fixed = runner.TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS
+    runner.TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS = {
+        path: reason for path, reason in original_fixed.items() if path != "/mnt"}
+    runner.subprocess.run = lambda command, *arguments, **options: (
+        walked.append(command), subprocess.CompletedProcess(command, 0, "", ""))[1]
+    scan.cache_clear()
+    try:
+        scan()
+        raised = None
+    except runner.SignalSandboxCouldNotStart as error:
+        raised = str(error)
+    finally:
+        runner.subprocess.run = real_run
+        runner.TEST_SANDBOX_FIXED_DIRECTORIES_HIDDEN_BY_EMPTY_TMPFS = original_fixed
+        scan.cache_clear()
+    check("when /mnt would no longer be hidden whole, the scan refuses without walking it, "
+          "and names it", raised is not None and "/mnt" in raised and walked == [],
+          (raised, walked))
     for label, stand_in in (
             ("find exits 2", lambda *arguments, **options: subprocess.CompletedProcess(
                 arguments[0], 2, "", "find: bad expression")),
@@ -499,21 +548,91 @@ if sys.platform.startswith("linux"):
 else:
     print("SKIP  the scan for writable directories: test sandboxes exist only on Linux")
 
+home_hidden = (runner.REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX,)
+
+
+def stub_interpreter(path, loaded, status=0):
+    """A stand-in interpreter that reports the given loaded paths as a real one would."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # printf's format turns each \\0 into the NUL a real interpreter's answer holds.
+    path.write_text("#!/bin/sh\nprintf " + shlex.quote("\\0".join(loaded)) + f"\nexit {status}\n")
+    path.chmod(0o755)
+    return str(path)
+
+
 with tempfile.TemporaryDirectory(
         dir=runner.REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX) as home_name:
-    environment_root = pathlib.Path(home_name) / "venv"
-    (environment_root / "bin").mkdir(parents=True)
-    (environment_root / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    home_scratch = pathlib.Path(home_name).resolve()
+    shown = runner.interpreter_directories_shown_read_only_in_test_sandbox
+    shown.cache_clear()
+    environment_root = home_scratch / "venv"
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(environment_root)],
+                   check=True)
+    venv_shown = shown(str(environment_root / "bin" / "python3"), home_hidden)
+    venv_site = subprocess.run(
+        [str(environment_root / "bin" / "python3"), "-I", "-c",
+         "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+        capture_output=True, text=True, check=True).stdout.strip()
     check("an interpreter in a virtual environment in the hidden home directory has the "
-          "environment shown read-only",
+          "environment's site-packages and pyvenv.cfg shown, not the whole environment",
+          any(venv_site == path or venv_site.startswith(path + "/") for path in venv_shown)
+          and str(environment_root / "pyvenv.cfg") in venv_shown
+          and str(environment_root) not in venv_shown, venv_shown)
+    # An installation whose prefix is a stand-in ~/.local, which also holds the keyrings.
+    local = home_scratch / "local"
+    for directory in ("bin", "lib/python3.99/lib-dynload", "lib/python3.99/site-packages",
+                      "share/keyrings"):
+        (local / directory).mkdir(parents=True)
+    (local / "share" / "keyrings" / "login.keyring").write_text("secret")
+    stdlib = str(local / "lib" / "python3.99")
+    site = str(local / "lib" / "python3.99" / "site-packages")
+    local_python = local / "bin" / "python3"
+    local_loaded = [str(local_python), str(local_python), stdlib,
+                    str(local / "lib" / "python3.99" / "lib-dynload"), site, site]
+    local_shown = shown(stub_interpreter(local_python, local_loaded), home_hidden)
+    check("an interpreter whose prefix is ~/.local has its standard library and its "
+          "executable shown, and nothing else of the prefix, so ~/.local/share/keyrings stays "
+          "hidden",
+          stdlib in local_shown and str(local_python) in local_shown
+          and not any(str(local / "share") == path or str(local / "share").startswith(path + "/")
+                      or path == str(local) for path in local_shown), local_shown)
+    holding = stub_interpreter(home_scratch / "odd" / "python3",
+                               [str(home_scratch / "odd" / "python3")] * 2
+                               + [runner.REAL_HOME_DIRECTORY_PATH_HIDDEN_BY_EMPTY_TMPFS_IN_TEST_SANDBOX] * 4)
+    try:
+        shown(holding, home_hidden)
+        raised = None
+    except runner.SignalSandboxCouldNotStart as error:
+        raised = str(error)
+    check("an interpreter that loads the hidden home directory itself stops the sandbox from "
+          "being built, since showing it would show the whole home directory",
+          raised is not None and "hides whole" in raised, raised)
+    broken = stub_interpreter(home_scratch / "broken" / "python3", ["/x"] * 6, status=3)
+    try:
+        shown(broken, home_hidden)
+        raised = None
+    except runner.SignalSandboxCouldNotStart as error:
+        raised = str(error)
+    check("an interpreter that cannot report what it loads stops the sandbox from being "
+          "built, naming the interpreter", raised is not None and broken in raised, raised)
+    launcher = home_scratch / "launcher" / "scripts" / "run-suite-in-signal-sandbox.py"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("")
+    original_hidden = runner.directories_hidden_whole_in_test_sandbox
+    runner.directories_hidden_whole_in_test_sandbox = lambda: home_hidden
+    try:
+        launch = runner.paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(
+            ["/usr/bin/python3"], [launcher])
+    finally:
+        runner.directories_hidden_whole_in_test_sandbox = original_hidden
+    check("a program file run inside the sandbox from the hidden home directory, such as the "
+          "launcher that checks the sandbox from inside, has its directory shown",
+          launch == [os.path.realpath(launcher.parent)], launch)
+    shown.cache_clear()
+if os.path.exists("/usr/bin/python3"):
+    check("an interpreter outside the home directory needs nothing shown",
           runner.interpreter_directories_shown_read_only_in_test_sandbox(
-              str(environment_root / "bin" / "python3")) == [environment_root])
-    check("an interpreter in the home directory outside a virtual environment has its own "
-          "directory shown",
-          runner.interpreter_directories_shown_read_only_in_test_sandbox(
-              str(pathlib.Path(home_name) / "python3")) == [pathlib.Path(home_name)])
-check("an interpreter outside the home directory needs nothing shown",
-      runner.interpreter_directories_shown_read_only_in_test_sandbox("/usr/bin/python3") == [])
+              "/usr/bin/python3", home_hidden) == [])
 
 with tempfile.TemporaryDirectory() as scratch_name:
     scratch = pathlib.Path(scratch_name)
@@ -538,6 +657,48 @@ with tempfile.TemporaryDirectory() as scratch_name:
     check("a listening socket directly in a system directory is covered by an empty file, "
           "and the system directory is not hidden",
           "/var/direct.sock" in arguments and ("--tmpfs", "/var") not in pairs, arguments)
+
+    # A checkout inside a directory the scan hides, as `--checkout /var/tmp/repo` puts it,
+    # with a read-only path inside the checkout and a writable one inside the read-only one.
+    real_scratch = os.path.realpath(scratch)
+    hidden_parent = os.path.dirname(real_scratch)
+    read_only_inside = scratch / "recorder"
+    writable_inside = read_only_inside / "record"
+    writable_inside.mkdir(parents=True)
+    runner.directories_this_account_can_create_files_in_hidden_in_test_sandbox = (
+        lambda: (hidden_parent,))
+    runner.listening_unix_sockets_the_test_sandbox_would_show = (
+        lambda *arguments, **options: [])
+    try:
+        arguments = runner.bwrap_arguments_for_one_suites_test_sandbox(
+            scratch, [writable_inside], read_only_paths=[read_only_inside])
+    finally:
+        runner.directories_this_account_can_create_files_in_hidden_in_test_sandbox = original_scan
+        runner.listening_unix_sockets_the_test_sandbox_would_show = original_listening
+    pairs = list(zip(arguments, arguments[1:]))
+
+    def position(pair):
+        return pairs.index(pair) if pair in pairs else None
+
+    cover = position(("--tmpfs", hidden_parent))
+    checkout_bind = position(("--tmp-overlay", real_scratch))
+    read_only_bind = position(("--ro-bind", os.path.realpath(read_only_inside)))
+    writable_bind = position(("--bind", os.path.realpath(writable_inside)))
+    check("a directory the scan hides is covered before the checkout inside it is bound, so "
+          "the cover does not hide the checkout",
+          None not in (cover, checkout_bind) and cover < checkout_bind, arguments)
+    check("the checkout under test is a copy-on-write overlay of itself, not bound writable, "
+          "so nothing a suite writes in it survives the suite",
+          checkout_bind is not None
+          and pairs[checkout_bind - 2] == ("--overlay-src", real_scratch)
+          and ("--bind", real_scratch) not in pairs, arguments)
+    check("a read-only path inside the checkout's copy-on-write overlay is bound after the "
+          "overlay, so it stays read-only",
+          None not in (checkout_bind, read_only_bind) and checkout_bind < read_only_bind,
+          arguments)
+    check("a writable path inside a read-only one is bound after it, so it stays writable",
+          None not in (read_only_bind, writable_bind) and read_only_bind < writable_bind,
+          arguments)
 
 
 # --- Isolation ----------------------------------------------------------------

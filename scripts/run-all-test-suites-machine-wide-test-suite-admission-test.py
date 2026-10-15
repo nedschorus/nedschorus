@@ -784,12 +784,24 @@ with tempfile.TemporaryDirectory() as scratch_name:
 
         code, printed, _ = main_with("records", **as_if_bwrap,
                                      write_case_times_suite_resources_and_junit_xml_of_run=records_cannot_be_written)
-        # The stand-in bwrap builds no real sandbox, so the suite itself fails here; exit 2
-        # still says the records are missing, rather than the suites' own exit.
-        check("records that cannot be written end the run with exit 2, the suites' SUMMARY "
-              "still printed, rather than the exit the suites alone would give",
-              code == runner.EXIT_COULD_NOT_RUN and "could not be written" in printed
+        # The stand-in bwrap builds no real sandbox, so the suite itself fails here, and a
+        # failing suite outranks the missing records.
+        check("records that cannot be written while a suite failed end the run with exit 1, "
+              "the failure's exit, naming the missing records and printing the SUMMARY",
+              code == runner.EXIT_SOME_FAILED and "could not be written" in printed
               and "SUMMARY: " in printed, (code, printed[-800:]))
+        real_run_one_suite = runner.run_one_suite
+
+        def suite_passes(*arguments, **options):
+            return {**real_run_one_suite(*arguments, **options), "exit": 0}
+
+        code, printed, _ = main_with("records-all-passed", **as_if_bwrap,
+                                     run_one_suite=suite_passes,
+                                     write_case_times_suite_resources_and_junit_xml_of_run=records_cannot_be_written)
+        check("records that cannot be written while every suite passed end the run with exit 2, "
+              "the SUMMARY still printed",
+              code == runner.EXIT_COULD_NOT_RUN and "could not be written" in printed
+              and "SUMMARY: 1 passed" in printed, (code, printed[-800:]))
 
         history_paths = []
 

@@ -120,9 +120,12 @@ def git(repo, *arguments):
                    check=True, capture_output=True)
 
 
-# A suite that says it started, then runs until the test creates its stop file.
+# A suite that says it started, then runs until the test creates its stop file. It says
+# so in its output too, which the runner copies to the suite's log as it runs: a sandboxed
+# suite's write in the checkout does not reach the checkout outside.
 WAITS_FOR_THE_STOP_FILE = f'''import os, pathlib, time
 pathlib.Path(os.environ["{STARTED_FILE_VARIABLE}"]).write_text(str(os.getpid()))
+print("started", flush=True)
 while not pathlib.Path(os.environ["{STOP_FILE_VARIABLE}"]).exists():
     time.sleep(0.05)
 '''
@@ -157,8 +160,9 @@ def start_run(root, repo, name):
     """Start the runner on repo with its own log directory; return (process, log dir)."""
     environment = dict(os.environ)
     environment.pop(module.SIGNAL_SANDBOX_INSIDE_VARIABLE, None)
-    # In the checkout, which the test sandbox binds writable, so the suite inside it
-    # and this test outside it see the same files.
+    # In the checkout, which a suite outside the test sandbox and this test share; inside
+    # a test sandbox the checkout is a copy-on-write overlay, so a sandboxed suite reports
+    # its start in its output instead.
     environment[STARTED_FILE_VARIABLE] = str(repo / f"{name}.started")
     environment[STOP_FILE_VARIABLE] = str(repo / "stop")
     log_dir = root / f"logs-{name}"
@@ -332,7 +336,9 @@ else:
             quick_repo = make_repo(root, "quick-test.py", "print('ok')\n", "quick-repo")
             run_e, logs_e = start_run(root, repo, "e")
             try:
-                started = wait_until(lambda: (repo / "e.started").exists())
+                suite_log = module.log_path_for(logs_e, sandboxed_suite)
+                started = wait_until(lambda: suite_log.exists()
+                                     and "started" in suite_log.read_text(errors="replace"))
                 records = run_records(root)
                 suite_processes = records[0]["suite_processes"] if records else []
                 init = suite_processes[0] if suite_processes else {}

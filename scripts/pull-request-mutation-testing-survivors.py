@@ -524,7 +524,10 @@ def main(argv=None):
                                 {suite: runner.command_prefix_starting_one_suite_in_its_test_sandbox(
                                     sandbox_prefix, worktree,
                                     [started_proofs[suite]] if suite in started_proofs else (),
-                                    suite=suite) for suite in suites},
+                                    suite=suite,
+                                    read_only_paths=runner.paths_one_suite_launch_needs_shown_read_only_in_test_sandbox(
+                                        [arguments.python]) if in_test_sandboxes else ())
+                                 for suite in suites},
                                 outside, nice_prefix, started_proofs)
                         for key in totals:
                             totals[key] += counts[key]

@@ -876,6 +876,39 @@ def run_cases():
                   not (control / "machine.lock").exists()
                   and all(call["lock_free"] is None for call in cosmic_ray_calls),
                   json.dumps(cosmic_ray_calls)[:800])
+
+        # An interpreter the test sandbox would hide, as `--python ~/venv/bin/python` names
+        # one: its installation is shown read-only in each mutant's sandbox.
+        with tempfile.TemporaryDirectory() as scratch_name, tempfile.TemporaryDirectory(
+                dir=Path.home()) as home_name:
+            repository, base, head = scratch_repository(scratch_name, {
+                "scripts/doubler.py": "def double(x):\n    return x + x\n",
+                "scripts/doubler-test.py": "import sys\nsys.exit(0)\n"})
+            venv, control = fake_venv(scratch_name, {"dump": []})
+            fake_bin = Path(scratch_name) / "bin"
+            fake_bin.mkdir()
+            (fake_bin / "bwrap").write_text("#!/bin/sh\nexit 0\n")
+            (fake_bin / "bwrap").chmod(0o755)
+            installation = Path(home_name).resolve() / "python-installation"
+            (installation / "bin").mkdir(parents=True)
+            standard_library = installation / "lib" / "python3.99"
+            standard_library.mkdir(parents=True)
+            home_python = installation / "bin" / "python3"
+            # Answers the question of what it loads as a real interpreter installed there would.
+            home_python.write_text("#!/bin/sh\nprintf " + shlex.quote("\\0".join(
+                [str(home_python)] * 2 + [str(standard_library)] * 4)) + "\n")
+            home_python.chmod(0o755)
+            completed = run_script(repository, control, "--head", head, "--base", base,
+                                   "--cosmic-ray-venv", str(venv), "--python", str(home_python),
+                                   path_override=f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+                                   dropped_variables=(inside_variable,))
+            config = ((control / "config.toml").read_text()
+                      if (control / "config.toml").exists() else "")
+            check("an interpreter in the hidden home directory has what it loads shown "
+                  "read-only in each mutant's test sandbox",
+                  f"--ro-bind {standard_library} {standard_library}" in config
+                  and f"--ro-bind {home_python} {home_python}" in config,
+                  f"rc={completed.returncode} out={completed.stdout[-600:]} config={config[:1500]}")
     else:
         print("SKIP  the signal sandbox cases: bwrap is used only on Linux")
 

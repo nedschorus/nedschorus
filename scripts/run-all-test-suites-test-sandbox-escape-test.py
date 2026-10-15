@@ -177,6 +177,12 @@ for path in targets["credential_files"]:
     attempt(f"read credential file {path}", read)
 for path in targets["outside_files"]:
     attempt(f"write {path}", lambda path=path: write(path))
+for directory in targets["fixed_hidden_directories"]:
+    attempt(f"see anything in {directory}",
+            lambda directory=directory: os.path.isdir(directory) and len(os.listdir(directory)) > 0)
+if targets["backup_file"]:
+    attempt(f"find a file under /mnt: {targets['backup_file']}",
+            lambda: os.path.lexists(targets["backup_file"]))
 def tmux_has_session():
     done = subprocess.run(["tmux", "-L", targets["tmux_socket_name"], "has-session"],
                           capture_output=True, text=True)
@@ -257,18 +263,28 @@ if targets["strace_directory"]:
     attempt("put a link and a named pipe among the strace traces", plant_in_strace_directory)
 attempt("write in the run's log directory", lambda: write(targets["log_file"]))
 attempt("write in the checkout under test", lambda: write(targets["checkout_file"]))
+attempt("change a tracked file in the checkout under test",
+        lambda: write(targets["checkout_tracked_file"], "changed inside"))
+attempt("change a script in the checkout under test",
+        lambda: write(targets["checkout_script"], "print('planted inside')\n"))
 def append_input_record():
     with open(targets["hook_log"], "a") as handle:
         handle.write("escape-test\tthe probe's own line\n")
 attempt("write the suite's own input record", append_input_record)
 # Sockets this test makes outside only once the probe has started, in /var/tmp and in the
 # home directory: what a process outside makes later must not show inside either.
-write(targets["late_sockets_ready"], "the probe is waiting")
+# The handshake goes through the suite's own input record, the one file both sides write
+# for real: what the probe writes in the checkout does not survive it.
+with open(targets["hook_log"], "a") as handle:
+    handle.write(targets["late_sockets_ready"] + "\n")
 import time
 deadline = time.monotonic() + 60
-while not os.path.exists(targets["late_sockets_made"]) and time.monotonic() < deadline:
+def late_sockets_made():
+    with open(targets["hook_log"]) as handle:
+        return targets["late_sockets_made"] in handle.read()
+while not late_sockets_made() and time.monotonic() < deadline:
     time.sleep(0.1)
-report("the late sockets were made outside", os.path.exists(targets["late_sockets_made"]))
+report("the late sockets were made outside", late_sockets_made())
 for path in targets["late_sockets"]:
     attempt(f"connect to a socket made outside after the suite started: {path}",
             lambda path=path: connect(path))
@@ -328,6 +344,12 @@ def environment_set(values):
                 os.environ[name] = value
 
 
+# Written out here, not read from the runner, so a runner that stops hiding one fails a case.
+DIRECTORIES_HIDDEN_WHOLE_THAT_HOLD_SOMETHING_OUTSIDE = ("/mnt", "/media", "/var/snap")
+
+PLANTED_SCRIPT_ORIGINAL = "print('as committed')\n"
+
+
 def make_linked_worktree(scratch):
     """A repository and a worktree linked to it, whose .git is a file naming its git directory."""
     repository = scratch / "repository"
@@ -354,6 +376,7 @@ def run_probe(scratch):
 
     git_directory, checkout = make_linked_worktree(scratch)
     (checkout / PROBE_SUITE).write_text(X11_PROBE_SOURCE + PROBE_SOURCE)
+    (checkout / "planted-script.py").write_text(PLANTED_SCRIPT_ORIGINAL)
     git_file_before = (checkout / ".git").read_text()
     # The run's log directory is placed in the home directory, as a run's often is; only
     # the suite's own input record in it is bound into the sandbox.
@@ -392,6 +415,14 @@ def run_probe(scratch):
         "the suite's input record": hook_log,
     }
 
+    # One file under /mnt, found without walking the backup drive.
+    backup_file = ""
+    backups = pathlib.Path("/mnt/backup")
+    if backups.is_dir():
+        try:
+            backup_file = str(next(iter(sorted(backups.iterdir()))))
+        except (OSError, StopIteration):
+            backup_file = ""
     tmux_environment = {key: value for key, value in os.environ.items()
                         if key not in ("TMUX", "TMUX_PANE", "TMUX_TMPDIR")}
     tmux_started = subprocess.run(["tmux", "-L", name, "new-session", "-d", "sleep", "600"],
@@ -432,12 +463,18 @@ def run_probe(scratch):
     writable_directories = [*runner.directories_this_account_can_create_files_in_hidden_in_test_sandbox(),
                             str(home)]
     late_sockets = [pathlib.Path("/var/tmp") / f"{name}-late.sock", canary_dir / "late.sock"]
-    late_ready, late_made = checkout / "late-sockets-ready", checkout / "late-sockets-made"
+    late_ready, late_made = "escape-test\tlate sockets ready", "escape-test\tlate sockets made"
     late_listeners = []
+
+    def hook_log_holds(line):
+        try:
+            return line in hook_log.read_text(errors="replace")
+        except OSError:
+            return False
 
     def make_late_sockets():
         deadline = time.monotonic() + 120
-        while not late_ready.exists() and time.monotonic() < deadline:
+        while not hook_log_holds(late_ready) and time.monotonic() < deadline:
             time.sleep(0.05)
         for path in late_sockets:
             late = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -445,7 +482,8 @@ def run_probe(scratch):
             late.listen(1)
             late.setblocking(False)
             late_listeners.append(late)
-        late_made.write_text("made")
+        with open(hook_log, "a") as handle:
+            handle.write(late_made + "\n")
 
     late_maker = threading.Thread(target=make_late_sockets, daemon=True)
     machine_sockets = [(path, kind) for path, kind in listening_unix_sockets_of_this_machine()
@@ -472,15 +510,20 @@ def run_probe(scratch):
         "runner_written_paths": {label: str(path) for label, path in runner_written.items()},
         "symlink_target": str(symlink_target),
         "strace_directory": str(strace_dir) if strace else "",
-        "checkout_file": str(checkout / "probe-stays"),
+        "checkout_file": str(checkout / "probe-was-here"),
+        "checkout_tracked_file": str(checkout / "tracked.txt"),
+        "checkout_script": str(checkout / "planted-script.py"),
         "log_file": str(log_dir / "probe-was-here"),
         "hook_log": str(hook_log),
         "x11_displays": X11_DISPLAYS_PROBED,
         "writable_directories": writable_directories,
+        "fixed_hidden_directories": [directory for directory in DIRECTORIES_HIDDEN_WHOLE_THAT_HOLD_SOMETHING_OUTSIDE
+                                     if os.path.isdir(directory) and os.listdir(directory)],
+        "backup_file": backup_file,
         "probe_file_name": probe_file_name,
         "late_sockets": [str(path) for path in late_sockets],
-        "late_sockets_ready": str(late_ready),
-        "late_sockets_made": str(late_made),
+        "late_sockets_ready": late_ready,
+        "late_sockets_made": late_made,
         "tcp_port": tcp_listener.getsockname()[1],
         "abstract_socket_name": name,
     }
@@ -580,6 +623,18 @@ def run_probe(scratch):
         for path in credential_files:
             ok, record = blocked(f"read credential file {path}")
             check(f"inside, a credential file is not there: {path}", ok, record)
+        for directory in DIRECTORIES_HIDDEN_WHOLE_THAT_HOLD_SOMETHING_OUTSIDE:
+            if not (os.path.isdir(directory) and os.listdir(directory)):
+                print(f"SKIP  {directory} holds nothing outside, so its hiding cannot be seen")
+                continue
+            ok, record = blocked(f"see anything in {directory}")
+            check(f"inside, {directory} is empty, though it holds something outside", ok, record)
+        if backup_file:
+            ok, record = blocked(f"find a file under /mnt: {backup_file}")
+            check("inside, a file under /mnt, such as a backup snapshot of the home directory, "
+                  "is not there", ok, record)
+        else:
+            print("SKIP  /mnt/backup holds nothing here, so no backup file can be looked for")
         for directory in writable_directories:
             check(f"outside afterwards, nothing the suite wrote in {directory}, a directory "
                   f"this account can create files in, is there",
@@ -645,8 +700,21 @@ def run_probe(scratch):
         record = attempts.get("write in the checkout under test")
         check("inside, a write in the checkout under test works",
               record is not None and record["worked"], record)
-        check("outside afterwards, a write in the checkout under test stays",
-              (checkout / "probe-stays").is_file())
+        check("outside afterwards, a new file written in the checkout under test is gone",
+              not (checkout / "probe-was-here").exists())
+        record = attempts.get("change a tracked file in the checkout under test")
+        check("inside, a tracked file in the checkout under test can be changed",
+              record is not None and record["worked"], record)
+        check("outside afterwards, a tracked file changed in the checkout under test is "
+              "unchanged", (checkout / "tracked.txt").read_text() == "tracked\n",
+              (checkout / "tracked.txt").read_text())
+        record = attempts.get("change a script in the checkout under test")
+        check("inside, a script in the checkout under test can be changed",
+              record is not None and record["worked"], record)
+        check("outside afterwards, a script changed in the checkout under test is unchanged, "
+              "so nothing run outside later runs what a suite planted",
+              (checkout / "planted-script.py").read_text() == PLANTED_SCRIPT_ORIGINAL,
+              (checkout / "planted-script.py").read_text())
         record = attempts.get("write the suite's own input record")
         recorded = hook_log.read_text(errors="replace").splitlines()
         check("inside, the suite writes its own input record, which the runner reads after",
@@ -742,6 +810,10 @@ def run_probe(scratch):
                         "queue >= 0 and libc.msgctl(queue, 0, None)\n"], capture_output=True)
         subprocess.run(["tmux", "-L", name, "kill-server"], env=tmux_environment,
                        capture_output=True)
+        # tmux leaves its socket file behind after kill-server.
+        tmux_socket_path.unlink(missing_ok=True)
+        check("outside afterwards, this test's own tmux socket file is gone",
+              not tmux_socket_path.exists(), str(tmux_socket_path))
         shutil.rmtree(canary_dir, ignore_errors=True)
         shutil.rmtree(log_dir, ignore_errors=True)
         shutil.rmtree(host_tmp, ignore_errors=True)
