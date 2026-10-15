@@ -238,6 +238,11 @@ def markdown_broken_paragraph_line_ranges(text: str) -> list:
     return ranges
 
 
+# SequenceMatcher without autojunk can take cubic time on spans of repeated lines: 800 lines
+# against 800 took about 5 s on ned-box, past which a span's every new line counts as added.
+LINE_DIFF_MAXIMUM_LINE_PAIRS = 250_000
+
+
 class EditedLinesUnknown(Exception):
     pass
 
@@ -267,33 +272,54 @@ def edit_added_line_numbers(tool_response, text_after: str) -> set:
     if not old:
         return set(range(len(after_lines)))
     before_lines = original.split("\n")
-    old_line_breaks, new_line_breaks = old.count("\n"), new.count("\n")
-    replacements = original.count(old) if replace_all else min(original.count(old), 1)
-    if not replacements:
+    # Claude Code removes an empty Edit's following newline too when old ends without one,
+    # so the line count says which of the two texts it removed.
+    for removed in ([old, old + "\n"] if not new and not old.endswith("\n") else [old]):
+        replacements = original.count(removed) if replace_all else min(original.count(removed), 1)
+        line_shift = new.count("\n") - removed.count("\n")
+        if replacements and len(after_lines) == len(before_lines) + replacements * line_shift:
+            return _lines_replacements_added(original, before_lines, after_lines, removed, new, replace_all)
+    if not original.count(old):
         raise EditedLinesUnknown("tool_response.oldString does not occur in tool_response.originalFile")
-    if len(after_lines) != len(before_lines) + replacements * (new_line_breaks - old_line_breaks):
-        raise EditedLinesUnknown("the file as read does not have the line count the Edit's "
-                                 "replacements in tool_response.originalFile give")
-    added = set()
+    raise EditedLinesUnknown("the file as read does not have the line count the Edit's "
+                             "replacements in tool_response.originalFile give")
+
+
+def _lines_replacements_added(original, before_lines, after_lines, old, new, replace_all) -> set:
+    """The after-Edit line numbers the replacements of old by new added. Replacements whose
+    line spans share a line are diffed as one span, since diffing each alone would match one
+    shared line against the other replacement's lines."""
+    old_line_breaks, new_line_breaks = old.count("\n"), new.count("\n")
+    spans = []
     offset = original.find(old)
     line, counted_to, replaced = 0, 0, 0
     while offset >= 0:
         line += original.count("\n", counted_to, offset)
         counted_to = offset
         new_line = line + replaced * (new_line_breaks - old_line_breaks)
-        matcher = difflib.SequenceMatcher(None, before_lines[line:line + old_line_breaks + 1],
-                                          after_lines[new_line:new_line + new_line_breaks + 1], autojunk=False)
-        for tag, _, _, start, end in matcher.get_opcodes():
-            if tag in ("replace", "insert"):
-                added.update(range(new_line + start, new_line + end))
+        span = [line, line + old_line_breaks + 1, new_line, new_line + new_line_breaks + 1]
+        if spans and line < spans[-1][1]:
+            spans[-1][1], spans[-1][3] = span[1], span[3]
+        else:
+            spans.append(span)
         replaced += 1
         if not replace_all:
             break
         offset = original.find(old, offset + len(old))
+    added = set()
+    for before_start, before_end, after_start, after_end in spans:
+        before_span, after_span = before_lines[before_start:before_end], after_lines[after_start:after_end]
+        if len(before_span) * len(after_span) > LINE_DIFF_MAXIMUM_LINE_PAIRS:
+            added.update(range(after_start, after_end))
+            continue
+        matcher = difflib.SequenceMatcher(None, before_span, after_span, autojunk=False)
+        for tag, _, _, start, end in matcher.get_opcodes():
+            if tag in ("replace", "insert"):
+                added.update(range(after_start + start, after_start + end))
     return added
 
 
-def broken_paragraph_line_ranges_holding_an_added_line(broken_ranges, added_line_numbers) -> list:
+def markdown_broken_paragraph_line_ranges_filter_to_ranges_holding_edit_added_lines(broken_ranges, added_line_numbers) -> list:
     """The [start, end) ranges among broken_ranges that hold a line of added_line_numbers.
     The ranges do not overlap, so looking each of their lines up costs one pass over the file."""
     return [(start, end) for start, end in broken_ranges
@@ -328,8 +354,8 @@ def main() -> int:
     try:
         trackable = checks.git_would_track(root, relative_path)
     except checks.GitCommandFailed as error:
-        print(f"markdown-edit-hard-wrapped-paragraph-reminder: {error}, so no reminder check was made.",
-              file=sys.stderr)
+        print(f"markdown-edit-hard-wrapped-paragraph-reminder: {error}, so no reminder check was made; "
+              f"the {tool_name} itself succeeded.", file=sys.stderr)
         return 1
     if not trackable:
         return 0
@@ -346,10 +372,10 @@ def main() -> int:
         try:
             added = edit_added_line_numbers(payload.get("tool_response"), text)
         except EditedLinesUnknown as error:
-            print(f"markdown-edit-hard-wrapped-paragraph-reminder: {error}, so no reminder check was made.",
-                  file=sys.stderr)
+            print(f"markdown-edit-hard-wrapped-paragraph-reminder: {error}, so no reminder check was made; "
+                  f"the Edit itself succeeded.", file=sys.stderr)
             return 1
-        broken_ranges = broken_paragraph_line_ranges_holding_an_added_line(broken_ranges, added)
+        broken_ranges = markdown_broken_paragraph_line_ranges_filter_to_ranges_holding_edit_added_lines(broken_ranges, added)
     if not broken_ranges:
         return 0
 

@@ -448,12 +448,71 @@ class AddedLineNumbersThatCanOnlyBeLookedUp:
 
 
 try:
-    kept = hook.broken_paragraph_line_ranges_holding_an_added_line(
+    kept = hook.markdown_broken_paragraph_line_ranges_filter_to_ranges_holding_edit_added_lines(
         [(0, 2), (4, 6), (8, 10)], AddedLineNumbersThatCanOnlyBeLookedUp({5, 10}))
 except AssertionError as error:
     kept = str(error)
 check("the overlap filter looks each paragraph line up in the added lines, and keeps only "
       "the paragraphs holding one", kept == [(4, 6)], kept)
+
+
+
+def added_lines_or_fault(original, old, new, after, replace_all=False):
+    response = {"originalFile": original, "oldString": old, "newString": new}
+    if replace_all is not None:
+        response["replaceAll"] = replace_all
+    try:
+        return sorted(hook.edit_added_line_numbers(response, after))
+    except hook.EditedLinesUnknown as error:
+        return f"EditedLinesUnknown: {error}"
+
+
+check("an Edit with an empty oldString, filling an empty file, counts every line of the file as added",
+      added_lines_or_fault("", "", "One.\nTwo.\n", "One.\nTwo.\n") == [0, 1, 2],
+      added_lines_or_fault("", "", "One.\nTwo.\n", "One.\nTwo.\n"))
+missing_replace_all = added_lines_or_fault("a\n", "a", "b", "b\n", replace_all=None)
+check("an Edit payload whose only missing field is replaceAll is a check not made",
+      isinstance(missing_replace_all, str) and "replaceAll" in missing_replace_all, missing_replace_all)
+consumed = added_lines_or_fault("Drop me.\nThe first half\nand the second half.\n", "Drop me.", "",
+                                "The first half\nand the second half.\n")
+check("an Edit with an empty newString that also removed the following newline, as Claude Code "
+      "2.1.222 and later do, is read, and adds no line", consumed == [], consumed)
+kept_newline = added_lines_or_fault("Drop me.\nThe first half\nand the second half.\n", "Drop me.", "",
+                                    "\nThe first half\nand the second half.\n")
+check("an Edit with an empty newString that left the following newline, as Claude Code 2.1.185 did, "
+      "adds only the emptied line", kept_newline == [0], kept_newline)
+adjacent = added_lines_or_fault("Filler.\np\np\np\nThe first half\n", "p\n", "",
+                                "Filler.\nThe first half\n", replace_all=True)
+check("a replace_all Edit deleting adjacent identical lines adds no line, though each deleted "
+      "line's span shares a line with the next", adjacent == [], adjacent)
+adjacent_inserts = added_lines_or_fault("p\np\nq\n", "p\n", "p\nNEW\n", "p\nNEW\np\nNEW\nq\n",
+                                        replace_all=True)
+check("a replace_all Edit whose adjacent replacements each add a line counts both added lines",
+      adjacent_inserts == [1, 3], adjacent_inserts)
+
+_real_sequence_matcher = hook.difflib.SequenceMatcher
+
+
+class SequenceMatcherNotToBeCalled:
+    def __init__(self, *arguments, **keywords):
+        raise AssertionError("the line diff ran on a span past LINE_DIFF_MAXIMUM_LINE_PAIRS")
+
+
+repeated_old = "\n".join(["x"] * 600)
+repeated_new = "\n".join(["x", "z"] * 300)
+hook.difflib.SequenceMatcher = SequenceMatcherNotToBeCalled
+try:
+    bounded = added_lines_or_fault("Top.\n" + repeated_old + "\nEnd.\n", repeated_old, repeated_new,
+                                   "Top.\n" + repeated_new + "\nEnd.\n")
+except AssertionError as error:
+    bounded = str(error)
+finally:
+    hook.difflib.SequenceMatcher = _real_sequence_matcher
+check("a span of 600 repeated lines against 600 is not line-diffed, and its every new line counts "
+      "as added", bounded == list(range(1, 601)), bounded if isinstance(bounded, str) else len(bounded))
+small = added_lines_or_fault("Top.\nx\nx\nEnd.\n", "x\nx", "x\nz", "Top.\nx\nz\nEnd.\n")
+check("a span within LINE_DIFF_MAXIMUM_LINE_PAIRS is line-diffed, so only its changed line counts as added",
+      small == [2], small)
 
 # ---------------------------------------------------------------------------
 # The hook, run as a subprocess against a scratch repository.
@@ -616,6 +675,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                                "# Notes\n\n", "")
         check("an Edit that only deleted lines gets no reminder",
               silent(result), result.stdout + result.stderr)
+        result = edit_then_run(checkout, edited_file,
+                               "Filler.\np\np\np\nThe first half\nand the second half.\n", "p\n", "",
+                               replace_all=True)
+        check("a replace_all Edit that only deleted adjacent identical lines above an untouched broken "
+              "paragraph gets no reminder", silent(result), result.stdout + result.stderr)
         far_apart = ("A mark on one line.\n\n" + "".join(f"Filler {n} on one line.\n\n" for n in range(8))
                      + "The first mark\nand the second half.\n")
         result = edit_then_run(checkout, edited_file, far_apart, "mark", "Mark", replace_all=True)
@@ -680,7 +744,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                                        "replace_all": False}))
         check("an Edit whose payload has no originalFile is reported as a check not made, exit 1",
               result.returncode == 1 and result.stdout == ""
-              and "lacks tool_response's originalFile" in result.stderr,
+              and "lacks tool_response's originalFile" in result.stderr
+              and "the Edit itself succeeded." in result.stderr,
               result.stdout + result.stderr)
         payload = payload_for(checkout, "Edit", edited_file, {"old_string": "x", "new_string": "y"})
         payload["tool_response"] = {"originalFile": BROKEN_TEXT, "oldString": "absent",
@@ -750,7 +815,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("when git check-ignore exits 128 the hook reports git's failure and exits 1",
           result.returncode == 1 and result.stdout.strip() == ""
           and "git check-ignore -q -- notes.md in" in result.stderr
-          and "failed (exit 128" in result.stderr,
+          and "failed (exit 128" in result.stderr
+          and "the Write itself succeeded." in result.stderr,
           f"exit {result.returncode}: {result.stdout + result.stderr}")
 
     # git missing from PATH: the hook runs by absolute path, so only git is absent.
