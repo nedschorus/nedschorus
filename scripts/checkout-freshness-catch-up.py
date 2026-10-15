@@ -168,9 +168,10 @@ GIT_IN_PROGRESS_MARKERS = tuple(GIT_IN_PROGRESS_OPERATION_BY_MARKER)
 # not — a dirty tree, or a conflict it aborted. A pushed branch is never
 # moved by anyone but its author, and then only forward.
 # A pushed branch that conflicts with main is the one exception: no commit on
-# top can clear a conflict, so it is cleared by a hand-merge (CLAUDE.md, "How a
-# change reaches main"). Forbidding every merge here would send an agent with a
-# conflict away from the one move that clears it.
+# top can clear a conflict, so it is cleared by the hand-merge that
+# the VERDICT: CONFLICT report of scripts/branch-conflict-check.py describes.
+# Forbidding every merge here would send an agent with a conflict away from
+# the one move that clears it.
 # The runner selects the suites a change can affect, so no agent picks them by hand.
 SELECTIVE_TEST_RUN_COMMAND = (
     "python3 scripts/run-all-test-suites.py "
@@ -1015,7 +1016,7 @@ def merge_parents_conflict(checkout: Path, first_parent: str, second_parent: str
     CONFLICT (file location), and -X no-renames merges it cleanly. Those are
     conflicts the author really faced, because scripts/branch-conflict-check.py
     asks git with detection on, and so do `git merge` and the pre-push hook that
-    runs that check: the check prints VERDICT: CONFLICT, CLAUDE.md sends the
+    runs that check: the check prints VERDICT: CONFLICT, its report sends the
     author to the hand-merge, and git's own merge stops until it is resolved by
     hand. With the no-renames re-merge alone this function would return False
     for that hand-merge, and the agent would be told the branch had made a
@@ -1091,9 +1092,10 @@ def merges_from_main(checkout: Path):
     asking both ways loses no misbehaviour. merge_parents_conflict therefore
     re-merges both ways and the merge is skipped when either conflicts.
 
-    WHAT ASKING BOTH WAYS GIVES UP. CLAUDE.md's conflict rule has two branches:
-    a conflict with work main deleted or replaced closes the pull request, and
-    any other conflict is cleared by a hand-merge. This detector does not tell
+    WHAT ASKING BOTH WAYS GIVES UP. The VERDICT: CONFLICT report of
+    scripts/branch-conflict-check.py gives two courses: a conflict with work
+    main deleted or replaced closes the pull request, and any other conflict
+    is cleared by a hand-merge. This detector does not tell
     the two apart: a merge made over a modify/delete conflict is skipped, and
     so is one made over a branch that RENAMED a file main deleted, which
     conflicts only with rename detection.

@@ -91,7 +91,7 @@ COLLISION_WARNING_TEMPLATE = (
     "wrote so its name ends -draft before the extension, or at the end of a name that has "
     "none; tell whoever expects the old path the new one; and leave {draft_of} as it is.\n"
     "If both files are meant to exist and the file you wrote is not a draft, rename the file "
-    "you wrote by docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-"
+    "you wrote following the rules in docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-"
     "glossary-terms.md, and update what you have already written to point at the new name.\n"
     "If you wrote the file by mistake, delete the file you wrote."
 )

@@ -398,8 +398,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "Do not rebase or amend it" in agent_text(result)
           and "git checkout -b <name> origin/main" in agent_text(result), agent_text(result))
     # A conflict with main is the one case a commit on top cannot clear; the
-    # pushed-branch advice sends it to the hand-merge (CLAUDE.md, "How a change
-    # reaches main", worded 2026-09-30).
+    # pushed-branch advice sends it to the hand-merge that the VERDICT: CONFLICT
+    # report of scripts/branch-conflict-check.py describes.
     check("a pushed branch is told how to clear a conflict with main, byte for byte",
           "If it conflicts with main, clear the conflict with the hand-merge that "
           "scripts/branch-conflict-check.py describes." in agent_text(result),
@@ -1640,11 +1640,11 @@ with tempfile.TemporaryDirectory() as exception_scratch:
           f"{old_git_result.returncode} {unresolvable_result.returncode}")
 
     # --- a hand-merge the conflict check called for is not reported ----------
-    # CLAUDE.md, "How a change reaches main": a pushed branch that
-    # scripts/branch-conflict-check.py reports as `VERDICT: CONFLICT` is cleared
-    # by a hand-merge. That program asks git with rename detection ON, as
-    # `git merge` and the pre-push hook do; this hook once re-merged the two
-    # parents with rename detection OFF only. A file added under a directory the
+    # A pushed branch that scripts/branch-conflict-check.py reports as
+    # `VERDICT: CONFLICT` is cleared by a hand-merge, as that report says. That
+    # program asks git with rename detection ON, as `git merge` and the pre-push
+    # hook do; this hook once re-merged the two parents with rename detection
+    # OFF only. A file added under a directory the
     # other side moved conflicts only WITH detection (CONFLICT (file location)).
     # So the conflict check ordered the hand-merge, git's own merge stopped and
     # was resolved by hand, and this hook then told the user that the branch did
@@ -1705,7 +1705,8 @@ with tempfile.TemporaryDirectory() as exception_scratch:
               merge_main_into(shape_seat) != 0)
         # The resolution git itself suggests: the added file goes where the
         # directory went. The merge's message names the resolved file, as
-        # CLAUDE.md has a hand-merge do.
+        # the VERDICT: CONFLICT report of scripts/branch-conflict-check.py has a
+        # hand-merge do.
         git(["add", "-A"], shape_seat)
         git(["commit", "-q", "-m",
              "Merge origin/main into seat by hand\n\n"
