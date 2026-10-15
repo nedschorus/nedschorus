@@ -348,7 +348,7 @@ if linux_only_cases_run_here("the report's sandbox lines"):
         repository = scratch_checkout(scratch, ["a-test.py", OUTSIDE_SUITE])
         completed, report = run_runner(
             scratch, repository, f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
-        check("with the sandbox on, report.txt says each suite runs in its own PID namespace",
+        check("with the sandbox on, report.txt says each suite runs in its own test sandbox, named by the bwrap program",
               completed.returncode == 0
               and f"each suite runs in its own test sandbox: {fake_bin / 'bwrap'}" in report,
               (completed.returncode, report[-600:]))
@@ -465,12 +465,12 @@ if linux_only_cases_run_here("the covers over listening sockets, and a test sand
                   line is not None and unreachable_path in line and vanished not in line
                   and "the run goes on" in line, line)
             check("one uncovered listening socket is named in the singular",
-                  line is not None and line.startswith("a listening socket left uncovered")
+                  line is not None and line.startswith("a listening socket that the test sandbox does not hide")
                   and "cannot reach it and" in line, line)
             listing.write_text(proc_net_unix_listing([unreachable_path, unreachable_path + "2"]))
             line = runner.uncovered_listening_sockets_report_line_or_none(str(listing))
             check("two uncovered listening sockets are named in the plural",
-                  line is not None and line.startswith("listening sockets left uncovered")
+                  line is not None and line.startswith("listening sockets that the test sandbox does not hide")
                   and "cannot reach them and" in line, line)
         else:
             print("SKIP  an unreachable socket: root can reach every path")

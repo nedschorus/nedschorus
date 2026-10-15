@@ -176,10 +176,14 @@ def main():
         check("when writing the run's stderr to the program's stderr fails, the run still "
               "goes to its end, its stderr file is whole, and the program says so with the "
               "run's process id, keeps the summary line unchanged, and exits 2",
-              unread.returncode == 2 and len(lines) == 2
+              unread.returncode == 2 and len(lines) == 4
               and lines[0].startswith("PR 7 head test run, process ")
               and "writing its stderr to stderr failed (BrokenPipeError" in lines[0]
-              and lines[1] == "PR 7 head test run: exit 0; SUMMARY: fake summary for pr7-merged"
+              and "The run's verdict still stands" in lines[1]
+              and "this program exits 2" in lines[1]
+              and "run the head test run for PR 7 again with a stderr that can be written"
+              in lines[2]
+              and lines[3] == "PR 7 head test run: exit 0; SUMMARY: fake summary for pr7-merged"
               and len((helpers / "hr" / "pr7" / "stderr").read_text().splitlines()) == 2002,
               f"exit {unread.returncode}\n{stdout}")
 

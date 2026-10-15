@@ -87,6 +87,10 @@ PULL_REQUEST_HEAD_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME = "pull-request-head-test
 PULL_REQUEST_HEAD_TEST_RUN_RUNNER_BESIDE_THIS_FILE = Path(__file__).resolve().with_name(
     "run-all-test-suites.py")
 
+# Appended to the SUMMARY line on stdout, so a caller that shows the line beside exit 4 does not
+# read a passing count as a verdict.
+OUTPUT_COPY_FAILED_SUMMARY_SUFFIX = "output copy failed, verdict not given"
+
 MAIN_AS_THE_CLONE_HAS_IT = "refs/remotes/origin/main"
 
 # Must match the runner's commit_and_state wording.
@@ -269,6 +273,9 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
                  / PULL_REQUEST_HEAD_TEST_RUN_DIRECTORY_NAME / f"{head}-{run_name}")
     directory.mkdir(parents=True, exist_ok=True)
     logs = directory / PULL_REQUEST_HEAD_TEST_RUN_LOGS_DIRECTORY_NAME
+    local_copy = directory / PULL_REQUEST_HEAD_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME
+    this_command = shlex.join([sys.executable, str(Path(__file__).resolve()),
+                               *(sys.argv[1:] if argv is None else argv)])
     # Resolve before changing cwd so a relative override cannot select the checkout's own runner.
     runner = (Path(arguments.test_suite_runner_program).resolve()
               if arguments.test_suite_runner_program
@@ -276,6 +283,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
     completed = None
     verdict_is_on_the_head = True
     seconds_waiting_for_lock = 0
+    copy_failure = None
     if since is not None:
         command = [
             sys.executable, str(runner), "--checkout", str(checkout),
@@ -294,9 +302,10 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
             steps_failed.append((
                 f"writing {run_all_test_suites.PROGRAM}'s output to this program's stderr "
                 f"failed ({copy_failure}); the runner ran to its end and its output is in "
-                "the record, but a run whose output was lost on the way is no verdict",
-                "Run this again with a stderr that can be written, such as a file or a "
-                "terminal that stays open."))
+                f"the record, whose local copy is {local_copy}, but a run whose output was "
+                "lost on the way is no verdict",
+                "To get a verdict, run this command again with a stderr that can be written, "
+                f"such as a file or a terminal that stays open: {this_command}"))
         if lock_never_released:
             steps_failed.append(
                 daily.lock_never_taken_step_failed(completed, seconds_waiting_for_lock))
@@ -365,7 +374,6 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
     citation = (f"{mark.NED_BOX_SSH_TARGET}:{arguments.log_store_root}/"
                 f"{PULL_REQUEST_HEAD_TEST_RUNS_KIND_DIRECTORY_NAME}/{machine}/{file_name}")
     ssh_target = None if on_ned_box else mark.NED_BOX_SSH_TARGET
-    local_copy = directory / PULL_REQUEST_HEAD_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME
     try:
         local_copy.write_text(record + "\n", encoding="utf-8")
     except OSError as error:
@@ -408,7 +416,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
         return daily.EXIT_RECORD_NOT_WRITTEN
 
     if summary is not None and verdict_is_on_the_head:
-        print(summary)
+        print(f"{summary}; {OUTPUT_COPY_FAILED_SUMMARY_SUFFIX}" if copy_failure else summary)
     print(f"{PROGRAM}: record written to {citation}")
     return exit_code_once_the_record_is_written
 
