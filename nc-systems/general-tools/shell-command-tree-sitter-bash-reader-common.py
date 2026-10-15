@@ -1407,6 +1407,34 @@ HEREDOC_START_WITH_DESCRIPTOR_PATTERN = re.compile(rb"([0-9]+)(<<-?)")
 MAX_HEREDOCS_TAKEN_OUT = 256
 
 
+def _escaped_by_backslashes(source, position):
+    """Return whether the byte at position is escaped by an odd run of backslashes before it."""
+    backslashes = 0
+    while position - 1 - backslashes >= 0 and source[position - 1 - backslashes] == ord("\\"):
+        backslashes += 1
+    return backslashes % 2 == 1
+
+
+def _comment_misread_after_an_escaped_blank(root, source):
+    """Return the offset of the earliest comment tree-sitter-bash starts right after an escaped blank, or None.
+
+    tree-sitter-bash starts a comment at a # that follows an escaped space or tab, as in
+    `echo \\ #word; rm x`; bash reads that # as part of the word, so the comment hides the
+    rest of the line, a command included.
+    """
+    stack, found = [root], []
+    while stack:
+        node = stack.pop()
+        if node.type == "heredoc_body":
+            continue
+        start = node.start_byte
+        if node.type == "comment" and start > 0 and source[start - 1:start] in (b" ", b"\t") \
+                and _escaped_by_backslashes(source, start - 1):
+            found.append(start)
+        stack.extend(node.children)
+    return min(found, default=None)
+
+
 def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
     """Return (source, tree, {placeholder: _HeredocTakenOut}) with every heredoc's body taken out.
 
@@ -1422,16 +1450,29 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
     rules; `<<DELIMITER` becomes `<PLACEHOLDER`, a plain redirection
     tree-sitter-bash reads correctly, and the body lines are removed; then
     the next one, until none is left. keep_first leaves the earliest heredoc in
-    place. edits, when given, gets (offset, length removed, length inserted) for
-    each change, in the order made.
+    place. A # that tree-sitter-bash takes for a comment's start after an escaped
+    blank is written as \\#, which bash reads as the same word, before any heredoc
+    after it is taken out, since a comment read there would hide that heredoc.
+    edits, when given, gets (offset, length removed, length inserted) for each
+    change, in the order made.
     """
     taken = {}
     original = source
     tree = parser().parse(source)
-    for index in range(MAX_HEREDOCS_TAKEN_OUT):
+    index = 0
+    for _ in range(MAX_HEREDOCS_TAKEN_OUT + source.count(b"#")):
         start = next(iter(_heredoc_starts(tree.root_node)[1 if keep_first else 0:]), None)
         operator = start.prev_sibling if start is not None else None
         if operator is None or operator.type not in ("<<", "<<-"):
+            operator = None
+        misread = _comment_misread_after_an_escaped_blank(tree.root_node, source)
+        if misread is not None and (operator is None or misread < operator.start_byte):
+            source = source[:misread] + b"\\" + source[misread:]
+            if edits is not None:
+                edits.append((misread, 0, 1))
+            tree = parser().parse(source)
+            continue
+        if operator is None or index == MAX_HEREDOCS_TAKEN_OUT:
             break
         operator_start, delimiter_start, dashed = (operator.start_byte, start.start_byte,
                                                    operator.type == "<<-")
@@ -1464,7 +1505,52 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
         source = (source[:operator_start] + replacement
                   + source[delimiter_end:body_start] + source[resume:])
         tree = parser().parse(source)
+        index += 1
     return source, tree, taken
+
+
+ShellSourceCommentsAndUnreadableSpans = collections.namedtuple(
+    "ShellSourceCommentsAndUnreadableSpans",
+    "comments unreadable_spans missing_tokens heredocs_never_closed")
+
+
+def shell_source_comments_and_unreadable_spans_after_reader_corrections(source):
+    """Return a shell script's comments as bash reads them, and what tree-sitter-bash could not read.
+
+    source is the script's bytes. The reader's corrections come first: heredoc
+    bodies are taken out as bash's lexer takes them, so a body line is never a
+    comment, and a # that tree-sitter-bash takes for a comment's start after an
+    escaped blank is read as part of its word, as bash reads it. Every offset is
+    in source as given.
+
+    comments: [(start, end)] for each comment, a #! first line included.
+    unreadable_spans: [(start, holds_a_hash)] for each span tree-sitter-bash
+    marks as an error; a comment inside one goes unread.
+    missing_tokens: [(token, line)] for each token a line needs that never comes.
+    heredocs_never_closed: [as written] for each heredoc whose body never reaches
+    its closing line.
+    """
+    edits = []
+    edited, tree, taken = _source_with_heredoc_bodies_taken_out(source, edits=edits)
+    comments, unreadable, missing = [], [], []
+    pending = [tree.root_node]
+    while pending:
+        node = pending.pop()
+        pending.extend(node.children)
+        if node.is_missing:
+            missing.append((node.type, node.start_point[0] + 1))
+        elif node.type == "ERROR":
+            at = _offset_before_edits(node.start_byte, edits)
+            unreadable.append((0 if at is None else at,
+                               b"#" in edited[node.start_byte:node.end_byte]))
+        elif node.type == "comment":
+            start = _offset_before_edits(node.start_byte, edits)
+            end = _offset_before_edits(node.end_byte, edits)
+            if start is not None and end is not None:
+                comments.append((start, end))
+    return ShellSourceCommentsAndUnreadableSpans(
+        sorted(comments), sorted(unreadable), sorted(missing, key=lambda token: token[1]),
+        [heredoc.written for heredoc in taken.values() if not heredoc.ending])
 
 
 def _delimiter_word(source, position):

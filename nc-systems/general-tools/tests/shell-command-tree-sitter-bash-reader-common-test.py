@@ -146,6 +146,34 @@ check("a case's branches are commands and its patterns are not",
 check("$'...' ends at its unescaped quote, and a plain '...' at its first quote",
       words_of("a $'it\\'s' b; c 'x'") == [["a", "it's", "b"], ["c", "x"]],
       words_of("a $'it\\'s' b; c 'x'"))
+found = words_of("echo \\ #word; rm -rf x && git push --force")
+check("a # after an escaped space is part of its word, so the commands after it on the line are read",
+      [words[0] for words in found] == ["echo", "rm", "git"] and "#word" in found[0], found)
+check("a # after an escaped backslash still starts a comment, which hides the rest of its line",
+      words_of("echo \\\\ # rm -rf x\nls") == [["echo", "\\"], ["ls"]],
+      words_of("echo \\\\ # rm -rf x\nls"))
+found = reader.simple_commands("echo '\\ #q'; cat <<EOF\n\\ #body\nEOF\nls")
+check("a # after an escaped space inside quotes and in a here-document body is left as written",
+      [list(words) for words in found] == [["echo", "\\ #q"], ["cat"], ["ls"]]
+      and found[1].redirects == [("<<", "\\ #body\n")],
+      [(list(words), words.redirects) for words in found])
+script = b"#!/bin/sh\nx=`# PR 1\necho hi`\necho \\ #word;# PR 2\ncat <<EOF\n# body\nEOF\ncase $y in\n  *\"a\"*\"b\"*) ;;\nesac\n"
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(script)
+check("the comments of a script are tree-sitter-bash's own, after the reader's corrections, "
+      "in offsets of the script as given",
+      [script[start:end] for start, end in read.comments] == [b"#!/bin/sh", b"# PR 1", b"# PR 2"],
+      [script[start:end] for start, end in read.comments])
+check("a span tree-sitter-bash cannot read is reported with whether it holds a #, "
+      "and a script whose quotes and here-documents close has nothing missing",
+      read.unreadable_spans and not any(holds for _, holds in read.unreadable_spans)
+      and read.missing_tokens == [] and read.heredocs_never_closed == [], read)
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(
+    b"cat <<EOF\nno end\n")
+check("a here-document that never closes is reported as written",
+      read.heredocs_never_closed == ["<<EOF"], read)
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(b"if true; then echo hi\n")
+check("a token a line needs that never comes is reported with its line",
+      read.missing_tokens == [("fi", 2)], read)
 check("export and unset are read as commands with their words",
       words_of("export A=1; unset B") == [["export", "A=1"], ["unset", "B"]],
       words_of("export A=1; unset B"))

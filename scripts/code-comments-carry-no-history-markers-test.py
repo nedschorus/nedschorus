@@ -175,37 +175,14 @@ class ShellScriptDoesNotParse(ValueError):
     pass
 
 
-def _escaped(source, position):
-    """Return whether the byte at position is escaped by an odd run of backslashes before it."""
-    backslashes = 0
-    while position - 1 - backslashes >= 0 and source[position - 1 - backslashes] == ord("\\"):
-        backslashes += 1
-    return backslashes % 2 == 1
-
-
-def _begins_a_word(source, position):
-    """Return whether bash starts a word at position: after a line end, or an unescaped blank or operator."""
-    if position == 0 or source[position - 1] == ord("\n"):
-        return True
-    return source[position - 1] in b" \t;&|()<>" and not _escaped(source, position - 1)
-
-
-def _comment_start(source, start, end):
-    """Return where bash starts the comment tree-sitter-bash reports at start, or None.
-
-    tree-sitter-bash takes a # after an escaped space for a comment; bash reads
-    that # as part of a word, and a comment starts only at a later # on the line
-    that begins a word, after an unescaped blank or operator such as ;.
-    """
-    position = start
-    while position != -1 and not _begins_a_word(source, position):
-        position = source.find(b"#", position + 1, end)
-    return None if position == -1 else position
-
-
 def _bash_reports_a_quote_never_closed(source):
-    """Return bash -n's complaint when bash cannot read source to its end, or None."""
-    checked = subprocess.run(["bash", "-n"], input=source, capture_output=True)
+    """Return bash's complaint when bash cannot read source to its end, or None.
+
+    extglob is on, as in a script that turns it on before its first extended
+    pattern: bash -n runs no shopt, so without it a valid @(a|b) case pattern
+    is a syntax error.
+    """
+    checked = subprocess.run(["bash", "-O", "extglob", "-n"], input=source, capture_output=True)
     if checked.returncode == 0:
         return None
     return checked.stderr.decode("utf-8", "replace").strip() or f"bash -n exited {checked.returncode}"
@@ -214,11 +191,10 @@ def _bash_reports_a_quote_never_closed(source):
 def shell_comment_lines(source):
     """Return [(line number, text)] for every comment in a shell script.
 
-    The script is parsed with tree-sitter-bash, the parser the project's Bash
-    guards use, so quoting, command substitution and arithmetic are read as bash
-    reads them. Here-document bodies are taken out first by the shared reader,
-    as bash's lexer takes them, so a body line such as `EOF # note` is data,
-    not a comment. A #! first line is not a comment.
+    The comments are tree-sitter-bash's own, after the shared reader's
+    corrections, the parser and corrections the project's Bash guards use, so
+    quoting, command substitution, arithmetic and here-document bodies are read
+    as bash reads them. A #! first line is not a comment.
 
     Raise ShellScriptDoesNotParse when a here-document never closes, or when a
     quote or substitution never closes, as bash -n reports it, because a
@@ -228,41 +204,24 @@ def shell_comment_lines(source):
     no comment, so it is passed over, and one with a # in it raises.
     """
     encoded = source.encode("utf-8", "surrogatepass")
-    edits = []
-    edited, tree, taken = shell_reader._source_with_heredoc_bodies_taken_out(encoded, edits=edits)
-    for heredoc in taken.values():
-        if not heredoc.ending:
-            raise ShellScriptDoesNotParse(
-                f"the here-document {heredoc.written} never reaches its closing line")
-    comments, pending, checked_with_bash = [], [tree.root_node], False
-    while pending:
-        node = pending.pop()
-        pending.extend(node.children)
-        if node.is_missing:
-            raise ShellScriptDoesNotParse(
-                f"a {node.type} that line {node.start_point[0] + 1} needs never comes")
-        if node.type == "ERROR":
-            if not checked_with_bash:
-                checked_with_bash = True
-                complaint = _bash_reports_a_quote_never_closed(encoded)
-                if complaint:
-                    raise ShellScriptDoesNotParse(f"bash cannot read it: {complaint}")
-            if b"#" in edited[node.start_byte:node.end_byte]:
-                at = shell_reader._offset_before_edits(node.start_byte, edits) or 0
+    read = shell_reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(encoded)
+    if read.heredocs_never_closed:
+        raise ShellScriptDoesNotParse(
+            f"the here-document {read.heredocs_never_closed[0]} never reaches its closing line")
+    if read.missing_tokens:
+        token, line = read.missing_tokens[0]
+        raise ShellScriptDoesNotParse(f"a {token} that line {line} needs never comes")
+    if read.unreadable_spans:
+        complaint = _bash_reports_a_quote_never_closed(encoded)
+        if complaint:
+            raise ShellScriptDoesNotParse(f"bash cannot read it: {complaint}")
+        for at, holds_a_hash in read.unreadable_spans:
+            if holds_a_hash:
                 line = encoded.count(b"\n", 0, at) + 1
-                raise ShellScriptDoesNotParse(
-                    f"tree-sitter-bash cannot read line {line}, which holds a #")
-        if node.type != "comment":
-            continue
-        original_start = shell_reader._offset_before_edits(node.start_byte, edits)
-        original_end = shell_reader._offset_before_edits(node.end_byte, edits)
-        if original_start == 0 and encoded.startswith(b"#!"):
-            continue
-        start = _comment_start(encoded, original_start, original_end)
-        if start is not None:
-            line = encoded.count(b"\n", 0, start) + 1
-            comments.append((line, encoded[start:original_end].decode("utf-8", "surrogatepass")))
-    return sorted(comments)
+                raise ShellScriptDoesNotParse(f"tree-sitter-bash cannot read line {line}, which holds a #")
+    return [(encoded.count(b"\n", 0, start) + 1, encoded[start:end].decode("utf-8", "surrogatepass"))
+            for start, end in read.comments
+            if not (start == 0 and encoded.startswith(b"#!"))]
 
 
 def python_comment_and_docstring_lines(source):
@@ -441,6 +400,21 @@ def main():
               [(line, kind) for line, kind, _ in markers_in(
                   "x.sh", "echo \\ #word;# PR 931\necho \\;# GHI 12\n", "shell")]
               == [(1, "pull request or issue number")]),
+        check("a comment at the start of a backtick substitution is read",
+              [(line, kind) for line, kind, _ in markers_in(
+                  "x.sh", "x=`# PR 931\necho hi`\necho done\n", "shell")]
+              == [(1, "pull request or issue number")]),
+        check("a # after an escaped space, and a ;# inside the quote that follows it, are data, not comments",
+              [(line, kind) for line, kind, _ in markers_in(
+                  "x.sh", "echo \\ #word\";# PR 931\"\n# GHI 12\n", "shell")]
+              == [(2, "pull request or issue number")]),
+        check("a # after an escaped space followed by a quote that never closes raises",
+              shell_script_does_not_parse("echo \\ #word\";# PR 931\n")),
+        check("an extglob case pattern in a script tree-sitter-bash cannot fully read is valid bash, so its comments are read",
+              [(line, kind) for line, kind, _ in markers_in(
+                  "x.sh", 'case "$x" in\n  *"a"*"b"*) echo hit ;;\nesac\n'
+                          "case $y in\n  @(a|b)) echo y ;;\nesac\n# PR 931\n", "shell")]
+              == [(7, "pull request or issue number")]),
         check("a quote that never closes raises, with no # after it",
               shell_script_does_not_parse("echo 'never closed\n")),
         check("a double quote that never closes raises, with no # after it",
