@@ -471,9 +471,21 @@ def github_issue_states_and_titles(numbers) -> dict:
     return {number: repository.get(f"n{number}") for number in set(numbers)}
 
 
+def lines_outside_fenced_code_blocks(lines):
+    """Yield (line number, line) for each line outside a ``` fenced code block;
+    the fence lines themselves are left out."""
+    in_code_fence = False
+    for line_number, line in enumerate(lines, 1):
+        if line.lstrip().startswith("```"):
+            in_code_fence = not in_code_fence
+            continue
+        if not in_code_fence:
+            yield line_number, line
+
+
 def planned_work_lines(lines):
     in_planned_work = False
-    for line_number, line in enumerate(lines, 1):
+    for line_number, line in lines_outside_fenced_code_blocks(lines):
         if line.startswith("#"):
             in_planned_work = line.strip() == PLANNED_WORK_HEADING
         elif in_planned_work and PLANNED_WORK_ENTRY.match(line):
@@ -571,13 +583,7 @@ def lint_markdown(path: Path, repo_root: Path, architecture_overview_checks=Fals
     lines = path.read_text(encoding="utf-8").splitlines()
     overview = (architecture_overview_checks
                 and architecture_overview_system(path, repo_root) is not None)
-    in_code_fence = False
-    for line_number, line in enumerate(lines, 1):
-        if line.lstrip().startswith("```"):
-            in_code_fence = not in_code_fence
-            continue
-        if in_code_fence:
-            continue
+    for line_number, line in lines_outside_fenced_code_blocks(lines):
         if any(marker in line for marker in HISTORY_MARKERS + FOREIGN_ROOT_MARKERS):
             checks = (check_dates(line),)
         else:
