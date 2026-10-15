@@ -46,3 +46,14 @@ The design gets a fast read and a full cold read, then an approval-walk with the
 ## Next action
 
 The design's first draft, written from the 2026-10-09 reading of every place these rules live, has had its fast read. Next: add it beside this GHI-MD, give it a full cold read, and walk its questions with the user.
+
+## Provisional additions (not yet vetted by the user)
+
+- MD-skills, 2026-10-14: Launch-time catch-up: the agent itself brings its agent-home up to date with main using judgment, while `sync_working_branch_with_main` stays fast-forward-only (MD-skills task #27).
+- MD-skills, 2026-10-14: Build: the checkout-freshness hook changes the design decides (MD-skills task #166).
+- MD-skills, 2026-10-14: Build: the worktree cleaner's 30-day rule (MD-skills task #167).
+- MD-skills, 2026-10-14: Build: agent-homes detached at main, seat-branches retired (MD-skills task #168).
+- MD-skills, 2026-10-14: Build: merge-lane-2's merged-onto-main test script moved into the repository (MD-skills task #169).
+- MD-skills, 2026-10-14: Edit the other GitHub issues the design's approval-walks changed, one edit-GHI each (MD-skills task #170).
+- MD-skills, 2026-10-14: Write the git and GitHub architecture overview for the wiki (MD-skills task #171).
+- MD-skills, 2026-10-14: Build: a hook that refuses a topic worktree made outside `~/Projects/nedschorus/.claude/worktrees/` (MD-skills task #173).
