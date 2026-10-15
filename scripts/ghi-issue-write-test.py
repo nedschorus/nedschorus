@@ -94,6 +94,7 @@ hash and exiting 0.
 import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -165,11 +166,13 @@ class Recorder:
 
     def __init__(self, answers=None):
         self.calls = []
+        self.timeouts = []
         self.answers = {MAIN_COMMIT_CALL: Completed(MAIN_COMMIT + "\n"),
                         **(answers or {})}
 
     def __call__(self, arguments, timeout=None, cwd=None, check=True):
         self.calls.append(list(arguments))
+        self.timeouts.append(timeout)
         for prefix, answer in self.answers.items():
             if prefix in " ".join(arguments):
                 if isinstance(answer, Exception):
@@ -188,6 +191,13 @@ class Recorder:
 
     def ran(self, fragment):
         return any(fragment in " ".join(call) for call in self.calls)
+
+    def timeout_of(self, fragment):
+        """The timeout the first call holding fragment was given."""
+        for call, timeout in zip(self.calls, self.timeouts):
+            if fragment in " ".join(call):
+                return timeout
+        return None
 
     def count(self, fragment):
         return sum(1 for call in self.calls if fragment in " ".join(call))
@@ -562,6 +572,9 @@ def run_cases(scratch: Path):
           first.ran("git push --quiet origin "
                     "HEAD:refs/heads/ghi-570-a-statusline"),
           str(first.commands()))
+    check("a filing's push is given the pre-push hook's time and a margin",
+          first.timeout_of("git push") == tool.push_time_limit_seconds(os.environ),
+          str(first.timeout_of("git push")))
     check("the worktree is removed even though the run succeeded",
           first.ran("git worktree remove"), str(first.commands()))
 
@@ -1916,6 +1929,9 @@ def run_edit_cases(scratch: Path):
           landing.ran("git push --quiet origin HEAD:refs/heads/"
                       f"ghi-570-edit-{tool.pairing_key(staged)}"),
           str(landing.commands()))
+    check("an edit's push is given the pre-push hook's time and a margin",
+          landing.timeout_of("git push") == tool.push_time_limit_seconds(os.environ),
+          str(landing.timeout_of("git push")))
     check("an edit in place removes nothing from main",
           not landing.ran("git rm"), str(landing.commands()))
     check("main is fetched before anything is compared against it",
@@ -3729,6 +3745,96 @@ def run_edit_landing_real_git_cases(scratch: Path):
           other_line in merged and author_line in merged, merged)
 
 
+def run_push_time_limit_cases(scratch: Path):
+    conflict = tool.pre_push_conflict_check
+    selective = tool.pre_push_selective_test_run
+    # The longest the hook can take: each stop_process_group waits its grace
+    # twice, and the selective run first lists descendants with `ps`, which
+    # descendant_process_ids gives 30 seconds.
+    hook_seconds = (conflict.DEFAULT_TIME_BUDGET_SECONDS
+                    + 2 * conflict.TERMINATE_GRACE_SECONDS
+                    + 30
+                    + selective.DEFAULT_TIME_BUDGET_SECONDS
+                    + 2 * selective.TERMINATE_GRACE_SECONDS)
+    check("a push is given more time than the pre-push hook can take",
+          tool.push_time_limit_seconds({}) > hook_seconds,
+          f"{tool.push_time_limit_seconds({})} against {hook_seconds}")
+    check("the push's time, less its margin, waits out each hook stop's "
+          "grace twice, once after SIGTERM and once after SIGKILL",
+          tool.push_time_limit_seconds({}) - tool.PUSH_TIME_MARGIN_SECONDS
+          == conflict.DEFAULT_TIME_BUDGET_SECONDS
+          + 2 * conflict.TERMINATE_GRACE_SECONDS
+          + selective.DEFAULT_TIME_BUDGET_SECONDS
+          + 2 * selective.TERMINATE_GRACE_SECONDS,
+          str(tool.push_time_limit_seconds({})))
+    for module in (conflict, selective):
+        longer = {module.TIME_BUDGET_ENVIRONMENT_VARIABLE: "1000"}
+        check(f"a longer budget in {module.TIME_BUDGET_ENVIRONMENT_VARIABLE} "
+              "lengthens the push's time by as much",
+              tool.push_time_limit_seconds(longer)
+              == tool.push_time_limit_seconds({})
+              - module.DEFAULT_TIME_BUDGET_SECONDS + 1000,
+              str(tool.push_time_limit_seconds(longer)))
+
+    stopped = subprocess.TimeoutExpired(["git", "push"], 1)
+    case_name = ("a stopped push says how long it ran, that a rerun is safe "
+                 "and when to tell the user, and asks origin nothing more")
+    recorder = Recorder({"git push": stopped})
+    try:
+        tool.push_branch(scratch, "b", recorder, environment={})
+        check(case_name, False, "the push reported success")
+    except tool.Refused as refusal:
+        text = str(refusal)
+        check(case_name,
+              refusal.code == 1
+              and text.startswith(
+                  f"git push of branch b was stopped after "
+                  f"{tool.push_time_limit_seconds({}):.0f} seconds, longer "
+                  "than the pre-push hook's own limit")
+              and "so the push did not finish." in text
+              and "Rerun the same command; a rerun is safe: it reads origin "
+                  "first, and if the branch got there, it opens the pull "
+                  "request for it instead of pushing again." in text
+              and "tell the user the push hangs" in text
+              and recorder.commands() == ["git push --quiet"],
+              text + "\n" + str(recorder.commands()))
+    except subprocess.TimeoutExpired:
+        check(case_name, False, "the timeout escaped without the message")
+
+    quick = Recorder()
+    tool.push_branch(scratch, "b", quick, environment={})
+    check("a push that finishes asks origin nothing more",
+          quick.ran("git push") and not quick.ran("git ls-remote"),
+          str(quick.commands()))
+    longer = {selective.TIME_BUDGET_ENVIRONMENT_VARIABLE: "1000"}
+    configured = Recorder()
+    tool.push_branch(scratch, "b", configured, environment=longer)
+    check("the push is given the time the hook reads from the same environment",
+          configured.timeout_of("git push") == tool.push_time_limit_seconds(longer),
+          str(configured.timeout_of("git push")))
+    # Both budget variables are set here, so one the outer process carries
+    # cannot change what this case compares.
+    variables = (conflict.TIME_BUDGET_ENVIRONMENT_VARIABLE,
+                 selective.TIME_BUDGET_ENVIRONMENT_VARIABLE)
+    saved = {name: os.environ.get(name) for name in variables}
+    os.environ.pop(conflict.TIME_BUDGET_ENVIRONMENT_VARIABLE, None)
+    os.environ[selective.TIME_BUDGET_ENVIRONMENT_VARIABLE] = "1000"
+    try:
+        from_process = Recorder()
+        tool.push_branch(scratch, "b", from_process)
+        check("with no environment given, the push's time comes from this "
+              "process's environment, as the hook's does",
+              from_process.timeout_of("git push")
+              == tool.push_time_limit_seconds(longer),
+              str(from_process.timeout_of("git push")))
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
 def run_pull_request_description_cases(directory):
     """Both pull requests this tool opens carry a line scripts/merge-gate.sh
     accepts, so the gate does not refuse every GHI-MD pull request."""
@@ -3764,6 +3870,8 @@ def main():
         run_edit_landing_real_git_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-landed-test-") as name:
         run_landed_design_cases(Path(name))
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-push-test-") as name:
+        run_push_time_limit_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-main-test-") as name:
         run_main_dispatch_cases(Path(name))
     # A checkout of its own: the reconsidered marker lives at the root of
