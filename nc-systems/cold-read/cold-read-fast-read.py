@@ -224,10 +224,11 @@ FAST_READ_ONLY_NAMES = ("CLAUDE.md", "CLAUDE.local.md")
 
 # git's own words when it finds no worktree; LC_ALL=C keeps them in English.
 GIT_FOUND_NO_WORKTREE_MESSAGES = ("not a git repository", "cannot change to")
-# git's words when a worktree's .git file names a git directory that does not
-# exist, such as a ned-box worktree read from the Mac through /Volumes/nedhome.
-# They begin like the no-worktree words above, so they are checked first: the
-# target is in a worktree whose top git cannot reach.
+# git's words when a worktree's .git file names a directory that is missing,
+# such as a ned-box worktree read from the Mac through /Volumes/nedhome, or
+# that exists but is not a git directory. They begin like the no-worktree
+# words above, so they are checked first: the target is in a worktree whose
+# git directory git cannot use.
 GIT_WORKTREE_GIT_DIRECTORY_MISSING_MESSAGE = "not a git repository: "
 
 
@@ -240,7 +241,8 @@ def checkout_root_holding(target: pathlib.Path) -> pathlib.Path:
     target's directory is missing or in no repository. Any other git failure
     raises CheckoutRootUnreadable: answering REPO_ROOT then would send a walk
     draft to the records route without saying why. That includes a worktree
-    whose .git file names a missing git directory, and a target in a bare
+    whose .git file names a missing directory or one that is not a git
+    directory, and a target in a bare
     repository or under a .git directory, where git finds a repository but
     no worktree.
     The variables that redirect git are dropped for this one call: set in
@@ -256,8 +258,10 @@ def checkout_root_holding(target: pathlib.Path) -> pathlib.Path:
         return pathlib.Path(top).resolve()
     if GIT_WORKTREE_GIT_DIRECTORY_MISSING_MESSAGE in completed.stderr:
         raise CheckoutRootUnreadable(
-            f"{target.parent} is in a git worktree whose .git file names a git "
-            f"directory that does not exist: {completed.stderr.strip()}")
+            f"{target} is inside a git worktree whose .git file names a git "
+            f"directory that is missing or is not a git directory: "
+            f"{completed.stderr.strip()}. Run the fast read on the machine that "
+            f"made the worktree, or repair the worktree there with git worktree repair")
     if any(message in completed.stderr for message in GIT_FOUND_NO_WORKTREE_MESSAGES):
         return REPO_ROOT
     raise CheckoutRootUnreadable(

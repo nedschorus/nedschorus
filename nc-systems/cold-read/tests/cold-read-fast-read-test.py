@@ -1263,9 +1263,27 @@ with tempfile.TemporaryDirectory() as missing_git_directory_scratch:
         missing_git_directory_raised = ""
     except warning_module.CheckoutRootUnreadable as error:
         missing_git_directory_raised = str(error)
-    check("a worktree whose .git file names a missing git directory is raised, not read as no worktree",
-          "names a git directory that does not exist" in missing_git_directory_raised,
+    check("a worktree whose .git file names a missing git directory is raised, not read as no worktree, "
+          "naming the target and a next step",
+          "names a git directory that is missing or is not a git directory" in missing_git_directory_raised
+          and str(draft_in_worktree_with_missing_git_directory) in missing_git_directory_raised
+          and "git worktree repair" in missing_git_directory_raised,
           repr(missing_git_directory_raised))
+
+    # git prints the same words when the .git file names a directory that
+    # exists but is not a git directory.
+    not_a_git_directory = missing_git_directory_scratch / "not-a-git-directory"
+    not_a_git_directory.mkdir()
+    (worktree_with_missing_git_directory / ".git").write_text(
+        f"gitdir: {not_a_git_directory}\n", encoding="utf-8")
+    try:
+        warning_module.checkout_root_holding(draft_in_worktree_with_missing_git_directory)
+        not_a_git_directory_raised = ""
+    except warning_module.CheckoutRootUnreadable as error:
+        not_a_git_directory_raised = str(error)
+    check("a worktree whose .git file names an existing directory that is not a git directory is raised too",
+          "names a git directory that is missing or is not a git directory" in not_a_git_directory_raised,
+          repr(not_a_git_directory_raised))
 
     # A bare repository has no worktree; git says so in words that are not the
     # no-worktree words, so the read fails rather than guessing a checkout.
