@@ -56,10 +56,11 @@ with the cold-read-record, as the evidence of what was put in front of the
 reviewer, and `target/` still holds the cold-read-target's own bytes. On the
 walk route it is scratch.
 
-WHERE THE REPORT GOES. A walk draft, `docs/walk/<name>-draft.md`, gets its
-suggestions file beside it: `docs/walk/<name>-suggestions.md`, which is what
-the walk reads next. Anything else -- a design, a skill, a record copy, a
-file outside this checkout -- gets a cold-read-record of its own under the
+WHERE THE REPORT GOES. A walk draft, `docs/walk/<name>-draft.md` in this
+checkout or in any other git worktree, gets its suggestions file beside it:
+`docs/walk/<name>-suggestions.md`, which is what the walk reads next.
+Anything else -- a design, a skill, a record copy, a file in no git
+worktree -- gets a cold-read-record of its own under the
 gitignored records tree:
 `cold-read-records/<name>-<YYYY-MM-DD>/fast-read.md`, where <name> is the
 cold-read-target's file name without its extension -- `SKILL-<skill name>`
@@ -215,21 +216,36 @@ FULL_RUN_NAME_SUFFIXES = (
 FAST_READ_ONLY_NAMES = ("CLAUDE.md", "CLAUDE.local.md")
 
 
+# git's own words when it finds no worktree; LC_ALL=C keeps them in English.
+GIT_FOUND_NO_WORKTREE_MESSAGES = ("not a git repository", "cannot change to")
+
+
+class CheckoutRootUnreadable(RuntimeError):
+    """git failed for a reason other than finding no worktree."""
+
+
 def checkout_root_holding(target: pathlib.Path) -> pathlib.Path:
     """The top of the git worktree holding `target`, or REPO_ROOT when git
     finds none (the target's directory is missing or in no repository).
+    Any other git failure raises CheckoutRootUnreadable: answering REPO_ROOT
+    then would send a walk draft to the records route without saying why.
     GIT_DIR and GIT_WORK_TREE are dropped for this one call: set in the
     environment they override -C and would name the wrong worktree."""
     environment = {name: value for name, value in os.environ.items()
                    if name not in ("GIT_DIR", "GIT_WORK_TREE")}
+    environment["LC_ALL"] = "C"
     completed = subprocess.run(
         ["git", "-C", str(target.parent), "rev-parse", "--show-toplevel"],
         capture_output=True, stdin=subprocess.DEVNULL, text=True,
         env=environment, check=False)
     top = completed.stdout.strip()
-    if completed.returncode != 0 or not top:
+    if completed.returncode == 0 and top:
+        return pathlib.Path(top).resolve()
+    if any(message in completed.stderr for message in GIT_FOUND_NO_WORKTREE_MESSAGES):
         return REPO_ROOT
-    return pathlib.Path(top).resolve()
+    raise CheckoutRootUnreadable(
+        f"git rev-parse --show-toplevel in {target.parent} failed "
+        f"(exit {completed.returncode}): {completed.stderr.strip() or 'no message'}")
 
 
 def full_run_class_of_target(target: pathlib.Path):
@@ -274,12 +290,15 @@ def fast_read_report_path_for_target(
     `target` is absolute and resolved; `now` is the one clock reading the
     record's name is taken from, and the walk route does not use it. A walk
     draft is recognised by where it sits and how it is named --
-    `docs/walk/<name>-draft.md` under this checkout -- and a draft of that
-    name in any other directory, or a walk file not named `-draft.md`, takes
-    the records route like everything else.
+    `docs/walk/<name>-draft.md` under the git worktree that holds it, which
+    need not be the checkout this program runs from -- and its suggestions
+    file goes beside it. A draft of that name in any other directory, or a
+    walk file not named `-draft.md`, takes the records route like everything
+    else.
     """
+    checkout_root = checkout_root_holding(target)
     try:
-        relative = target.relative_to(REPO_ROOT)
+        relative = target.relative_to(checkout_root)
     except ValueError:
         relative = None
     if (relative is not None
@@ -287,7 +306,7 @@ def fast_read_report_path_for_target(
             and relative.name.endswith(WALK_DRAFT_SUFFIX)
             and len(relative.name) > len(WALK_DRAFT_SUFFIX)):
         name = relative.name[:-len(WALK_DRAFT_SUFFIX)]
-        return (REPO_ROOT / WALK_DIRECTORY_RELATIVE
+        return (checkout_root / WALK_DIRECTORY_RELATIVE
                 / f"{name}{WALK_SUGGESTIONS_SUFFIX}")
     return (fresh_record_dir(RECORDS_DIR / record_directory_name_for_target(target, now))
             / "fast-read.md")
@@ -715,12 +734,18 @@ def main() -> int:
         print(f"FAILED (target not found: {target})")
         return EXIT_BAD_INVOCATION
 
-    full_run_class_name = full_run_class_of_target(target)
+    try:
+        full_run_class_name = full_run_class_of_target(target)
+        report = fast_read_report_path_for_target(target, record_clock_reading())
+    except CheckoutRootUnreadable as error:
+        print(f"{PROGRAM}: could not tell which checkout holds the target, so "
+              f"could not tell where its report goes: {error}", file=sys.stderr)
+        print(f"FAILED (could not tell which checkout holds {target})")
+        return 1
     if full_run_class_name is not None:
         print(f"{PROGRAM}: {full_run_required_line(full_run_class_name)}",
               file=sys.stderr)
 
-    report = fast_read_report_path_for_target(target, record_clock_reading())
     # A walk draft's report lands in docs/walk/ and is not a cold-read-record;
     # only the records route freezes the cold-read-target and ships.
     on_records_route = RECORDS_DIR in report.parents
