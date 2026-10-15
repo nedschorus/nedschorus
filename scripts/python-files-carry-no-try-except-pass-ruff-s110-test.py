@@ -8,7 +8,7 @@ Exception` and `except BaseException`; an `except` that names a narrower
 exception is left alone.
 
 Ruff is pinned in
-nc-systems/general-tools/compiled-python-libraries-pinned-requirements.txt.
+nc-systems/general-tools/python-libraries-pinned-requirements.txt.
 When the python3 running this suite cannot run Ruff, the suite installs the
 pinned file per user, as the hooks do. When that install fails, the suite
 prints what the install printed and the command that installs it by hand,
@@ -34,9 +34,9 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 REPOSITORY = Path(__file__).resolve().parent.parent
 
 _pinned_libraries_install_spec = importlib.util.spec_from_file_location(
-    "compiled_python_libraries_pinned_requirements_install_common",
+    "python_libraries_pinned_requirements_install_if_missing_then_import_common",
     REPOSITORY / "nc-systems" / "general-tools"
-    / "compiled-python-libraries-pinned-requirements-install-common.py")
+    / "python-libraries-pinned-requirements-install-if-missing-then-import-common.py")
 pinned_libraries_install = importlib.util.module_from_spec(_pinned_libraries_install_spec)
 _pinned_libraries_install_spec.loader.exec_module(pinned_libraries_install)
 
@@ -78,7 +78,7 @@ def ruff_ready_or_failure(runner, installer, host):
         return None
     try:
         install_output = installer()
-    except pinned_libraries_install.CompiledPythonLibrariesUnavailable as error:
+    except pinned_libraries_install.PythonLibrariesPinnedRequirementsInstallOrImportFailed as error:
         install_output = error.install_output
     runs, printed = ruff_runs(runner)
     if runs:
@@ -121,7 +121,7 @@ def run_failure_cases():
         return subprocess.CompletedProcess(command, 1, "", "No module named ruff")
 
     def failing_installer():
-        raise pinned_libraries_install.CompiledPythonLibrariesUnavailable(
+        raise pinned_libraries_install.PythonLibrariesPinnedRequirementsInstallOrImportFailed(
             "ERROR: No matching distribution found for ruff==0.17.0")
 
     failure = ruff_ready_or_failure(ruff_never_runs, failing_installer, "ned-box")
