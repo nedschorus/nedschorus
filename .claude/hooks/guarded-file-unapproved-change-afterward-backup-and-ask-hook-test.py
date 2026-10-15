@@ -571,6 +571,112 @@ def cases(scratch):
     check("declining a new file with no approved version copies it and deletes it",
           result.returncode == 0 and not skill.exists() and key in world.versions(skill),
           (result.stderr, world.versions(skill)))
+    check("the declined new file is not asked about again once it is deleted",
+          world.run() == "", world.store_file(skill, "log"))
+
+    # -- declining deletions whose folders are gone
+    world = fresh(scratch, "deleted-folders")
+    skills = world.repo / ".claude" / "skills"
+    first, second = skills / "x" / "SKILL.md", skills / "y" / "SKILL.md"
+    for path in (first, second):
+        path.parent.mkdir(parents=True)
+        path.write_text(f"{path.parent.name} v1\n")
+    world.run()
+    world.marker('The user said "y" to both skills')
+    world.command("--approve", first, world.key(first), second, world.key(second))
+    for path in (first, second):
+        path.unlink()
+        path.parent.rmdir()
+    world.run()
+    result = world.command("--restore", first, "deleted")
+    check("declining a deletion whose folder is gone too recreates the folder and puts the file "
+          "back", result.returncode == 0 and first.read_text() == "x v1\n",
+          (result.returncode, result.stdout, result.stderr))
+    second.parent.mkdir()
+    second.parent.chmod(0o500)
+    first.unlink()
+    world.run()
+    try:
+        result = world.command("--restore", first, "deleted", second, "deleted")
+    finally:
+        second.parent.chmod(0o700)
+    check("when one of several files cannot be put back, --restore says what it did to each and "
+          "exits 1",
+          result.returncode == 1 and first.read_text() == "x v1\n"
+          and f"Put back the approved version" in result.stdout
+          and f"Failed on {second}" in result.stdout and "not every file" in result.stderr,
+          (result.returncode, result.stdout, result.stderr))
+
+    # -- a guarded file that cannot be read is reported, never kept as an empty version
+    world = World(Path(scratch) / "unreadable-first-run")
+    home_claude = world.home / ".claude" / "CLAUDE.md"
+    home_claude.chmod(0o000)
+    try:
+        message = world.run()
+    finally:
+        home_claude.chmod(0o600)
+    empty_blob = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    check("an unreadable guarded file on the first run is reported, and no empty version is "
+          "approved", "did not run" in message
+          and empty_blob not in world.store_file(home_claude, "approved"),
+          (message, world.store_file(home_claude, "approved")))
+    world = fresh(scratch, "unreadable-later")
+    home_claude = world.home / ".claude" / "CLAUDE.md"
+    home_claude.write_text("global v2\n")
+    home_claude.chmod(0o000)
+    try:
+        message = world.run()
+    finally:
+        home_claude.chmod(0o600)
+    check("an unreadable changed guarded file is reported and no empty version is kept",
+          "did not run" in message and empty_blob not in world.versions(home_claude),
+          (message, world.versions(home_claude)))
+    check("once it can be read, the next run asks about it",
+          str(home_claude) in world.run(), "")
+    key = world.key(home_claude)
+    world.marker('The user said "y"')
+    home_claude.chmod(0o000)
+    try:
+        result = world.command("--approve", home_claude, key)
+    finally:
+        home_claude.chmod(0o600)
+    check("--approve of a file it cannot read says it failed, without a traceback, and exits 1",
+          result.returncode == 1 and "--approve failed" in result.stderr
+          and "Traceback" not in result.stderr, result.stderr)
+
+    # -- a guarded file absent when first listed is checked once it comes back
+    world = fresh(scratch, "absent-at-listing")
+    later = world.repo / ".claude" / "skills" / "later" / "SKILL.md"
+    later.parent.mkdir(parents=True)
+    later.write_text("later v1\n")
+    world.git("add", ".")
+    world.git("commit", "-qm", "add a skill")
+    later.unlink()
+    world.run()
+    later.write_text("later v2, never approved\n")
+    message = world.run()
+    check("a tracked guarded file absent when first listed is asked about once it comes back "
+          "changed", str(later) in message, message)
+
+    # -- a tool the instruction-file guard does not check is no approval
+    world = fresh(scratch, "multiedit")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2 by MultiEdit\n")
+    message = world.run(tool="MultiEdit", file_path=claude)
+    check("a MultiEdit of a guarded file, which the guard does not check, is asked about",
+          str(claude) in message and "has not approved" in message, message)
+
+    # -- the subagent line comes first in the ask, and is in the reminder
+    world = fresh(scratch, "subagent-line")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2\n")
+    message = world.run()
+    reminder = world.run()
+    check("the ask tells a subagent what to do before any step that asks the user",
+          0 <= message.find("If you are a subagent") < message.find("Show the user each change"),
+          message)
+    check("the reminder tells a subagent to report instead, and names the approval marker",
+          "If you are a subagent" in reminder and ".walk-approved" in reminder, reminder)
 
     # -- two files changed by one tool call get one message
     world = fresh(scratch, "two-files")

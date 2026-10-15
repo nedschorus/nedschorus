@@ -75,7 +75,9 @@ DIFF_MAX_CHARACTERS = 4000
 # /config change to another key is copied and not asked about.
 SETTINGS_KEYS_ASKED_ABOUT = ("hooks", "disableAllHooks", "permissions", "env")
 
-FILE_WRITING_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+# The tools the instruction-file guard checks before they write, so a successful call to one was
+# let through by the guard. Keep this equal to the guard's PreToolUse matcher in settings.json.
+FILE_WRITING_TOOLS = ("Edit", "Write", "NotebookEdit")
 # A reflog subject starting with this is a commit the agent made; any other subject is git's
 # own work: a switch, reset, merge, pull, rebase, cherry-pick or revert.
 COMMIT_SUBJECT_PREFIX = "commit"
@@ -102,6 +104,8 @@ ASK_HEADER = (
     "place while you ask him; this hook has kept a copy of the version.")
 ASK_FILE = "{path}, version {key}. Its change against the newest approved version:\n{diff}"
 ASK_INSTRUCTIONS = (
+    "If you are a subagent, report the change to the agent that dispatched you instead of "
+    "asking the user, and do none of the steps below.\n"
     "Show the user each change above and ask him whether he approves it.\n"
     "If he approves, write his words into {marker} at the top of your session's checkout, then "
     "run once: python3 {program} --approve {pairs}\n"
@@ -109,13 +113,15 @@ ASK_INSTRUCTIONS = (
     "without asking him, then tell him what you fixed.\n"
     "If he declines, run: python3 {program} --restore {pairs}\n"
     "If he declines a version that is in a commit, also run, for each such file: "
-    "git commit --only -m \"Put back the approved <file name>\" -- <path>\n"
+    "git commit --only -m \"Put back the approved <file name>\" -- <path>")
+REMINDER = (
+    "Reminder: {path} still holds version {key}, which the user has not approved.\n"
     "If you are a subagent, report the change to the agent that dispatched you instead of "
-    "asking the user.")
-REMINDER = ("Reminder: {path} still holds version {key}, which the user has not approved. Show "
-            "him the change and ask him, as this hook's earlier message said, then run "
-            "python3 {program} --approve {path} {key} if he approves, or --restore with the same "
-            "arguments if he declines.")
+    "asking the user.\n"
+    "Otherwise show him the change and ask him, as this hook's earlier message said.\n"
+    "If he approves, write his words into {marker} at the top of your session's checkout, then "
+    "run: python3 {program} --approve {path} {key}\n"
+    "If he declines, run: python3 {program} --restore {path} {key}")
 STORE_FAILED = (
     "The guarded-file backup did not run, so a change to a guarded file is neither copied nor "
     "checked against the versions the user approved: {reason}.\n"
@@ -125,10 +131,18 @@ REMEDY_NED_BOX = "check that {store} exists and that nedlern can write to it."
 REMEDY_MAC = ("check that ned-box is up and that the Mac has mounted ned-box's home share at "
               "/Volumes/nedhome with {store} in it.")
 REFUSED = "{program_name} {mode}: refused, nothing was changed: {reason}"
+COMMAND_FAILED = ("{program_name} {mode} failed: {reason}. Tell the user, with this message; run "
+                  "the command again once the cause is fixed.")
+RESTORE_INCOMPLETE = ("{program_name} --restore: not every file was put back; the lines above "
+                      "say what was done to each. Tell the user which files failed and why.")
 
 
 class StoreUnreachable(Exception):
     """The store could not be checked, opened, read or written."""
+
+
+class RestoreIncomplete(Exception):
+    """--restore changed some files and failed on others; args[0] is a line per pair."""
 
 
 class Refused(Exception):
@@ -520,9 +534,12 @@ def checkout_files(checkout: Path, decisions: dict):
         if not relative or not could_be_guarded(relative):
             continue
         absolute = str(checkout / relative)
+        if not os.path.isfile(absolute):
+            # Not decided while absent, so the file is classified when it comes back.
+            continue
         if relative not in decisions:
-            decisions[relative] = os.path.isfile(absolute) and is_guarded(absolute)
-        if decisions[relative] and os.path.isfile(absolute):
+            decisions[relative] = is_guarded(absolute)
+        if decisions[relative]:
             paths.append(absolute)
     return sorted(paths)
 
@@ -706,10 +723,9 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
 
 
 def read_file(path):
-    try:
-        return Path(path).read_bytes()
-    except OSError:
-        return b""
+    """The file's bytes. A read that fails raises, so the run reports the failure instead of
+    keeping an empty version as if it were the file."""
+    return Path(path).read_bytes()
 
 
 def ask_entry(store, check, log):
@@ -1004,7 +1020,8 @@ def messages(asks, reminders):
         out.append("\n\n".join([ASK_HEADER, files, ASK_INSTRUCTIONS.format(
             marker=APPROVAL_MARKER_NAME, program=program, pairs=pairs)]))
     for path, key in reminders:
-        out.append(REMINDER.format(path=path, key=key, program=HOOK_PATH))
+        out.append(REMINDER.format(path=path, key=key, marker=APPROVAL_MARKER_NAME,
+                                   program=HOOK_PATH))
     return out
 
 
@@ -1104,24 +1121,33 @@ def restore(pairs):
             plan.append((path, key, newest, content))
         if time.monotonic() > end:
             raise StoreUnreachable("the deadline passed before any version was put back")
-        lines = []
+        lines, failed = [], []
         for path, key, newest, content in plan:
-            if content is None:
-                if os.path.lexists(path):
-                    os.unlink(path)
-                restored = DELETED
-                lines.append(f"Deleted {path}: it has no approved version.")
-            else:
-                put_back(path, content)
-                restored = newest[0]
-                lines.append(f"Put back the approved version {restored} of {path}.")
-            log_line(store, path, "restored", "command-line", "", key, restored)
-        return lines
+            try:
+                if content is None:
+                    if os.path.lexists(path):
+                        os.unlink(path)
+                    restored = DELETED
+                    # Absence is the version the user chose, so the next run does not ask again.
+                    if DELETED not in store.approved(path):
+                        store.approve(path, DELETED)
+                    message = f"Deleted {path}: it has no approved version."
+                else:
+                    put_back(path, content)
+                    restored = newest[0]
+                    message = f"Put back the approved version {restored} of {path}."
+                log_line(store, path, "restored", "command-line", "", key, restored)
+            except OSError as error:
+                failed.append(path)
+                lines.append(f"Failed on {path}, which may be only part way restored: {error}")
+                continue
+            lines.append(message)
+        return lines, failed
 
-    lines = run_command_work(work)
+    lines, failed = run_command_work(work)
     for path, key in pairs:
         checkout = guard().enclosing_repository_root(Path(path).parent)
-        if checkout is None or key == DELETED:
+        if checkout is None or key == DELETED or path in failed:
             continue
         relative = os.path.relpath(path, checkout)
         tree = subprocess.run(["git", "-C", str(checkout), "ls-tree", "HEAD", "--", relative],
@@ -1129,10 +1155,14 @@ def restore(pairs):
         if len(tree) >= 3 and tree[2] == current[path][1]:
             lines.append(f"The declined version is in a commit; run: git commit --only -m "
                          f"\"Put back the approved {Path(path).name}\" -- {path}")
+    if failed:
+        raise RestoreIncomplete(lines)
     return lines
 
 
 def put_back(path, content: bytes):
+    # A declined deletion may have taken the file's folder with it.
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     temporary = f"{path}.{os.getpid()}.restore"
     mode = stat.S_IMODE(os.stat(path).st_mode) if os.path.exists(path) else 0o644
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
@@ -1165,8 +1195,16 @@ def main(arguments=None):
             return EXIT_BAD_INVOCATION
         try:
             lines = approve(pairs, Path.cwd()) if mode == "--approve" else restore(pairs)
+        except RestoreIncomplete as error:
+            print("\n".join(error.args[0]))
+            print(RESTORE_INCOMPLETE.format(program_name=HOOK_PATH.name), file=sys.stderr)
+            return EXIT_REFUSED
         except (Refused, StoreUnreachable) as error:
             print(REFUSED.format(program_name=HOOK_PATH.name, mode=mode, reason=error),
+                  file=sys.stderr)
+            return EXIT_REFUSED
+        except OSError as error:
+            print(COMMAND_FAILED.format(program_name=HOOK_PATH.name, mode=mode, reason=error),
                   file=sys.stderr)
             return EXIT_REFUSED
         print("\n".join(lines))
