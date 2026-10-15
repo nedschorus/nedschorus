@@ -58,7 +58,9 @@ is seen. Claude Code records a Stop or SubagentStop hook's exit 1 as a
 non-blocking error and still ends the turn. Exit 2 would continue the
 conversation, and a fault that recurs at every stop would then never let the
 agent stop. A log line that cannot be written is not a fault: the log is for
-rechecking precision, and the reminder still goes out.
+rechecking precision, and the reminder still goes out. The hook then exits 0
+and puts the failure in its JSON output's systemMessage, which Claude Code
+shows the user; stderr at exit 0 is shown to no one.
 
 --measure-precision LABELS_CSV runs absence_claim_matches() over a labelled
 reply file (columns reply_id, label, reply_text; label CORRECT, INCORRECT or
@@ -384,17 +386,20 @@ def run(stdin_text, environment, home, now):
         "matches": [{"pattern": number, "phrase": phrase} for number, phrase in matches],
         "reply": reply[:REPLY_TEXT_LOGGED_CHARACTERS],
     })
+    output = {}
+    if outcome == "reminded":
+        matched = ", ".join(f'"{phrase}"' for _, phrase in matches[:3])
+        template = SUBAGENT_REMINDER_TEMPLATE if event == "SubagentStop" else REMINDER_TEMPLATE
+        output.update({"decision": "block", "reason": template.format(matched=matched)})
     if log_failure:
-        # The reminder still goes out on stdout, so a log failure is told on stderr, not raised.
-        print(f"absence-claim-locator-reminder-hook: the outcome {outcome!r} was not logged "
-              f"to {path}: {log_failure}", file=sys.stderr)
-    if outcome != "reminded":
-        return None
-    matched = ", ".join(f'"{phrase}"' for _, phrase in matches[:3])
-    template = SUBAGENT_REMINDER_TEMPLATE if event == "SubagentStop" else REMINDER_TEMPLATE
-    return json.dumps({"decision": "block",
-                       "reason": template.format(matched=matched)},
-                      ensure_ascii=False)
+        reached = ("The reminder to run the locator was still sent to the agent."
+                   if outcome == "reminded" else "No reminder was due, so none was sent to the agent.")
+        output["systemMessage"] = (
+            f"absence-claim-locator-reminder-hook: the outcome {outcome!r} of checking the last "
+            f"reply was not logged to {path}: {log_failure}. {reached} A recheck of the hook's "
+            f"precision will miss this reply; make {path} a file that can be written, or set "
+            f"{LOG_ENVIRONMENT_VARIABLE} to one.")
+    return json.dumps(output, ensure_ascii=False) if output else None
 
 
 def measure_precision(labels_path):
@@ -431,9 +436,12 @@ def main(argv=None):
         except Exception as log_error:
             log_failure = f"{type(log_error).__name__}: {log_error}"
         not_logged = f"; the failure was not logged either: {log_failure}" if log_failure else ""
-        print(f"absence-claim-locator-reminder-hook: the last reply was not checked for a "
-              f"claim that a file is missing, because the hook failed; the turn ends as "
-              f"usual: {type(error).__name__}: {error}{not_logged}", file=sys.stderr)
+        print(f"absence-claim-locator-reminder-hook: the hook failed with "
+              f"{type(error).__name__}: {error}{not_logged}. So the last reply was not checked "
+              f"for a claim that a file is missing, no reminder reached the agent, and the turn "
+              f"ends as usual. If this recurs, run python3 "
+              f"scripts/absence-claim-locator-reminder-hook-test.py and tell the user what it "
+              f"reports.", file=sys.stderr)
         return 1
     return 0
 

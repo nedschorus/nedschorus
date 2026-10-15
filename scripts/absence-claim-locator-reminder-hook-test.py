@@ -7,7 +7,8 @@ with the log file and the once-per-session marker directory pointed into a
 directory this suite made, so no case writes the live log-store or
 ~/.local/state/claude. The exit code is asserted on every case: a Stop hook
 that exits 2 blocks the turn from ending, so the hook exits 0, or 1 with one
-stderr line on a fault, and never 2.
+stderr line on a fault, and never 2; a log that cannot be written is told in
+a systemMessage.
 
 The precision case reads the labelled replies the trigger was measured on,
 which stay in the log-store because they are transcript text and this
@@ -478,14 +479,39 @@ check("a fault whose error cannot be logged: still reported on stderr, exit 1, "
       reported(result, "JSONDecodeError")
       and "the failure was not logged either: IsADirectoryError" in result.stderr,
       (result.returncode, result.stdout, result.stderr))
+check("a fault's stderr line names the error before it says the turn ends as usual",
+      result.stderr.find("JSONDecodeError") < result.stderr.find("the turn ends as usual")
+      and "no reminder reached the agent" in result.stderr,
+      result.stderr)
+
+
+def system_message(result):
+    try:
+        return json.loads(result.stdout).get("systemMessage")
+    except ValueError:
+        return None
+
 
 case = Case().user("Where are the transcripts?").assistant_text(B01_CLAIM).write()
 case.log.mkdir()
 result = case.run()
-check("a log path that cannot be written: still reminds, exit 0, and stderr says the "
-      "outcome was not logged",
+check("a log path that cannot be written: still reminds, exit 0, and the systemMessage, not "
+      "stderr, says the outcome was not logged and that the reminder was sent",
       result.returncode == 0 and blocked_reason(result) == REMINDER_FOR_B01
-      and "'reminded' was not logged" in result.stderr and "IsADirectoryError" in result.stderr,
+      and result.stderr == ""
+      and "'reminded'" in (system_message(result) or "")
+      and "IsADirectoryError" in (system_message(result) or "")
+      and "was still sent to the agent" in (system_message(result) or ""),
+      (result.returncode, result.stdout, result.stderr))
+
+case = Case().user("Where are the transcripts?").assistant_text(B01_CLAIM).write()
+case.log.mkdir()
+result = case.run(CLAUDE_CODE_SESSION_ATTENDED="0")
+check("a log path that cannot be written, with no reminder due: exit 0, no decision, and a "
+      "systemMessage saying the outcome was not logged and no reminder was sent",
+      result.returncode == 0 and blocked_reason(result) is None and result.stderr == ""
+      and "'headless'" in (system_message(result) or "")
+      and "none was sent to the agent" in (system_message(result) or ""),
       (result.returncode, result.stdout, result.stderr))
 
 shutil.rmtree(SUITE_ROOT, ignore_errors=True)
