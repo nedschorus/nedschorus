@@ -192,6 +192,28 @@
             "timeout": 30
           }
         ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
+            "timeout": 30
+          }
+        ]
       }
     ]
   },
