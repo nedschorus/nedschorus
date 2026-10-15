@@ -344,6 +344,49 @@ print(failures)
           "heron plan newest of all" in paged.stdout or "heron plan newest of all" in "".join(every_hit[:3]),
           paged.stdout)
 
+    late_in_early_stop = (many / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-seat0"
+                          / "late.jsonl")
+    write(late_in_early_stop, transcript_records(typed("heron plan dated after its file", "2026-08-15T00:00:00Z")),
+          mtime=epoch("2026-07-31"))
+    stopped = run(many, "heron plan", "--kind", "user-messages", "--limit", "3")
+    late_in_early_stop.unlink()
+    check("a message dated after its transcript's modification time is reported when the early stop relies on it",
+          "older transcripts were not read" in stopped.stdout and stopped.returncode == 2
+          and "after its modification time" in stopped.stderr, stopped.stdout + stopped.stderr)
+
+    tabbed = write(root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-x" / "tabbed.jsonl",
+                   transcript_records(typed("heron\tplan with a tab", "2026-10-03T00:00:00Z")))
+    result = run(root, "heron\tplan", "--kind", "user-messages")
+    tabbed.unlink()
+    check("a pattern holding a literal control character finds the message JSON stores escaped",
+          result.returncode == 0 and "plan with a tab" in result.stdout, result.stdout + result.stderr)
+
+    session_dates = subprocess.run([sys.executable, "-c", f"""
+import importlib.util
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("search", {str(PROGRAM)!r})
+search = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(search)
+missing = Path({str(Path(scratch) / "no-such-transcript.jsonl")!r})
+locked = Path({str(Path(scratch) / "locked-transcript.jsonl")!r})
+locked.write_text('{{"timestamp": "2026-10-01T00:00:00Z"}}\\n')
+locked.chmod(0)
+for function in (search.session_start, search.session_last_activity):
+    print(function.__name__, "missing", repr(function(missing)))
+    try:
+        function(locked)
+        print(function.__name__, "locked", "returned")
+    except PermissionError:
+        print(function.__name__, "locked", "raised")
+locked.chmod(0o644)
+"""], capture_output=True, text=True)
+    check("session_start and session_last_activity give no date for a missing transcript, "
+          "and raise for one that cannot be read",
+          session_dates.stdout.split("\n")[:4] == ["session_start missing ''", "session_start locked raised",
+                                                   "session_last_activity missing ''",
+                                                   "session_last_activity locked raised"],
+          session_dates.stdout + session_dates.stderr)
+
     # Failures.
     result = run(Path(scratch) / "absent", "heron")
     check("a missing log-store on ned-box is a failure, not an empty result",
@@ -366,6 +409,12 @@ print(failures)
     check("a file ripgrep cannot read is a failure",
           result.returncode == 2 and "FAILED: ripgrep could not search everything" in result.stderr
           and "Permission denied" in result.stderr, result.stderr)
+    check("after the FAILED lines, one closing line says whether the hits shown hold and what to tell the user",
+          result.stderr.rstrip().splitlines()[-1].startswith("Each hit printed above is a real match")
+          and "do not change its permissions" in result.stderr and "walk" in result.stdout, result.stderr)
+    clean = run(unreadable, "heron plan")
+    check("a search with no failures prints no closing line about failures",
+          clean.returncode == 0 and "Each hit printed above" not in clean.stderr, clean.stderr)
 
     result = run(root, "heron", environment={PREFIX + "RIPGREP_PROGRAM_OVERRIDE": str(Path(scratch) / "no-rg")})
     check("ripgrep missing is a failure that says how to install it",

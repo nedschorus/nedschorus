@@ -75,6 +75,9 @@ FAILURES. A record that could not be searched prints a line opening FAILED,
 naming what failed and what to do, after the hits found elsewhere: a missing
 log-store or kind directory, a file ripgrep could not read, a transcript the
 reader could not read, ripgrep missing, ned-box unreachable from the Mac.
+After the FAILED lines of a search that printed its hits, one closing line says
+the hits are real matches but the page may lack hits from the failed records,
+and what to tell the user.
 
 Exit 0 when hits were found and everything was searched; 1 when nothing
 matched and everything was searched; 2 when anything could not be searched,
@@ -120,6 +123,12 @@ THIS_MACHINE_OVERRIDE = ENVIRONMENT_PREFIX + "THIS_MACHINE_OVERRIDE"
 EXIT_FOUND = 0
 EXIT_NOTHING_FOUND = 1
 EXIT_FAILED = 2
+FAILURES_CLOSING_LINE = (
+    "Each hit printed above is a real match, but the records the FAILED lines name were not searched or "
+    "not dated, so the page may lack hits from them, newer ones included, and a hit dated \"date unknown\" "
+    "may be out of order. Tell the user which records failed and why. A \"Permission denied\" line means "
+    "this user cannot read that file: tell the user its path, and do not change its permissions. For any "
+    "other line, do what it says.")
 
 FILE_KIND_DIRECTORIES = {
     "walk": "walk",
@@ -792,6 +801,7 @@ def main(argv=None):
     for failure in failures:
         print(f"FAILED: {failure}", file=sys.stderr)
     if failures:
+        print(FAILURES_CLOSING_LINE, file=sys.stderr)
         return EXIT_FAILED
     return EXIT_FOUND if hits else EXIT_NOTHING_FOUND
 
