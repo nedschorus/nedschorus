@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Refuse search globs that expand to option-like filenames before --.
 
-Variables, remote commands, shell launchers, braces, and git pathspecs are not expanded.
+Variables, remote commands, shell launchers, braces, and git pathspecs are not expanded,
+nor is the value of an option that takes one, such as grep -f's pattern file.
+A refusal gives the agent's whole command with -- put in; when no place for -- is found,
+it gives the search alone only if the command is that search, and otherwise no command.
 Bare subshell cwd boundaries and bash without globstar may produce false positives.
 Expansion fails open on errors or budget exhaustion; sparse walks rely on the hook timeout."""
 
@@ -42,6 +45,26 @@ GLOB_OPENING_MARKERS = {GLOB_CHARACTER_MARKERS[c] for c in "*?["}
 
 # Stay below the hook timeout, which otherwise fails open silently.
 EXPANSION_BUDGET_SECONDS = 5.0
+
+# Options whose value may stand as the next word; that word is the option's value, such as
+# grep -f's pattern file, not a file to search, so a dash-named match there is not misread.
+GREP_OPTIONS_TAKING_A_VALUE = ("efmABCdD", (
+    "--regexp", "--file", "--max-count", "--after-context", "--before-context", "--context",
+    "--devices", "--directories", "--exclude", "--include", "--exclude-dir",
+    "--exclude-from", "--label", "--binary-files", "--group-separator"))
+SEARCH_PROGRAM_OPTIONS_TAKING_A_VALUE = {
+    "grep": GREP_OPTIONS_TAKING_A_VALUE,
+    "egrep": GREP_OPTIONS_TAKING_A_VALUE,
+    "fgrep": GREP_OPTIONS_TAKING_A_VALUE,
+    "ugrep": GREP_OPTIONS_TAKING_A_VALUE,
+    "rg": ("efgtTmABCjMrE", (
+        "--regexp", "--file", "--glob", "--iglob", "--type", "--type-not", "--type-add",
+        "--max-count", "--after-context", "--before-context", "--context", "--threads",
+        "--max-columns", "--replace", "--encoding", "--max-depth", "--max-filesize",
+        "--pre", "--pre-glob", "--ignore-file", "--sort", "--sortr", "--color",
+        "--colors", "--path-separator", "--field-match-separator",
+        "--field-context-separator", "--context-separator", "--engine", "--type-clear")),
+}
 
 SAFE_UNQUOTED_CHARACTERS = re.compile(r"^[A-Za-z0-9_./~@%+=:,-]+$")
 
@@ -110,15 +133,32 @@ def first_expansion_beginning_with_dash(word, directory, deadline, clock):
     if clock() > deadline:
         raise ExpansionBudgetSpent()
     base = os.path.normpath(directory)
-    prefix = glob.escape(base) + os.sep
+    # The matches start with the directory as written, not as escaped for the pattern.
+    literal_prefix = base if base.endswith(os.sep) else base + os.sep
+    pattern_prefix = glob.escape(base) + ("" if base.endswith(os.sep) else os.sep)
     for count, path in enumerate(
-            glob.iglob(prefix + glob_pattern_for_word(word), recursive=True)):
-        relative = path[len(prefix):]
+            glob.iglob(pattern_prefix + glob_pattern_for_word(word), recursive=True)):
+        relative = path[len(literal_prefix):]
         if relative.startswith("-"):
             return relative
         if count % 256 == 255 and clock() > deadline:
             raise ExpansionBudgetSpent()
     return None
+
+
+def option_takes_the_next_word_as_its_value(program, word):
+    """Return whether word is an option of program whose value is the next word."""
+    short_options, long_options = SEARCH_PROGRAM_OPTIONS_TAKING_A_VALUE.get(program, ("", ()))
+    if word.startswith("--"):
+        return word in long_options
+    if not word.startswith("-") or word == "-":
+        return False
+    # In a cluster such as -lf, the first option that takes a value takes the rest of the word,
+    # or the next word when it ends the cluster.
+    for position, letter in enumerate(word[1:], start=1):
+        if letter in short_options:
+            return position == len(word) - 1
+    return False
 
 
 def search_program_index(words):
@@ -165,6 +205,9 @@ def refused_search(command, commands, command_index, program_index,
         word = arguments[index]
         if word == "--":
             return None
+        if option_takes_the_next_word_as_its_value(program, plain_word(word)):
+            index += 2
+            continue
         if not word_holds_unquoted_glob(word):
             index += 1
             continue
@@ -188,10 +231,14 @@ def refused_search(command, commands, command_index, program_index,
             first_word += 1
         respelled = (words[first_word:program_index + 1] + arguments[:index]
                      + ["--"] + arguments[index:])
-        respelled_search = " ".join(
-            [item if item == "--" else shell_spelling_of_word(item) for item in respelled]
-            + [operator + shell_spelling_of_word(target)
-               for operator, target in words.redirects if operator != "<<"])
+        # The search alone runs elsewhere, or does less, when other commands stood around it,
+        # such as a cd before it or a pipe after it; then the refusal gives no command.
+        respelled_search = None
+        if len(commands) == 1:
+            respelled_search = " ".join(
+                [item if item == "--" else shell_spelling_of_word(item) for item in respelled]
+                + [operator + shell_spelling_of_word(target)
+                   for operator, target in words.redirects if operator != "<<"])
         return details, whole_command, respelled_search
     return None
 
@@ -249,9 +296,9 @@ def analyze_command_text(command, payload_cwd, clock=time.monotonic):
     if refused is None:
         return None
     details, whole_command, respelled_search = refused
-    if respelled_search is None:
-        return REFUSAL_WITHOUT_COMMAND_TEMPLATE.format(**details)
     if whole_command is None:
+        if respelled_search is None:
+            return REFUSAL_WITHOUT_COMMAND_TEMPLATE.format(**details)
         return REFUSAL_WITH_COMMAND_TEMPLATE.format(
             accepted_command=respelled_search, **details)
     while clock() <= deadline:
