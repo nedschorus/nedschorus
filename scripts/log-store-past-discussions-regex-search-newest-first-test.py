@@ -399,6 +399,12 @@ locked.chmod(0o644)
     check("a missing kind directory is a failure, and the other kinds' hits are still shown",
           result.returncode == 2 and "has no" in result.stderr and "analysis" in result.stderr
           and "walk" in result.stdout, result.stderr)
+    result = run(partial, "no-record-holds-this-pattern-zq")
+    closing = result.stderr.rstrip().splitlines()[-1] if result.stderr.strip() else ""
+    check("with failures and no hit printed, the closing line says a match may be in the failed records",
+          result.returncode == 2 and closing.startswith("No hit was printed")
+          and "do not say nothing matched" in closing and "Each hit printed above" not in result.stderr,
+          result.stderr)
 
     unreadable = Path(scratch) / "unreadable"
     build_store(unreadable)
@@ -411,7 +417,13 @@ locked.chmod(0o644)
           and "Permission denied" in result.stderr, result.stderr)
     check("after the FAILED lines, one closing line says whether the hits shown hold and what to tell the user",
           result.stderr.rstrip().splitlines()[-1].startswith("Each hit printed above is a real match")
-          and "do not change its permissions" in result.stderr and "walk" in result.stdout, result.stderr)
+          and "do not change the path's permissions" in result.stderr and "walk" in result.stdout, result.stderr)
+    check("the closing line says what to tell the user, a directory's whole tree included, and which remedies to run",
+          "which leaves out everything under it" in result.stderr.splitlines()[-1]
+          and "a record not dated" in result.stderr.splitlines()[-1]
+          and "run it if it reruns this search" in result.stderr.splitlines()[-1], result.stderr)
+    check("with hits printed, the closing line does not say no hit was printed",
+          "No hit was printed" not in result.stderr, result.stderr)
     clean = run(unreadable, "heron plan")
     check("a search with no failures prints no closing line about failures",
           clean.returncode == 0 and "Each hit printed above" not in clean.stderr, clean.stderr)
