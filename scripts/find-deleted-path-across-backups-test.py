@@ -204,8 +204,10 @@ REAPED = "/private/tmp/claude-501/w/scratchpad/reaped.md"
 # /private/tmp, not /tmp: `mount` reports the resolved spelling, and the script
 # compares its own mount point against that table. See the constant's own
 # comment for what the /tmp spelling cost.
-MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro"
-MOUNT_POINT_TMP_SPELLING = "/tmp/find-deleted-path-across-backups-local-snapshot-ro"
+MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro-%d" % os.getpid()
+MOUNT_POINT_TMP_SPELLING = "/tmp/find-deleted-path-across-backups-local-snapshot-ro-%d" % os.getpid()
+check("the local-snapshot mount point is this run's own, named by its process ID",
+      finder.LOCAL_SNAPSHOT_MOUNT_POINT == MOUNT_POINT, finder.LOCAL_SNAPSHOT_MOUNT_POINT)
 
 local_hit = FakeRunner([LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e", (0, "", ""))])
 report = finder.search_local_snapshots(REAPED, "/repo", local_hit)
@@ -232,8 +234,8 @@ check("... and that printed mount-and-copy counts as a copy command, so the run 
       "%s %s" % (report.prints_copy_command, finder.exit_status([report])))
 check("... and the agent runs that command itself, since it asks for no password",
       not report.copy_command_may_ask_password
-      and "Nothing was copied yet: run the command printed under local snapshots yourself, since it asks for no "
-          "password. Each copies a version into" in finder.render_summary([report]),
+      and "Nothing was copied yet: run the commands printed under local snapshots yourself, in order, since they "
+          "ask for no password. Each surface's commands copy a version into" in finder.render_summary([report]),
       finder.render_summary([report]))
 check("no sudo is asked for anywhere on this surface — that is its entire point",
       not any("sudo" in c for c in local_hit.calls) and not any("sudo" in c for c in report.recovery),
@@ -528,6 +530,26 @@ if os.path.realpath("/tmp") == "/private/tmp":
           and any(l.startswith("the mount point " + MOUNT_POINT + " already had ") for l in report.lines),
           "%s %s" % (report.status, report.lines))
 
+
+# Another run at the same time mounts on its own mount point, so this run finds no occupier, hands back
+# no unmount, and reads that run's snapshot where it sits instead of unmounting it.
+OTHER_RUNS_MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro-1"
+concurrent = MountTableRunner([
+    # The trailing slash keeps these from matching this run's own mount point, whose ID may begin with 1.
+    ("test -d " + OTHER_RUNS_MOUNT_POINT, (0, "", "")),
+    ("test -e " + OTHER_RUNS_MOUNT_POINT + "/", (0, "", "")),
+    ("mount_apfs", (0, "", "")),
+    RELEASES_FINE,
+    ("test -e", (1, "", "")),
+    LISTS_SNAPSHOTS,
+], OCCUPIED_LISTING.replace(MOUNT_POINT, OTHER_RUNS_MOUNT_POINT))
+report = finder.search_local_snapshots(REAPED, "/repo", concurrent)
+check("a snapshot another live run has mounted is read in place, and nothing tells the agent to unmount it",
+      report.status == FOUND
+      and not any(l.startswith("the mount point ") for l in report.lines)
+      and not any("diskutil unmount " + OTHER_RUNS_MOUNT_POINT in c for c in report.recovery)
+      and not any(c == "diskutil unmount " + OTHER_RUNS_MOUNT_POINT for c in concurrent.calls),
+      "%s %s %s %s" % (report.status, report.lines, report.recovery, concurrent.calls))
 
 # But when something unsearchable IS still mountable, that is the one to offer.
 mixed_unreachable = MountTableRunner([
@@ -2367,6 +2389,8 @@ check("with warm sudo, a hit is FOUND with the path inside the snapshot and a cp
       and any(("cp -n " + TM_DATA_ROOT + "/Users/el/Projects/nedschorus/a/b.md "
                + finder.found_copies_folder().path + "/timemachine-") in c for c in report.recovery),
       "%s %s %s" % (report.status, report.lines, report.recovery))
+check("... and its printed mount may ask for the password, since a warm credential can expire before it runs",
+      report.copy_command_may_ask_password, str(report.copy_command_may_ask_password))
 
 tm_find_fails = FakeRunner(WARM + [
     ("sudo -n mount_apfs", (0, "", "")),
@@ -2843,8 +2867,8 @@ check("--prompt-for-root reaches the Time Machine surface from the command line"
       "exit=%s\n%s" % (code, text))
 check("... and a Time Machine hit reached with --prompt-for-root sends its printed command to the user, "
       "since its sudo may ask for his password",
-      "Nothing was copied yet: give the user the command printed under time machine, since its sudo may ask "
-      "for his password. Each copies a version into" in text
+      "Nothing was copied yet: give the user the commands printed under time machine, in order, since their "
+      "sudo may ask for his password. Each surface's commands copy a version into" in text
       and "yourself" not in text, text)
 
 code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "localsnapshots", "--skip", "git", "--skip", "reflog",
@@ -3006,7 +3030,7 @@ check("... and the report names the rule as what carried it, not a warm credenti
       str(report.lines))
 check("... and since the rule lets its printed sudo mount run with no password, the agent runs it itself",
       report.prints_copy_command and not report.copy_command_may_ask_password
-      and "run the command printed under time machine yourself" in finder.render_summary([report]),
+      and "run the commands printed under time machine yourself" in finder.render_summary([report]),
       finder.render_summary([report]))
 
 rule_installed_run = FakeRunner(RULE_INSTALLED + [
@@ -3491,6 +3515,40 @@ with tempfile.TemporaryDirectory() as tmp:
           and any("a partial file was left at %s and is not a copy" % os.path.join(stuck_folder.path, stuck_left[0])
                   in l for l in stuck.lines),
           "%s %s" % (stuck_left, stuck.lines))
+
+    linked_folder = finder.FoundCopiesFolder(root=str(Path(tmp, "linked-root")), now=1792000300)
+    linked = finder.SurfaceReport("log-store", FOUND, [], versions=[
+        finder.FoundVersion("logstore-x-kept.md", "file", str(source))])
+    finder.os.unlink = unlink_refused
+    try:
+        finder.copy_found_versions(linked, folder=linked_folder)
+    finally:
+        finder.os.unlink = real_unlink
+    linked_left = sorted(n for n in os.listdir(linked_folder.path) if n.startswith(".partial-"))
+    check("found copies: a temporary link that cannot be removed after a copy is named on the copy's line",
+          len(linked.copied) == 1 and len(linked_left) == 1
+          and any(l.startswith("copied to %s; a hidden second link to it, %s, could not be removed"
+                               % (linked.copied[0], os.path.join(linked_folder.path, linked_left[0])))
+                  for l in linked.lines),
+          "%s %s" % (linked_left, linked.lines))
+
+    refused_folder = finder.FoundCopiesFolder(root=str(Path(tmp, "refused-root")), now=1792000400)
+    refused = finder.SurfaceReport("log-store", FOUND, [], versions=[
+        finder.FoundVersion("logstore-x-kept.md", "file", str(source))])
+    real_link = finder.os.link
+
+    def link_refused(source_path, target_path, *args, **kwargs):
+        raise OSError(1, "Operation not permitted")
+    finder.os.link = link_refused
+    try:
+        finder.copy_found_versions(refused, folder=refused_folder)
+    finally:
+        finder.os.link = real_link
+    check("found copies: a link that fails is a could NOT copy line, and the temporary file is removed",
+          refused.copied == [] and os.listdir(refused_folder.path) == []
+          and any(l.startswith("could NOT copy ") and "Operation not permitted; no partial file was left" in l
+                  for l in refused.lines),
+          "%s %s" % (os.listdir(refused_folder.path), refused.lines))
 
 code, out, err = finder.fetch_bytes(["definitely-not-a-command-on-this-machine"])
 check("found copies: a fetch whose program is absent reports exit 127 and says so, instead of raising",
