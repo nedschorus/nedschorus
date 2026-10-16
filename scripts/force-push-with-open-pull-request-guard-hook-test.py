@@ -994,6 +994,20 @@ check("the deny reason carries the pull request's title",
       output and FAST_READ_PULL_REQUEST["title"]
       in output["hookSpecificOutput"]["permissionDecisionReason"], str(output))
 
+# A closing redirection, such as 2>&-, takes no target, so bash passes every word after it to git:
+# the --force after one is a force push, refused as the plain one is.
+for command in ["git push --force origin the-pr-branch", "git push 2>&- --force origin the-pr-branch",
+                "git push >&- --force origin the-pr-branch", "git push <&- --force origin the-pr-branch",
+                "git push 3>&- --force origin the-pr-branch", "git push 2>&- -f origin the-pr-branch",
+                "git push 2>&- --force-with-lease origin the-pr-branch"]:
+    code, output = run_main(
+        {"tool_name": "Bash", "cwd": SESSION_WORKTREE, "tool_input": {"command": command}},
+        ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST}))
+    check(f"a force push at an open pull request's head is denied, with a closing redirection "
+          f"before --force or without one: {command!r}",
+          code == 0 and output is not None
+          and output["hookSpecificOutput"].get("permissionDecision") == "deny", f"{code} {output}")
+
 code, output = run_main(
     {"tool_name": "Bash", "cwd": SESSION_WORKTREE,
      "tool_input": {"command": "git push --force origin the-pr-branch"}},
