@@ -40,11 +40,13 @@ either side (default 1); a user's message is shown as an excerpt around the
 match. The date is the one in the file's name for walk, cold-read-records and
 analysis, or the file's modification date when the name has none; the time
 the user sent a message; and for a session dialog the time of the turn that
-holds the matching line: a dialog's turns carry no time, so the line is found
-in the session's transcript, and the first record that holds it gives the
-time. A line shorter than TURN_LOOKUP_MINIMUM_CHARACTERS, or one no record
-holds, is dated by the session's last activity, the last timestamp in its
-transcript, and the hit says so. A walk file's agent-seat is
+holds the matching line: a dialog's turns carry no time, so the dialog is
+built again from the session's transcript, with the extractor that wrote it,
+and the line's turn gives the time. A line said several times is matched by
+its place among them: its second appearance in the dialog takes the second
+turn's time. A line the dialog built again does not hold as often, or one
+whose turn's record has no time, is dated by the session's last activity, the
+last timestamp in its transcript, and the hit says so. A walk file's agent-seat is
 the one its header says ran the approval-walk. A session's agent-seat is read
 from its project-key, the transcript folder Claude Code names after the
 session's directory.
@@ -174,9 +176,6 @@ SEAT_IN_PROJECT_KEY = re.compile(r"-agents-(.+?)(?:--claude-worktrees-.*|-worktr
 DIALOG_FILE_SUFFIX = "-dialog-complete.md"
 MODIFICATION_TIME_MARGIN_SECONDS = 2
 TRANSCRIPT_TAIL_BYTES = 64 * 1024
-# Shorter lines, such as "yes", occur in too many records to say which turn holds them.
-TURN_LOOKUP_MINIMUM_CHARACTERS = 12
-TURN_LOOKUP_MAXIMUM_CHARACTERS = 160
 OWN_SESSION_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 NOT_FOUND_IN_TRANSCRIPT_NOTE = "session's last activity: its turn was not found in the transcript"
 
@@ -427,51 +426,6 @@ def session_transcript(root, hit):
     return root / "transcripts" / hit["machine"] / "projects" / hit["project_key"] / f"{session_id}.jsonl"
 
 
-def turn_lookup_needle(line):
-    """The text to find a dialog line's turn by in the raw transcript, or None when it is too short.
-
-    A dialog line is a line of a message's text, which the transcript holds as a JSON string.
-    """
-    text = line.strip()
-    if len(text) < TURN_LOOKUP_MINIMUM_CHARACTERS:
-        return None
-    return json.dumps(text[:TURN_LOOKUP_MAXIMUM_CHARACTERS], ensure_ascii=False)[1:-1]
-
-
-def turn_times(transcript, needles, failures):
-    """Map each needle to the timestamp of the first transcript record that holds it.
-
-    A needle no record holds is left out. One ripgrep pass reads the transcript.
-    """
-    if not needles:
-        return {}
-    arguments = ["--no-filename", "--fixed-strings"]
-    for needle in needles:
-        arguments += ["-e", needle]
-    ripgrep = os.environ.get(RIPGREP_OVERRIDE) or "rg"
-    try:
-        completed = subprocess.run([ripgrep, "--no-ignore", "--hidden", *arguments, "--", str(transcript)],
-                                   stdin=subprocess.DEVNULL, capture_output=True)
-    except FileNotFoundError:
-        raise RipgrepMissing(ripgrep)
-    said = completed.stderr.decode("utf-8", "replace").strip()
-    if completed.returncode not in (0, 1) or said:
-        failures.append(f"could not read the transcript {transcript} to date the session dialog's hits "
-                        f"by their turns: {said or f'ripgrep exited {completed.returncode}'}")
-    found = {}
-    waiting = set(needles)
-    for line in completed.stdout.decode("utf-8", "replace").splitlines():
-        if not waiting:
-            break
-        stamp = timestamp_of(line)
-        if not stamp:
-            continue
-        for needle in [n for n in waiting if n in line]:
-            found[needle] = stamp
-            waiting.discard(needle)
-    return found
-
-
 def session_id_of(path):
     name = Path(path).name
     if name.endswith(DIALOG_FILE_SUFFIX):
@@ -479,25 +433,65 @@ def session_id_of(path):
     return Path(path).stem
 
 
-def dialog_turn_dates(hits, root, failures):
+_extractor_in_this_process = None
+
+
+def dialog_line_turn_times(transcript_text, dialog_text, line_numbers):
+    """Return ({line number: its turn's timestamp, or ""}, error or None) for one session dialog.
+
+    Runs in a worker process, so it takes and returns only plain values.
+    """
+    global _extractor_in_this_process
+    if _extractor_in_this_process is None:
+        _extractor_in_this_process = load_handoff_extractor()
+    try:
+        # ripgrep numbers lines at "\n" alone, so universal newlines would misnumber them.
+        written = Path(dialog_text).read_bytes().decode("utf-8", "replace").split("\n")
+    except OSError as error:
+        return {}, f"could not read the session dialog {dialog_text} to date its hits by their turns: {error}"
+    try:
+        built = _extractor_in_this_process.complete_dialog_lines_with_turn_timestamps(Path(transcript_text))
+    except OSError as error:
+        return {}, (f"could not read the transcript {transcript_text} to date the session dialog's hits "
+                    f"by their turns: {error}")
+    stamps_by_line = collections.defaultdict(list)
+    for line, stamp in built:
+        stamps_by_line[line].append(stamp)
+    wanted = set(line_numbers)
+    times = {number: "" for number in wanted}
+    seen = collections.Counter()
+    for number, line in enumerate(written, 1):
+        if number in wanted:
+            stamps = stamps_by_line.get(line, [])
+            times[number] = stamps[seen[line]] if seen[line] < len(stamps) else ""
+        seen[line] += 1
+    return times, None
+
+
+def dialog_turn_dates(hits, root, failures, jobs):
     """Set each session-dialog hit's "turn_date": its own turn's timestamp, or "" when not found."""
-    needles_by_transcript = {}
+    lines_by_dialog = {}
+    transcripts = {}
     for hit in hits:
-        hit["needle"] = turn_lookup_needle(hit.get("text", ""))
-        if hit["needle"]:
-            needles_by_transcript.setdefault(session_transcript(root, hit), set()).add(hit["needle"])
+        lines_by_dialog.setdefault(hit["path"], set()).add(hit["line"])
+        transcripts[hit["path"]] = session_transcript(root, hit)
+    arguments = [(str(transcripts[path]), path, sorted(lines))
+                 for path, lines in lines_by_dialog.items() if transcripts[path].is_file()]
+    if jobs <= 1 or len(arguments) <= 1:
+        results = [dialog_line_turn_times(*each) for each in arguments]
+    else:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=min(jobs, len(arguments))) as processes:
+            results = list(processes.map(dialog_line_turn_times, *zip(*arguments), chunksize=4))
     times = {}
-    if needles_by_transcript:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(needles_by_transcript))) as threads:
-            futures = {transcript: threads.submit(turn_times, transcript, sorted(needles), failures)
-                       for transcript, needles in needles_by_transcript.items() if transcript.is_file()}
-            for transcript, future in futures.items():
-                times[transcript] = future.result()
+    for (_, path, _), (found, error) in zip(arguments, results):
+        times[path] = found
+        if error:
+            failures.append(error)
     for hit in hits:
-        hit["turn_date"] = times.get(session_transcript(root, hit), {}).get(hit["needle"], "")
+        hit["turn_date"] = times.get(hit["path"], {}).get(hit["line"], "")
 
 
-def dated_file_hits(hits, root, seat, machine, since, until, failures, own_session=""):
+def dated_file_hits(hits, root, seat, machine, since, until, failures, own_session="", jobs=1):
     """Fill in each hit's date and drop those outside the filters."""
     kept = []
     modification_dates = {}
@@ -513,7 +507,7 @@ def dated_file_hits(hits, root, seat, machine, since, until, failures, own_sessi
             if own_session and session_id_of(hit["path"]) == own_session:
                 continue
         selected.append(hit)
-    dialog_turn_dates([hit for hit in selected if hit["kind"] == SESSION_DIALOGS], root, failures)
+    dialog_turn_dates([hit for hit in selected if hit["kind"] == SESSION_DIALOGS], root, failures, jobs)
     for hit in selected:
         path = Path(hit["path"])
         if hit["kind"] == SESSION_DIALOGS and hit["turn_date"]:
@@ -698,8 +692,6 @@ def transcript_candidates(root, pattern, seat, machine, since, failures, own_ses
     return candidates
 
 
-_extractor_in_this_process = None
-
 
 def matching_user_messages(path_text, pattern, since, until):
     """Return (timestamp and excerpt of each matching user message, error or None) for one transcript.
@@ -867,8 +859,9 @@ def main(argv=None):
         if this_machine() != NED_BOX_HOSTNAME:
             forwarded = list(arguments)
             if parsed.own_session is None and not parsed.include_own_session:
-                # ned-box's copy cannot see this machine's environment.
-                forwarded += ["--own-session", own_session]
+                # ned-box's copy cannot see this machine's environment. Put first, since after a -- it
+                # would be read as the pattern.
+                forwarded = ["--own-session", own_session] + forwarded
             return run_on_ned_box_over_ssh(forwarded)
         print(f"FAILED: there is no log-store at {root} on {this_machine()}, so nothing was searched.\n"
               f"The log-store is on ned-box at {DEFAULT_LOG_STORE_ROOT}; run this program there.",
@@ -887,7 +880,7 @@ def main(argv=None):
                 lambda: dated_file_hits(
                     file_hits(root, kinds, parsed.pattern, max(0, parsed.context), file_failures),
                     root, parsed.seat, parsed.machine, parsed.since, parsed.until, file_failures,
-                    own_session))
+                    own_session, parsed.jobs))
             transcript_search = (threads.submit(transcript_candidates, root, parsed.pattern, parsed.seat,
                                                 parsed.machine, parsed.since, user_failures, own_session)
                                  if USER_MESSAGES in kinds else None)

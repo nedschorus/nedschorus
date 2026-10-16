@@ -174,10 +174,11 @@ with tempfile.TemporaryDirectory() as scratch:
                          "## Agent\n\nThe user said \"keep the heron egret\" today.\n",
                          mtime=DIALOG_IMPORTED_AT)
     finding = run(root, "egret", "--kind", "session-dialogs")
-    check("a dialog line said twice is dated by the first record that holds it",
+    check("a dialog line is dated by its own turn, not a later turn that quotes it within a longer line",
           "2026-09-10T08:00:00Z  session-dialogs  ned-box  turns" in finding.stdout, finding.stdout)
-    check("a dialog line too short to tell its turn apart is dated by the session's last activity, and says so",
-          "2026-10-20T08:00:00Z (session's last activity" in finding.stdout, finding.stdout)
+    check("a short dialog line is dated by its own turn too",
+          "2026-09-10T08:01:00Z  session-dialogs  ned-box  turns" in finding.stdout
+          and "last activity" not in finding.stdout, finding.stdout)
     check("a dialog line holding a quote mark is found in the transcript, where JSON escapes it",
           "2026-09-12T08:00:00Z  session-dialogs  ned-box  turns" in finding.stdout, finding.stdout)
     finding = run(root, "one egret seat", "--kind", "session-dialogs", "--since", "2026-10-01")
@@ -188,6 +189,57 @@ with tempfile.TemporaryDirectory() as scratch:
           finding.returncode == 0 and "2026-09-10T08:00:00Z" in finding.stdout, finding.stdout)
     turns_dialog.unlink()
     turns_transcript.unlink()
+
+    def tool_result(text, stamp):
+        return {"type": "user", "timestamp": stamp, "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "read-1", "content": text}]}}
+
+    def tool_use(text, stamp):
+        return {"type": "assistant", "timestamp": stamp, "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "write-1", "name": "Write", "input": {"content": text}}]}}
+
+    ibis_key = "-home-nedlern-agents-ibis"
+    ibis_transcript = root / "transcripts" / "ned-box" / "projects" / ibis_key / "s21.jsonl"
+    write(ibis_transcript, transcript_records(
+        tool_result("- [PR 7: the ibis plan](https://example.invalid/7)", "2026-09-01T08:00:00Z"),
+        tool_use("The ibis draft says yes.", "2026-09-02T08:00:00Z"),
+        agent("- [PR 7: the ibis plan](https://example.invalid/7)\nThe ibis draft says yes.", "2026-09-03T08:00:00Z"),
+        agent("Again:\n- [PR 7: the ibis plan](https://example.invalid/7)", "2026-09-05T08:00:00Z"),
+        {"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "An ibis turn with no time."}]}},
+        agent("Done.", "2026-09-30T08:00:00Z")))
+    ibis_dialog = write(root / "session-dialogs" / "ned-box" / ibis_key / "s21-dialog-complete.md",
+                        "# Complete session dialog\n\n## Agent\n\n- [PR 7: the ibis plan](https://example.invalid/7)\n"
+                        "The ibis draft says yes.\n\n## Agent\n\nAgain:\n"
+                        "- [PR 7: the ibis plan](https://example.invalid/7)\n\n## Agent\n\nAn ibis turn with no time.\n",
+                        mtime=DIALOG_IMPORTED_AT)
+    finding = run(root, "ibis", "--kind", "session-dialogs")
+    check("a dialog line an earlier tool result also holds is dated by its own turn, not the tool result",
+          "2026-09-03T08:00:00Z  session-dialogs  ned-box  ibis\n  " + str(ibis_dialog) + ":5" in finding.stdout
+          and "2026-09-01" not in finding.stdout, finding.stdout)
+    check("a dialog line an earlier tool call's input also holds is dated by its own turn, not the tool call",
+          str(ibis_dialog) + ":6" in finding.stdout.split("2026-09-03T08:00:00Z")[-1]
+          and "2026-09-02" not in finding.stdout, finding.stdout)
+    check("a line said in two turns is dated, at each place, by the turn it appears in",
+          "2026-09-05T08:00:00Z  session-dialogs  ned-box  ibis\n  " + str(ibis_dialog) + ":11" in finding.stdout,
+          finding.stdout)
+    check("a dialog line whose turn's record has no time is dated by the session's last activity, and says so",
+          "2026-09-30T08:00:00Z (session's last activity: its turn was not found in the transcript)  "
+          "session-dialogs  ned-box  ibis\n  " + str(ibis_dialog) + ":15" in finding.stdout, finding.stdout)
+    ibis_dialog.unlink()
+    ibis_transcript.unlink()
+
+    probe = subprocess.run([sys.executable, "-c", f"""
+import importlib.util
+spec = importlib.util.spec_from_file_location("search", {str(PROGRAM)!r})
+search = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(search)
+print(search.dialog_line_turn_times({str(root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-prime-intellect" / "s1.jsonl")!r},
+                                    {str(Path(scratch) / "no-such-dialog.md")!r}, [3]))
+"""], capture_output=True, text=True)
+    check("a session dialog that cannot be read again to date its hits is a failure",
+          "could not read the session dialog " in probe.stdout and "no-such-dialog.md" in probe.stdout,
+          probe.stdout + probe.stderr)
 
     own = run(root, "heron plan", environment={"CLAUDE_CODE_SESSION_ID": "s1"})
     check("the agent-session running the search is left out, its dialog and its messages both, and the "
@@ -300,7 +352,7 @@ search.session_start = unreadable
 search.session_last_activity = lambda transcript: "2026-10-05T10:00:00Z"
 dialog = {str(root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-prime-intellect" / "s1-dialog-complete.md")!r}
 hit = {{"kind": "session-dialogs", "path": dialog, "machine": "ned-box",
-        "project_key": "-home-nedlern-agents-prime-intellect", "line": 5}}
+        "project_key": "-home-nedlern-agents-prime-intellect", "line": 1}}
 failures = []
 search.dated_file_hits([hit], Path({str(root)!r}), "", "", None, "2026-09-30", failures)
 print(failures)
@@ -552,12 +604,18 @@ locked.chmod(0o644)
           result.returncode == 1 and "ARG:nedlern@ned-box" in result.stdout
           and ("ARG:python3 /home/nedlern/Projects/nedschorus/scripts/"
                "log-store-past-discussions-regex-search-newest-first.py "
-               "'heron'\"'\"'s plan' --seat prime --own-session ''") in result.stdout.splitlines(), result.stdout)
+               "--own-session '' 'heron'\"'\"'s plan' --seat prime") in result.stdout.splitlines(), result.stdout)
     result = run(Path(scratch) / "absent", "heron",
                  environment={PREFIX + "THIS_MACHINE_OVERRIDE": "mac", PREFIX + "SSH_PROGRAM_OVERRIDE": echoing,
                               "CLAUDE_CODE_SESSION_ID": "mac-session-1"})
     check("from the Mac, the running agent-session is passed to ned-box's copy, which cannot see it",
-          any(line.endswith("newest-first.py heron --own-session mac-session-1")
+          any(line.endswith("newest-first.py --own-session mac-session-1 heron")
+              for line in result.stdout.splitlines()), result.stdout)
+    result = run(Path(scratch) / "absent", "--", "-heron",
+                 environment={PREFIX + "THIS_MACHINE_OVERRIDE": "mac", PREFIX + "SSH_PROGRAM_OVERRIDE": echoing,
+                              "CLAUDE_CODE_SESSION_ID": "mac-session-1"})
+    check("from the Mac, a pattern after -- is still the pattern on ned-box, since the session goes before it",
+          any(line.endswith("newest-first.py --own-session mac-session-1 -- -heron")
               for line in result.stdout.splitlines()), result.stdout)
 
 print(f"{'FAILED' if failures else 'all cases passed'}: {len(failures)} failure(s)")
