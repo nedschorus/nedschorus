@@ -683,101 +683,101 @@ with tempfile.TemporaryDirectory() as root:
           and "nedschorus-merge-lane-tasks" not in only_box_out,
           only_box_out)
 
-# --- ned-box never ssh's to itself -----------------------------------------
-#
-# The blocking finding. On ned-box the local store IS ned-box's, and the
-# machine with no route from there is the Mac.
+# --- ned-box never ssh's to itself, and reads the Mac through its forced command
+
+MAC_LIST = "nedschorus-cold-read-research-tasks"
+MAC_TAR = a_tar_of({MAC_LIST: [task(3, "Mac task")]})
+MAC_READ_REQUEST = "read-agent-seat-task-lists"
 
 with tempfile.TemporaryDirectory() as root:
     store = build_store(root, {BOX_LIST: [task(7, "Box task")]})
-    self_calls = []
+    mac_calls = []
     with pretending_the_host_is("ned-box"):
         box_out, box_message, box_code = run_and_code(
             ["--seats", "--store", str(store), "--machine", "both"],
-            runner=a_runner_returning(stdout=BOX_TAR, calls=self_calls))
+            runner=a_runner_returning(stdout=MAC_TAR, calls=mac_calls))
 
-    check("on ned-box, no ssh is run at all: the store in front of it is "
-          "ned-box's own",
-          self_calls == [], self_calls)
-    check("on ned-box, the seats it shows are ned-box's, not the Mac's",
-          "merge-lane-2" in box_out and "ned-box" in box_out
-          and "Machines read: ned-box (this machine)." in box_out, box_out)
+    check("on ned-box, the only ssh is to the Mac, sending the one read "
+          "request with the Mac-side key; ned-box's own store is read from disk",
+          len(mac_calls) == 1 and mac_calls[0][-1] == MAC_READ_REQUEST
+          and "nedlern@ned-box" not in mac_calls[0]
+          and str(reader.mac_window.MAC_SIDE_ACTION_KEY) in mac_calls[0],
+          mac_calls)
+    check("on ned-box, both machines' seats are shown, and both are named "
+          "as read",
+          "merge-lane-2" in box_out and "cold-read-research" in box_out
+          and "Machines read: mac, ned-box (this machine)." in box_out,
+          box_out)
+    check("on ned-box, a clean read of both machines exits zero",
+          box_code == reader.EXIT_EVERYTHING_ASKED_FOR_WAS_READ
+          and box_message == "", f"{box_code!r} {box_message!r}")
+
     with pretending_the_host_is("ned-box"):
-        expected_no_route = reader.no_route_notice(reader.MACHINE_NAME_MAC)
-    check("on ned-box, asking for both machines says the Mac was not read",
-          expected_no_route in box_out
-          and "No ssh route from ned-box to mac" in box_out, box_out)
-    check("and says where to run to read it, and how to ask for this "
-          "machine alone",
-          "Run this program on mac" in box_out
-          and "--machine ned-box" in box_out, box_out)
-    # The ruling of 2026-09-24: the machine this one has no route to is
-    # named, but it is not a failure. Paired with the Mac-side case below,
-    # where an unreachable ned-box DOES fail the run and prints the
-    # incomplete block, so neither assertion can pass because the other
-    # path is dead.
-    check("on ned-box, the unrouted Mac does not fail the run: it exits "
-          "zero",
-          box_code == reader.EXIT_EVERYTHING_ASKED_FOR_WAS_READ,
-          f"{box_code!r} {box_message!r}")
-    check("and the Mac is named in its own block, not as the answer being "
-          "incomplete",
-          "Not read, because this machine has no route to it:" in box_out
-          and "incomplete" not in box_out, box_out)
+        mac_task_out = run(
+            ["--seat", "cold-read-research", "--task", "3", "--store",
+             str(store), "--machine", "both"],
+            runner=a_runner_returning(stdout=MAC_TAR))[0]
+    check("on ned-box, a Mac seat's task can be cited and opened",
+          "Mac task" in mac_task_out and "machine: mac" in mac_task_out,
+          mac_task_out)
 
+    self_calls = []
     with pretending_the_host_is("ned-box"):
         box_alone_out, _, box_alone_code = run_and_code(
             ["--seats", "--store", str(store), "--machine", "ned-box"],
-            runner=a_runner_returning(stdout=BOX_TAR, calls=self_calls))
-    check("on ned-box, --machine ned-box is a complete answer and exits "
-          "zero",
+            runner=a_runner_returning(stdout=MAC_TAR, calls=self_calls))
+    check("on ned-box, --machine ned-box is a complete answer, exits zero "
+          "and runs no ssh",
           box_alone_code == 0 and "not read" not in box_alone_out
           and self_calls == [], f"{box_alone_code!r} {box_alone_out!r}")
 
-# --- on ned-box the Mac is named on every entry path, and never fails it ---
-#
-# The unrouted block is printed by main after every entry path, so it is
-# pinned on each of the four, as the unreadable-file notice is above.
+# --- what the Mac's failures say, read from ned-box -----------------------
 
 with tempfile.TemporaryDirectory() as root:
     store = build_store(root, {BOX_LIST: [task(7, "Box task")]})
-    for path_name, argv in (
-            ("the listing", ["--seat", "merge-lane-2"]),
-            ("--task", ["--seat", "merge-lane-2", "--task", "7"]),
-            ("--seats", ["--seats"]),
-            ("--every-task-list", ["--every-task-list"])):
+    for case_name, runner, expected in (
+            ("an unreachable Mac",
+             a_runner_returning(
+                 stderr=b"ssh: connect to host edwards-macbook-air.local "
+                        b"port 22: Operation timed out", returncode=255),
+             "could not reach the Mac"),
+            ("a Mac whose clone predates the request",
+             a_runner_returning(
+                 stderr=b"mac-window-opened-for-ned-box-forced-command: no "
+                        b"window was opened, because the request does not "
+                        b"start with the verb 'open-window'.",
+                 returncode=reader.mac_forced_command.EXIT_REFUSED),
+             "the Mac's clone needs a git pull"),
+            ("a Mac whose tar failed",
+             a_runner_returning(
+                 stderr=b"tar exited 1, so the archive may be incomplete",
+                 returncode=reader.mac_forced_command.EXIT_TAR_FAILED),
+             "tar exited 1"),
+            ("a truncated archive from the Mac",
+             a_runner_returning(stdout=MAC_TAR[:1536]),
+             "did not arrive as a readable archive")):
         with pretending_the_host_is("ned-box"):
-            path_out, path_message, path_code = run_and_code(
-                argv + ["--store", str(store), "--machine", "both"])
-        check(f"on ned-box, {path_name}: exits zero and names the Mac as "
-              f"not read",
-              path_code == reader.EXIT_EVERYTHING_ASKED_FOR_WAS_READ
-              and "No ssh route from ned-box to mac" in path_out
-              and "Machines read: ned-box (this machine)." in path_out,
-              f"{path_code!r} {path_message!r} {path_out!r}")
+            failed_out, failed_message, failed_code = run_and_code(
+                ["--seats", "--store", str(store), "--machine", "both"],
+                runner=runner)
+        check(f"on ned-box, {case_name} fails the run and says what happened",
+              failed_code == reader.EXIT_SOMETHING_COULD_NOT_BE_READ
+              and expected in failed_out
+              and "Machines read: ned-box (this machine)." in failed_out,
+              f"{failed_code!r} {failed_message!r} {failed_out!r}")
 
-    # A seat that lives on the Mac, asked for from ned-box. The refusal must
-    # still say the Mac was never read, or the seat reads as one that does
-    # not exist.
+    # A seat on the Mac, asked for while the Mac cannot be read: the refusal
+    # must say why, or the seat reads as one that does not exist.
     with pretending_the_host_is("ned-box"):
         _, mac_seat_message, mac_seat_code = run_and_code(
             ["--seat", "cold-read-research", "--store", str(store),
-             "--machine", "both"])
-    check("on ned-box, a seat that is not found is refused, and the refusal "
-          "names the Mac as not read",
+             "--machine", "both"],
+            runner=a_runner_returning(stderr=b"timed out", returncode=255))
+    check("on ned-box, a seat not found while the Mac cannot be read is "
+          "refused, and the refusal names the Mac's failure",
           mac_seat_code == reader.EXIT_SOMETHING_COULD_NOT_BE_READ
-          and "No ssh route from ned-box to mac" in mac_seat_message,
+          and "could not reach the Mac" in mac_seat_message,
           f"{mac_seat_code!r} {mac_seat_message!r}")
-
-    # Asking for the unrouted machine alone: nothing asked for can be read.
-    with pretending_the_host_is("ned-box"):
-        _, mac_alone_message, mac_alone_code = run_and_code(
-            ["--seats", "--store", str(store), "--machine", "mac"])
-    check("on ned-box, --machine mac alone still refuses and exits non-zero",
-          mac_alone_code == reader.EXIT_SOMETHING_COULD_NOT_BE_READ
-          and "No task lists on the machines read: none." in mac_alone_message
-          and "No ssh route from ned-box to mac" in mac_alone_message,
-          f"{mac_alone_code!r} {mac_alone_message!r}")
 
 # ned-box's OWN store is still a failure when it cannot be read: missing
 # altogether, or holding a task file that cannot be read.
@@ -785,19 +785,17 @@ with tempfile.TemporaryDirectory() as root:
     missing_store = Path(root) / "no-store-here"
     with pretending_the_host_is("ned-box"):
         _, no_store_message, no_store_code = run_and_code(
-            ["--seats", "--store", str(missing_store), "--machine", "both"])
-    check("on ned-box, a missing store of its own still exits non-zero, and "
-          "says so beside the Mac",
+            ["--seats", "--store", str(missing_store), "--machine", "ned-box"])
+    check("on ned-box, a missing store of its own exits non-zero",
           no_store_code == reader.EXIT_SOMETHING_COULD_NOT_BE_READ
-          and "No task store on ned-box" in no_store_message
-          and "No ssh route from ned-box to mac" in no_store_message,
+          and "No task store on ned-box" in no_store_message,
           f"{no_store_code!r} {no_store_message!r}")
 
     store = build_store(root, {BOX_LIST: [task(7, "Box task")]})
     (store / BOX_LIST / "8.json").write_text("{not json")
     with pretending_the_host_is("ned-box"):
         broken_out, broken_message, broken_code = run_and_code(
-            ["--seats", "--store", str(store), "--machine", "both"])
+            ["--seats", "--store", str(store), "--machine", "ned-box"])
     check("on ned-box, an unreadable task file of its own still exits "
           "non-zero",
           broken_code == reader.EXIT_SOMETHING_COULD_NOT_BE_READ

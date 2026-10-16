@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Open an iTerm window, a Typora file or a browser page on this Mac, at ned-box's request.
+"""Open an iTerm window, a Typora file or a browser page on this Mac, or send its agent-seat task lists, at ned-box's request.
 
 Usage: SSH_ORIGINAL_COMMAND='<request>' scripts/mac-window-opened-for-ned-box-forced-command.py
 
@@ -96,6 +96,23 @@ So the most this verb can do is open, with the Mac's default application for
 it, a file named .html under ned-box's log-store, which the Mac can already
 read. The name is checked, not the file a link leads to inside the log-store.
 
+THE FIFTH ACCEPTED SHAPE, the Mac's agent-seat task lists, read:
+
+    read-agent-seat-task-lists
+
+- The request is exactly the verb, with no words after it.
+- The Mac's task store, TASK_STORE_UNDER_HOME under its home, must be a
+  directory; a missing store is refused with EXIT_NO_TASK_STORE.
+- tar archives the store to standard output, which carries the archive and
+  nothing else, so ned-box's scripts/seat-task-list-read.py can unpack it as
+  it unpacks ned-box's own. Every message goes to standard error.
+  COPYFILE_DISABLE keeps the Mac's tar from adding `._` extended-attribute
+  files, which the reader would take for task files.
+- Any tar failure exits EXIT_TAR_FAILED, so the reader can tell it from a
+  refusal, which exits EXIT_REFUSED, as tar's own fatal status also does.
+
+So the most this verb can do is hand ned-box a copy of the Mac's task lists.
+
 Every request, accepted or refused, is appended to REQUEST_LOG_PATH, so the
 user can see what ned-box asked his Mac to do. An accepted request is logged
 before its window opens, and a request that cannot be logged opens no window:
@@ -148,11 +165,15 @@ DEFAULT_OPEN_PROGRAM = "/usr/bin/open"
 OPEN_IN_BROWSER_REQUEST_VERB = "open-in-browser"
 LOG_STORE_DIRECTORY_NAME = "nedschorus-logs"
 BROWSER_PAGE_SUFFIX = ".html"
+AGENT_SEAT_TASK_LISTS_READ_VERB = "read-agent-seat-task-lists"
+TASK_STORE_UNDER_HOME = Path(".claude") / "tasks"
 
 EXIT_OPENED = 0
 EXIT_REFUSED = 2
 EXIT_OPENER_FAILED = 1
 EXIT_LOG_UNWRITABLE = 3
+EXIT_NO_TASK_STORE = 4
+EXIT_TAR_FAILED = 5
 
 
 class RequestRefused(Exception):
@@ -370,12 +391,56 @@ def open_in_browser(request):
     return EXIT_OPENED
 
 
+def agent_seat_task_lists_read(request):
+    if request != AGENT_SEAT_TASK_LISTS_READ_VERB:
+        log_error = append_to_request_log("refused", request)
+        print(f"{PROGRAM}: the task lists were not sent, because {AGENT_SEAT_TASK_LISTS_READ_VERB} takes no words after it.",
+              file=sys.stderr)
+        print(f"Send the request {AGENT_SEAT_TASK_LISTS_READ_VERB} alone; on ned-box, scripts/seat-task-list-read.py sends it.",
+              file=sys.stderr)
+        if log_error:
+            print(f"The refusal could not be added to the request log {REQUEST_LOG_PATH} either: {log_error}", file=sys.stderr)
+        return EXIT_REFUSED
+    store = Path.home() / TASK_STORE_UNDER_HOME
+    if not store.is_dir():
+        log_error = append_to_request_log("no-task-store", request)
+        print(f"{PROGRAM}: the task lists were not sent, because there is no task store at {store} on the Mac.", file=sys.stderr)
+        print("Tell the user; no agent-seat on the Mac has written a task list yet, or the store has moved.", file=sys.stderr)
+        if log_error:
+            print(f"This could not be added to the request log {REQUEST_LOG_PATH} either: {log_error}", file=sys.stderr)
+        return EXIT_NO_TASK_STORE
+    log_error = append_to_request_log("accepted", request)
+    if log_error:
+        print(f"{PROGRAM}: the task lists were not sent, because the request could not be added to the request log "
+              f"{REQUEST_LOG_PATH}: {log_error}.", file=sys.stderr)
+        print("Every request ned-box makes of the Mac is logged first. Tell the user this error.", file=sys.stderr)
+        return EXIT_LOG_UNWRITABLE
+    sys.stdout.flush()
+    result = subprocess.run(["tar", "-C", str(store), "-cf", "-", "."], stdout=sys.stdout.buffer, stderr=subprocess.PIPE,
+                            env={**os.environ, "COPYFILE_DISABLE": "1"})
+    if result.returncode != 0:
+        log_error = append_to_request_log(f"tar-failed-{result.returncode}", request)
+        print(f"{PROGRAM}: tar exited {result.returncode}, so the archive of {store} may be incomplete: "
+              f"{result.stderr.decode('utf-8', 'replace').strip()}", file=sys.stderr)
+        print("Run the read again; if it fails twice, tell the user this error.", file=sys.stderr)
+        if log_error:
+            print(f"The failure could not be added to the request log {REQUEST_LOG_PATH}: {log_error}", file=sys.stderr)
+        return EXIT_TAR_FAILED
+    log_error = append_to_request_log("sent", request)
+    if log_error:
+        print(f"{PROGRAM}: the task lists were sent, but the outcome could not be added to the request log "
+              f"{REQUEST_LOG_PATH}: {log_error}. Tell the user this error.", file=sys.stderr)
+    return EXIT_OPENED
+
+
 def main():
     # sshd passes a forced command no arguments, so only a person running it by hand reaches this.
     if sys.argv[1:] in (["--help"], ["-h"]):
         print(__doc__)
         return 0
     request = os.environ.get("SSH_ORIGINAL_COMMAND")
+    if request is not None and request.split(" ")[0] == AGENT_SEAT_TASK_LISTS_READ_VERB:
+        return agent_seat_task_lists_read(request)
     if request is not None and request.split(" ")[0] == TYPORA_VERB:
         return open_in_typora(request)
     if request is not None and request.split(" ")[0] == OPEN_IN_BROWSER_REQUEST_VERB:
