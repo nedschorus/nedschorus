@@ -170,6 +170,30 @@ for command, expected in [("echo \\ x", ["echo", " x"]), ("echo \\  x", ["echo",
                           ('echo \\ "q"', ["echo", " q"]), ("echo a\\ b \\ c", ["echo", "a b", " c"])]:
     check(f"escaped blanks at a word's start stay in the word, as bash passes it: {command!r}",
           words_of(command) == [expected], words_of(command))
+# Each expected list is the words bash passed to a shell function standing in for the command.
+for command, expected in [("echo \\ <<<x y", [["echo", " ", "y"]]),
+                          ("zzp \\  >f x", [["zzp", " ", "x"]]),
+                          ("zzp a>f \\  b", [["zzp", "a", " ", "b"]]),
+                          ("zzq \\ ;", [["zzq", " "]]),
+                          ("zzq \\ \\ ;zzp", [["zzq", "  "], ["zzp"]]),
+                          ("zzp \\ &&zzq", [["zzp", " "], ["zzq"]]),
+                          ("zzp \\  #c", [["zzp", " "]]),
+                          ("zzp \\ \nzzq", [["zzp", " "], ["zzq"]]),
+                          ("zzp \\ 0<(zzq) x", [["zzq"], ["zzp", " 0<(zzq)", "x"]]),
+                          ("zzp a \\ 0<(zzq)", [["zzq"], ["zzp", "a", " 0<(zzq)"]]),
+                          # tree-sitter-bash folds the lines after this pipeline into its redirections.
+                          ("zzp hi | zzq | zzr -c | zzs -2\nzzt > f <x\nzzu > g <y\n"
+                           "zzv $(zzw) \\ && for t in a b; do zzx; done",
+                           [["zzp", "hi"], ["zzq"], ["zzr", "-c"], ["zzs", "-2"], ["zzt"], ["zzu"], ["zzw"],
+                            ["zzv", "$(zzw)", " "], ["zzx"]])]:
+    check(f"escaped blanks next to a redirection or a separator are words, as bash passes them: "
+          f"{command!r}", words_of(command) == expected, words_of(command))
+for command, expected in [("zzp >\\ f", (["zzp"], [(">", " f")])),
+                          ("zzp > \\  f", (["zzp", "f"], [(">", " ")]))]:
+    found = reader.simple_commands(command)
+    check(f"escaped blanks before a redirection's target start the target, as bash reads it: "
+          f"{command!r}", (list(found[0]), found[0].redirects) == expected,
+          [(list(words), words.redirects) for words in found])
 found = reader.simple_commands("ls \\ ~/x")
 check("a word that starts with an escaped space is not a word whose ~ bash expands",
       list(found[0]) == ["ls", " ~/x"]

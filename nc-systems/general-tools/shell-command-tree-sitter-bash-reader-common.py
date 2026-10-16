@@ -758,12 +758,16 @@ def _redirect_parts(node, glob_markers, limit=None, restored=None):
     # passes them to the command as arguments. It also splits a target such as
     # `$X/push$i.log` after its last `$`; a part that touches the one before it is the same word.
     words = []
+    previous_end = destinations[0].prev_sibling.end_byte if destinations else None
     for destination in destinations:
         value = word_value(destination, glob_markers, restored)
+        gap_words, prefix = _escaped_blank_words_in_gap(
+            node.text[previous_end - node.start_byte:destination.start_byte - node.start_byte])
         if words and destination.start_byte == previous_end:
             words[-1] = _word_with_text(words[-1], words[-1] + value)
         else:
-            words.append(value)
+            words.extend(gap_words)
+            words.append(prefix + value if prefix else value)
         previous_end = destination.end_byte
     return (operator, words[0] if words else ""), words[1:]
 
@@ -882,9 +886,18 @@ class _Collector:
                                                         pipeline_start),)
                               if len(pipeline) > 1 else child_shell)
                 redirects, trailing_words = [], []
+                previous_end = unit["children"][-1].end_byte if unit["children"] else None
                 for redirect, limit in unit["redirects"]:
+                    if previous_end is not None:
+                        trailing_words.extend(_escaped_blank_words_before_operator(
+                            self.source[previous_end:redirect.start_byte]))
+                        previous_end = (_redirect_destinations(redirect)[limit - 1].end_byte
+                                        if limit else redirect.end_byte)
                     shared_heredocs.extend(
                         self.redirect(redirect, unit_shell, redirects, trailing_words, limit))
+                if previous_end is not None:
+                    trailing_words.extend(_escaped_blank_words_ending_command(
+                        self.source, previous_end))
                 if unit["children"] is not None:
                     self.simple_command(unit["node"], unit["children"], unit_shell,
                                         list(shared_heredocs), redirects, trailing_words)
@@ -984,7 +997,7 @@ class _Collector:
                     and child.start_byte == joined.end_byte:
                 # bash passes 0<(cmd) as one word, the 0 joined to the substitution's path.
                 self._read_command_part(child, child_shell, words, own_redirects, own_heredocs)
-                words[-1] = _text(joined) + words[-1]
+                words[-1] = joined_prefix + _text(joined) + words[-1]
                 joined = None
                 continue
             if joined is not None:
@@ -997,7 +1010,7 @@ class _Collector:
                 prefix = ""
             if child.type == "number" and self.source[child.end_byte + 1:child.end_byte + 2] == b"(" \
                     and self.source[child.end_byte:child.end_byte + 1] in (b"<", b">"):
-                joined = child
+                joined, joined_prefix = child, prefix
                 continue
             count = len(words)
             self._read_command_part(child, child_shell, words, own_redirects, own_heredocs)
@@ -1064,6 +1077,39 @@ def _escaped_blank_words_in_gap(gap):
         else:
             return [], ""
     return words, current
+
+
+def _escaped_blank_words_before_operator(gap):
+    """Return the words the escaped blanks in gap make when an operator or the command's end follows.
+
+    The operator ends the word the last escaped blanks start, so they are a word of their own.
+    """
+    words, prefix = _escaped_blank_words_in_gap(gap)
+    return words + [prefix] if prefix else words
+
+
+def _escaped_blank_words_ending_command(source, start):
+    """Return the words of the escaped blanks from start to the text that ends a command.
+
+    tree-sitter-bash ends a command at its last word and leaves escaped blanks
+    after it outside every node, so `zzq \\ ;` loses the " " bash passes. The
+    blanks count only when a separator, a comment, a closing parenthesis or
+    backtick, a line end or the end of the source follows them.
+    """
+    end = start
+    while True:
+        pair = source[end:end + 2]
+        if pair in (b"\\ ", b"\\\t", b"\\\n"):
+            end += 2
+        elif source[end:end + 1] in (b" ", b"\t"):
+            end += 1
+        else:
+            break
+    # A # here starts a comment: the source corrections make a # just after an escaped blank
+    # part of a word.
+    if source[end:end + 1] not in (b"", b"\n", b";", b"&", b"|", b")", b"`", b"#"):
+        return []
+    return _escaped_blank_words_before_operator(source[start:end])
 
 
 def _separates_commands(gap):
