@@ -10,11 +10,13 @@ Run: python3 scripts/mac-window-opened-for-ned-box-forced-command-test.py
 """
 
 import importlib.util
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
 
@@ -539,6 +541,64 @@ else:
 
     shutil.rmtree(pages)
     shutil.rmtree(outside_page.parent)
+
+def run_task_lists_read(request, with_store=True, tar_body=None, log_is_a_directory=False):
+    """Run the program as sshd would for a task-list read; return (result, log, stdout bytes)."""
+    scratch = Path(tempfile.mkdtemp(prefix="mac-task-lists-read-test-"))
+    if with_store:
+        task_list = scratch / ".claude" / "tasks" / "nedschorus-mac-seat-tasks"
+        task_list.mkdir(parents=True)
+        (task_list / "1.json").write_text(json.dumps({"id": "1", "subject": "Mac task", "status": "pending"}))
+    if log_is_a_directory:
+        (scratch / ".claude" / "mac-window-opened-for-ned-box.log").mkdir(parents=True)
+    path = os.environ.get("PATH", "/usr/bin:/bin")
+    if tar_body is not None:
+        fake_bin = scratch / "fake-bin"
+        fake_bin.mkdir()
+        (fake_bin / "tar").write_text("#!/bin/sh\n" + tar_body)
+        (fake_bin / "tar").chmod(0o755)
+        path = f"{fake_bin}:{path}"
+    environment = {"PATH": path, "HOME": str(scratch), "SSH_ORIGINAL_COMMAND": request}
+    result = subprocess.run([sys.executable, str(PROGRAM_PATH)], capture_output=True, env=environment)
+    log_path = scratch / ".claude" / "mac-window-opened-for-ned-box.log"
+    log = log_path.read_text() if log_path.is_file() else ""
+    shutil.rmtree(scratch)
+    return result, log, result.stdout
+
+
+result, log, archive = run_task_lists_read("read-agent-seat-task-lists")
+check("task lists: a read exits 0", result.returncode == 0, result.stderr)
+try:
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as sent:
+        member_names = sent.getnames()
+except tarfile.TarError as unreadable:
+    member_names = [f"not a tar archive: {unreadable}"]
+check("task lists: standard output is a tar archive of the store, and nothing else",
+      "./nedschorus-mac-seat-tasks/1.json" in member_names, member_names)
+check("task lists: a read is logged as accepted before it is sent",
+      " accepted 'read-agent-seat-task-lists'" in log and " sent " in log
+      and log.index(" accepted ") < log.index(" sent "), log)
+
+result, log, archive = run_task_lists_read("read-agent-seat-task-lists nedschorus-mac-seat-tasks")
+check("task lists: a request with words after the verb is refused and exits 2, sending nothing",
+      result.returncode == forced_command.EXIT_REFUSED and archive == b"" and b"takes no words" in result.stderr,
+      (result.returncode, result.stderr))
+check("task lists: the refusal is logged", " refused " in log, log)
+
+result, log, archive = run_task_lists_read("read-agent-seat-task-lists", with_store=False)
+check("task lists: a missing task store exits with its own status and says so, sending nothing",
+      result.returncode == forced_command.EXIT_NO_TASK_STORE and archive == b"" and b"no task store" in result.stderr,
+      (result.returncode, result.stderr))
+
+result, log, archive = run_task_lists_read("read-agent-seat-task-lists", tar_body="echo 'tar: read error' >&2\nexit 2\n")
+check("task lists: a tar failure exits with its own status, not the refusal's, and passes tar's error on",
+      result.returncode == forced_command.EXIT_TAR_FAILED and b"tar: read error" in result.stderr,
+      (result.returncode, result.stderr))
+check("task lists: a tar failure is logged", "tar-failed-2" in log, log)
+
+result, log, archive = run_task_lists_read("read-agent-seat-task-lists", log_is_a_directory=True)
+check("task lists: a read that cannot be logged sends nothing and exits 3",
+      result.returncode == forced_command.EXIT_LOG_UNWRITABLE and archive == b"", (result.returncode, result.stderr))
 
 print()
 if failures:

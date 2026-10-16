@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Read and cite seat task lists from both machines without modifying the stores.
 
-The only configured ssh route is Mac to ned-box; on ned-box the Mac is
-reported unread without failing the run. A requested store that cannot be
-read is a failure, not an empty task list."""
+Each machine reads the other's store as one tar archive. The Mac reads
+ned-box's over ssh; ned-box reads the Mac's by sending the request
+read-agent-seat-task-lists to the Mac's forced command for ned-box's key,
+through scripts/open-mac-window-from-ned-box.py's ssh command. A requested
+store that cannot be read is a failure, not an empty task list."""
 
 import argparse
 import importlib.util
@@ -24,6 +26,15 @@ _records_reader_spec = importlib.util.spec_from_file_location(
 records_reader = importlib.util.module_from_spec(_records_reader_spec)
 _records_reader_spec.loader.exec_module(records_reader)
 
+_mac_window_spec = importlib.util.spec_from_file_location(
+    "open_mac_window_from_ned_box",
+    Path(__file__).resolve().parent / "open-mac-window-from-ned-box.py")
+mac_window = importlib.util.module_from_spec(_mac_window_spec)
+_mac_window_spec.loader.exec_module(mac_window)
+mac_forced_command = mac_window.load_forced_command_module()
+
+PROGRAM = "seat-task-list-read"
+
 DEFAULT_STORE = Path.home() / ".claude" / "tasks"
 STORE_UNDER_HOME = Path(".claude") / "tasks"
 LIST_ID_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
@@ -40,6 +51,7 @@ END_OF_TAR_ARCHIVE = bytes(2 * tarfile.BLOCKSIZE)
 
 EXIT_EVERYTHING_ASKED_FOR_WAS_READ = 0
 EXIT_SOMETHING_COULD_NOT_BE_READ = 1
+TRANSFER_TIMEOUT_SECONDS = 120
 
 TaskListLocation = namedtuple("TaskListLocation", "machine directory")
 
@@ -76,14 +88,6 @@ def no_store_notice(machine, store):
             f"store.")
 
 
-def no_route_notice(machine):
-    return (f"No ssh route from {this_machine_name()} to {machine}, so "
-            f"{machine}'s task lists were not read.\n"
-            f"Run this program on {machine} to read them.\n"
-            f"Pass --machine {this_machine_name()} to ask for this machine "
-            f"alone.")
-
-
 def ssh_failed_notice(machine, what_ssh_said):
     return (f"{machine} could not be read (ssh exited "
             f"{SSH_ITSELF_FAILED_EXIT}): "
@@ -110,8 +114,56 @@ def archive_unreadable_notice(machine, detail):
             f"{machine} itself.")
 
 
+def mac_clone_needs_pull_notice():
+    return ("mac refused the request "
+            f"{mac_forced_command.AGENT_SEAT_TASK_LISTS_READ_VERB}, because "
+            f"its forced command is older than that request.\n"
+            f"Tell the user the Mac's clone needs a git pull before ned-box "
+            f"can read the Mac's task lists.\n"
+            f"Pass --machine ned-box to read this machine alone.")
+
+
+def mac_sent_with_warning_notice(what_the_mac_said):
+    return (f"mac sent its task lists, but its forced command also said: "
+            f"{what_the_mac_said}\n"
+            f"Tell the user what it said; the task lists below are complete.")
+
+
+def mac_read_failed_notice(exit_code, what_the_mac_said):
+    return (f"mac's task store was not read (the Mac's forced command "
+            f"exited {exit_code}): {what_the_mac_said or 'no error text'}\n"
+            f"Do what that says; if it names no remedy, tell the user.\n"
+            f"Pass --machine ned-box to read this machine alone.")
+
+
+def fetch_mac_task_store_archive(runner):
+    """Return (archive_bytes_or_None, problems) for the Mac's store, read from ned-box."""
+    destination = (os.environ.get("NEDSCHORUS_MAC_SSH_DESTINATION")
+                   or mac_window.DEFAULT_MAC_SSH_DESTINATION)
+    completed = runner(mac_window.ssh_command(
+        mac_forced_command.AGENT_SEAT_TASK_LISTS_READ_VERB, destination))
+    what_it_said = (completed.stderr or b"").decode("utf-8", "replace").strip()
+    if completed.returncode == 0:
+        # The Mac exits 0 when it sent the store but could not log the outcome.
+        return completed.stdout, ([mac_sent_with_warning_notice(what_it_said)]
+                                  if what_it_said else [])
+    if completed.returncode == SSH_ITSELF_FAILED_EXIT:
+        return None, ["\n".join(mac_window.explain_connection_failure(
+            what_it_said, destination, PROGRAM,
+            not_done="mac's task lists were not read",
+            fallback="that mac's task lists could not be read; "
+                     "--machine ned-box reads this machine alone"))]
+    # An older forced command takes any unknown verb for a malformed open-window request.
+    if (completed.returncode == mac_forced_command.EXIT_REFUSED
+            and f"verb {mac_forced_command.REQUEST_VERB!r}" in what_it_said):
+        return None, [mac_clone_needs_pull_notice()]
+    return None, [mac_read_failed_notice(completed.returncode, what_it_said)]
+
+
 def fetch_task_store_archive(machine, runner):
     """Return (archive_bytes_or_None, problems) for one machine’s task store."""
+    if machine == MACHINE_NAME_MAC:
+        return fetch_mac_task_store_archive(runner)
     # One archive keeps parsing local and independent of the remote Python version.
     # tar exit 1 can mean a complete archive changed while reading; exit 2 is fatal, 255 is ssh failure.
     completed = runner([
@@ -179,8 +231,8 @@ def unpack_task_store_members(archive, store, machine):
 
 
 def read_task_lists(machines, store, scratch, runner):
-    """Return (locations, problems, machines_read, unrouted) for the requested machines."""
-    locations, problems, machines_read, unrouted = [], [], [], []
+    """Return (locations, problems, machines_read) for the requested machines."""
+    locations, problems, machines_read = [], [], []
     for machine in machines:
         if machine == this_machine_name():
             if not store.is_dir():
@@ -188,9 +240,6 @@ def read_task_lists(machines, store, scratch, runner):
                 continue
             machines_read.append(machine)
             locations.extend(task_lists_in_store(store, machine))
-            continue
-        if machine not in SSH_TARGET_BY_MACHINE:
-            unrouted.append(no_route_notice(machine))
             continue
         archive_bytes, fetch_problems = fetch_task_store_archive(
             machine, runner)
@@ -204,7 +253,7 @@ def read_task_lists(machines, store, scratch, runner):
             continue
         machines_read.append(machine)
         locations.extend(task_lists_in_store(unpacked, machine))
-    return sorted(locations), problems, machines_read, unrouted
+    return sorted(locations), problems, machines_read
 
 
 def task_lists_or_refuse(locations, machines_read):
@@ -351,16 +400,6 @@ def print_problems(problems):
         print(problem)
 
 
-def print_unrouted(unrouted):
-    # An unconfigured route limits coverage but is not a failed read.
-    if not unrouted:
-        return
-    print()
-    print("Not read, because this machine has no route to it:")
-    for notice in unrouted:
-        print(notice)
-
-
 def report_seats(locations):
     unreadable_seen = False
     for location in locations:
@@ -431,9 +470,17 @@ def report_one_task_list(location, arguments):
     return bool(notice)
 
 
-def run_one_command(command):
-    return subprocess.run(command, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE)
+def run_one_command(command, timeout_seconds=TRANSFER_TIMEOUT_SECONDS):
+    """Run one ssh command; a run past the time limit comes back as ssh's own failure."""
+    # ConnectTimeout bounds only the connection; a machine that sleeps mid-transfer would hang the read.
+    try:
+        return subprocess.run(command, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            command, SSH_ITSELF_FAILED_EXIT, b"",
+            f"ssh did not finish within {timeout_seconds:g} seconds"
+            .encode())
 
 
 def machines_to_read(arguments):
@@ -491,7 +538,7 @@ def main(argv=None, runner=None):
 
     with tempfile.TemporaryDirectory(
             prefix="seat-task-list-read-") as scratch:
-        locations, problems, machines_read, unrouted = read_task_lists(
+        locations, problems, machines_read = read_task_lists(
             machines, store, Path(scratch), runner)
         try:
             task_lists = task_lists_or_refuse(locations, machines_read)
@@ -509,10 +556,9 @@ def main(argv=None, runner=None):
         except SystemExit as refusal:
             # An unread machine must not make a seat appear nonexistent.
             raise SystemExit(
-                "\n".join([str(refusal.code)] + problems + unrouted))
+                "\n".join([str(refusal.code)] + problems))
 
         print(machines_read_line(machines_read))
-        print_unrouted(unrouted)
         print_problems(problems)
 
     if problems or unreadable_seen:
