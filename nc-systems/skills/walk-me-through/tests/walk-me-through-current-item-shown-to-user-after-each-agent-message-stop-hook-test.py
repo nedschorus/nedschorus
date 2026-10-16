@@ -434,20 +434,40 @@ def test_range_headings_and_values():
                 range_section("## Item 12.1 of 54", "## Item 12.2 of 54"),
                 range_section("## Item 12.2 of 54", "## Item 13 of 54: last"))
     case = Case()
+    case.walk_files(minutes="Next to present: item 9 of 54.",
+                    document="# A walk\n\n## Item 9 of 54: first\n\nText.\n\n"
+                             "## Items 12 to 10 of 54: backwards\n\nMore.\n\n"
+                             "## Item 13 of 54: last\n\nEnd.\n")
+    case.reply("Recorded.")
+    result = case.run()
+    shown = json.loads(result.stdout or "{}").get("systemMessage", "") if result.returncode == 0 else ""
+    check("a heading whose range runs backwards starts no item, and the hook shows the item before it",
+          "Text." in shown and "More." in shown and "End." not in shown,
+          f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+    case = Case()
     case.walk_files(minutes="Next to present: items 12 to 10 of 54.", document=RANGE_WALK_DOCUMENT)
     case.reply("Recorded.")
-    check_blocked("a backwards range is sent back to be corrected", case.run(), "items 12 to 10 of 54")
-    for case_name, minutes in (
-            ("a backwards range after a listed item is sent back, not cut to the item",
-             "Next to present: items 9, 12 to 10 of 54."),
-            ("a range across parts of different items is sent back",
-             "Next to present: items 12.1 to 13 of 54."),
+    check_blocked("a backwards range is sent back as backwards", case.run(), "items 12 to 10 of 54",
+                  "`12 to 10` runs backwards", "`items 10 to 12`")
+    for case_name, minutes, phrases in (
+            ("a backwards range after a listed item is sent back as backwards, not cut to the item",
+             "Next to present: items 9, 12 to 10 of 54.", ("`12 to 10` runs backwards",)),
+            ("a range across parts of different items is sent back as crossing items",
+             "Next to present: items 12.1 to 13 of 54.",
+             ("`12.1 to 13` runs between parts of different items",)),
+            ("a dotted range across items is sent back as crossing items",
+             "Next to present: items 4.9 to 5.1 of 9.",
+             ("`4.9 to 5.1` runs between parts of different items",)),
             ("a chained range is sent back as a line naming no item",
-             "Next to present: items 10 to 11 to 12 of 54.")):
+             "Next to present: items 10 to 11 to 12 of 54.", ("does not open with an item",))):
         case = Case()
         case.walk_files(minutes=minutes, document=RANGE_WALK_DOCUMENT)
         case.reply("Recorded.")
-        check_blocked(case_name, case.run(), "does not open with an item")
+        result = case.run()
+        check_blocked(case_name, result, *phrases)
+        if "does not open with an item" not in phrases:
+            check(case_name + ", and not told it is in no form",
+                  "does not open with an item" not in (blocked_reason(result) or ""), result.stdout)
 
 
 def test_where_the_minutes_line_sits():
@@ -480,7 +500,17 @@ def test_where_the_minutes_line_sits():
                     document=WALK_DOCUMENT + "\n## Item 2 of 10: a re-planned copy\n\nText.\n")
     case.reply("Recorded.")
     check_blocked("a line without `of M` over headings with two totals is sent back", case.run(),
-                  "gives no `of M`")
+                  "gives no `of M`", "more than one total (`of 9`, `of 10`)")
+    case = Case()
+    case.walk_files(minutes="Next to present: item 2.",
+                    document="# A walk\n\n## The poem page\n\nText.\n\n## The summary\n\nText.\n")
+    case.reply("Recorded.")
+    result = case.run()
+    check_blocked("a line without `of M` over headings with no running count is told the headings "
+                  "lack counts", result, "has no heading with a running count", "`Item N of M`",
+                  "lacks its running count `of M`")
+    check("a walk-document with no counted heading is not told it has more than one total",
+          "more than one total" not in (blocked_reason(result) or ""), result.stdout)
     case = Case()
     case.walk_files(minutes="Next to present: item 2 of 9.",
                     document=WALK_DOCUMENT + "\n## Item 2 of 10: a re-planned copy\n\nText.\n")

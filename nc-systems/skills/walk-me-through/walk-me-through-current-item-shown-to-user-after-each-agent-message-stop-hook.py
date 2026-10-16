@@ -95,13 +95,23 @@ UNUSABLE_OPENING_TEMPLATE = (
     "approval-walk current-item check: the open approval-walk {walk} could not "
     "be checked: {problem}"
 )
+NOT_A_FORM_PROBLEM = (
+    "does not open with an item in one of the forms `item N of M`, `item N.K of M`, "
+    "`items N and P of M` or `items N to P of M`")
+
+
+class UnusableRange(ValueError):
+    """The `Next to present:` value names no item; its argument says why."""
+
+
 UNUSABLE_INSTRUCTIONS = (
     "If the approval-walk has closed, change the `Next to present:` line in "
     "{minutes} to `Next to present: none, closed.` and end the turn.",
     "Otherwise, correct that line so that it names the items the user has yet to "
     "answer by their headings in the walk-document {document}, as `Next to "
     "present: item 3 of 9.`, `item 4.1 of 9.`, `items 5 and 6 of 9.` or `items 10 to 12 of 54.`; change a "
-    "heading in the walk-document only when the heading itself is misnumbered.",
+    "heading in the walk-document only when the heading itself is misnumbered or "
+    "lacks its running count `of M`.",
     "Then end the turn: this hook shows the user the items the line names.",
 )
 
@@ -201,7 +211,11 @@ def is_closed(value):
 
 
 def expand_numbers(number_list):
-    """Return the item numbers a list such as `5, 6 and 7` or `10 to 12` names, or None."""
+    """Return the item numbers a list such as `5, 6 and 7` or `10 to 12` names.
+
+    Raise UnusableRange, saying what is wrong, for a range that runs backwards, one whose
+    ends belong to different items, or a joiner such as `to` with no range around it.
+    """
     pieces = NUMBER_OR_JOINER.findall(number_list)
     numbers, index = [], 0
     while index < len(pieces):
@@ -209,26 +223,37 @@ def expand_numbers(number_list):
             first, last = pieces[index], pieces[index + 2]
             first_head, _, first_tail = first.rpartition(".")
             last_head, _, last_tail = last.rpartition(".")
-            if first_head != last_head or int(first_tail) > int(last_tail):
-                return None
+            if first_head != last_head:
+                raise UnusableRange(
+                    f"its range `{first} to {last}` runs between parts of different items; "
+                    f"a range runs within one item's parts, such as `items 12.1 to 12.3`, "
+                    f"or between whole items, such as `items 10 to 12`")
+            if int(first_tail) > int(last_tail):
+                raise UnusableRange(
+                    f"its range `{first} to {last}` runs backwards; a range runs from the "
+                    f"lower number to the higher, such as `items {last} to {first}`")
             prefix = first_head + "." if first_head else ""
             numbers += [prefix + str(n) for n in range(int(first_tail), int(last_tail) + 1)]
             index += 3
         elif pieces[index].lower() in ("to", "-", "\u2013"):
-            return None
+            raise UnusableRange(NOT_A_FORM_PROBLEM)
         else:
             numbers.append(pieces[index])
             index += 1
-    return numbers or None
+    if not numbers:
+        raise UnusableRange(NOT_A_FORM_PROBLEM)
+    return numbers
 
 
 def parse_items(value):
-    """Return (item numbers, M or None) from a value such as `items 10 to 12 of 54.`, or None."""
+    """Return (item numbers, M or None) from a value such as `items 10 to 12 of 54.`.
+
+    Raise UnusableRange, saying what is wrong, when the value names no item that way.
+    """
     match = VALUE_COUNT.match(value)
     if not match:
-        return None
-    numbers = expand_numbers(match[1])
-    return (numbers, match[2]) if numbers else None
+        raise UnusableRange(NOT_A_FORM_PROBLEM)
+    return expand_numbers(match[1]), match[2]
 
 
 def open_walk(walk_directory, parser):
@@ -261,9 +286,14 @@ def item_units(document_text, parser):
             continue
         content = tokens[index + 1].content.split("\n")[0] if index + 1 < len(tokens) else ""
         match = HEADING_COUNT.match(content)
-        numbers = expand_numbers(match[1]) if match else None
-        if numbers:
-            starts.append((first_line, numbers, match[2]))
+        if not match:
+            continue
+        try:
+            numbers = expand_numbers(match[1])
+        except UnusableRange:
+            # A heading whose count names no item starts no unit, as an uncounted heading does.
+            continue
+        starts.append((first_line, numbers, match[2]))
     units = []
     for index, (first_line, numbers, total) in enumerate(starts):
         end = starts[index + 1][0] if index + 1 < len(starts) else len(lines)
@@ -340,25 +370,29 @@ def run(stdin_text, environment):
     name = minutes.name[:-len(MINUTES_SUFFIX)]
     document = minutes.with_name(name + ".md")
     values = {"walk": name, "minutes": minutes, "document": document, "value": value}
-    parsed = parse_items(value)
-    if parsed is None:
+    try:
+        numbers, total = parse_items(value)
+    except UnusableRange as problem:
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
-            f"its minutes' last `Next to present:` line, `{value}`, does not open "
-            f"with an item in one of the forms `item N of M`, `item N.K of M`, "
-            f"`items N and P of M` or `items N to P of M`."), **values)
-    numbers, total = parsed
+            f"its minutes' last `Next to present:` line, `{value}`, {problem}."), **values)
     if not document.is_file():
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
             f"its walk-document {document} does not exist."), **values)
     all_units = item_units(document.read_text(encoding="utf-8"), parser)
     if total is None:
         totals = {unit_total for _, unit_total, _ in all_units}
-        if len(totals) != 1:
+        if not totals:
+            return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
+                f"its walk-document {document} has no heading with a running count, such "
+                f"as `## Item 3 of 9: <the point>`, so the hook cannot find the item the "
+                f"minutes name: give each item's heading its count `Item N of M`."), **values)
+        if len(totals) > 1:
+            listed = ", ".join(f"`of {each}`" for each in sorted(totals, key=int))
             return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
                 f"its minutes' last `Next to present:` line, `{value}`, gives no `of M`, "
-                f"and the walk-document's headings give more than one total, so the line "
-                f"must say which: write it as `item N of M`, with M the total of the "
-                f"heading meant."), **values)
+                f"and the walk-document's headings give more than one total ({listed}), "
+                f"so the line must say which: write it as `item N of M`, with M the total "
+                f"of the heading meant."), **values)
         total = totals.pop()
     units = [unit for unit in all_units if unit[1] == total and set(unit[0]) & set(numbers)]
     missing = [number for number in numbers if not any(number in unit[0] for unit in units)]
