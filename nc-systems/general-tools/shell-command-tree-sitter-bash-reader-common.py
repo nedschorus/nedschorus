@@ -1220,7 +1220,10 @@ class _Collector:
             pass
         elif child.type == "command_name":
             target = child.named_children[0] if child.named_children else child
-            words.append(word_value(target, self.glob_markers, self.restored))
+            # tree-sitter-bash reads the 0 of a command that starts 0<f as its command_name; it is
+            # the redirect's descriptor, and the command name is the first word after the target.
+            if not _descriptor_of_next_redirect(target, self.source):
+                words.append(word_value(target, self.glob_markers, self.restored))
         elif child.is_named and child.type != "comment":
             words.append(word_value(child, self.glob_markers, self.restored))
         elif not child.is_named and kind_is_keyword(child):

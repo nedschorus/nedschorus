@@ -224,6 +224,11 @@ for label, text in [
     check(f"{label} carries no dates, citations or rulings", not asides,
           f"{asides}: {text}")
 
+runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
+decision, reason = decide("0</dev/null git push --force origin the-pr-branch", runner)
+check("a force push after a redirection of descriptor 0 is still a force push, and is denied",
+      decision == "deny", f"{decision}: {reason}")
+
 runner = ProbeRunner(open_pull_requests={})
 decision, reason = decide("git push --force origin a-branch-with-no-pull-request", runner)
 check("a force push at a branch with no open pull request is allowed",
