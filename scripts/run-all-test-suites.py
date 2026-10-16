@@ -290,8 +290,33 @@ run lasts at least as long as its longest suite, and a suite slows when the
 machine is busy, so more jobs pay off only once no single suite dominates.
 -j 1 still runs one suite at a time when a run must.
 
-NO PER-SUITE TIMEOUT. No suite has been seen to hang, so none is imposed.
-A hung suite hangs the run.
+PER-SUITE TIMEOUT. Each suite has a time limit, counted from its start, after
+admission: max(TEST_SUITE_TIMEOUT_FLOOR_SECONDS, 600, and
+TEST_SUITE_TIMEOUT_MULTIPLE_OF_RECORDED_SECONDS, 4, times the seconds of its
+last passing recording, the one the starting order reads). A suite with no
+passing recording gets TEST_SUITE_TIMEOUT_WITHOUT_PASSING_RECORDING_SECONDS,
+1800. Measured over 257 runs on ned-box, 21,701 passing suite runs: a suite
+ran at most 3.3 times its fastest pass when that pass took 20 s or more, while
+a fast suite can spike far past any multiple
+(scripts/run-suite-in-signal-sandbox-test.py passed in 10.8 s and in 297 s),
+which the floor covers; no pass exceeded this limit measured from the suite's
+fastest pass. 1800 s is six times the longest pass seen. A suite past its limit
+is killed with SIGKILL: the init of its PID namespace, which ends every process
+inside, and every process of its process group, since each suite starts in a
+session of its own; a process it started in a session of its own outside a PID
+namespace is not reached. It is reported FAIL with `TIMEOUT after <n>s (limit
+<m>s from recorded <r>s)`, or `from no passing recording`; its cgroup counters are lost with the shell that
+keeps them, and the other suites run on. Its recording keeps the kill's exit,
+so the next run starts it first, under the limit for no passing recording.
+
+A STOPPED RUN KILLS ITS SUITES. Since each suite runs in a session of its own,
+a signal sent to the runner's process group no longer reaches them. So once its
+suites start, the runner handles SIGTERM, SIGHUP and SIGINT: it kills every
+running suite as a timeout does, starts no other, prints a line naming the
+signal, and exits 2. The handler only records the signal; each suite's thread
+and the loop collecting results act on it within RUN_STOP_SIGNAL_CHECK_SECONDS.
+A runner killed with SIGKILL cannot do this: its suites in bwrap still die with
+it, and a suite outside bwrap outlives it.
 
 OUTPUT. A first line naming the checkout, its commit, whether tracked files
 differ from that commit, the suite count, the interpreter's own --version
@@ -714,6 +739,15 @@ ADMISSION_WAITED_LINE_PREFIX = "seconds suites waited for admission: "
 TEST_CASE_LINE = re.compile(r"^\s*(?P<verdict>PASS|FAIL|ok)\b:?\s*(?P<text>.*)$")
 # A process a suite run without any sandbox leaves running can hold its output open.
 TEST_SUITE_OUTPUT_DRAIN_SECONDS = 10
+# A suite's time limit is the larger of the floor and the multiple of its last passing
+# run's seconds; see PER-SUITE TIMEOUT in the docstring for why these numbers.
+TEST_SUITE_TIMEOUT_FLOOR_SECONDS = 600
+TEST_SUITE_TIMEOUT_MULTIPLE_OF_RECORDED_SECONDS = 4
+TEST_SUITE_TIMEOUT_WITHOUT_PASSING_RECORDING_SECONDS = 1800
+# How often a running suite's thread, and the loop that collects results, look for a
+# stop signal the runner received.
+RUN_STOP_SIGNAL_CHECK_SECONDS = 0.5
+RUN_STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
 # Runs inside the suite's own cgroup scope and reads the scope's counters just before
 # the scope ends, because systemd removes a scope's cgroup when its last process exits.
 # $0 is the open file descriptor the counters go to, which the suite does not inherit;
@@ -1482,6 +1516,10 @@ class MachineWideTestSuiteAdmissionCouldNotDecide(Exception):
     """Admission could not be decided, such as a slot file that cannot be opened."""
 
 
+class TestRunStoppedBeforeSuiteStarted(Exception):
+    """The runner received a stop signal before this suite started."""
+
+
 class MachineWideTestSuiteAdmissionCancelled(Exception):
     """The run stopped admitting suites, so a suite still waiting does not start."""
 
@@ -1882,7 +1920,7 @@ def write_case_times_suite_resources_and_junit_xml_of_run(log_dir, results):
                 time=f"{result['seconds']:.3f}")
             if result["exit"] != 0:
                 xml.etree.ElementTree.SubElement(
-                    case_element, "failure", message=describe_exit(result["exit"]))
+                    case_element, "failure", message=why_suite_failed(result))
             continue
         for case in cases:
             case_element = xml.etree.ElementTree.SubElement(
@@ -1897,7 +1935,7 @@ def write_case_times_suite_resources_and_junit_xml_of_run(log_dir, results):
                 suite_element, "testcase", classname=result["suite"],
                 name=f"{result['suite']} exit", time="0.000")
             xml.etree.ElementTree.SubElement(case_element, "failure",
-                                             message=describe_exit(result["exit"]))
+                                             message=why_suite_failed(result))
     with open_for_writing_without_following_symlinks(log_dir / JUNIT_XML_FILE_NAME,
                                                      binary=True) as junit:
         xml.etree.ElementTree.ElementTree(root).write(junit, encoding="utf-8",
@@ -1911,7 +1949,7 @@ def append_test_case_failure_history(history_file, top, commit, branch, log_dir,
         if result["exit"] == 0:
             continue
         failing = [case for case in result.get("cases", ()) if case["verdict"] == "FAIL"]
-        for case in failing or [{"name": None, "detail": describe_exit(result["exit"])}]:
+        for case in failing or [{"name": None, "detail": why_suite_failed(result)}]:
             lines.append(json.dumps({
                 "unix_time": time.time(), "suite": result["suite"], "case": case["name"],
                 "detail": case["detail"], "exit": result["exit"], "commit": commit,
@@ -2525,8 +2563,15 @@ def suite_process_started(process, status_read, note_suite_process):
 
 
 def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefix=(),
-                  note_suite_process=None, in_cgroup_scope=False, nice=False, platform=None):
+                  note_suite_process=None, in_cgroup_scope=False, nice=False, platform=None,
+                  time_limit=None, run_stop_signals=None):
     """Run one suite; return its result, on Linux with each case line it printed timed.
+
+    time_limit is (limit seconds, recorded seconds or None) from
+    suite_timeout_and_the_recorded_seconds_it_came_from(); a suite still running at its limit is
+    killed with every process it started, and its result carries "timeout". Once
+    run_stop_signals, a list a signal handler appends to, is not empty, the suite is
+    killed the same way, and its result carries "stopped by".
 
     With in_cgroup_scope, the suite runs in a cgroup scope of its own and its CPU seconds
     and peak memory are read from there; with nice, at low priority. Inside its test
@@ -2570,6 +2615,14 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         sandbox_prefix = command_prefix_starting_one_suite_in_its_test_sandbox(
             sandbox_prefix, top, writable_paths, suite, read_only_paths)
     status_read = status_write = None
+    namespace_inits = []
+    if note_suite_process is not None:
+        noted = note_suite_process
+
+        def note_suite_process(pid, namespace_init):
+            if namespace_init:
+                namespace_inits.append(pid)
+            noted(pid, namespace_init=namespace_init)
     if sandbox_prefix and note_suite_process is not None:
         status_read_fd, status_write = os.pipe()
         status_read = os.fdopen(status_read_fd, "r")
@@ -2601,13 +2654,16 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
     time_case_lines = platform.startswith("linux")
     started = time.monotonic()
     copier = None
+    timed_out = stopped_by = None
     try:
         log = open_for_writing_without_following_symlinks(log_file, binary=True)
         try:
             process = subprocess.Popen(
                 command, cwd=str(top), env=environment, stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE if time_case_lines else log,
-                stderr=subprocess.STDOUT, pass_fds=passed)
+                stderr=subprocess.STDOUT, pass_fds=passed,
+                # Its own process group, so a timeout can kill everything it started.
+                start_new_session=True)
         except BaseException:
             log.close()
             raise
@@ -2625,7 +2681,26 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         sandbox_started = None
         if note_suite_process is not None:
             sandbox_started = suite_process_started(process, status_read, note_suite_process)
-        exit_code = process.wait()
+        deadline = None if time_limit is None else started + time_limit[0]
+        while True:
+            wait_seconds = None if run_stop_signals is None else RUN_STOP_SIGNAL_CHECK_SECONDS
+            if deadline is not None:
+                left = max(0.0, deadline - time.monotonic())
+                wait_seconds = left if wait_seconds is None else min(wait_seconds, left)
+            try:
+                exit_code = process.wait(wait_seconds)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            if run_stop_signals:
+                stopped_by = run_stop_signals[0]
+            elif deadline is not None and time.monotonic() >= deadline:
+                timed_out = time_limit
+            else:
+                continue
+            kill_test_suite_and_every_process_it_started(process, namespace_inits)
+            exit_code = process.wait()
+            break
         seconds = time.monotonic() - started
         if copier is not None:
             copier.join(TEST_SUITE_OUTPUT_DRAIN_SECONDS)
@@ -2659,6 +2734,11 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         "peak_memory_bytes": None,
         "resources_note": None,
     }
+    # A suite that ended on its own as its limit passed keeps its own verdict.
+    if timed_out is not None and exit_code != 0:
+        result["timeout"] = {"limit": timed_out[0], "recorded": timed_out[1]}
+    if stopped_by is not None and exit_code != 0:
+        result["stopped by"] = stopped_by
     if statistics is not None:
         with statistics:
             statistics.seek(0)
@@ -2666,6 +2746,19 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         result["cpu_seconds"], result["peak_memory_bytes"], result["resources_note"] = \
             cpu_seconds_and_peak_memory_from_suite_cgroup_statistics(counters)
     return result
+
+
+def kill_test_suite_and_every_process_it_started(process, namespace_inits):
+    """SIGKILL the suite's PID namespace, whose init's end ends every process inside it,
+    and its process group, which holds every process it started outside one.
+
+    Called before the suite's first process is reaped, so its process group id is still
+    its own."""
+    for init in namespace_inits:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(init, signal.SIGKILL)
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGKILL)
 
 
 def unescaped_strace_string(text):
@@ -2924,17 +3017,31 @@ def remove_recording_if_unchanged(recordings_dir, suite, identity_read):
         return "removed"
 
 
+def recorded_passing_seconds_or_none(recording):
+    """The seconds of a recorded run that passed, or None when there are none to use."""
+    # A run that did not pass may have stopped early, so its seconds may understate the suite.
+    if not isinstance(recording, dict) or recording.get("exit") != 0:
+        return None
+    seconds = recording.get("seconds")
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
+        return None
+    return seconds
+
+
+def suite_timeout_and_the_recorded_seconds_it_came_from(recording):
+    """(the suite's time limit in seconds, the recorded seconds it came from or None)."""
+    recorded = recorded_passing_seconds_or_none(recording)
+    if recorded is None:
+        return TEST_SUITE_TIMEOUT_WITHOUT_PASSING_RECORDING_SECONDS, None
+    return (max(TEST_SUITE_TIMEOUT_FLOOR_SECONDS,
+                TEST_SUITE_TIMEOUT_MULTIPLE_OF_RECORDED_SECONDS * recorded), recorded)
+
+
 def suites_longest_recorded_first(suites, recordings):
     """Return the suites in starting order: no usable duration first, then longest first."""
     def starting_order(suite):
-        recording = recordings.get(suite)
-        # A run that did not pass may have stopped early, so its seconds may understate the suite.
-        if not isinstance(recording, dict) or recording.get("exit") != 0:
-            return (0, 0.0)
-        seconds = recording.get("seconds")
-        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)):
-            return (0, 0.0)
-        return (1, -seconds)
+        seconds = recorded_passing_seconds_or_none(recordings.get(suite))
+        return (0, 0.0) if seconds is None else (1, -seconds)
     # sorted is stable, so ties keep the order git listed the suites in.
     return sorted(suites, key=starting_order)
 
@@ -3115,6 +3222,19 @@ def describe_exit(code):
         return f"killed by signal {-code}"
 
 
+def why_suite_failed(result):
+    """What a failed suite's line says after its path: its timeout, or how it exited."""
+    if result.get("stopped by"):
+        return f"killed when the run was stopped by {result['stopped by']}"
+    timeout = result.get("timeout")
+    if timeout is None:
+        return describe_exit(result["exit"])
+    source = ("no passing recording" if timeout["recorded"] is None
+              else f"recorded {timeout['recorded']:.0f}s")
+    return (f"TIMEOUT after {result['seconds']:.0f}s "
+            f"(limit {timeout['limit']:.0f}s from {source})")
+
+
 def suite_line(result):
     detail = f"{result['seconds']:.1f}s"
     if result["skips"]:
@@ -3127,7 +3247,7 @@ def suite_line(result):
                        f"{result['peak_memory_bytes'] / 10**6:.0f} MB")
     if result["exit"] == 0:
         return f"PASS {result['suite']} ({detail})"
-    return f"FAIL {result['suite']} {describe_exit(result['exit'])} ({detail})"
+    return f"FAIL {result['suite']} {why_suite_failed(result)} ({detail})"
 
 
 class Report:
@@ -3162,6 +3282,13 @@ def machine_lock_refusal(lock_file, holder, wait_seconds):
             f"{MACHINE_LOCK_WAIT_SECONDS_SUGGESTED}, instead of retrying in a loop: a "
             f"process waiting on the lock always gets the lock before a process that "
             f"retries.")
+
+
+def restore_signal_handlers(replaced):
+    """Put back the handlers a run replaced, so a stop signal after its suites acts as before."""
+    while replaced:
+        stop_signal, handler = replaced.popitem()
+        signal.signal(stop_signal, handler)
 
 
 def parse_arguments(argv):
@@ -3243,6 +3370,7 @@ def main(argv=None, platform=None):
             return EXIT_LOCKED
 
     log_dir_handle = run_record = readings = None
+    signal_handlers_replaced = {}
     try:
         # Read again under the lock: the checkout may have changed while this run waited,
         # and the commit this run reports is read under the lock too.
@@ -3358,7 +3486,14 @@ def main(argv=None, platform=None):
             for suite, selected, why in selection:
                 report.line(f"{'SELECTED' if selected else 'NOT SELECTED'} {suite}: {why}")
 
+        run_stop_signals = []
+
         def run_admitted(suite, **options):
+            if run_stop_signals:
+                raise TestRunStoppedBeforeSuiteStarted(suite)
+            options["run_stop_signals"] = run_stop_signals
+            options["time_limit"] = suite_timeout_and_the_recorded_seconds_it_came_from(
+                recordings.get(suite))
             outside = suite in SUITES_RUN_WITHOUT_ANY_SANDBOX
             kind = (f"without any sandbox: {SUITES_RUN_WITHOUT_ANY_SANDBOX[suite]}"
                     if outside and sandbox_prefix else
@@ -3417,31 +3552,67 @@ def main(argv=None, platform=None):
             return result
 
         results = []
+
+        def record_run_stop(signal_number, frame):
+            # Only recorded here: the suites' threads and the loop below act on it where it
+            # is safe, since raising inside subprocess code can leave a child unreaped.
+            run_stop_signals.append(signal.Signals(signal_number).name)
+
+        for stop_signal in RUN_STOP_SIGNALS:
+            signal_handlers_replaced[stop_signal] = signal.signal(stop_signal, record_run_stop)
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
             running = [pool.submit(run_and_record, suite) for suite in chosen]
-            for finished in concurrent.futures.as_completed(running):
-                try:
-                    result = finished.result()
-                except (MachineWideTestSuiteAdmissionCouldNotDecide, SignalSandboxCouldNotStart,
-                        OSError) as error:
+            pending = set(running)
+            stop_acted_on = False
+            while pending:
+                done, pending = concurrent.futures.wait(
+                    pending, timeout=RUN_STOP_SIGNAL_CHECK_SECONDS,
+                    return_when=concurrent.futures.FIRST_COMPLETED)
+                if run_stop_signals and not stop_acted_on:
+                    stop_acted_on = True
                     for waiting in running:
                         waiting.cancel()
-                    # A suite already waiting for admission is running as far as its future knows.
                     if admission is not None:
                         admission.cancel()
-                    what = ("admission failed" if isinstance(error, MachineWideTestSuiteAdmissionCouldNotDecide)
-                            else "a suite's test sandbox could not be built"
-                            if isinstance(error, SignalSandboxCouldNotStart)
-                            else "a suite could not be started")
-                    report.line(f"{PROGRAM}: not run to the end — {what}: {error}")
-                    report.line("Fix what it names, then run this again. The suites already "
-                                "running finish first.")
-                    report.close()
-                    return EXIT_COULD_NOT_RUN
-                results.append(result)
-                report.line(suite_line(result))
-                if result.get("output_note"):
-                    report.line(f"{result['suite']}: {result['output_note']}")
+                for finished in done:
+                    if finished.cancelled():
+                        continue
+                    try:
+                        result = finished.result()
+                    except (TestRunStoppedBeforeSuiteStarted,
+                            MachineWideTestSuiteAdmissionCancelled):
+                        if run_stop_signals:
+                            continue
+                        raise
+                    except (MachineWideTestSuiteAdmissionCouldNotDecide, SignalSandboxCouldNotStart,
+                            OSError) as error:
+                        for waiting in running:
+                            waiting.cancel()
+                        # A suite already waiting for admission is running as far as its future knows.
+                        if admission is not None:
+                            admission.cancel()
+                        what = ("admission failed" if isinstance(error, MachineWideTestSuiteAdmissionCouldNotDecide)
+                                else "a suite's test sandbox could not be built"
+                                if isinstance(error, SignalSandboxCouldNotStart)
+                                else "a suite could not be started")
+                        report.line(f"{PROGRAM}: not run to the end — {what}: {error}")
+                        report.line("Fix what it names, then run this again. The suites already "
+                                    "running finish first.")
+                        report.close()
+                        return EXIT_COULD_NOT_RUN
+                    results.append(result)
+                    report.line(suite_line(result))
+                    if result.get("output_note"):
+                        report.line(f"{result['suite']}: {result['output_note']}")
+        restore_signal_handlers(signal_handlers_replaced)
+        if run_stop_signals:
+            report.line(f"{PROGRAM}: not run to the end — stopped by {run_stop_signals[0]}. "
+                        f"Every suite still running was killed with every process it started, "
+                        f"and the suites not yet started were not run.")
+            report.close()
+            if run_record is not None:
+                run_record.finish()
+            return EXIT_COULD_NOT_RUN
 
         results.sort(key=lambda result: result["suite"])
         failed = [result for result in results if result["exit"] != 0]
@@ -3450,7 +3621,7 @@ def main(argv=None, platform=None):
             report.line("")
             report.line(f"{len(failed)} failed:")
             for result in failed:
-                report.line(f"FAIL {result['suite']} {describe_exit(result['exit'])}"
+                report.line(f"FAIL {result['suite']} {why_suite_failed(result)}"
                             f" — log {result['log']}")
         if skipping:
             report.line("")
@@ -3507,6 +3678,7 @@ def main(argv=None, platform=None):
             return EXIT_SOME_FAILED
         return EXIT_COULD_NOT_RUN if records_failed else EXIT_ALL_PASSED
     finally:
+        restore_signal_handlers(signal_handlers_replaced)
         if readings is not None:
             readings.stop()
         if log_dir_handle is not None:
