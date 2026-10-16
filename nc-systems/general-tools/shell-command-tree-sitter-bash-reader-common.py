@@ -502,9 +502,6 @@ def _unescape_unquoted(text, glob_markers):
     while index < len(text):
         char = text[index]
         if char == "\\":
-            if text[index + 1:index + 2] == "\n":
-                index += 2
-                continue
             out.append(text[index + 1:index + 2])
             index += 2
             continue
@@ -520,9 +517,6 @@ def _unescape_double_quoted(text):
         char = text[index]
         if char == "\\" and index + 1 < len(text):
             following = text[index + 1]
-            if following == "\n":
-                index += 2
-                continue
             if following in DOUBLE_QUOTE_ESCAPABLE:
                 out.append(following)
                 index += 2
@@ -766,10 +760,8 @@ def _redirect_parts(node, glob_markers, source, limit=None, restored=None):
     A closing redirection, such as 2>&-, has no target, so its target is "" and
     every word after it is returned as a word of the command. source is the text parsed. limit, when given, is how many of its destination nodes belong to it.
     """
-    # tree-sitter-bash reads the -3 of -3>f, and the 4 of -f\<newline>4>f, as a descriptor; bash
-    # passes each as a word, the second as -f4.
-    words_before = [_unescape_unquoted(source[_word_start_left_out_before(node, child, source):child.end_byte]
-                                       .decode("utf-8", SHELL_TEXT_ERRORS), glob_markers)
+    # tree-sitter-bash reads the -3 of -3>f as a descriptor; bash passes it as a word.
+    words_before = [_unescape_unquoted(_text(child), glob_markers)
                     for child in node.children
                     if child.type == "file_descriptor" and child.text
                     and not _digits_are_whole_token(source, child.start_byte, child.end_byte)]
@@ -842,32 +834,16 @@ def _redirect_text_before_operator(node, operator, source, glob_markers):
     return "", gap_words + [prefix + _unescape_unquoted(text.decode("utf-8", SHELL_TEXT_ERRORS), glob_markers)]
 
 
-def _offset_after_line_continuations(source, offset):
-    """Return offset moved past the line continuations that start there, which bash removes first."""
-    while source[offset:offset + 2] == b"\\\n":
-        offset += 2
-    return offset
-
-
-def _offset_before_line_continuations(source, offset):
-    """Return offset moved back past the line continuations that end there."""
-    while source[offset - 2:offset] == b"\\\n" and not _escaped_by_backslashes(source, offset - 2):
-        offset -= 2
-    return offset
-
-
 def _digits_are_whole_token(source, start, end):
     """Return whether source[start:end] is decimal digits that make a whole token, which bash can read as a descriptor.
 
     bash reads digits as a redirection's descriptor only when they are a
-    whole token once it has removed line continuations: not 0x1, -3 or 2#1,
-    and not digits that what touches their left joins to a word, as the 0
-    of `\\ 0<f`, of `' '0<f` and of `-f\\<newline>0<f`. Digits right after
-    >& or <& are that redirection's target, as the 2 of `1>&2<f`.
+    whole token: not 0x1, -3 or 2#1, and not digits that what touches their
+    left joins to a word, as the 0 of `\\ 0<f` and of `' '0<f`. Digits right
+    after >& or <& are that redirection's target, as the 2 of `1>&2<f`.
     """
     if not DECIMAL_DIGITS_PATTERN.fullmatch(source[start:end]):
         return False
-    start = _offset_before_line_continuations(source, start)
     if start == 0:
         return True
     before = source[start - 1:start]
@@ -878,33 +854,14 @@ def _digits_are_whole_token(source, start, end):
     return before in b" \t\n;|("
 
 
-def _word_start_left_out_before(node, descriptor, source):
-    """Return where the word holding a redirect's descriptor starts, which is before it when tree-sitter-bash left out the text joined to it.
-
-    tree-sitter-bash puts the -f of `-f\\<newline>4>f` in no node; bash joins
-    it to the 4. The text is looked for after the node before the redirect,
-    if there is one: a redirect that starts a command has no node before it.
-    """
-    floor = node.prev_sibling.end_byte if node.prev_sibling is not None else 0
-    start = descriptor.start_byte
-    while start > floor:
-        if source[start - 2:start] == b"\\\n" and start - 2 >= floor and not _escaped_by_backslashes(source, start - 2):
-            start -= 2
-        elif source[start - 1:start] in b" \t\n;|&()<>`" and not _escaped_by_backslashes(source, start - 1):
-            break
-        else:
-            start -= 1
-    return start
-
-
 def _descriptor_of_next_redirect(node, source):
     """Return whether node is a number written against the redirect after it, as the 0 of 0<f.
 
     Digits joined to the word before them, such as the 0 of `\\ 0<f`, are part of that word.
     """
-    after = _offset_after_line_continuations(source, node.end_byte)
-    return (node.type == "number" and _digits_are_whole_token(source, node.start_byte, node.end_byte)
-            and source[after:after + 1] in (b"<", b">") and source[after + 1:after + 2] != b"(")
+    end = node.end_byte
+    return (node.type == "number" and _digits_are_whole_token(source, node.start_byte, end)
+            and source[end:end + 1] in (b"<", b">") and source[end + 1:end + 2] != b"(")
 
 
 def _redirect_end_with_escaped_blanks_continuing_target(source, node, limit=None):
@@ -925,11 +882,11 @@ def _descriptor_written_before(node, source):
     """Return the descriptor tree-sitter-bash read as a number just before a redirect, as in 0<f, or ""."""
     previous = node.prev_sibling
     while previous is not None and previous.type != "number" and previous.children \
-            and _offset_after_line_continuations(source, previous.end_byte) == node.start_byte:
+            and previous.end_byte == node.start_byte:
         previous = previous.children[-1]
     if previous is not None and previous.type == "number" \
             and _digits_are_whole_token(source, previous.start_byte, previous.end_byte) \
-            and _offset_after_line_continuations(source, previous.end_byte) == node.start_byte:
+            and previous.end_byte == node.start_byte:
         return _text(previous)
     return ""
 
@@ -1079,8 +1036,8 @@ class _Collector:
             # of three or more when that command has a redirection; bash runs two commands.
             part, previous_end = [], None
             for child in node.children:
-                if previous_end is not None and part and _separates_commands(
-                        self.source[previous_end:child.start_byte]):
+                if previous_end is not None and part \
+                        and b"\n" in self.source[previous_end:child.start_byte]:
                     items.append(("unit", node, part))
                     part = []
                 part.append(child)
@@ -1101,8 +1058,8 @@ class _Collector:
         # closing redirection, which needs no target.
         groups, previous_end = [[]], destinations[0].prev_sibling.end_byte if destinations else None
         for destination in destinations:
-            if previous_end is not None and _separates_commands(
-                    self.source[previous_end:destination.start_byte]):
+            if previous_end is not None \
+                    and b"\n" in self.source[previous_end:destination.start_byte]:
                 groups.append([])
             groups[-1].append(destination)
             previous_end = destination.end_byte
@@ -1143,7 +1100,7 @@ class _Collector:
         words, own_redirects, own_heredocs = [], [], []
         joined = None
         previous_end = None
-        # Whether the last word runs on through escaped blanks or line continuations to previous_end.
+        # Whether the last word runs on through escaped blanks to previous_end.
         continues = False
         for child in children:
             gap_words, prefix = (_escaped_blank_words_in_gap(self.source[previous_end:child.start_byte])
@@ -1225,18 +1182,16 @@ class _Collector:
 def _escaped_blanks_continuing_word(source, end):
     """Return (blanks, end after them) for the escaped blanks that continue the word ending at end.
 
-    tree-sitter-bash ends a word before a backslash and tab, and before a line
-    continuation; bash keeps escaped blanks that touch a word's last character
-    in that word, so `zzq a\\<tab>;` passes "a<tab>". A gap read for escaped
+    tree-sitter-bash ends a word before a backslash and tab; bash keeps escaped
+    blanks that touch a word's last character in that word, so `zzq a\\<tab>;` passes "a<tab>". A gap read for escaped
     blank words starts at the end this returns, or right after an operator.
     """
     blanks = ""
     while True:
         pair = source[end:end + 2]
-        if pair in (b"\\ ", b"\\\t"):
-            blanks += pair[1:].decode()
-        elif pair != b"\\\n":
+        if pair not in (b"\\ ", b"\\\t"):
             return blanks, end
+        blanks += pair[1:].decode()
         end += 2
 
 
@@ -1248,16 +1203,14 @@ def _escaped_blank_words_in_gap(gap):
     " x". words are the ones made only of escaped blanks; prefix is the escaped
     blanks that run into the next word and start it. The gap must not start
     with escaped blanks that continue the word before it: see
-    _escaped_blanks_continuing_word. A gap holding anything but blanks, escaped
-    blanks and line continuations is left alone.
+    _escaped_blanks_continuing_word. A gap holding anything but blanks and
+    escaped blanks is left alone.
     """
     words, current, index = [], "", 0
     while index < len(gap):
         pair = gap[index:index + 2]
         if pair in (b"\\ ", b"\\\t"):
             current += pair[1:].decode()
-            index += 2
-        elif pair == b"\\\n":
             index += 2
         elif gap[index:index + 1] in (b" ", b"\t", b"\n"):
             if current:
@@ -1289,7 +1242,7 @@ def _escaped_blank_words_ending_command(source, start):
     end = start
     while True:
         pair = source[end:end + 2]
-        if pair in (b"\\ ", b"\\\t", b"\\\n"):
+        if pair in (b"\\ ", b"\\\t"):
             end += 2
         elif source[end:end + 1] in (b" ", b"\t"):
             end += 1
@@ -1300,11 +1253,6 @@ def _escaped_blank_words_ending_command(source, start):
     if source[end:end + 1] not in (b"", b"\n", b";", b"&", b"|", b")", b"`", b"#"):
         return []
     return _escaped_blank_words_before_operator(source[start:end])
-
-
-def _separates_commands(gap):
-    """Return whether the text between two parts of one command holds a line end bash stops at."""
-    return b"\n" in gap.replace(b"\\\n", b"")
 
 
 def kind_is_keyword(node):
@@ -1376,8 +1324,9 @@ def _source_with_case_terminators_repaired(text, text_node_types, keep_first=Fal
     """
     edits, written = [], []
     source, tree, taken = _source_with_heredoc_bodies_taken_out(text, keep_first, edits)
-    # A match found with a body taken out may span that body, so the rounds count terminators.
-    for _ in range(len(CASE_TERMINATOR_PATTERN.findall(text))):
+    # A match found with a body taken out may span that body, so the rounds count terminators,
+    # which line continuations may split.
+    for _ in range(len(CASE_TERMINATOR_PATTERN.findall(text.replace(b"\\\n", b"")))):
         if not tree.root_node.has_error:
             break
         matches = [found for found in LAST_CASE_TERMINATOR_PATTERN.finditer(source)
@@ -1724,6 +1673,26 @@ def _escaped_by_backslashes(source, position):
     return backslashes % 2 == 1
 
 
+def _line_continuations_bash_removes(root, source, end):
+    """Return the offset of each line continuation before end that bash removes, in order.
+
+    bash removes a backslash and newline everywhere but inside single quotes,
+    $'...' and comments, and in a heredoc body whose delimiter is quoted, which
+    is taken out before the continuations after its operator are looked for.
+    """
+    found = []
+    at = source.find(b"\\\n")
+    while at != -1 and at < end:
+        if not _escaped_by_backslashes(source, at) \
+                and not _inside_text(root, at, LINE_CONTINUATION_KEEPING_NODE_TYPES):
+            found.append(at)
+        at = source.find(b"\\\n", at + 2)
+    return found
+
+
+LINE_CONTINUATION_KEEPING_NODE_TYPES = {"raw_string", "ansi_c_string", "comment"}
+
+
 def _comment_misread_after_an_escaped_blank(root, source):
     """Return the offset of the earliest comment tree-sitter-bash starts right after an escaped blank, or None.
 
@@ -1762,19 +1731,32 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
     before the next heredoc operator: one after the operator may be a line of that
     heredoc's body that tree-sitter-bash misplaced, and a body is kept as written.
     A misread on the operator's own line is corrected where the body's start is
-    found, and in source once that heredoc is taken out. edits, when given, gets (offset, length removed, length inserted) for each
+    found, and in source once that heredoc is taken out. Line continuations
+    before the next heredoc operator are removed, as bash removes them before
+    it reads tokens: tree-sitter-bash keeps one inside an operator such as <(
+    and misreads the command. edits, when given, gets (offset, length removed, length inserted) for each
     change, in the order made.
     """
     taken = {}
     original = source
     tree = parser().parse(source)
     index = 0
-    for _ in range(MAX_HEREDOCS_TAKEN_OUT + source.count(b"#")):
+    for _ in range(MAX_HEREDOCS_TAKEN_OUT + source.count(b"#") + source.count(b"\\\n")):
         start = next(iter(_heredoc_starts(tree.root_node)[1 if keep_first else 0:]), None)
         operator = start.prev_sibling if start is not None else None
         if operator is None or operator.type not in ("<<", "<<-"):
             operator = None
         misread = _comment_misread_after_an_escaped_blank(tree.root_node, source)
+        first = min((at for at in (misread, operator and operator.start_byte) if at is not None),
+                    default=len(source))
+        continuations = _line_continuations_bash_removes(tree.root_node, source, first)
+        if continuations:
+            for at in reversed(continuations):
+                source = source[:at] + source[at + 2:]
+            if edits is not None:
+                edits.extend((at - 2 * number, 2, 0) for number, at in enumerate(continuations))
+            tree = parser().parse(source)
+            continue
         if misread is not None and (operator is None or misread < operator.start_byte):
             source = source[:misread] + b"\\" + source[misread:]
             if edits is not None:
@@ -1790,9 +1772,12 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
         if descriptor:
             operator_start, delimiter_start = descriptor.start(2), descriptor.end()
         delimiter_end, delimiter = _delimiter_word(source, delimiter_start)
+        delimiter_as_written = source[delimiter_start:delimiter_end]
+        expanded = not any(mark in delimiter_as_written.replace(b"\\\n", b"")
+                           for mark in (b"'", b'"', b"\\"))
         body_start = _heredoc_body_start(source, delimiter_end)
         body_end, resume = _heredoc_body_end(source, body_start, delimiter, dashed,
-                                             _inside_substitution(start))
+                                             _inside_substitution(start), expanded)
         body = source[body_start:body_end]
         if dashed:
             body = b"\n".join(line.lstrip(b"\t") for line in body.split(b"\n"))
@@ -1800,11 +1785,10 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
         while placeholder.encode() in original:
             placeholder += "_"
         written = source[operator_start:delimiter_end]
-        delimiter_as_written = source[delimiter_start:delimiter_end]
         taken[placeholder] = _HeredocTakenOut(
             written.decode("utf-8", SHELL_TEXT_ERRORS),
             delimiter_as_written.decode("utf-8", SHELL_TEXT_ERRORS), body,
-            not any(mark in delimiter_as_written for mark in (b"'", b'"', b"\\")),
+            expanded,
             source[body_end:resume].decode("utf-8", SHELL_TEXT_ERRORS), index)
         replacement = b"<" + placeholder.encode()
         if edits is not None:
@@ -1866,12 +1850,14 @@ def _delimiter_word(source, position):
     """Return (end, delimiter) for the heredoc delimiter word at position, by bash's rules.
 
     The word ends at an unquoted blank or operator character; the delimiter is
-    the word with its quotes and backslashes removed.
+    the word with its quotes, backslashes and line continuations removed.
     """
     word, index = bytearray(), position
     while index < len(source):
         character = source[index:index + 1]
-        if character == b"\\":
+        if source[index:index + 2] == b"\\\n":
+            index += 2
+        elif character == b"\\":
             word += source[index + 1:index + 2]
             index += 2
         elif character == b"'":
@@ -1883,6 +1869,9 @@ def _delimiter_word(source, position):
             # Inside double quotes a backslash keeps ", \\, $ and ` literal.
             index += 1
             while index < len(source) and source[index:index + 1] != b'"':
+                if source[index:index + 2] == b"\\\n":
+                    index += 2
+                    continue
                 if source[index:index + 1] == b"\\" and source[index + 1:index + 2] in b'"\\$`':
                     index += 1
                 word += source[index:index + 1]
@@ -1905,17 +1894,21 @@ def _inside_substitution(node):
     return False
 
 
-def _heredoc_body_end(source, position, delimiter, dashed, inside_substitution):
+def _heredoc_body_end(source, position, delimiter, dashed, inside_substitution, expanded):
     """Return (body end, where the command line resumes) for a body starting at position.
 
     The body ends at a line that is exactly its delimiter, after leading tabs
     for <<-; inside a substitution, bash also ends it at the delimiter
-    followed by the substitution's ). A body that never ends runs to the end.
+    followed by the substitution's ). In an expanded body, one whose delimiter
+    is not quoted, bash first joins each line that ends in a line continuation
+    to the next. A body that never ends runs to the end.
     """
     while position < len(source):
         line_end = source.find(b"\n", position)
+        while expanded and line_end != -1 and _escaped_by_backslashes(source, line_end):
+            line_end = source.find(b"\n", line_end + 1)
         line_end = len(source) if line_end == -1 else line_end
-        line = source[position:line_end]
+        line = source[position:line_end].replace(b"\\\n", b"")
         compared = line.lstrip(b"\t") if dashed else line
         if compared == delimiter:
             return position, min(line_end + 1, len(source))

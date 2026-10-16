@@ -465,6 +465,46 @@ for command, expected in [
     found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
     check(f"digits are a descriptor only when they are a whole token, as bash reads them: {command!r}",
           found == expected, found)
+# bash removes each line continuation before it reads tokens, except inside single quotes, $'...',
+# comments and a heredoc body whose delimiter is quoted; tree-sitter-bash keeps one inside an
+# operator such as <( and misreads the command. Each expected reading is bash's, from bash -xc.
+for command, expected in [
+    ("git push --repo <\\\n(true) --force origin b",
+     [(["true"], []), (["git", "push", "--repo", "<(true)", "--force", "origin", "b"], [])]),
+    ("zzp \"a\\\nb\" 'c\\\nd' $'e\\\nf'", [(["zzp", "ab", "c\\\nd", "e\\\nf"], [])]),
+    ("zzp a\\\\\nb", [(["zzp", "a\\"], []), (["b"], [])]),
+    ("zzp \\\\\n-f4>f 4>f", [(["zzp", "\\"], []), (["-f4"], [(">", "f"), ("4>", "f")])]),
+    ("zzp end\\\n", [(["zzp", "end"], [])]),
+    ("zzp \"$(zzq --repo <\\\n(zzr) --force)\"",
+     [(["zzr"], []), (["zzq", "--repo", "<(zzr)", "--force"], []),
+      (["zzp", "$(zzq --repo <(zzr) --force)"], [])]),
+    ("zzp `zzq --repo <\\\n(zzr) --force`",
+     [(["zzr"], []), (["zzq", "--repo", "<(zzr)", "--force"], []),
+      (["zzp", "`zzq --repo <(zzr) --force`"], [])]),
+    ("# c \\\nzzp x", [(["zzp", "x"], [])]),
+    ("zzp a\\\n#b", [(["zzp", "a#b"], [])]),
+    ("zzp $\\\n(zzq) <\\\n<<x", [(["zzq"], []), (["zzp", "$(zzq)"], [("<<<", "x")])]),
+    ("cat <<EOF\nE\\\nOF\nzzp ran\nEOF", [(["cat"], [("<<", "")]), (["zzp", "ran"], []), (["EOF"], [])]),
+    ("cat <<EOF\nx\\\nEOF\nzzp ran\nEOF", [(["cat"], [("<<", "x\\\nEOF\nzzp ran\n")])]),
+    ("cat <<'EOF'\nx\\\nEOF\nzzp ran\nEOF",
+     [(["cat"], [("<<", "x\\\n")]), (["zzp", "ran"], []), (["EOF"], [])]),
+    ("cat <<EOF\n$(zzp --repo <\\\n(zzq) --force)\nEOF",
+     [(["zzq"], []), (["zzp", "--repo", "<(zzq)", "--force"], []),
+      (["cat"], [("<<", "$(zzp --repo <\\\n(zzq) --force)\n")])]),
+    ("cat <<'EOF'\n$(zzp \\\nx)\nEOF", [(["cat"], [("<<", "$(zzp \\\nx)\n")])]),
+    ("cat <<E\\\nOF\n$(zzp)\nEOF", [(["zzp"], []), (["cat"], [("<<", "$(zzp)\n")])]),
+    ("cat <<\"E\\\nOF\"\n$(zzp)\nEOF", [(["cat"], [("<<", "$(zzp)\n")])]),
+]:
+    found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
+    check(f"a line continuation is removed where bash removes it, and kept elsewhere: {command!r}",
+          found == expected, found)
+for command in ("case a in a) zzp x;\\\n& esac; zzq", "case a in a) zzp x;\\\n;& esac; zzq"):
+    found = [list(words) for words in reader.simple_commands(command)]
+    check(f"a last case terminator a line continuation splits is repaired, so the command after esac "
+          f"is read: {command!r}", found == [["zzp", "x"], ["zzq"]], found)
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(b"zzp a\\\nb # c\n")
+check("a comment after a line continuation is reported at its offsets in the source as given",
+      read.comments == [(9, 12)], read)
 found = [(list(words), words.redirects) for words in reader.simple_commands("zzp 2>&1>f")]
 check("a number that is a redirection's first target stays its target, though the next redirection touches it",
       found and found[0][1][0] == ("2>&", "1"), found)
