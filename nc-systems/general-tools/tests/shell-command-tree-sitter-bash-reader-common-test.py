@@ -324,6 +324,37 @@ for command, expected in [
 ]:
     found = [(list(f), f.redirects) for f in reader.simple_commands(command)]
     check(f"the 0 before a redirect is its descriptor, not a word: {command!r}", found == expected, found)
+# tree-sitter-bash reads a 0 that starts a command, before < or >, as the command's name; bash reads
+# it as the redirect's descriptor, and the command's name is the first word after the target.
+for command, expected in [
+    ("0</dev/null zzp push", [(["zzp", "push"], [("0<", "/dev/null")])]),
+    ("0>f zzp", [(["zzp"], [("0>", "f")])]),
+    ("0<&- zzp a", [(["zzp", "a"], [("0<&-", "")])]),
+    ("0<<<x zzp", [(["zzp"], [("0<<<", "x")])]),
+    ("0<<E zzp\nx\nE", [(["zzp"], [("<<", "x\n")])]),
+    ("0\\\n<f zzp", [(["zzp"], [("0<", "f")])]),
+    ("0<f", []),
+    ("x=1 0<f zzp", [(["x=1", "zzp"], [("0<", "f")])]),
+    ("zzq; 0<f zzp", [(["zzq"], []), (["zzp"], [("0<", "f")])]),
+    ("zzq && 0<f zzp", [(["zzq"], []), (["zzp"], [("0<", "f")])]),
+    ("zzq || 0<f zzp", [(["zzq"], []), (["zzp"], [("0<", "f")])]),
+    ("zzq & 0<f zzp", [(["zzq"], []), (["zzp"], [("0<", "f")])]),
+    ("zzq | 0<f zzp", [(["zzq"], []), (["zzp"], [("0<", "f")])]),
+    ("(0<f zzp)", [(["zzp"], [("0<", "f")])]),
+    ("{ 0<f zzp; }", [(["zzp"], [("0<", "f")])]),
+    ("if 0<f zzp; then zzq; fi", [(["zzp"], [("0<", "f")]), (["zzq"], [])]),
+    ("while 0<f zzp; do zzq; done", [(["zzp"], [("0<", "f")]), (["zzq"], [])]),
+    ("! 0<f zzp", [(["zzp"], [("0<", "f")])]),
+    ("zzq $(0<f zzp)", [(["zzp"], [("0<", "f")]), (["zzq", "$(0<f zzp)"], [])]),
+    # The 0 is the command's name when it is a word of its own, or joined to the text before it.
+    ("0 <f zzp", [(["0", "zzp"], [("<", "f")])]),
+    ("'0'<f zzp", [(["0", "zzp"], [("<", "f")])]),
+    ("a\\\n0<f zzp", [(["a0", "zzp"], [("<", "f")])]),
+    ("x=1\\\n0<f zzp", [(["x=10", "zzp"], [("<", "f")])]),
+]:
+    found = [(list(f), f.redirects) for f in reader.simple_commands(command)]
+    check(f"a 0 that starts a command before a redirect is its descriptor, not the command's name, "
+          f"as bash reads it: {command!r}", found == expected, found)
 # bash passes 0<(xb) to xa as one word, and a wrapper's option value written so is one word too.
 found = [(list(f), f.redirects) for f in reader.simple_commands("xa 0<(xb)")]
 check("a 0 written against a process substitution is part of its word",

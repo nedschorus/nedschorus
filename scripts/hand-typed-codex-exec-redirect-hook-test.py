@@ -58,6 +58,7 @@ REFUSED = [
     ("codex exec behind env, nohup and timeout", 'env A=1 nohup timeout 600 codex exec "task"'),
     ("codex exec after an environment assignment", 'CODEX_HOME=/tmp/h codex exec "task"'),
     ("codex exec after &&", 'cd /tmp && codex exec "task"'),
+    ("codex exec after a redirection of descriptor 0", '0</dev/null codex exec "task"'),
     ("codex exec inside a command substitution", 'out=$(codex exec "task")'),
     ("codex exec inside bash -c", "bash -c 'codex exec -C x \"task\"'"),
     ("codex exec inside an ssh command", "ssh nedlern@ned-box 'cd ~/x && codex exec \"task\"'"),
