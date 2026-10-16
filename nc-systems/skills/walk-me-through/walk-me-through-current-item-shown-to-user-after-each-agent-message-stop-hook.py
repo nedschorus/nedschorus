@@ -1,11 +1,24 @@
 #!/usr/bin/env python3
 """Stop hook: while an approval-walk is open, show the user the current item
-in full after each message the agent writes to him, with the answers he can give.
+in full after each message the agent writes to him in answer to him, with the
+answers he can give.
 
 Wired as a Stop hook in .claude/settings.json. The user answers the item at the
 end of what he reads, so the item is shown there by code rather than left to
 the agent to repeat. A turn that wrote nothing to the user, such as a silent
 turn after a background-task notice, shows nothing.
+
+ONLY A TURN THAT ANSWERS THE USER shows the item or blocks: a turn started by
+his own prompt, typed, queued or a slash command. A turn started by another
+agent-seat's message, a background-task notice, a coordinator's message or a
+scheduled prompt shows and blocks nothing, so a walk left open while the agent
+does other work does not repeat its item under every report, and the minutes,
+which change only when he answers, are not checked then. Claude Code records
+on each turn's opening prompt a `turnOrigin`, `human` for his own; the last
+user record carrying one names the current turn's origin, because a message
+that arrives while the agent works carries none. A transcript with no
+`turnOrigin`, from a Claude Code that did not write it, is read by the turn's
+start below: its `origin` kind is `human`, or it has none.
 
 THE TURN starts at the last user-type record in the transcript that is
 neither only tool results nor an injection inside the turn: the user's
@@ -24,9 +37,13 @@ A marker inside a code span is a quotation, not a marker; a value inside one,
 as in ``#next_to_present `item 3 of 9` ``, is read without its backticks, and a
 colon after the hashtag, `#next_to_present: none`, is read as the old form's
 colon was. Minutes written before the
-hashtag carry the old marker `Next to present:`; the last marker of either
-form counts, and when it is the old form on a walk that is not closed, the
-hook blocks with the line to add instead of showing an item. Its value is `none` or
+hashtag carry the old marker `Next to present:`. Minutes with only old-form
+markers are walks run before the hashtag, finished or not, and are not open
+walks: read as open, every finished one whose last line names an item would
+become the open walk in turn as each newer walk closes. In minutes that also
+hold a hashtag marker, the last marker of either form counts, and when it is
+the old form on a walk that is not closed, the hook blocks with the line to
+add instead of showing an item. Its value is `none` or
 `closed` for a closed walk, or opens with a running count, `item N`,
 `item 4.1`, `items 5 and 6`, `items 10 to 12`, with or without `of M`, and
 anything after the count, such as `(awaiting answer), then item 24`, is
@@ -43,7 +60,9 @@ nothing; it runs to the next running count, so headings inside an item, such
 as an original and a proposed section, stay in it. A heading that names
 several items is one unit, and so are the paragraphs under it that open with
 the count of one of its items, such as `**Item 10 of 12: ...**` under `##
-Items 10 and 11 of 12`. A heading that keeps an earlier item beside its
+Items 10 and 11 of 12`; when the minutes name only some of its items, the
+text before its first such paragraph is shown with the paragraphs of the
+items named. A heading that keeps an earlier item beside its
 revision says `revised` after its count, as in `## Item 27 of 72 (revised)`;
 only the latest revision is shown. A running count that names no item, such
 as a range that runs backwards, still ends the item before it, so that item is
@@ -98,7 +117,7 @@ MARKDOWN_PARSER_MODULE_FILE = REPOSITORY_TOP / "scripts" / "markdown-edit-hard-w
 CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 WALK_DIRECTORY = Path("docs") / "walk"
 MINUTES_SUFFIX = "-minutes.md"
-# Group 1 is set only for the hashtag; the old form is read so that open walks it marks are migrated.
+# Group 1 is set only for the hashtag; the old form is read so that a hashtag walk's stray old line is migrated.
 # The value runs to the line's end or the next marker, so two markers on a line are read as two.
 NEXT_MARKER = re.compile(
     r"(?:(#next_to_present)\b|Next to present:)[*_`\s:]*((?:(?!#next_to_present\b|Next to present:)[^\n])*)",
@@ -110,10 +129,12 @@ NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
 NUMBER_LIST = rf"{NUMBER}(?:{NUMBER_JOINER}{NUMBER})*(?![\d.]\d)"
 VALUE_COUNT = re.compile(rf"^items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b)?", re.I)
 HEADING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
-REVISED = re.compile(r"\brevised\b", re.I)
+# Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
+REVISED = re.compile(r"^[\s(,:;.\-\u2013\u2014]*revised\b", re.I)
 NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
 # A record from one of these starts a turn even when Claude Code marks it isMeta.
 TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator", "task-notification")
+USER_TURN_ORIGIN = "human"
 
 ANSWERS_LINE = "Answer Y to approve, N to decline, D to defer, R to repeat the item, or E to have it explained."
 UNUSABLE_OPENING_TEMPLATE = (
@@ -156,8 +177,7 @@ def load_module(name, path):
     return module
 
 
-def last_reply_text(transcript_path):
-    """Return the text of the last assistant message of the transcript's last turn."""
+def transcript_records(transcript_path):
     records = []
     with open(transcript_path, encoding="utf-8") as transcript:
         for line in transcript:
@@ -167,7 +187,11 @@ def last_reply_text(transcript_path):
                 continue
             if isinstance(record, dict):
                 records.append(record)
-    start = 0
+    return records
+
+
+def turn_start(records):
+    """Return the index of the record that starts the transcript's last turn, or None."""
     for index in range(len(records) - 1, -1, -1):
         record = records[index]
         if record.get("type") != "user":
@@ -180,8 +204,26 @@ def last_reply_text(transcript_path):
         origin_kind = (record.get("origin") or {}).get("kind")
         if record.get("isMeta") and origin_kind not in TURN_STARTING_ORIGIN_KINDS:
             continue
-        start = index + 1
-        break
+        return index
+    return None
+
+
+def turn_answers_user(records):
+    """Whether the transcript's last turn was started by the user's own prompt."""
+    for record in reversed(records):
+        if "turnOrigin" in record:
+            return record["turnOrigin"] == USER_TURN_ORIGIN
+    start = turn_start(records)
+    if start is None:
+        return False
+    origin = records[start].get("origin")
+    return origin is None or origin.get("kind") == USER_TURN_ORIGIN
+
+
+def last_reply_text(records):
+    """Return the text of the last assistant message of the transcript's last turn."""
+    start = turn_start(records)
+    start = 0 if start is None else start + 1
     texts_by_message = {}
     last_text_message_id = None
     for record in records[start:]:
@@ -229,7 +271,10 @@ def code_line_numbers(tokens):
 
 
 def next_to_present(minutes_text, parser):
-    """Return (value, whether the marker is the old form) for the minutes' last marker outside code, or None."""
+    """Return (value, whether the marker is the old form) for the minutes' last marker outside code.
+
+    None when the minutes hold no marker, or only old-form markers.
+    """
     code_lines = code_line_numbers(parser.parse(minutes_text))
     markers = []
     for number, line in enumerate(minutes_text.split("\n")):
@@ -239,7 +284,7 @@ def next_to_present(minutes_text, parser):
         for marker in NEXT_MARKER.finditer(line):
             if not any(start <= marker.start() < end for start, end in spans):
                 markers.append((marker[1], marker[2].replace("`", "").strip()))
-    if not markers:
+    if not any(hashtag for hashtag, _ in markers):
         return None
     hashtag, value = markers[-1]
     return value, not hashtag
@@ -314,17 +359,21 @@ def open_walk(walk_directory, parser):
 
 
 def item_units(document_text, parser):
-    """Return [(item numbers, M, text, problem)] for each running count that starts an item.
+    """Return [(item numbers, M, text, problem, head, parts)] for each running count that starts an item.
 
     A count starts an item on a heading, or on a paragraph opening with `**`, except a
     paragraph whose items the count heading above it already names, with no other count
-    between them, which stays in that heading's unit. A count that names no item still
-    ends the unit before it; its unit has no numbers, and problem names the heading and
-    says why. problem is None for every other unit. A unit is left out when a later
-    heading whose text says `revised` names all of its items.
+    between them, which stays in that heading's unit as one of its parts, [(item numbers,
+    text)], each running to the next; head is the unit's text before its first part, and
+    text holds head and parts. A
+    count that names no item still ends the unit before it; its unit has no numbers, and
+    problem names the heading and says why. problem is None for every other unit. A unit
+    is left out when a later heading that says `revised` right after its count names all
+    of its items.
     """
     lines = document_text.split("\n")
     starts = []
+    parts_by_start = {}
     group = None
     tokens = parser.parse(document_text)
     for index, token in enumerate(tokens):
@@ -343,11 +392,12 @@ def item_units(document_text, parser):
             numbers, problem = [], f"its walk-document's heading `{content.strip()}` names no item: {error}"
         if token.type == "heading_open":
             group = (set(numbers), match[2])
-        elif group and set(numbers) <= group[0] and match[2] == group[1]:
+        elif group and numbers and set(numbers) <= group[0] and match[2] == group[1]:
+            parts_by_start.setdefault(len(starts) - 1, []).append((first_line, numbers))
             continue
         else:
             group = None
-        revised = bool(REVISED.search(content[match.end():]))
+        revised = bool(REVISED.match(content[match.end():]))
         starts.append((first_line, numbers, match[2], problem, revised))
     units = []
     for index, (first_line, numbers, total, problem, _) in enumerate(starts):
@@ -355,8 +405,23 @@ def item_units(document_text, parser):
                            for _, later_numbers, later_total, _, revised in starts[index + 1:]):
             continue
         end = starts[index + 1][0] if index + 1 < len(starts) else len(lines)
-        units.append((numbers, total, "\n".join(lines[first_line:end]), problem))
+        part_starts = parts_by_start.get(index, [])
+        part_ends = [part_line for part_line, _ in part_starts[1:]] + [end]
+        parts = [(part_numbers, "\n".join(lines[part_line:part_end]))
+                 for (part_line, part_numbers), part_end in zip(part_starts, part_ends)]
+        head = "\n".join(lines[first_line:part_starts[0][0] if part_starts else end])
+        units.append((numbers, total, "\n".join(lines[first_line:end]), problem, head, parts))
     return units
+
+
+def shown_text(unit, numbers):
+    """Return the unit's text, or, when the minutes name only some of a grouped heading's
+    items, its head with the parts of the items named."""
+    unit_numbers, _, text, _, head, parts = unit
+    if set(unit_numbers) <= set(numbers):
+        return text
+    return "\n".join([head] + [part_text for part_numbers, part_text in parts
+                               if set(part_numbers) & set(numbers)])
 
 
 def without_bold_marks_outside_code_spans(line):
@@ -426,15 +491,15 @@ def output_for(payload, environment, answering_a_stop_hook):
         return None
     if not payload.get("cwd"):
         return None
+    records = transcript_records(Path(transcript_path).expanduser())
+    if not turn_answers_user(records) or not last_reply_text(records).strip():
+        return None
     top = checkout_top(Path(payload["cwd"]))
     if top is None or not (top / WALK_DIRECTORY).is_dir():
         return None
     parser = markdown_parser(may_install=not answering_a_stop_hook)
     walk = open_walk(top / WALK_DIRECTORY, parser)
     if walk is None:
-        return None
-    reply = last_reply_text(Path(transcript_path).expanduser())
-    if not reply.strip():
         return None
     minutes, value, old_form = walk
     name = minutes.name[:-len(MINUTES_SUFFIX)]
@@ -485,10 +550,9 @@ def output_for(payload, environment, answering_a_stop_hook):
         named = ", ".join(f"`Item {number} of {total}`" for number in repeated)
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
             f"its walk-document has more than one heading for {named}, so the hook cannot tell "
-            f"which one the minutes name: the heading that is misnumbered needs its own number, and "
-            f"a heading that revises an earlier one says `(revised)` after its count."))
+            f"which one the minutes name."))
     shown = without_heading_and_bold_marks(
-        "\n".join(unit[2].strip("\n") for unit in units), parser)
+        "\n".join(shown_text(unit, numbers).strip("\n") for unit in units), parser)
     return json.dumps({"systemMessage": shown + "\n\n" + ANSWERS_LINE}, ensure_ascii=False)
 
 
