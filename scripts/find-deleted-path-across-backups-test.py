@@ -19,6 +19,7 @@ import importlib.util
 import io
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -34,6 +35,10 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
+# Every copy this suite makes lands in a scratch folder, never in the user's Downloads.
+FOUND_COPIES_SCRATCH = tempfile.mkdtemp(prefix="find-deleted-path-found-copies-test-")
+os.environ["FIND_DELETED_PATH_FOUND_COPIES_ROOT"] = FOUND_COPIES_SCRATCH
+
 MODULE_PATH = Path(__file__).with_name("find-deleted-path-across-backups.py")
 spec = importlib.util.spec_from_file_location("find_deleted_path_across_backups", MODULE_PATH)
 finder = importlib.util.module_from_spec(spec)
@@ -44,6 +49,16 @@ NOT_FOUND = finder.NOT_FOUND
 UNAVAILABLE = finder.UNAVAILABLE
 
 failures = []
+
+
+def git_sources(report):
+    """The "<commit>:<path>" of each git version the report will copy."""
+    return [version.source for version in report.versions if version.kind == "git"]
+
+
+def version_sources(report):
+    """(kind, source) of each version the report will copy."""
+    return [(version.kind, version.source) for version in report.versions]
 
 
 def check(name, condition, detail=""):
@@ -161,7 +176,7 @@ git_dotfile = FakeRunner([
 report = finder.search_git(".env", "/repo", git_dotfile)
 check("a request for '.env' is NOT FOUND when history only has 'scripts/env'",
       report.status == NOT_FOUND,
-      "was FOUND with a recovery command for scripts/env: %s" % report.recovery)
+      "was FOUND with a version to copy from scripts/env: %s" % git_sources(report))
 
 # --------------------------------------------------------------------------
 # local snapshots — the surface that needs no password
@@ -198,13 +213,20 @@ check("a path in every local snapshot is FOUND, newest first",
       report.status == FOUND and any(l.strip() == "com.apple.TimeMachine.2026-08-31-115113.local"
                                      for l in report.lines),
       "%s %s" % (report.status, report.lines))
-check("the recovery command mounts the newest snapshot holding it and copies the file out",
+FOUND_COPIES_FOLDER = finder.found_copies_folder().path
+check("the recovery command mounts the newest snapshot holding it and copies the file into the found-copies "
+      "folder, never over the original",
       report.recovery == [
           "mkdir -p %s && mount_apfs -o ro -s com.apple.TimeMachine.2026-08-31-115113.local "
           "/System/Volumes/Data %s" % (MOUNT_POINT, MOUNT_POINT),
-          "cp %s%s . && diskutil unmount %s" % (MOUNT_POINT, REAPED, MOUNT_POINT),
+          "mkdir -p %s && cp -n %s%s %s/localsnapshot-2026-08-31T1151-reaped.md && diskutil unmount %s"
+          % (FOUND_COPIES_FOLDER, MOUNT_POINT, REAPED, FOUND_COPIES_FOLDER, MOUNT_POINT),
       ],
       str(report.recovery))
+check("the found-copies folder is the scratch root the environment names, under the time of the search",
+      FOUND_COPIES_FOLDER.startswith(FOUND_COPIES_SCRATCH + os.sep)
+      and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{6}Z", os.path.basename(FOUND_COPIES_FOLDER)) is not None,
+      FOUND_COPIES_FOLDER)
 check("no sudo is asked for anywhere on this surface — that is its entire point",
       not any("sudo" in c for c in local_hit.calls) and not any("sudo" in c for c in report.recovery),
       "%s %s" % (local_hit.calls, report.recovery))
@@ -399,10 +421,9 @@ check("... and the report says so, since it is the difference between searched a
       any(l == "1 of them were read where macOS already had them mounted, mounting nothing: "
                "com.apple.TimeMachine.2026-08-31-115113.local" for l in report.lines),
       str(report.lines))
-check("... and the recovery copies straight out of that mount, with nothing to mount or release",
-      report.recovery[0].startswith("cp ") and (LIVE_OS_MOUNT + REAPED) in report.recovery[0]
-      and not any("mount_apfs" in c for c in report.recovery),
-      str(report.recovery))
+check("... and this run copies it straight out of that mount, with nothing to mount, release or run",
+      version_sources(report) == [("file", LIVE_OS_MOUNT + REAPED)] and report.recovery == [],
+      "%s %s" % (version_sources(report), report.recovery))
 check("a mount point containing ' (' survives the parse, since the options paren is the last one",
       any(c == "test -d " + LIVE_OS_MOUNT for c in read_in_place.calls),
       str([c for c in read_in_place.calls if c.startswith("test -d")]))
@@ -482,10 +503,11 @@ check("... and the snapshots that could not be mounted past it are still UNAVAIL
 # reads from.
 occupied_hit = occupied_runner(occupier_has_it=True)
 report = finder.search_local_snapshots(REAPED, "/repo", occupied_hit)
-check("a hit inside the leftover mount is FOUND and copied straight out of it",
+check("a hit inside the leftover mount is FOUND, copied straight out of it, and the mount left to release",
       report.status == FOUND
-      and report.recovery == ["cp %s%s . && diskutil unmount %s" % (MOUNT_POINT, REAPED, MOUNT_POINT)],
-      "%s %s" % (report.status, report.recovery))
+      and version_sources(report) == [("file", MOUNT_POINT + REAPED)]
+      and report.recovery == ["diskutil unmount %s" % MOUNT_POINT],
+      "%s %s %s" % (report.status, version_sources(report), report.recovery))
 
 # The parameter gets the same normalisation as the constant, so a caller that
 # spells it /tmp is not silently given the broken comparison back.
@@ -765,12 +787,15 @@ git_found = FakeRunner([
 ])
 report = finder.search_git("md-review-records/x/dispositions.md", "/repo", git_found)
 check("git reports FOUND for a deleted path still in history", report.status == FOUND)
-check("git hands back a runnable recovery command",
-      any(c.startswith(finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES + " -C") and " show " in c for c in report.recovery),
-      str(report.recovery))
+check("git hands back a version to copy and no command to run",
+      [version.repo for version in report.versions] == ["/repo"] and report.recovery == [],
+      "%s %s" % (version_sources(report), report.recovery))
 check("git cites the deletion's parent, which held the file, not the last commit that modified it",
-      report.recovery == [finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES + " -C /repo show merge0123:md-review-records/x/dispositions.md"],
-      str(report.recovery))
+      git_sources(report) == ["merge0123:md-review-records/x/dispositions.md"],
+      str(git_sources(report)))
+check("... and names the copy for the commit and the file",
+      [version.name for version in report.versions] == ["git-merge012-dispositions.md"],
+      str([version.name for version in report.versions]))
 check("git records the last date it HELD the file, not the last date it modified it",
       getattr(report, "newest_date_held", None) == "2026-08-14",
       "got %r; 2026-08-12 is the modification date, and a backup candidate chosen from it is one snapshot too old"
@@ -813,8 +838,8 @@ git_walks_back = FakeRunner([
 ])
 report = finder.search_git("a/b.md", "/repo", git_walks_back)
 check("git skips the deleting commit and cites one whose tree has the blob",
-      report.status == FOUND and any("feedface" in c for c in report.recovery),
-      str(report.recovery))
+      report.status == FOUND and any("feedface" in c for c in git_sources(report)),
+      str(git_sources(report)))
 check("... and the date it records is that commit's, not the deletion's",
       getattr(report, "newest_date_held", None) == "2026-08-13",
       repr(getattr(report, "newest_date_held", None)))
@@ -834,8 +859,8 @@ git_absolute = FakeRunner([
 ])
 report = finder.search_git("/repo/md-review-records/x/dispositions.md", "/repo", git_absolute)
 check("an absolute path inside the repository is searched by its repo-relative form",
-      report.status == FOUND and report.recovery == [finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES + " -C /repo show abc123def:md-review-records/x/dispositions.md"],
-      "%s %s %s" % (report.status, report.lines, report.recovery))
+      report.status == FOUND and git_sources(report) == ["abc123def:md-review-records/x/dispositions.md"],
+      "%s %s %s" % (report.status, report.lines, git_sources(report)))
 
 git_outside = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
@@ -895,15 +920,26 @@ with tempfile.TemporaryDirectory() as tmp:
                                check=True, stdout=subprocess.PIPE).stdout.decode().strip()
     report = finder.search_git("a/b.md", str(repo))
     check("real git: the commit cited is the merge whose tree last held the file",
-          report.status == FOUND and report.recovery == ["%s -C %s show %s:a/b.md" % (finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES, repo, merge_sha[:9])],
-          "%s %s %s (merge is %s)" % (report.status, report.lines, report.recovery, merge_sha[:9]))
+          report.status == FOUND and git_sources(report) == ["%s:a/b.md" % merge_sha],
+          "%s %s %s (merge is %s)" % (report.status, report.lines, git_sources(report), merge_sha[:9]))
+    copied_report = finder.copy_found_versions(report)
+    check("real git: this run copies the file, as the merge last held it, into the found-copies folder",
+          len(copied_report.copied) == 1 and copied_report.copied[0].startswith(FOUND_COPIES_FOLDER + os.sep)
+          and Path(copied_report.copied[0]).read_bytes() == b"v2\n"
+          and any(l == "copied to %s" % copied_report.copied[0] for l in copied_report.lines),
+          "%s %s" % (copied_report.copied, copied_report.lines))
+    copied_again = finder.copy_found_versions(finder.search_git("a/b.md", str(repo)))
+    check("real git: a second copy of the same version is written beside the first, never over it",
+          len(copied_again.copied) == 1 and copied_again.copied[0] != copied_report.copied[0]
+          and copied_again.copied[0].endswith("-2.md") and Path(copied_report.copied[0]).read_bytes() == b"v2\n",
+          "%s %s" % (copied_again.copied, copied_report.copied))
     check("real git: the date recorded is the merge's, 2026-08-14, not the modification's 2026-08-12",
           getattr(report, "newest_date_held", None) == "2026-08-14",
           repr(getattr(report, "newest_date_held", None)))
     report = finder.search_git(str(Path(repo, "a", "b.md")), str(repo))
     check("real git: the absolute form of a deleted in-repo file is FOUND",
-          report.status == FOUND and report.recovery and report.recovery[0].endswith(":a/b.md"),
-          "%s %s %s" % (report.status, report.lines, report.recovery))
+          report.status == FOUND and git_sources(report) and git_sources(report)[0].endswith(":a/b.md"),
+          "%s %s %s" % (report.status, report.lines, git_sources(report)))
     report = finder.search_git("/definitely/elsewhere/a/b.md", str(repo))
     check("real git: an absolute path outside the repository is UNAVAILABLE",
           report.status == UNAVAILABLE, "%s %s" % (report.status, report.lines))
@@ -931,9 +967,13 @@ with tempfile.TemporaryDirectory() as tmp:
     fixture_git("commit", "-q", "-m", "delete the notes")
     report = finder.search_git("notes/café.md", str(repo))
     check("real git: a fragment of a deleted non-ASCII path is FOUND",
-          report.status == FOUND and report.recovery
-          and report.recovery[0].endswith("docs/notes/café.md'"),
-          "%s %s %s" % (report.status, report.lines, report.recovery))
+          report.status == FOUND and git_sources(report)
+          and git_sources(report)[0].endswith(":docs/notes/café.md"),
+          "%s %s %s" % (report.status, report.lines, git_sources(report)))
+    copied_report = finder.copy_found_versions(report)
+    check("real git: ... and its copy keeps the non-ASCII name's letters it can, and the content",
+          len(copied_report.copied) == 1 and Path(copied_report.copied[0]).read_bytes() == b"kept\n",
+          "%s %s" % (copied_report.copied, copied_report.lines))
 
 # --------------------------------------------------------------------------
 # git reflog — commits no branch or tag reaches, which only a reflog names
@@ -996,14 +1036,12 @@ with tempfile.TemporaryDirectory() as tmp:
     report = finder.search_git_reflog("docs/drafts/pr-main-process-design.md", str(clone))
     check("real git: the reflog surface FINDS it, from a checkout whose own HEAD reflog never named it",
           report.status == FOUND and report.surface == "git reflog"
-          and report.recovery == ["%s -C %s show %s:docs/drafts/pr-main-process-design.md" % (finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES, clone, draft_sha[:9])],
-          "%s %s %s (draft is %s)" % (report.status, report.lines, report.recovery, draft_sha[:9]))
-    recovered = subprocess.run(report.recovery[0] if report.recovery else "false", shell=True,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               env={k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE")})
-    check("real git: the reflog surface's recovery command prints the file's content",
-          recovered.returncode == 0 and recovered.stdout.decode() == "the draft\n",
-          "exit %s: %r %r" % (recovered.returncode, recovered.stdout, recovered.stderr))
+          and git_sources(report) == ["%s:docs/drafts/pr-main-process-design.md" % draft_sha],
+          "%s %s %s (draft is %s)" % (report.status, report.lines, git_sources(report), draft_sha[:9]))
+    finder.copy_found_versions(report)
+    check("real git: the reflog surface's version is copied with the file's content",
+          len(report.copied) == 1 and Path(report.copied[0]).read_bytes() == b"the draft\n",
+          "%s %s" % (report.copied, report.lines))
     check("real git: a reflog FOUND says the reflog entry will be pruned, so copy it out now",
           any("prunes reflog entries" in l for l in report.lines), str(report.lines))
 
@@ -1064,19 +1102,19 @@ with tempfile.TemporaryDirectory() as tmp:
     git_report = finder.search_git("kept.md", str(repo))
     report = finder.search_git_reflog("kept.md", str(repo))
     check("real git: a reflog-only deletion whose parent main reaches is NOT FOUND by the reflog surface",
-          report.status == NOT_FOUND and not report.recovery,
-          "%s %s %s (main's tip is %s)" % (report.status, report.lines, report.recovery, main_tip[:9]))
+          report.status == NOT_FOUND and not report.versions,
+          "%s %s %s (main's tip is %s)" % (report.status, report.lines, git_sources(report), main_tip[:9]))
     check("real git: that parent is the git surface's to report, so the two surfaces never name one commit",
-          git_report.status == FOUND and any(main_tip[:9] in r for r in git_report.recovery)
-          and not any(main_tip[:9] in r for r in report.recovery),
-          "git %s %s / reflog %s" % (git_report.status, git_report.recovery, report.recovery))
+          git_report.status == FOUND and any(main_tip[:9] in r for r in git_sources(git_report))
+          and not any(main_tip[:9] in r for r in git_sources(report)),
+          "git %s %s / reflog %s" % (git_report.status, git_sources(git_report), git_sources(report)))
     check("real git: the reflog surface's NOT FOUND says the branch history is the git surface's",
           any("git surface" in l for l in report.lines), str(report.lines))
 
     report = finder.search_git_reflog("only-draft.md", str(repo))
     check("real git: a reflog-only deletion whose parent is reflog-only too is FOUND at that parent",
-          report.status == FOUND and report.recovery == ["%s -C %s show %s:only-draft.md" % (finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES, repo, draft_holder[:9])],
-          "%s %s %s (holder is %s)" % (report.status, report.lines, report.recovery, draft_holder[:9]))
+          report.status == FOUND and git_sources(report) == ["%s:only-draft.md" % draft_holder],
+          "%s %s %s (holder is %s)" % (report.status, report.lines, git_sources(report), draft_holder[:9]))
 
 reflog_git_fails = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
@@ -1175,52 +1213,25 @@ for variable in ("GIT_COMMON_DIR", "GIT_DIR"):
             reflog_report = finder.search_git_reflog("a/b.md", str(repo))
         check("real git: with %s naming another clone, the git surface still FINDS a file only the "
               "searched repository's history holds" % variable,
-              report.status == FOUND and report.recovery and report.recovery[0].endswith(":a/b.md")
-              and report.recovery[0].startswith("%s -C %s " % (finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES, repo)),
-              "%s %s %s" % (report.status, report.lines, report.recovery))
+              report.status == FOUND and git_sources(report) and git_sources(report)[0].endswith(":a/b.md")
+              and [version.repo for version in report.versions] == [str(repo)],
+              "%s %s %s" % (report.status, report.lines, git_sources(report)))
         check("real git: with %s naming another clone, the reflog surface searches the repository asked "
               "about: NOT FOUND, because every ref there already reaches the file" % variable,
               reflog_report.status == NOT_FOUND, "%s %s" % (reflog_report.status, reflog_report.lines))
 
-# The git recovery command is printed for a caller to run in a shell of their
-# own, which this program's run_command never touches, so it carries the
-# variables' removal in its own text.
-import shlex  # noqa: E402
-
-printed_git_tokens = shlex.split(finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES)
-check("a printed git recovery command begins with env, unsets each of the six git redirect variables once, "
-      "then runs git",
-      printed_git_tokens[:1] == ["env"] and printed_git_tokens[-1:] == ["git"]
-      and printed_git_tokens[1:-1:2] == ["-u"] * len(GIT_REDIRECT_VARIABLES_EXPECTED_DROPPED)
-      and sorted(printed_git_tokens[2:-1:2]) == sorted(GIT_REDIRECT_VARIABLES_EXPECTED_DROPPED),
-      finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES)
-check("the printed git recovery command's prefix is the locator's own constant, defined once for both programs",
-      finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES
-      is finder.locator.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES,
-      "%r / %r" % (finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES,
-                   finder.locator.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES))
-
+# The git copy runs in this process, so a caller's redirect variables must not send it to another clone.
 for variable in ("GIT_COMMON_DIR", "GIT_DIR"):
     with tempfile.TemporaryDirectory() as tmp:
         repo = git_fixture_repo(tmp)
         other = other_clone_fixture(tmp)
         report = finder.search_git("a/b.md", str(repo))
-        printed = report.recovery[0] if report.recovery else ""
-        bare = "git" + printed[len(finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES):]
-        shell_environment = dict(os.environ, **{variable: str(Path(other, ".git"))})
-        as_printed = subprocess.run(["/bin/sh", "-c", printed], cwd=tmp, env=shell_environment,
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        without_prefix = subprocess.run(["/bin/sh", "-c", bare], cwd=tmp, env=shell_environment,
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    check("real git: with %s naming another clone in the shell that runs it, the printed git recovery command "
-          "prints the file as the searched repository last held it" % variable,
-          printed.startswith(finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES + " -C ")
-          and as_printed.returncode == 0 and as_printed.stdout == b"v2\n",
-          "%r exit %s %r %r" % (printed, as_printed.returncode, as_printed.stdout, as_printed.stderr))
-    check("real git: ... and the same command without its env prefix exits 128 under %s, so the case above "
-          "measures what it claims" % variable,
-          without_prefix.returncode == 128,
-          "%r exit %s %r" % (bare, without_prefix.returncode, without_prefix.stderr))
+        with caller_environment_with(**{variable: str(Path(other, ".git"))}):
+            finder.copy_found_versions(report)
+    check("real git: with %s naming another clone, this run copies the file as the searched repository "
+          "last held it" % variable,
+          len(report.copied) == 1 and Path(report.copied[0]).read_bytes() == b"v2\n",
+          "%s %s" % (report.copied, report.lines))
 
 # --------------------------------------------------------------------------
 # transcripts
@@ -1360,7 +1371,8 @@ timeshift_hit = FakeRunner([
 report = finder.search_timeshift("a/b.md", "nedlern@ned-box", "/mnt/backup/timeshift/snapshots",
                                  finder.DEFAULT_BOX_SEARCH_ROOTS, timeshift_hit)
 check("timeshift reports FOUND with the newest snapshot first",
-      report.status == FOUND and "2026-08-14" in report.recovery[0], str(report.recovery))
+      report.status == FOUND and report.versions and "2026-08-14" in report.versions[0].source
+      and report.versions[0].name == "timeshift-2026-08-14_11-35-50-b.md", str(version_sources(report)))
 
 # A fake runner cannot execute the shell this builds, so the one thing it CAN
 # check is the text: a seat-directory root must reach the box with its glob
@@ -1400,10 +1412,10 @@ with tempfile.TemporaryDirectory() as tmp:
 
     report = timeshift("md-review-records/x/dispositions.md")
     check("timeshift, real shell: the repo-relative form is FOUND, newest snapshot first",
-          report.status == FOUND and "2026-08-14" in report.recovery[0], "%s %s" % (report.status, report.lines))
+          report.status == FOUND and report.versions and "2026-08-14" in report.versions[0].source, "%s %s" % (report.status, report.lines))
     report = timeshift("dispositions.md")
     check("timeshift, real shell: the documented fragment form is FOUND in the same snapshots",
-          report.status == FOUND and any("2026-08-13" in l for l in report.lines) and "2026-08-14" in report.recovery[0],
+          report.status == FOUND and any("2026-08-13" in l for l in report.lines) and report.versions and "2026-08-14" in report.versions[0].source,
           "%s %s" % (report.status, report.lines))
     check("timeshift, real shell: a seat-glob root is searched by suffix too",
           any("/seats/s1/" in l for l in report.lines), str(report.lines))
@@ -1538,13 +1550,20 @@ with tempfile.TemporaryDirectory() as tmp:
           not any("older file(s)" in l for l in report.lines), str(report.lines))
     check("log-store, store here: read in place, and nothing is sent over ssh",
           not any(c.startswith("ssh") for c in here.calls), str(here.calls))
-    check("log-store, store here: the recovery copies the copy at the wanted path, the one the path identifies",
-          report.recovery == ["cp %s ." % exact_copy], str(report.recovery))
+    check("log-store, store here: the version copied is the copy at the wanted path, the one the path identifies",
+          version_sources(report) == [("file", str(exact_copy))] and report.recovery == [],
+          "%s %s" % (version_sources(report), report.recovery))
+    finder.copy_found_versions(report)
+    check("log-store, store here: this run copies it into the found-copies folder, named for the store and its time",
+          len(report.copied) == 1 and os.path.basename(report.copied[0]).startswith("logstore-")
+          and report.copied[0].endswith("-pr-main-process-design.md")
+          and Path(report.copied[0]).read_bytes() == Path(exact_copy).read_bytes(),
+          "%s %s" % (report.copied, report.lines))
 
     report = finder.search_log_store("docs/drafts/PR-Main-Process-Design.md", str(store), "", RunsLocallyRefusesSsh([]))
     check("log-store: the wanted path is matched whatever its case",
-          report.status == FOUND and report.recovery == ["cp %s ." % exact_copy],
-          "%s %s" % (report.status, report.recovery))
+          report.status == FOUND and version_sources(report) == [("file", str(exact_copy))],
+          "%s %s" % (report.status, version_sources(report)))
 
     report = finder.search_log_store("docs/drafts/nowhere-at-all.md", str(store), "nedlern@ned-box",
                                      RunsLocallyRefusesSsh([]))
@@ -1563,8 +1582,38 @@ with tempfile.TemporaryDirectory() as tmp:
     check("log-store, store on the box: the same walk runs there and FINDS the same three copies",
           report.status == FOUND and sum(1 for l in report.lines if l.startswith("    2026-")) == 3,
           "%s %s" % (report.status, report.lines))
-    check("log-store, store on the box: the recovery is an scp from the box",
-          report.recovery == ["scp nedlern@ned-box:%s ." % exact_copy], str(report.recovery))
+    check("log-store, store on the box: the version is read from the box",
+          [(version.kind, version.host, version.source) for version in report.versions]
+          == [("box-file", "nedlern@ned-box", str(exact_copy))] and report.recovery == [],
+          "%s %s" % (version_sources(report), report.recovery))
+    fetched = []
+
+    def fetch_from_box(argv):
+        fetched.append(argv)
+        return 0, b"the box's copy\n", ""
+    finder.copy_found_versions(report, fetch=fetch_from_box)
+    check("log-store, store on the box: ... over one ssh with BatchMode and a short connect timeout, as cat of the "
+          "quoted path, and copied into the folder",
+          len(fetched) == 1 and fetched[0][:5] == ["ssh", "-o", "BatchMode=yes", "-o",
+                                                  "ConnectTimeout=%d" % finder.BOX_LOG_STORE_CONNECT_TIMEOUT_SECONDS]
+          and fetched[0][5] == "nedlern@ned-box" and fetched[0][6] == "cat -- %s" % shlex.quote(str(exact_copy))
+          and len(report.copied) == 1 and Path(report.copied[0]).read_bytes() == b"the box's copy\n",
+          "%s %s %s" % (fetched, report.copied, report.lines))
+    report = finder.search_log_store("pr-main-process-design.md", str(store), "nedlern@ned-box",
+                                     LocalShellRunner([], Path(tmp)), store_is_here=False)
+
+    def box_refuses(argv):
+        return 255, b"", "ssh: connect to host ned-box port 22: Connection refused\n"
+    finder.copy_found_versions(report, fetch=box_refuses)
+    check("log-store, store on the box: a copy that fails is reported with ssh's own words, and nothing is written",
+          report.copied == [] and len(report.copy_failures) == 1
+          and any(l.startswith("could NOT copy nedlern@ned-box:%s — ssh exited 255: ssh: connect to host" % exact_copy)
+                  for l in report.lines),
+          "%s %s" % (report.copied, report.lines))
+    check("log-store, store on the box: ... and a hit none of whose versions could be copied exits 4, not 0",
+          finder.exit_status([report]) == finder.EXIT_FOUND_BUT_NOT_COPIED
+          and "Could NOT copy every version log-store found" in finder.render_summary([report]),
+          "%s\n%s" % (finder.exit_status([report]), finder.render_summary([report])))
 
     report = finder.search_log_store("pr-main-process-design.md", str(Path(tmp, "no-store-here")),
                                      "nedlern@ned-box", LocalShellRunner([], Path(tmp)), store_is_here=False)
@@ -1729,12 +1778,12 @@ with tempfile.TemporaryDirectory() as tmp:
 
     report = finder.search_log_store("dispositions.md", str(store), "", RunsLocallyRefusesSsh([]))
     check("log-store: a bare file name still matches that name in any directory, as it does in git",
-          report.status == FOUND and report.recovery == ["cp %s ." % other_record],
-          "%s %s" % (report.status, report.recovery))
+          report.status == FOUND and version_sources(report) == [("file", str(other_record))],
+          "%s %s" % (report.status, version_sources(report)))
     report = finder.search_log_store(str(other_record), str(store), "", RunsLocallyRefusesSsh([]))
     check("log-store: a store file asked for by its own absolute path is FOUND",
-          report.status == FOUND and report.recovery == ["cp %s ." % other_record],
-          "%s %s" % (report.status, report.recovery))
+          report.status == FOUND and version_sources(report) == [("file", str(other_record))],
+          "%s %s" % (report.status, version_sources(report)))
 
     at_its_path = Path(store, "cold-read-records", "2026-08-11-ghi-info-agent-design", "target",
                        *FOUNDING_PATH.split("/"))
@@ -1744,7 +1793,7 @@ with tempfile.TemporaryDirectory() as tmp:
     os.utime(str(at_its_path), (older, older))
     report = finder.search_log_store(FOUNDING_PATH, str(store), "", RunsLocallyRefusesSsh([]))
     check("log-store: a copy kept under a record's target/ at the wanted path is FOUND, and is what is copied",
-          report.status == FOUND and report.recovery == ["cp %s ." % at_its_path],
+          report.status == FOUND and version_sources(report) == [("file", str(at_its_path))],
           "%s %s %s" % (report.status, report.lines, report.recovery))
     check("log-store: ... and the newer same-name file elsewhere is flagged as a candidate to check, not copied",
           any("1 other file(s) with 'dispositions' in their name are newer than the newest copy at %r" % FOUNDING_PATH
@@ -1757,7 +1806,7 @@ with tempfile.TemporaryDirectory() as tmp:
     skill_target.write_text("the ghi-write skill\n")
     report = finder.search_log_store(".claude/skills/ghi-write/SKILL.md", str(store), "", RunsLocallyRefusesSsh([]))
     check("log-store: a skill kept at its own path under target/ is FOUND, whatever the case of its name",
-          report.status == FOUND and report.recovery == ["cp %s ." % skill_target],
+          report.status == FOUND and version_sources(report) == [("file", str(skill_target))],
           "%s %s %s" % (report.status, report.lines, report.recovery))
     report = finder.search_log_store(".claude/skills/never-existed-skill/SKILL.md", str(store), "",
                                      RunsLocallyRefusesSsh([]))
@@ -1903,8 +1952,12 @@ with tempfile.TemporaryDirectory() as tmp:
     reports = run_as_if_on(True, "a/b.md", box, on_box)
     by_surface = {r.surface: r for r in reports}
     kept_copy = str(Path(kept, "b.md"))
-    check("on the box: a file Timeshift kept is FOUND in place, and recovered with cp, not scp",
-          by_surface["timeshift"].status == FOUND and by_surface["timeshift"].recovery == ["cp %s ." % kept_copy]
+    check("on the box: a file Timeshift kept is FOUND in place, and copied by this run straight from the snapshot",
+          by_surface["timeshift"].status == FOUND and by_surface["timeshift"].recovery == []
+          and version_sources(by_surface["timeshift"]) == [("file", kept_copy)]
+          and len(by_surface["timeshift"].copied) == 1
+          and os.path.basename(by_surface["timeshift"].copied[0]).startswith("timeshift-")
+          and Path(by_surface["timeshift"].copied[0]).read_bytes() == Path(kept_copy).read_bytes()
           and by_surface["timeshift"].lines[0] == "1 snapshot(s) on ned-box still have it, newest first:",
           "%s %s %s" % (by_surface["timeshift"].status, by_surface["timeshift"].lines, by_surface["timeshift"].recovery))
     check("on the box: a transcript of the box's that mentions it is FOUND, named as ned-box's",
@@ -2301,9 +2354,10 @@ tm_warm_hit = FakeRunner(WARM + [
     (TM_FIND, (0, TM_DATA_ROOT + "/Users/el/Projects/nedschorus/a/b.md\n", "")),
 ])
 report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_warm_hit)
-check("with warm sudo, a hit is FOUND with the path inside the snapshot and a cp command",
+check("with warm sudo, a hit is FOUND with the path inside the snapshot and a cp into the found-copies folder",
       report.status == FOUND and any("holds /Users/el/Projects/nedschorus/a/b.md" in l for l in report.lines)
-      and any(c.startswith("cp " + TM_DATA_ROOT + "/Users/el/Projects/nedschorus/a/b.md") for c in report.recovery),
+      and any(("cp -n " + TM_DATA_ROOT + "/Users/el/Projects/nedschorus/a/b.md "
+               + finder.found_copies_folder().path + "/timemachine-") in c for c in report.recovery),
       "%s %s %s" % (report.status, report.lines, report.recovery))
 
 tm_find_fails = FakeRunner(WARM + [
@@ -2338,7 +2392,7 @@ check("an absolute path is tested under <stamp>.backup/Data too, so a file that 
       and any("holds /Users/el/Projects/nedschorus/README.md" in l for l in report.lines),
       "%s %s" % (report.status, report.lines))
 check("... and the cp handed back reads from that root, not from the mount point",
-      any(c.startswith("cp " + TM_DATA_ROOT + "/Users/el/Projects/nedschorus/README.md")
+      any(("cp -n " + TM_DATA_ROOT + "/Users/el/Projects/nedschorus/README.md ") in c
           for c in report.recovery),
       str(report.recovery))
 
@@ -2452,7 +2506,21 @@ check("exit 1 only when every surface that ran was searched and none has it",
 
 code, text = run_main(["md-review-records/x/dispositions.md", "--repo", "/repo", "--skip", "transcripts",
                        "--skip", "box", "--skip", "timemachine", "--skip", "localsnapshots"], git_found)
-check("exit 0 when a surface FOUND it", code == 0 and "Recoverable from: git." in text, "exit=%s\n%s" % (code, text))
+check("exit 4 when a surface FOUND it but its version could not be copied, here because /repo is a fake",
+      code == finder.EXIT_FOUND_BUT_NOT_COPIED and "Recoverable from: git." in text
+      and "could NOT copy merge0123:md-review-records/x/dispositions.md in /repo — git exited" in text,
+      "exit=%s\n%s" % (code, text))
+check("... and the docstring's exit-code block promises exit 4 for that",
+      "4 when a surface FOUND it" in finder.__doc__)
+real_fetch = finder.fetch_bytes
+finder.fetch_bytes = lambda argv: (0, b"the dispositions\n", "")
+try:
+    code, text = run_main(["md-review-records/x/dispositions.md", "--repo", "/repo", "--skip", "transcripts",
+                           "--skip", "box", "--skip", "timemachine", "--skip", "localsnapshots"], git_found)
+finally:
+    finder.fetch_bytes = real_fetch
+check("exit 0 when a surface FOUND it and its version was copied",
+      code == 0 and "Recoverable from: git." in text and "copied to " in text, "exit=%s\n%s" % (code, text))
 
 mixed = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
@@ -2566,7 +2634,7 @@ with tempfile.TemporaryDirectory() as tmp:
         "--box-ssh-host", "a-box-that-never-answers",
         "--log-store-root", NO_LOG_STORE_ON_THIS_MACHINE,
         "--timeshift-snapshot-root", no_timeshift_snapshot_root_on_either_machine,
-        "--skip", "localsnapshots", "--skip", "timemachine"]
+        "--skip", "localsnapshots", "--skip", "timemachine", "--found-copies-root", FOUND_COPIES_SCRATCH]
     env = {k: v for k, v in os.environ.items()
            if k not in ("GIT_DIR", "GIT_WORK_TREE") and not k.startswith("FIND_DELETED_PATH_")}
     env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
@@ -2577,13 +2645,15 @@ with tempfile.TemporaryDirectory() as tmp:
     # case made or one that exists on neither machine.
     streaming_child_roots = {flag: (streaming_child_options[streaming_child_options.index(flag) + 1]
                                     if flag in streaming_child_options else None)
-                             for flag in ("--transcripts-dir", "--log-store-root", "--timeshift-snapshot-root")}
+                             for flag in ("--transcripts-dir", "--log-store-root", "--timeshift-snapshot-root",
+                                          "--found-copies-root")}
     streaming_child_roots_pinned = (
         streaming_child_roots["--transcripts-dir"] == str(Path(tmp, "transcripts"))
+        and streaming_child_roots["--found-copies-root"] == FOUND_COPIES_SCRATCH
         and all(streaming_child_roots[flag] is not None and not os.path.exists(streaming_child_roots[flag])
                 for flag in ("--log-store-root", "--timeshift-snapshot-root")))
-    check("streaming child's command line, before it is started: its own transcripts directory, and a log-store "
-          "and Timeshift root that exist on neither machine",
+    check("streaming child's command line, before it is started: its own transcripts directory and found-copies "
+          "folder, and a log-store and Timeshift root that exist on neither machine",
           streaming_child_roots_pinned, "roots: %s" % streaming_child_roots)
     if streaming_child_roots_pinned:
         child = subprocess.Popen(
@@ -3082,10 +3152,16 @@ with tempfile.TemporaryDirectory() as tmp:
                             "--skip", "box", "--skip", "timemachine"],
                            runner=RunsLocallyRefusesSsh([]))
     text = captured.getvalue()
-check("cited query: a log-store file cited in the scp form is FOUND at its own path, exit 0, with its copy command",
-      code == 0 and "log-store       FOUND" in text and "$ cp %s ." % minutes in text
-      and "Recoverable from: log-store." in text,
+copied_lines = [l.strip()[len("copied to "):] for l in text.splitlines() if l.strip().startswith("copied to ")]
+check("cited query: a log-store file cited in the scp form is FOUND at its own path, exit 0, and copied",
+      code == 0 and "log-store       FOUND" in text and "Recoverable from: log-store." in text
+      and len(copied_lines) == 1 and Path(copied_lines[0]).read_text() == "the rulings\n"
+      and "$ cp" not in text,
       "exit=%s\n%s" % (code, text))
+check("cited query: ... and the summary says where the copy went, and that nothing was written anywhere else",
+      any(l.startswith("Copied 1 version(s) into %s: open them there; nothing was written anywhere else"
+                       % os.path.dirname(copied_lines[0] if copied_lines else "")) for l in text.splitlines()),
+      text)
 check("cited query: ... and the header shows the path searched and the form it was given in",
       "Searching every history this fleet keeps for: %s (given as %s)" % (minutes, cited) in text, text)
 
@@ -3106,10 +3182,9 @@ with tempfile.TemporaryDirectory() as tmp:
                                     "--skip", "transcripts", "--skip", "box", "--skip", "timemachine"],
                                    runner=recorded)
             text = captured.getvalue()
-            shown = [l.split("$ ", 1)[1] for l in text.splitlines()
-                     if l.strip().startswith("$ %s " % finder.PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES)]
-            recovered = (subprocess.run(["sh", "-c", shown[0]], capture_output=True, text=True).stdout
-                         if shown else "")
+            shown = [l.strip()[len("copied to "):] for l in text.splitlines()
+                     if l.strip().startswith("copied to ")]
+            recovered = Path(shown[0]).read_text() if shown else ""
         finally:
             os.chdir(directory_before)
         check("cited query: ../a/b.md from a subdirectory, --repo %s, is searched as a/b.md and FOUND in git"
@@ -3117,8 +3192,9 @@ with tempfile.TemporaryDirectory() as tmp:
               code == 0 and "Searching every history this fleet keeps for: a/b.md (given as ../a/b.md)" in text
               and "git             FOUND" in text,
               "exit=%s\n%s" % (code, text))
-        check("cited query: ... and its recovery command, run from that subdirectory, prints the file",
-              shown and shown[0].endswith(":a/b.md") and recovered == "v2\n", "%s -> %r" % (shown, recovered))
+        check("cited query: ... and the copy this run made holds the file",
+              shown and re.fullmatch(r"git-[0-9a-f]{8}-b(-\d+)?\.md", os.path.basename(shown[0]))
+              and recovered == "v2\n", "%s -> %r" % (shown, recovered))
         git_log_calls = [c for c in recorded.calls if c.startswith("git -C ") and " log " in c]
         check("cited query: ... and every git log lookup runs at the repository's top level, not the subdirectory",
               git_log_calls and all(c.startswith("git -C %s log " % top_level) for c in git_log_calls),
@@ -3157,7 +3233,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("log-store: a copy at the wanted path newer than every candidate stands alone, the only file listed",
           report.status == FOUND and [l.split("  ", 1)[1] for l in listed] == [str(exact_copy)]
           and not any(l.startswith("Candidates only") for l in report.lines)
-          and report.recovery == ["cp %s ." % exact_copy],
+          and version_sources(report) == [("file", str(exact_copy))],
           str(report.lines))
     check("log-store: ... and the older candidates are one line, a count and a command that lists every name",
           older_lines == ["(2 older file(s) with 'pr-main-process-design' in their name are candidates only and not"
@@ -3262,6 +3338,67 @@ with tempfile.TemporaryDirectory() as tmp:
           "FOUND" % DASH_NAME,
           "the Mac, from its log-store copy: 1 session transcript(s) mention it" in reports[0].lines,
           str(reports[0].lines))
+
+# --------------------------------------------------------------------------
+# the found-copies folder: what is written, where, and what a failure says
+# --------------------------------------------------------------------------
+
+with tempfile.TemporaryDirectory() as tmp:
+    folder = finder.FoundCopiesFolder(root=tmp, now=1792000000)
+    check("found copies: the folder is <root>/<UTC time of the search to the second>",
+          folder.path == os.path.join(tmp, "2026-10-14T174640Z"), folder.path)
+    check("found copies: a name holding '/' or '..' stays inside the folder",
+          os.path.dirname(folder.destination("../../etc/passwd")) == folder.path
+          and os.path.dirname(folder.destination("a/b/../c.md")) == folder.path
+          and folder.destination("..") == os.path.join(folder.path, "copy"),
+          "%s %s %s" % (folder.destination("../../etc/passwd"), folder.destination("a/b/../c.md"),
+                        folder.destination("..")))
+
+    missing = finder.SurfaceReport("log-store", FOUND, [], versions=[
+        finder.FoundVersion("logstore-x-gone.md", "file", str(Path(tmp, "gone.md")))])
+    finder.copy_found_versions(missing, folder=folder)
+    check("found copies: a version that cannot be read is a 'could NOT copy' line naming it, and nothing is written",
+          missing.copied == [] and len(missing.copy_failures) == 1
+          and any(l.startswith("could NOT copy %s — " % Path(tmp, "gone.md")) and "No such file" in l
+                  for l in missing.lines)
+          and not os.path.exists(folder.path),
+          "%s %s" % (missing.lines, os.path.exists(folder.path)))
+
+    source = Path(tmp, "kept.md")
+    source.write_text("kept\n")
+    blocked_root = Path(tmp, "not-a-directory")
+    blocked_root.write_text("a file where the folder's root would go\n")
+    blocked = finder.FoundCopiesFolder(root=str(blocked_root), now=1792000000)
+    unwritable = finder.SurfaceReport("log-store", FOUND, [], versions=[
+        finder.FoundVersion("logstore-x-kept.md", "file", str(source))])
+    finder.copy_found_versions(unwritable, folder=blocked)
+    check("found copies: a folder that cannot be made is a 'could NOT copy' line saying where it could not write",
+          unwritable.copied == [] and len(unwritable.copy_failures) == 1
+          and any(l.startswith("could NOT copy %s — could not write into %s" % (source, blocked.path))
+                  for l in unwritable.lines),
+          str(unwritable.lines))
+
+    two = finder.SurfaceReport("git", FOUND, [], versions=[
+        finder.FoundVersion("git-aaaaaaaa-x.md", "git", "aaaa:x.md", repo=tmp),
+        finder.FoundVersion("logstore-x-kept.md", "file", str(source))])
+    finder.copy_found_versions(two, folder=folder, fetch=lambda argv: (128, b"", "fatal: bad object aaaa\n"))
+    check("found copies: one failed version does not stop the next from being copied, and the exit is still 0",
+          len(two.copied) == 1 and Path(two.copied[0]).read_text() == "kept\n" and len(two.copy_failures) == 1
+          and any(l == "could NOT copy aaaa:x.md in %s — git exited 128: fatal: bad object aaaa" % tmp
+                  for l in two.lines)
+          and finder.exit_status([two]) == finder.EXIT_FOUND,
+          "%s %s" % (two.lines, finder.exit_status([two])))
+
+    printed_only = finder.SurfaceReport("time machine", FOUND, [], ["mkdir -p x && cp -n a b"])
+    check("found copies: a hit reached only through a printed command exits 0, since the caller holds a way to copy it",
+          finder.exit_status([printed_only]) == finder.EXIT_FOUND, str(finder.exit_status([printed_only])))
+
+code, out, err = finder.fetch_bytes(["definitely-not-a-command-on-this-machine"])
+check("found copies: a fetch whose program is absent reports exit 127 and says so, instead of raising",
+      code == 127 and out == b"" and "not found on this machine" in err, "%s %r %r" % (code, out, err))
+code, out, err = finder.fetch_bytes(["sleep", "5"], timeout=0.2)
+check("found copies: a fetch that runs past its time limit reports exit 124, instead of raising",
+      code == 124 and "timed out after" in err, "%s %r" % (code, err))
 
 print()
 if failures:

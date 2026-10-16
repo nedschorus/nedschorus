@@ -48,6 +48,7 @@ BACKUP_SEARCH_SUMMARY_OPENINGS = (
     "Recoverable from: ", "No surface that could be searched has it.")
 BACKUP_SEARCH_FOUND_EXIT = 0
 BACKUP_SEARCH_INCOMPLETE_EXIT = 3
+BACKUP_SEARCH_FOUND_BUT_NOT_COPIED_EXIT = 4
 
 # Bound hashing cost, the only search cost that grows with file size.
 HASH_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
@@ -1038,10 +1039,15 @@ def run_backup_search_after_nothing_found(query, git_search_complete):
                 f"line): tell the user that the places it did not print were "
                 f"not searched, and do not say the file does not exist."]
     if code == BACKUP_SEARCH_FOUND_EXIT:
-        return ["The backup search found it: before you say it can be "
-                "recovered, check that the place a FOUND line names holds the "
-                "file's content, since a transcript matches whenever the path "
-                "was only typed in it."]
+        return ["The backup search found it: open the copies its \"copied to\" "
+                "lines name, and check that one holds the file's content before "
+                "you say it can be recovered, since a transcript matches whenever "
+                "the path was only typed in it. Restore a copy to the file's own "
+                "path only when asked to."]
+    if code == BACKUP_SEARCH_FOUND_BUT_NOT_COPIED_EXIT:
+        return ["The backup search found it but could not copy any version: "
+                "tell the user what its \"could NOT copy\" lines say, and do not "
+                "say the file does not exist."]
     if code == BACKUP_SEARCH_INCOMPLETE_EXIT:
         return ["Tell the user which places the backup search could NOT "
                 "search, and why: its Could NOT search line names them."]
