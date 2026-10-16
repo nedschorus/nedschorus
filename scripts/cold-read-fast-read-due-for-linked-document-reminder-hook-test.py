@@ -409,6 +409,32 @@ def main():
     check("a file:///Volumes/nedhome link maps to the file under ned-box's home",
           found == [mapped.resolve()], f"found {found!r}")
 
+    # Only the mount itself maps: /Volumes/nedhome-other is another directory.
+    lookalike = fake_home / "-other" / "a.md"
+    lookalike.parent.mkdir(parents=True)
+    lookalike.write_text("x\n")
+    found = hook.find_markdown_file_paths_linked_or_named_in_agent_reply(
+        "[doc](file:///Volumes/nedhome-other/a.md).", None)
+    check("a file:///Volumes/nedhome-other link is not mapped under ned-box's home",
+          found == [], f"found {found!r}")
+
+    # A shared module that will not load is a fault like any other, not a traceback.
+    scratch_root = SUITE_ROOT / "hook-without-its-home-module"
+    (scratch_root / "scripts").mkdir(parents=True)
+    (scratch_root / "nc-systems" / "general-tools").mkdir(parents=True)
+    shutil.copy(HOOK_SCRIPT, scratch_root / "scripts" / HOOK_SCRIPT.name)
+    rule_module = "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py"
+    shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nc-systems" / "general-tools" / rule_module,
+                scratch_root / "nc-systems" / "general-tools" / rule_module)
+    completed = subprocess.run(
+        [sys.executable, str(scratch_root / "scripts" / HOOK_SCRIPT.name)],
+        input="{}", capture_output=True, text=True, timeout=60)
+    check("a shared module that will not load is a fault: exit 1, one stderr line, no output",
+          completed.returncode == 1 and completed.stdout == ""
+          and "made no check" in completed.stderr
+          and len(completed.stderr.strip().splitlines()) == 1,
+          f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
+
     shutil.rmtree(SUITE_ROOT, ignore_errors=True)
     if failures:
         print(f"{len(failures)} case(s) failed")

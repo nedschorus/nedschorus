@@ -61,18 +61,43 @@ import sys
 import tempfile
 from pathlib import Path
 
-_ned_box_home_specification = importlib.util.spec_from_file_location(
-    "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-    / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
-ned_box_home = importlib.util.module_from_spec(_ned_box_home_specification)
-_ned_box_home_specification.loader.exec_module(ned_box_home)
-
 PROGRAM = "ned-box-path-in-agent-reply-unclickable-on-mac-warning-hook"
+FAULT_LINES = (
+    PROGRAM + ": your previous reply was not checked for /home/nedlern/ paths the user cannot "
+    "open on the Mac, because the check failed: {reason}",
+    "When you give the user a ned-box file to open, link the file as "
+    "file:///Volumes/nedhome/<the path after /home/nedlern/>.",
+    "If this failure is reported again on later prompts, tell the user, quoting the first line.",
+)
+
+
+def _load_module_by_path(module_name, path):
+    specification = importlib.util.spec_from_file_location(module_name, path)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def fault_exit(error):
+    reason = f"{type(error).__name__}: {error}"
+    print("\n".join(FAULT_LINES).format(reason=reason), file=sys.stderr)
+    return 1
+
+
+# The patterns below are built from these paths, so a load that fails ends the
+# hook here, reported the way main() reports any other fault.
+try:
+    ned_box_home_path_constants = _load_module_by_path(
+        "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+        Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+        / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+except Exception as error:
+    sys.exit(fault_exit(error))
+
 HIT_LINES_LISTED_AT_MOST = 10
 NOTE_RECORD_DIRECTORY_NAME = "ned-box-path-in-agent-reply-unclickable-on-mac-warning-hook-state"
-NED_BOX_HOME = ned_box_home.NED_BOX_HOME + "/"
-MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home.MAC_MOUNT_OF_NED_BOX_HOME + "/"
+NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME + "/"
+MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME + "/"
 LOG_STORE_DIRECTORY_UNDER_NED_BOX_HOME = "nedschorus-logs/"
 SCP_CITATION_HOST_PREFIX = "nedlern@ned-box:"
 
@@ -108,24 +133,10 @@ HIT_LINE = '"{written}" in "{excerpt}": write {replacement}'
 MORE_HITS_LINE = ("{count} more not listed: reread the rest of the same reply for paths under "
                   "/home/nedlern/ given the same way.")
 SUGGESTED_LINK_TEMPLATE = "[{text}](file://" + MAC_MOUNT_OF_NED_BOX_HOME + "{rest})"
-FAULT_LINES = (
-    PROGRAM + ": your previous reply was not checked for /home/nedlern/ paths the user cannot "
-    "open on the Mac, because the check failed: {reason}",
-    "When you give the user a ned-box file to open, link the file as "
-    "file:///Volumes/nedhome/<the path after /home/nedlern/>.",
-    "If this failure is reported again on later prompts, tell the user, quoting the first line.",
-)
 NOTE_RECORD_FAILED_LINE = (
     PROGRAM + ": its record of the replies it has noted, {record}, could not be {action} "
     "({reason}), so this note may be sent again for the same reply. Nothing needs doing about "
     "the record.")
-
-
-def _load_module_by_path(module_name, path):
-    specification = importlib.util.spec_from_file_location(module_name, path)
-    module = importlib.util.module_from_spec(specification)
-    specification.loader.exec_module(module)
-    return module
 
 
 @functools.lru_cache(maxsize=None)
@@ -304,9 +315,7 @@ def main():
         if output is not None:
             print(output)
     except Exception as error:
-        reason = f"{type(error).__name__}: {error}"
-        print("\n".join(FAULT_LINES).format(reason=reason), file=sys.stderr)
-        return 1
+        return fault_exit(error)
     return 0
 
 

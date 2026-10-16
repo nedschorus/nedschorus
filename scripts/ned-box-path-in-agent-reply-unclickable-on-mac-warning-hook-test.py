@@ -287,6 +287,19 @@ check("as a subprocess, a payload with nothing to check prints nothing and exits
       result.returncode == 0 and result.stdout == "" and result.stderr == "",
       (result.returncode, result.stdout, result.stderr))
 
+scratch_root = SCRATCH / "hook-without-its-home-module"
+(scratch_root / "scripts").mkdir(parents=True)
+shutil.copy(HOOK_PATH, scratch_root / "scripts" / HOOK_PATH.name)
+result = subprocess.run([sys.executable, str(scratch_root / "scripts" / HOOK_PATH.name)],
+                        input="{}", capture_output=True, text=True, timeout=60)
+reason_prefix = hook.FAULT_LINES[0].split("{reason}")[0]
+check("a shared module that will not load is a fault: FAULT_LINES on stderr, "
+      "nothing on stdout, exit 1",
+      result.returncode == 1 and result.stdout == ""
+      and result.stderr.splitlines()[0].startswith(reason_prefix)
+      and result.stderr.splitlines()[1:] == list(hook.FAULT_LINES[1:]),
+      (result.returncode, result.stdout, result.stderr))
+
 try:
     hook.run(json.dumps(prompt_payload(SCRATCH)), ATTENDED, on_ned_box=True)
     raised = None

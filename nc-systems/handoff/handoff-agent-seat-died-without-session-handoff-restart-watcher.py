@@ -103,10 +103,10 @@ MAC_BROWSER_PAGE_OPENER_PROGRAM = REPOSITORY / "scripts" / "open-html-page-in-ma
 _ned_box_home_specification = importlib.util.spec_from_file_location(
     "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
     REPOSITORY / "nc-systems" / "general-tools" / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
-ned_box_home = importlib.util.module_from_spec(_ned_box_home_specification)
-_ned_box_home_specification.loader.exec_module(ned_box_home)
+ned_box_home_path_constants = importlib.util.module_from_spec(_ned_box_home_specification)
+_ned_box_home_specification.loader.exec_module(ned_box_home_path_constants)
 
-LOG_DIRECTORY = Path(ned_box_home.NED_BOX_HOME) / "nedschorus-logs" / PROGRAM
+LOG_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedschorus-logs" / PROGRAM
 STATE_DIRECTORY = Path("~/.local/state/nedschorus").expanduser()
 STATE_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_STATE_DIRECTORY"
 LOG_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_LOG_DIRECTORY"
@@ -125,8 +125,8 @@ CRASH_CONFIRMATION_SECONDS = 50
 RESTART_LIMIT_SECONDS = 3600
 
 # A path in a notice is rewritten to the Mac's mount, so the user can open it there.
-NED_BOX_HOME = ned_box_home.NED_BOX_HOME
-MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home.MAC_MOUNT_OF_NED_BOX_HOME
+NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME
+MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME
 # launch-claude-ubuntu is not on the Mac's PATH; the Mac's checkout holds it.
 MAC_LAUNCHER = "/Users/el/Projects/nedschorus/scripts/launch-claude-ubuntu"
 
