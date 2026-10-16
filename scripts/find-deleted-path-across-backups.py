@@ -130,8 +130,9 @@ than modifying one, and every snapshot this script opens is unmounted again in
 a `finally` — including when the search inside it fails. Each run mounts on a
 mount point named with its own process ID. A snapshot that an ended run of this
 script left on its mount point is unmounted by the next run, which then mounts it
-on its own; one that another live run of this script holds is neither read nor
-unmounted, and is reported as not searched.
+on its own. A snapshot that another live run of this script holds, or that an
+ended run left and that will not unmount, is never read in place, and is
+reported as not searched.
 
 CROSSING THE ROOT WALL, WITH NOBODY IN THE ROOM. The whole of surface 7's
 privilege is that one mount_apfs against the external backup volume. Two things
@@ -706,9 +707,9 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
         )
 
     already_mounted = _local_snapshots_already_mounted(runner)
-    # Clear what ended runs left before reading anything; another live run's mounts are never read, since
-    # that run may unmount one between this run's two tests of it.
-    run_lines, run_release, held_by_live_runs = _clear_mounts_left_by_ended_runs(
+    # Clear what ended runs left before reading anything. Another run's mount is never read in place, since
+    # another live run may unmount it between this run's two tests of it.
+    run_lines, run_release, held_by_other_runs = _clear_mounts_left_by_ended_runs(
         already_mounted, mount_point, runner)
     # An occupied mount point blocks later mounts; it was left by an ended run, so the printed clear is safe.
     occupying = sorted(name for name, where in already_mounted.items() if where == mount_point)
@@ -723,8 +724,8 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
             # Stop after a failed release: later mounts would all fail on the occupied mount point.
             unsearched.append((snapshot, "not reached: " + stuck))
             continue
-        if snapshot in held_by_live_runs:
-            unsearched.append((snapshot, held_by_live_runs[snapshot]))
+        if snapshot in held_by_other_runs:
+            unsearched.append((snapshot, held_by_other_runs[snapshot]))
             continue
         outcome, where, release_failure, read_in_place = _local_snapshot_probe(
             snapshot, probe_path, mount_point, runner, already_mounted.get(snapshot))
@@ -733,7 +734,7 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
             unsearched.append((snapshot, where))
         else:
             searched.append(snapshot)
-            if read_in_place and where != mount_point and _ended_run_process_id(where, mount_point) is None:
+            if read_in_place and where != mount_point:
                 in_place.append(snapshot)
             if outcome == "hit":
                 hits.append((snapshot, where, read_in_place))
@@ -797,9 +798,9 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
         # macOS cannot mount a snapshot twice; recovery must read an existing mount in place.
         # A snapshot another live run holds is still in already_mounted, so it is left out here too.
         reachable = [snapshot for snapshot, _ in unsearched if snapshot not in already_mounted]
-        if not reachable and any(snapshot in held_by_live_runs for snapshot, _ in unsearched):
+        if not reachable and any(snapshot in held_by_other_runs for snapshot, _ in unsearched):
             lines.append("mount_apfs cannot open a snapshot twice, so a snapshot another run of this script "
-                         "has mounted can be searched only after that run ends: run this search again then")
+                         "has mounted can be searched only once that mount is gone: run this search again then")
         elif not reachable:
             lines.append("every snapshot that could not be searched is one macOS already has mounted; "
                          "mount_apfs cannot open a snapshot twice, and macOS's own mounts are not this "
@@ -828,43 +829,46 @@ def _ended_run_process_id(where, mount_point):
 
 
 def _run_of_this_script_is_live(process_id, runner):
-    """Return (live, why): whether process_id is a run of this script that is still running."""
+    """Return (live, why, ps failed): whether process_id is a run of this script that is still running."""
     code, out, stderr = runner(["ps", "-p", str(process_id), "-o", "command="])
     if code == 1 and not out.strip():
-        return False, "process %d has ended" % process_id
+        return False, "process %d has ended" % process_id, False
     if code != 0:
         first = stderr.strip().splitlines()[0] if stderr.strip() else "no error text"
         # Unknown is treated as live: unmounting a live run's snapshot would break its search.
-        return True, "ps could not say whether process %d still runs — ps exited %s: %s" % (process_id, code, first)
+        return (True, "ps could not say whether process %d still runs — ps exited %s: %s"
+                % (process_id, code, first), True)
     if THIS_SCRIPT_NAME in out:
-        return True, "process %d, another run of this script, is still running" % process_id
-    return False, "process %d has ended and its number now belongs to another program" % process_id
+        return True, "process %d, another run of this script, is still running" % process_id, False
+    return False, "process %d has ended and its number now belongs to another program" % process_id, False
 
 
 def _clear_mounts_left_by_ended_runs(already_mounted, mount_point, runner):
     """Unmount snapshots that ended runs of this script left mounted, and remove their empty mount points.
 
     Returns (report lines, clear commands for mounts that would not release, {snapshot: why it is not
-    searched} for snapshots another live run holds). A cleared snapshot is dropped from already_mounted so
-    this run mounts it for itself; one that would not release stays there and is read in place.
+    searched} for snapshots another run's mount still holds). A cleared snapshot is dropped from
+    already_mounted so this run mounts it for itself. One that would not release is not searched: another
+    run reclaiming it at the same time may unmount it between this run's two tests of it.
     """
     lines = []
     release = []
-    held_by_live_runs = {}
+    held_by_other_runs = {}
     head = mount_point.rpartition("-")[0]
     for snapshot, where in sorted(already_mounted.items()):
         process_id = _ended_run_process_id(where, mount_point)
         if process_id is None:
             continue
-        live, why = _run_of_this_script_is_live(process_id, runner)
+        live, why, _ = _run_of_this_script_is_live(process_id, runner)
         if live:
-            held_by_live_runs[snapshot] = "mounted on %s, and %s" % (where, why)
+            held_by_other_runs[snapshot] = "mounted on %s, and %s" % (where, why)
             continue
         code, _, stderr = runner(["diskutil", "unmount", where])
         if code != 0:
             first = stderr.strip().splitlines()[0] if stderr.strip() else "no error text"
-            lines.append("%s was left mounted on %s by a run of this script that ended (%s); this run read it "
-                         "there, since diskutil unmount exited %s: %s" % (snapshot, where, why, code, first))
+            held_by_other_runs[snapshot] = (
+                "left mounted on %s by a run of this script that ended (%s), and diskutil unmount exited %s: %s"
+                % (where, why, code, first))
             release.append(_local_snapshot_clear_mount_point_command(where))
             continue
         del already_mounted[snapshot]
@@ -877,13 +881,18 @@ def _clear_mounts_left_by_ended_runs(already_mounted, mount_point, runner):
         first = stderr.strip().splitlines()[0] if stderr.strip() else "no error text"
         lines.append("could not look for empty mount points that ended runs left in %s — find exited %s: %s"
                      % (os.path.dirname(head), code, first))
-        return lines, release, held_by_live_runs
+        return lines, release, held_by_other_runs
     for left in sorted(out.split()):
         process_id = _ended_run_process_id(left, mount_point)
-        if process_id is None or _run_of_this_script_is_live(process_id, runner)[0]:
+        if process_id is None:
+            continue
+        live, why, ps_failed = _run_of_this_script_is_live(process_id, runner)
+        if ps_failed:
+            lines.append("left the empty mount point %s in place, since %s" % (left, why))
+        if live:
             continue
         lines.extend(_remove_empty_mount_point(left, "an ended run's", runner))
-    return lines, release, held_by_live_runs
+    return lines, release, held_by_other_runs
 
 
 def _remove_empty_mount_point(where, whose, runner):
