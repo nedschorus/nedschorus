@@ -66,10 +66,11 @@ compaction, its dialog and its messages both: what it said since, it still
 holds in context, so those hits only echo the search, but what came before
 the compaction it holds only as a summary. Its last compaction is read from
 its transcript, the live one in ~/.claude/projects when there is one, else
-the log-store's copy; a session never compacted is left out whole, and a
-dialog hit not dated by its turn is left out too, since it cannot be placed
-before or after the compaction. --include-own-session searches all of it, and
-the closing lines say which. Hits
+the log-store's copy. A session never compacted is left out whole; so is one
+whose transcript cannot be found or read, and a FAILED line says why. A hit
+not dated, by its turn or its message, is left out too, since it cannot be
+placed before the compaction, and the closing line counts those.
+--include-own-session searches all of it, and the closing lines say which. Hits
 come newest first, hits with one date in file and line order; --limit (default 30) caps how many are
 shown and --skip passes over the first N, so the closing line says how to see
 the next ones.
@@ -88,8 +89,9 @@ dialogs included, is on ned-box. When the log-store is not on this machine
 and this machine is not ned-box, the program runs ned-box's copy,
 /home/nedlern/Projects/nedschorus/scripts/<this program>, over
 `ssh nedlern@ned-box` with the same arguments, and passes the running
-agent-session's identity and the time of its last compaction, read from the
-Mac's live transcript, which ned-box's copy cannot see. Reading eleven gigabytes of
+agent-session's identity and its last compaction, read from the Mac's live
+transcript, which ned-box's copy cannot see; when the Mac's copy cannot read
+it, it prints a FAILED line after ned-box's output and exits 2. Reading eleven gigabytes of
 transcripts through the Mac's mount /Volumes/nedhome/nedschorus-logs would
 be slow, and ripgrep is not reliably on the Mac's PATH.
 
@@ -192,6 +194,10 @@ TRANSCRIPT_TAIL_BYTES = 64 * 1024
 OWN_SESSION_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 LIVE_TRANSCRIPTS_DIRECTORY = Path.home() / ".claude" / "projects"
 COMPACTION_SUBTYPE = "compact_boundary"
+# What the Mac's copy tells ned-box's copy, besides a compaction's timestamp.
+NEVER_COMPACTED = "never"
+COMPACTION_UNKNOWN = "unknown"
+COMPACTION_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z")
 NOT_FOUND_IN_TRANSCRIPT_NOTE = "session's last activity: its turn was not found in the transcript"
 
 
@@ -441,12 +447,32 @@ def session_transcript(root, hit):
     return root / "transcripts" / hit["machine"] / "projects" / hit["project_key"] / f"{session_id}.jsonl"
 
 
-def own_session_transcript(session_id, root):
+def listed_directories(directory, failures):
+    """The directories in directory, sorted; none when it does not exist; a listing that fails is a failure."""
+    try:
+        return sorted(Path(entry.path) for entry in os.scandir(directory) if entry.is_dir())
+    except FileNotFoundError:
+        return []
+    except OSError as error:
+        failures.append(f"could not list {directory} to find this agent-session's transcript: {error}")
+        return []
+
+
+def own_session_transcript(session_id, root, failures):
     """The running agent-session's transcript: the live one on this machine, else the log-store's copy, or None."""
-    for directory in (LIVE_TRANSCRIPTS_DIRECTORY, root / "transcripts"):
-        pattern = f"*/{session_id}.jsonl" if directory == LIVE_TRANSCRIPTS_DIRECTORY else f"*/projects/*/{session_id}.jsonl"
-        for path in sorted(directory.glob(pattern)):
-            return path
+    project_directories = listed_directories(LIVE_TRANSCRIPTS_DIRECTORY, failures)
+    project_directories += [projects for machine in listed_directories(root / "transcripts", failures)
+                            for projects in listed_directories(machine / "projects", failures)]
+    for directory in project_directories:
+        path = directory / f"{session_id}.jsonl"
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            failures.append(f"could not look for this agent-session's transcript at {path}: {error}")
+            continue
+        return path
     return None
 
 
@@ -470,26 +496,40 @@ def last_compaction_time(transcript):
 
 
 def own_session_compaction(session_id, root, failures):
-    """The time before which the running agent-session's records are searched, or "" to leave it all out."""
-    transcript = own_session_transcript(session_id, root)
+    """The running agent-session's last compaction: its timestamp, NEVER_COMPACTED, or COMPACTION_UNKNOWN
+    when its transcript was not found or could not be read, which failures then says."""
+    transcript = own_session_transcript(session_id, root, failures)
     if transcript is None:
-        return ""
+        failures.append(f"found no transcript of this agent-session, {session_id}, under "
+                        f"{LIVE_TRANSCRIPTS_DIRECTORY} or {root / 'transcripts'}, so its last compaction is "
+                        f"unknown and all of its records were left out")
+        return COMPACTION_UNKNOWN
     try:
-        return last_compaction_time(transcript)
+        return last_compaction_time(transcript) or NEVER_COMPACTED
     except OSError as error:
         failures.append(f"could not read this agent-session's transcript {transcript} to find its last "
                         f"compaction, so all of its records were left out: {error}")
-        return ""
+        return COMPACTION_UNKNOWN
 
 
-def left_out_as_own_session(hit, own_session, compacted_at):
-    """Whether a hit is the running agent-session's, from after its last compaction or not placeable before it."""
+def compaction_argument(text):
+    if text in (NEVER_COMPACTED, COMPACTION_UNKNOWN) or COMPACTION_TIMESTAMP.fullmatch(text):
+        return text
+    raise argparse.ArgumentTypeError(f"expected a UTC timestamp, {NEVER_COMPACTED} or {COMPACTION_UNKNOWN}")
+
+
+def own_session_hit_date(hit, own_session):
+    """None when the hit is not the running agent-session's; else the date that places it, "" when none does."""
     if not own_session or hit["kind"] not in (SESSION_DIALOGS, USER_MESSAGES):
-        return False
+        return None
     if session_id_of(hit["path"]) != own_session:
-        return False
-    date = hit.get("turn_date") if hit["kind"] == SESSION_DIALOGS else hit["date"]
-    return not date or date >= compacted_at
+        return None
+    return hit.get("turn_date") if hit["kind"] == SESSION_DIALOGS else hit["date"]
+
+
+def compacted_before(date, compacted_at):
+    """Whether a record dated `date` came before a compaction at `compacted_at`, which is a timestamp."""
+    return bool(date) and date < compacted_at
 
 
 def session_id_of(path):
@@ -502,12 +542,12 @@ def session_id_of(path):
 _extractor_in_this_process = None
 
 
-def written_without_subagent_turns(lines, extractor):
-    """Whether a written dialog holds the section saying the subagent tracker failed when it was written."""
+def left_out_sections(lines, extractor):
+    """How many times the lines hold the section saying the subagent tracker failed: its heading, then its note."""
     heading = "## " + extractor.SUBAGENT_HEADINGS[extractor.SUBAGENT_TURNS_LEFT_OUT_KIND]
     opening = extractor.subagent_turns_left_out_turn(RuntimeError())["text"].split(":", 1)[0]
-    return any(line == heading and lines[number + 2].startswith(opening)
-               for number, line in enumerate(lines[:-2]))
+    return sum(1 for number, line in enumerate(lines[:-2])
+               if line == heading and lines[number + 2].startswith(opening))
 
 
 def dialog_line_turn_times(transcript_text, dialog_text, line_numbers):
@@ -533,7 +573,9 @@ def dialog_line_turn_times(transcript_text, dialog_text, line_numbers):
         return {}, (f"could not date the hits in the session dialog {dialog_text} by their turns, since the "
                     f"dialog built again from {transcript_text} lacks its subagent turns: "
                     f"{' '.join(left_out_notes)}")
-    if written_without_subagent_turns(written, _extractor_in_this_process):
+    # The dialog built again holds the section only where a turn quotes it, since its tracker did not fail.
+    if left_out_sections(written, _extractor_in_this_process) > left_out_sections(
+            [line for line, _ in built], _extractor_in_this_process):
         return {}, (f"could not date the hits in the session dialog {dialog_text} by their turns, since it "
                     f"was written while the subagent tracker failed and lacks the subagent turns the dialog "
                     f"built again from {transcript_text} holds; the dialogs refresher, "
@@ -827,7 +869,7 @@ def newest_first_results(paths, pattern, since, until, jobs):
 
 
 def user_message_hits(root, candidates, pattern, since, until, jobs, page_size, other_dates, failures,
-                      own_session="", compacted_at=""):
+                      own_session="", compacted_at="", own_undated=None):
     """Hits among the user's typed messages; and whether older transcripts were left unread.
 
     Transcripts are read newest first by modification time. Once page_size hits are in hand
@@ -846,7 +888,9 @@ def user_message_hits(root, candidates, pattern, since, until, jobs, page_size, 
     try:
         for index, (found_messages, error) in enumerate(reader):
             if own_session and readable[index][0].stem == own_session:
-                found_messages = [each for each in found_messages if each[0] and each[0] < compacted_at]
+                if own_undated is not None:
+                    own_undated += [each for each in found_messages if not each[0]]
+                found_messages = [each for each in found_messages if compacted_before(each[0], compacted_at)]
             results[readable[index][0]] = (found_messages, error)
             for date, _ in found_messages:
                 if page_size:
@@ -930,10 +974,11 @@ def argument_parser():
                         help="read transcripts in N processes (default: one per core); 1 reads them in this one")
     parser.add_argument("--skip", type=int, default=0, metavar="N", help="pass over the newest N hits")
     parser.add_argument("--include-own-session", action="store_true",
-                        help=f"also search the agent-session running this search, which ${OWN_SESSION_VARIABLE} "
-                             f"names and which is left out by default")
+                        help=f"also search what the agent-session running this search, which "
+                             f"${OWN_SESSION_VARIABLE} names, said since its last compaction, or all it said "
+                             f"when it was never compacted; left out by default")
     parser.add_argument("--own-session", metavar="SESSION_ID", default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--own-session-compacted-at", metavar="TIMESTAMP", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--own-session-compacted-at", type=compaction_argument, default=None, help=argparse.SUPPRESS)
     return parser
 
 
@@ -947,14 +992,18 @@ def main(argv=None):
     if not root.is_dir():
         if this_machine() != NED_BOX_HOSTNAME:
             forwarded = list(arguments)
+            mac_failures = []
             if parsed.own_session is None and not parsed.include_own_session:
                 # ned-box's copy cannot see this machine's environment or live transcripts. Put first, since
                 # after a -- it would be read as the pattern.
-                compacted_at = own_session_compaction(own_session, root, []) if own_session else ""
+                compaction = own_session_compaction(own_session, root, mac_failures) if own_session else ""
                 forwarded = (["--own-session", own_session]
-                             + (["--own-session-compacted-at", compacted_at] if compacted_at else [])
+                             + (["--own-session-compacted-at", compaction] if compaction else [])
                              + forwarded)
-            return run_on_ned_box_over_ssh(forwarded)
+            exit_code = run_on_ned_box_over_ssh(forwarded)
+            for failure in mac_failures:
+                print(f"FAILED: on {this_machine()}, {failure}.", file=sys.stderr)
+            return EXIT_FAILED if mac_failures else exit_code
         print(f"FAILED: there is no log-store at {root} on {this_machine()}, so nothing was searched.\n"
               f"The log-store is on ned-box at {DEFAULT_LOG_STORE_ROOT}; run this program there.",
               file=sys.stderr)
@@ -966,12 +1015,14 @@ def main(argv=None):
     page_size = parsed.skip + parsed.limit if parsed.limit > 0 else 0
     file_failures, user_failures = [], []
     stopped_early = False
-    compacted_at = ""
+    compaction = ""
     if own_session:
-        compacted_at = (parsed.own_session_compacted_at if parsed.own_session_compacted_at
-                        else own_session_compaction(own_session, root, file_failures))
-    # A session never compacted is left out whole before its records are read; else after they are dated.
+        compaction = (parsed.own_session_compacted_at if parsed.own_session_compacted_at is not None
+                      else own_session_compaction(own_session, root, file_failures))
+    compacted_at = compaction if compaction not in ("", NEVER_COMPACTED, COMPACTION_UNKNOWN) else ""
+    # A session not known to be compacted is left out whole before its records are read; else after they are dated.
     left_out_whole = "" if compacted_at else own_session
+    own_undated = []
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as threads:
             file_search = threads.submit(
@@ -982,13 +1033,18 @@ def main(argv=None):
             transcript_search = (threads.submit(transcript_candidates, root, parsed.pattern, parsed.seat,
                                                 parsed.machine, parsed.since, user_failures, left_out_whole)
                                  if USER_MESSAGES in kinds else None)
-            hits = [hit for hit in file_search.result()
-                    if not left_out_as_own_session(hit, own_session, compacted_at)]
+            hits = []
+            for hit in file_search.result():
+                date = own_session_hit_date(hit, own_session)
+                if date is None or compacted_before(date, compacted_at):
+                    hits.append(hit)
+                elif not date:
+                    own_undated.append(hit)
             candidates = transcript_search.result() if transcript_search else None
         if candidates:
             found, stopped_early = user_message_hits(
                 root, candidates, parsed.pattern, parsed.since, parsed.until, parsed.jobs, page_size,
-                [hit["date"] for hit in hits], user_failures, own_session, compacted_at)
+                [hit["date"] for hit in hits], user_failures, own_session, compacted_at, own_undated)
             hits += found
     except RipgrepMissing as missing:
         print(f"FAILED: ripgrep ({missing}) is not installed on {this_machine()}, so nothing was searched.\n"
@@ -1019,12 +1075,17 @@ def main(argv=None):
     if parsed.include_own_session:
         pass
     elif own_session and compacted_at:
+        undated = (f", except {len(own_undated)} hit(s) that could not be dated and so placed before it, "
+                   f"which were left out too" if own_undated else "")
         print(f"Left out this agent-session's records since its last compaction at {compacted_at}, session "
-              f"{own_session}, which it still holds in context; its records before then were searched; "
+              f"{own_session}, which it still holds in context; its records before then were searched{undated}; "
               f"--include-own-session searches them all.")
+    elif own_session and compaction == NEVER_COMPACTED:
+        print(f"Left out this agent-session's own records, session {own_session}, since its transcript shows no "
+              f"compaction and it still holds them in context; --include-own-session searches them too.")
     elif own_session:
-        print(f"Left out this agent-session's own records, session {own_session}, since it has not been "
-              f"compacted and still holds them in context; --include-own-session searches them too.")
+        print(f"Left out this agent-session's own records, session {own_session}, all of them, since its last "
+              f"compaction is unknown, as a FAILED line says; --include-own-session searches them too.")
     else:
         print(f"This agent-session could not be identified, since ${OWN_SESSION_VARIABLE} is not set, "
               f"so its own records, if any, are among the hits.")
