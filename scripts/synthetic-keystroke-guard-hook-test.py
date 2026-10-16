@@ -433,6 +433,10 @@ for case_name, command in [
      "ssh ned-box 'cat < f | bash' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
     ("a heredoc fed to ssh host 'bash -s < setup.sh' is not read: bash reads setup.sh",
      "ssh ned-box 'bash -s < setup.sh' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to ssh host 'bash 1>&2</dev/null' is not read: the 2 is >&'s target, so bash reads /dev/null",
+     "ssh ned-box 'bash 1>&2</dev/null' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
+    ("a heredoc fed to ssh host 'bash 1>&2\\<newline></dev/null' is not read: bash reads /dev/null",
+     "ssh ned-box 'bash 1>&2\\\n</dev/null' <<'EOF'\ntmux send-keys -t gatekeeper Enter\nEOF"),
 ]:
     runner = StubRunner(stdout="1\n")
     check(case_name, decide(command, runner) is None and not runner.calls, runner.calls)

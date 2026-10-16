@@ -362,7 +362,7 @@ for command, expected in [
     ("zzp >&- a\nzzq b", [(["zzp", "a"], [(">&-", "")]), (["zzq", "b"], [])]),
     ("zzq <&- \n\\\n \"x y\"", [(["zzq"], [("<&-", "")]), (["x y"], [])]),
     ("zzp 2>&- 0<&- a", [(["zzp", "a"], [("2>&-", ""), ("0<&-", "")])]),
-    ("zzp 2>f \\ 2>&-", [(["zzp", " 2"], [("2>", "f"), ("2>&-", "")])]),
+    ("zzp 2>f \\ 2>&-", [(["zzp", " 2"], [("2>", "f"), (">&-", "")])]),
     # Escaped blanks after a closing operator start a word, since it has no target to continue.
     ("zzq <&- ''\\ ;", [(["zzq", " "], [("<&-", "")])]),
     ("zzq >&-\\\t", [(["zzq", "\t"], [(">&-", "")])]),
@@ -411,6 +411,29 @@ for command, expected in [
     found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
     check(f"a descriptor is decimal digits touching the operator once line continuations are removed, "
           f"as bash reads it: {command!r}", found == expected, found)
+# bash reads digits as a descriptor only when they are a whole token: what touches their left, once
+# line continuations are removed, joins them to a word, and digits right after >& or <& are its target.
+for command, expected in [
+    ("env -u \\ 0\\\n</dev/null zzp push --force origin br",
+     [(["env", "-u", " 0", "zzp", "push", "--force", "origin", "br"], [("<", "/dev/null")])]),
+    ("env -u \\\t0\\\n</dev/null zzp push --force origin br",
+     [(["env", "-u", "\t0", "zzp", "push", "--force", "origin", "br"], [("<", "/dev/null")])]),
+    ("env -u \\ 0</dev/null zzp", [(["env", "-u", " 0", "zzp"], [("<", "/dev/null")])]),
+    ("env -u ' '0\\\n</dev/null zzp", [(["env", "-u", " 0", "zzp"], [("<", "/dev/null")])]),
+    ("zzp 'a'4>f", [(["zzp", "a4"], [(">", "f")])]),
+    ("zzp a\\\n\\\n4>f x", [(["zzp", "a4", "x"], [(">", "f")])]),
+    ("bash 1>&2\\\n</dev/null", [(["bash"], [("1>&", "2"), ("<", "/dev/null")])]),
+    ("bash 1>&2</dev/null", [(["bash"], [("1>&", "2"), ("<", "/dev/null")])]),
+    ("bash 0<&3</dev/null", [(["bash"], [("0<&", "3"), ("<", "/dev/null")])]),
+    ("zzp a>&2\\\n4>f", [(["zzp", "a"], [(">&", "24"), (">", "f")])]),
+    ("zzp push -f\\\n4>/dev/null origin br", [(["zzp", "push", "-f4", "origin", "br"], [(">", "/dev/null")])]),
+    ("-f\\\n4>/dev/null zzp b", [(["-f4", "zzp", "b"], [(">", "/dev/null")])]),
+    ("zzp 1\\\\\n2>f", [(["zzp", "1\\"], [])]),
+    ("zzp a;2>f b", [(["zzp", "a"], []), (["b"], [("2>", "f")])]),
+]:
+    found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
+    check(f"digits are a descriptor only when they are a whole token, as bash reads them: {command!r}",
+          found == expected, found)
 found = [(list(words), words.redirects) for words in reader.simple_commands("zzp 2>&1>f")]
 check("a number that is a redirection's first target stays its target, though the next redirection touches it",
       found and found[0][1][0] == ("2>&", "1"), found)
