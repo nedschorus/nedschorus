@@ -295,7 +295,8 @@ reflog, transcripts and Timeshift answer the fragment forms; the log-store
 lists by the file's name, whatever form it was given in, and counts as found
 only a copy whose path ends with the form given.
 
-Exit code: 0 when at least one surface FOUND it. 1 when every surface that ran
+Exit code: 0 when at least one version FOUND was copied into the found-copies
+folder. 1 when every surface that ran
 was searched and none has it — the only exit that means "stop looking", once
 any log-store candidates the summary names have been checked. 3 when
 nothing was found and at least one surface could NOT be searched: the same
@@ -306,9 +307,9 @@ surface answerable with nobody in the room. 4 when a surface FOUND it
 but no version was copied into the found-copies folder and no printed command
 copies one, as when every copy failed or the only hit is a transcript: the
 FOUND lines say what was found. 5 when nothing was copied but a printed
-command, such as a mount that needs the user's password, copies a version
-into the folder. 0 only when at least one version was copied. 2 on a usage
-error. The first
+command, such as a snapshot mount, copies a version into the folder; the
+summary says which such commands the agent runs and which go to the user
+because their sudo may ask for his password. 2 on a usage error. The first
 version returned 1 for the third case too, so a wrapper branching on $? was
 told "not found" by a run that had searched nothing. Log-store candidates
 never count toward 0: the summary names them on a line of their own instead,
@@ -405,7 +406,8 @@ BOX_TRANSCRIPTS_DIR_MISSING = 3
 class SurfaceReport:
     """One surface's result and recovery instructions."""
 
-    def __init__(self, surface, status, lines=None, recovery=None, versions=None, prints_copy_command=False):
+    def __init__(self, surface, status, lines=None, recovery=None, versions=None, prints_copy_command=False,
+                 copy_command_may_ask_password=False):
         self.surface = surface
         self.status = status
         self.lines = list(lines or [])
@@ -413,6 +415,8 @@ class SurfaceReport:
         # True only when a recovery command copies a version into the found-copies folder; a transcript's
         # context print or a bare unmount is a recovery line that copies nothing.
         self.prints_copy_command = prints_copy_command
+        # True when that command's sudo may stop for the user's password, so only he can run it.
+        self.copy_command_may_ask_password = copy_command_may_ask_password
         # Each FoundVersion this run copies into the found-copies folder after the surface finishes.
         self.versions = list(versions or [])
         self.copied = []
@@ -1586,6 +1590,8 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
             searched.append(snapshot)
         else:
             unsearched.append((snapshot, detail))
+    # Only the sudoers rule makes the printed `sudo mount_apfs` run without a password; a warm credential expires.
+    rule_carried_it = can_sudo != 0 and not prompt_for_root
     if can_sudo == 0:
         how = "with an already-warm sudo"
     elif prompt_for_root:
@@ -1605,7 +1611,7 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
         return SurfaceReport("time machine", FOUND, lines,
                              _time_machine_manual_recovery(hits[0][0], device, hits[0][1],
                                                            clear_first=bool(stuck)),
-                             prints_copy_command=True)
+                             prints_copy_command=True, copy_command_may_ask_password=not rule_carried_it)
     if searched:
         lines.append("searched %s and did not find it" % ", ".join(searched))
     if unsearched:
@@ -1947,10 +1953,18 @@ def render_summary(reports):
             out.append("Could NOT copy every version %s found: see each one's \"could NOT copy\" line above."
                        % ", ".join(not_copied))
         if not copied:
-            commands = [r.surface for r in found if r.prints_copy_command]
-            if commands:
-                out.append("Nothing was copied yet: the command printed under %s copies a version into %s "
-                           "when it is run." % (", ".join(commands), found_copies_folder().path))
+            agent_runs = [r.surface for r in found if r.prints_copy_command and not r.copy_command_may_ask_password]
+            user_runs = [r.surface for r in found if r.prints_copy_command and r.copy_command_may_ask_password]
+            if agent_runs or user_runs:
+                steps = []
+                if agent_runs:
+                    steps.append("run the command printed under %s yourself, since it asks for no password"
+                                 % ", ".join(agent_runs))
+                if user_runs:
+                    steps.append("give the user the command printed under %s, since its sudo may ask for his "
+                                 "password" % ", ".join(user_runs))
+                out.append("Nothing was copied yet: %s. Each copies a version into %s."
+                           % ("; ".join(steps), found_copies_folder().path))
             else:
                 out.append("No version was copied: what was found is only what each FOUND surface's lines "
                            "above say.")

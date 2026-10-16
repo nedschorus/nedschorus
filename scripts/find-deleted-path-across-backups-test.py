@@ -230,6 +230,11 @@ check("the found-copies folder is the scratch root the environment names, under 
 check("... and that printed mount-and-copy counts as a copy command, so the run exits 5 until it is run",
       report.prints_copy_command and finder.exit_status([report]) == finder.EXIT_FOUND_COPY_COMMAND_PRINTED,
       "%s %s" % (report.prints_copy_command, finder.exit_status([report])))
+check("... and the agent runs that command itself, since it asks for no password",
+      not report.copy_command_may_ask_password
+      and "Nothing was copied yet: run the command printed under local snapshots yourself, since it asks for no "
+          "password. Each copies a version into" in finder.render_summary([report]),
+      finder.render_summary([report]))
 check("no sudo is asked for anywhere on this surface — that is its entire point",
       not any("sudo" in c for c in local_hit.calls) and not any("sudo" in c for c in report.recovery),
       "%s %s" % (local_hit.calls, report.recovery))
@@ -2836,8 +2841,11 @@ code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "localsnapshots", 
 check("--prompt-for-root reaches the Time Machine surface from the command line",
       code == finder.EXIT_FOUND_COPY_COMMAND_PRINTED and "Recoverable from: time machine." in text,
       "exit=%s\n%s" % (code, text))
-check("... and a Time Machine hit, copied by no one yet, says the printed command copies it",
-      "Nothing was copied yet: the command printed under time machine copies a version into" in text, text)
+check("... and a Time Machine hit reached with --prompt-for-root sends its printed command to the user, "
+      "since its sudo may ask for his password",
+      "Nothing was copied yet: give the user the command printed under time machine, since its sudo may ask "
+      "for his password. Each copies a version into" in text
+      and "yourself" not in text, text)
 
 code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "localsnapshots", "--skip", "git", "--skip", "reflog",
                        "--skip", "transcripts", "--skip", "box"], FakeRunner(COLD_THEN_PROMPTED))
@@ -2996,6 +3004,10 @@ check("... and the report names the rule as what carried it, not a warm credenti
       any("the sudoers rule is installed" in l for l in report.lines)
       and not any("already-warm" in l for l in report.lines),
       str(report.lines))
+check("... and since the rule lets its printed sudo mount run with no password, the agent runs it itself",
+      report.prints_copy_command and not report.copy_command_may_ask_password
+      and "run the command printed under time machine yourself" in finder.render_summary([report]),
+      finder.render_summary([report]))
 
 rule_installed_run = FakeRunner(RULE_INSTALLED + [
     ("rev-parse --git-dir", (0, ".git\n", "")),

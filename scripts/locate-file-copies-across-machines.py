@@ -1051,11 +1051,12 @@ def run_backup_search_after_nothing_found(query, git_search_complete):
                 "or a transcript where the path may only have been typed, and do "
                 "not say the file does not exist."]
     if code == BACKUP_SEARCH_FOUND_COPY_COMMAND_PRINTED_EXIT:
-        return ["The backup search found it but copied nothing yet: the command "
-                "it printed under the FOUND surface copies a version into its "
-                "found-copies folder. Give the user that command, which needs "
-                "him, such as a mount that asks for his password, and do not say "
-                "the file does not exist."]
+        return ["The backup search found it but copied nothing yet: each "
+                "command it printed under a FOUND surface copies a version into "
+                "its found-copies folder. Its \"Nothing was copied yet\" line says "
+                "which commands you run yourself and which you give the user "
+                "because their sudo may ask for his password; do as it says, and "
+                "do not say the file does not exist."]
     if code == BACKUP_SEARCH_INCOMPLETE_EXIT:
         return ["Tell the user which places the backup search could NOT "
                 "search, and why: its Could NOT search line names them."]

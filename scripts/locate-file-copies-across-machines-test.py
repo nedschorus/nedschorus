@@ -699,10 +699,12 @@ with scratch() as directory:
           and "open the copies" not in output.rstrip().splitlines()[-1], output)
     code, output, runs = handed("never-anywhere.md", backup_mode="copy-command-printed")
     check("when the backup search copied nothing but printed a copy command, "
-          "the last line says to give the user that command",
+          "the last line sends the agent to the summary that says who runs "
+          "each command, not to the user for every one",
           code == 1 and output.rstrip().splitlines()[-1].startswith(
-              "The backup search found it but copied nothing yet: the command "
-              "it printed under the FOUND surface copies a version"), output)
+              "The backup search found it but copied nothing yet: each "
+              "command it printed under a FOUND surface copies a version")
+          and "which commands you run yourself" in output.rstrip().splitlines()[-1], output)
     code, output, runs = handed("never-anywhere.md", backup_mode="incomplete")
     check("when the backup search could not search a place, the last line "
           "says to tell the user which, and why",
