@@ -2670,6 +2670,21 @@ check("... and the walk stops rather than filing every later candidate under the
 check("... and the command that frees the mount point comes back with the report",
       "diskutil unmount " + TM_MOUNT in report.recovery, str(report.recovery))
 
+# A failed release is reported even when an earlier candidate is already unsearched, since its mount was
+# refused: the clear command at the head of the recovery needs that line to explain it.
+tm_refused_then_stuck = TimeMachineReleaseFailsRunner(WARM + [
+    ("mount_apfs -o ro -s com.apple.TimeMachine.2026-08-13-183101.backup", (1, "", "mount_apfs: Resource busy\n")),
+    ("sudo -n mount_apfs", (0, "", "")),
+    (TM_FIND, (0, "", "")),
+])
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=tm_refused_then_stuck)
+check("a Time Machine release that fails after an earlier candidate's mount was refused is still named",
+      any(l.startswith("could not search com.apple.TimeMachine.2026-08-13-183101.backup") for l in report.lines)
+      and any(" stayed mounted on " + TM_MOUNT in l and "Resource busy" in l and not l.startswith("could not")
+              for l in report.lines)
+      and report.recovery[:1] == ["diskutil unmount " + TM_MOUNT],
+      "%s %s" % (report.lines, report.recovery))
+
 tm_one_refused = FakeRunner(WARM + [
     ("mount_apfs -o ro -s com.apple.TimeMachine.2026-08-13-183101.backup", (1, "", "mount_apfs: Resource busy\n")),
     ("sudo -n mount_apfs", (0, "", "")),
