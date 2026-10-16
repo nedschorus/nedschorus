@@ -105,6 +105,7 @@ exists in the form reviewed.
 """
 
 import argparse
+import collections
 import datetime
 import hashlib
 import importlib.util
@@ -117,6 +118,7 @@ import subprocess
 import sys
 import time
 import typing
+import urllib.parse
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 _record_names_spec = importlib.util.spec_from_file_location(
@@ -356,20 +358,38 @@ def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Pat
     return record_dir
 
 
+# A link ends where Markdown, HTML or a quote closes it.
+URL_BODY = r"[^\s)\]>\"'`<]+"
+MAC_MOUNT_OF_NED_BOX_HOME = "/Volumes/nedhome/"
+NED_BOX_HOME = "/home/nedlern/"
+
+
 def reference_integrity_pre_pass(target: pathlib.Path, record_dir: pathlib.Path) -> None:
     """Save unresolved references as leads for the reviewer."""
+    raw_text = target.read_text(encoding="utf-8")
+    file_link_paths = sorted({urllib.parse.unquote(path)
+                              for path in re.findall(r"file://(/" + URL_BODY + ")", raw_text)})
     # A URL's tail looks like a path, so URLs are removed before matching.
-    text = re.sub(r"[A-Za-z][A-Za-z0-9+.-]*://\S+", " ", target.read_text(encoding="utf-8"))
+    text = re.sub(r"[A-Za-z][A-Za-z0-9+.-]*://" + URL_BODY, " ", raw_text)
     # A filename can contain more than one dot.
     candidates = sorted(set(re.findall(
         r"[\w./-]+/[\w./-]+|[\w-]+(?:\.[\w-]+)*\.(?:md|py|sh|json|yaml|toml)",
         text)))
-    # Prose names a file by its bare name wherever the file lives.
+    # Prose names a file by its bare name wherever the file lives, and a draft
+    # names files it adds before they are committed.
     listing = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "ls-files"], capture_output=True, text=True,
+        ["git", "-C", str(REPO_ROOT), "ls-files", "--cached", "--others", "--exclude-standard"],
+        capture_output=True, text=True,
         env=git_redirecting_removal.environment_without_git_redirecting_variables())
-    tracked_names = {pathlib.PurePosixPath(path).name for path in listing.stdout.splitlines()}
+    name_counts = collections.Counter(
+        pathlib.PurePosixPath(path).name for path in listing.stdout.splitlines())
     lines = ["# Reference-integrity pre-pass", ""]
+    for path in file_link_paths:
+        # Links written for the Mac name ned-box's home through its mount.
+        resolved = pathlib.Path(path).exists() or (
+            path.startswith(MAC_MOUNT_OF_NED_BOX_HOME)
+            and pathlib.Path(NED_BOX_HOME + path[len(MAC_MOUNT_OF_NED_BOX_HOME):]).exists())
+        lines.append(f"- {'ok' if resolved else 'UNRESOLVED'}: `{path}`")
     if listing.returncode != 0:
         # The pre-pass is a lead for the reviewer, so it goes on without the lookup.
         lines += [f"- bare file names were not looked up: git ls-files exited"
@@ -377,10 +397,12 @@ def reference_integrity_pre_pass(target: pathlib.Path, record_dir: pathlib.Path)
     for candidate in candidates:
         # Strip trailing punctuation only; leading dots belong to paths.
         clean = candidate.rstrip(".,;:")
-        resolved = ((REPO_ROOT / clean).exists() or (target.parent / clean).exists()
-                    or ("/" not in clean and clean in tracked_names))
-        lines.append(f"- {'ok' if resolved else 'UNRESOLVED'}: `{clean}`")
-    if not candidates:
+        resolved = (REPO_ROOT / clean).exists() or (target.parent / clean).exists()
+        sharing = name_counts[clean] if "/" not in clean else 0
+        # A bare name names a file only when one file has it.
+        note = f" ({sharing} files have this name)" if not resolved and sharing > 1 else ""
+        lines.append(f"- {'ok' if resolved or sharing == 1 else 'UNRESOLVED'}: `{clean}`{note}")
+    if not candidates and not file_link_paths:
         lines.append("- no path-like references found")
     (record_dir / "reference-check.md").write_text(
         "\n".join(lines) + "\n", encoding="utf-8")

@@ -1263,6 +1263,65 @@ with tempfile.TemporaryDirectory() as scratch:
     check("reference pre-pass: a missing path is UNRESOLVED",
           "- UNRESOLVED: `nc-systems/cold-read/no-such-file.py`" in reference_lines,
           repr(reference_lines))
+    link_followed_by_path_target = reference_directory / "link-then-path.md"
+    link_followed_by_path_target.write_text(
+        "[PR 661](https://github.com/nedschorus/nedschorus/pull/661)nc-systems/cold-read/"
+        "no-such-file-after-link.py\n", encoding="utf-8")
+    grid_module.reference_integrity_pre_pass(link_followed_by_path_target, reference_directory)
+    reference_lines = (reference_directory / "reference-check.md").read_text(
+        encoding="utf-8").splitlines()
+    check("reference pre-pass: a path written straight after a link's closing parenthesis is listed",
+          "- UNRESOLVED: `nc-systems/cold-read/no-such-file-after-link.py`" in reference_lines,
+          repr(reference_lines))
+    existing_file_link = reference_directory / "linked file.md"
+    existing_file_link.write_text("linked\n", encoding="utf-8")
+    file_link_target = reference_directory / "file-links.md"
+    file_link_target.write_text(
+        f"[ok](file://{str(existing_file_link).replace(' ', '%20')}) and"
+        f" [broken](file://{reference_directory}/no-such-linked-file.md) and"
+        " [mac](file:///Volumes/nedhome/no-such-directory-under-the-home/x.md)\n",
+        encoding="utf-8")
+    grid_module.reference_integrity_pre_pass(file_link_target, reference_directory)
+    reference_lines = (reference_directory / "reference-check.md").read_text(
+        encoding="utf-8").splitlines()
+    check("reference pre-pass: a file link to an existing file is ok",
+          f"- ok: `{existing_file_link}`" in reference_lines, repr(reference_lines))
+    check("reference pre-pass: a file link to a missing file is UNRESOLVED",
+          f"- UNRESOLVED: `{reference_directory}/no-such-linked-file.md`" in reference_lines,
+          repr(reference_lines))
+    check("reference pre-pass: a broken /Volumes/nedhome file link is UNRESOLVED",
+          "- UNRESOLVED: `/Volumes/nedhome/no-such-directory-under-the-home/x.md`"
+          in reference_lines, repr(reference_lines))
+    with mock.patch.object(grid_module, "NED_BOX_HOME", str(reference_directory) + "/"):
+        mac_link_target = reference_directory / "mac-link.md"
+        mac_link_target.write_text(
+            "[mac](file:///Volumes/nedhome/linked%20file.md)\n", encoding="utf-8")
+        grid_module.reference_integrity_pre_pass(mac_link_target, reference_directory)
+    reference_lines = (reference_directory / "reference-check.md").read_text(
+        encoding="utf-8").splitlines()
+    check("reference pre-pass: a /Volumes/nedhome file link read on ned-box resolves under the home",
+          "- ok: `/Volumes/nedhome/linked file.md`" in reference_lines, repr(reference_lines))
+    shared_name_target = reference_directory / "shared-name.md"
+    shared_name_target.write_text("See SKILL.md.\n", encoding="utf-8")
+    grid_module.reference_integrity_pre_pass(shared_name_target, reference_directory)
+    reference_lines = (reference_directory / "reference-check.md").read_text(
+        encoding="utf-8").splitlines()
+    check("reference pre-pass: a bare name that several files share is UNRESOLVED, with the count",
+          any(line.startswith("- UNRESOLVED: `SKILL.md` (") and line.endswith(" files have this name)")
+              for line in reference_lines), repr(reference_lines))
+    untracked_name = "reference-pre-pass-untracked-new-file-for-the-grid-test.md"
+    untracked_file = grid_module.REPO_ROOT / "nc-systems" / "cold-read" / untracked_name
+    bare_untracked_target = reference_directory / "bare-untracked.md"
+    bare_untracked_target.write_text(f"See {untracked_name}.\n", encoding="utf-8")
+    untracked_file.write_text("new\n", encoding="utf-8")
+    try:
+        grid_module.reference_integrity_pre_pass(bare_untracked_target, reference_directory)
+    finally:
+        untracked_file.unlink()
+    reference_lines = (reference_directory / "reference-check.md").read_text(
+        encoding="utf-8").splitlines()
+    check("reference pre-pass: a bare name of a new, not yet tracked file is ok",
+          f"- ok: `{untracked_name}`" in reference_lines, repr(reference_lines))
     with mock.patch.dict(os.environ, {"GIT_DIR": str(scratch / "no-such-git-directory")}):
         grid_module.reference_integrity_pre_pass(reference_target, reference_directory)
     reference_lines = (reference_directory / "reference-check.md").read_text(
