@@ -52,7 +52,10 @@ WHAT ONE RUN DOES, in order.
   3. Runs `<the Python running this program>
      <worktree>/scripts/run-all-test-suites.py --log-dir <logs>
      --wait-for-lock-seconds 3600` from the worktree, with no selection
-     option and no -j, so the runner chooses how many suites run at once. The
+     option and no -j, so the runner chooses how many suites run at once. On
+     Linux the runner's environment gains XDG_RUNTIME_DIR=/run/user/<uid>
+     when it has none and /run/user/<uid>/bus exists, because cron gives no
+     user session bus. The
      runner waits up to an hour for the machine's lock itself; when it exits
      3 after that hour, the record says the lock was not released within it.
      The verdict is the runner's exit code and its `SUMMARY:` line, read from
@@ -342,6 +345,23 @@ def subprocess_run_copying_each_output_line_as_it_arrives(arguments, worktree: P
     return completed
 
 
+def environment_with_user_runtime_directory_when_the_user_session_bus_exists(
+        environment, platform=None, uid=None, path_exists=os.path.exists):
+    """Return the environment, with XDG_RUNTIME_DIR added when the user's session bus is there.
+
+    cron starts the job without the user's session variables, and the runner's
+    `systemd-run --user --scope` finds the bus at $XDG_RUNTIME_DIR/bus, so without the
+    variable no suite's CPU seconds or peak memory are measured. The variable is added
+    only on Linux, only when it is missing, and only when /run/user/<uid>/bus exists."""
+    platform = sys.platform if platform is None else platform
+    uid = os.getuid() if uid is None else uid
+    runtime_directory = f"/run/user/{uid}"
+    if (platform.startswith("linux") and "XDG_RUNTIME_DIR" not in environment
+            and path_exists(f"{runtime_directory}/bus")):
+        return {**environment, "XDG_RUNTIME_DIR": runtime_directory}
+    return environment
+
+
 def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, monotonic,
                                                        stream_to=None):
     """Return (process result, seconds waiting for the lock, whether the lock was never taken).
@@ -353,7 +373,8 @@ def run_test_suite_runner_waiting_for_the_machine_lock(command, worktree: Path, 
     started = monotonic()
     arguments = [*command, "--wait-for-lock-seconds",
                  f"{DAILY_FULL_TEST_RUN_LOCK_WAIT_BOUND_SECONDS:g}"]
-    environment = run_all_test_suites.environment_without_git_redirecting_variables()
+    environment = environment_with_user_runtime_directory_when_the_user_session_bus_exists(
+        run_all_test_suites.environment_without_git_redirecting_variables())
     if stream_to is None:
         completed = subprocess.run(
             arguments, cwd=str(worktree), env=environment,

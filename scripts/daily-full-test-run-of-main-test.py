@@ -932,6 +932,25 @@ def run_cases_as_a_program(workspace: Path):
           f"{invalid.returncode} {invalid.stderr}")
 
 
+def run_user_runtime_directory_cases():
+    add = program.environment_with_user_runtime_directory_when_the_user_session_bus_exists
+    bus_exists = lambda path: path == "/run/user/1234/bus"
+    base = {"PATH": "/usr/bin"}
+    added = add(base, platform="linux", uid=1234, path_exists=bus_exists)
+    check("the runner's environment gains XDG_RUNTIME_DIR when it has none and the user's "
+          "bus exists",
+          added == {"PATH": "/usr/bin", "XDG_RUNTIME_DIR": "/run/user/1234"}
+          and base == {"PATH": "/usr/bin"}, repr(added))
+    kept = add({"XDG_RUNTIME_DIR": "/elsewhere"}, platform="linux", uid=1234,
+               path_exists=bus_exists)
+    check("an XDG_RUNTIME_DIR the environment already has is kept",
+          kept == {"XDG_RUNTIME_DIR": "/elsewhere"}, repr(kept))
+    no_bus = add(base, platform="linux", uid=1234, path_exists=lambda path: False)
+    check("nothing is added when the user's bus does not exist", no_bus == base, repr(no_bus))
+    on_the_mac = add(base, platform="darwin", uid=1234, path_exists=bus_exists)
+    check("nothing is added on darwin", on_the_mac == base, repr(on_the_mac))
+
+
 def run_log_store_readme_cases():
     readme = record_shipper.STORE_README
     kind = program.DAILY_FULL_TEST_RUNS_KIND_DIRECTORY_NAME
@@ -1080,6 +1099,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_cases_on_ned_box(workspace_root)
     run_cases_on_the_mac(workspace_root)
     run_cases_as_a_program(workspace_root)
+    run_user_runtime_directory_cases()
     run_log_store_readme_cases()
     run_line_copying_cases(workspace_root)
 
