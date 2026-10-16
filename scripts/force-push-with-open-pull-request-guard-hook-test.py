@@ -1008,6 +1008,21 @@ for command in ["git push --force origin the-pr-branch", "git push 2>&- --force 
           code == 0 and output is not None
           and output["hookSpecificOutput"].get("permissionDecision") == "deny", f"{code} {output}")
 
+# bash reads only decimal digits touching < or > as a descriptor, after it removes line
+# continuations, so 0x1 here is -u's value, the 0 is a descriptor, and git is the program.
+for command in ["env -u 2>&1 0x1</dev/null git push --force origin the-pr-branch",
+                "env -u 0x1</dev/null git push --force origin the-pr-branch",
+                "env 3>&- 0\\\n</dev/null git push --force origin the-pr-branch",
+                "env 0\\\n</dev/null git push --force origin the-pr-branch",
+                "git push -f4>/dev/null origin the-pr-branch"]:
+    code, output = run_main(
+        {"tool_name": "Bash", "cwd": SESSION_WORKTREE, "tool_input": {"command": command}},
+        ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST}))
+    check(f"a force push at an open pull request's head is denied, with a number that is not a "
+          f"descriptor or a descriptor split by a line continuation: {command!r}",
+          code == 0 and output is not None
+          and output["hookSpecificOutput"].get("permissionDecision") == "deny", f"{code} {output}")
+
 code, output = run_main(
     {"tool_name": "Bash", "cwd": SESSION_WORKTREE,
      "tool_input": {"command": "git push --force origin the-pr-branch"}},
