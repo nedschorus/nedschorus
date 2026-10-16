@@ -388,10 +388,17 @@ PEER_PROMPT = opening_prompt("peer", "Another Claude session sent a message: PR 
 NOTICE_PROMPT = opening_prompt("task_notification", "<task-notification>done</task-notification>",
                                origin={"kind": "task-notification"}, promptSource="system")
 SCHEDULED_PROMPT = opening_prompt("scheduled", "Hourly stall check.", isMeta=True, promptSource="system")
-# A message that arrives while the agent works carries no turnOrigin.
-PEER_MESSAGE_WHILE_WORKING = {"type": "user", "isMeta": True, "origin": {"kind": "peer"},
-                              "message": {"role": "user", "content": [
-                                  {"type": "text", "text": "Another Claude session sent a message while you were working: hi"}]}}
+
+
+def typed_while_working(kind, prompt):
+    """A prompt delivered into a running turn, in the form Claude Code writes it: no turnOrigin."""
+    return {"type": "attachment", "attachment": {
+        "type": "queued_command", "prompt": prompt, "commandMode": "prompt", "origin": {"kind": kind},
+        **({"humanTurn": True} if kind == "human" else {})}}
+
+
+PEER_MESSAGE_WHILE_WORKING = typed_while_working("peer", "Another Claude session sent a message: hi")
+USER_ANSWER_WHILE_WORKING = typed_while_working("human", "Y")
 REPLY_TEXT = {"type": "assistant", "message": {"id": "m9", "content": [
     {"type": "text", "text": "PR 1188 merged; nothing waits on you."}]}}
 
@@ -411,7 +418,19 @@ def test_only_a_turn_that_answers_the_user_shows_or_blocks():
             ("a turn opened by a scheduled prompt shows nothing",
              [USER_PROMPT, REPLY_TEXT, SCHEDULED_PROMPT, TOOL_CALL, TOOL_RESULT, REPLY_TEXT], False),
             ("a message that arrives while the agent answers the user leaves the turn the user's",
-             [USER_PROMPT, TOOL_CALL, TOOL_RESULT, PEER_MESSAGE_WHILE_WORKING, REPLY_TEXT], True)):
+             [USER_PROMPT, TOOL_CALL, TOOL_RESULT, PEER_MESSAGE_WHILE_WORKING, REPLY_TEXT], True),
+            ("the user's answer typed into a turn another agent-seat's message opened shows the item",
+             [USER_PROMPT, REPLY_TEXT, PEER_PROMPT, TOOL_CALL, USER_ANSWER_WHILE_WORKING, TOOL_RESULT, REPLY_TEXT],
+             True),
+            ("the user's answer typed into a turn a background-task notice opened shows the item",
+             [NOTICE_PROMPT, USER_ANSWER_WHILE_WORKING, REPLY_TEXT], True),
+            ("the user's answer typed into a turn a scheduled prompt opened shows the item",
+             [SCHEDULED_PROMPT, TOOL_CALL, USER_ANSWER_WHILE_WORKING, TOOL_RESULT, REPLY_TEXT], True),
+            ("another agent-seat's message typed into a turn another agent-seat's message opened shows nothing",
+             [USER_PROMPT, REPLY_TEXT, PEER_PROMPT, TOOL_CALL, PEER_MESSAGE_WHILE_WORKING, TOOL_RESULT, REPLY_TEXT],
+             False),
+            ("the user's answer typed into an earlier turn does not make a later agent-started turn his",
+             [PEER_PROMPT, USER_ANSWER_WHILE_WORKING, REPLY_TEXT, NOTICE_PROMPT, REPLY_TEXT], False)):
         case = Case()
         case.walk_files(minutes="#next_to_present item 2 of 9.")
         case.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
@@ -426,7 +445,15 @@ def test_only_a_turn_that_answers_the_user_shows_or_blocks():
              [without_turn_origin, REPLY_TEXT], True),
             ("without turnOrigin, a prompt with another origin shows nothing",
              [dict(without_turn_origin, origin={"kind": "coordinator"}), REPLY_TEXT], False),
-            ("a transcript with no prompt at all shows nothing", [REPLY_TEXT], False)):
+            ("a transcript with no prompt at all shows nothing", [REPLY_TEXT], False),
+            ("without turnOrigin, the user's answer typed into another origin's turn shows the item",
+             [dict(without_turn_origin, origin={"kind": "coordinator"}), USER_ANSWER_WHILE_WORKING, REPLY_TEXT],
+             True),
+            ("without turnOrigin, an answer typed into another origin's turn before it starts does not count",
+             [USER_ANSWER_WHILE_WORKING, dict(without_turn_origin, origin={"kind": "coordinator"}), REPLY_TEXT],
+             False),
+            ("with no prompt at all, the user's answer typed while working shows the item",
+             [USER_ANSWER_WHILE_WORKING, REPLY_TEXT], True)):
         case = Case()
         case.walk_files(minutes="#next_to_present item 2 of 9.")
         case.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
@@ -703,6 +730,26 @@ def test_grouped_heading_paragraphs_and_kept_revisions_are_shown():
     check_blocked("a revision of one item of a grouped heading leaves that item under two headings",
                   case.run(), "more than one heading for `Item 5 of 9`")
     case = Case()
+    case.walk_files(minutes="#next_to_present item 27 of 72.",
+                    document=REVISED_WALK_DOCUMENT.replace("## Item 27 of 72 (revised): keeping",
+                                                           "## **Item 27 of 72** (revised): keeping"))
+    case.reply("Recorded.")
+    check_shown("a heading whose bold closes before `(revised)` is a revision", case.run(),
+                wanted_text="Item 27 of 72 (revised): keeping code and design in step\n\n"
+                            "The revision. Recommendation: Y.")
+    for case_name, document in (
+            ("minutes naming a grouped item whose paragraph is not bold show the whole group",
+             "# A walk\n\n## Items 5 and 6 of 9: two\n\n**Item 5 of 9: five.** Five.\n\n"
+             "Item 6 of 9: six. Six.\n\n## Item 7 of 9: seven\n\nSeven.\n"),
+            ("minutes naming a grouped item with no paragraph of its own show the whole group",
+             "# A walk\n\n## Items 5 and 6 of 9: two\n\n**Item 5 of 9: five.** Five.\n\n"
+             "Both together. Recommendation: Y.\n\n## Item 7 of 9: seven\n\nSeven.\n")):
+        case = Case()
+        case.walk_files(minutes="#next_to_present item 6 of 9.", document=document)
+        case.reply("Recorded.")
+        group = document.split("## Items 5 and 6 of 9: ", 1)[1].split("\n\n## Item 7", 1)[0]
+        check_shown(case_name, case.run(), wanted_text=("Items 5 and 6 of 9: " + group).replace("**", ""))
+    case = Case()
     case.walk_files(minutes="#next_to_present item 10 of 54.",
                     document=("# A walk\n\n## Item 9 of 54: nine\n\nNine.\n\n"
                               "**Items 12 to 10 of 54: backwards.** Bad text.\n\n## Item 11 of 54: eleven\n\nEleven.\n"))
@@ -820,26 +867,20 @@ def test_minutes_without_line_are_not_open():
 def test_old_marker_is_migrated():
     item_2 = section("## Item 2 of 9", "## Item 4.1 of 9")
     case = Case()
-    minutes = case.walk_files(minutes="#next_to_present item 9 of 9.\n\nNext to present: item 2 of 9.")
+    minutes = case.walk_files(minutes="Next to present: item 2 of 9.")
     case.reply("Recorded.")
     result = case.run()
-    check_blocked("a hashtag walk whose newest marker is the old form is told the line to add", result,
+    check_blocked("an open walk marked only with the old form is told the line to add", result,
                   "is the old form `Next to present:`", f"at the end of {minutes}",
                   "leave the old lines as they are: #next_to_present item 2 of 9\n",
                   "Then end the turn: this hook shows the user the items the new line names.")
     check("the old form's block shows no item", "where the poem page lives" not in result.stdout,
           result.stdout)
     case = Case()
-    case.walk_files(minutes="Next to present: item 2 of 9.")
+    case.walk_files(minutes="#next_to_present item 9 of 9.\n\nNext to present: item 2 of 9.")
     case.reply("Recorded.")
-    check_silent("minutes with only old-form markers are a walk run before the hashtag, not an open walk",
-                 case.run())
-    case = Case()
-    case.walk_files(name="finished-walk", minutes="Walk closed.\n\nNext to present: item 1", modified=1_000)
-    case.walk_files(name="newer-walk", minutes="#next_to_present item 2 of 9.\n\n#next_to_present none, closed.",
-                    modified=2_000)
-    case.reply("Recorded.")
-    check_silent("closing the newest walk does not make an older old-form walk the open one", case.run())
+    check_blocked("a hashtag walk whose newest marker is the old form is told the line to add", case.run(),
+                  "leave the old lines as they are: #next_to_present item 2 of 9\n")
     case = Case()
     case.walk_files(minutes="#next_to_present item 2 of 9\n\nNext to present: item 5 of 9.")
     case.reply("Recorded.")
@@ -850,16 +891,16 @@ def test_old_marker_is_migrated():
     case.reply("Recorded.")
     check_shown("a hashtag line below an old-form line counts", case.run(), item_2)
     case = Case()
-    case.walk_files(minutes="#next_to_present item 9 of 9.\n\nNext to present: `item 2 of 9.`")
+    case.walk_files(minutes="Next to present: `item 2 of 9.`")
     case.reply("Recorded.")
     check_blocked("an old-form value inside a code span is carried whole into the line to add",
                   case.run(), "leave the old lines as they are: #next_to_present item 2 of 9\n")
     case = Case()
-    case.walk_files(minutes="#next_to_present item 2 of 9.\n\nNext to present: none, closed.")
+    case.walk_files(minutes="Next to present: item 2 of 9.\n\nNext to present: none, closed.")
     case.reply("All done.")
-    check_silent("a hashtag walk closed with the old form is not open", case.run())
+    check_silent("a walk closed with the old form is not open", case.run())
     case = Case()
-    case.walk_files(minutes="#next_to_present item 9 of 9.\n\nNext to present: item 2 of 9.")
+    case.walk_files(minutes="Next to present: item 2 of 9.")
     case.reply("Recorded.")
     check_silent("while the agent answers a Stop hook, the old form's block is not printed",
                  case.run(stop_hook_active=True))
@@ -937,6 +978,13 @@ def test_faults_are_reported():
     check("a transcript that cannot be read exits 1 and names the fault on stderr",
           result.returncode == 1 and "UnicodeDecodeError" in result.stderr and result.stdout == "",
           f"exit {result.returncode}, stderr {result.stderr!r}")
+    case = Case()
+    case.walk_files(minutes="#next_to_present none, closed.")
+    case.transcript.write_bytes(b'{"type": "user", "message": {"content": "\xff\xfe"}}\n')
+    result = case.run()
+    check("with no open walk, the transcript is not read, so a transcript that cannot be read is no fault",
+          result.returncode == 0 and result.stdout == "" and result.stderr == "",
+          f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
 def main():

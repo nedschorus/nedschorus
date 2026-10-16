@@ -16,9 +16,12 @@ does other work does not repeat its item under every report, and the minutes,
 which change only when he answers, are not checked then. Claude Code records
 on each turn's opening prompt a `turnOrigin`, `human` for his own; the last
 user record carrying one names the current turn's origin, because a message
-that arrives while the agent works carries none. A transcript with no
-`turnOrigin`, from a Claude Code that did not write it, is read by the turn's
-start below: its `origin` kind is `human`, or it has none.
+that arrives while the agent works carries none. A prompt he types while the
+agent works on a turn something else started is delivered into that turn as
+an `attachment` of type `queued_command` whose origin kind is `human`; the
+agent answers him in that turn, so it answers the user too. A transcript with
+no `turnOrigin`, from a Claude Code that did not write it, is read by the
+turn's start below: its `origin` kind is `human`, or it has none.
 
 THE TURN starts at the last user-type record in the transcript that is
 neither only tool results nor an injection inside the turn: the user's
@@ -37,13 +40,9 @@ A marker inside a code span is a quotation, not a marker; a value inside one,
 as in ``#next_to_present `item 3 of 9` ``, is read without its backticks, and a
 colon after the hashtag, `#next_to_present: none`, is read as the old form's
 colon was. Minutes written before the
-hashtag carry the old marker `Next to present:`. Minutes with only old-form
-markers are walks run before the hashtag, finished or not, and are not open
-walks: read as open, every finished one whose last line names an item would
-become the open walk in turn as each newer walk closes. In minutes that also
-hold a hashtag marker, the last marker of either form counts, and when it is
-the old form on a walk that is not closed, the hook blocks with the line to
-add instead of showing an item. Its value is `none` or
+hashtag carry the old marker `Next to present:`; the last marker of either
+form counts, and when it is the old form on a walk that is not closed, the
+hook blocks with the line to add instead of showing an item. Its value is `none` or
 `closed` for a closed walk, or opens with a running count, `item N`,
 `item 4.1`, `items 5 and 6`, `items 10 to 12`, with or without `of M`, and
 anything after the count, such as `(awaiting answer), then item 24`, is
@@ -117,7 +116,7 @@ MARKDOWN_PARSER_MODULE_FILE = REPOSITORY_TOP / "scripts" / "markdown-edit-hard-w
 CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 WALK_DIRECTORY = Path("docs") / "walk"
 MINUTES_SUFFIX = "-minutes.md"
-# Group 1 is set only for the hashtag; the old form is read so that a hashtag walk's stray old line is migrated.
+# Group 1 is set only for the hashtag; the old form is read so that open walks it marks are migrated.
 # The value runs to the line's end or the next marker, so two markers on a line are read as two.
 NEXT_MARKER = re.compile(
     r"(?:(#next_to_present)\b|Next to present:)[*_`\s:]*((?:(?!#next_to_present\b|Next to present:)[^\n])*)",
@@ -130,7 +129,7 @@ NUMBER_LIST = rf"{NUMBER}(?:{NUMBER_JOINER}{NUMBER})*(?![\d.]\d)"
 VALUE_COUNT = re.compile(rf"^items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b)?", re.I)
 HEADING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
 # Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
-REVISED = re.compile(r"^[\s(,:;.\-\u2013\u2014]*revised\b", re.I)
+REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
 NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
 # A record from one of these starts a turn even when Claude Code marks it isMeta.
 TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator", "task-notification")
@@ -208,16 +207,28 @@ def turn_start(records):
     return None
 
 
+def typed_while_working(record):
+    """Whether the record is a prompt of the user's delivered into a running turn.
+
+    Of the attachments Claude Code writes, only a delivered prompt, a `queued_command`, carries an origin.
+    """
+    attachment = record.get("attachment")
+    return isinstance(attachment, dict) and (attachment.get("origin") or {}).get("kind") == USER_TURN_ORIGIN
+
+
 def turn_answers_user(records):
-    """Whether the transcript's last turn was started by the user's own prompt."""
-    for record in reversed(records):
-        if "turnOrigin" in record:
-            return record["turnOrigin"] == USER_TURN_ORIGIN
-    start = turn_start(records)
-    if start is None:
-        return False
-    origin = records[start].get("origin")
-    return origin is None or origin.get("kind") == USER_TURN_ORIGIN
+    """Whether the transcript's last turn was started by the user's own prompt, or took one while it ran."""
+    for index in range(len(records) - 1, -1, -1):
+        if "turnOrigin" in records[index]:
+            opened_by_user = records[index]["turnOrigin"] == USER_TURN_ORIGIN
+            break
+    else:
+        index = turn_start(records)
+        if index is None:
+            return any(typed_while_working(record) for record in records)
+        origin = records[index].get("origin")
+        opened_by_user = origin is None or origin.get("kind") == USER_TURN_ORIGIN
+    return opened_by_user or any(typed_while_working(record) for record in records[index + 1:])
 
 
 def last_reply_text(records):
@@ -271,10 +282,7 @@ def code_line_numbers(tokens):
 
 
 def next_to_present(minutes_text, parser):
-    """Return (value, whether the marker is the old form) for the minutes' last marker outside code.
-
-    None when the minutes hold no marker, or only old-form markers.
-    """
+    """Return (value, whether the marker is the old form) for the minutes' last marker outside code, or None."""
     code_lines = code_line_numbers(parser.parse(minutes_text))
     markers = []
     for number, line in enumerate(minutes_text.split("\n")):
@@ -284,7 +292,7 @@ def next_to_present(minutes_text, parser):
         for marker in NEXT_MARKER.finditer(line):
             if not any(start <= marker.start() < end for start, end in spans):
                 markers.append((marker[1], marker[2].replace("`", "").strip()))
-    if not any(hashtag for hashtag, _ in markers):
+    if not markers:
         return None
     hashtag, value = markers[-1]
     return value, not hashtag
@@ -416,12 +424,12 @@ def item_units(document_text, parser):
 
 def shown_text(unit, numbers):
     """Return the unit's text, or, when the minutes name only some of a grouped heading's
-    items, its head with the parts of the items named."""
+    items and some of those have a part of their own, its head with those parts."""
     unit_numbers, _, text, _, head, parts = unit
-    if set(unit_numbers) <= set(numbers):
+    named_parts = [part_text for part_numbers, part_text in parts if set(part_numbers) & set(numbers)]
+    if set(unit_numbers) <= set(numbers) or not named_parts:
         return text
-    return "\n".join([head] + [part_text for part_numbers, part_text in parts
-                               if set(part_numbers) & set(numbers)])
+    return "\n".join([head] + named_parts)
 
 
 def without_bold_marks_outside_code_spans(line):
@@ -491,15 +499,15 @@ def output_for(payload, environment, answering_a_stop_hook):
         return None
     if not payload.get("cwd"):
         return None
-    records = transcript_records(Path(transcript_path).expanduser())
-    if not turn_answers_user(records) or not last_reply_text(records).strip():
-        return None
     top = checkout_top(Path(payload["cwd"]))
     if top is None or not (top / WALK_DIRECTORY).is_dir():
         return None
     parser = markdown_parser(may_install=not answering_a_stop_hook)
     walk = open_walk(top / WALK_DIRECTORY, parser)
     if walk is None:
+        return None
+    records = transcript_records(Path(transcript_path).expanduser())
+    if not turn_answers_user(records) or not last_reply_text(records).strip():
         return None
     minutes, value, old_form = walk
     name = minutes.name[:-len(MINUTES_SUFFIX)]
