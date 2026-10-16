@@ -101,11 +101,13 @@ if mode == "killed":
     os.kill(os.getpid(), signal.SIGKILL)
 if mode == "raises":
     raise RuntimeError("stand-in backup search failed")
-if mode == "found":
+if mode in ("found", "found-some-unsearched"):
     print("log-store       FOUND")
     print("    copied to /scratch/found/logstore-x")
     print()
     print("Recoverable from: log-store.")
+    if mode == "found-some-unsearched":
+        print("Could NOT search: local snapshots -- see each one's line above.")
     sys.exit(0)
 if mode in ("copy-command-printed", "copy-command-printed-some-unsearched"):
     print("time machine    FOUND")
@@ -115,11 +117,13 @@ if mode in ("copy-command-printed", "copy-command-printed-some-unsearched"):
     if mode == "copy-command-printed-some-unsearched":
         print("Could NOT search: local snapshots -- see each one's line above.")
     sys.exit(5)
-if mode == "not-copied":
+if mode in ("not-copied", "not-copied-some-unsearched"):
     print("log-store       FOUND")
     print("    could NOT copy x — ssh exited 255: refused")
     print()
     print("Recoverable from: log-store.")
+    if mode == "not-copied-some-unsearched":
+        print("Could NOT search: local snapshots -- see each one's line above.")
     sys.exit(4)
 if mode == "incomplete":
     print("time machine    UNAVAILABLE")
@@ -715,6 +719,15 @@ with scratch() as directory:
           code == 1 and output.rstrip().splitlines()[-1].startswith(
               "It also could NOT search some places: tell the user which")
           and "The backup search found it but copied nothing yet" in output, output)
+    for unsearched_mode, exit_line in (
+            ("found-some-unsearched", "The backup search found it: open the copies"),
+            ("not-copied-some-unsearched", "The backup search found it but copied no version")):
+        code, output, runs = handed("never-anywhere.md", backup_mode=unsearched_mode)
+        check("when the backup search exits %s and could not search some "
+              "places, the last line also says to tell the user which" % unsearched_mode,
+              code == 1 and output.rstrip().splitlines()[-1].startswith(
+                  "It also could NOT search some places: tell the user which")
+              and exit_line in output, output)
     code, output, runs = handed("never-anywhere.md", backup_mode="incomplete")
     check("when the backup search could not search a place, the last line "
           "says to tell the user which, and why",

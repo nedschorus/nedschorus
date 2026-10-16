@@ -127,7 +127,12 @@ attached but unmounted, because the user's disk does go offline and a script
 that gives up there is useless to him (user-ruled 2026-08-23). `mount_apfs -o
 ro` on a local snapshot opens it READ-ONLY, which is reading a snapshot rather
 than modifying one, and every snapshot this script opens is unmounted again in
-a `finally` — including when the search inside it fails.
+a `finally` — including when the search inside it fails. Each run mounts on a
+mount point named with its own process ID. A snapshot that an ended run of this
+script left on its mount point is unmounted by the next run, which then mounts it
+on its own. A snapshot that another live run of this script holds, or that an
+ended run left and that will not unmount, is never read in place, and is
+reported as not searched.
 
 CROSSING THE ROOT WALL, WITH NOBODY IN THE ROOM. The whole of surface 7's
 privilege is that one mount_apfs against the external backup volume. Two things
@@ -394,6 +399,9 @@ LOCAL_SNAPSHOT_NAME_SUFFIX = ".local"
 # Use /private/tmp because mount reports the resolved path, not the /tmp symlink. The process ID keeps two
 # runs at once off one mount point, so whatever already sits on this one was left by a run that has ended.
 LOCAL_SNAPSHOT_MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro-%d" % os.getpid()
+
+# A process whose command line holds this is a run of this script.
+THIS_SCRIPT_NAME = "find-deleted-path-across-backups"
 
 # Bound waits so an ssh to a sleeping box cannot hang recovery.
 SHORT_TIMEOUT_SECONDS = 20
@@ -699,6 +707,10 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
         )
 
     already_mounted = _local_snapshots_already_mounted(runner)
+    # Clear what ended runs left before reading anything. Another run's mount is never read in place, since
+    # another live run may unmount it between this run's two tests of it.
+    run_lines, run_release, held_by_other_runs = _clear_mounts_left_by_ended_runs(
+        already_mounted, mount_point, runner)
     # An occupied mount point blocks later mounts; it was left by an ended run, so the printed clear is safe.
     occupying = sorted(name for name, where in already_mounted.items() if where == mount_point)
     hits = []
@@ -706,13 +718,18 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
     in_place = []
     unsearched = []
     stuck = None
+    made_mount_point = False
     for snapshot in snapshots:
         if stuck is not None:
             # Stop after a failed release: later mounts would all fail on the occupied mount point.
             unsearched.append((snapshot, "not reached: " + stuck))
             continue
+        if snapshot in held_by_other_runs:
+            unsearched.append((snapshot, held_by_other_runs[snapshot]))
+            continue
         outcome, where, release_failure, read_in_place = _local_snapshot_probe(
             snapshot, probe_path, mount_point, runner, already_mounted.get(snapshot))
+        made_mount_point = made_mount_point or not read_in_place
         if outcome == "unmounted":
             unsearched.append((snapshot, where))
         else:
@@ -725,9 +742,12 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
             # Add "not reached" only for later snapshots; this snapshot was searched.
             stuck = "%s stayed mounted on %s — %s" % (snapshot, mount_point, release_failure)
 
+    if made_mount_point and stuck is None and not occupying:
+        run_lines.extend(_remove_empty_mount_point(mount_point, "this run's own", runner))
+
     lines = ["%d local snapshot(s) retained, %d searched — no password needed for any of it"
              % (len(snapshots), len(searched)),
-             "tested %s inside each" % probe_path]
+             "tested %s inside each" % probe_path] + run_lines
     if occupying:
         # Report the occupied mount point even when every readable snapshot was searched.
         lines.append("the mount point %s already had %s on it when this run started, so every snapshot "
@@ -762,9 +782,10 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
                                    "file", best_where + probe_path)
             release = ([_local_snapshot_clear_mount_point_command(mount_point)] if best_where == mount_point
                        else [])
-            return SurfaceReport("local snapshots", FOUND, lines, release, [version])
+            return SurfaceReport("local snapshots", FOUND, lines, release + run_release, [version])
         return SurfaceReport("local snapshots", FOUND, lines,
-                             _local_snapshot_recovery(best_snapshot, probe_path, mount_point, clear_first),
+                             _local_snapshot_recovery(best_snapshot, probe_path, mount_point, clear_first)
+                             + run_release,
                              prints_copy_command=True)
 
     if searched:
@@ -775,8 +796,12 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
                      "other path would need a find over the volume, which this surface does not run)" % wanted)
     if unsearched:
         # macOS cannot mount a snapshot twice; recovery must read an existing mount in place.
+        # A snapshot another live run holds is still in already_mounted, so it is left out here too.
         reachable = [snapshot for snapshot, _ in unsearched if snapshot not in already_mounted]
-        if not reachable:
+        if not reachable and any(snapshot in held_by_other_runs for snapshot, _ in unsearched):
+            lines.append("mount_apfs cannot open a snapshot twice, so a snapshot another run of this script "
+                         "has mounted can be searched only once that mount is gone: run this search again then")
+        elif not reachable:
             lines.append("every snapshot that could not be searched is one macOS already has mounted; "
                          "mount_apfs cannot open a snapshot twice, and macOS's own mounts are not this "
                          "script's to clear — the rest were searched and do not have it")
@@ -784,12 +809,99 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
             "local snapshots",
             UNAVAILABLE,
             lines,
-            _local_snapshot_recovery(reachable[0], probe_path, mount_point, clear_first) if reachable
-            else ([_local_snapshot_clear_mount_point_command(mount_point)] if clear_first else []),
+            (_local_snapshot_recovery(reachable[0], probe_path, mount_point, clear_first) if reachable
+             else ([_local_snapshot_clear_mount_point_command(mount_point)] if clear_first else []))
+            + run_release,
         )
     # A failed release does not undo a completed search; keep NOT FOUND and provide the clear command.
     return SurfaceReport("local snapshots", NOT_FOUND, lines,
-                         [_local_snapshot_clear_mount_point_command(mount_point)] if clear_first else [])
+                         ([_local_snapshot_clear_mount_point_command(mount_point)] if clear_first else [])
+                         + run_release)
+
+
+def _ended_run_process_id(where, mount_point):
+    """The process ID in a mount point of this script's own spelling other than this run's, else None."""
+    head, _, own_id = mount_point.rpartition("-")
+    if not own_id.isdigit() or where == mount_point:
+        return None
+    match = re.fullmatch(re.escape(head) + r"-(\d+)", where)
+    return int(match.group(1)) if match else None
+
+
+def _run_of_this_script_is_live(process_id, runner):
+    """Return (live, why, ps failed): whether process_id is a run of this script that is still running."""
+    code, out, stderr = runner(["ps", "-p", str(process_id), "-o", "command="])
+    if code == 1 and not out.strip():
+        return False, "process %d has ended" % process_id, False
+    if code != 0:
+        first = stderr.strip().splitlines()[0] if stderr.strip() else "no error text"
+        # Unknown is treated as live: unmounting a live run's snapshot would break its search.
+        return (True, "ps could not say whether process %d still runs — ps exited %s: %s"
+                % (process_id, code, first), True)
+    if THIS_SCRIPT_NAME in out:
+        return True, "process %d, another run of this script, is still running" % process_id, False
+    return False, "process %d has ended and its number now belongs to another program" % process_id, False
+
+
+def _clear_mounts_left_by_ended_runs(already_mounted, mount_point, runner):
+    """Unmount snapshots that ended runs of this script left mounted, and remove their empty mount points.
+
+    Returns (report lines, clear commands for mounts that would not release, {snapshot: why it is not
+    searched} for snapshots another run's mount still holds). A cleared snapshot is dropped from
+    already_mounted so this run mounts it for itself. One that would not release is not searched: another
+    run reclaiming it at the same time may unmount it between this run's two tests of it.
+    """
+    lines = []
+    release = []
+    held_by_other_runs = {}
+    head = mount_point.rpartition("-")[0]
+    for snapshot, where in sorted(already_mounted.items()):
+        process_id = _ended_run_process_id(where, mount_point)
+        if process_id is None:
+            continue
+        live, why, _ = _run_of_this_script_is_live(process_id, runner)
+        if live:
+            held_by_other_runs[snapshot] = "mounted on %s, and %s" % (where, why)
+            continue
+        code, _, stderr = runner(["diskutil", "unmount", where])
+        if code != 0:
+            first = stderr.strip().splitlines()[0] if stderr.strip() else "no error text"
+            held_by_other_runs[snapshot] = (
+                "left mounted on %s by a run of this script that ended (%s), and diskutil unmount exited %s: %s"
+                % (where, why, code, first))
+            release.append(_local_snapshot_clear_mount_point_command(where))
+            continue
+        del already_mounted[snapshot]
+        lines.append("%s was left mounted on %s by a run of this script that ended (%s); this run unmounted it"
+                     % (snapshot, where, why))
+        lines.extend(_remove_empty_mount_point(where, "an ended run's", runner))
+    code, out, stderr = runner(["find", os.path.dirname(head), "-maxdepth", "1", "-type", "d", "-empty",
+                                "-name", os.path.basename(head) + "-*"])
+    if code != 0:
+        first = stderr.strip().splitlines()[0] if stderr.strip() else "no error text"
+        lines.append("could not look for empty mount points that ended runs left in %s — find exited %s: %s"
+                     % (os.path.dirname(head), code, first))
+        return lines, release, held_by_other_runs
+    for left in sorted(out.split()):
+        process_id = _ended_run_process_id(left, mount_point)
+        if process_id is None:
+            continue
+        live, why, ps_failed = _run_of_this_script_is_live(process_id, runner)
+        if ps_failed:
+            lines.append("left the empty mount point %s in place, since %s" % (left, why))
+        if live:
+            continue
+        lines.extend(_remove_empty_mount_point(left, "an ended run's", runner))
+    return lines, release, held_by_other_runs
+
+
+def _remove_empty_mount_point(where, whose, runner):
+    """Remove an empty mount point; return a line naming it when it could not be removed."""
+    code, _, stderr = runner(["rmdir", where])
+    if code == 0:
+        return []
+    first = stderr.strip().splitlines()[0] if stderr.strip() else "no error text"
+    return ["could not remove %s empty mount point %s — rmdir exited %s: %s" % (whose, where, code, first)]
 
 
 def _local_snapshot_clear_mount_point_command(mount_point):

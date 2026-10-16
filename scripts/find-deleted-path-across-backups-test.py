@@ -506,6 +506,10 @@ check("... and it is NOT counted as one macOS already had mounted, because it is
       "%s %s" % (report.lines, report.recovery))
 check("... and the snapshots that could not be mounted past it are still UNAVAILABLE, not 'not found'",
       report.status == UNAVAILABLE, "%s %s" % (report.status, report.lines))
+check("... and this run does not try to remove its own mount point, which the leftover still occupies",
+      "rmdir " + MOUNT_POINT not in occupied.calls
+      and not any(l.startswith("could not remove") for l in report.lines),
+      "%s %s" % (occupied.calls, report.lines))
 
 # The occupier is a perfectly good read-only mount of a real snapshot, so when
 # the file is in it the answer is FOUND — and one command both takes the file
@@ -531,25 +535,184 @@ if os.path.realpath("/tmp") == "/private/tmp":
           "%s %s" % (report.status, report.lines))
 
 
-# Another run at the same time mounts on its own mount point, so this run finds no occupier, hands back
-# no unmount, and reads that run's snapshot where it sits instead of unmounting it.
-OTHER_RUNS_MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro-1"
+# Mount points of other runs of this script. Each ID is longer than any real one, so it is no prefix of this
+# run's own and a table entry naming it never answers for this run's mount point.
+OTHER_RUNS_MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro-900000001"
+ENDED_RUNS_MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro-900000002"
+LIVE_RUN_PS = ("ps -p 900000001 -o command=", (0, "python3 scripts/find-deleted-path-across-backups.py notes.md\n", ""))
+ENDED_RUN_PS = ("ps -p 900000002 -o command=", (1, "", ""))
+NO_EMPTY_MOUNT_POINTS = ("find /private/tmp -maxdepth 1", (0, "", ""))
+REMOVES_FINE = ("rmdir", (0, "", ""))
+
+# Another live run's mount is never read: that run unmounts it when its own test is done, so a test here
+# could find the tree gone and record a miss. Nor is it unmounted, which would break that run's search.
 concurrent = MountTableRunner([
-    # The trailing slash keeps these from matching this run's own mount point, whose ID may begin with 1.
-    ("test -d " + OTHER_RUNS_MOUNT_POINT, (0, "", "")),
-    ("test -e " + OTHER_RUNS_MOUNT_POINT + "/", (0, "", "")),
+    LIVE_RUN_PS, NO_EMPTY_MOUNT_POINTS, REMOVES_FINE,
     ("mount_apfs", (0, "", "")),
     RELEASES_FINE,
     ("test -e", (1, "", "")),
     LISTS_SNAPSHOTS,
 ], OCCUPIED_LISTING.replace(MOUNT_POINT, OTHER_RUNS_MOUNT_POINT))
 report = finder.search_local_snapshots(REAPED, "/repo", concurrent)
-check("a snapshot another live run has mounted is read in place, and nothing tells the agent to unmount it",
-      report.status == FOUND
-      and not any(l.startswith("the mount point ") for l in report.lines)
-      and not any("diskutil unmount " + OTHER_RUNS_MOUNT_POINT in c for c in report.recovery)
-      and not any(c == "diskutil unmount " + OTHER_RUNS_MOUNT_POINT for c in concurrent.calls),
-      "%s %s %s %s" % (report.status, report.lines, report.recovery, concurrent.calls))
+check("a snapshot another live run has mounted is not read, and is not unmounted",
+      not any(c.startswith("test ") and OTHER_RUNS_MOUNT_POINT + "/" in c + "/" for c in concurrent.calls)
+      and not any(c == "diskutil unmount " + OTHER_RUNS_MOUNT_POINT for c in concurrent.calls)
+      and not any(OTHER_RUNS_MOUNT_POINT in c for c in report.recovery),
+      "%s %s" % (concurrent.calls, report.recovery))
+check("... and it is reported as not searched, naming the run that holds it, never 'none of them has it'",
+      report.status == UNAVAILABLE
+      and any(l == "could not search com.apple.TimeMachine.2026-08-30-124711.local — mounted on %s, and "
+                   "process 900000001, another run of this script, is still running" % OTHER_RUNS_MOUNT_POINT
+              for l in report.lines)
+      and any("run this search again then" in l for l in report.lines)
+      and not any("macOS already has mounted" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+check("... and no mount command is offered for it, since mount_apfs cannot open it twice",
+      not any("2026-08-30-124711" in c for c in report.recovery), str(report.recovery))
+
+# A run killed between its mount_apfs and its diskutil unmount leaves the snapshot on its own mount point.
+# The next run unmounts it itself, removes its empty mount point, and searches the snapshot on its own.
+ended_listing = OCCUPIED_LISTING.replace(MOUNT_POINT, ENDED_RUNS_MOUNT_POINT)
+ended = MountTableRunner([
+    # Its directory still resolves, as it would if the rmdir after the unmount failed; it is empty now.
+    ("test -d " + ENDED_RUNS_MOUNT_POINT, (0, "", "")),
+    ENDED_RUN_PS, NO_EMPTY_MOUNT_POINTS, REMOVES_FINE, MOUNTS_FINE, RELEASES_FINE,
+    ("test -e", (1, "", "")), LISTS_SNAPSHOTS,
+], ended_listing)
+report = finder.search_local_snapshots(REAPED, "/repo", ended)
+check("a snapshot an ended run left mounted is unmounted by this run, then searched on this run's own mount",
+      "diskutil unmount " + ENDED_RUNS_MOUNT_POINT in ended.calls
+      and "rmdir " + ENDED_RUNS_MOUNT_POINT in ended.calls
+      and any(c.startswith("mount_apfs") and "2026-08-30-124711" in c and c.endswith(MOUNT_POINT)
+              for c in ended.calls)
+      and report.status == NOT_FOUND,
+      "%s %s" % (report.status, ended.calls))
+check("... and the report names it as left by an ended run, never as one macOS already had mounted",
+      any(l == "com.apple.TimeMachine.2026-08-30-124711.local was left mounted on %s by a run of this script "
+               "that ended (process 900000002 has ended); this run unmounted it" % ENDED_RUNS_MOUNT_POINT
+          for l in report.lines)
+      and not any("macOS already had" in l for l in report.lines),
+      str(report.lines))
+check("... and this run removes its own empty mount point when it is done",
+      ended.calls[-1] == "rmdir " + MOUNT_POINT and not any("could not remove" in l for l in report.lines),
+      "%s %s" % (ended.calls, report.lines))
+
+# A process ID can be given to another program once the run that had it ends.
+reused = MountTableRunner([
+    ("ps -p 900000002 -o command=", (0, "/usr/libexec/some-daemon\n", "")),
+    NO_EMPTY_MOUNT_POINTS, REMOVES_FINE, MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")), LISTS_SNAPSHOTS,
+], ended_listing)
+report = finder.search_local_snapshots(REAPED, "/repo", reused)
+check("a mount whose run's process ID now belongs to another program is cleared as an ended run's",
+      "diskutil unmount " + ENDED_RUNS_MOUNT_POINT in reused.calls
+      and any("process 900000002 has ended and its number now belongs to another program" in l for l in report.lines),
+      "%s %s" % (reused.calls, report.lines))
+
+ps_fails = MountTableRunner([
+    ("ps -p 900000002 -o command=", (127, "", "ps: command not found\n")),
+    NO_EMPTY_MOUNT_POINTS, REMOVES_FINE, MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")), LISTS_SNAPSHOTS,
+], ended_listing)
+report = finder.search_local_snapshots(REAPED, "/repo", ps_fails)
+check("when ps cannot say whether the run still runs, its mount is left alone and the snapshot reported "
+      "unsearched with ps's words",
+      "diskutil unmount " + ENDED_RUNS_MOUNT_POINT not in ps_fails.calls
+      and report.status == UNAVAILABLE
+      and any("ps could not say whether process 900000002 still runs — ps exited 127: ps: command not found" in l
+              for l in report.lines),
+      "%s %s %s" % (ps_fails.calls, report.status, report.lines))
+
+# An ended run's mount that will not release is not read in place: another run reclaiming it at the same
+# time may finish unmounting it between this run's two tests, and an empty directory would read as a miss.
+ended_stuck = MountTableRunner([
+    ENDED_RUN_PS, NO_EMPTY_MOUNT_POINTS, REMOVES_FINE,
+    ("diskutil unmount " + ENDED_RUNS_MOUNT_POINT, (1, "", "Unmount failed: Resource busy\n")),
+    ("test -d " + ENDED_RUNS_MOUNT_POINT, (0, "", "")),
+    ("test -e " + ENDED_RUNS_MOUNT_POINT + "/", (1, "", "")),
+    MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")), LISTS_SNAPSHOTS,
+], ended_listing)
+report = finder.search_local_snapshots(REAPED, "/repo", ended_stuck)
+check("an ended run's mount that will not unmount is not read, and its snapshot is reported not searched "
+      "with the unmount's words",
+      not any(c.startswith("test ") and ENDED_RUNS_MOUNT_POINT in c for c in ended_stuck.calls)
+      and report.status == UNAVAILABLE
+      and any(l == "could not search com.apple.TimeMachine.2026-08-30-124711.local — left mounted on %s by a "
+                   "run of this script that ended (process 900000002 has ended), and diskutil unmount exited 1: "
+                   "Unmount failed: Resource busy" % ENDED_RUNS_MOUNT_POINT for l in report.lines)
+      and not any("macOS already had" in l for l in report.lines),
+      "%s %s %s" % (report.status, report.lines, ended_stuck.calls))
+check("... and the command that clears it is handed back, with no mount command for it",
+      report.recovery == ["diskutil unmount " + ENDED_RUNS_MOUNT_POINT], str(report.recovery))
+
+# The clear for an ended run's stuck mount is handed back even when another snapshot, one macOS has mounted,
+# holds the file and is copied straight out.
+found_beside_stuck = MountTableRunner([
+    ENDED_RUN_PS, NO_EMPTY_MOUNT_POINTS, REMOVES_FINE,
+    ("diskutil unmount " + ENDED_RUNS_MOUNT_POINT, (1, "", "Unmount failed: Resource busy\n")),
+    ("test -d " + LIVE_OS_MOUNT, (0, "", "")),
+    ("test -e " + LIVE_OS_MOUNT, (0, "", "")),
+    MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")), LISTS_SNAPSHOTS,
+], MOUNT_LISTING.replace(STALE_OS_MOUNT, ENDED_RUNS_MOUNT_POINT))
+report = finder.search_local_snapshots(REAPED, "/repo", found_beside_stuck)
+check("a hit read where macOS has it mounted still hands back the clear for an ended run's stuck mount",
+      report.status == FOUND and version_sources(report) == [("file", LIVE_OS_MOUNT + REAPED)]
+      and report.recovery == ["diskutil unmount " + ENDED_RUNS_MOUNT_POINT],
+      "%s %s %s" % (report.status, version_sources(report), report.recovery))
+
+# Every run before this one left its empty mount point behind; those of ended runs are removed.
+LIVE_RUNS_EMPTY = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro-900000001"
+ENDED_RUNS_EMPTY = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro-900000002"
+sweep = FakeRunner([
+    ("find /private/tmp -maxdepth 1", (0, "%s\n%s\n" % (LIVE_RUNS_EMPTY, ENDED_RUNS_EMPTY), "")),
+    LIVE_RUN_PS, ENDED_RUN_PS, REMOVES_FINE, LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE,
+    ("test -e", (1, "", "")),
+])
+report = finder.search_local_snapshots(REAPED, "/repo", sweep)
+sweep_ps_fails = FakeRunner([
+    ("find /private/tmp -maxdepth 1", (0, ENDED_RUNS_EMPTY + "\n", "")),
+    ("ps -p 900000002 -o command=", (124, "", "timed out\n")),
+    REMOVES_FINE, LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")),
+])
+report = finder.search_local_snapshots(REAPED, "/repo", sweep_ps_fails)
+check("an empty mount point whose run ps cannot answer for is left in place, and the report says why",
+      "rmdir " + ENDED_RUNS_EMPTY not in sweep_ps_fails.calls
+      and any(l == "left the empty mount point %s in place, since ps could not say whether process 900000002 "
+                   "still runs — ps exited 124: timed out" % ENDED_RUNS_EMPTY for l in report.lines),
+      "%s %s" % (sweep_ps_fails.calls, report.lines))
+
+check("an ended run's empty mount point is removed, and a live run's is left alone",
+      "rmdir " + ENDED_RUNS_EMPTY in sweep.calls and "rmdir " + LIVE_RUNS_EMPTY not in sweep.calls,
+      str(sweep.calls))
+
+sweep_fails = FakeRunner([
+    ("find /private/tmp -maxdepth 1", (0, ENDED_RUNS_EMPTY + "\n", "")),
+    ENDED_RUN_PS, ("rmdir", (1, "", "rmdir: Operation not permitted\n")),
+    LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")),
+])
+report = finder.search_local_snapshots(REAPED, "/repo", sweep_fails)
+check("an empty mount point that cannot be removed is named with rmdir's words, and the search goes on",
+      any(l == "could not remove an ended run's empty mount point %s — rmdir exited 1: rmdir: Operation not "
+               "permitted" % ENDED_RUNS_EMPTY for l in report.lines)
+      and any(l == "could not remove this run's own empty mount point %s — rmdir exited 1: rmdir: Operation "
+                   "not permitted" % MOUNT_POINT for l in report.lines)
+      and report.status == NOT_FOUND,
+      "%s %s" % (report.status, report.lines))
+
+find_fails = FakeRunner([
+    ("find /private/tmp -maxdepth 1", (1, "", "find: /private/tmp: Permission denied\n")),
+    REMOVES_FINE, LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")),
+])
+report = finder.search_local_snapshots(REAPED, "/repo", find_fails)
+check("a find that cannot list the mount points is named with its words, and the search goes on",
+      any(l == "could not look for empty mount points that ended runs left in /private/tmp — find exited 1: "
+               "find: /private/tmp: Permission denied" for l in report.lines)
+      and report.status == NOT_FOUND,
+      "%s %s" % (report.status, report.lines))
+
+stuck_keeps_dir = ReleaseFailsRunner([LISTS_SNAPSHOTS, MOUNTS_FINE, NO_EMPTY_MOUNT_POINTS, REMOVES_FINE,
+                                      ("test -e", (1, "", ""))])
+finder.search_local_snapshots(REAPED, "/repo", stuck_keeps_dir)
+check("a mount point this run could not unmount is not removed, since it is not empty",
+      "rmdir " + MOUNT_POINT not in stuck_keeps_dir.calls, str(stuck_keeps_dir.calls))
 
 # But when something unsearchable IS still mountable, that is the one to offer.
 mixed_unreachable = MountTableRunner([
