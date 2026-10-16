@@ -44,8 +44,10 @@ there is part of the code. So an
 agent that rewords an item edits the walk-document first, or the user is shown
 the old text.
 
-SILENT when stop_hook_active is set (the agent is already continuing because
-of a Stop hook), when the agent-session is a headless `claude -p` child (its
+WHILE THE AGENT ANSWERS A STOP HOOK (stop_hook_active set), the item notice
+is still shown, under the one exemption in the Stop-hook silence rule's module,
+because it does not keep the agent going; a block on unusable minutes is not
+printed then. SILENT when the agent-session is a headless `claude -p` child (its
 last words are its caller's answer), when the transcript is missing, when the
 turn's last reply is empty, when the cwd is not in a git checkout, and when no
 approval-walk is open.
@@ -346,8 +348,15 @@ def run(stdin_text, environment):
     payload = json.loads(stdin_text)
     rule = load_module("claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
                        STOP_HOOKS_STAY_SILENT_RULE_FILE)
-    if rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
+    # The item notice is the rule's one exemption; a block on unusable minutes stays silent.
+    output = output_for(payload, environment)
+    if not rule.stop_hook_output_may_be_printed_while_agent_answers_a_stop_hook(payload, output):
         return None
+    return output
+
+
+def output_for(payload, environment):
+    """The item notice, a block naming why there is no item to show, or None."""
     if (environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
             or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0"):
         return None

@@ -574,7 +574,14 @@ def test_silent_cases():
     case = Case()
     case.walk_files(minutes="Next to present: item 2 of 9.")
     case.reply("No item here.")
-    check_silent("stop_hook_active keeps the hook silent", case.run(stop_hook_active=True))
+    check_shown("while the agent answers a Stop hook, the item notice is still shown",
+                case.run(stop_hook_active=True), section("## Item 2 of 9", "## Item 4.1 of 9"))
+    unusable = Case()
+    unusable.walk_files(minutes="Next to present: item 12 to 10 of 9.")
+    unusable.reply("No item here.")
+    check_blocked("unusable minutes block when the agent is not answering a Stop hook", unusable.run())
+    check_silent("while the agent answers a Stop hook, a block on unusable minutes is not printed",
+                 unusable.run(stop_hook_active=True))
     check_silent("a headless child is shown nothing",
                  case.run(environment_extra={"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
     case.reply(None)
