@@ -1301,6 +1301,24 @@ with tempfile.TemporaryDirectory() as scratch:
         encoding="utf-8").splitlines()
     check("reference pre-pass: a /Volumes/nedhome file link read on ned-box resolves under the home",
           "- ok: `/Volumes/nedhome/linked file.md`" in reference_lines, repr(reference_lines))
+    linked_file = reference_directory / "linked-for-cleanup.md"
+    linked_file.write_text("x\n", encoding="utf-8")
+    cleanup_target = reference_directory / "link-cleanup.md"
+    cleanup_target.write_text(
+        f"[part](file://{linked_file}#a-section) and see file://{linked_file}.\n"
+        "[other machine](file:///no-such-top-directory-for-the-grid-test/el/x.md)\n",
+        encoding="utf-8")
+    grid_module.reference_integrity_pre_pass(cleanup_target, reference_directory)
+    reference_lines = (reference_directory / "reference-check.md").read_text(
+        encoding="utf-8").splitlines()
+    check("reference pre-pass: a file link with a #fragment resolves to its file",
+          f"- ok: `{linked_file}`" in reference_lines
+          and not any("#a-section" in line for line in reference_lines), repr(reference_lines))
+    check("reference pre-pass: a file link that ends a sentence loses the period",
+          not any(f"`{linked_file}.`" in line for line in reference_lines), repr(reference_lines))
+    check("reference pre-pass: a file link whose home is not on this machine is not checkable here",
+          "- not checkable on this machine: `/no-such-top-directory-for-the-grid-test/el/x.md`"
+          in reference_lines, repr(reference_lines))
     shared_name_target = reference_directory / "shared-name.md"
     shared_name_target.write_text("See SKILL.md.\n", encoding="utf-8")
     grid_module.reference_integrity_pre_pass(shared_name_target, reference_directory)
@@ -1310,14 +1328,15 @@ with tempfile.TemporaryDirectory() as scratch:
           any(line.startswith("- UNRESOLVED: `SKILL.md` (") and line.endswith(" files have this name)")
               for line in reference_lines), repr(reference_lines))
     untracked_name = "reference-pre-pass-untracked-new-file-for-the-grid-test.md"
-    untracked_file = grid_module.REPO_ROOT / "nc-systems" / "cold-read" / untracked_name
+    untracked_repository = scratch / "reference-pre-pass-untracked-repository"
+    (untracked_repository / "nc-systems").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(untracked_repository)], check=True,
+                   env=grid_module.git_redirecting_removal.environment_without_git_redirecting_variables())
+    (untracked_repository / "nc-systems" / untracked_name).write_text("new\n", encoding="utf-8")
     bare_untracked_target = reference_directory / "bare-untracked.md"
     bare_untracked_target.write_text(f"See {untracked_name}.\n", encoding="utf-8")
-    untracked_file.write_text("new\n", encoding="utf-8")
-    try:
+    with mock.patch.object(grid_module, "REPO_ROOT", untracked_repository):
         grid_module.reference_integrity_pre_pass(bare_untracked_target, reference_directory)
-    finally:
-        untracked_file.unlink()
     reference_lines = (reference_directory / "reference-check.md").read_text(
         encoding="utf-8").splitlines()
     check("reference pre-pass: a bare name of a new, not yet tracked file is ok",
