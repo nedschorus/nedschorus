@@ -90,8 +90,10 @@ and this machine is not ned-box, the program runs ned-box's copy,
 /home/nedlern/Projects/nedschorus/scripts/<this program>, over
 `ssh nedlern@ned-box` with the same arguments, and passes the running
 agent-session's identity and its last compaction, read from the Mac's live
-transcript, which ned-box's copy cannot see; when the Mac's copy cannot read
-it, it prints a FAILED line after ned-box's output and exits 2. Reading eleven gigabytes of
+transcript, which ned-box's copy cannot see. When the Mac has no live
+transcript of the session, ned-box's copy reads the log-store's copy; when
+the Mac's copy finds one but cannot read it, it prints a FAILED line after
+ned-box's output and exits 2. Reading eleven gigabytes of
 transcripts through the Mac's mount /Volumes/nedhome/nedschorus-logs would
 be slow, and ripgrep is not reliably on the Mac's PATH.
 
@@ -458,11 +460,8 @@ def listed_directories(directory, failures):
         return []
 
 
-def own_session_transcript(session_id, root, failures):
-    """The running agent-session's transcript: the live one on this machine, else the log-store's copy, or None."""
-    project_directories = listed_directories(LIVE_TRANSCRIPTS_DIRECTORY, failures)
-    project_directories += [projects for machine in listed_directories(root / "transcripts", failures)
-                            for projects in listed_directories(machine / "projects", failures)]
+def transcript_in(project_directories, session_id, failures):
+    """The session's transcript in the first of project_directories that holds one, or None."""
     for directory in project_directories:
         path = directory / f"{session_id}.jsonl"
         try:
@@ -474,6 +473,16 @@ def own_session_transcript(session_id, root, failures):
             continue
         return path
     return None
+
+
+def own_session_transcript(session_id, root, failures):
+    """The running agent-session's transcript: the live one on this machine, else the log-store's copy, or None."""
+    live = transcript_in(listed_directories(LIVE_TRANSCRIPTS_DIRECTORY, failures), session_id, failures)
+    if live is not None:
+        return live
+    return transcript_in([projects for machine in listed_directories(root / "transcripts", failures)
+                          for projects in listed_directories(machine / "projects", failures)],
+                         session_id, failures)
 
 
 def last_compaction_time(transcript):
@@ -504,6 +513,11 @@ def own_session_compaction(session_id, root, failures):
                         f"{LIVE_TRANSCRIPTS_DIRECTORY} or {root / 'transcripts'}, so its last compaction is "
                         f"unknown and all of its records were left out")
         return COMPACTION_UNKNOWN
+    return transcript_compaction(transcript, failures)
+
+
+def transcript_compaction(transcript, failures):
+    """The transcript's last compaction: its timestamp, NEVER_COMPACTED, or COMPACTION_UNKNOWN when it cannot be read."""
     try:
         return last_compaction_time(transcript) or NEVER_COMPACTED
     except OSError as error:
@@ -996,7 +1010,10 @@ def main(argv=None):
             if parsed.own_session is None and not parsed.include_own_session:
                 # ned-box's copy cannot see this machine's environment or live transcripts. Put first, since
                 # after a -- it would be read as the pattern.
-                compaction = own_session_compaction(own_session, root, mac_failures) if own_session else ""
+                # This machine has no log-store, so this finds the live transcript or none; with none,
+                # ned-box's copy looks for the log-store's copy itself.
+                live = own_session_transcript(own_session, root, mac_failures) if own_session else None
+                compaction = transcript_compaction(live, mac_failures) if live is not None else ""
                 forwarded = (["--own-session", own_session]
                              + (["--own-session-compacted-at", compaction] if compaction else [])
                              + forwarded)

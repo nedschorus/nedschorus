@@ -372,8 +372,14 @@ print(x.render_complete_dialog_of_transcript_as_markdown(pathlib.Path({str(egret
     (root / "walk" / "s1.md").unlink()
     check("a walk file named like the running agent-session is not taken for its record",
           "walk file named like the session" in own.stdout, own.stdout)
-    locked = live.parent
     write(live, s1_text)
+    (root / "transcripts").chmod(0)
+    own = run(root, "heron plan", "--kind", "walk", environment={"CLAUDE_CODE_SESSION_ID": "s1"})
+    (root / "transcripts").chmod(0o755)
+    check("a live transcript is used without listing the log-store's transcripts",
+          own.returncode == 0 and "could not list" not in own.stderr and "shows no compaction" in own.stdout,
+          own.stdout + own.stderr)
+    locked = live.parent
     locked.chmod(0)
     own = run(root, "heron plan", environment={"CLAUDE_CODE_SESSION_ID": "s1"})
     locked.chmod(0o755)
@@ -760,6 +766,14 @@ locked.chmod(0o644)
           and ("ARG:python3 /home/nedlern/Projects/nedschorus/scripts/"
                "log-store-past-discussions-regex-search-newest-first.py "
                "--own-session '' 'heron'\"'\"'s plan' --seat prime") in result.stdout.splitlines(), result.stdout)
+    result = run(Path(scratch) / "absent", "heron",
+                 environment={PREFIX + "THIS_MACHINE_OVERRIDE": "mac", PREFIX + "SSH_PROGRAM_OVERRIDE": echoing,
+                              "CLAUDE_CODE_SESSION_ID": "mac-session-1"})
+    check("from the Mac, with no live transcript of the session there, no compaction is passed, so ned-box's "
+          "copy reads the log-store's copy, and nothing failed",
+          result.returncode == 1 and "FAILED" not in result.stderr
+          and any(line.endswith("newest-first.py --own-session mac-session-1 heron")
+                  for line in result.stdout.splitlines()), result.stdout + result.stderr)
     mac_live_path = Path(scratch) / "home" / ".claude" / "projects" / "-Users-el-agents-x" / "mac-session-1.jsonl"
     write(mac_live_path, transcript_records(typed("hello", "2026-10-09T09:00:00Z")))
     result = run(Path(scratch) / "absent", "heron",
