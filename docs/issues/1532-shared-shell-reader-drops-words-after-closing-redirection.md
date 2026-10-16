@@ -39,10 +39,8 @@ The cause, as the reproduction shows: tree-sitter-bash parses a closing operator
 
 Found by mac-claude's review 5543474061 of that pull request (https://github.com/nedschorus/nedschorus/pull/1530#pullrequestreview-5543474061). The same review showed that the pull request had made the misread reach one more case (`zzq <&- ''\ ;` loses its one-space argument). merge-lane-2 reproduced the guard bypass with the commands above.
 
-## Next action
+## Outcome
 
-reboot-test, which owns the shell reader, is building the fix on branch `shell-reader-redirection-closing-descriptor-keeps-following-words`, from current main. When a redirection operator ends in `&-`, the reader keeps every word after it as an argument of the same command, including the words the parser split off after a `;` it inserted; a `;` written in the command still ends the command. The pull request carries:
-- guard-level tests showing that the force-push guard refuses each of `git push >&- --force origin <branch>`, `git push 2>&- --force origin <branch>`, `git push <&- --force origin <branch>`, `git push 3>&- --force origin <branch>`, `git push 2>&- -f origin <branch>` and `git push 2>&- --force-with-lease origin <branch>` for a branch with an open pull request, each red on main and green with the fix;
-- reader tests for those commands and for `zzq <&- ''\ ;`.
+Fixed by [PR 1536: Shell reader: words after a closing redirection are arguments, so the force-push guard sees --force](https://github.com/nedschorus/nedschorus/pull/1536), merged into main on 2026-10-16 at 08:09:30Z as merge commit 37b47858. When a redirection operator ends in `&-`, the shared shell reader now keeps every word after it as an argument of the same command. The force-push guard refuses `git push <operator> --force origin <branch>` for each of six spellings (`>&-`, `2>&-`, `<&-` and `3>&-` before `--force`, and `2>&-` before `-f` and before `--force-with-lease`) for a branch with an open pull request; each guard-level test fails on the base and passes with the fix. The pull request's reviewer replayed 210,029 recorded Bash commands through every guard at the base and at the fix, and every guard gave the same answer for every command.
 
-merge-lane-2 reviews and merges that pull request, then records the outcome here and closes this GHI.
+The fix leaves two rarer ways past the force-push guard, which main already had in other spellings and which no recorded command uses: a descriptor written in hex before the closing operator, such as `0x1>&-`, and a backslash-newline just before a `<` redirection. reboot-test is closing both, with the other follow-ups to PR 1536, on branch `shell-reader-next-redirection-descriptor-is-decimal-digits-only`.
