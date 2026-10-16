@@ -1,8 +1,10 @@
 #!/bin/sh
-# Refuses a push from a mutation-testing worktree, a push of a branch that
+# Refuses a push from a mutation-testing worktree, a push that rewrites or
+# deletes the head branch of an open pull request, a push of a branch that
 # conflicts with main, and a push whose selective test run has a failing suite;
-# lets every other push through. The work is done by three Python files,
+# lets every other push through. The work is done by four Python files,
 # scripts/git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py,
+# scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py,
 # scripts/git-client-side-hooks-pre-push-conflict-check.py and
 # scripts/git-client-side-hooks-pre-push-selective-test-run.py, whose docstrings
 # have the reasons and what is and is not checked. This file only guards the way
@@ -37,6 +39,7 @@ conflict_check="$hook_directory/../git-client-side-hooks-pre-push-conflict-check
 scripts_directory=$(cd "$hook_directory/.." 2>/dev/null && pwd -P) || scripts_directory="$hook_directory/.."
 mutation_testing_worktree_check="$scripts_directory/git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py"
 selective_test_run="$scripts_directory/git-client-side-hooks-pre-push-selective-test-run.py"
+open_pull_request_branch_check="$scripts_directory/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py"
 selective_test_run_hand_command="python3 scripts/run-all-test-suites.py --only-suites-whose-recorded-inputs-changed-since origin/main --wait-for-lock-seconds 600"
 refuse_push_status=10
 checked_remote=origin
@@ -98,6 +101,23 @@ if [ -f "$mutation_testing_worktree_check" ]; then
     fi
 else
     echo "pre-push: the check for mutation-testing worktrees did not run, because $mutation_testing_worktree_check is missing, so this check lets the push through without checking whether it comes from a mutation-testing worktree." >&2
+    echo "$tell_user_line" >&2
+fi
+
+# Every push goes to this check too, since the branch filter above leaves out deletions and
+# main, which this check covers. It fails open, as the checks before and after it do.
+if [ -f "$open_pull_request_branch_check" ]; then
+    printf '%s\n' "$pushed_refs" | python3 "$open_pull_request_branch_check" "$@"
+    open_pull_request_branch_status=$?
+    if [ "$open_pull_request_branch_status" -eq "$refuse_push_status" ]; then
+        exit 1
+    fi
+    if [ "$open_pull_request_branch_status" -ne 0 ]; then
+        echo "pre-push: the check for rewrites and deletions of open pull requests' head branches, $open_pull_request_branch_check, exited with status $open_pull_request_branch_status, so this check lets the push through without checking whether it rewrites or deletes the head branch of an open pull request." >&2
+        echo "$tell_user_line" >&2
+    fi
+else
+    echo "pre-push: the check for rewrites and deletions of open pull requests' head branches did not run, because $open_pull_request_branch_check is missing, so this check lets the push through without checking whether it rewrites or deletes the head branch of an open pull request." >&2
     echo "$tell_user_line" >&2
 fi
 
