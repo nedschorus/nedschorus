@@ -221,14 +221,53 @@ def brief_cases(root, repository, base, frozen_head):
         review(commit_id=frozen_head, body="Two blockers."),
         review(state="COMMENTED", commit_id=frozen_head, review_id=12, body="**Blocking: 3**")])}})
     code, out, err = run(root, repository, miscounted)
-    check("brief: a later review's stated count is checked against the round's marked comments",
-          code == 1 and "says **Blocking: 3**" in err and "2 of their inline comments" in err, err)
+    check("brief: a later review's stated count is checked against its own marked comments",
+          code == 1 and "says **Blocking: 3**" in err and "2 of its own inline comments" in err
+          and "change nothing and push nothing" in err
+          and f"naming its changes-requested review, {URL}#pullrequestreview-11" in err, err)
+
+    added = dict(routes_for(frozen_head, [review(commit_id=frozen_head),
+                                          review(state="COMMENTED", commit_id=frozen_head, review_id=12,
+                                                 body="**Blocking: 1**, one more.")]),
+                 **comments_route(12, [comment("run.py", "**Blocks.** run.py drops the exit code.",
+                                               line=40, comment_id=4)]))
+    code, out, err = run(root, repository, added)
+    check("brief: a later review of the same commit that adds a blocker, with its own count, is read",
+          code == 0 and "Blocking findings (3)" in out and "run.py drops the exit code" in out, err + out)
+
+    duplicate = dict(routes_for(frozen_head, [review(commit_id=frozen_head),
+                                              review(state="COMMENTED", commit_id=frozen_head, review_id=12,
+                                                     body="Re-posting one.")]),
+                     **comments_route(12, [dict(BLOCKING_COMMENTS[0], id=5,
+                                                html_url=f"{URL}#discussion_r5")]))
+    code, out, err = run(root, repository, duplicate)
+    check("brief: a blocker re-posted with the same path, line and body counts once",
+          code == 0 and "Blocking findings (2)" in out
+          and out.count("hook.py swallows the error") == 1, err + out)
+
+    moved = dict(routes_for(frozen_head, [review(commit_id=frozen_head),
+                                          review(state="COMMENTED", commit_id=frozen_head, review_id=12,
+                                                 body="Now inline.")],
+                            comments=[BLOCKING_COMMENTS[1]]),
+                 **comments_route(12, [BLOCKING_COMMENTS[0], BLOCKING_COMMENTS[2]]))
+    code, out, err = run(root, repository, moved)
+    check("brief: a changes-requested review's count with no marked comment is checked against the later ones",
+          code == 0 and "Blocking findings (2)" in out, err + out)
+
+    second_round = dict(routes_for(frozen_head, [review(commit_id=base, review_id=10),
+                                                 review(commit_id=frozen_head, review_id=11)]),
+                        **comments_route(10, [comment("old.py", "**Blocks.** an earlier round's finding.",
+                                                      comment_id=9)]))
+    code, out, err = run(root, repository, second_round)
+    check("brief: with two changes-requested reviews of different commits, only the latest sets the round",
+          code == 0 and f"Frozen-head: {frozen_head}" in out and "Blocking findings (2)" in out
+          and "an earlier round's finding" not in out, err + out)
 
     code, out, err = run(root, repository, routes_for(
         frozen_head, [review(commit_id=frozen_head),
                       review(state="COMMENTED", commit_id=base, review_id=12)]))
     check("brief: a later comment-only review of another commit means no fix-round, exit 1",
-          code == 1 and f"is COMMENTED of commit {base}, not CHANGES_REQUESTED" in err, err)
+          code == 1 and f"is COMMENTED on commit {base}, not CHANGES_REQUESTED" in err, err)
 
     code, out, err = run(root, repository, routes_for(
         frozen_head, [review(commit_id=frozen_head),
@@ -240,7 +279,7 @@ def brief_cases(root, repository, base, frozen_head):
     code, out, err = run(root, repository, routes_for(
         frozen_head, [review(state="COMMENTED", commit_id=frozen_head)]))
     check("brief: comment-only reviews with no changes-requested review mean no fix-round, exit 1",
-          code == 1 and "is COMMENTED of commit" in err, err)
+          code == 1 and "is COMMENTED on commit" in err, err)
 
     code, out, err = run(root, repository, routes_for(base, [review(commit_id=frozen_head)]))
     check("brief: a head that moved past the reviewed commit refuses with exit 1",
@@ -254,7 +293,7 @@ def brief_cases(root, repository, base, frozen_head):
     code, out, err = run(root, repository, routes_for(
         frozen_head, [review(commit_id=frozen_head, body="**Blocking: 3**")]))
     check("brief: a stated blocking count that differs from the marked comments refuses",
-          code == 1 and "says **Blocking: 3**" in err and "2 of its inline comments" in err, err)
+          code == 1 and "says **Blocking: 3**" in err and "2 of its own inline comments" in err, err)
 
     code, out, err = run(root, repository, routes_for(
         frozen_head, [review(commit_id=frozen_head, body="no count stated")]))
