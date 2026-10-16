@@ -851,17 +851,9 @@ def _offset_after_line_continuations(source, offset):
 
 def _offset_before_line_continuations(source, offset):
     """Return offset moved back past the line continuations that end there."""
-    while source[offset - 2:offset] == b"\\\n" and not _escaped(source, offset - 2):
+    while source[offset - 2:offset] == b"\\\n" and not _escaped_by_backslashes(source, offset - 2):
         offset -= 2
     return offset
-
-
-def _escaped(source, offset):
-    """Return whether a backslash escapes the byte at offset: an odd run of backslashes stands before it."""
-    start = offset
-    while start > 0 and source[start - 1:start] == b"\\":
-        start -= 1
-    return (offset - start) % 2 == 1
 
 
 def _digits_are_whole_token(source, start, end):
@@ -879,7 +871,7 @@ def _digits_are_whole_token(source, start, end):
     if start == 0:
         return True
     before = source[start - 1:start]
-    if _escaped(source, start - 1):
+    if _escaped_by_backslashes(source, start - 1):
         return False
     if before == b"&":
         return source[start - 2:start - 1] not in (b"<", b">")
@@ -896,9 +888,9 @@ def _word_start_left_out_before(node, descriptor, source):
     floor = node.prev_sibling.end_byte if node.prev_sibling is not None else 0
     start = descriptor.start_byte
     while start > floor:
-        if source[start - 2:start] == b"\\\n" and start - 2 >= floor and not _escaped(source, start - 2):
+        if source[start - 2:start] == b"\\\n" and start - 2 >= floor and not _escaped_by_backslashes(source, start - 2):
             start -= 2
-        elif source[start - 1:start] in b" \t\n;|&()<>`" and not _escaped(source, start - 1):
+        elif source[start - 1:start] in b" \t\n;|&()<>`" and not _escaped_by_backslashes(source, start - 1):
             break
         else:
             start -= 1
