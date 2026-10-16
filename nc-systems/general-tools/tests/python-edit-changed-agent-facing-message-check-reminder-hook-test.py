@@ -11,6 +11,7 @@ from this process before any git runs.
 """
 
 import difflib
+import hashlib
 import importlib.util
 import json
 import os
@@ -105,6 +106,15 @@ def fast_read_targets(text):
             if line.startswith(FAST_READ_COMMAND_PREFIX)]
 
 
+def file_text(path):
+    """The file's text, or None when the file is missing, so a removed target
+    fails its case instead of stopping the run."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+
+
 def silent(result):
     return result.returncode == 0 and result.stdout.strip() == "" and result.stderr.strip() == ""
 
@@ -144,9 +154,8 @@ REMINDER_INSTRUCTION_LINES = (
     "that asserts the message's text.",
     "Each command prints the path of its report; the report's directory under "
     "cold-read-records/ is that message's cold-read-record.",
-    "If a report shows the message misread, rewrite the message, then run the command from "
-    "the reminder your rewrite brings; a command from an earlier reminder names the earlier "
-    "text, and its file is gone once that text is.",
+    "If a report shows the message misread, rewrite the message and run the command from the "
+    "reminder your rewrite brings; an earlier reminder's command still reads the earlier text.",
     "Name each message's cold-read-record in the pull request's description.",
     "If every listed message passes, carry on; nothing needs saying to the user.",
     "If your edit changed a message held in a local variable or built any other way, check "
@@ -186,14 +195,13 @@ with tempfile.TemporaryDirectory() as temporary:
     for line in REMINDER_INSTRUCTION_LINES:
         check(f"the reminder carries the instruction line: {line[:60]}", line in text.split("\n"), text)
     targets = fast_read_targets(text)
+    text_digest = hashlib.sha256("first message, reworded".encode()).hexdigest()[:16]
     check("the reminder gives the changed message's cold-read-fast-read command, its file named "
-          "by path and line under the temporary directory",
-          len(targets) == 1
-          and targets[0].parent.parent == hook_temporary_directory / FAST_READ_TARGET_DIRECTORY_NAME
-          and targets[0].name.startswith("scripts-tool-line-8-")
-          and targets[0].name.endswith("-agent-facing-message.md"), text)
+          "by path and a digest of the text alone, in one directory under the temporary directory",
+          targets == [hook_temporary_directory / FAST_READ_TARGET_DIRECTORY_NAME
+                      / f"scripts-tool-{text_digest}-agent-facing-message.md"], text)
     check("the command's file holds the changed message's text",
-          len(targets) == 1 and targets[0].read_text(encoding="utf-8") == "first message, reworded\n",
+          len(targets) == 1 and file_text(targets[0]) == "first message, reworded\n",
           targets)
     check("the reminder says why each message gets its cold-read-fast-read",
           "because a fresh reader shows whether an agent with only the message understands it"
@@ -211,10 +219,21 @@ with tempfile.TemporaryDirectory() as temporary:
     second_targets = fast_read_targets(agent_text(result))
     check("a rewrite that moves a message's first line gives a command whose file holds the new text",
           len(second_targets) == 1 and "scripts/tool.py:10  second, rewritten" in agent_text(result)
-          and second_targets[0].read_text(encoding="utf-8") == "second, rewritten\n",
+          and file_text(second_targets[0]) == "second, rewritten\n",
           (second_targets, result))
-    check("after a rewrite, the earlier reminder's command no longer reads the earlier text",
-          len(first_targets) == 1 and not first_targets[0].exists(), first_targets)
+    check("after a rewrite, the earlier reminder's command still reads the earlier text, never "
+          "the rewritten text",
+          len(first_targets) == 1 and first_targets != second_targets
+          and file_text(first_targets[0]) == "second, reworded\n", first_targets)
+
+    reset()
+    existing_target = targets[0] if targets else Path(temporary) / "none"
+    existing_target.write_text("left by an earlier run\n", encoding="utf-8")
+    edit_then_run(repository, program, COMMITTED_SOURCE, '"first message to the agent"',
+                  '"first message, reworded"')
+    check("a target file already present for the same text is not written again",
+          file_text(existing_target) == "left by an earlier run\n", existing_target)
+    existing_target.write_text("first message, reworded\n", encoding="utf-8")
 
     reset()
     result = edit_then_run(repository, program, COMMITTED_SOURCE, '"first message to the agent"',
@@ -255,13 +274,28 @@ with tempfile.TemporaryDirectory() as temporary:
         repository, program, COMMITTED_SOURCE, "second message to the agent", "second, reworded")))
     result = edit_then_run(repository, program, COMMITTED_SOURCE.replace(
         "second message to the agent", "second, reworded"), "LIMIT = 3\n", "LIMIT = 3\nOTHER = 4\n")
-    moved_targets = sorted(earlier_targets[0].parent.iterdir()) if earlier_targets else []
-    check("an Edit that moves an earlier-listed message, writing no message, is silent and moves "
-          "the message's file to the message's new line",
-          silent(result) and len(earlier_targets) == 1 and not earlier_targets[0].exists()
-          and len(moved_targets) == 1 and moved_targets[0].name.startswith("scripts-tool-line-10-")
-          and moved_targets[0].read_text(encoding="utf-8") == "second, reworded\n",
-          (result, moved_targets))
+    check("an Edit that only moves an earlier-listed message's line is silent, and the earlier "
+          "command still reads the message's text",
+          silent(result) and len(earlier_targets) == 1
+          and file_text(earlier_targets[0]) == "second, reworded\n",
+          (result, earlier_targets))
+
+    committed_source = 'LIMIT = 3\nprint("a message to commit")\n'
+    committed_program = repository / "scripts" / "committed.py"
+    committed_program.write_text(committed_source, encoding="utf-8")
+    git(repository, "add", "scripts/committed.py")
+    git(repository, "commit", "-q", "-m", "commit fixture", "--", "scripts/committed.py")
+    reworded = committed_source.replace("a message to commit", "a committed message, reworded")
+    earlier_targets = fast_read_targets(agent_text(edit_then_run(
+        repository, committed_program, committed_source, "a message to commit",
+        "a committed message, reworded")))
+    git(repository, "commit", "-q", "-m", "commit the reworded message", "--", "scripts/committed.py")
+    result = edit_then_run(repository, committed_program, reworded, "LIMIT = 3", "LIMIT = 4")
+    check("a commit followed by an Edit of other code is silent, and the earlier command still "
+          "reads the message's text",
+          silent(result) and len(earlier_targets) == 1
+          and file_text(earlier_targets[0]) == "a committed message, reworded\n",
+          (result, earlier_targets))
 
     reset()
     both_old = 'print("first message to the agent")\n    sys.stderr.write("second message to the agent\\n")'
@@ -270,29 +304,35 @@ with tempfile.TemporaryDirectory() as temporary:
         repository, program, COMMITTED_SOURCE, both_old, both_new)))
     both_source = COMMITTED_SOURCE.replace(both_old, both_new)
     result = edit_then_run(repository, program, both_source, '    print("first, reworded")\n', "")
-    check("when another changed message moves onto a removed message's line, the removed message's "
-          "command reads no file rather than the other message",
-          silent(result) and len(both_targets) == 2 and both_targets[0].name.startswith("scripts-tool-line-8-")
-          and not both_targets[0].exists(), (result, both_targets))
+    check("when another changed message moves onto a removed message's line, each earlier command "
+          "still reads its own message's text",
+          silent(result) and len(both_targets) == 2
+          and file_text(both_targets[0]) == "first, reworded\n"
+          and file_text(both_targets[1]) == "second, reworded\n",
+          (result, both_targets))
 
-    # Root writes through a 0o500 directory, so the refresh cannot fail there.
-    if os.geteuid() == 0:
-        print("SKIP  earlier targets that cannot be brought up to date: this test runs as root")
-    else:
-        reset()
-        locked_targets = fast_read_targets(agent_text(edit_then_run(
-            repository, program, COMMITTED_SOURCE, "second message to the agent", "second, reworded")))
-        locked_directory = locked_targets[0].parent if locked_targets else Path(temporary) / "none"
-        locked_directory.chmod(0o500)
-        try:
-            result = edit_then_run(repository, program, COMMITTED_SOURCE.replace(
-                "second message to the agent", "second, reworded"), "LIMIT = 3\n", "LIMIT = 3\nOTHER = 4\n")
-        finally:
-            locked_directory.chmod(0o700)
-        text = agent_text(result)
-        check("earlier targets that cannot be brought up to date are reported as not inspected, exit 0",
-              result.returncode == 0 and "could not inspect your Edit of scripts/tool.py" in text
-              and "fast-read target files" in text and "could not be brought up to date" in text, result)
+    other_checkout = Path(temporary) / "other-checkout"
+    other_checkout.mkdir()
+    git(other_checkout, "init", "-q")
+    git(other_checkout, "config", "user.email", "test@example.invalid")
+    git(other_checkout, "config", "user.name", "test")
+    other_program = other_checkout / "scripts" / "tool.py"
+    other_program.parent.mkdir()
+    other_program.write_text(COMMITTED_SOURCE, encoding="utf-8")
+    git(other_checkout, "add", "-A")
+    git(other_checkout, "commit", "-q", "-m", "fixture")
+    reset()
+    this_targets = fast_read_targets(agent_text(edit_then_run(
+        repository, program, COMMITTED_SOURCE, "first message to the agent", "first, in this checkout")))
+    other_targets = fast_read_targets(agent_text(edit_then_run(
+        other_checkout, other_program, COMMITTED_SOURCE, "first message to the agent",
+        "first, in the other checkout")))
+    check("two checkouts with different text at the same relative path get two files, each "
+          "holding its own checkout's text",
+          len(this_targets) == 1 and len(other_targets) == 1 and this_targets != other_targets
+          and file_text(this_targets[0]) == "first, in this checkout\n"
+          and file_text(other_targets[0]) == "first, in the other checkout\n",
+          (this_targets, other_targets))
 
     reset()
     result = edit_then_run(repository, program, COMMITTED_SOURCE,

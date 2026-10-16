@@ -6,14 +6,12 @@ its cold-read-fast-read command: the hook writes each message's text to a file
 of its own under the temporary directory, because cold-read-fast-read.py reads
 only files, and the file's name becomes the cold-read-record's name.
 
-Each source file in each checkout has its own target directory. Each hook run
-that inspects the file and writes a message, or finds that directory present,
-refreshes it to hold
-one file for each message in the source file whose text is not at HEAD, named
-by the message's line and a digest of its text, and removes every other file
-there. A command from an earlier reminder therefore reads either the message's
-current text or no file at all, which cold-read-fast-read.py refuses, never a
-text the agent has since rewritten or moved with an Edit, MultiEdit or Write.
+Each target file is named by the source file's repository-relative path and a
+digest of the message's text alone, in one directory under the temporary
+directory. The hook writes a target file only when it is missing, and never
+removes one, so a command reads the text its reminder listed for as long as the
+temporary directory keeps the file; a rewritten message gets a new file and a
+new command.
 
 A PostToolUse hook: the act has happened, and the agent rewrites any message
 that fails the page. The reminder goes in hookSpecificOutput.additionalContext,
@@ -49,6 +47,7 @@ import ast
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -109,9 +108,8 @@ FAST_READ_MESSAGE_TEMPLATE = (
     "{commands}\n"
     "Each command prints the path of its report; the report's directory under "
     "cold-read-records/ is that message's cold-read-record.\n"
-    "If a report shows the message misread, rewrite the message, then run the command from "
-    "the reminder your rewrite brings; a command from an earlier reminder names the earlier "
-    "text, and its file is gone once that text is.\n"
+    "If a report shows the message misread, rewrite the message and run the command from the "
+    "reminder your rewrite brings; an earlier reminder's command still reads the earlier text.\n"
     "Name each message's cold-read-record in the pull request's description."
 )
 FAST_READ_FILES_NOT_WRITTEN_TEMPLATE = (
@@ -227,35 +225,28 @@ def messages_not_at_head(entries, file_path: Path):
     return changed
 
 
-def fast_read_target_directory(checkout_root: Path, relative_path: str) -> Path:
-    """The directory of one source file's targets. Checkouts on one machine
-    share the temporary directory, and two source paths can share a slug, so
-    the name is a digest of both."""
-    digest = hashlib.sha256(f"{checkout_root}\0{relative_path}".encode()).hexdigest()[:16]
-    return Path(tempfile.gettempdir()) / FAST_READ_TARGET_DIRECTORY_NAME / digest
-
-
-def fast_read_target_path(directory: Path, relative_path: str, entry) -> Path:
-    """The file for one message; its name becomes the cold-read-record's name."""
+def fast_read_target_path(relative_path: str, text: str) -> Path:
+    """The file for one message's text; its name becomes the cold-read-record's
+    name. The text's digest keeps checkouts sharing the temporary directory, and
+    source paths sharing a slug, from reading each other's texts."""
     slug = re.sub(r"[^A-Za-z0-9]+", "-", relative_path.removesuffix(".py")).strip("-")
-    digest = hashlib.sha256(entry["text"].encode()).hexdigest()[:8]
-    return directory / f"{slug}-line-{entry['line']}-{digest}-agent-facing-message.md"
+    digest = hashlib.sha256(text.encode()).hexdigest()[:16]
+    return (Path(tempfile.gettempdir()) / FAST_READ_TARGET_DIRECTORY_NAME
+            / f"{slug}-{digest}-agent-facing-message.md")
 
 
-def fast_read_targets_refreshed(directory: Path, relative_path: str, changed):
-    """Write a target for each changed message and remove every other file in
-    the directory. Returns each changed message's target path, keyed by line
-    and text."""
-    targets = {(entry["line"], entry["text"]): fast_read_target_path(directory, relative_path, entry)
-               for entry in changed}
-    if not targets and not directory.is_dir():
-        return targets
-    directory.mkdir(parents=True, exist_ok=True)
-    for stale in set(directory.iterdir()) - set(targets.values()):
-        stale.unlink()
-    for (_, text), target in targets.items():
-        target.write_text(text.rstrip("\n") + "\n", encoding="utf-8")
-    return targets
+def fast_read_target_written(relative_path: str, text: str) -> Path:
+    """The text's target file, written if missing. It is written under a
+    temporary name and renamed into place, so a concurrent hook run never reads
+    or leaves a half-written file."""
+    target = fast_read_target_path(relative_path, text)
+    if not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, partial = tempfile.mkstemp(dir=target.parent, prefix=".", suffix=".partial")
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(text.rstrip("\n") + "\n")
+        os.replace(partial, target)
+    return target
 
 
 def reminder_text(tool_name, relative_path, entries, targets, targets_error):
@@ -278,7 +269,7 @@ def reminder_text_listing(tool_name, relative_path, entries, listed_count, targe
             more=len(entries) - listed_count, path=relative_path))
     if targets_error is None:
         fast_read = FAST_READ_MESSAGE_TEMPLATE.format(commands="\n".join(
-            "  " + FAST_READ_COMMAND.format(target=targets[(entry["line"], entry["text"])])
+            "  " + FAST_READ_COMMAND.format(target=targets[entry["text"]])
             for entry in listed))
     else:
         fast_read = FAST_READ_FILES_NOT_WRITTEN_TEMPLATE.format(reason=targets_error)
@@ -293,11 +284,8 @@ def words_joined_with_or(words):
     return ", ".join(words[:-1]) + " or " + words[-1]
 
 
-def inspection_text(payload, checkout_root: Path, relative_path: str):
-    """The text to hand the agent, or None when the edit changed no message.
-    Refreshes the source file's fast-read targets whenever the edit wrote a
-    message or targets from an earlier reminder exist, since an edit that
-    writes no message can still move one."""
+def inspection_text(payload, relative_path: str):
+    """The text to hand the agent, or None when the edit changed no message."""
     tool_name = payload["tool_name"]
     file_path = Path(payload["tool_input"]["file_path"])
     try:
@@ -308,26 +296,22 @@ def inspection_text(payload, checkout_root: Path, relative_path: str):
         ast.parse(source)
     except (SyntaxError, ValueError) as error:
         return FILE_DID_NOT_PARSE_MESSAGE_TEMPLATE.format(path=relative_path, tool=tool_name, error=error)
-    entries = collector.agent_facing_string_nodes_in_source(source)
-    written = entries
+    written = collector.agent_facing_string_nodes_in_source(source)
     if tool_name in EDIT_TOOL_NAMES:
         added, gaps = edit_written_lines_and_gaps(payload.get("tool_response"))
-        written = [entry for entry in entries if entry_was_written(entry, added, gaps)]
-    directory = fast_read_target_directory(checkout_root, relative_path)
-    if not written and not directory.is_dir():
+        written = [entry for entry in written if entry_was_written(entry, added, gaps)]
+    if not written:
         return None
-    changed = messages_not_at_head(entries, file_path)
-    written_ids = {id(entry) for entry in written}
-    listed = [entry for entry in changed if id(entry) in written_ids]
+    listed = messages_not_at_head(written, file_path)
+    if not listed:
+        return None
     try:
-        targets, targets_error = fast_read_targets_refreshed(directory, relative_path, changed), None
+        targets = {entry["text"]: fast_read_target_written(relative_path, entry["text"])
+                   for entry in listed}
+        targets_error = None
     except OSError as error:
-        if not listed:
-            raise HookCouldNotInspect(
-                f"the earlier reminders' fast-read target files in {directory} could not be "
-                f"brought up to date: {type(error).__name__}: {error}") from error
         targets, targets_error = {}, f"{type(error).__name__}: {error}"[:REASON_CHARACTER_LIMIT]
-    return reminder_text(tool_name, relative_path, listed, targets, targets_error) if listed else None
+    return reminder_text(tool_name, relative_path, listed, targets, targets_error)
 
 
 def main() -> int:
@@ -346,9 +330,9 @@ def main() -> int:
     found = checkout_path.checkout_relative_path(file_path, Path(working_directory))
     if found is None or collector.path_is_test_file(found[1]):
         return 0
-    checkout_root, relative_path = found
+    relative_path = found[1]
     try:
-        text = inspection_text(payload, checkout_root, relative_path)
+        text = inspection_text(payload, relative_path)
     except Exception as error:
         reason = str(error) if isinstance(error, HookCouldNotInspect) else (
             f"the hook failed with {type(error).__name__}: {error}")
