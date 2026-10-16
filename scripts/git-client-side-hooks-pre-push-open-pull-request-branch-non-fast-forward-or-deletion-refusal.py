@@ -23,7 +23,6 @@ through unchecked; scripts/force-push-with-open-pull-request-guard-hook.py reads
 
 import json
 import os
-import socket
 import subprocess
 import sys
 
@@ -66,18 +65,8 @@ ESCAPE_HATCH_INSTRUCTION = (
 LOOKUP_FAILED_REFUSAL = (
     "this push is refused, because it {action} branch {branch} on origin, and whether {branch} "
     "has an open pull request could not be checked: {detail}.")
-LOOKUP_FAILED_INSTRUCTIONS = [
-    "Run gh auth status to see whether gh on {machine} is logged in.",
-    "If gh is not logged in: tell the user this whole message; he logs it in himself with gh "
-    "auth login, and on ned-box from a Terminal on his Mac with ssh -t nedlern@ned-box "
-    "'gh auth login'. Push again once gh pr list works.",
-    "If gh did not answer in time, or its answer could not be read: push again.",
-    "If gh pr list --state open --head {branch} lists a pull request: {instead}",
-]
-LOOKUP_FAILED_REWRITE_INSTEAD = (
-    "do not force the push; put your change in a new commit on top of origin/{branch} instead.")
-LOOKUP_FAILED_DELETION_INSTEAD = (
-    "close the pull request with a comment that says why before you delete the branch.")
+LOOKUP_FAILED_INSTRUCTION = (
+    "Tell the user this whole message, and do not push {branch} again until he answers.")
 
 
 class OpenPullRequestLookupFailed(Exception):
@@ -157,10 +146,7 @@ def refusal_lines(pushed_refs_text, runner):
         branch, deletes, detail = lookup_failures[0]
         return [LOOKUP_FAILED_REFUSAL.format(action="deletes" if deletes else "forces an update to",
                                              branch=branch, detail=detail),
-                *(line.format(branch=branch, machine=socket.gethostname(), instead=(
-                    LOOKUP_FAILED_DELETION_INSTEAD if deletes
-                    else LOOKUP_FAILED_REWRITE_INSTEAD.format(branch=branch)))
-                  for line in LOOKUP_FAILED_INSTRUCTIONS),
+                LOOKUP_FAILED_INSTRUCTION.format(branch=branch),
                 ESCAPE_HATCH_INSTRUCTION]
     return []
 

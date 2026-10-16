@@ -1584,17 +1584,18 @@ def run_open_pull_request_branch_cases(scratch):
     rewrite(scenario, "clean")
     result = scenario.push("--force", "origin", "clean")
     check("open pull request check: when gh is logged out, a forced rewrite is refused, saying "
-          "what failed and how to log gh in",
+          "what failed and to tell the user",
           was_refused(result) and "it forces an update to branch clean on origin, and "
           + lookup_failed + "gh pr list exited with status 4: " + FAKE_GH_LOGGED_OUT in result.stderr
-          and "Run gh auth status" in result.stderr
-          and "ssh -t nedlern@ned-box 'gh auth login'" in result.stderr
+          and "Tell the user this whole message, and do not push clean again until he answers."
+          in result.stderr
+          and "Run gh auth status" not in result.stderr
+          and "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE=1" in result.stderr
           and scenario.origin_ref("clean") == pushed, result.describe())
     result = scenario.push("origin", "--delete", "conflicting")
     check("open pull request check: when gh is logged out, a deletion is refused",
           was_refused(result) and "it deletes branch conflicting on origin" in result.stderr
-          and "close the pull request with a comment" in result.stderr
-          and "new commit on top" not in result.stderr
+          and "do not push conflicting again until he answers" in result.stderr
           and scenario.origin_ref("conflicting") is not None, result.describe())
     scenario.git(scenario.clone, "reset", "--quiet", "--hard", pushed)
     scenario.on_branch("clean", "on-top.txt", "on top\n", "On top")
@@ -1633,6 +1634,17 @@ def run_open_pull_request_branch_cases(scratch):
                 return subprocess.CompletedProcess(command, 1, "", "")
             return gh_behaviour(command)
         return run
+
+    gh_options = []
+
+    def recording_runner(command, **options):
+        gh_options.append(options)
+        return subprocess.CompletedProcess(command, 0, "[]", "")
+
+    loaded.open_pull_request("clean", recording_runner)
+    check("open pull request check: the gh call is given the gh timeout",
+          [o.get("timeout") for o in gh_options] == [loaded.GH_TIMEOUT_SECONDS]
+          and loaded.GH_TIMEOUT_SECONDS > 0, repr(gh_options))
 
     def raises(error):
         def behaviour(command):

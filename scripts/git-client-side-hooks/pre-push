@@ -29,7 +29,9 @@
 # The pushed refs are read once, into a variable, so the messages below can
 # name each branch the conflict check would have checked, and so a push with
 # no such branch (main, a tag, a deletion, another remote) runs neither the
-# conflict check nor the selective test run, and prints nothing.
+# conflict check nor the selective test run. Such a push still runs the open
+# pull request check, which asks GitHub about a forced update or a deletion of
+# a branch on origin.
 # The filter matches branches_to_check in the Python file; the pre-push test
 # suite pins both against the same pushes.
 
