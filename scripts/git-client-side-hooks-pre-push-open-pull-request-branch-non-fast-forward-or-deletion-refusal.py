@@ -68,14 +68,18 @@ LOOKUP_FAILED_REFUSAL = (
     "has an open pull request could not be checked: {detail}.")
 LOOKUP_FAILED_INSTRUCTIONS = [
     "Run gh auth status to see whether gh on {machine} is logged in.",
-    "If gh is not logged in: tell the user this whole message; he logs it in himself with gh "
-    "auth login, and on ned-box from a Terminal on his Mac with ssh -t nedlern@ned-box "
-    "'gh auth login'. Push again once gh pr list works.",
-    "If gh did not answer in time, or its answer could not be read: push again.",
-    "If gh is logged in, or its error names the repository: gh finds the repository from the "
-    "remotes of this clone, not from the URL git handed this hook, and may be unable to resolve "
-    "origin as a GitHub repository. Run git remote get-url origin and tell the user what it "
-    "prints.",
+    "If gh's error above says gh is not logged in: tell the user this whole message; he logs gh in "
+    "himself, on the Mac with gh auth login in a Terminal, and on ned-box from a Terminal on his "
+    "Mac with ssh -t nedlern@ned-box 'gh auth login'. Push again only after he says gh is "
+    "logged in.",
+    "If gh's error above says gh did not answer in time, or printed output that is not JSON: push "
+    "again once. If that push is refused the same way, tell the user this whole message.",
+    "If gh's error above says no git remote points to a known GitHub host: gh finds the "
+    "repository from the remotes of this clone, not from the URL git handed this hook. Run git "
+    "remote get-url origin, tell the user what it prints, and do not push {branch} again until "
+    "he answers.",
+    "If gh's error above is none of these: tell the user this whole message, and do not push "
+    "{branch} again until he answers.",
     "If gh pr list --state open --head {branch} lists a pull request: {instead}",
 ]
 LOOKUP_FAILED_REWRITE_INSTEAD = (
