@@ -461,7 +461,9 @@ def listed_directories(directory, failures):
 
 
 def transcript_in(project_directories, session_id, failures):
-    """The session's transcript in the first of project_directories that holds one, or None."""
+    """The session's transcript in the first of project_directories that holds one, or None; a directory
+    that cannot be looked into is a failure only when none holds it."""
+    unexamined = []
     for directory in project_directories:
         path = directory / f"{session_id}.jsonl"
         try:
@@ -469,9 +471,10 @@ def transcript_in(project_directories, session_id, failures):
         except FileNotFoundError:
             continue
         except OSError as error:
-            failures.append(f"could not look for this agent-session's transcript at {path}: {error}")
+            unexamined.append(f"could not look for this agent-session's transcript at {path}: {error}")
             continue
         return path
+    failures += unexamined
     return None
 
 
@@ -1010,9 +1013,9 @@ def main(argv=None):
             if parsed.own_session is None and not parsed.include_own_session:
                 # ned-box's copy cannot see this machine's environment or live transcripts. Put first, since
                 # after a -- it would be read as the pattern.
-                # This machine has no log-store, so this finds the live transcript or none; with none,
-                # ned-box's copy looks for the log-store's copy itself.
-                live = own_session_transcript(own_session, root, mac_failures) if own_session else None
+                # With no live transcript here, ned-box's copy looks for the log-store's copy itself.
+                live = (transcript_in(listed_directories(LIVE_TRANSCRIPTS_DIRECTORY, mac_failures), own_session,
+                                      mac_failures) if own_session else None)
                 compaction = transcript_compaction(live, mac_failures) if live is not None else ""
                 forwarded = (["--own-session", own_session]
                              + (["--own-session-compacted-at", compaction] if compaction else [])

@@ -774,8 +774,36 @@ locked.chmod(0o644)
           result.returncode == 1 and "FAILED" not in result.stderr
           and any(line.endswith("newest-first.py --own-session mac-session-1 heron")
                   for line in result.stdout.splitlines()), result.stdout + result.stderr)
+    not_a_store = write(Path(scratch) / "not-a-directory", "")
+    result = run(not_a_store, "heron",
+                 environment={PREFIX + "THIS_MACHINE_OVERRIDE": "mac", PREFIX + "SSH_PROGRAM_OVERRIDE": echoing,
+                              "CLAUDE_CODE_SESSION_ID": "mac-session-1"})
+    check("from the Mac, only the live directory is looked in, never the log-store's path, which the Mac lacks",
+          result.returncode == 1 and "FAILED" not in result.stderr, result.stdout + result.stderr)
     mac_live_path = Path(scratch) / "home" / ".claude" / "projects" / "-Users-el-agents-x" / "mac-session-1.jsonl"
     write(mac_live_path, transcript_records(typed("hello", "2026-10-09T09:00:00Z")))
+    locked_first = Path(scratch) / "home" / ".claude" / "projects" / "-Users-el-agents-a-locked"
+    locked_first.mkdir()
+    locked_first.chmod(0)
+    result = run(Path(scratch) / "absent", "heron",
+                 environment={PREFIX + "THIS_MACHINE_OVERRIDE": "mac", PREFIX + "SSH_PROGRAM_OVERRIDE": echoing,
+                              "CLAUDE_CODE_SESSION_ID": "mac-session-1"})
+    locked_first.chmod(0o755)
+    locked_first.rmdir()
+    mac_projects = Path(scratch) / "home" / ".claude" / "projects"
+    mac_projects.chmod(0)
+    unlisted = run(Path(scratch) / "absent", "heron",
+                   environment={PREFIX + "THIS_MACHINE_OVERRIDE": "mac", PREFIX + "SSH_PROGRAM_OVERRIDE": echoing,
+                                "CLAUDE_CODE_SESSION_ID": "mac-session-1"})
+    mac_projects.chmod(0o755)
+    check("from the Mac, a live directory that cannot be listed is a FAILED line and exit 2",
+          unlisted.returncode == 2 and "FAILED: on mac, could not list" in unlisted.stderr,
+          unlisted.stdout + unlisted.stderr)
+    check("a live project directory that cannot be looked into is not a failure when another holds the "
+          "transcript",
+          result.returncode == 1 and "FAILED" not in result.stderr
+          and any(line.endswith("--own-session mac-session-1 --own-session-compacted-at never heron")
+                  for line in result.stdout.splitlines()), result.stdout + result.stderr)
     result = run(Path(scratch) / "absent", "heron",
                  environment={PREFIX + "THIS_MACHINE_OVERRIDE": "mac", PREFIX + "SSH_PROGRAM_OVERRIDE": echoing,
                               "CLAUDE_CODE_SESSION_ID": "mac-session-1"})
