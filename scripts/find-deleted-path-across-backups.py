@@ -303,8 +303,11 @@ thing the summary's "Could NOT search" line says, and the usual result of an
 unattended run, because reading inside Time Machine needs root — unless the
 sudoers rule described above is installed, which is exactly what makes that
 surface answerable with nobody in the room. 4 when a surface FOUND it
-but no version could be copied into the found-copies folder and no command
-was printed to copy it: each "could NOT copy" line says why. 2 on a usage
+but no version was copied into the found-copies folder and no printed command
+copies one, as when every copy failed or the only hit is a transcript: the
+FOUND lines say what was found. 5 when nothing was copied but a printed
+command, such as a mount that needs the user's password, copies a version
+into the folder. 0 only when at least one version was copied. 2 on a usage
 error. The first
 version returned 1 for the third case too, so a wrapper branching on $? was
 told "not found" by a run that had searched nothing. Log-store candidates
@@ -324,6 +327,7 @@ import shlex
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -348,6 +352,7 @@ EXIT_NOT_FOUND_EVERYWHERE = 1
 EXIT_USAGE = 2
 EXIT_INCOMPLETE = 3
 EXIT_FOUND_BUT_NOT_COPIED = 4
+EXIT_FOUND_COPY_COMMAND_PRINTED = 5
 
 FOUND_COPIES_ROOT_ENVIRONMENT_VARIABLE = "FIND_DELETED_PATH_FOUND_COPIES_ROOT"
 DEFAULT_FOUND_COPIES_ROOT = "~/Downloads/nedschorus-found-copies"
@@ -400,11 +405,14 @@ BOX_TRANSCRIPTS_DIR_MISSING = 3
 class SurfaceReport:
     """One surface's result and recovery instructions."""
 
-    def __init__(self, surface, status, lines=None, recovery=None, versions=None):
+    def __init__(self, surface, status, lines=None, recovery=None, versions=None, prints_copy_command=False):
         self.surface = surface
         self.status = status
         self.lines = list(lines or [])
         self.recovery = list(recovery or [])
+        # True only when a recovery command copies a version into the found-copies folder; a transcript's
+        # context print or a bare unmount is a recovery line that copies nothing.
+        self.prints_copy_command = prints_copy_command
         # Each FoundVersion this run copies into the found-copies folder after the surface finishes.
         self.versions = list(versions or [])
         self.copied = []
@@ -504,19 +512,51 @@ def _version_bytes(version, fetch):
     return out, None
 
 
+class CopyWriteFailed(OSError):
+    """A copy could not be written; partial_left names a cut-off file that could not be removed, or is None."""
+
+    def __init__(self, error, partial_left):
+        super().__init__(str(error))
+        self.partial_left = partial_left
+
+
+def _remove_partial(temporary):
+    """Remove a temporary file; return its path when it could not be removed, else None."""
+    try:
+        os.unlink(temporary)
+        return None
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return temporary
+
+
 def _write_new_file(path, content):
-    """Write content to path, or to path with -2, -3 ... added when path is taken; return the path used."""
+    """Write content to path, or to path with -2, -3 ... added when path is taken; return the path used.
+
+    The content goes to a hidden temporary file first and is linked to its name only once complete, so a
+    write that fails partway never leaves a cut-off file under a copy's name.
+    """
+    fd, temporary = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".partial-")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+    except OSError as error:
+        raise CopyWriteFailed(error, _remove_partial(temporary))
     base, extension = os.path.splitext(path)
     candidate, number = path, 1
     while True:
         try:
-            # "x" never replaces a file, so two versions with one name both survive.
-            with open(candidate, "xb") as handle:
-                handle.write(content)
-            return candidate
+            # A link never replaces a file, so two versions with one name both survive.
+            os.link(temporary, candidate)
         except FileExistsError:
             number += 1
             candidate = "%s-%d%s" % (base, number, extension)
+            continue
+        except OSError as error:
+            raise CopyWriteFailed(error, _remove_partial(temporary))
+        _remove_partial(temporary)
+        return candidate
 
 
 def copy_found_versions(report, folder=None, fetch=None):
@@ -531,6 +571,10 @@ def copy_found_versions(report, folder=None, fetch=None):
             try:
                 os.makedirs(folder.path, exist_ok=True)
                 written = _write_new_file(folder.destination(version.name), content)
+            except CopyWriteFailed as error:
+                left = ("a partial file was left at %s and is not a copy" % error.partial_left
+                        if error.partial_left else "no partial file was left")
+                content, why = None, "could not write into %s: %s; %s" % (folder.path, error, left)
             except OSError as error:
                 content, why = None, "could not write into %s: %s" % (folder.path, error)
         if content is None:
@@ -714,7 +758,8 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
                        else [])
             return SurfaceReport("local snapshots", FOUND, lines, release, [version])
         return SurfaceReport("local snapshots", FOUND, lines,
-                             _local_snapshot_recovery(best_snapshot, probe_path, mount_point, clear_first))
+                             _local_snapshot_recovery(best_snapshot, probe_path, mount_point, clear_first),
+                             prints_copy_command=True)
 
     if searched:
         lines.append("searched %s .. %s and none of them has it" % (searched[-1], searched[0]))
@@ -1559,7 +1604,8 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
             lines.append("%s holds %s" % (snapshot, hit))
         return SurfaceReport("time machine", FOUND, lines,
                              _time_machine_manual_recovery(hits[0][0], device, hits[0][1],
-                                                           clear_first=bool(stuck)))
+                                                           clear_first=bool(stuck)),
+                             prints_copy_command=True)
     if searched:
         lines.append("searched %s and did not find it" % ", ".join(searched))
     if unsearched:
@@ -1900,6 +1946,14 @@ def render_summary(reports):
         if not_copied:
             out.append("Could NOT copy every version %s found: see each one's \"could NOT copy\" line above."
                        % ", ".join(not_copied))
+        if not copied:
+            commands = [r.surface for r in found if r.prints_copy_command]
+            if commands:
+                out.append("Nothing was copied yet: the command printed under %s copies a version into %s "
+                           "when it is run." % (", ".join(commands), found_copies_folder().path))
+            else:
+                out.append("No version was copied: what was found is only what each FOUND surface's lines "
+                           "above say.")
     else:
         out.append("No surface that could be searched has it.")
     if candidates:
@@ -1987,17 +2041,15 @@ def main(argv=None, runner=run_command):
 
 
 def exit_status(reports):
-    """Return 0 for a hit, 1 for an exhaustive miss, 3 for an incomplete search, or 4 for a hit none of
-    whose versions could be copied."""
+    """Return 0 when a version was copied, 5 when none was but a printed command copies one, 4 for any
+    other hit, 1 for an exhaustive miss, or 3 for an incomplete search."""
     found = [r for r in reports if r.status == FOUND]
     if found:
-        attempted = any(r.versions for r in found)
-        copied = any(r.copied for r in found)
-        another_way = any(r.recovery for r in found)
-        # Found, yet no version reached the folder and no command was printed: the caller holds nothing.
-        if attempted and not copied and not another_way:
-            return EXIT_FOUND_BUT_NOT_COPIED
-        return EXIT_FOUND
+        if any(r.copied for r in found):
+            return EXIT_FOUND
+        if any(r.prints_copy_command for r in found):
+            return EXIT_FOUND_COPY_COMMAND_PRINTED
+        return EXIT_FOUND_BUT_NOT_COPIED
     if not reports or any(r.status == UNAVAILABLE for r in reports):
         return EXIT_INCOMPLETE
     return EXIT_NOT_FOUND_EVERYWHERE

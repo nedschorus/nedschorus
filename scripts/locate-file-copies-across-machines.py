@@ -49,6 +49,7 @@ BACKUP_SEARCH_SUMMARY_OPENINGS = (
 BACKUP_SEARCH_FOUND_EXIT = 0
 BACKUP_SEARCH_INCOMPLETE_EXIT = 3
 BACKUP_SEARCH_FOUND_BUT_NOT_COPIED_EXIT = 4
+BACKUP_SEARCH_FOUND_COPY_COMMAND_PRINTED_EXIT = 5
 
 # Bound hashing cost, the only search cost that grows with file size.
 HASH_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
@@ -1045,9 +1046,16 @@ def run_backup_search_after_nothing_found(query, git_search_complete):
                 "the path was only typed in it. Restore a copy to the file's own "
                 "path only when asked to."]
     if code == BACKUP_SEARCH_FOUND_BUT_NOT_COPIED_EXIT:
-        return ["The backup search found it but could not copy any version: "
-                "tell the user what its \"could NOT copy\" lines say, and do not "
-                "say the file does not exist."]
+        return ["The backup search found it but copied no version: tell the "
+                "user what its FOUND lines say, such as a \"could NOT copy\" line "
+                "or a transcript where the path may only have been typed, and do "
+                "not say the file does not exist."]
+    if code == BACKUP_SEARCH_FOUND_COPY_COMMAND_PRINTED_EXIT:
+        return ["The backup search found it but copied nothing yet: the command "
+                "it printed under the FOUND surface copies a version into its "
+                "found-copies folder. Give the user that command, which needs "
+                "him, such as a mount that asks for his password, and do not say "
+                "the file does not exist."]
     if code == BACKUP_SEARCH_INCOMPLETE_EXIT:
         return ["Tell the user which places the backup search could NOT "
                 "search, and why: its Could NOT search line names them."]

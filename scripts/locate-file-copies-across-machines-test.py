@@ -102,10 +102,17 @@ if mode == "killed":
 if mode == "raises":
     raise RuntimeError("stand-in backup search failed")
 if mode == "found":
-    print("transcripts     FOUND")
+    print("log-store       FOUND")
+    print("    copied to /scratch/found/logstore-x")
     print()
-    print("Recoverable from: transcripts.")
+    print("Recoverable from: log-store.")
     sys.exit(0)
+if mode == "copy-command-printed":
+    print("time machine    FOUND")
+    print("    $ mkdir -p /scratch/found && cp -n a /scratch/found/timemachine-x")
+    print()
+    print("Recoverable from: time machine.")
+    sys.exit(5)
 if mode == "not-copied":
     print("log-store       FOUND")
     print("    could NOT copy x — ssh exited 255: refused")
@@ -683,11 +690,19 @@ with scratch() as directory:
               "The backup search found it: open the copies its \"copied to\" "
               "lines name, and check that one holds the file's content"), output)
     code, output, runs = handed("never-anywhere.md", backup_mode="not-copied")
-    check("when the backup search found it but could copy no version, the last "
-          "line says to tell the user what it could not copy",
+    check("when the backup search found it but copied no version, the last "
+          "line says to tell the user what its FOUND lines say, and does not "
+          "send the agent to copies that do not exist",
           code == 1 and output.rstrip().splitlines()[-1].startswith(
-              "The backup search found it but could not copy any version: tell "
-              "the user what its \"could NOT copy\" lines say"), output)
+              "The backup search found it but copied no version: tell the user "
+              "what its FOUND lines say")
+          and "open the copies" not in output.rstrip().splitlines()[-1], output)
+    code, output, runs = handed("never-anywhere.md", backup_mode="copy-command-printed")
+    check("when the backup search copied nothing but printed a copy command, "
+          "the last line says to give the user that command",
+          code == 1 and output.rstrip().splitlines()[-1].startswith(
+              "The backup search found it but copied nothing yet: the command "
+              "it printed under the FOUND surface copies a version"), output)
     code, output, runs = handed("never-anywhere.md", backup_mode="incomplete")
     check("when the backup search could not search a place, the last line "
           "says to tell the user which, and why",
@@ -745,11 +760,12 @@ check("every summary the backup search prints begins as this program "
 check("the backup search's found, could-not-search-everywhere and "
       "found-but-not-copied exit codes are the ones this program reads",
       (backup_search.EXIT_FOUND, backup_search.EXIT_INCOMPLETE,
-       backup_search.EXIT_FOUND_BUT_NOT_COPIED)
+       backup_search.EXIT_FOUND_BUT_NOT_COPIED, backup_search.EXIT_FOUND_COPY_COMMAND_PRINTED)
       == (program.BACKUP_SEARCH_FOUND_EXIT, program.BACKUP_SEARCH_INCOMPLETE_EXIT,
-          program.BACKUP_SEARCH_FOUND_BUT_NOT_COPIED_EXIT),
+          program.BACKUP_SEARCH_FOUND_BUT_NOT_COPIED_EXIT,
+          program.BACKUP_SEARCH_FOUND_COPY_COMMAND_PRINTED_EXIT),
       (backup_search.EXIT_FOUND, backup_search.EXIT_INCOMPLETE,
-       backup_search.EXIT_FOUND_BUT_NOT_COPIED))
+       backup_search.EXIT_FOUND_BUT_NOT_COPIED, backup_search.EXIT_FOUND_COPY_COMMAND_PRINTED))
 
 # --- A surface that fails does not read as "not found" --------------------------
 with scratch() as directory:

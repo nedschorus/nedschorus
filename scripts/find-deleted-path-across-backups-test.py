@@ -227,6 +227,9 @@ check("the found-copies folder is the scratch root the environment names, under 
       FOUND_COPIES_FOLDER.startswith(FOUND_COPIES_SCRATCH + os.sep)
       and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{6}Z", os.path.basename(FOUND_COPIES_FOLDER)) is not None,
       FOUND_COPIES_FOLDER)
+check("... and that printed mount-and-copy counts as a copy command, so the run exits 5 until it is run",
+      report.prints_copy_command and finder.exit_status([report]) == finder.EXIT_FOUND_COPY_COMMAND_PRINTED,
+      "%s %s" % (report.prints_copy_command, finder.exit_status([report])))
 check("no sudo is asked for anywhere on this surface — that is its entire point",
       not any("sudo" in c for c in local_hit.calls) and not any("sudo" in c for c in report.recovery),
       "%s %s" % (local_hit.calls, report.recovery))
@@ -2831,7 +2834,10 @@ code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "localsnapshots", 
                        "--skip", "transcripts", "--skip", "box", "--prompt-for-root"],
                       FakeRunner(COLD_THEN_PROMPTED))
 check("--prompt-for-root reaches the Time Machine surface from the command line",
-      code == 0 and "Recoverable from: time machine." in text, "exit=%s\n%s" % (code, text))
+      code == finder.EXIT_FOUND_COPY_COMMAND_PRINTED and "Recoverable from: time machine." in text,
+      "exit=%s\n%s" % (code, text))
+check("... and a Time Machine hit, copied by no one yet, says the printed command copies it",
+      "Nothing was copied yet: the command printed under time machine copies a version into" in text, text)
 
 code, text = run_main(["a/b.md", "--repo", "/repo", "--skip", "localsnapshots", "--skip", "git", "--skip", "reflog",
                        "--skip", "transcripts", "--skip", "box"], FakeRunner(COLD_THEN_PROMPTED))
@@ -3388,10 +3394,91 @@ with tempfile.TemporaryDirectory() as tmp:
                   for l in two.lines)
           and finder.exit_status([two]) == finder.EXIT_FOUND,
           "%s %s" % (two.lines, finder.exit_status([two])))
+    check("found copies: a successful copy leaves no hidden partial file beside it",
+          not [n for n in os.listdir(folder.path) if n.startswith(".partial-")], str(os.listdir(folder.path)))
 
-    printed_only = finder.SurfaceReport("time machine", FOUND, [], ["mkdir -p x && cp -n a b"])
-    check("found copies: a hit reached only through a printed command exits 0, since the caller holds a way to copy it",
-          finder.exit_status([printed_only]) == finder.EXIT_FOUND, str(finder.exit_status([printed_only])))
+    printed_only = finder.SurfaceReport("time machine", FOUND, [], ["mkdir -p x && cp -n a b"],
+                                        prints_copy_command=True)
+    check("found copies: a hit reached only through a printed copy command exits 5, not 0: nothing was copied",
+          finder.exit_status([printed_only]) == finder.EXIT_FOUND_COPY_COMMAND_PRINTED,
+          str(finder.exit_status([printed_only])))
+
+    transcript_only = finder.SurfaceReport("transcripts", FOUND, ["x.md typed in session s"],
+                                           ["grep -n x.md session.jsonl | head"])
+    check("found copies: a hit that is only a transcript exits 4, since its context print copies nothing",
+          finder.exit_status([transcript_only]) == finder.EXIT_FOUND_BUT_NOT_COPIED
+          and "No version was copied" in finder.render_summary([transcript_only]),
+          "%s\n%s" % (finder.exit_status([transcript_only]), finder.render_summary([transcript_only])))
+
+    release_only = finder.SurfaceReport("local snapshots", FOUND, [], ["diskutil unmount /tmp/m"], versions=[
+        finder.FoundVersion("localsnapshot-x-gone.md", "file", str(Path(tmp, "no-such-file")))])
+    finder.copy_found_versions(release_only, folder=folder)
+    check("found copies: a snapshot read in place whose copy failed, leaving only the unmount, exits 4, not 0",
+          release_only.copied == [] and finder.exit_status([release_only]) == finder.EXIT_FOUND_BUT_NOT_COPIED,
+          "%s %s" % (release_only.lines, finder.exit_status([release_only])))
+
+    failed_git = finder.SurfaceReport("git", FOUND, [], versions=[
+        finder.FoundVersion("git-bbbbbbbb-x.md", "git", "bbbb:x.md", repo=tmp)])
+    finder.copy_found_versions(failed_git, folder=folder, fetch=lambda argv: (128, b"", "fatal: bad object\n"))
+    check("found copies: a transcript next to a failed git copy exits 4, not 0",
+          finder.exit_status([transcript_only, failed_git]) == finder.EXIT_FOUND_BUT_NOT_COPIED,
+          str(finder.exit_status([transcript_only, failed_git])))
+    check("found copies: ... while one copied version anywhere makes the run exit 0",
+          finder.exit_status([transcript_only, failed_git, two]) == finder.EXIT_FOUND,
+          str(finder.exit_status([transcript_only, failed_git, two])))
+
+    real_fdopen = os.fdopen
+
+    class WritesHalfThenFails:
+        def __init__(self, fd, mode):
+            self.handle = real_fdopen(fd, mode)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.handle.close()
+            return False
+
+        def write(self, content):
+            self.handle.write(content[:3])
+            self.handle.flush()
+            raise OSError(28, "No space left on device")
+
+    half_folder = finder.FoundCopiesFolder(root=str(Path(tmp, "half-root")), now=1792000100)
+    half = finder.SurfaceReport("log-store", FOUND, [], versions=[
+        finder.FoundVersion("logstore-x-kept.md", "file", str(source))])
+    finder.os.fdopen = WritesHalfThenFails
+    try:
+        finder.copy_found_versions(half, folder=half_folder)
+    finally:
+        finder.os.fdopen = real_fdopen
+    left_behind = sorted(os.listdir(half_folder.path)) if os.path.isdir(half_folder.path) else []
+    check("found copies: a write that fails partway leaves no file in the folder, and its line says so",
+          half.copied == [] and left_behind == []
+          and any("No space left on device; no partial file was left" in l for l in half.lines),
+          "%s %s" % (left_behind, half.lines))
+
+    stuck_folder = finder.FoundCopiesFolder(root=str(Path(tmp, "stuck-root")), now=1792000200)
+    stuck = finder.SurfaceReport("log-store", FOUND, [], versions=[
+        finder.FoundVersion("logstore-x-kept.md", "file", str(source))])
+    real_unlink = finder.os.unlink
+
+    def unlink_refused(path, *args, **kwargs):
+        raise PermissionError(13, "Permission denied", path)
+    finder.os.fdopen = WritesHalfThenFails
+    finder.os.unlink = unlink_refused
+    try:
+        finder.copy_found_versions(stuck, folder=stuck_folder)
+    finally:
+        finder.os.fdopen = real_fdopen
+        finder.os.unlink = real_unlink
+    stuck_left = sorted(os.listdir(stuck_folder.path))
+    check("found copies: a partial file that cannot be removed is named on the line, never under a copy's name",
+          stuck.copied == [] and len(stuck_left) == 1 and stuck_left[0].startswith(".partial-")
+          and any("a partial file was left at %s and is not a copy" % os.path.join(stuck_folder.path, stuck_left[0])
+                  in l for l in stuck.lines),
+          "%s %s" % (stuck_left, stuck.lines))
 
 code, out, err = finder.fetch_bytes(["definitely-not-a-command-on-this-machine"])
 check("found copies: a fetch whose program is absent reports exit 127 and says so, instead of raising",
