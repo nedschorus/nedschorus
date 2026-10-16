@@ -1023,6 +1023,19 @@ for command in ["env -u 2>&1 0x1</dev/null git push --force origin the-pr-branch
           code == 0 and output is not None
           and output["hookSpecificOutput"].get("permissionDecision") == "deny", f"{code} {output}")
 
+# bash reads digits as a descriptor only when they are a whole token, so the 0 here is part of -u's
+# value " 0", and -f joins the 4 across the line continuation to make -f4.
+for command in ["env -u \\ 0\\\n</dev/null git push --force origin the-pr-branch",
+                "env -u \\\t0\\\n</dev/null git push --force origin the-pr-branch",
+                "git push -f\\\n4>/dev/null origin the-pr-branch"]:
+    code, output = run_main(
+        {"tool_name": "Bash", "cwd": SESSION_WORKTREE, "tool_input": {"command": command}},
+        ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST}))
+    check(f"a force push at an open pull request's head is denied, with digits that the text before "
+          f"them joins to a word: {command!r}",
+          code == 0 and output is not None
+          and output["hookSpecificOutput"].get("permissionDecision") == "deny", f"{code} {output}")
+
 code, output = run_main(
     {"tool_name": "Bash", "cwd": SESSION_WORKTREE,
      "tool_input": {"command": "git push --force origin the-pr-branch"}},
