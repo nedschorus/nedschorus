@@ -149,13 +149,21 @@ with tempfile.TemporaryDirectory(prefix="run-all-test-suites-overlapping-runs-")
           len(first_times) == 3 and len(second_times) == 3
           and first_times[0] < second_times[-1] and second_times[0] < first_times[-1],
           (first_rows, second_rows))
+    runner_spec = importlib.util.spec_from_file_location("run_all_test_suites", RUNNER_PATH)
+    runner = importlib.util.module_from_spec(runner_spec)
+    runner_spec.loader.exec_module(runner)
+    cgroup_unavailable = runner.why_test_suites_cannot_run_in_cgroup_scopes_on_this_machine_or_none()
     for name in ("first", "second"):
         log_dir = scratch / f"logs-{name}"
         resources = (log_dir / "test-suite-resource-use.tsv").read_text().splitlines()
         fields = resources[1].split("\t") if len(resources) > 1 else []
-        check(f"the {name} run records the suite's kind, admission wait, CPU seconds and peak "
-              f"memory", len(fields) == 8 and fields[1] == "test sandbox"
-              and fields[4] != "" and fields[5] != "" and int(fields[6] or 0) > 0, resources)
+        check(f"the {name} run records the suite's kind and admission wait",
+              len(fields) == 8 and fields[1] == "test sandbox" and fields[4] != "", resources)
+        if cgroup_unavailable is None:
+            check(f"the {name} run records the suite's CPU seconds and peak memory",
+                  len(fields) == 8 and fields[5] != "" and int(fields[6] or 0) > 0, resources)
+        else:
+            print(f"SKIP  the {name} run's CPU seconds and peak memory: {cgroup_unavailable}")
         readings = (log_dir / "machine-cpu-and-memory-readings.tsv").read_text().splitlines()
         check(f"the {name} run records the machine's readings each second", len(readings) >= 3,
               readings)
