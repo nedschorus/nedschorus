@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Tests for scripts/git-client-side-hooks/pre-push, the hook that refuses to
 push a branch that conflicts with main, or whose selective test run has a
-failing suite, and for the Python files it runs,
-scripts/git-client-side-hooks-pre-push-conflict-check.py and
-scripts/git-client-side-hooks-pre-push-selective-test-run.py.
+failing suite, or a push that rewrites or deletes the head branch of an open
+pull request, and for the Python files it runs,
+scripts/git-client-side-hooks-pre-push-conflict-check.py,
+scripts/git-client-side-hooks-pre-push-selective-test-run.py and
+scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py.
 
 Run: python3 scripts/git-client-side-hooks-pre-push-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -16,6 +18,7 @@ the temporary directory:
     <layout>/scripts/git-client-side-hooks-pre-push-conflict-check.py
     <layout>/scripts/branch-conflict-check.py
     <layout>/scripts/git-client-side-hooks-pre-push-selective-test-run.py
+    <layout>/scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py
     <layout>/scripts/run-all-test-suites.py, always a fake that passes
     unless a case gives another fake; the real one is never run by a push here
     <layout>/nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py
@@ -23,7 +26,9 @@ So each case runs exactly what git runs on a seat's push. A case that needs
 the conflict check to misbehave puts a fake check at the check's path, and
 leaves the real one alone. No real repository's config is read or written:
 global and system git config are shut out, and every GIT_ variable is
-removed from each case's environment.
+removed from each case's environment. A fake gh, first on every case's PATH,
+answers the open pull request lookup: no open pull request, unless a case
+names some or makes the fake fail.
 
 The hook must never stop a push it should let through (user, 2026-09-23:
 "Messing up how git works or how we push is a big problem"), so most cases
@@ -55,6 +60,8 @@ MUTATION_TESTING_WORKTREE_CHECK = (SCRIPTS_DIRECTORY / "git-client-side-hooks-pr
                                    "testing-worktree-push-refusal.py")
 REAL_CONFLICT_CHECK = SCRIPTS_DIRECTORY / "branch-conflict-check.py"
 SELECTIVE_TEST_RUN_CHECK = SCRIPTS_DIRECTORY / "git-client-side-hooks-pre-push-selective-test-run.py"
+OPEN_PULL_REQUEST_BRANCH_CHECK = (SCRIPTS_DIRECTORY / "git-client-side-hooks-pre-push-open-pull-"
+                                  "request-branch-non-fast-forward-or-deletion-refusal.py")
 REAL_TEST_SUITES_RUNNER = SCRIPTS_DIRECTORY / "run-all-test-suites.py"
 GIT_OUTPUT_MODULE_RELATIVE_PATH = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
@@ -62,6 +69,10 @@ GIT_OUTPUT_MODULE_RELATIVE_PATH = Path(
 TIME_BUDGET_VARIABLE = "NEDSCHORUS_PRE_PUSH_CONFLICT_CHECK_SECONDS"
 FAKE_CHECK_LOG_VARIABLE = "PRE_PUSH_TEST_FAKE_CHECK_LOG"
 FAKE_TEST_SUITES_RUNNER_LOG_VARIABLE = "PRE_PUSH_TEST_FAKE_TEST_SUITES_RUNNER_LOG"
+FAKE_GH_OPEN_PULL_REQUESTS_VARIABLE = "PRE_PUSH_TEST_FAKE_GH_OPEN_PULL_REQUESTS"
+FAKE_GH_FAILURE_VARIABLE = "PRE_PUSH_TEST_FAKE_GH_FAILURE"
+FAKE_GH_LOG_VARIABLE = "PRE_PUSH_TEST_FAKE_GH_LOG"
+ESCAPE_HATCH_VARIABLE = "CLAUDE_MERGE_LANE_ASKED_FOR_THIS_REWRITE"
 SELECTIVE_TEST_RUN_BUDGET_VARIABLE = "NEDSCHORUS_PRE_PUSH_SELECTIVE_TEST_RUN_SECONDS"
 SESSION_VARIABLE = "CLAUDE_CODE_BRIDGE_SESSION_ID"
 LOCAL_SESSION_VARIABLE = "CLAUDE_CODE_SESSION_ID"
@@ -306,20 +317,45 @@ sys.exit(2)
 """ % (FAKE_SANDBOX_REFUSAL_FIRST_LINE, FAKE_SANDBOX_REFUSAL_LAST_LINE)
 
 
+# --- Fake gh ---------------------------------------------------------------
+# Answers `gh pr list --state open --head <branch> --json ...` from a JSON object of
+# branch to pull request in FAKE_GH_OPEN_PULL_REQUESTS_VARIABLE, or fails with the
+# text in FAKE_GH_FAILURE_VARIABLE, as a logged-out gh does. Logs each call.
+FAKE_GH = """\
+#!/usr/bin/env python3
+import json, os, sys
+_log = os.environ.get("%s")
+if _log:
+    with open(_log, "a") as _handle:
+        _handle.write(" ".join(sys.argv[1:]) + "\\n")
+_failure = os.environ.get("%s")
+if _failure:
+    print(_failure, file=sys.stderr)
+    sys.exit(4)
+_branch = sys.argv[sys.argv.index("--head") + 1]
+_open = json.loads(os.environ.get("%s") or "{}")
+print(json.dumps([_open[_branch]] if _branch in _open else []))
+""" % (FAKE_GH_LOG_VARIABLE, FAKE_GH_FAILURE_VARIABLE, FAKE_GH_OPEN_PULL_REQUESTS_VARIABLE)
+FAKE_GH_LOGGED_OUT = "To get started with GitHub CLI, please run:  gh auth login"
+
+
 # --- Layouts and repositories ---------------------------------------------
 
 def make_layout(parent, name, conflict_check=REAL_CONFLICT_CHECK,
                 runner_text=None, include_runner=True, mutation_testing_worktree_check_text=None,
                 include_mutation_testing_worktree_check=True,
                 test_suites_runner_text=None, include_test_suites_runner=True,
-                selective_test_run_check_text=None, include_selective_test_run_check=True):
+                selective_test_run_check_text=None, include_selective_test_run_check=True,
+                open_pull_request_branch_check_text=None,
+                include_open_pull_request_branch_check=True):
     """A copy of this checkout's hooks, laid out as the hook expects.
 
     conflict_check is a Path to copy, a string of fake check source, or None
     for no check at all. runner_text replaces the Python file the hook runs
     for the conflict check. test_suites_runner_text replaces the fake
     run-all-test-suites.py that passes, and selective_test_run_check_text the
-    selective test run check. Returns the hooks directory, for core.hooksPath.
+    selective test run check, and open_pull_request_branch_check_text the check
+    for rewrites and deletions of open pull requests' head branches. Returns the hooks directory, for core.hooksPath.
     """
     scripts = parent / name / "scripts"
     hooks = scripts / HOOK_DIRECTORY_NAME
@@ -341,6 +377,11 @@ def make_layout(parent, name, conflict_check=REAL_CONFLICT_CHECK,
         selective_test_run_check.write_text(selective_test_run_check_text)
     elif include_selective_test_run_check:
         shutil.copy2(SELECTIVE_TEST_RUN_CHECK, selective_test_run_check)
+    open_pull_request_branch_check = scripts / OPEN_PULL_REQUEST_BRANCH_CHECK.name
+    if open_pull_request_branch_check_text is not None:
+        open_pull_request_branch_check.write_text(open_pull_request_branch_check_text)
+    elif include_open_pull_request_branch_check:
+        shutil.copy2(OPEN_PULL_REQUEST_BRANCH_CHECK, open_pull_request_branch_check)
     if include_test_suites_runner:
         (scripts / REAL_TEST_SUITES_RUNNER.name).write_text(
             test_suites_runner_text if test_suites_runner_text is not None
@@ -393,6 +434,11 @@ class Scenario:
         self.fake_test_suites_runner_log = parent / (name + "-fake-test-suites-runner-log.txt")
         self.path_override = path_override
         self.extra_environment = {}
+        self.fake_gh_directory = parent / (name + "-fake-gh-bin")
+        self.fake_gh_directory.mkdir()
+        (self.fake_gh_directory / "gh").write_text(FAKE_GH)
+        (self.fake_gh_directory / "gh").chmod(0o755)
+        self.fake_gh_log = parent / (name + "-fake-gh-log.txt")
         self.git(parent, "init", "--quiet", "--bare", str(self.origin))
         self.git(parent, "init", "--quiet", "--initial-branch=main", str(self.clone))
         self.git(self.clone, "config", "user.name", "Pre-push Test")
@@ -422,8 +468,10 @@ class Scenario:
         env["GIT_CONFIG_NOSYSTEM"] = "1"
         env[FAKE_CHECK_LOG_VARIABLE] = str(self.fake_check_log)
         env[FAKE_TEST_SUITES_RUNNER_LOG_VARIABLE] = str(self.fake_test_suites_runner_log)
-        if self.path_override is not None:
-            env["PATH"] = self.path_override
+        env[FAKE_GH_LOG_VARIABLE] = str(self.fake_gh_log)
+        env.pop(ESCAPE_HATCH_VARIABLE, None)
+        path = self.path_override if self.path_override is not None else env.get("PATH", "")
+        env["PATH"] = str(self.fake_gh_directory) + os.pathsep + path
         env.update(self.extra_environment)
         return env
 
@@ -501,6 +549,11 @@ class Scenario:
             return []
         return [json.loads(line) for line in
                 self.fake_test_suites_runner_log.read_text().splitlines() if line]
+
+    def fake_gh_calls(self):
+        if not self.fake_gh_log.exists():
+            return []
+        return [line for line in self.fake_gh_log.read_text().splitlines() if line]
 
     def fake_check_calls(self):
         if not self.fake_check_log.exists():
@@ -635,7 +688,8 @@ def run_unit_cases():
         hooks = make_layout(layout_parent, "filter", conflict_check=None,
                             include_runner=False,
                             mutation_testing_worktree_check_text="import sys\nsys.exit(0)\n",
-                            selective_test_run_check_text="import sys\nsys.exit(0)\n")
+                            selective_test_run_check_text="import sys\nsys.exit(0)\n",
+                            open_pull_request_branch_check_text="import sys\nsys.exit(0)\n")
         expected_first_line_end = NO_BRANCH_CHECKED % ", ".join(
             [branch_entry("topic", sha), branch_entry("renamed-on-push", other)])
         for shell in SHELLS_FOR_THE_HOOK:
@@ -1398,6 +1452,212 @@ def run_mutation_testing_worktree_cases(scratch):
           (status, printed.getvalue()))
 
 
+# --- Rewrites and deletions of open pull requests' head branches ----------
+def run_open_pull_request_branch_cases(scratch):
+    pull_request = {"number": 4242, "title": "Clean work",
+                    "url": "https://github.com/example/example/pull/4242"}
+    open_on_clean = json.dumps({"clean": pull_request, "clean-second": pull_request})
+    refused_header = ("pre-push: this push is refused, because its update to branch clean does not "
+                      "build on the commits origin holds, and clean is the head of open pull "
+                      "request #4242 (https://github.com/example/example/pull/4242)")
+    lookup_failed = "whether clean has an open pull request could not be checked: "
+
+    def fresh(label):
+        scenario = Scenario(scratch, "open-pull-request-" + label, real)
+        scenario.git(scenario.clone, "push", "--quiet", "--no-verify", "origin", "clean",
+                     "conflicting")
+        scenario.extra_environment[FAKE_GH_OPEN_PULL_REQUESTS_VARIABLE] = open_on_clean
+        return scenario
+
+    def rewrite(scenario, branch):
+        """Replace the branch's last commit, so its pushed head is no longer an ancestor."""
+        scenario.git(scenario.clone, "switch", "--quiet", branch)
+        scenario.git(scenario.clone, "commit", "--quiet", "--amend", "-m", "Rewritten")
+
+    real = make_layout(scratch, "layout-open-pull-request")
+
+    # (a) A new branch needs no lookup, open pull request or not.
+    scenario = fresh("new-branch")
+    result = scenario.push("origin", "clean-second")
+    check("open pull request check: a new branch goes through without asking gh",
+          went_through(result) and scenario.fake_gh_calls() == [], result.describe())
+
+    # (c) A fast-forward to an open pull request's head goes through without asking gh.
+    scenario = fresh("fast-forward")
+    scenario.on_branch("clean", "on-top.txt", "on top\n", "On top")
+    result = scenario.push("origin", "clean")
+    check("open pull request check: a fast-forward to an open pull request's head goes through "
+          "without asking gh",
+          went_through(result) and scenario.fake_gh_calls() == []
+          and scenario.origin_ref("clean") == scenario.head("clean"), result.describe())
+
+    # (d) A forced update that does not build on the head is refused, in each spelling.
+    for label, arguments in (("--force", ("--force", "origin", "clean")),
+                             ("--force-with-lease", ("--force-with-lease", "origin", "clean")),
+                             ("a + refspec", ("origin", "+clean:clean"))):
+        scenario = fresh("rewrite-" + label.replace(" ", "-").replace("+", "plus").strip("-"))
+        pushed = scenario.origin_ref("clean")
+        rewrite(scenario, "clean")
+        result = scenario.push(*arguments)
+        check(f"open pull request check: a push with {label} that rewrites an open pull "
+              f"request's head is refused, naming the branch and the pull request",
+              was_refused(result) and refused_header in result.stderr
+              and scenario.origin_ref("clean") == pushed, result.describe())
+    check("open pull request check: the refusal says to push a new commit on top, to clear a "
+          "conflict by the hand-merge, and how merge-lane-2 lets the push through",
+          "new commit on top of origin/clean" in result.stderr
+          and "the hand-merge that scripts/branch-conflict-check.py describes" in result.stderr
+          and f"{ESCAPE_HATCH_VARIABLE}=1 directly in front of the git push command"
+          in result.stderr, result.describe())
+
+    # An unforced rewrite never reaches the hook: git rejects it first.
+    scenario = fresh("unforced-rewrite")
+    rewrite(scenario, "clean")
+    result = scenario.push("origin", "clean")
+    check("open pull request check: git rejects an unforced rewrite before the hook runs",
+          was_refused(result) and "this push is refused" not in result.stderr
+          and scenario.fake_gh_calls() == [], result.describe())
+
+    # (c) A remote commit this clone has never fetched cannot be shown to be an ancestor.
+    scenario = fresh("remote-commit-absent")
+    other_clone = scratch / "open-pull-request-remote-commit-absent-other-clone"
+    scenario.git(scratch, "clone", "--quiet", "--branch", "clean", str(scenario.origin),
+                 str(other_clone))
+    scenario.git(other_clone, "config", "user.name", "Other")
+    scenario.git(other_clone, "config", "user.email", "other@example.invalid")
+    scenario.commit("other.txt", "other\n", "Pushed from another clone", cwd=other_clone)
+    scenario.git(other_clone, "push", "--quiet", "--no-verify", "origin", "clean")
+    pushed = scenario.origin_ref("clean")
+    scenario.on_branch("clean", "on-top.txt", "on top\n", "On top of an old head")
+    result = scenario.push("--force", "origin", "clean")
+    check("open pull request check: a forced push over a remote commit this clone never fetched "
+          "is refused, and the refusal says to fetch",
+          was_refused(result) and refused_header in result.stderr
+          and "git fetch origin clean" in result.stderr
+          and scenario.origin_ref("clean") == pushed, result.describe())
+
+    # (b) A rewrite of a branch with no open pull request goes through, after asking gh.
+    scenario = fresh("no-pull-request")
+    scenario.extra_environment[FAKE_GH_OPEN_PULL_REQUESTS_VARIABLE] = "{}"
+    rewrite(scenario, "clean")
+    result = scenario.push("--force", "origin", "clean")
+    check("open pull request check: a forced rewrite of a branch with no open pull request goes "
+          "through",
+          went_through(result) and scenario.origin_ref("clean") == scenario.head("clean")
+          and any("--head clean" in call for call in scenario.fake_gh_calls()),
+          result.describe())
+
+    # (e) Deleting an open pull request's head branch closes the pull request: refused.
+    scenario = fresh("deletion")
+    result = scenario.push("origin", "--delete", "clean")
+    check("open pull request check: deleting an open pull request's head branch is refused, "
+          "saying it closes the pull request and how to close it first",
+          was_refused(result) and "it deletes branch clean, the head of open pull request #4242"
+          in result.stderr and "gh pr close 4242 --comment" in result.stderr
+          and scenario.origin_ref("clean") is not None, result.describe())
+    result = scenario.push("origin", "--delete", "conflicting")
+    check("open pull request check: deleting a branch with no open pull request goes through",
+          went_through(result) and scenario.origin_ref("conflicting") is None, result.describe())
+
+    # The escape merge-lane-2 gives, the same assignment the Bash force-push guard reads.
+    scenario = fresh("escape")
+    rewrite(scenario, "clean")
+    scenario.extra_environment[ESCAPE_HATCH_VARIABLE] = "1"
+    result = scenario.push("--force", "origin", "clean")
+    check(f"open pull request check: {ESCAPE_HATCH_VARIABLE}=1 lets a forced rewrite through",
+          scenario.origin_ref("clean") == scenario.head("clean")
+          and "this push is refused, because its update" not in result.stderr, result.describe())
+
+    # Only origin is checked.
+    scenario = fresh("other-remote")
+    scenario.git(scenario.clone, "remote", "add", "other", str(scenario.origin))
+    rewrite(scenario, "clean")
+    result = scenario.push("--force", "other", "clean")
+    check("open pull request check: a forced rewrite pushed to a remote other than origin is not "
+          "checked", scenario.fake_gh_calls() == []
+          and scenario.origin_ref("clean") == scenario.head("clean"), result.describe())
+
+    # (f) When gh cannot answer, a rewrite or a deletion is refused; a fast-forward needs no answer.
+    scenario = fresh("gh-logged-out")
+    scenario.extra_environment[FAKE_GH_FAILURE_VARIABLE] = FAKE_GH_LOGGED_OUT
+    pushed = scenario.origin_ref("clean")
+    rewrite(scenario, "clean")
+    result = scenario.push("--force", "origin", "clean")
+    check("open pull request check: when gh is logged out, a forced rewrite is refused, saying "
+          "what failed and how to log gh in",
+          was_refused(result) and "it forces an update to branch clean on origin, and "
+          + lookup_failed + "gh pr list exited with status 4: " + FAKE_GH_LOGGED_OUT in result.stderr
+          and "Run gh auth status" in result.stderr
+          and "ssh -t nedlern@ned-box 'gh auth login'" in result.stderr
+          and scenario.origin_ref("clean") == pushed, result.describe())
+    result = scenario.push("origin", "--delete", "conflicting")
+    check("open pull request check: when gh is logged out, a deletion is refused",
+          was_refused(result) and "it deletes branch conflicting on origin" in result.stderr
+          and "close the pull request with a comment" in result.stderr
+          and "new commit on top" not in result.stderr
+          and scenario.origin_ref("conflicting") is not None, result.describe())
+    scenario.git(scenario.clone, "reset", "--quiet", "--hard", pushed)
+    scenario.on_branch("clean", "on-top.txt", "on top\n", "On top")
+    result = scenario.push("origin", "clean")
+    check("open pull request check: when gh is logged out, a fast-forward still goes through",
+          went_through(result) and scenario.origin_ref("clean") == scenario.head("clean"),
+          result.describe())
+
+    # The check itself crashing, or missing, lets the push through and says so, as the other checks do.
+    for label, text, expected in [
+            ("crashes", "raise RuntimeError('broken')\n",
+             "-deletion-refusal.py, exited with status 1, so this check lets the push through "
+             "without checking whether it rewrites or deletes the head branch of an open pull "
+             "request."),
+            ("is missing", None, "head branches did not run, because ")]:
+        hooks = make_layout(scratch, "layout-open-pull-request-check-" + label.replace(" ", "-"),
+                            open_pull_request_branch_check_text=text,
+                            include_open_pull_request_branch_check=text is not None)
+        scenario = Scenario(scratch, "open-pull-request-check-" + label.replace(" ", "-"), hooks)
+        result = scenario.push("origin", "clean")
+        check(f"when the open pull request check {label}, the push goes through and the hook "
+              f"says what was not checked and to tell the user",
+              went_through(result) and expected in result.stderr
+              and TELL_USER_LINE in result.stderr, result.describe())
+
+    # gh that cannot be run, that hangs, or that prints what is not JSON: each refuses.
+    specification = importlib.util.spec_from_file_location("open_pull_request_branch_check",
+                                                           OPEN_PULL_REQUEST_BRANCH_CHECK)
+    loaded = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(loaded)
+    pushed_refs = f"refs/heads/clean {'1' * 40} refs/heads/clean {'2' * 40}\n"
+
+    def runner_whose_gh(gh_behaviour):
+        def run(command, **options):
+            if command[0] == "git":
+                return subprocess.CompletedProcess(command, 1, "", "")
+            return gh_behaviour(command)
+        return run
+
+    def raises(error):
+        def behaviour(command):
+            raise error
+        return behaviour
+
+    for label, behaviour, detail in [
+            ("cannot be run", raises(FileNotFoundError(2, "No such file or directory", "gh")),
+             "gh could not be run ("),
+            ("does not answer in time", raises(subprocess.TimeoutExpired(["gh"], 10)),
+             "gh pr list did not answer within 10 seconds"),
+            ("prints what is not JSON",
+             lambda command: subprocess.CompletedProcess(command, 0, "not json", ""),
+             "gh pr list printed output that is not JSON")]:
+        printed = io.StringIO()
+        try:
+            status = loaded.main(["origin", "url"], pushed_refs, printed, {},
+                                 runner_whose_gh(behaviour))
+        except Exception as error:  # A crash is this case's failure, not the suite's.
+            status = repr(error)
+        check(f"open pull request check: when gh {label}, a forced rewrite is refused, saying so",
+              status == loaded.EXIT_REFUSE_PUSH and lookup_failed + detail in printed.getvalue(),
+              (status, printed.getvalue()))
+
+
 def main():
     run_unit_cases()
     # Resolved, because git and the hooks print resolved paths: on macOS the temporary
@@ -1407,6 +1667,7 @@ def main():
         run_push_cases(scratch)
         run_selective_test_run_cases(scratch)
         run_mutation_testing_worktree_cases(scratch)
+        run_open_pull_request_branch_cases(scratch)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     if failures:

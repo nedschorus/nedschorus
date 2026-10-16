@@ -68,6 +68,9 @@ EXEMPT_PROGRAMS = {
     "scripts/git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py":
         "run only by the git pre-push hook scripts/git-client-side-hooks/pre-push, "
         "which hands it git's arguments and the refs being pushed on stdin",
+    "scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py":
+        "run only by the git pre-push hook scripts/git-client-side-hooks/pre-push, "
+        "which hands it git's arguments and the refs being pushed on stdin",
     "scripts/git-client-side-hooks-pre-push-selective-test-run.py":
         "run only by the git pre-push hook scripts/git-client-side-hooks/pre-push, with no "
         "arguments and nothing on stdin; it ignores its arguments, so --help would start a "
