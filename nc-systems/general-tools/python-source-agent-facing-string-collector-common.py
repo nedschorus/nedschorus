@@ -9,7 +9,8 @@ them followed by S; the value, in a dict literal, of one of
 AGENT_FACING_HOOK_OUTPUT_KEYS, the keys through which a Claude Code hook's JSON
 output reaches the agent, when that value is a string, an f-string or a name
 assigned a string once at module level; and the module docstring of a file
-that mentions __doc__, which argparse prints for --help. A message held in a
+that mentions __doc__, which argparse prints for --help. A message built with + is one message,
+its literal pieces joined and each other operand shown as {source}. A message held in a
 local variable, or built any other way, is not found. "systemMessage" is not
 among the keys: Claude Code shows that text to the user, not to the agent.
 
@@ -38,7 +39,39 @@ def path_is_test_file(path):
     return path.endswith("-test.py") or "tests" in path.split("/")[:-1]
 
 
+def is_string_literal_node(node):
+    return isinstance(node, ast.JoinedStr) or (isinstance(node, ast.Constant) and isinstance(node.value, str))
+
+
+def addition_chain_operands(expression):
+    """The operands of a chain of + operators, left to right."""
+    if isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Add):
+        return [*addition_chain_operands(expression.left), *addition_chain_operands(expression.right)]
+    return [expression]
+
+
+def message_text_of_addition_chain(operands):
+    """The literal pieces joined; an f-string field or another operand is shown as {source}."""
+    pieces = []
+    for operand in operands:
+        if isinstance(operand, ast.Constant) and isinstance(operand.value, str):
+            pieces.append(operand.value)
+        elif isinstance(operand, ast.JoinedStr):
+            pieces.extend(part.value if isinstance(part, ast.Constant) else "{" + ast.unparse(part.value) + "}"
+                          for part in operand.values)
+        else:
+            pieces.append("{" + ast.unparse(operand) + "}")
+    return "".join(pieces)
+
+
 def string_nodes_without_f_string_parts(expression):
+    """Each string literal, f-string or + chain holding a string literal, as one node; a + chain
+    is one message, so its literal pieces are not yielded separately."""
+    if isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Add):
+        operands = addition_chain_operands(expression)
+        if any(is_string_literal_node(operand) for operand in operands):
+            yield expression
+            return
     if isinstance(expression, ast.JoinedStr):
         yield expression
     elif isinstance(expression, ast.Constant) and isinstance(expression.value, str):
@@ -46,6 +79,12 @@ def string_nodes_without_f_string_parts(expression):
     else:
         for child in ast.iter_child_nodes(expression):
             yield from string_nodes_without_f_string_parts(child)
+
+
+def text_of_string_node(node):
+    if isinstance(node, ast.BinOp):
+        return message_text_of_addition_chain(addition_chain_operands(node))
+    return ast.unparse(node) if isinstance(node, ast.JoinedStr) else node.value
 
 
 class AgentFacingStringNodeCollector(ast.NodeVisitor):
@@ -69,7 +108,7 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
                 continue
             self.seen_node_contexts.add(identity)
             self.string_entries.append({"line": node.lineno, "end_line": node.end_lineno,
-                                        "label": label, "text": ast.unparse(node) if isinstance(node, ast.JoinedStr) else node.value})
+                                        "label": label, "text": text_of_string_node(node)})
 
     def visit_enclosing_definition(self, node):
         self.enclosing_names.append(node.name)

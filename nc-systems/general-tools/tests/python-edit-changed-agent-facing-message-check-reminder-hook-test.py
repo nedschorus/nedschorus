@@ -429,10 +429,10 @@ with tempfile.TemporaryDirectory() as temporary:
           and "Before you write or change an agent-facing-message from now on" in text, len(text))
 
     result = write_then_run(repository, repository / "scripts" / "joined.py",
-                            'print("stopped: " + NAME + ".")\nprint("" + NAME)\n')
+                            'print("stopped: " + NAME + ".")\nprint("-" * 20)\n')
     text = agent_text(result)
-    check("a string with no letter in it, such as a separator joined with +, is not listed",
-          "scripts/joined.py:1  stopped:" in text and "scripts/joined.py:1  ." not in text
+    check("a + chain is listed as one message, and a string with no letter in it, such as a separator, is not listed",
+          "scripts/joined.py:1  stopped: {NAME}." in text and "scripts/joined.py:2" not in text
           and "changed 1 " in text, text)
 
     reset()

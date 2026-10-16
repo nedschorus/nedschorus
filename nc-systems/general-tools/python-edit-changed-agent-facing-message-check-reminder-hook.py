@@ -213,8 +213,8 @@ def first_line_of(text: str) -> str:
 
 def messages_not_at_head(entries, file_path: Path):
     """The entries whose text the file at HEAD holds in no message, each line
-    and text once; an entry with no letter in it, such as a separator joined
-    into a message with +, is no message for a fast read."""
+    and text once; an entry with no letter in it, such as a separator
+    like "-" * 20, is no message for a fast read."""
     texts_at_head = message_texts_at_head(file_path)
     changed, seen = [], set()
     for entry in entries:

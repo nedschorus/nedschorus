@@ -58,7 +58,7 @@ RECOGNIZED_FORMS = (
     ("a string literal as reason", 'output = {"decision": "block", "reason": "block text"}\n', "block text"),
     ("a string literal as stopReason", 'output = {"continue": False, "stopReason": "stop text"}\n', "stop text"),
     ("a concatenation of strings as additionalContext",
-     'output = {"additionalContext": "joined " + "text"}\n', "joined "),
+     'output = {"additionalContext": "joined " + "text"}\n', "joined text"),
     ("a name assigned a string once at module level, as additionalContext",
      'REMINDER = "bound text"\noutput = {"additionalContext": REMINDER}\n', "bound text"),
 )
@@ -78,6 +78,17 @@ check("a name with a message suffix used as additionalContext is reported once, 
 found = entries('print("one "\n      "two")\n')
 check("an entry carries its first and last line", [(entry["line"], entry["end_line"]) for entry in found]
       == [(1, 2)], found)
+
+CHAINS = (
+    ("a chain of two literals", 'X_MESSAGE = "first " + "second"\n', [(1, 1, "first second")]),
+    ("a chain with a variable in the middle", 'X_MESSAGE = "first " + name + " second"\n',
+     [(1, 1, "first {name} second")]),
+    ("a parenthesised multi-line chain", 'X_MESSAGE = (\n    "a"\n    + "b"\n)\n', [(2, 3, "ab")]),
+    ("a chain nested in a call argument", 'print(str("a " + x + " b"))\n', [(1, 1, "a {x} b")]),
+)
+for case_name, source, expected in CHAINS:
+    found = [(entry["line"], entry["end_line"], entry["text"]) for entry in entries(source)]
+    check(f"concatenation: {case_name} is one message", found == expected, found)
 
 NOT_RECOGNIZED_FORMS = (
     ("a systemMessage, which the user sees and the agent does not",
