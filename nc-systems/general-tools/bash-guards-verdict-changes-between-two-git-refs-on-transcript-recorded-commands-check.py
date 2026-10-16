@@ -96,18 +96,31 @@ def raise_pair_timed_out(*_):
     raise PairTimedOut()
 
 
-# While the replay waits for a step child, a stop signal must not raise inside subprocess's own code:
-# SystemExit raised between Popen._wait()'s lock acquire and its try leaves the lock held, and the
-# reaping wait() in run_step_in_child() then blocks forever with the child unreaped. In that wait the
-# handler only records the stop, and run_step_in_child() raises at a safe point.
-WAITING_FOR_STEP = {"waiting": False, "stop_requested": False}
+# A stop signal must not raise SystemExit inside subprocess's own code: raised between Popen._wait()'s
+# lock acquire and its try, it leaves the lock held, and the wait() that subprocess.run() or
+# run_step_in_child() then makes blocks forever with the child unreaped. Every subprocess call in the
+# replay parent runs inside stop_deferred(), in which the handler only records the stop; the block's
+# exit raises SystemExit(2) from the replay's own code.
+STOP_STATE = {"deferred": 0, "stop_requested": False}
 
 
 def raise_terminated(*_):
-    if WAITING_FOR_STEP["waiting"]:
-        WAITING_FOR_STEP["stop_requested"] = True
+    if STOP_STATE["deferred"]:
+        STOP_STATE["stop_requested"] = True
         return
     raise SystemExit(2)  # So the finally blocks remove the checkouts when the run is stopped.
+
+
+@contextlib.contextmanager
+def stop_deferred():
+    STOP_STATE["deferred"] += 1
+    try:
+        yield
+    finally:
+        STOP_STATE["deferred"] -= 1
+        if STOP_STATE["stop_requested"] and not STOP_STATE["deferred"]:
+            STOP_STATE["stop_requested"] = False
+            raise SystemExit(2)
 
 
 # ---------------------------------------------------------------- step 1: the pairs
@@ -494,8 +507,9 @@ def child_environment():
 
 def run_git(repository, *arguments):
     try:
-        completed = subprocess.run(["git", "-C", repository, *arguments], capture_output=True, text=True,
-                                   env=child_environment(), timeout=GIT_TIMEOUT_SECONDS)
+        with stop_deferred():
+            completed = subprocess.run(["git", "-C", repository, *arguments], capture_output=True, text=True,
+                                       env=child_environment(), timeout=GIT_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as error:
         raise ReplayFailed(f"git {' '.join(arguments)} did not finish in {GIT_TIMEOUT_SECONDS} s") from error
     if completed.returncode != 0:
@@ -516,15 +530,13 @@ def run_step_in_child(arguments, log_path, deadline_seconds):
     """Run one ref's step in a fresh interpreter, so each ref's modules load from that ref alone."""
     # In its own process group, so a step that ends, fails or is stopped takes its workers with it;
     # they would otherwise go on reading checkouts the replay is removing.
-    WAITING_FOR_STEP["stop_requested"] = False
-    WAITING_FOR_STEP["waiting"] = True  # Before the start, so a stop during it cannot leave the step unreaped.
-    with open(log_path, "w") as log:
+    with stop_deferred(), open(log_path, "w") as log:
         step = subprocess.Popen([sys.executable, "-B", __file__, *arguments], stdout=log,
                                 stderr=subprocess.STDOUT, env=child_environment(), start_new_session=True)
         try:
             returncode = None
             deadline = time.monotonic() + deadline_seconds
-            while returncode is None and time.monotonic() < deadline and not WAITING_FOR_STEP["stop_requested"]:
+            while returncode is None and time.monotonic() < deadline and not STOP_STATE["stop_requested"]:
                 with contextlib.suppress(subprocess.TimeoutExpired):
                     returncode = step.wait(timeout=min(STOP_CHECK_INTERVAL_SECONDS, max(deadline - time.monotonic(), 0)))
         finally:
@@ -534,9 +546,6 @@ def run_step_in_child(arguments, log_path, deadline_seconds):
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(step.pid, signal.SIGKILL)
             step.wait()
-            WAITING_FOR_STEP["waiting"] = False
-    if WAITING_FOR_STEP["stop_requested"]:
-        raise SystemExit(2)
     if returncode is None:
         raise ReplayFailed(f"the step {arguments[1]} ran past its deadline of {deadline_seconds} s and was stopped; "
                            f"log {log_path}")
@@ -572,8 +581,9 @@ def remove_checkouts(repository, checkouts):
     removed, with the reason."""
     failed = []
     try:
-        listed = subprocess.run(["git", "-C", repository, "worktree", "list", "--porcelain"], capture_output=True,
-                                text=True, env=child_environment(), timeout=GIT_TIMEOUT_SECONDS)
+        with stop_deferred():
+            listed = subprocess.run(["git", "-C", repository, "worktree", "list", "--porcelain"], capture_output=True,
+                                    text=True, env=child_environment(), timeout=GIT_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         return [f"{checkout}: git worktree list did not finish in {GIT_TIMEOUT_SECONDS} s" for checkout in checkouts]
     if listed.returncode != 0:
@@ -591,9 +601,10 @@ def remove_checkouts(repository, checkouts):
                 failed.append(f"{checkout}: not registered with git, and it could not be deleted")
             continue
         try:
-            completed = subprocess.run(["git", "-C", repository, "worktree", "remove", "--force", str(checkout)],
-                                       capture_output=True, text=True, env=child_environment(),
-                                       timeout=GIT_TIMEOUT_SECONDS)
+            with stop_deferred():
+                completed = subprocess.run(["git", "-C", repository, "worktree", "remove", "--force", str(checkout)],
+                                           capture_output=True, text=True, env=child_environment(),
+                                           timeout=GIT_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             failed.append(f"{checkout}: git worktree remove did not finish in {GIT_TIMEOUT_SECONDS} s")
             continue

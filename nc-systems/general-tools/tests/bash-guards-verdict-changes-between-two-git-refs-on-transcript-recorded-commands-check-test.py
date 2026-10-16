@@ -429,8 +429,8 @@ try:
               f"running {still_running}\n{stopped_output}")
 
     # SystemExit raised by the stop handler between Popen._wait()'s lock acquire and its try used to leave
-    # the lock held, so run_step_in_child() blocked forever reaping the step. The signal is delivered at
-    # exactly that point, in a child process so a hang is a timeout and not a stuck test.
+    # the lock held, so the next wait() on that process blocked forever. The signal is delivered at exactly
+    # that point, in a child process so a hang is a timeout and not a stuck test.
     gap_script = (
         "import importlib.util, os, signal, subprocess, sys\n"
         "spec = importlib.util.spec_from_file_location('replay', sys.argv[1])\n"
@@ -445,24 +445,32 @@ try:
         "replay.__file__ = sys.argv[2]\n"
         "sys.setprofile(profiler)\n"
         "try:\n"
-        "    replay.run_step_in_child(['--step', 'stand-in'], os.devnull, 600)\n"
+        "    if sys.argv[3] == 'step':\n"
+        "        replay.run_step_in_child(['--step', 'stand-in'], os.devnull, 600)\n"
+        "    elif sys.argv[3] == 'git':\n"
+        "        replay.run_git(sys.argv[4], 'rev-parse', 'HEAD')\n"
+        "    else:\n"
+        "        replay.remove_checkouts(sys.argv[4], [sys.argv[5]])\n"
         "except SystemExit as stop:\n"
         "    sys.setprofile(None)\n"
-        "    print('exit', stop.code)\n"
+        "    print('exit', stop.code, 'signal delivered', bool(fired))\n"
     )
     gap_directory = Path(scratch) / "gap"
     gap_directory.mkdir()
     (gap_directory / "stand-in-step.py").write_text("import time\ntime.sleep(1000)\n")
-    try:
-        gap = subprocess.run([sys.executable, "-c", gap_script, str(SCRIPT_PATH), str(gap_directory / "stand-in-step.py")],
-                             capture_output=True, text=True, timeout=30)
-        gap_detail = f"exit {gap.returncode}\n{gap.stdout}{gap.stderr}"
-        gap_ok = gap.returncode == 0 and "exit 2" in gap.stdout
-    except subprocess.TimeoutExpired:
-        gap_ok, gap_detail = False, "run_step_in_child() was still waiting 30 s after a stop signal landed in Popen._wait()"
-        subprocess.run(["pkill", "-f", str(gap_directory / "stand-in-step.py")])
-    check("a stop signal landing inside subprocess's wait does not hang the reaping of the step: exit 2, no hang",
-          gap_ok, gap_detail)
+    for gap_call, gap_extra in (("step", []), ("git", [str(REPOSITORY_ROOT)]),
+                                ("worktree list and remove", [str(REPOSITORY_ROOT), str(gap_directory)])):
+        try:
+            gap = subprocess.run([sys.executable, "-c", gap_script, str(SCRIPT_PATH),
+                                  str(gap_directory / "stand-in-step.py"), gap_call.split()[0], *gap_extra],
+                                 capture_output=True, text=True, timeout=30)
+            gap_detail = f"exit {gap.returncode}\n{gap.stdout}{gap.stderr}"
+            gap_ok = gap.returncode == 0 and "exit 2 signal delivered True" in gap.stdout
+        except subprocess.TimeoutExpired:
+            gap_ok, gap_detail = False, f"the {gap_call} call was still waiting 30 s after a stop signal landed in Popen._wait()"
+            subprocess.run(["pkill", "-f", str(gap_directory / "stand-in-step.py")])
+        check(f"a stop signal landing inside subprocess's wait during the {gap_call} call does not hang: exit 2",
+              gap_ok, gap_detail)
 
     step_deadline_as_written = replay.step_deadline_seconds
     replay.step_deadline_seconds = lambda pair_count, jobs, timeout: 10
