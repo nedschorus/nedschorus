@@ -15,7 +15,21 @@ Skipped: files that do not exist, anything in the log-store or in a
 cold-read-records directory, and docs/walk/<name>-suggestions.md, which is a
 fast read's own report.
 
-WHEN A DOCUMENT IS DUE. A document is not due when a fast read of its
+WHEN A DOCUMENT IS DUE. A document in a git checkout is due only when that
+checkout changed it from main: the document is not in the merge-base of the
+checkout's HEAD and refs/remotes/origin/main, as with a new file or a
+git-ignored walk-document, or its bytes differ from the copy there, through
+an uncommitted edit or a commit on the topic branch. The merge-base, not
+origin/main's tip, because a checkout behind main would otherwise be asked
+about every document main changed since. A document the checkout left alone
+is never due, whatever its records, because an agent should fast-read only
+what it can still change. The checkout that holds the document decides, not
+the payload's cwd: an agent-seat's cwd is its seat checkout, while the
+documents it changes sit in its topic branch's worktree. The ref is used as it
+stands, without a fetch. When that checkout has no origin/main, or git fails,
+the hook reports a fault, below. A document in no git checkout skips this
+test.
+A document that passes it is not due when a fast read of its
 current text is on record. A walk-document named docs/walk/<name>-draft.md
 in any git worktree, fast-read from that checkout or another, writes
 docs/walk/<name>-suggestions.md beside it, so a suggestions file newer than
@@ -70,8 +84,8 @@ that directory; the log-store is its parent directory.
 
 OUTPUT: {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": ...}},
 which continues the conversation with the text as the agent's next input.
-ON A FAULT, such as input that is not JSON, a module that will not load, or
-a record directory it cannot read,
+ON A FAULT, such as input that is not JSON, a module that will not load, a
+record directory it cannot read, or a checkout without origin/main,
 the hook prints one line naming it on stderr and exits 1: Claude Code records
 a Stop hook's exit 1 as a non-blocking error and still ends the turn.
 """
@@ -121,6 +135,7 @@ WALK_DIRECTORY_PARTS = ("docs", "walk")
 WALK_DRAFT_SUFFIX = "-draft.md"
 WALK_SUGGESTIONS_SUFFIX = "-suggestions.md"
 GIT_TIMEOUT_SECONDS = 5
+MAIN_REFERENCE = "refs/remotes/origin/main"
 FAST_READ_PROGRAM = "nc-systems/cold-read/cold-read-fast-read.py"
 TRANSCRIPT_UNREADABLE_LINES = (
     "cold-read-fast-read due check skipped: this hook could not read this "
@@ -143,8 +158,8 @@ RELATIVE_PATH_PATTERN = re.compile(
 
 REMINDER_OPENING = (
     "cold-read-fast-read due: your last reply linked these documents for the "
-    "user, and none of them has had a cold-read-fast-read since the "
-    "document's last change:")
+    "user; its checkout changed each from main, and none of them has "
+    "had a cold-read-fast-read since the document's last change:")
 REMINDER_INSTRUCTIONS = (
     "Run on each document, from your checkout: python3 " + FAST_READ_PROGRAM
     + " --target <document path>",
@@ -195,6 +210,45 @@ def checkout_top(directory, git_environment):
     if completed.returncode != 0 or not completed.stdout.strip():
         return None
     return Path(completed.stdout.strip()).resolve()
+
+
+def git_in_checkout(top, arguments, git_environment):
+    return subprocess.run(["git", "-C", str(top), *arguments], capture_output=True,
+                          timeout=GIT_TIMEOUT_SECONDS, env=git_environment)
+
+
+def git_failure(top, arguments, completed):
+    return RuntimeError(
+        f"git {' '.join(arguments)} failed in {top} with exit {completed.returncode}: "
+        f"{completed.stderr.decode(errors='replace').strip()}")
+
+
+def main_base(document_top, git_environment, bases):
+    """The checkout's fork point from origin/main, found once per checkout per run."""
+    if document_top not in bases:
+        arguments = ["merge-base", "HEAD", MAIN_REFERENCE]
+        found = git_in_checkout(document_top, arguments, git_environment)
+        if found.returncode != 0:
+            raise git_failure(document_top, arguments, found)
+        bases[document_top] = found.stdout.decode().strip()
+    return bases[document_top]
+
+
+def document_differs_from_main(document, document_top, git_environment, bases):
+    """True when the document is not at its checkout's main base, or its bytes differ."""
+    arguments = ["ls-tree", "-z", main_base(document_top, git_environment, bases), "--",
+                 document.relative_to(document_top).as_posix()]
+    listed = git_in_checkout(document_top, arguments, git_environment)
+    if listed.returncode != 0:
+        raise git_failure(document_top, arguments, listed)
+    if not listed.stdout:
+        return True
+    # An entry reads "<mode> <type> <object>\t<path>".
+    arguments = ["cat-file", "blob", listed.stdout.split()[2].decode()]
+    shown = git_in_checkout(document_top, arguments, git_environment)
+    if shown.returncode != 0:
+        raise git_failure(document_top, arguments, shown)
+    return shown.stdout != document.read_bytes()
 
 
 def find_markdown_file_paths_linked_or_named_in_agent_reply(
@@ -346,11 +400,15 @@ def run(stdin_text, environment):
     git_environment = environment_without_git_redirection()
     session_top = checkout_top(cwd, git_environment) if cwd else None
     due = []
+    main_bases = {}
     documents = find_markdown_file_paths_linked_or_named_in_agent_reply(
         reply, cwd, git_environment,
         lambda path: is_skipped(path, log_store_directory, record_names))
     for document in documents:
         document_top = checkout_top(document.parent, git_environment)
+        if document_top is not None and not document_differs_from_main(
+                document, document_top, git_environment, main_bases):
+            continue
         stores = [store]
         for top in (document_top, session_top):
             if top is not None and top / record_names.RECORDS_DIRECTORY_NAME not in stores:
