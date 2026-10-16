@@ -975,7 +975,11 @@ class _Collector:
     def simple_command(self, node, children, child_shell, heredocs, redirects, trailing_words):
         words, own_redirects, own_heredocs = [], [], []
         joined = None
+        previous_end = None
         for child in children:
+            gap_words, prefix = (_escaped_blank_words_in_gap(self.source[previous_end:child.start_byte])
+                                 if previous_end is not None else ([], ""))
+            previous_end = child.end_byte
             if joined is not None and child.type == "process_substitution" \
                     and child.start_byte == joined.end_byte:
                 # bash passes 0<(cmd) as one word, the 0 joined to the substitution's path.
@@ -986,11 +990,19 @@ class _Collector:
             if joined is not None:
                 words.append(word_value(joined, self.glob_markers, self.restored))
                 joined = None
+            words.extend(gap_words)
+            if prefix and child.type in REDIRECT_NODE_TYPES:
+                # An operator ends the word the escaped blanks start, so they are a word of their own.
+                words.append(prefix)
+                prefix = ""
             if child.type == "number" and self.source[child.end_byte + 1:child.end_byte + 2] == b"(" \
                     and self.source[child.end_byte:child.end_byte + 1] in (b"<", b">"):
                 joined = child
                 continue
+            count = len(words)
             self._read_command_part(child, child_shell, words, own_redirects, own_heredocs)
+            if prefix and len(words) > count:
+                words[count] = prefix + words[count]
         if joined is not None:
             words.append(word_value(joined, self.glob_markers, self.restored))
         words.extend(trailing_words)
@@ -1025,6 +1037,33 @@ class _Collector:
             words.append(word_value(child, self.glob_markers, self.restored))
         elif not child.is_named and kind_is_keyword(child):
             words.append(_text(child))
+
+
+def _escaped_blank_words_in_gap(gap):
+    """Return (words, prefix) for the escaped blanks tree-sitter-bash skipped between two words.
+
+    tree-sitter-bash reads a backslash before a space or tab at a word's start
+    as space between words, so `echo \\ x` loses the space bash passes in
+    " x". words are the ones made only of escaped blanks; prefix is the escaped
+    blanks that run into the next word and start it. A gap holding anything but
+    blanks, escaped blanks and line continuations is left alone.
+    """
+    words, current, index = [], "", 0
+    while index < len(gap):
+        pair = gap[index:index + 2]
+        if pair in (b"\\ ", b"\\\t"):
+            current += pair[1:].decode()
+            index += 2
+        elif pair == b"\\\n":
+            index += 2
+        elif gap[index:index + 1] in (b" ", b"\t", b"\n"):
+            if current:
+                words.append(current)
+            current = ""
+            index += 1
+        else:
+            return [], ""
+    return words, current
 
 
 def _separates_commands(gap):
@@ -1638,20 +1677,27 @@ def _heredoc_body_start(source, delimiter_end):
     probe = b": " + source[delimiter_end:]
     inserted = []
     tree = parser().parse(probe)
-    for _ in range(probe.count(b"#")):
+    for _ in range(probe.count(b"#") + 1):
+        line_end = _opening_line_end(tree.root_node, probe)
         misread = _comment_misread_after_an_escaped_blank(tree.root_node, probe)
-        if misread is None:
+        # A misread in the body cannot move the opening line's end, and correcting
+        # each one costs a parse of the whole body.
+        if misread is None or (line_end is not None and misread > line_end):
             break
         probe = probe[:misread] + b"\\" + probe[misread:]
         inserted.append(misread)
         tree = parser().parse(probe)
+    if line_end is None:
+        return len(source)
+    for at in reversed(inserted):
+        if line_end > at:
+            line_end -= 1
+    return delimiter_end + line_end - 2 + 1
 
-    def in_source(offset):
-        for at in reversed(inserted):
-            if offset > at:
-                offset -= 1
-        return delimiter_end + offset - 2
-    stack, inside, comments = [tree.root_node], [], []
+
+def _opening_line_end(root, probe):
+    """Return the offset in probe of the first line end outside quotes, substitutions and continuations, or None."""
+    stack, inside, comments = [root], [], []
     while stack:
         node = stack.pop()
         if node.type == "comment":
@@ -1667,12 +1713,12 @@ def _heredoc_body_start(source, delimiter_end):
     while True:
         line_end = probe.find(b"\n", position)
         if line_end == -1:
-            return len(source)
+            return None
         # A backslash continues a line, except at the end of a comment.
-        continued = (len(probe[:line_end]) - len(probe[:line_end].rstrip(b"\\"))) % 2 == 1 \
+        continued = _escaped_by_backslashes(probe, line_end) \
             and not any(begin <= line_end - 1 < end for begin, end in comments)
         if not any(begin < line_end < end for begin, end in inside) and not continued:
-            return in_source(line_end) + 1
+            return line_end
         position = line_end + 1
 
 
