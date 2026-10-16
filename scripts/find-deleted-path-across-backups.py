@@ -720,12 +720,13 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
     stuck = None
     made_mount_point = False
     for snapshot in snapshots:
+        # A cleanup failure comes first: it is true whatever the loop below does, and it explains its clear command.
+        if snapshot in held_by_other_runs:
+            unsearched.append((snapshot, held_by_other_runs[snapshot]))
+            continue
         if stuck is not None:
             # Stop after a failed release: later mounts would all fail on the occupied mount point.
             unsearched.append((snapshot, "not reached: " + stuck))
-            continue
-        if snapshot in held_by_other_runs:
-            unsearched.append((snapshot, held_by_other_runs[snapshot]))
             continue
         outcome, where, release_failure, read_in_place = _local_snapshot_probe(
             snapshot, probe_path, mount_point, runner, already_mounted.get(snapshot))
@@ -762,8 +763,8 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
         if repeats:
             lines.append("    ... and %d more snapshot(s) with the same message" % repeats)
 
-    if stuck and not unsearched:
-        # A failed release on the last snapshot has no later unsearched entry to report it.
+    if stuck and not any(reason.startswith("not reached: ") for _, reason in unsearched):
+        # No "not reached" entry carries the failed release, so report it on its own line.
         lines.append(stuck)
 
     clear_first = bool(stuck) or bool(occupying)

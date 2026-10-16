@@ -643,6 +643,43 @@ check("an ended run's mount that will not unmount is not read, and its snapshot 
 check("... and the command that clears it is handed back, with no mount command for it",
       report.recovery == ["diskutil unmount " + ENDED_RUNS_MOUNT_POINT], str(report.recovery))
 
+# Both cleanup failures are reported when this run's own mount also will not release: the ended run's mount
+# keeps its own reason, not "not reached", so its clear command comes back explained.
+ENDED_STUCK_LINE = ("could not search com.apple.TimeMachine.2026-08-30-124711.local — left mounted on %s by a "
+                    "run of this script that ended (process 900000002 has ended), and diskutil unmount exited 1: "
+                    "Unmount failed: Resource busy" % ENDED_RUNS_MOUNT_POINT)
+OWN_STUCK = ("diskutil unmount " + MOUNT_POINT, (1, "", "Unmount of own failed: busy\n"))
+both_stuck = MountTableRunner([
+    ENDED_RUN_PS, NO_EMPTY_MOUNT_POINTS, REMOVES_FINE,
+    ("diskutil unmount " + ENDED_RUNS_MOUNT_POINT, (1, "", "Unmount failed: Resource busy\n")),
+    OWN_STUCK, MOUNTS_FINE, ("test -e", (1, "", "")), LISTS_SNAPSHOTS,
+], ended_listing)
+report = finder.search_local_snapshots(REAPED, "/repo", both_stuck)
+check("an ended run's mount that will not unmount is reported with its own reason even after this run's "
+      "own mount would not release",
+      ENDED_STUCK_LINE in report.lines
+      and any(l.startswith("could not search ") and "not reached: " in l and "Unmount of own failed: busy" in l
+              for l in report.lines)
+      and not any(" stayed mounted on " in l and not l.startswith("could not search ") for l in report.lines)
+      and "diskutil unmount " + ENDED_RUNS_MOUNT_POINT in report.recovery,
+      "%s %s" % (report.lines, report.recovery))
+
+# With no later snapshot left to carry "not reached", this run's own failed release gets a line of its own.
+two_snapshots = ("tmutil listlocalsnapshots", (0, "com.apple.TimeMachine.2026-08-31-124711.local\n"
+                                                  "com.apple.TimeMachine.2026-08-30-124711.local\n", ""))
+both_stuck_last = MountTableRunner([
+    ENDED_RUN_PS, NO_EMPTY_MOUNT_POINTS, REMOVES_FINE,
+    ("diskutil unmount " + ENDED_RUNS_MOUNT_POINT, (1, "", "Unmount failed: Resource busy\n")),
+    OWN_STUCK, MOUNTS_FINE, ("test -e", (1, "", "")), two_snapshots,
+], ended_listing)
+report = finder.search_local_snapshots(REAPED, "/repo", both_stuck_last)
+check("... and when no snapshot is left to be not reached, both failures still get a line",
+      ENDED_STUCK_LINE in report.lines
+      and any(l.startswith("com.apple.TimeMachine.2026-08-31-124711.local stayed mounted on %s — " % MOUNT_POINT)
+              and "Unmount of own failed: busy" in l for l in report.lines)
+      and report.recovery == ["diskutil unmount " + MOUNT_POINT, "diskutil unmount " + ENDED_RUNS_MOUNT_POINT],
+      "%s %s" % (report.lines, report.recovery))
+
 # The clear for an ended run's stuck mount is handed back even when another snapshot, one macOS has mounted,
 # holds the file and is copied straight out.
 found_beside_stuck = MountTableRunner([
