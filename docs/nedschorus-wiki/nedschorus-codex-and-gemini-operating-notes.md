@@ -72,7 +72,7 @@ upgrade on 2026-09-04 removed the quota that stopped every Gemini cell in the
 
 **Model ids carry the effort.** `agy models` lists them live:
 `gemini-3.8-flash-high`, `-medium`, `-low`, and the same for `gemini-4-argon`
-(on ned-box, 2026-10-16). Pass the whole id to `--model`; `--effort` exists too
+(on ned-box, 2026-10-15). Pass the whole id to `--model`; `--effort` exists too
 and should agree with the suffix. The list also offers Claude and GPT-OSS ids
 through Antigravity, which we do not use.
 
