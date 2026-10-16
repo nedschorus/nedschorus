@@ -1331,9 +1331,10 @@ def _source_with_case_terminators_repaired(text, text_node_types, keep_first=Fal
             break
         matches = [found for found in LAST_CASE_TERMINATOR_PATTERN.finditer(source)
                    if not _inside_text(tree.root_node, found.start(), text_node_types)]
-        starts = [(_offset_before_edits(found.start(), edits), found.start(1) - found.start())
-                  for found in (matches if all_at_once else matches[:1])]
-        starts = [(start, length) for start, length in starts if start is not None]
+        # A line continuation may split the terminator, so its end is mapped back to text too.
+        spans = [(_offset_before_edits(found.start(), edits), _offset_before_edits(found.start(1), edits))
+                 for found in (matches if all_at_once else matches[:1])]
+        starts = [(start, end - start) for start, end in spans if start is not None and end is not None]
         if not starts:
             break
         # Each terminator written as ;; shortens the text by its length less two, so an offset
@@ -1677,20 +1678,56 @@ def _line_continuations_bash_removes(root, source, end):
     """Return the offset of each line continuation before end that bash removes, in order.
 
     bash removes a backslash and newline everywhere but inside single quotes,
-    $'...' and comments, and in a heredoc body whose delimiter is quoted, which
-    is taken out before the continuations after its operator are looked for.
+    $'...' and comments, and in a heredoc body whose delimiter is quoted. A body
+    starts only after a line end, and a continuation can split the operator that
+    opens one, so tree-sitter-bash does not see it: only the continuations before
+    the first line end after the earliest one are returned, and the caller passes
+    as end the line end after the heredoc operator it sees. A body is then taken
+    out before its continuations are looked for. A line end inside quotes ends
+    no line, so a round may stop early, which costs only another round.
     """
     found = []
     at = source.find(b"\\\n")
     while at != -1 and at < end:
         if not _escaped_by_backslashes(source, at) \
-                and not _inside_text(root, at, LINE_CONTINUATION_KEEPING_NODE_TYPES):
+                and not _inside_text(root, at, LINE_CONTINUATION_KEEPING_NODE_TYPES) \
+                and not _inside_single_quotes_of_a_heredoc_delimiter(root, source, at):
             found.append(at)
         at = source.find(b"\\\n", at + 2)
-    return found
+    if not found:
+        return found
+    line_end = min(found[0], end)
+    removed = {at + 1 for at in found}
+    while line_end < end and (source[line_end:line_end + 1] != b"\n" or line_end in removed):
+        line_end += 1
+    return [at for at in found if at < line_end]
 
 
 LINE_CONTINUATION_KEEPING_NODE_TYPES = {"raw_string", "ansi_c_string", "comment"}
+
+
+def _inside_single_quotes_of_a_heredoc_delimiter(root, source, offset):
+    """Return whether offset lies inside single quotes of a heredoc's delimiter word.
+
+    tree-sitter-bash reads a delimiter such as 'E\\<newline>OF' as one node with no
+    quoted string inside, so the quotes are followed here as bash follows them.
+    """
+    node = root.descendant_for_byte_range(offset, offset + 1)
+    while node is not None and node.type != "heredoc_start":
+        node = node.parent
+    if node is None:
+        return False
+    quote, index = None, node.start_byte
+    while index < offset:
+        character = source[index:index + 1]
+        if quote == b"'":
+            quote = None if character == b"'" else quote
+        elif character == b"\\":
+            index += 1
+        elif character == b'"' or (quote is None and character == b"'"):
+            quote = character if quote is None else None
+        index += 1
+    return quote == b"'"
 
 
 def _comment_misread_after_an_escaped_blank(root, source):
@@ -1732,7 +1769,7 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
     heredoc's body that tree-sitter-bash misplaced, and a body is kept as written.
     A misread on the operator's own line is corrected where the body's start is
     found, and in source once that heredoc is taken out. Line continuations
-    before the next heredoc operator are removed, as bash removes them before
+    before the next heredoc's body are removed, as bash removes them before
     it reads tokens: tree-sitter-bash keeps one inside an operator such as <(
     and misreads the command. edits, when given, gets (offset, length removed, length inserted) for each
     change, in the order made.
@@ -1747,9 +1784,11 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
         if operator is None or operator.type not in ("<<", "<<-"):
             operator = None
         misread = _comment_misread_after_an_escaped_blank(tree.root_node, source)
-        first = min((at for at in (misread, operator and operator.start_byte) if at is not None),
-                    default=len(source))
-        continuations = _line_continuations_bash_removes(tree.root_node, source, first)
+        # The operator's body starts after a line end, so the continuations on its line go first.
+        line_end = source.find(b"\n", operator.start_byte) if operator is not None else -1
+        continuations = _line_continuations_bash_removes(
+            tree.root_node, source, min(at for at in (misread, line_end, len(source))
+                                        if at is not None and at != -1))
         if continuations:
             for at in reversed(continuations):
                 source = source[:at] + source[at + 2:]
@@ -1773,7 +1812,7 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
             operator_start, delimiter_start = descriptor.start(2), descriptor.end()
         delimiter_end, delimiter = _delimiter_word(source, delimiter_start)
         delimiter_as_written = source[delimiter_start:delimiter_end]
-        expanded = not any(mark in delimiter_as_written.replace(b"\\\n", b"")
+        expanded = not any(mark in delimiter_as_written
                            for mark in (b"'", b'"', b"\\"))
         body_start = _heredoc_body_start(source, delimiter_end)
         body_end, resume = _heredoc_body_end(source, body_start, delimiter, dashed,
@@ -1850,14 +1889,12 @@ def _delimiter_word(source, position):
     """Return (end, delimiter) for the heredoc delimiter word at position, by bash's rules.
 
     The word ends at an unquoted blank or operator character; the delimiter is
-    the word with its quotes, backslashes and line continuations removed.
+    the word with its quotes and backslashes removed.
     """
     word, index = bytearray(), position
     while index < len(source):
         character = source[index:index + 1]
-        if source[index:index + 2] == b"\\\n":
-            index += 2
-        elif character == b"\\":
+        if character == b"\\":
             word += source[index + 1:index + 2]
             index += 2
         elif character == b"'":
@@ -1869,9 +1906,6 @@ def _delimiter_word(source, position):
             # Inside double quotes a backslash keeps ", \\, $ and ` literal.
             index += 1
             while index < len(source) and source[index:index + 1] != b'"':
-                if source[index:index + 2] == b"\\\n":
-                    index += 2
-                    continue
                 if source[index:index + 1] == b"\\" and source[index + 1:index + 2] in b'"\\$`':
                     index += 1
                 word += source[index:index + 1]
@@ -1908,14 +1942,21 @@ def _heredoc_body_end(source, position, delimiter, dashed, inside_substitution, 
         while expanded and line_end != -1 and _escaped_by_backslashes(source, line_end):
             line_end = source.find(b"\n", line_end + 1)
         line_end = len(source) if line_end == -1 else line_end
-        line = source[position:line_end].replace(b"\\\n", b"")
+        line, joined = _line_continuations_removed(source[position:line_end])
         compared = line.lstrip(b"\t") if dashed else line
         if compared == delimiter:
             return position, min(line_end + 1, len(source))
         if inside_substitution and compared.startswith(delimiter + b")"):
-            return position, position + len(line) - len(compared) + len(delimiter)
+            return position, position + _offset_before_edits(
+                len(line) - len(compared) + len(delimiter), joined)
         position = line_end + 1
     return len(source), len(source)
+
+
+def _line_continuations_removed(text):
+    """Return (text with every backslash and newline removed, the edits that removed them)."""
+    found = [match.start() for match in re.finditer(rb"\\\n", text)]
+    return text.replace(b"\\\n", b""), [(at - 2 * number, 2, 0) for number, at in enumerate(found)]
 
 
 def _heredoc_body_start(source, delimiter_end):

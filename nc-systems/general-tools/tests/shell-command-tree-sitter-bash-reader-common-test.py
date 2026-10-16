@@ -494,6 +494,13 @@ for command, expected in [
     ("cat <<'EOF'\n$(zzp \\\nx)\nEOF", [(["cat"], [("<<", "$(zzp \\\nx)\n")])]),
     ("cat <<E\\\nOF\n$(zzp)\nEOF", [(["zzp"], []), (["cat"], [("<<", "$(zzp)\n")])]),
     ("cat <<\"E\\\nOF\"\n$(zzp)\nEOF", [(["cat"], [("<<", "$(zzp)\n")])]),
+    ("zzp <\\\n<'EOF'\nx\\\nEOF\nzzr after", [(["zzp"], [("<<", "x\\\n")]), (["zzr", "after"], [])]),
+    ("zzp <\\\n<'EOF'\na\\\nb\nEOF", [(["zzp"], [("<<", "a\\\nb\n")])]),
+    ("zzp <<\\\n-EOF\n\tx\n\tEOF\nzzr after", [(["zzp"], [("<<", "x\n")]), (["zzr", "after"], [])]),
+    ("zzq <<'\\\nG'\nx\nG\nzzr", [(["zzq"], [("<<", "x\nG\nzzr")])]),
+    ("zzq <<\"\\\nG\"\nx\nG\nzzr", [(["zzq"], [("<<", "x\n")]), (["zzr"], [])]),
+    ("zzs \"$(zzq <<EOF\nE\\\nOF)\nEOF\n)\"",
+     [(["zzq"], [("<<", "")]), (["zzs", "$(zzq <<EOF\nE\\\nOF)\nEOF\n)"], [])]),
 ]:
     found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
     check(f"a line continuation is removed where bash removes it, and kept elsewhere: {command!r}",
@@ -502,9 +509,15 @@ for command in ("case a in a) zzp x;\\\n& esac; zzq", "case a in a) zzp x;\\\n;&
     found = [list(words) for words in reader.simple_commands(command)]
     check(f"a last case terminator a line continuation splits is repaired, so the command after esac "
           f"is read: {command!r}", found == [["zzp", "x"], ["zzq"]], found)
-read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(b"zzp a\\\nb # c\n")
-check("a comment after a line continuation is reported at its offsets in the source as given",
-      read.comments == [(9, 12)], read)
+command = "case a in a) zzp;\\\n;& esac; case b in b) zzq;& esac; zzr"
+found = [list(words) for words in reader.simple_commands(command)]
+check(f"a case terminator a line continuation splits is replaced over its whole length in the text "
+      f"as given, so the command after the next case is read: {command!r}",
+      found == [["zzp"], ["zzq"], ["zzr"]], found)
+for source, expected in [(b"zzp a\\\nb # c\n", [(9, 12)]), (b"zzp a\\\n\\\nb \\\n#c\n", [(13, 15)])]:
+    read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(source)
+    check(f"a comment after line continuations is reported at its offsets in the source as given: {source!r}",
+          read.comments == expected, read)
 found = [(list(words), words.redirects) for words in reader.simple_commands("zzp 2>&1>f")]
 check("a number that is a redirection's first target stays its target, though the next redirection touches it",
       found and found[0][1][0] == ("2>&", "1"), found)
