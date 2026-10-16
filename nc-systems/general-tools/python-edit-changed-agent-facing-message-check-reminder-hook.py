@@ -213,13 +213,14 @@ def first_line_of(text: str) -> str:
 
 def messages_not_at_head(entries, file_path: Path):
     """The entries whose text the file at HEAD holds in no message, each line
-    and text once; an entry with no letter in it, such as a separator
-    like "-" * 20, is no message for a fast read."""
+    and text once; an entry with no letter in its literal text, outside
+    {...} placeholders, such as a separator like "-" * 20 or report.render() + "\n", is no
+    message for a fast read."""
     texts_at_head = message_texts_at_head(file_path)
     changed, seen = [], set()
     for entry in entries:
         key = (entry["line"], entry["text"])
-        if entry["text"] in texts_at_head or key in seen or not re.search(r"[A-Za-z]", entry["text"]):
+        if entry["text"] in texts_at_head or key in seen or not re.search(r"[A-Za-z]", entry["literal_text"]):
             continue
         seen.add(key)
         changed.append(entry)

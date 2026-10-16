@@ -10,7 +10,10 @@ AGENT_FACING_HOOK_OUTPUT_KEYS, the keys through which a Claude Code hook's JSON
 output reaches the agent, when that value is a string, an f-string or a name
 assigned a string once at module level; and the module docstring of a file
 that mentions __doc__, which argparse prints for --help. A message built with + is one message,
-its literal pieces joined and each other operand shown as {source}. A message held in a
+its literal pieces joined and each other operand shown as {source}; an f-string
+field in the chain keeps its conversion and format spec, {x!r} and {x:.1f}, as ast.unparse writes
+the field of a standalone f-string. Each entry also holds literal_text, the message's literal
+pieces alone, outside every {...} placeholder. A message held in a
 local variable, or built any other way, is not found. "systemMessage" is not
 among the keys: Claude Code shows that text to the user, not to the agent.
 
@@ -50,14 +53,24 @@ def addition_chain_operands(expression):
     return [expression]
 
 
-def message_text_of_addition_chain(operands):
-    """The literal pieces joined; an f-string field or another operand is shown as {source}."""
+def f_string_field_text(field):
+    """The whole field, such as {x!r} or {x:.1f}, as ast.unparse writes it inside a standalone f-string."""
+    unparsed = ast.unparse(ast.JoinedStr(values=[field]))
+    return unparsed[unparsed.index("{"):unparsed.rindex("}") + 1]
+
+
+def message_text_of_addition_chain(operands, literal_only=False):
+    """The literal pieces joined; an f-string field or another operand is shown as {source},
+    or left out when literal_only."""
     pieces = []
     for operand in operands:
         if isinstance(operand, ast.Constant) and isinstance(operand.value, str):
             pieces.append(operand.value)
+        elif literal_only:
+            if isinstance(operand, ast.JoinedStr):
+                pieces.extend(part.value for part in operand.values if isinstance(part, ast.Constant))
         elif isinstance(operand, ast.JoinedStr):
-            pieces.extend(part.value if isinstance(part, ast.Constant) else "{" + ast.unparse(part.value) + "}"
+            pieces.extend(part.value if isinstance(part, ast.Constant) else f_string_field_text(part)
                           for part in operand.values)
         else:
             pieces.append("{" + ast.unparse(operand) + "}")
@@ -87,6 +100,15 @@ def text_of_string_node(node):
     return ast.unparse(node) if isinstance(node, ast.JoinedStr) else node.value
 
 
+def literal_text_of_string_node(node):
+    """The node's literal words alone, outside every {...} placeholder."""
+    if isinstance(node, ast.BinOp):
+        return message_text_of_addition_chain(addition_chain_operands(node), literal_only=True)
+    if isinstance(node, ast.JoinedStr):
+        return "".join(part.value for part in node.values if isinstance(part, ast.Constant))
+    return node.value
+
+
 class AgentFacingStringNodeCollector(ast.NodeVisitor):
     """Record string spans and their call, assignment or exception context."""
 
@@ -108,7 +130,8 @@ class AgentFacingStringNodeCollector(ast.NodeVisitor):
                 continue
             self.seen_node_contexts.add(identity)
             self.string_entries.append({"line": node.lineno, "end_line": node.end_lineno,
-                                        "label": label, "text": text_of_string_node(node)})
+                                        "label": label, "text": text_of_string_node(node),
+                                        "literal_text": literal_text_of_string_node(node)})
 
     def visit_enclosing_definition(self, node):
         self.enclosing_names.append(node.name)
@@ -180,7 +203,7 @@ def module_level_string_values(tree):
 
 
 def agent_facing_string_nodes_in_source(source):
-    """Each entry holds line and end_line, counted from 1, label and text.
+    """Each entry holds line and end_line, counted from 1, label, text and literal_text.
     Source that is None or does not parse yields no entries."""
     if source is None:
         return []

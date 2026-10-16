@@ -435,6 +435,14 @@ with tempfile.TemporaryDirectory() as temporary:
           "scripts/joined.py:1  stopped: {NAME}." in text and "scripts/joined.py:2" not in text
           and "changed 1 " in text, text)
 
+    result = write_then_run(repository, repository / "scripts" / "rendered.py",
+                            'print(report.render() + "\\n")\nprint("Failed: " + name)\n')
+    text = agent_text(result)
+    check("a + chain whose literal text has no letter, such as report.render() + newline, is not listed, "
+          "while a chain with literal words is",
+          "scripts/rendered.py:1" not in text and "scripts/rendered.py:2  Failed: {name}" in text
+          and "changed 1 " in text, text)
+
     reset()
     not_a_directory = Path(temporary) / "tmp-whose-target-directory-is-a-file"
     not_a_directory.mkdir()
