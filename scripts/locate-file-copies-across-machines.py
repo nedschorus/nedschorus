@@ -89,7 +89,9 @@ NED_BOX_SURFACES = {
     "this_repository": {"clones": ["/home/nedlern/Projects/nedschorus"],
                         "checkout_parents": ["/home/nedlern/agents"],
                         "scratch_trees": ["/tmp"]},
-    # The Mac mounts ned-box's home here.
+    # The Mac mounts ned-box's home here. A copy of the pair in
+    # nc-systems/general-tools/ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py,
+    # since this file is sent over ssh alone; its test fails when the two differ.
     "spellings": [["/Volumes/nedhome", "/home/nedlern"]],
 }
 KNOWN_HOST_HOMES = {NED_BOX_HOSTNAME: "/home/nedlern"}

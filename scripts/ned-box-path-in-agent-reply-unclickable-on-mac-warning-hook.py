@@ -61,11 +61,18 @@ import sys
 import tempfile
 from pathlib import Path
 
+_ned_box_home_specification = importlib.util.spec_from_file_location(
+    "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+ned_box_home = importlib.util.module_from_spec(_ned_box_home_specification)
+_ned_box_home_specification.loader.exec_module(ned_box_home)
+
 PROGRAM = "ned-box-path-in-agent-reply-unclickable-on-mac-warning-hook"
 HIT_LINES_LISTED_AT_MOST = 10
 NOTE_RECORD_DIRECTORY_NAME = "ned-box-path-in-agent-reply-unclickable-on-mac-warning-hook-state"
-NED_BOX_HOME = "/home/nedlern/"
-MAC_MOUNT_OF_NED_BOX_HOME = "/Volumes/nedhome/"
+NED_BOX_HOME = ned_box_home.NED_BOX_HOME + "/"
+MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home.MAC_MOUNT_OF_NED_BOX_HOME + "/"
 LOG_STORE_DIRECTORY_UNDER_NED_BOX_HOME = "nedschorus-logs/"
 SCP_CITATION_HOST_PREFIX = "nedlern@ned-box:"
 
@@ -75,12 +82,12 @@ SCP_CITATION_HOST_PREFIX = "nedlern@ned-box:"
 # its opening run and the same run is cut from the path's end.
 PATH_REST = r"[^\s`'\"<>()\[\]{}|*\x00]*"
 PATH_REST_PATTERN = re.compile(PATH_REST)
-BARE_PATH_PATTERN = re.compile(r"(?<![\w/.~-])(?P<emphasis>_*)(?P<path>/home/nedlern/" + PATH_REST + ")")
+BARE_PATH_PATTERN = re.compile(r"(?<![\w/.~-])(?P<emphasis>_*)(?P<path>" + re.escape(NED_BOX_HOME) + PATH_REST + ")")
 SCP_HOST_PREFIX_BEFORE_PATH_PATTERN = re.compile(r"(?:[\w.-]+@)?ned-box:$")
 UNOPENABLE_TARGET_PATTERN = re.compile(
-    r"^<?(?:file://(?:localhost)?)?/home/nedlern/(?P<rest>[^<>\s]*?)>?$", re.IGNORECASE)
+    r"^<?(?:file://(?:localhost)?)?" + re.escape(NED_BOX_HOME) + r"(?P<rest>[^<>\s]*?)>?$", re.IGNORECASE)
 UNOPENABLE_FILE_URL_PATTERN = re.compile(
-    r"^<?file://(?:localhost)?/home/nedlern/(?P<rest>[^<>\s]*?)>?$", re.IGNORECASE)
+    r"^<?file://(?:localhost)?" + re.escape(NED_BOX_HOME) + r"(?P<rest>[^<>\s]*?)>?$", re.IGNORECASE)
 TRAILING_SENTENCE_PUNCTUATION = ".,;:!?"
 
 PREVIOUS_REPLY_OPENING_LINES = (

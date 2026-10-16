@@ -331,7 +331,8 @@ def run_missing_launcher_case(workspace: Path):
             "git-machine-readable-output-runner-and-parser-common.py",
             "git-redirecting-environment-variables-removal-common.py",
             "tmux-target-or-server-does-not-exist-error-pattern-common.py",
-            "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py"):
+            "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py",
+            "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py"):
         (general_tools_home / general_tools_module).write_text(
             (SUPERVISOR_SCRIPT.parents[1] / "general-tools" / general_tools_module)
             .read_text(encoding="utf-8"), encoding="utf-8")

@@ -60,6 +60,9 @@ _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
 git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
 _git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
 GIT_REDIRECTING_ENVIRONMENT_VARIABLES = git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
+# cold-read-grid.py reads ned-box's home and the Mac's mount of it from this module.
+NED_BOX_HOME_MODULE = (
+    SYSTEM_DIRECTORY.parent / "general-tools" / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 
 
 def git(repository, *arguments):
@@ -91,6 +94,7 @@ def commit_seeded_cold_read_scratch_repository(repository):
     (repository / "nc-systems" / "general-tools").mkdir(parents=True)
     shutil.copy2(GIT_OUTPUT_MODULE, repository / "nc-systems" / "general-tools")
     shutil.copy2(GIT_REDIRECTING_REMOVAL_MODULE, repository / "nc-systems" / "general-tools")
+    shutil.copy2(NED_BOX_HOME_MODULE, repository / "nc-systems" / "general-tools")
     # The records tree is gitignored in the real repository, which is what
     # keeps a reviewer's own report out of the detector's sight.
     (repository / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")
