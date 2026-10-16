@@ -766,6 +766,23 @@ with tempfile.TemporaryDirectory() as root:
               and "Machines read: ned-box (this machine)." in failed_out,
               f"{failed_code!r} {failed_message!r} {failed_out!r}")
 
+    warned_calls = []
+    with pretending_the_host_is("ned-box"):
+        warned_out, warned_message, warned_code = run_and_code(
+            ["--seats", "--store", str(store), "--machine", "both"],
+            runner=a_runner_returning(
+                stdout=MAC_TAR, calls=warned_calls,
+                stderr=b"mac-window-opened-for-ned-box-forced-command: the "
+                       b"task lists were sent, but the outcome could not be "
+                       b"added to the request log"))
+    check("on ned-box, a Mac that sent its store but warned keeps the "
+          "store, passes the warning on, and exits non-zero",
+          warned_code == reader.EXIT_SOMETHING_COULD_NOT_BE_READ
+          and "cold-read-research" in warned_out
+          and "could not be added to the request log" in warned_out
+          and "Machines read: mac, ned-box (this machine)." in warned_out,
+          f"{warned_code!r} {warned_message!r} {warned_out!r}")
+
     # A seat on the Mac, asked for while the Mac cannot be read: the refusal
     # must say why, or the seat reads as one that does not exist.
     with pretending_the_host_is("ned-box"):
@@ -778,6 +795,14 @@ with tempfile.TemporaryDirectory() as root:
           mac_seat_code == reader.EXIT_SOMETHING_COULD_NOT_BE_READ
           and "could not reach the Mac" in mac_seat_message,
           f"{mac_seat_code!r} {mac_seat_message!r}")
+
+# A transfer that never finishes comes back as ssh's own failure.
+timed_out = reader.run_one_command(
+    [sys.executable, "-c", "import time; time.sleep(30)"], timeout_seconds=0.5)
+check("a command past the time limit comes back as ssh's failure, saying so",
+      timed_out.returncode == reader.SSH_ITSELF_FAILED_EXIT
+      and b"did not finish within 0.5 seconds" in timed_out.stderr,
+      timed_out)
 
 # ned-box's OWN store is still a failure when it cannot be read: missing
 # altogether, or holding a task file that cannot be read.

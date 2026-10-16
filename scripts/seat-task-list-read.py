@@ -51,6 +51,7 @@ END_OF_TAR_ARCHIVE = bytes(2 * tarfile.BLOCKSIZE)
 
 EXIT_EVERYTHING_ASKED_FOR_WAS_READ = 0
 EXIT_SOMETHING_COULD_NOT_BE_READ = 1
+TRANSFER_TIMEOUT_SECONDS = 120
 
 TaskListLocation = namedtuple("TaskListLocation", "machine directory")
 
@@ -122,6 +123,12 @@ def mac_clone_needs_pull_notice():
             f"Pass --machine ned-box to read this machine alone.")
 
 
+def mac_sent_with_warning_notice(what_the_mac_said):
+    return (f"mac sent its task lists, but its forced command also said: "
+            f"{what_the_mac_said}\n"
+            f"Tell the user what it said; the task lists below are complete.")
+
+
 def mac_read_failed_notice(exit_code, what_the_mac_said):
     return (f"mac's task store was not read (the Mac's forced command "
             f"exited {exit_code}): {what_the_mac_said or 'no error text'}\n"
@@ -137,7 +144,9 @@ def fetch_mac_task_store_archive(runner):
         mac_forced_command.AGENT_SEAT_TASK_LISTS_READ_VERB, destination))
     what_it_said = (completed.stderr or b"").decode("utf-8", "replace").strip()
     if completed.returncode == 0:
-        return completed.stdout, []
+        # The Mac exits 0 when it sent the store but could not log the outcome.
+        return completed.stdout, ([mac_sent_with_warning_notice(what_it_said)]
+                                  if what_it_said else [])
     if completed.returncode == SSH_ITSELF_FAILED_EXIT:
         return None, ["\n".join(mac_window.explain_connection_failure(
             what_it_said, destination, PROGRAM,
@@ -461,9 +470,17 @@ def report_one_task_list(location, arguments):
     return bool(notice)
 
 
-def run_one_command(command):
-    return subprocess.run(command, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE)
+def run_one_command(command, timeout_seconds=TRANSFER_TIMEOUT_SECONDS):
+    """Run one ssh command; a run past the time limit comes back as ssh's own failure."""
+    # ConnectTimeout bounds only the connection; a machine that sleeps mid-transfer would hang the read.
+    try:
+        return subprocess.run(command, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(
+            command, SSH_ITSELF_FAILED_EXIT, b"",
+            f"ssh did not finish within {timeout_seconds:g} seconds"
+            .encode())
 
 
 def machines_to_read(arguments):

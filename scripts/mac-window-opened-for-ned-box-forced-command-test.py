@@ -576,7 +576,8 @@ except tarfile.TarError as unreadable:
 check("task lists: standard output is a tar archive of the store, and nothing else",
       "./nedschorus-mac-seat-tasks/1.json" in member_names, member_names)
 check("task lists: a read is logged as accepted before it is sent",
-      " accepted 'read-agent-seat-task-lists'" in log and log.index(" accepted ") < log.index(" sent "), log)
+      " accepted 'read-agent-seat-task-lists'" in log and " sent " in log
+      and log.index(" accepted ") < log.index(" sent "), log)
 
 result, log, archive = run_task_lists_read("read-agent-seat-task-lists nedschorus-mac-seat-tasks")
 check("task lists: a request with words after the verb is refused and exits 2, sending nothing",
