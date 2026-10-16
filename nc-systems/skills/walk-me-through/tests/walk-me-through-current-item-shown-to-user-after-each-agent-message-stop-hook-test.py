@@ -171,7 +171,7 @@ def check_silent(case_name, result):
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
-ANSWERS_LINE = "Answer Y to approve, N to decline, D to defer, or R to repeat the item."
+ANSWERS_LINE = "Answer Y to approve, N to decline, D to defer, R to repeat the item, or E to have it explained."
 
 
 def without_bold_marks_outside_code_spans(line):
@@ -214,7 +214,7 @@ def check_blocked(case_name, result, *phrases):
 
 def test_shows_current_item_whatever_the_reply_says():
     case = Case()
-    case.walk_files(minutes="Next to present: item 2 of 9.")
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
     item = section("## Item 2 of 9", "## Item 4.1 of 9")
     for case_name, reply in (
             ("a reply that already holds the item is followed by the item", ITEM_2_REPLY),
@@ -281,7 +281,7 @@ Recommendation: Y."""
 
 def test_code_is_shown_as_written():
     case = Case()
-    case.walk_files(minutes="Next to present: item 1 of 2.", document=CODE_WALK_DOCUMENT)
+    case.walk_files(minutes="#next_to_present item 1 of 2.", document=CODE_WALK_DOCUMENT)
     case.reply("Recorded.")
     result = case.run()
     check_shown("marks inside code spans, fenced blocks and indented code are shown as written",
@@ -298,7 +298,7 @@ def test_code_is_shown_as_written():
 
 def test_items_shown_together():
     case = Case()
-    case.walk_files(minutes="Next to present: items 5 and 6 of 9.")
+    case.walk_files(minutes="#next_to_present items 5 and 6 of 9.")
     case.reply("Recorded.")
     check_shown("items shown together are both shown, in the walk-document's order", case.run(),
                 section("## Item 5 of 9", "## Item 6 of 9"),
@@ -307,7 +307,7 @@ def test_items_shown_together():
 
 def test_items_under_one_heading():
     case = Case()
-    case.walk_files(minutes="Next to present: items 7 and 8 of 9.")
+    case.walk_files(minutes="#next_to_present items 7 and 8 of 9.")
     case.reply("Recorded.")
     check_shown("items under one heading are shown whole", case.run(),
                 section("## Items 7 and 8 of 9", "## Item 9 of 9"))
@@ -315,7 +315,7 @@ def test_items_under_one_heading():
 
 def test_part_without_recommendation():
     case = Case()
-    case.walk_files(minutes="Next to present: item 4.1 of 9.")
+    case.walk_files(minutes="#next_to_present item 4.1 of 9.")
     case.reply("Recorded.")
     check_shown("a part is shown alone, without the next part", case.run(),
                 section("## Item 4.1 of 9", "## Item 5 of 9"))
@@ -323,7 +323,7 @@ def test_part_without_recommendation():
 
 def test_item_holding_original_and_proposed_sections():
     case = Case()
-    case.walk_files(minutes="Next to present: item 9 of 9.")
+    case.walk_files(minutes="#next_to_present item 9 of 9.")
     case.reply("Recorded.")
     check_shown("an item holding its own headings is shown whole", case.run(),
                 section("## Item 9 of 9"))
@@ -356,7 +356,7 @@ LATER_TEXT = {"type": "assistant", "message": {"id": "m3", "content": [
 
 def test_where_the_turn_starts():
     case = Case()
-    case.walk_files(minutes="Next to present: item 2 of 9.")
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
     item = section("## Item 2 of 9", "## Item 4.1 of 9")
     for case_name, records, shown in (
             ("a turn that wrote to the user, then made tool calls, shows the item",
@@ -412,29 +412,29 @@ def range_section(start, end=None):
 def test_range_headings_and_values():
     for case_name, minutes, start, end in (
             ("an item before a range heading ends at the range heading",
-             "Next to present: item 9 of 54.", "## Item 9 of 54", "## Items 10 to 12 of 54"),
+             "#next_to_present item 9 of 54.", "## Item 9 of 54", "## Items 10 to 12 of 54"),
             ("minutes naming a range show the range heading's unit",
-             "Next to present: items 10 to 12 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
+             "#next_to_present items 10 to 12 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
             ("minutes listing the range's items show the same unit",
-             "Next to present: items 10, 11 and 12 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
+             "#next_to_present items 10, 11 and 12 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
             ("a dashed range is read as a range",
-             "Next to present: items 10-12 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
+             "#next_to_present items 10-12 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
             ("one item inside a range heading shows the range's unit",
-             "Next to present: item 11 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
+             "#next_to_present item 11 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
             ("a running count inside a code fence starts no item",
-             "Next to present: item 12.1 of 54.", "## Item 12.1 of 54", "## Item 12.2 of 54")):
+             "#next_to_present item 12.1 of 54.", "## Item 12.1 of 54", "## Item 12.2 of 54")):
         case = Case()
         case.walk_files(minutes=minutes, document=RANGE_WALK_DOCUMENT)
         case.reply("Recorded.")
         check_shown(case_name, case.run(), range_section(start, end))
     case = Case()
-    case.walk_files(minutes="Next to present: items 12.1 to 12.2 of 54.", document=RANGE_WALK_DOCUMENT)
+    case.walk_files(minutes="#next_to_present items 12.1 to 12.2 of 54.", document=RANGE_WALK_DOCUMENT)
     case.reply("Recorded.")
     check_shown("a dotted range shows its parts", case.run(),
                 range_section("## Item 12.1 of 54", "## Item 12.2 of 54"),
                 range_section("## Item 12.2 of 54", "## Item 13 of 54: last"))
     case = Case()
-    case.walk_files(minutes="Next to present: item 9 of 54.",
+    case.walk_files(minutes="#next_to_present item 9 of 54.",
                     document="# A walk\n\n## Item 9 of 54: first\n\nText.\n\n"
                              "## Items 12 to 10 of 54: backwards\n\nMore.\n\n"
                              "## Item 13 of 54: last\n\nEnd.\n")
@@ -445,21 +445,21 @@ def test_range_headings_and_values():
           "Text." in shown and "More." in shown and "End." not in shown,
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
     case = Case()
-    case.walk_files(minutes="Next to present: items 12 to 10 of 54.", document=RANGE_WALK_DOCUMENT)
+    case.walk_files(minutes="#next_to_present items 12 to 10 of 54.", document=RANGE_WALK_DOCUMENT)
     case.reply("Recorded.")
     check_blocked("a backwards range is sent back as backwards", case.run(), "items 12 to 10 of 54",
                   "`12 to 10` runs backwards", "`items 10 to 12`")
     for case_name, minutes, phrases in (
             ("a backwards range after a listed item is sent back as backwards, not cut to the item",
-             "Next to present: items 9, 12 to 10 of 54.", ("`12 to 10` runs backwards",)),
+             "#next_to_present items 9, 12 to 10 of 54.", ("`12 to 10` runs backwards",)),
             ("a range across parts of different items is sent back as crossing items",
-             "Next to present: items 12.1 to 13 of 54.",
+             "#next_to_present items 12.1 to 13 of 54.",
              ("`12.1 to 13` runs between parts of different items",)),
             ("a dotted range across items is sent back as crossing items",
-             "Next to present: items 4.9 to 5.1 of 9.",
+             "#next_to_present items 4.9 to 5.1 of 9.",
              ("`4.9 to 5.1` runs between parts of different items",)),
             ("a chained range is sent back as a line naming no item",
-             "Next to present: items 10 to 11 to 12 of 54.", ("does not open with an item",))):
+             "#next_to_present items 10 to 11 to 12 of 54.", ("does not open with an item",))):
         case = Case()
         case.walk_files(minutes=minutes, document=RANGE_WALK_DOCUMENT)
         case.reply("Recorded.")
@@ -473,36 +473,36 @@ def test_range_headings_and_values():
 def test_where_the_minutes_line_sits():
     item_2 = section("## Item 2 of 9", "## Item 4.1 of 9")
     for case_name, minutes in (
-            ("a line inside a bullet counts", "- Next to present: item 2 of 9."),
-            ("a bold marker counts", "**Next to present:** item 2 of 9."),
-            ("a line without `of M` uses the walk-document's total", "Next to present: item 2."),
+            ("a line inside a bullet counts", "- #next_to_present item 2 of 9."),
+            ("a bold marker counts", "**#next_to_present** item 2 of 9"),
+            ("a line without `of M` uses the walk-document's total", "#next_to_present item 2."),
             ("words after the running count are ignored",
-             "Next to present: item 2 (awaiting answer), then item 5, then item 6."),
+             "#next_to_present item 2 (awaiting answer), then item 5, then item 6."),
             ("a comma and a note after the count are ignored",
-             "Next to present: item 2 of 9, the poem page (item 1 was dropped)."),
+             "#next_to_present item 2 of 9, the poem page (item 1 was dropped)."),
             ("a marker inside a code span or a fence is not the last line",
-             "Next to present: item 2 of 9.\n\nThe hook asks for `Next to present: item 5 of 9.`\n\n"
-             "```\nNext to present: item 6 of 9.\n```")):
+             "#next_to_present item 2 of 9.\n\nThe hook asks for `#next_to_present item 5 of 9.`\n\n"
+             "```\n#next_to_present item 6 of 9.\n```")):
         case = Case()
         case.walk_files(minutes=minutes)
         case.reply("Recorded.")
         check_shown(case_name, case.run(), item_2)
     for case_name, minutes in (
             ("a walk closed mid-sentence is not open",
-             "Next to present: item 2 of 9.\n\nSwept into another walk; Next to present: none, closed."),
-            ("a walk closed with `closed` alone is not open", "Next to present: closed.")):
+             "#next_to_present item 2 of 9.\n\nSwept into another walk; #next_to_present none, closed."),
+            ("a walk closed with `closed` alone is not open", "#next_to_present closed.")):
         case = Case()
         case.walk_files(minutes=minutes)
         case.reply("Recorded.")
         check_silent(case_name, case.run())
     case = Case()
-    case.walk_files(minutes="Next to present: item 2.",
+    case.walk_files(minutes="#next_to_present item 2.",
                     document=WALK_DOCUMENT + "\n## Item 2 of 10: a re-planned copy\n\nText.\n")
     case.reply("Recorded.")
     check_blocked("a line without `of M` over headings with two totals is sent back", case.run(),
                   "gives no `of M`", "more than one total (`of 9`, `of 10`)")
     case = Case()
-    case.walk_files(minutes="Next to present: item 2.",
+    case.walk_files(minutes="#next_to_present item 2.",
                     document="# A walk\n\n## The poem page\n\nText.\n\n## The summary\n\nText.\n")
     case.reply("Recorded.")
     result = case.run()
@@ -512,7 +512,7 @@ def test_where_the_minutes_line_sits():
     check("a walk-document with no counted heading is not told it has more than one total",
           "more than one total" not in (blocked_reason(result) or ""), result.stdout)
     case = Case()
-    case.walk_files(minutes="Next to present: item 2 of 9.",
+    case.walk_files(minutes="#next_to_present item 2 of 9.",
                     document=WALK_DOCUMENT + "\n## Item 2 of 10: a re-planned copy\n\nText.\n")
     case.reply("Recorded.")
     check_shown("only the heading with the minutes' total is shown", case.run(), item_2)
@@ -520,23 +520,23 @@ def test_where_the_minutes_line_sits():
 
 def test_unparseable_line():
     case = Case()
-    case.walk_files(minutes="Next to present: the poem question.")
+    case.walk_files(minutes="#next_to_present the poem question.")
     case.reply(ITEM_2_REPLY)
-    check_blocked("a Next to present: line naming no item is sent back to be corrected",
+    check_blocked("a #next_to_present line naming no item is sent back to be corrected",
                   case.run(), "could not be checked", "the poem question",
                   "Then end the turn: this hook shows the user the items the line names.")
 
 
 def test_missing_walk_document():
     case = Case()
-    case.walk_files(minutes="Next to present: item 2 of 9.", document=None)
+    case.walk_files(minutes="#next_to_present item 2 of 9.", document=None)
     case.reply(ITEM_2_REPLY)
     check_blocked("a missing walk-document is named", case.run(), "does not exist")
 
 
 def test_missing_heading():
     case = Case()
-    case.walk_files(minutes="Next to present: item 3 of 9.")
+    case.walk_files(minutes="#next_to_present item 3 of 9.")
     case.reply(ITEM_2_REPLY)
     check_blocked("a heading the walk-document lacks is named", case.run(),
                   "no heading `Item 3 of 9`")
@@ -544,11 +544,11 @@ def test_missing_heading():
 
 def test_closed_and_last_line_wins():
     case = Case()
-    case.walk_files(minutes="Next to present: item 2 of 9.\n\nNext to present: none, closed.")
+    case.walk_files(minutes="#next_to_present item 2 of 9.\n\n#next_to_present none, closed.")
     case.reply("All done.")
     check_silent("a walk whose last line is none, closed. is not open", case.run())
     case = Case()
-    case.walk_files(minutes="Next to present: none, closed.\n\nNext to present: item 2 of 9.")
+    case.walk_files(minutes="#next_to_present none, closed.\n\n#next_to_present item 2 of 9.")
     case.reply("All done.")
     check_shown("a reopened walk's last line counts", case.run(),
                 section("## Item 2 of 9", "## Item 4.1 of 9"))
@@ -558,13 +558,45 @@ def test_minutes_without_line_are_not_open():
     case = Case()
     case.walk_files(minutes="## Item 1 of 9 — Y")
     case.reply("Anything at all.")
-    check_silent("minutes without a Next to present: line are not an open walk", case.run())
+    check_silent("minutes without a #next_to_present line are not an open walk", case.run())
+
+
+def test_old_marker_is_migrated():
+    item_2 = section("## Item 2 of 9", "## Item 4.1 of 9")
+    case = Case()
+    minutes = case.walk_files(minutes="Next to present: item 2 of 9.")
+    case.reply("Recorded.")
+    result = case.run()
+    check_blocked("an open walk marked only with the old form is told the line to add", result,
+                  "is the old form `Next to present:`", f"at the end of {minutes}",
+                  "leave the old lines as they are: #next_to_present item 2 of 9\n",
+                  "Then end the turn: this hook shows the user the items the new line names.")
+    check("the old form's block shows no item", "where the poem page lives" not in result.stdout,
+          result.stdout)
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9\n\nNext to present: item 5 of 9.")
+    case.reply("Recorded.")
+    check_blocked("an old-form line below a hashtag line is the newest marker and is migrated",
+                  case.run(), "#next_to_present item 5 of 9")
+    case = Case()
+    case.walk_files(minutes="Next to present: item 5 of 9.\n\n#next_to_present item 2 of 9")
+    case.reply("Recorded.")
+    check_shown("a hashtag line below an old-form line counts", case.run(), item_2)
+    case = Case()
+    case.walk_files(minutes="Next to present: item 2 of 9.\n\nNext to present: none, closed.")
+    case.reply("All done.")
+    check_silent("a walk closed with the old form is not open", case.run())
+    case = Case()
+    case.walk_files(minutes="Next to present: item 2 of 9.")
+    case.reply("Recorded.")
+    check_silent("while the agent answers a Stop hook, the old form's block is not printed",
+                 case.run(stop_hook_active=True))
 
 
 def test_newest_open_walk_is_checked():
     case = Case()
-    case.walk_files(name="older-walk", minutes="Next to present: item 5 of 9.", modified=1_000)
-    case.walk_files(name="newer-walk", minutes="Next to present: item 2 of 9.", modified=2_000)
+    case.walk_files(name="older-walk", minutes="#next_to_present item 5 of 9.", modified=1_000)
+    case.walk_files(name="newer-walk", minutes="#next_to_present item 2 of 9.", modified=2_000)
     case.reply("Recorded.")
     check_shown("the most recently modified open walk's item is the one shown", case.run(),
                 section("## Item 2 of 9", "## Item 4.1 of 9"))
@@ -572,12 +604,12 @@ def test_newest_open_walk_is_checked():
 
 def test_silent_cases():
     case = Case()
-    case.walk_files(minutes="Next to present: item 2 of 9.")
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
     case.reply("No item here.")
     check_shown("while the agent answers a Stop hook, the item notice is still shown",
                 case.run(stop_hook_active=True), section("## Item 2 of 9", "## Item 4.1 of 9"))
     unusable = Case()
-    unusable.walk_files(minutes="Next to present: item 12 to 10 of 9.")
+    unusable.walk_files(minutes="#next_to_present item 12 to 10 of 9.")
     unusable.reply("No item here.")
     check_blocked("unusable minutes block when the agent is not answering a Stop hook", unusable.run())
     check_silent("while the agent answers a Stop hook, a block on unusable minutes is not printed",
@@ -601,9 +633,9 @@ def test_faults_are_reported():
           result.returncode == 1 and "the hook failed" in result.stderr and result.stdout == "",
           f"exit {result.returncode}, stderr {result.stderr!r}")
     case = Case()
-    minutes = case.walk_files(minutes="Next to present: item 2 of 9.")
+    minutes = case.walk_files(minutes="#next_to_present item 2 of 9.")
     case.reply(ITEM_2_REPLY)
-    minutes.write_bytes(b"Next to present: \xff\xfe item 2 of 9.\n")
+    minutes.write_bytes(b"#next_to_present \xff\xfe item 2 of 9.\n")
     result = case.run()
     check("minutes that cannot be read exit 1 and name the fault on stderr",
           result.returncode == 1 and "UnicodeDecodeError" in result.stderr,

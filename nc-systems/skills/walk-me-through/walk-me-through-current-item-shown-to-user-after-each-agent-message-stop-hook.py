@@ -16,10 +16,13 @@ reminder. Claude Code marks another agent-seat's message isMeta too, so the
 origin decides first. The item is shown only when an assistant message after
 the turn's start holds text.
 
-THE OPEN APPROVAL-WALK. The walk-me-through skill keeps a `Next to present:`
+THE OPEN APPROVAL-WALK. The walk-me-through skill keeps a `#next_to_present`
 line in each walk's docs/walk/<name>-minutes.md; agents write it at a line's
 start, in a bullet, or mid-sentence, so the marker is found anywhere outside
-code, and the last one in a minutes file counts. Its value is `none` or
+code, and the last one in a minutes file counts. Minutes written before the
+hashtag carry the old marker `Next to present:`; the last marker of either
+form counts, and when it is the old form on a walk that is not closed, the
+hook blocks with the line to add instead of showing an item. Its value is `none` or
 `closed` for a closed walk, or opens with a running count, `item N`,
 `item 4.1`, `items 5 and 6`, `items 10 to 12`, with or without `of M`, and
 anything after the count, such as `(awaiting answer), then item 24`, is
@@ -80,7 +83,8 @@ MARKDOWN_PARSER_MODULE_FILE = REPOSITORY_TOP / "scripts" / "markdown-edit-hard-w
 CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 WALK_DIRECTORY = Path("docs") / "walk"
 MINUTES_SUFFIX = "-minutes.md"
-NEXT_MARKER = re.compile(r"Next to present:[*_`\s]*([^\n]*)", re.I)
+# Group 1 is set only for the hashtag; the old form is read so that open walks it marks are migrated.
+NEXT_MARKER = re.compile(r"(?:(#next_to_present)\b|Next to present:)[*_`\s]*([^\n]*)", re.I)
 CLOSED_VALUE = re.compile(r"^(?:none|closed)\b", re.I)
 NUMBER = r"\d+(?:\.\d+)*"
 NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
@@ -92,7 +96,7 @@ NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
 # A record from one of these starts a turn even when Claude Code marks it isMeta.
 TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator", "task-notification")
 
-ANSWERS_LINE = "Answer Y to approve, N to decline, D to defer, or R to repeat the item."
+ANSWERS_LINE = "Answer Y to approve, N to decline, D to defer, R to repeat the item, or E to have it explained."
 UNUSABLE_OPENING_TEMPLATE = (
     "approval-walk current-item check: the open approval-walk {walk} could not "
     "be checked: {problem}"
@@ -103,18 +107,26 @@ NOT_A_FORM_PROBLEM = (
 
 
 class UnusableRange(ValueError):
-    """The `Next to present:` value names no item; its argument says why."""
+    """The `#next_to_present` value names no item; its argument says why."""
 
 
 UNUSABLE_INSTRUCTIONS = (
-    "If the approval-walk has closed, change the `Next to present:` line in "
-    "{minutes} to `Next to present: none, closed.` and end the turn.",
-    "Otherwise, correct that line so that it names the items the user has yet to "
-    "answer by their headings in the walk-document {document}, as `Next to "
-    "present: item 3 of 9.`, `item 4.1 of 9.`, `items 5 and 6 of 9.` or `items 10 to 12 of 54.`; change a "
-    "heading in the walk-document only when the heading itself is misnumbered or "
+    "If the approval-walk has closed, add the line `#next_to_present none, closed` "
+    "at the end of {minutes} and end the turn.",
+    "Otherwise, add a line at the end of {minutes} that names the items the user has "
+    "yet to answer by their headings in the walk-document {document}, as "
+    "`#next_to_present item 3 of 9`, `item 4.1 of 9`, `items 5 and 6 of 9` or `items 10 to 12 of 54`; "
+    "change a heading in the walk-document only when the heading itself is misnumbered or "
     "lacks its running count `of M`.",
     "Then end the turn: this hook shows the user the items the line names.",
+)
+OLD_MARKER_PROBLEM = (
+    "the newest marker line in its minutes {minutes} is the old form `Next to present:`, "
+    "and the hook reads the current item only from a `#next_to_present` line.")
+OLD_MARKER_INSTRUCTIONS = (
+    "Add this line at the end of {minutes}, below every earlier marker line, and leave "
+    "the old lines as they are: {new_line}",
+    "Then end the turn: this hook shows the user the items the new line names.",
 )
 
 
@@ -199,13 +211,16 @@ def without_code_spans(line):
 
 
 def next_to_present(minutes_text, parser):
-    """Return the value after the minutes' last `Next to present:` outside code, or None."""
+    """Return (value, whether the marker is the old form) for the minutes' last marker outside code, or None."""
     code_lines = code_line_numbers(parser.parse(minutes_text))
-    values = []
+    markers = []
     for number, line in enumerate(minutes_text.split("\n")):
         if number not in code_lines:
-            values += NEXT_MARKER.findall(without_code_spans(line))
-    return values[-1].strip() if values else None
+            markers += NEXT_MARKER.findall(without_code_spans(line))
+    if not markers:
+        return None
+    hashtag, value = markers[-1]
+    return value.strip(), not hashtag
 
 
 def is_closed(value):
@@ -259,17 +274,17 @@ def parse_items(value):
 
 
 def open_walk(walk_directory, parser):
-    """Return (minutes path, value) for the open approval-walk, or None."""
+    """Return (minutes path, value, whether the marker is the old form) for the open approval-walk, or None."""
     candidates = []
     for minutes in walk_directory.glob("*" + MINUTES_SUFFIX):
-        value = next_to_present(minutes.read_text(encoding="utf-8"), parser)
-        if value is None or is_closed(value):
+        marker = next_to_present(minutes.read_text(encoding="utf-8"), parser)
+        if marker is None or is_closed(marker[0]):
             continue
-        candidates.append((minutes.stat().st_mtime, minutes, value))
+        candidates.append((minutes.stat().st_mtime, minutes, marker))
     if not candidates:
         return None
-    _, minutes, value = max(candidates, key=lambda candidate: candidate[0])
-    return minutes, value
+    _, minutes, (value, old_form) = max(candidates, key=lambda candidate: candidate[0])
+    return minutes, value, old_form
 
 
 def item_units(document_text, parser):
@@ -375,15 +390,19 @@ def output_for(payload, environment):
     reply = last_reply_text(Path(transcript_path).expanduser())
     if not reply.strip():
         return None
-    minutes, value = walk
+    minutes, value, old_form = walk
     name = minutes.name[:-len(MINUTES_SUFFIX)]
     document = minutes.with_name(name + ".md")
     values = {"walk": name, "minutes": minutes, "document": document, "value": value}
+    if old_form:
+        new_line = "#next_to_present " + value.rstrip(". ")
+        return block(UNUSABLE_OPENING_TEMPLATE, OLD_MARKER_INSTRUCTIONS,
+                     problem=OLD_MARKER_PROBLEM.format(minutes=minutes), new_line=new_line, **values)
     try:
         numbers, total = parse_items(value)
     except UnusableRange as problem:
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
-            f"its minutes' last `Next to present:` line, `{value}`, {problem}."), **values)
+            f"its minutes' last `#next_to_present` line, `{value}`, {problem}."), **values)
     if not document.is_file():
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
             f"its walk-document {document} does not exist."), **values)
@@ -398,7 +417,7 @@ def output_for(payload, environment):
         if len(totals) > 1:
             listed = ", ".join(f"`of {each}`" for each in sorted(totals, key=int))
             return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
-                f"its minutes' last `Next to present:` line, `{value}`, gives no `of M`, "
+                f"its minutes' last `#next_to_present` line, `{value}`, gives no `of M`, "
                 f"and the walk-document's headings give more than one total ({listed}), "
                 f"so the line must say which: write it as `item N of M`, with M the total "
                 f"of the heading meant."), **values)
