@@ -1,7 +1,7 @@
 # Notes on using the Codex and Gemini (Antigravity) agents from an agent-seat
 
 Written 2026-09-04 by the cold-read-research agent-seat after a day of running both as
-cold-read cells. Every item here was measured, not read from docs, unless it
+cold-read-cells. Every item here was measured, not read from docs, unless it
 says otherwise. The measurements it cites are in the record
 `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/`. Claude Code is not covered: it is the runtime the agent-seats run in.
 
@@ -14,8 +14,9 @@ gives a non-answer (Codex declines to guess its own model ids).
 
 ## Codex (`codex`, OpenAI)
 
-**Install and update.** Installed through npm, not brew: `/opt/homebrew/bin/codex`
-is a symlink into `node_modules/@openai/codex`. `brew upgrade codex` fails
+**Install and update.** Installed through npm, not brew: on the Mac `/opt/homebrew/bin/codex`
+is a symlink into `node_modules/@openai/codex`, and on ned-box `/usr/local/bin/codex` is a symlink into
+`/usr/local/lib/node_modules/@openai/codex`. `brew upgrade codex` fails
 ("Cask 'codex' is not installed") even though a brew formula exists. Use
 `codex update` (it runs `npm install -g @openai/codex`). Check with
 `codex --version`. No live `codex exec` should be running when you update; the
@@ -51,7 +52,7 @@ records what was asked. Effort is per run, in the `-c` override, not in the id.
 ("read CLAUDE.md and follow it"), user-ruled, and codex follows it by reading
 the file when it may read files — measured with a canary on 2026-08-22 and
 again today. A run told not to read files sees only the pointer and says so.
-That is the intended behaviour for a cold-read cell, which is meant to be
+That is the intended behaviour for a cold-read-cell, which is meant to be
 context-free.
 
 **Time and quota.** A max-effort run on a 1,500–2,300-word document takes
@@ -64,14 +65,14 @@ finishes.
 
 **What it is.** There is no `gemini` CLI on this machine. Gemini runs through
 the Antigravity CLI, `agy` (`~/.local/bin/agy`), which is the agent behind the
-Antigravity IDE. Its config lives under `~/.gemini/antigravity/`. `agy update`
+Antigravity IDE. On ned-box its config lives under `~/.gemini/antigravity-cli/`. `agy update`
 checks and updates; `agy --version` reports it. The user's Google account
 upgrade on 2026-09-04 removed the quota that stopped every Gemini cell in the
 08-29 trial ("Individual quota reached ... Resets in 95h").
 
 **Model ids carry the effort.** `agy models` lists them live:
-`gemini-3.8-flash-high`, `-medium`, `-low`, the same for 3.7 and 3.6, and
-`gemini-3.1-pro-high/low`. Pass the whole id to `--model`; `--effort` exists too
+`gemini-3.8-flash-high`, `-medium`, `-low`, and the same for `gemini-4-argon`
+(on ned-box, 2026-10-15). Pass the whole id to `--model`; `--effort` exists too
 and should agree with the suffix. The list also offers Claude and GPT-OSS ids
 through Antigravity, which we do not use.
 
@@ -94,14 +95,14 @@ through Antigravity, which we do not use.
    `~/.gemini/settings.json`). With it, the cell writes its own report file
    at the path the prompt names, exactly as the Claude cell does.
 
-Also: `--print-timeout` defaults to 5 minutes; a high-effort read of a
+Also: `--print-timeout` defaults to `0s`, which waits until the turn completes; a high-effort read of a
 1,500-word document takes 3–3.5 minutes, so set 20–30m for anything larger.
 `--output-format text` gives the answer alone. The report the model writes
 carries no provenance stamp; the runner prepends one so the campaign's
 manifest and scorer treat the record like any other cell's.
 
 **Where its docs are.** The CLI ships its own customization guide as a skill:
-`~/.gemini/antigravity/builtin/skills/agy-customizations/SKILL.md` and
+`~/.gemini/antigravity-cli/builtin/skills/agy-customizations/SKILL.md` on ned-box and
 `docs/rules.md` beside it. Rules load from `GEMINI.md` or `AGENTS.md` in any
 directory from the working directory up to the repository root, and from
 `.agents/rules/*.md`; standalone files have no frontmatter and are always on.
@@ -117,7 +118,7 @@ on a design. `gemini-3.8-flash-high` takes about 200 seconds. Neither found a
 defect no other cell found, so Gemini is a speed cell for interactive use,
 not a cold-read-cell in the cold-read-full-run.
 
-## Running a one-off prompt as a cold-read cell
+## Running a one-off prompt as a cold-read-cell
 
 Each runtime has its launcher: `nc-systems/cold-read/cold-read-claude-cell.py`,
 `nc-systems/cold-read/cold-read-codex-cell.py` and
