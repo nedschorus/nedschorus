@@ -317,12 +317,13 @@ a signal sent to the runner's process group no longer reaches them. So once its
 suites start, the runner handles SIGTERM, SIGHUP and SIGINT: it kills every
 running suite as a timeout does, starts no other, prints a line naming the
 signal, and exits 2; a signal that comes after the last suite ended stops
-nothing, and the run is reported as usual. Since the handlers are set before the
-first suite starts, and a handled signal is reset to its default action when a
-suite's process is started, every suite starts with the default action for
-these three signals, even when the runner was started with them ignored, as a
-command put in the background in a subshell is. The handler only records the
-signal; each suite's thread and the loop collecting results act on it within
+nothing, and the run is reported as usual. A signal the runner was started
+with ignored, as SIGHUP is under nohup and SIGINT is for a command put in the
+background in a subshell, stops nothing: it gets a handler that does nothing.
+Since the handlers are set before the first suite starts, and a handled signal
+is reset to its default action when a suite's process is started, every suite
+starts with the default action for these three signals either way. The stop
+handler only records the signal; each suite's thread and the loop collecting results act on it within
 RUN_STOP_SIGNAL_CHECK_SECONDS.
 A runner killed with SIGKILL cannot do this: its suites in bwrap still die with
 it, and a suite outside bwrap outlives it.
@@ -3563,10 +3564,17 @@ def main(argv=None, platform=None):
             # is safe, since raising inside subprocess code can leave a child unreaped.
             run_stop_signals.append(signal.Signals(signal_number).name)
 
-        # Set even when the runner was started with a signal ignored: a handled signal
-        # starts each suite with its default action, while an ignored one would pass on.
+        def ignore_run_stop(signal_number, frame):
+            pass
+
+        # A signal the runner was started with ignored, as under nohup, stays without
+        # effect on the run; it gets a handler that does nothing rather than SIG_IGN,
+        # because a handled signal starts each suite with its default action, while an
+        # ignored one would pass on to every suite.
         for stop_signal in RUN_STOP_SIGNALS:
-            signal_handlers_replaced[stop_signal] = signal.signal(stop_signal, record_run_stop)
+            handler = (ignore_run_stop if signal.getsignal(stop_signal) == signal.SIG_IGN
+                       else record_run_stop)
+            signal_handlers_replaced[stop_signal] = signal.signal(stop_signal, handler)
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
             running = [pool.submit(run_and_record, suite) for suite in chosen]
             pending = set(running)

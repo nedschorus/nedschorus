@@ -2167,6 +2167,44 @@ with tempfile.TemporaryDirectory() as scratch:
           (started_ignoring.returncode, started_ignoring.stdout,
            suite_log.read_text() if suite_log else "no suite log"))
 
+# Under nohup the runner starts with SIGHUP ignored; a hangup must then stop nothing.
+SIGHUP_IGNORED_DRIVER = r'''
+import os, signal, sys
+signal.signal(signal.SIGHUP, signal.SIG_IGN)
+os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+'''
+SLEEPS_AFTER_SAYING_IT_STARTED = (
+    "(pathlib.Path(os.environ['" + RAN_FILE_VARIABLE + "']).parent / 'started').touch()\n"
+    "time.sleep(3)\n"
+    "print('ok')\n")
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"sleeps-test.py": SLEEPS_AFTER_SAYING_IT_STARTED})
+    environment = dict(os.environ, **{RAN_FILE_VARIABLE: str(root / "ran.txt")})
+    runner_process = subprocess.Popen(
+        [sys.executable, "-c", SIGHUP_IGNORED_DRIVER, str(PROGRAM),
+         "--checkout", str(root / "repo"), "--log-dir", str(root / "logs"),
+         "--lock-file", str(root / "run.lock"),
+         "--recorded-inputs-directory", str(root / "recordings")],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=environment,
+        stdin=subprocess.DEVNULL)
+    deadline = time.monotonic() + 60
+    while not (root / "started").exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    suite_started = (root / "started").exists()
+    runner_process.send_signal(signal.SIGHUP)
+    try:
+        hangup_output, _ = runner_process.communicate(timeout=60)
+    except subprocess.TimeoutExpired:
+        runner_process.kill()
+        hangup_output, _ = runner_process.communicate()
+    check("a runner started with SIGHUP ignored, as under nohup, is not stopped by a "
+          "hangup: its suite finishes and passes, and the run exits 0",
+          suite_started and runner_process.returncode == 0
+          and "PASS sleeps-test.py" in hangup_output and "stopped by" not in hangup_output,
+          (suite_started, runner_process.returncode, hangup_output))
+
 # The stop is sent as the run puts its handlers back, after its last suite ended.
 STOP_AFTER_LAST_SUITE_DRIVER = r'''
 import importlib.util, os, signal, sys
