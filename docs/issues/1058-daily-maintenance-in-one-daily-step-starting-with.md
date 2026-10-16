@@ -126,6 +126,26 @@ Open for this job: how the program finds every agent-seat's clones and worktrees
 
 Related: the draft GHI-MD on branch `local-branches-with-unpushed-commits-piling-up-ghi-md-topic-branch` on origin, `docs/issues/local-branches-with-unpushed-commits-piling-up-merged-branch-removal-push-early-rule-and-reminder-hook.md`, which the user approved on 2026-10-14 as item 5 of the same approval-walk and which waits on four questions for him before it is filed, prevents such branches from piling up: `scripts/clean-worktrees.py` removes branches whose pull request merged, CLAUDE.md says to push a branch whenever it has commits, and a hook reminds an agent right after a commit that its branch has commits on no remote. This job is the daily backstop for what those miss, and the only check of pushed branches with no pull request. That branch is itself one of the 18.
 
+## An eleventh job: new recorded Bash commands for the Bash guards replay
+
+The user approved this job with "y" in reboot-test's agent-session on 2026-10-16, after saying: "I suspect if you remove dups we can run them all, but the maint cycle will want to add new, non dups as they occur." Asked whether duplicates are matched by exact text alone or by the pair of command text and working directory, since two guards read the working directory and ignoring it would cut only 0.6%, he answered on 2026-10-16: "Y, keep the directory". The corpus key is the (command text, working directory) pair. The job keeps current the stored pairs file of the GHI this filing creates, titled "The Bash guards replay reads a stored file of distinct recorded command pairs, reuses main's readings and reads many commands in each new process"; the filer replaces that title with the GHI's link once create-GHI gives it a number. Until the GHI is filed, its GHI-MD is `docs/issues/bash-guards-replay-script-to-read-stored-distinct-command-pairs-cache-main-branch-readings-and-batch-new-process-reads.md` on branch `bash-guards-replay-distinct-command-corpus-ghi`. The stored pairs file and the files beside it are in `nedlern@ned-box:/home/nedlern/nedschorus-logs/bash-guards-replay-stored-distinct-command-pairs/`. That GHI has every pull request that changes a Bash guard or the shell reader, `nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py`, replay every pair in the file: each distinct pair of exact command text and working directory recorded in both machines' transcripts, with where it was first seen.
+
+Each day, a program, with no model:
+
+- **Adds the new pairs.** It reads only the transcript lines written since its last run, in the transcript directories the replay reads, using that GHI's record of how far each transcript has been read, and appends to the stored pairs file each pair not already in it.
+- **Reads the new pairs at main.** It reads each added pair through every Bash guard at main, in every mode of the replay, and adds the readings to that GHI's cache of main's readings, so the next pull request's replay does not read them at main again.
+- **Compares them with what happened.** For each added pair, it compares main's in-process reading with the verdict the guards gave the command when the command ran. The transcript records that verdict: a tool result marked as an error whose text begins `PreToolUse:Bash hook error: ` is a refusal, and any other result means the command passed.
+
+The user hears from this job only when something needs attention, by the design in "How a daily job is handed to the user and tracked" below:
+
+- **The replay's time passes its budget.** The budget is the time that GHI's first full measured invocation sets. The message gives the time of the last full invocation, which that GHI has the replay record in the log-store, the budget, and the number of pairs in the file.
+- **A newly added pair reads differently at main from its recorded verdict.** One line per pair: the command, shortened; the working directory; the transcript where it was first seen; the recorded verdict; and main's reading.
+- **The job could not do its work.** When the log-store or a transcript cannot be read, or a guard raises or runs past its time on a new pair, the message says what the job could not read and why, and never says that nothing needs attention.
+
+On a day with none of these, the job shows the user nothing.
+
+Open for this job: which differences from the recorded verdict are expected rather than reported, since the guard that judged the command may have been older or not yet written, and the replay stubs the git and gh probes that the force-push guard and the Markdown push reminder make; and that a transcript records that some hook refused a command, not which one.
+
 ## Checks at the moment of change
 
 The user approved this section on 2026-10-15, in the approval-walk cold-read-research-open-questions-and-skill-reviews-2026-10-14 of agent-seat cold-read-research, whose minutes are at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/cold-read-research-open-questions-and-skill-reviews-2026-10-14-minutes.md`. He set its goal: "My goal is to have many ASAP checks, and then some maint backups, or maybe maint backups for all, just in case something slips by."
@@ -142,6 +162,7 @@ Each job is also checked, where it can be, at the moment the thing it checks cha
 - **Open tasks that belong in an open issue:** at filing, by GHI [Check each new task against the open issues when it is filed, and add a match to that issue's GHI-MD](https://github.com/nedschorus/nedschorus/issues/1432).
 - **Names a reader cannot understand away from where they are defined:** when a name is chosen, the naming page has whoever chooses it ask a fresh subagent what it means, and the agent type `new-name-propose-and-check-fresh-agent` runs that check; no check runs today on the values of a fixed set, or on a walk-document before its approval-walk.
 - **Branches whose commits are in no pull request:** at each session-handoff, as the tenth job says, and right after a commit, by the reminder hook the related draft GHI-MD proposes; neither runs today.
+- **New recorded Bash commands for the Bash guards replay:** each pull request that changes a Bash guard or the shell reader is replayed before it merges; a command recorded since the eleventh job last ran is not replayed until that job adds it.
 
 The full list of the project's check methods, and which of them need a daily backup, is to be compiled; the user asked for it on 2026-10-15.
 
