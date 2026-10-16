@@ -48,6 +48,12 @@ _collector_spec = importlib.util.spec_from_file_location(
     Path(__file__).resolve().with_name("python-source-agent-facing-string-collector-common.py"))
 collector = importlib.util.module_from_spec(_collector_spec)
 _collector_spec.loader.exec_module(collector)
+_checkout_path_spec = importlib.util.spec_from_file_location(
+    "edited_file_path_within_checkout_root_and_git_check_ignore_common",
+    Path(__file__).resolve().with_name(
+        "edited-file-path-within-checkout-root-and-git-check-ignore-common.py"))
+checkout_path = importlib.util.module_from_spec(_checkout_path_spec)
+_checkout_path_spec.loader.exec_module(checkout_path)
 
 HOOK_NAME = "python-edit-changed-agent-facing-message-check-reminder"
 PAGE_PATH = ("docs/nedschorus-wiki/"
@@ -130,25 +136,11 @@ class HookCouldNotInspect(Exception):
     """The reason, worded to follow "because", that the edit was not inspected."""
 
 
-def enclosing_checkout_root(directory: Path):
-    """Return the nearest checkout root at or above directory, or None."""
-    for candidate in (directory, *directory.parents):
-        git_marker = candidate / ".git"
-        if git_marker.is_file() or (git_marker / "HEAD").is_file():
-            return candidate
-    return None
-
-
 def repository_relative_path(file_path: str, working_directory: str):
     """The file's path relative to the checkout holding working_directory, or
     None when either is outside a checkout or the file is outside that checkout."""
-    root = enclosing_checkout_root(Path(working_directory).resolve())
-    if root is None:
-        return None
-    try:
-        return Path(file_path).resolve().relative_to(root).as_posix()
-    except ValueError:
-        return None
+    found = checkout_path.checkout_relative_path(file_path, Path(working_directory))
+    return None if found is None else found[1]
 
 
 def edit_written_lines_and_gaps(tool_response):
