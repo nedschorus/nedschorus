@@ -92,6 +92,8 @@ def run(root, *arguments, environment=None):
     env = dict(os.environ)
     # The agent-session running these tests is not one of the store's sessions.
     env.pop("CLAUDE_CODE_SESSION_ID", None)
+    # The program reads the running agent-session's live transcript under ~/.claude/projects.
+    env["HOME"] = str(Path(root).parent / "home")
     env[PREFIX + "LOG_STORE_ROOT_OVERRIDE"] = str(root)
     env[PREFIX + "THIS_MACHINE_OVERRIDE"] = "ned-box"
     env.update(environment or {})
@@ -259,6 +261,30 @@ sys.exit(search.main(["start the heron plan", "--kind", "session-dialogs", "--jo
           and "(session's last activity" in broken_tracker.stdout
           and "2026-09-28T09:00:00Z  session-dialogs" not in broken_tracker.stdout,
           broken_tracker.stdout + broken_tracker.stderr)
+    egret_key = "-home-nedlern-agents-written-while-broken"
+    egret_transcript = write(root / "transcripts" / "ned-box" / "projects" / egret_key / "s22.jsonl", transcript_records(
+        agent("the stork plan", "2026-09-01T08:00:00Z"),
+        agent("the stork plan", "2026-09-02T08:00:00Z")))
+    left_out_section = ("## Subagent tasks and reports left out\n\nThe subagent tracker, "
+                        "handoff-extract-conversation-subagent-tracker-nbd.py, failed, so this dialog leaves out "
+                        "every subagent task and report: RuntimeError: gone\n")
+    egret_dialog = write(root / "session-dialogs" / "ned-box" / egret_key / "s22-dialog-complete.md",
+                         "## Agent\n\nthe stork plan\n\n" + left_out_section, mtime=DIALOG_IMPORTED_AT)
+    finding = run(root, "stork plan", "--kind", "session-dialogs")
+    check("a dialog written while the subagent tracker failed is not dated by turn, since the dialog built "
+          "again holds turns it lacks; a FAILED line says so and the search exits nonzero",
+          finding.returncode == 2 and "was written while the subagent tracker failed" in finding.stderr
+          and "(session's last activity" in finding.stdout and "2026-09-01T08:00:00Z" not in finding.stdout,
+          finding.stdout + finding.stderr)
+    egret_dialog.write_text("## Agent\n\nthe stork plan\n\n## User\n\n" + left_out_section.split("\n", 2)[2]
+                            + "\n## Subagent tasks and reports left out\n\nas a heading the user typed\n")
+    finding = run(root, "stork plan", "--kind", "session-dialogs")
+    check("a dialog that only quotes the tracker's note, or its heading with no note under it, is dated by turn",
+          finding.returncode == 0 and "2026-09-01T08:00:00Z  session-dialogs" in finding.stdout,
+          finding.stdout + finding.stderr)
+    egret_dialog.unlink()
+    egret_transcript.unlink()
+
     check("a session dialog that cannot be read again to date its hits is a failure",
           "could not read the session dialog " in probe.stdout and "no-such-dialog.md" in probe.stdout,
           probe.stdout + probe.stderr)
@@ -267,7 +293,8 @@ sys.exit(search.main(["start the heron plan", "--kind", "session-dialogs", "--jo
     check("the agent-session running the search is left out, its dialog and its messages both, and the "
           "closing line says so",
           own.returncode == 0 and "prime-intellect" not in own.stdout
-          and "Left out this agent-session's own records, session s1;" in own.stdout, own.stdout)
+          and "Left out this agent-session's own records, session s1, since it has not been compacted"
+          in own.stdout, own.stdout)
     own = run(root, "heron plan", "--include-own-session", environment={"CLAUDE_CODE_SESSION_ID": "s1"})
     check("--include-own-session searches the running agent-session too",
           "session-dialogs  ned-box  prime-intellect" in own.stdout
@@ -278,10 +305,58 @@ sys.exit(search.main(["start the heron plan", "--kind", "session-dialogs", "--jo
           "line says so",
           "prime-intellect" in own.stdout and "could not be identified" in own.stdout, own.stdout)
 
+    s1 = root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-prime-intellect" / "s1.jsonl"
+    s1_text = s1.read_text()
+    compaction = {"type": "system", "subtype": "compact_boundary", "content": "Conversation compacted",
+                  "timestamp": "2026-09-28T09:00:30Z"}
+    s1.write_text(s1_text + transcript_records(compaction))
+    own = run(root, "heron plan", environment={"CLAUDE_CODE_SESSION_ID": "s1"})
+    check("after a compaction, the running agent-session's records from before it are searched and those "
+          "since are left out, and the closing line says so",
+          own.returncode == 0 and "2026-09-28T09:00:00Z  session-dialogs  ned-box  prime-intellect" in own.stdout
+          and "user-messages  ned-box  prime-intellect" not in own.stdout
+          and "since its last compaction at 2026-09-28T09:00:30Z" in own.stdout, own.stdout)
+    live = Path(scratch) / "home" / ".claude" / "projects" / "-home-nedlern-agents-prime-intellect" / "s1.jsonl"
+    write(live, s1_text + transcript_records(dict(compaction, timestamp="2026-09-28T08:58:00Z"),
+                                             dict(compaction, timestamp="2026-09-28T08:59:00Z"),
+                                             dict(compaction, timestamp="2026-09-28T09:05:00Z", isSidechain=True)))
+    own = run(root, "heron plan", environment={"CLAUDE_CODE_SESSION_ID": "s1"})
+    check("the last compaction is read from the live transcript when there is one, and a subagent's is not "
+          "the session's",
+          "prime-intellect" not in own.stdout.split("Hits")[0]
+          and "since its last compaction at 2026-09-28T08:59:00Z" in own.stdout, own.stdout)
+    live.unlink()
+    own = run(root, "heron plan", "--own-session", "s1", "--own-session-compacted-at", "2026-09-28T09:02:00Z")
+    check("ned-box's copy takes the compaction time the Mac's copy passes, since it cannot read the Mac's live "
+          "transcript",
+          "2026-09-28T09:01:00Z  user-messages  ned-box  prime-intellect" in own.stdout
+          and "since its last compaction at 2026-09-28T09:02:00Z" in own.stdout, own.stdout)
+    live.mkdir()
+    own = run(root, "heron plan", environment={"CLAUDE_CODE_SESSION_ID": "s1"})
+    live.rmdir()
+    check("a transcript that cannot be read for its last compaction leaves the agent-session out whole, "
+          "and a FAILED line says so",
+          own.returncode == 2 and "to find its last compaction, so all of its records were left out" in own.stderr
+          and "prime-intellect" not in own.stdout.split("Hits")[0], own.stdout + own.stderr)
+    write(root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-prime-intellect" / "s1-dialog-complete.md",
+          "# Complete session dialog\n\n## Agent\n\nShall we start the heron plan?\n\n## Agent\n\n"
+          "heron plan said nowhere in the transcript\n", mtime=DIALOG_IMPORTED_AT)
+    own = run(root, "heron plan", "--kind", "session-dialogs", environment={"CLAUDE_CODE_SESSION_ID": "s1"})
+    check("after a compaction, a dialog hit of the running agent-session not dated by its turn is left out, "
+          "since it cannot be placed before the compaction",
+          "said nowhere" not in own.stdout and "2026-09-28T09:00:00Z" in own.stdout, own.stdout)
+    write(root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-prime-intellect" / "s1-dialog-complete.md",
+          "# Complete session dialog\n\n## Agent\n\nShall we start the heron plan?\n", mtime=DIALOG_IMPORTED_AT)
+    s1.write_text(s1_text)
+    os.utime(s1, (epoch("2026-10-05"), epoch("2026-10-05")))
+
     write(root / "walk" / "a-tie-2026-09-01.md", "kingfisher\n")
     write(root / "walk" / "b-tie-2026-09-01.md", "kingfisher\n")
-    first = run(root, "kingfisher", "--limit", "1")
-    second = run(root, "kingfisher", "--limit", "1", "--skip", "1")
+    # ripgrep's own order would hide a missing tie-break, so it is made to list files in reverse.
+    reversed_rg = stub(scratch, "rg-reverse-order", 'exec rg --sortr path "$@"\n')
+    first = run(root, "kingfisher", "--limit", "1", environment={PREFIX + "RIPGREP_PROGRAM_OVERRIDE": reversed_rg})
+    second = run(root, "kingfisher", "--limit", "1", "--skip", "1",
+                 environment={PREFIX + "RIPGREP_PROGRAM_OVERRIDE": reversed_rg})
     (root / "walk" / "a-tie-2026-09-01.md").unlink()
     (root / "walk" / "b-tie-2026-09-01.md").unlink()
     check("hits with the same date keep one order, by file, so --skip pages through them",
@@ -633,6 +708,17 @@ locked.chmod(0o644)
     check("from the Mac, the running agent-session is passed to ned-box's copy, which cannot see it",
           any(line.endswith("newest-first.py --own-session mac-session-1 heron")
               for line in result.stdout.splitlines()), result.stdout)
+    mac_live = write(Path(scratch) / "home" / ".claude" / "projects" / "-Users-el-agents-x" / "mac-session-1.jsonl",
+                     transcript_records({"type": "system", "subtype": "compact_boundary",
+                                         "timestamp": "2026-10-09T10:00:00Z"}))
+    result = run(Path(scratch) / "absent", "heron",
+                 environment={PREFIX + "THIS_MACHINE_OVERRIDE": "mac", PREFIX + "SSH_PROGRAM_OVERRIDE": echoing,
+                              "CLAUDE_CODE_SESSION_ID": "mac-session-1"})
+    mac_live.unlink()
+    check("from the Mac, the running agent-session's last compaction, read from the Mac's live transcript, "
+          "is passed to ned-box's copy",
+          any(line.endswith("newest-first.py --own-session mac-session-1 --own-session-compacted-at "
+                            "2026-10-09T10:00:00Z heron") for line in result.stdout.splitlines()), result.stdout)
     result = run(Path(scratch) / "absent", "--", "-heron",
                  environment={PREFIX + "THIS_MACHINE_OVERRIDE": "mac", PREFIX + "SSH_PROGRAM_OVERRIDE": echoing,
                               "CLAUDE_CODE_SESSION_ID": "mac-session-1"})
