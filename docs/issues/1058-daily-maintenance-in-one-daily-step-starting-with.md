@@ -107,6 +107,25 @@ Each line gives the name, where a reader meets it, and the standalone alternativ
 - **Codex priority `P2`** (Claude's survey only), set by Codex's review rubric outside the project: in reviews and in merge-lane-2's session-handoff, and no project file says whether a P2 blocks the merge. Claude: keep the name, written "Codex priority P2 (P0 highest)" with whether it blocks.
 - **"ignite", "igniting" and "relaunched plain"** (Claude's survey only), in no glossary: printed by `scripts/recover-crashed-seats.py` and `nc-systems/handoff/handoff-supervisor.py`, so a reader of a recovery report cannot tell which kind of start happened; also the flag `--ignite-fallback`. Claude: "started a fresh agent-session from the dialog extract" and "relaunched without resuming"; flag `--fresh-session-from-dialog-extract`.
 
+## A tenth job: branches whose commits are in no pull request
+
+The user asked for this job on 2026-10-16, in words merge-lane-2 relayed to agent-seat cold-read-improvement at about 02:35 UTC: "We need to add the unsubmitted commit check to the maintence - I hope their is a GHI for that to add this too, and to the handoff time maint." That night merge-lane-2 had found four branches on origin, pushed on 2026-10-14 under item 2 of approval-walk open-decisions-unpushed-branches-memory-claude-md-root-cause-and-cold-read-2026-10-14 ("push now, then submit or delete"), still holding commits main lacks and with no pull request; nothing had reminded their owners. A pushed branch with no pull request is reviewed and merged by nobody, because merge-lane-2 works from the queue of open pull requests.
+
+On 2026-10-16, 18 branches on origin held commits main lacks, by `git rev-list --count origin/main..origin/<branch>`, and had never had a pull request, by `gh pr list --state all --limit 2000` over all 1,330 head branch names; the oldest was last committed on 2026-09-30.
+
+Each day, a program, with no model, lists for each agent-seat:
+
+- **(a) Branches on origin with commits main lacks and no pull request ever opened**, open, closed or merged, from that branch.
+- **(b) Local branches with commits on no remote**, those `git rev-list <branch> --not --remotes` lists, in every clone and worktree of the agent-seat on both machines; main and a detached HEAD are left out.
+
+Each line gives the branch, the machine for a local branch, the number of such commits, the age in days since the branch's last commit, and the owner: the agent-seat whose agent-home or worktree has the branch checked out or holds it, or "owner unknown" when no agent-seat's checkout holds a branch of that name. The job deletes and pushes nothing: a branch may be held local on purpose, which only its owner or the user knows. The user sees the list, and decides who takes a branch whose owner is unknown, or that it is deleted; on a day with none, the job says so in one line. When a machine or GitHub cannot be read, the job says what it did not check and why, and never says nothing was found there; ned-box cannot reach the Mac, so the Mac's part runs on the Mac.
+
+**At each session-handoff**, the handoff-supervisor runs the same program for the agent-seat it is handing off, and the successor's first prompt lists that agent-seat's branches under (a) and (b), as it lists the agent-seat's leftover work-snapshots today, with the instruction for each: push it and open its pull request when the work is ready, push it when it is not, or delete it when its work is on main or was dropped. The new agent-session is the one most likely to know the branch, and it hears of it before starting other work.
+
+Open for this job: how the program finds every agent-seat's clones and worktrees on a machine, the question the eighth deferred decision below asks for the third job; and whether a branch the user has told its owner to keep local is marked so that it stops being listed.
+
+Related: the draft GHI-MD on branch `local-branches-with-unpushed-commits-piling-up-ghi-md-topic-branch` on origin, `docs/issues/local-branches-with-unpushed-commits-piling-up-merged-branch-removal-push-early-rule-and-reminder-hook.md`, which the user approved on 2026-10-14 as item 5 of the same approval-walk and which waits on four questions for him before it is filed, prevents such branches from piling up: `scripts/clean-worktrees.py` removes branches whose pull request merged, CLAUDE.md says to push a branch whenever it has commits, and a hook reminds an agent right after a commit that its branch has commits on no remote. This job is the daily backstop for what those miss, and the only check of pushed branches with no pull request. That branch is itself one of the 18.
+
 ## Checks at the moment of change
 
 The user approved this section on 2026-10-15, in the approval-walk cold-read-research-open-questions-and-skill-reviews-2026-10-14 of agent-seat cold-read-research, whose minutes are at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/cold-read-research-open-questions-and-skill-reviews-2026-10-14-minutes.md`. He set its goal: "My goal is to have many ASAP checks, and then some maint backups, or maybe maint backups for all, just in case something slips by."
@@ -122,6 +141,7 @@ Each job is also checked, where it can be, at the moment the thing it checks cha
 - **The hook and program measurement:** no single moment marks it, so it stays weekly.
 - **Open tasks that belong in an open issue:** at filing, by GHI [Check each new task against the open issues when it is filed, and add a match to that issue's GHI-MD](https://github.com/nedschorus/nedschorus/issues/1432).
 - **Names a reader cannot understand away from where they are defined:** when a name is chosen, the naming page has whoever chooses it ask a fresh subagent what it means, and the agent type `new-name-propose-and-check-fresh-agent` runs that check; no check runs today on the values of a fixed set, or on a walk-document before its approval-walk.
+- **Branches whose commits are in no pull request:** at each session-handoff, as the tenth job says, and right after a commit, by the reminder hook the related draft GHI-MD proposes; neither runs today.
 
 The full list of the project's check methods, and which of them need a daily backup, is to be compiled; the user asked for it on 2026-10-15.
 
@@ -158,4 +178,4 @@ The design:
 
 ## Next action
 
-Settle the eight open questions above with the user, then build the second job of the daily step, the report of agent-seats far behind main, the check for a pending ned-box reboot or firmware update, the program that lists documents due for a cold-read-fast-read, the check for a missing library or tool, the weekly count of hook firings and of programs nothing names, the daily check of every agent-seat's open tasks that the check at filing missed, and the daily check for names a reader cannot understand away from where they are defined, their tests, and the change to `memory_review_due_lines` or to the scheduled-jobs file that the first question decides.
+Settle the eight open questions above with the user, then build the second job of the daily step, the report of agent-seats far behind main, the check for a pending ned-box reboot or firmware update, the program that lists documents due for a cold-read-fast-read, the check for a missing library or tool, the weekly count of hook firings and of programs nothing names, the daily check of every agent-seat's open tasks that the check at filing missed, the daily check for names a reader cannot understand away from where they are defined, the daily and session-handoff check for branches whose commits are in no pull request, their tests, and the change to `memory_review_due_lines` or to the scheduled-jobs file that the first question decides.
