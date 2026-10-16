@@ -84,24 +84,39 @@ import sys
 from pathlib import Path
 from urllib.parse import unquote
 
-# Every Stop hook obeys this rule first: see the module's docstring.
-_stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
-    "claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-    / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
-stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
-_stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
-_ned_box_home_specification = importlib.util.spec_from_file_location(
-    "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
-    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-    / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
-ned_box_home = importlib.util.module_from_spec(_ned_box_home_specification)
-_ned_box_home_specification.loader.exec_module(ned_box_home)
 
-LOG_STORE_DIRECTORY = Path(ned_box_home.NED_BOX_HOME) / "nedschorus-logs"
+
+def fault_exit(error):
+    print(f"cold-read-fast-read-due-for-linked-document-reminder-hook: the hook failed, "
+          f"so it made no check of the documents the reply linked; the agent need not act: "
+          f"{error!r}", file=sys.stderr)
+    return 1
+
+
+def _load_general_tools_module(file_name):
+    specification = importlib.util.spec_from_file_location(
+        file_name.removesuffix(".py").replace("-", "_"),
+        Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools" / file_name)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+# Constants below are built from these modules, so a load that fails ends the
+# hook here, reported the way main() reports any other fault.
+try:
+    # Every Stop hook obeys this rule first: see the module's docstring.
+    stop_hooks_stay_silent_rule = _load_general_tools_module(
+        "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+    ned_box_home_path_constants = _load_general_tools_module(
+        "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+except Exception as error:
+    sys.exit(fault_exit(error))
+
+LOG_STORE_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedschorus-logs"
 LOG_STORE_COLD_READ_RECORDS_ENVIRONMENT_VARIABLE = "NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY"
-MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home.MAC_MOUNT_OF_NED_BOX_HOME + "/"
-NED_BOX_HOME = ned_box_home.NED_BOX_HOME + "/"
+MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME + "/"
+NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME + "/"
 WALK_DIRECTORY_PARTS = ("docs", "walk")
 WALK_DRAFT_SUFFIX = "-draft.md"
 WALK_SUGGESTIONS_SUFFIX = "-suggestions.md"
@@ -357,10 +372,7 @@ def main():
     try:
         output = run(sys.stdin.read(), os.environ)
     except Exception as error:
-        print(f"cold-read-fast-read-due-for-linked-document-reminder-hook: the hook failed, "
-              f"so it made no check of the documents the reply linked; the agent need not act: "
-              f"{error!r}", file=sys.stderr)
-        return 1
+        return fault_exit(error)
     if output is not None:
         print(output)
     return 0

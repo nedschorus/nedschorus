@@ -123,8 +123,8 @@ _ned_box_home_specification = importlib.util.spec_from_file_location(
     "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
     Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
     / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
-ned_box_home = importlib.util.module_from_spec(_ned_box_home_specification)
-_ned_box_home_specification.loader.exec_module(ned_box_home)
+ned_box_home_path_constants = importlib.util.module_from_spec(_ned_box_home_specification)
+_ned_box_home_specification.loader.exec_module(ned_box_home_path_constants)
 
 PROGRAM = "mac-window-opened-for-ned-box-forced-command"
 REQUEST_VERB = "open-window"
@@ -141,8 +141,8 @@ DEFAULT_WINDOW_OPENER = Path(__file__).with_name("open-iterm-window-running-comm
 REQUEST_LOG_PATH = Path.home() / ".claude" / "mac-window-opened-for-ned-box.log"
 TYPORA_VERB = "open-in-typora"
 TYPORA_APPLICATION = "Typora"
-NED_BOX_HOME = ned_box_home.NED_BOX_HOME
-MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home.MAC_MOUNT_OF_NED_BOX_HOME
+NED_BOX_HOME = ned_box_home_path_constants.NED_BOX_HOME
+MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home_path_constants.MAC_MOUNT_OF_NED_BOX_HOME
 MAXIMUM_PATH_LENGTH = 1024
 DEFAULT_OPEN_PROGRAM = "/usr/bin/open"
 OPEN_IN_BROWSER_REQUEST_VERB = "open-in-browser"
