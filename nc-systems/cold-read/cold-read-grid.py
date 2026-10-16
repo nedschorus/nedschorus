@@ -140,6 +140,12 @@ _common_spec = importlib.util.spec_from_file_location(
 )
 cell_common = importlib.util.module_from_spec(_common_spec)
 _common_spec.loader.exec_module(cell_common)
+_git_redirecting_removal_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_variables_removal_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "git-redirecting-environment-variables-removal-common.py")
+git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
+_git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
 # The log also contains runtime and model text; only program-prefixed lines are cell status.
 CELL_PROGRAM_NAMES = tuple(path.stem for path in CELL_LAUNCHERS.values())
 # Pin terminology effort explicitly so launcher tier-map changes cannot change the pass.
@@ -352,16 +358,27 @@ def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Pat
 
 def reference_integrity_pre_pass(target: pathlib.Path, record_dir: pathlib.Path) -> None:
     """Save unresolved references as leads for the reviewer."""
-    text = target.read_text(encoding="utf-8")
+    # A URL's tail looks like a path, so URLs are removed before matching.
+    text = re.sub(r"[A-Za-z][A-Za-z0-9+.-]*://\S+", " ", target.read_text(encoding="utf-8"))
     # A filename can contain more than one dot.
     candidates = sorted(set(re.findall(
         r"[\w./-]+/[\w./-]+|[\w-]+(?:\.[\w-]+)*\.(?:md|py|sh|json|yaml|toml)",
         text)))
+    # Prose names a file by its bare name wherever the file lives.
+    listing = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "ls-files"], capture_output=True, text=True,
+        env=git_redirecting_removal.environment_without_git_redirecting_variables())
+    tracked_names = {pathlib.PurePosixPath(path).name for path in listing.stdout.splitlines()}
     lines = ["# Reference-integrity pre-pass", ""]
+    if listing.returncode != 0:
+        # The pre-pass is a lead for the reviewer, so it goes on without the lookup.
+        lines += [f"- bare file names were not looked up: git ls-files exited"
+                  f" {listing.returncode}: {listing.stderr.strip()}", ""]
     for candidate in candidates:
         # Strip trailing punctuation only; leading dots belong to paths.
         clean = candidate.rstrip(".,;:")
-        resolved = (REPO_ROOT / clean).exists() or (target.parent / clean).exists()
+        resolved = ((REPO_ROOT / clean).exists() or (target.parent / clean).exists()
+                    or ("/" not in clean and clean in tracked_names))
         lines.append(f"- {'ok' if resolved else 'UNRESOLVED'}: `{clean}`")
     if not candidates:
         lines.append("- no path-like references found")
