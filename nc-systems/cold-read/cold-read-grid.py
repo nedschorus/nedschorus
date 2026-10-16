@@ -362,30 +362,40 @@ def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Pat
 URL_BODY = r"[^\s)\]>\"'`<]+"
 MAC_MOUNT_OF_NED_BOX_HOME = "/Volumes/nedhome/"
 NED_BOX_HOME = "/home/nedlern/"
+MAC_HOME = "/Users/el/"
 
 
-def without_fragment_and_trailing_punctuation(reference: str) -> str:
-    """The file a reference names: no #fragment or ?query, no sentence punctuation after it."""
-    # Strip trailing punctuation only; leading dots belong to paths.
-    return re.split(r"[#?]", reference, maxsplit=1)[0].rstrip(".,;:")
+def without_trailing_sentence_punctuation(reference: str) -> str:
+    """A reference without the punctuation a sentence puts after it."""
+    # Only one mark goes: a run of dots, such as a "..." placeholder, is part of what was written.
+    return re.sub(r"(?<!\.)[.,;:]$", "", reference)
+
+
+def file_link_path(link: str) -> str:
+    """The file a file:// link names, without its #fragment or ?query."""
+    # The URL is parsed before %-escapes are decoded, so an escaped # stays in the file name.
+    return urllib.parse.unquote(urllib.parse.urlsplit(without_trailing_sentence_punctuation(link)).path)
 
 
 def file_link_status(path: str) -> str:
-    """ok, UNRESOLVED, or not checkable when the path's home is on another machine."""
-    # Links written for the Mac name ned-box's home through its mount.
-    if path.startswith(MAC_MOUNT_OF_NED_BOX_HOME):
-        path = NED_BOX_HOME + path[len(MAC_MOUNT_OF_NED_BOX_HOME):]
+    """ok, UNRESOLVED, or not checkable when the path is under a root this machine does not have."""
     if pathlib.Path(path).exists():
         return "ok"
-    home = pathlib.PurePosixPath(*pathlib.PurePosixPath(path).parts[:3])
-    return "UNRESOLVED" if pathlib.Path(home).is_dir() else "not checkable on this machine"
+    # The Mac reaches ned-box's home through its mount, so a link written for the Mac names a ned-box file.
+    if path.startswith(MAC_MOUNT_OF_NED_BOX_HOME) and pathlib.Path(NED_BOX_HOME).is_dir():
+        on_ned_box = NED_BOX_HOME + path[len(MAC_MOUNT_OF_NED_BOX_HOME):]
+        return "ok" if pathlib.Path(on_ned_box).exists() else "UNRESOLVED"
+    for root in (MAC_HOME, NED_BOX_HOME, MAC_MOUNT_OF_NED_BOX_HOME):
+        if path.startswith(root) and not pathlib.Path(root).is_dir():
+            return "not checkable on this machine"
+    return "UNRESOLVED"
 
 
 def reference_integrity_pre_pass(target: pathlib.Path, record_dir: pathlib.Path) -> None:
     """Save unresolved references as leads for the reviewer."""
     raw_text = target.read_text(encoding="utf-8")
-    file_link_paths = sorted({without_fragment_and_trailing_punctuation(urllib.parse.unquote(path))
-                              for path in re.findall(r"file://(/" + URL_BODY + ")", raw_text)})
+    file_link_paths = sorted({file_link_path(link)
+                              for link in re.findall(r"file:///" + URL_BODY, raw_text)})
     # A URL's tail looks like a path, so URLs are removed before matching.
     text = re.sub(r"[A-Za-z][A-Za-z0-9+.-]*://" + URL_BODY, " ", raw_text)
     # A filename can contain more than one dot.
@@ -408,7 +418,7 @@ def reference_integrity_pre_pass(target: pathlib.Path, record_dir: pathlib.Path)
         lines += [f"- bare file names were not looked up: git ls-files exited"
                   f" {listing.returncode}: {listing.stderr.strip()}", ""]
     for candidate in candidates:
-        clean = without_fragment_and_trailing_punctuation(candidate)
+        clean = without_trailing_sentence_punctuation(candidate)
         resolved = (REPO_ROOT / clean).exists() or (target.parent / clean).exists()
         sharing = name_counts[clean] if "/" not in clean else 0
         # A bare name names a file only when one file has it.

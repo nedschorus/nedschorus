@@ -1306,9 +1306,12 @@ with tempfile.TemporaryDirectory() as scratch:
     cleanup_target = reference_directory / "link-cleanup.md"
     cleanup_target.write_text(
         f"[part](file://{linked_file}#a-section) and see file://{linked_file}.\n"
-        "[other machine](file:///no-such-top-directory-for-the-grid-test/el/x.md)\n",
+        "[other machine](file:///no-such-top-directory-for-the-grid-test/el/x.md)\n"
+        f"[missing here](file:///tmp/no-such-directory-for-the-grid-test-{os.getpid()}/x.md)"
+        f" and [placeholder](file://{reference_directory}/...)\n",
         encoding="utf-8")
-    grid_module.reference_integrity_pre_pass(cleanup_target, reference_directory)
+    with mock.patch.object(grid_module, "MAC_HOME", "/no-such-top-directory-for-the-grid-test/el/", create=True):
+        grid_module.reference_integrity_pre_pass(cleanup_target, reference_directory)
     reference_lines = (reference_directory / "reference-check.md").read_text(
         encoding="utf-8").splitlines()
     check("reference pre-pass: a file link with a #fragment resolves to its file",
@@ -1319,6 +1322,52 @@ with tempfile.TemporaryDirectory() as scratch:
     check("reference pre-pass: a file link whose home is not on this machine is not checkable here",
           "- not checkable on this machine: `/no-such-top-directory-for-the-grid-test/el/x.md`"
           in reference_lines, repr(reference_lines))
+    check("reference pre-pass: a missing file under a directory this machine has is UNRESOLVED, not uncheckable",
+          f"- UNRESOLVED: `/tmp/no-such-directory-for-the-grid-test-{os.getpid()}/x.md`" in reference_lines,
+          repr(reference_lines))
+    check("reference pre-pass: a ... placeholder link keeps its dots and is not read as its directory",
+          f"- UNRESOLVED: `{reference_directory}/...`" in reference_lines
+          and f"- ok: `{reference_directory}/`" not in reference_lines, repr(reference_lines))
+    other_top_directory = scratch / "reference-pre-pass-other-machine-top"
+    other_top_directory.mkdir()
+    other_machine_target = reference_directory / "other-machine-links.md"
+    other_machine_target.write_text(
+        f"[sibling of a home](file://{other_top_directory}/no-such-user/x.md)\n", encoding="utf-8")
+    with mock.patch.object(grid_module, "MAC_HOME", str(other_top_directory) + "/el/", create=True):
+        grid_module.reference_integrity_pre_pass(other_machine_target, reference_directory)
+    reference_lines = (reference_directory / "reference-check.md").read_text(
+        encoding="utf-8").splitlines()
+    check("reference pre-pass: only the named root of the other machine is not checkable, not its parent's other entries",
+          f"- UNRESOLVED: `{other_top_directory}/no-such-user/x.md`" in reference_lines,
+          repr(reference_lines))
+    mac_mount = scratch / "reference-pre-pass-mac-mount"
+    mac_mount.mkdir()
+    (mac_mount / "on-the-mac.md").write_text("x\n", encoding="utf-8")
+    (reference_directory / "notes#1.md").write_text("x\n", encoding="utf-8")
+    mac_view_target = reference_directory / "mac-view.md"
+    mac_view_target.write_text(
+        f"[mounted](file://{mac_mount}/on-the-mac.md) and"
+        f" [escaped](file://{reference_directory}/notes%231.md)\n", encoding="utf-8")
+    with mock.patch.object(grid_module, "MAC_MOUNT_OF_NED_BOX_HOME", str(mac_mount) + "/"), \
+            mock.patch.object(grid_module, "NED_BOX_HOME", str(scratch / "no-ned-box-home-on-the-mac") + "/"):
+        grid_module.reference_integrity_pre_pass(mac_view_target, reference_directory)
+    reference_lines = (reference_directory / "reference-check.md").read_text(
+        encoding="utf-8").splitlines()
+    check("reference pre-pass: a valid mount link read on the Mac is ok, checked as written",
+          f"- ok: `{mac_mount}/on-the-mac.md`" in reference_lines, repr(reference_lines))
+    check("reference pre-pass: an escaped # in a file link is part of the file name",
+          f"- ok: `{reference_directory}/notes#1.md`" in reference_lines, repr(reference_lines))
+    unmounted_target = reference_directory / "unmounted.md"
+    unmounted_target.write_text(
+        f"[unmounted](file://{scratch}/no-mount-here/x.md)\n", encoding="utf-8")
+    with mock.patch.object(grid_module, "MAC_MOUNT_OF_NED_BOX_HOME", str(scratch / "no-mount-here") + "/"), \
+            mock.patch.object(grid_module, "NED_BOX_HOME", str(scratch / "no-ned-box-home-here") + "/"):
+        grid_module.reference_integrity_pre_pass(unmounted_target, reference_directory)
+    reference_lines = (reference_directory / "reference-check.md").read_text(
+        encoding="utf-8").splitlines()
+    check("reference pre-pass: a mount link is not checkable where neither the mount nor ned-box's home is",
+          f"- not checkable on this machine: `{scratch}/no-mount-here/x.md`" in reference_lines,
+          repr(reference_lines))
     shared_name_target = reference_directory / "shared-name.md"
     shared_name_target.write_text("See SKILL.md.\n", encoding="utf-8")
     grid_module.reference_integrity_pre_pass(shared_name_target, reference_directory)
