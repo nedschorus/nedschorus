@@ -1278,8 +1278,7 @@ with tempfile.TemporaryDirectory() as scratch:
     file_link_target = reference_directory / "file-links.md"
     file_link_target.write_text(
         f"[ok](file://{str(existing_file_link).replace(' ', '%20')}) and"
-        f" [broken](file://{reference_directory}/no-such-linked-file.md) and"
-        " [mac](file:///Volumes/nedhome/no-such-directory-under-the-home/x.md)\n",
+        f" [broken](file://{reference_directory}/no-such-linked-file.md)\n",
         encoding="utf-8")
     grid_module.reference_integrity_pre_pass(file_link_target, reference_directory)
     reference_lines = (reference_directory / "reference-check.md").read_text(
@@ -1289,18 +1288,24 @@ with tempfile.TemporaryDirectory() as scratch:
     check("reference pre-pass: a file link to a missing file is UNRESOLVED",
           f"- UNRESOLVED: `{reference_directory}/no-such-linked-file.md`" in reference_lines,
           repr(reference_lines))
-    check("reference pre-pass: a broken /Volumes/nedhome file link is UNRESOLVED",
-          "- UNRESOLVED: `/Volumes/nedhome/no-such-directory-under-the-home/x.md`"
-          in reference_lines, repr(reference_lines))
     with mock.patch.object(grid_module, "NED_BOX_HOME", str(reference_directory) + "/"):
         mac_link_target = reference_directory / "mac-link.md"
         mac_link_target.write_text(
-            "[mac](file:///Volumes/nedhome/linked%20file.md)\n", encoding="utf-8")
+            "[mac](file:///Volumes/nedhome/linked%20file.md) and"
+            " [broken mount](file:///Volumes/nedhome/no-such-directory-under-the-home/x.md) and"
+            f" [missing home file](file://{reference_directory}/no-such-home-file.md)\n",
+            encoding="utf-8")
         grid_module.reference_integrity_pre_pass(mac_link_target, reference_directory)
     reference_lines = (reference_directory / "reference-check.md").read_text(
         encoding="utf-8").splitlines()
     check("reference pre-pass: a /Volumes/nedhome file link read on ned-box resolves under the home",
           "- ok: `/Volumes/nedhome/linked file.md`" in reference_lines, repr(reference_lines))
+    check("reference pre-pass: a broken /Volumes/nedhome file link read on ned-box is UNRESOLVED",
+          "- UNRESOLVED: `/Volumes/nedhome/no-such-directory-under-the-home/x.md`"
+          in reference_lines, repr(reference_lines))
+    check("reference pre-pass: a missing file under a home this machine has is UNRESOLVED, not uncheckable",
+          f"- UNRESOLVED: `{reference_directory}/no-such-home-file.md`" in reference_lines,
+          repr(reference_lines))
     linked_file = reference_directory / "linked-for-cleanup.md"
     linked_file.write_text("x\n", encoding="utf-8")
     cleanup_target = reference_directory / "link-cleanup.md"
@@ -1308,9 +1313,10 @@ with tempfile.TemporaryDirectory() as scratch:
         f"[part](file://{linked_file}#a-section) and see file://{linked_file}.\n"
         "[other machine](file:///no-such-top-directory-for-the-grid-test/el/x.md)\n"
         f"[missing here](file:///tmp/no-such-directory-for-the-grid-test-{os.getpid()}/x.md)"
-        f" and [placeholder](file://{reference_directory}/...)\n",
+        f" and [placeholder](file://{reference_directory}/...)\n"
+        f"or see file://{reference_directory}/elided/..., then\n",
         encoding="utf-8")
-    with mock.patch.object(grid_module, "MAC_HOME", "/no-such-top-directory-for-the-grid-test/el/", create=True):
+    with mock.patch.object(grid_module, "MAC_HOME", "/no-such-top-directory-for-the-grid-test/el/"):
         grid_module.reference_integrity_pre_pass(cleanup_target, reference_directory)
     reference_lines = (reference_directory / "reference-check.md").read_text(
         encoding="utf-8").splitlines()
@@ -1328,12 +1334,15 @@ with tempfile.TemporaryDirectory() as scratch:
     check("reference pre-pass: a ... placeholder link keeps its dots and is not read as its directory",
           f"- UNRESOLVED: `{reference_directory}/...`" in reference_lines
           and f"- ok: `{reference_directory}/`" not in reference_lines, repr(reference_lines))
+    check("reference pre-pass: a comma after a ... placeholder link is stripped like any sentence mark",
+          f"- UNRESOLVED: `{reference_directory}/elided/...`" in reference_lines
+          and not any("...," in line for line in reference_lines), repr(reference_lines))
     other_top_directory = scratch / "reference-pre-pass-other-machine-top"
     other_top_directory.mkdir()
     other_machine_target = reference_directory / "other-machine-links.md"
     other_machine_target.write_text(
         f"[sibling of a home](file://{other_top_directory}/no-such-user/x.md)\n", encoding="utf-8")
-    with mock.patch.object(grid_module, "MAC_HOME", str(other_top_directory) + "/el/", create=True):
+    with mock.patch.object(grid_module, "MAC_HOME", str(other_top_directory) + "/el/"):
         grid_module.reference_integrity_pre_pass(other_machine_target, reference_directory)
     reference_lines = (reference_directory / "reference-check.md").read_text(
         encoding="utf-8").splitlines()

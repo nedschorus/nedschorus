@@ -366,9 +366,9 @@ MAC_HOME = "/Users/el/"
 
 
 def without_trailing_sentence_punctuation(reference: str) -> str:
-    """A reference without the punctuation a sentence puts after it."""
-    # Only one mark goes: a run of dots, such as a "..." placeholder, is part of what was written.
-    return re.sub(r"(?<!\.)[.,;:]$", "", reference)
+    """A reference without the one punctuation mark a sentence puts after it."""
+    # A period after another dot is kept: a run of dots, such as a "..." placeholder, is part of what was written.
+    return re.sub(r"[,;:]$|(?<!\.)\.$", "", reference)
 
 
 def file_link_path(link: str) -> str:
