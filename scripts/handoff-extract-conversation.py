@@ -556,6 +556,10 @@ def render_complete_dialog_of_transcript_as_markdown(transcript_path: Path) -> s
     A transcript with no dialog turns still yields a dialog, one that says it holds none,
     so a caller that writes it has a file to say the session was read.
     """
+    return render_companion(*complete_dialog_turns_and_report(transcript_path))
+
+
+def complete_dialog_turns_and_report(transcript_path: Path):
     turns, skip_counts = read_dialog_turns(transcript_path, include_subagent_tasks_and_reports=True)
     report = ExtractionReport(
         session_id=transcript_path.stem,
@@ -565,7 +569,23 @@ def render_complete_dialog_of_transcript_as_markdown(transcript_path: Path) -> s
         total_turns=len(turns),
         skip_counts=skip_counts,
     )
-    return render_companion(turns, report)
+    return turns, report
+
+
+def complete_dialog_lines_with_turn_timestamps(transcript_path: Path):
+    """Return (lines, left_out_notes) for the text render_complete_dialog_of_transcript_as_markdown gives.
+
+    lines pairs each line with the timestamp of the turn it belongs to: "" for a heading line, or a turn
+    whose record has none. left_out_notes holds the text of each note saying the subagent tracker failed,
+    so the lines lack every subagent turn; it is empty when the dialog is whole.
+    """
+    turns, report = complete_dialog_turns_and_report(transcript_path)
+    lines = render_companion(turns, report).split("\n")
+    stamps = []
+    for turn in turns:
+        stamps += [turn.get("timestamp") or ""] * len("\n".join(render_turn(turn)).split("\n"))
+    return (list(zip(lines, [""] * (len(lines) - len(stamps)) + stamps)),
+            [note["text"] for note in turns_left_out_notes(turns)])
 
 
 def resolve_transcript_path(arguments) -> Path:
