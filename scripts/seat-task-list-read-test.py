@@ -782,6 +782,33 @@ with tempfile.TemporaryDirectory() as root:
           and "could not be added to the request log" in warned_out
           and "Machines read: mac, ned-box (this machine)." in warned_out,
           f"{warned_code!r} {warned_message!r} {warned_out!r}")
+    check("on ned-box, a Mac that sent its store but warned is reported "
+          "under a heading that says it was read in full, not under the "
+          "heading for what was not read",
+          "Read in full, but with a warning:" in warned_out
+          and "arrived in full and were read" in warned_out
+          and "what follows was not read" not in warned_out
+          and "below" not in warned_out.split(
+              "Read in full, but with a warning:")[-1],
+          warned_out)
+
+    # On the refusal path no task list prints, so the warning must not point at one.
+    with pretending_the_host_is("ned-box"):
+        _, warned_refusal, warned_refusal_code = run_and_code(
+            ["--seat", "no-such-seat", "--store", str(store),
+             "--machine", "both"],
+            runner=a_runner_returning(
+                stdout=MAC_TAR,
+                stderr=b"mac-window-opened-for-ned-box-forced-command: the "
+                       b"task lists were sent, but the outcome could not be "
+                       b"added to the request log"))
+    check("on ned-box, a refusal after a Mac that warned passes the warning "
+          "on without pointing at task lists that were not printed",
+          warned_refusal_code == reader.EXIT_SOMETHING_COULD_NOT_BE_READ
+          and "could not be added to the request log" in warned_refusal
+          and "arrived in full and were read" in warned_refusal
+          and "below" not in warned_refusal,
+          f"{warned_refusal_code!r} {warned_refusal!r}")
 
     # A seat on the Mac, asked for while the Mac cannot be read: the refusal
     # must say why, or the seat reads as one that does not exist.

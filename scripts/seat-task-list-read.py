@@ -123,10 +123,15 @@ def mac_clone_needs_pull_notice():
             f"Pass --machine ned-box to read this machine alone.")
 
 
+class ReadInFullWarning(str):
+    """A problem reported about a store that was nevertheless read in full."""
+
+
 def mac_sent_with_warning_notice(what_the_mac_said):
-    return (f"mac sent its task lists, but its forced command also said: "
-            f"{what_the_mac_said}\n"
-            f"Tell the user what it said; the task lists below are complete.")
+    return ReadInFullWarning(
+        f"mac's task lists arrived in full and were read, but its forced "
+        f"command also said: {what_the_mac_said}\n"
+        f"Tell the user what it said.")
 
 
 def mac_read_failed_notice(exit_code, what_the_mac_said):
@@ -392,12 +397,18 @@ def machines_read_line(machines_read):
 
 
 def print_problems(problems):
-    if not problems:
-        return
-    print()
-    print("This answer is incomplete; what follows was not read.")
-    for problem in problems:
-        print(problem)
+    warnings = [p for p in problems if isinstance(p, ReadInFullWarning)]
+    unread = [p for p in problems if not isinstance(p, ReadInFullWarning)]
+    if unread:
+        print()
+        print("This answer is incomplete; what follows was not read.")
+        for problem in unread:
+            print(problem)
+    if warnings:
+        print()
+        print("Read in full, but with a warning:")
+        for warning in warnings:
+            print(warning)
 
 
 def report_seats(locations):
