@@ -91,11 +91,17 @@ _stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_locat
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
 stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
 _stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
+_ned_box_home_specification = importlib.util.spec_from_file_location(
+    "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+ned_box_home = importlib.util.module_from_spec(_ned_box_home_specification)
+_ned_box_home_specification.loader.exec_module(ned_box_home)
 
-LOG_STORE_DIRECTORY = Path("/home/nedlern/nedschorus-logs")
+LOG_STORE_DIRECTORY = Path(ned_box_home.NED_BOX_HOME) / "nedschorus-logs"
 LOG_STORE_COLD_READ_RECORDS_ENVIRONMENT_VARIABLE = "NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY"
-MAC_MOUNT_OF_NED_BOX_HOME = "/Volumes/nedhome/"
-NED_BOX_HOME = "/home/nedlern/"
+MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home.MAC_MOUNT_OF_NED_BOX_HOME + "/"
+NED_BOX_HOME = ned_box_home.NED_BOX_HOME + "/"
 WALK_DIRECTORY_PARTS = ("docs", "walk")
 WALK_DRAFT_SUFFIX = "-draft.md"
 WALK_SUGGESTIONS_SUFFIX = "-suggestions.md"

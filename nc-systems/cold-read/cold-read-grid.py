@@ -148,6 +148,12 @@ _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
     / "git-redirecting-environment-variables-removal-common.py")
 git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
 _git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
+_ned_box_home_spec = importlib.util.spec_from_file_location(
+    "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+ned_box_home = importlib.util.module_from_spec(_ned_box_home_spec)
+_ned_box_home_spec.loader.exec_module(ned_box_home)
 # The log also contains runtime and model text; only program-prefixed lines are cell status.
 CELL_PROGRAM_NAMES = tuple(path.stem for path in CELL_LAUNCHERS.values())
 # Pin terminology effort explicitly so launcher tier-map changes cannot change the pass.
@@ -360,8 +366,8 @@ def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Pat
 
 # A link ends where Markdown, HTML or a quote closes it.
 URL_BODY = r"[^\s)\]>\"'`<]+"
-MAC_MOUNT_OF_NED_BOX_HOME = "/Volumes/nedhome/"
-NED_BOX_HOME = "/home/nedlern/"
+MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home.MAC_MOUNT_OF_NED_BOX_HOME + "/"
+NED_BOX_HOME = ned_box_home.NED_BOX_HOME + "/"
 MAC_HOME = "/Users/el/"
 
 

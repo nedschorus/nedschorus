@@ -111,12 +111,20 @@ suites use, so no test opens a real window or a real file. sshd does not pass
 a client's environment to a forced command, so ned-box cannot set them.
 """
 
+import importlib.util
 import os
 import re
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+_ned_box_home_specification = importlib.util.spec_from_file_location(
+    "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+ned_box_home = importlib.util.module_from_spec(_ned_box_home_specification)
+_ned_box_home_specification.loader.exec_module(ned_box_home)
 
 PROGRAM = "mac-window-opened-for-ned-box-forced-command"
 REQUEST_VERB = "open-window"
@@ -133,8 +141,8 @@ DEFAULT_WINDOW_OPENER = Path(__file__).with_name("open-iterm-window-running-comm
 REQUEST_LOG_PATH = Path.home() / ".claude" / "mac-window-opened-for-ned-box.log"
 TYPORA_VERB = "open-in-typora"
 TYPORA_APPLICATION = "Typora"
-NED_BOX_HOME = "/home/nedlern"
-MAC_MOUNT_OF_NED_BOX_HOME = "/Volumes/nedhome"
+NED_BOX_HOME = ned_box_home.NED_BOX_HOME
+MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home.MAC_MOUNT_OF_NED_BOX_HOME
 MAXIMUM_PATH_LENGTH = 1024
 DEFAULT_OPEN_PROGRAM = "/usr/bin/open"
 OPEN_IN_BROWSER_REQUEST_VERB = "open-in-browser"

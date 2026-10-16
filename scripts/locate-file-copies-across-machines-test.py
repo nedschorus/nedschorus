@@ -52,6 +52,12 @@ _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
 git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
 _git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
 GIT_REDIRECTING_ENVIRONMENT_VARIABLES = git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
+_ned_box_home_spec = importlib.util.spec_from_file_location(
+    "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+    SCRIPTS_DIR.parent / "nc-systems" / "general-tools"
+    / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+ned_box_home = importlib.util.module_from_spec(_ned_box_home_spec)
+_ned_box_home_spec.loader.exec_module(ned_box_home)
 
 STAND_IN_SSH = """#!/usr/bin/env python3
 import json, os, subprocess, sys, time
@@ -173,6 +179,12 @@ program = load_program("locate_file_copies_under_test")
 check("the program's list of variables that redirect git is the shared module's",
       tuple(program.GIT_REDIRECTING_ENVIRONMENT_VARIABLES) == GIT_REDIRECTING_ENVIRONMENT_VARIABLES,
       (program.GIT_REDIRECTING_ENVIRONMENT_VARIABLES, GIT_REDIRECTING_ENVIRONMENT_VARIABLES))
+# It keeps its own copy of ned-box's home and the Mac's mount of it for the same reason.
+check("the program's spelling of ned-box's home on the Mac is the shared module's",
+      program.NED_BOX_SURFACES["spellings"]
+      == [[ned_box_home.MAC_MOUNT_OF_NED_BOX_HOME, ned_box_home.NED_BOX_HOME]]
+      and program.KNOWN_HOST_HOMES[program.NED_BOX_HOSTNAME] == ned_box_home.NED_BOX_HOME,
+      (program.NED_BOX_SURFACES["spellings"], program.KNOWN_HOST_HOMES))
 _saved_redirecting = {name: os.environ.get(name) for name in GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
 try:
     for _name in GIT_REDIRECTING_ENVIRONMENT_VARIABLES:

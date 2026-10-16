@@ -11,32 +11,40 @@ hidden files such as .DS_Store so incidental metadata cannot trigger review."""
 import argparse
 import base64
 import hashlib
+import importlib.util
 import json
 import shlex
 import socket
 import subprocess
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 PROGRAM = "daily-memory-review-mark"
 
 PACIFIC_TIME_ZONE_NAME = "America/Los_Angeles"
 
+_ned_box_home_specification = importlib.util.spec_from_file_location(
+    "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+    Path(__file__).resolve().parents[1] / "general-tools" / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+ned_box_home = importlib.util.module_from_spec(_ned_box_home_specification)
+_ned_box_home_specification.loader.exec_module(ned_box_home)
+
 NED_BOX_HOSTNAME = "ned-box"
 NED_BOX_SSH_TARGET = "nedlern@ned-box"
 NED_BOX_SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 
 MAC_MEMORY_STORE_DIRECTORY = "/Users/el/.claude/projects/-Users-el-Projects-nedschorus/memory"
-NED_BOX_MEMORY_STORE_DIRECTORY = (
-    "/home/nedlern/.claude/projects/-home-nedlern-Projects-nedschorus/memory")
+NED_BOX_MEMORY_STORE_UNDER_HOME = ".claude/projects/-home-nedlern-Projects-nedschorus/memory"
+NED_BOX_MEMORY_STORE_DIRECTORY = ned_box_home.NED_BOX_HOME + "/" + NED_BOX_MEMORY_STORE_UNDER_HOME
 # Reviewers read and delete entries through the mount, falling back to ssh.
 # This reader uses ssh because a hung mount has no read timeout.
 NED_BOX_MEMORY_STORE_MAC_MOUNT_DIRECTORY = (
-    "/Volumes/nedhome/.claude/projects/-home-nedlern-Projects-nedschorus/memory")
+    ned_box_home.MAC_MOUNT_OF_NED_BOX_HOME + "/" + NED_BOX_MEMORY_STORE_UNDER_HOME)
 MEMORY_STORE_INDEX_FILE_NAME = "MEMORY.md"
 
-DAILY_MEMORY_REVIEW_MARKS_DIRECTORY = "/home/nedlern/nedschorus-logs/daily-memory-review-marks"
+DAILY_MEMORY_REVIEW_MARKS_DIRECTORY = ned_box_home.NED_BOX_HOME + "/nedschorus-logs/daily-memory-review-marks"
 DAILY_MEMORY_REVIEW_MARK_KINDS = ("started", "done")
 
 # Look up the timeout at call time so tests can lower it.
