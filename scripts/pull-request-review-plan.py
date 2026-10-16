@@ -19,8 +19,13 @@ unrelated files should not decide the delta tier. All applicable reasons
 remain listed.
 
 Rule 3: list changed agent-facing strings, with their context and old text.
-Tests are excluded: a test's copy of an expected message is not handed to
-an agent. F-string placeholders survive in the listing.
+Which strings are agent-facing, and which files are tests, is decided by
+nc-systems/general-tools/python-source-agent-facing-string-collector-common.py:
+printed, written or raised strings, strings assigned to names with a message
+suffix, string values of a hook's agent-facing JSON output keys in a dict
+literal, and a module docstring printed through __doc__. Tests are excluded:
+a test's copy of an expected message is not handed to an agent. F-string
+placeholders survive in the listing.
 
 Merged pull requests use the merge commit's first parent as the diff base:
 the current base branch already contains the head and would hide the change.
@@ -68,12 +73,20 @@ _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
 git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
 _git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
 
+_agent_facing_string_collector_spec = importlib.util.spec_from_file_location(
+    "python_source_agent_facing_string_collector_common",
+    Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
+    / "python-source-agent-facing-string-collector-common.py")
+_agent_facing_string_collector = importlib.util.module_from_spec(_agent_facing_string_collector_spec)
+_agent_facing_string_collector_spec.loader.exec_module(_agent_facing_string_collector)
+path_is_test_file = _agent_facing_string_collector.path_is_test_file
+agent_facing_string_nodes_in_source = _agent_facing_string_collector.agent_facing_string_nodes_in_source
+
 REVIEW_TIER_ORDER = {"seat-alone": 0, "seat-and-codex": 1, "full-reviewer": 2}
 GITHUB_PULL_REQUEST_FIELDS = "number,title,url,state,author,headRefOid,baseRefName,mergeCommit"
 GIT_FULL_HASH_PATTERN = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 DIFF_HUNK_HEADER_PATTERN = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
 REGISTERED_HOOK_PATH_PATTERN = re.compile(r'\$CLAUDE_PROJECT_DIR"?/([^"\s]+)')
-AGENT_STRING_NAME_SUFFIXES = ("_ADVICE", "_MESSAGE", "_TEMPLATE", "_LINE", "_LINES", "_REFUSAL")
 PROSE_DIRECTORY_CODE_EXTENSIONS = {".py", ".sh", ".json", ".yaml", ".yml", ".toml", ".js"}
 
 
@@ -270,10 +283,6 @@ def normalized_syntax_tree_dump_without_strings(source):
     return ast.dump(SyntaxTreeWithoutDocstringsOrStringValues().visit(ast.parse(source)))
 
 
-def path_is_test_file(path):
-    return path.endswith("-test.py") or "tests" in path.split("/")[:-1]
-
-
 def registered_hook_paths_at_revision(repository, revision):
     source = read_revision_blob_or_none(repository, revision, ".claude/settings.json")
     try:
@@ -386,85 +395,6 @@ def review_tier_and_deciding_reason(changed_files):
         -REVIEW_TIER_ORDER[entry["tier"]], entry["class"] not in ("hook", "settings"),
         path_is_test_file(entry["path"]), entry["path"]))
     return deciding_file["tier"], deciding_file["reason"]
-
-
-def string_nodes_without_f_string_parts(expression):
-    if isinstance(expression, ast.JoinedStr):
-        yield expression
-    elif isinstance(expression, ast.Constant) and isinstance(expression.value, str):
-        yield expression
-    else:
-        for child in ast.iter_child_nodes(expression):
-            yield from string_nodes_without_f_string_parts(child)
-
-
-class AgentFacingStringNodeCollector(ast.NodeVisitor):
-    """Record string spans and their call, assignment or exception context."""
-
-    def __init__(self):
-        self.enclosing_names = []
-        self.string_entries = []
-        self.seen_node_contexts = set()
-
-    def collect_expression_strings(self, expression, label):
-        if expression is None:
-            return
-        if self.enclosing_names:
-            label += f" in {'.'.join(self.enclosing_names)}()"
-        for node in string_nodes_without_f_string_parts(expression):
-            identity = (id(node), label)
-            if identity in self.seen_node_contexts:
-                continue
-            self.seen_node_contexts.add(identity)
-            self.string_entries.append({"line": node.lineno, "end_line": node.end_lineno,
-                                        "label": label, "text": ast.unparse(node) if isinstance(node, ast.JoinedStr) else node.value})
-
-    def visit_enclosing_definition(self, node):
-        self.enclosing_names.append(node.name)
-        self.generic_visit(node)
-        self.enclosing_names.pop()
-
-    visit_FunctionDef = visit_enclosing_definition
-    visit_AsyncFunctionDef = visit_enclosing_definition
-    visit_ClassDef = visit_enclosing_definition
-
-    def visit_Call(self, node):
-        call_name = ast.unparse(node.func)
-        if call_name in ("print", "sys.stderr.write", "sys.stdout.write"):
-            for argument in [*node.args, *(keyword.value for keyword in node.keywords)]:
-                self.collect_expression_strings(argument, call_name)
-        self.generic_visit(node)
-
-    def visit_Raise(self, node):
-        self.collect_expression_strings(node.exc, "raise")
-        self.generic_visit(node)
-
-    def visit_assignment_value(self, node):
-        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        for target in targets:
-            if isinstance(target, ast.Name) and target.id.endswith(AGENT_STRING_NAME_SUFFIXES):
-                self.collect_expression_strings(node.value, f"{target.id} =")
-        self.generic_visit(node)
-
-    visit_Assign = visit_assignment_value
-    visit_AnnAssign = visit_assignment_value
-    visit_AugAssign = visit_assignment_value
-
-
-def agent_facing_string_nodes_in_source(source):
-    if source is None:
-        return []
-    try:
-        tree = ast.parse(source)
-    except (SyntaxError, ValueError):
-        return []
-    collector = AgentFacingStringNodeCollector()
-    if ("__doc__" in source and tree.body and isinstance(tree.body[0], ast.Expr)
-            and isinstance(tree.body[0].value, ast.Constant)
-            and isinstance(tree.body[0].value.value, str)):
-        collector.collect_expression_strings(tree.body[0].value, "module docstring (printed by --help)")
-    collector.visit(tree)
-    return sorted(collector.string_entries, key=lambda entry: (entry["line"], entry["label"]))
 
 
 def changed_agent_facing_text_entries(repository, old_revision, new_revision, changed_files):
