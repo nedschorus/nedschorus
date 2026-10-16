@@ -763,9 +763,7 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
         if repeats:
             lines.append("    ... and %d more snapshot(s) with the same message" % repeats)
 
-    if stuck and not any(reason.startswith("not reached: ") for _, reason in unsearched):
-        # No "not reached" entry carries the failed release, so report it on its own line.
-        lines.append(stuck)
+    lines.extend(_failed_release_line(stuck, unsearched))
 
     clear_first = bool(stuck) or bool(occupying)
 
@@ -937,6 +935,13 @@ def _snapshot_name_stamp(snapshot_name):
     if len(digits) >= 12:
         return "%s-%s-%sT%s" % (digits[:4], digits[4:6], digits[6:8], digits[8:12])
     return "%s-%s-%s" % (digits[:4], digits[4:6], digits[6:8]) if len(digits) >= 8 else "undated"
+
+
+def _failed_release_line(stuck, unsearched):
+    """The failed-release line, unless a "not reached" entry already carries it."""
+    if stuck and not any(reason.startswith("not reached: ") for _, reason in unsearched):
+        return [stuck]
+    return []
 
 
 def _grouped_by_reason(unsearched):
@@ -1717,9 +1722,7 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
              % (len(snapshots), len(searched), len(candidates), how)]
     for snapshot, reason in unsearched:
         lines.append("could not search %s — %s" % (snapshot, reason))
-    if stuck and not unsearched:
-        # The last candidate has no later unsearched entry to carry a failed release.
-        lines.append(stuck)
+    lines.extend(_failed_release_line(stuck, unsearched))
     if hits:
         for snapshot, hit in hits:
             lines.append("%s holds %s" % (snapshot, hit))
