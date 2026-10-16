@@ -102,10 +102,23 @@ if mode == "killed":
 if mode == "raises":
     raise RuntimeError("stand-in backup search failed")
 if mode == "found":
-    print("transcripts     FOUND")
+    print("log-store       FOUND")
+    print("    copied to /scratch/found/logstore-x")
     print()
-    print("Recoverable from: transcripts.")
+    print("Recoverable from: log-store.")
     sys.exit(0)
+if mode == "copy-command-printed":
+    print("time machine    FOUND")
+    print("    $ mkdir -p /scratch/found && cp -n a /scratch/found/timemachine-x")
+    print()
+    print("Recoverable from: time machine.")
+    sys.exit(5)
+if mode == "not-copied":
+    print("log-store       FOUND")
+    print("    could NOT copy x — ssh exited 255: refused")
+    print()
+    print("Recoverable from: log-store.")
+    sys.exit(4)
 if mode == "incomplete":
     print("time machine    UNAVAILABLE")
     print()
@@ -277,6 +290,8 @@ def program_environment(base, mode="ok", plan=None, backup_mode="not-found"):
     environment[BACKUP_SEARCH_VARIABLE] = str(
         base / "stand-in-bin" / "backup-search-stand-in.py")
     environment["FAKE_BACKUP_SEARCH_MODE"] = backup_mode
+    # The real backup search copies what it finds; a run started here copies into the scratch base.
+    environment["FIND_DELETED_PATH_FOUND_COPIES_ROOT"] = str(base / "found-copies")
     environment["FAKE_BACKUP_SEARCH_LOG"] = str(base / "backup-search-runs.log")
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     return environment
@@ -669,12 +684,27 @@ with scratch() as directory:
 
     code, output, runs = handed("never-anywhere.md", backup_mode="found")
     check("when the backup search finds it, the exit code stays this "
-          "program's own, and the last line says to check the content before "
-          "calling it recoverable",
+          "program's own, and the last line says to open the copies it made and "
+          "check their content before calling it recoverable",
           code == 1 and output.rstrip().splitlines()[-1].startswith(
-              "The backup search found it: before you say it can be "
-              "recovered, check that the place a FOUND line names holds the "
-              "file's content"), output)
+              "The backup search found it: open the copies its \"copied to\" "
+              "lines name, and check that one holds the file's content"), output)
+    code, output, runs = handed("never-anywhere.md", backup_mode="not-copied")
+    check("when the backup search found it but copied no version, the last "
+          "line says to tell the user what its FOUND lines say, and does not "
+          "send the agent to copies that do not exist",
+          code == 1 and output.rstrip().splitlines()[-1].startswith(
+              "The backup search found it but copied no version: tell the user "
+              "what its FOUND lines say")
+          and "open the copies" not in output.rstrip().splitlines()[-1], output)
+    code, output, runs = handed("never-anywhere.md", backup_mode="copy-command-printed")
+    check("when the backup search copied nothing but printed a copy command, "
+          "the last line sends the agent to the summary that says who runs "
+          "each command, not to the user for every one",
+          code == 1 and output.rstrip().splitlines()[-1].startswith(
+              "The backup search found it but copied nothing yet: each "
+              "command it printed under a FOUND surface copies a version")
+          and "which commands you run yourself" in output.rstrip().splitlines()[-1], output)
     code, output, runs = handed("never-anywhere.md", backup_mode="incomplete")
     check("when the backup search could not search a place, the last line "
           "says to tell the user which, and why",
@@ -729,11 +759,15 @@ check("every summary the backup search prints begins as this program "
       "expects it to",
       all(line.startswith(program.BACKUP_SEARCH_SUMMARY_OPENINGS)
           for line in summaries), summaries)
-check("the backup search's found and could-not-search-everywhere exit codes "
-      "are the ones this program reads",
-      (backup_search.EXIT_FOUND, backup_search.EXIT_INCOMPLETE)
-      == (program.BACKUP_SEARCH_FOUND_EXIT, program.BACKUP_SEARCH_INCOMPLETE_EXIT),
-      (backup_search.EXIT_FOUND, backup_search.EXIT_INCOMPLETE))
+check("the backup search's found, could-not-search-everywhere and "
+      "found-but-not-copied exit codes are the ones this program reads",
+      (backup_search.EXIT_FOUND, backup_search.EXIT_INCOMPLETE,
+       backup_search.EXIT_FOUND_BUT_NOT_COPIED, backup_search.EXIT_FOUND_COPY_COMMAND_PRINTED)
+      == (program.BACKUP_SEARCH_FOUND_EXIT, program.BACKUP_SEARCH_INCOMPLETE_EXIT,
+          program.BACKUP_SEARCH_FOUND_BUT_NOT_COPIED_EXIT,
+          program.BACKUP_SEARCH_FOUND_COPY_COMMAND_PRINTED_EXIT),
+      (backup_search.EXIT_FOUND, backup_search.EXIT_INCOMPLETE,
+       backup_search.EXIT_FOUND_BUT_NOT_COPIED, backup_search.EXIT_FOUND_COPY_COMMAND_PRINTED))
 
 # --- A surface that fails does not read as "not found" --------------------------
 with scratch() as directory:
