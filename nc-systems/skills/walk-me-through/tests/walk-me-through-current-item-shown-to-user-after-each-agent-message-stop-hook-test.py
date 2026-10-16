@@ -376,6 +376,118 @@ def test_where_the_turn_starts():
             check_silent(case_name, case.run())
 
 
+RANGE_WALK_DOCUMENT = """# A walk with ranges
+
+## Item 9 of 54: nine
+
+Nine text. Recommendation: Y.
+
+## Items 10 to 12 of 54: three small cuts
+
+Item 10 of 54 cuts a word. Item 11 of 54 cuts a line. Item 12 of 54 cuts a path. Recommendation: Y.
+
+## Item 12.1 of 54: a part
+
+Part one. The steps:
+
+```text
+## Item 13 of 54: inside a fence, not a heading
+```
+
+## Item 12.2 of 54: another part
+
+Part two. Recommendation: Y.
+
+## Item 13 of 54: last
+
+Last. Recommendation: Y.
+"""
+
+
+def range_section(start, end=None):
+    text = RANGE_WALK_DOCUMENT
+    return text[text.index(start):text.index(end) if end else len(text)]
+
+
+def test_range_headings_and_values():
+    for case_name, minutes, start, end in (
+            ("an item before a range heading ends at the range heading",
+             "Next to present: item 9 of 54.", "## Item 9 of 54", "## Items 10 to 12 of 54"),
+            ("minutes naming a range show the range heading's unit",
+             "Next to present: items 10 to 12 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
+            ("minutes listing the range's items show the same unit",
+             "Next to present: items 10, 11 and 12 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
+            ("a dashed range is read as a range",
+             "Next to present: items 10-12 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
+            ("one item inside a range heading shows the range's unit",
+             "Next to present: item 11 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
+            ("a running count inside a code fence starts no item",
+             "Next to present: item 12.1 of 54.", "## Item 12.1 of 54", "## Item 12.2 of 54")):
+        case = Case()
+        case.walk_files(minutes=minutes, document=RANGE_WALK_DOCUMENT)
+        case.reply("Recorded.")
+        check_shown(case_name, case.run(), range_section(start, end))
+    case = Case()
+    case.walk_files(minutes="Next to present: items 12.1 to 12.2 of 54.", document=RANGE_WALK_DOCUMENT)
+    case.reply("Recorded.")
+    check_shown("a dotted range shows its parts", case.run(),
+                range_section("## Item 12.1 of 54", "## Item 12.2 of 54"),
+                range_section("## Item 12.2 of 54", "## Item 13 of 54: last"))
+    case = Case()
+    case.walk_files(minutes="Next to present: items 12 to 10 of 54.", document=RANGE_WALK_DOCUMENT)
+    case.reply("Recorded.")
+    check_blocked("a backwards range is sent back to be corrected", case.run(), "items 12 to 10 of 54")
+    for case_name, minutes in (
+            ("a backwards range after a listed item is sent back, not cut to the item",
+             "Next to present: items 9, 12 to 10 of 54."),
+            ("a range across parts of different items is sent back",
+             "Next to present: items 12.1 to 13 of 54."),
+            ("a chained range is sent back as a line naming no item",
+             "Next to present: items 10 to 11 to 12 of 54.")):
+        case = Case()
+        case.walk_files(minutes=minutes, document=RANGE_WALK_DOCUMENT)
+        case.reply("Recorded.")
+        check_blocked(case_name, case.run(), "does not open with an item")
+
+
+def test_where_the_minutes_line_sits():
+    item_2 = section("## Item 2 of 9", "## Item 4.1 of 9")
+    for case_name, minutes in (
+            ("a line inside a bullet counts", "- Next to present: item 2 of 9."),
+            ("a bold marker counts", "**Next to present:** item 2 of 9."),
+            ("a line without `of M` uses the walk-document's total", "Next to present: item 2."),
+            ("words after the running count are ignored",
+             "Next to present: item 2 (awaiting answer), then item 5, then item 6."),
+            ("a comma and a note after the count are ignored",
+             "Next to present: item 2 of 9, the poem page (item 1 was dropped)."),
+            ("a marker inside a code span or a fence is not the last line",
+             "Next to present: item 2 of 9.\n\nThe hook asks for `Next to present: item 5 of 9.`\n\n"
+             "```\nNext to present: item 6 of 9.\n```")):
+        case = Case()
+        case.walk_files(minutes=minutes)
+        case.reply("Recorded.")
+        check_shown(case_name, case.run(), item_2)
+    for case_name, minutes in (
+            ("a walk closed mid-sentence is not open",
+             "Next to present: item 2 of 9.\n\nSwept into another walk; Next to present: none, closed."),
+            ("a walk closed with `closed` alone is not open", "Next to present: closed.")):
+        case = Case()
+        case.walk_files(minutes=minutes)
+        case.reply("Recorded.")
+        check_silent(case_name, case.run())
+    case = Case()
+    case.walk_files(minutes="Next to present: item 2.",
+                    document=WALK_DOCUMENT + "\n## Item 2 of 10: a re-planned copy\n\nText.\n")
+    case.reply("Recorded.")
+    check_blocked("a line without `of M` over headings with two totals is sent back", case.run(),
+                  "gives no `of M`")
+    case = Case()
+    case.walk_files(minutes="Next to present: item 2 of 9.",
+                    document=WALK_DOCUMENT + "\n## Item 2 of 10: a re-planned copy\n\nText.\n")
+    case.reply("Recorded.")
+    check_shown("only the heading with the minutes' total is shown", case.run(), item_2)
+
+
 def test_unparseable_line():
     case = Case()
     case.walk_files(minutes="Next to present: the poem question.")

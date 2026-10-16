@@ -16,20 +16,25 @@ reminder. Claude Code marks another agent-seat's message isMeta too, so the
 origin decides first. The item is shown only when an assistant message after
 the turn's start holds text.
 
-THE OPEN APPROVAL-WALK. The walk-me-through skill keeps one line in each
-walk's docs/walk/<name>-minutes.md reading `Next to present: item N of M.`,
-`item 4.1 of 9`, `items 5 and 6 of 9`, or `none, closed.`; the last such line
-in a minutes file is the one that counts. Among the minutes files in
-docs/walk/ at the top of the checkout named by the payload's cwd, the open
-approval-walk is the most recently modified one whose line names items.
-Minutes with no such line, as every walk before the line existed, are not
-open walks.
+THE OPEN APPROVAL-WALK. The walk-me-through skill keeps a `Next to present:`
+line in each walk's docs/walk/<name>-minutes.md; agents write it at a line's
+start, in a bullet, or mid-sentence, so the marker is found anywhere outside
+code, and the last one in a minutes file counts. Its value is `none` or
+`closed` for a closed walk, or opens with a running count, `item N`,
+`item 4.1`, `items 5 and 6`, `items 10 to 12`, with or without `of M`, and
+anything after the count, such as `(awaiting answer), then item 24`, is
+ignored. Among the minutes files in docs/walk/ at the top of the checkout
+named by the payload's cwd, the open approval-walk is the most recently
+modified one whose value is not closed. Minutes with no such line, as every
+walk before the line existed, are not open walks.
 
 ITEMS IN THE WALK-DOCUMENT. An item starts at its running count, `Item N of
-M` or, for items shown together, `Items 5 and 6 of M`, on a heading line
-(one starting `#` or `**`), and runs to the next running count, so headings
+M`, `Items 5 and 6 of M` or `Items 10 to 12 of M`, on a heading or on a
+paragraph opening with `**`, as markdown-it-py reads the document, so a count
+inside code starts nothing; it runs to the next running count, so headings
 inside an item, such as an original and a proposed section, stay in it. A
-heading that names several items is one unit.
+heading that names several items is one unit. When the minutes' value has no
+`of M`, the walk-document's own total is used, if its headings carry only one.
 
 WHAT IS SHOWN is the text of the units the minutes name, taken from the
 walk-document in the walk-document's order, without heading marks, bold marks
@@ -73,12 +78,15 @@ MARKDOWN_PARSER_MODULE_FILE = REPOSITORY_TOP / "scripts" / "markdown-edit-hard-w
 CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 WALK_DIRECTORY = Path("docs") / "walk"
 MINUTES_SUFFIX = "-minutes.md"
-NEXT_LINE = re.compile(r"^\s*Next to present:\s*(.*?)\s*$", re.M)
-CLOSED_VALUE = re.compile(r"^none\b", re.I)
-ITEMS_VALUE = re.compile(r"^items?\s+(.+?)\s+of\s+(\d+)\.?$", re.I)
-ITEM_NUMBER = re.compile(r"\d+(?:\.\d+)*")
-# A running count: `item 2 of 9`, `item 4.1 of 9`, `items 5 and 6 of 9`, `items 5, 6 and 7 of 9`.
-RUNNING_COUNT = r"items?\s+(\d+(?:\.\d+)*(?:\s*(?:,|and|&)\s*\d+(?:\.\d+)*)*)\s+of\s+{total}\b"
+NEXT_MARKER = re.compile(r"Next to present:[*_`\s]*([^\n]*)", re.I)
+CLOSED_VALUE = re.compile(r"^(?:none|closed)\b", re.I)
+NUMBER = r"\d+(?:\.\d+)*"
+NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
+# A running count: `item 2`, `item 4.1`, `items 5 and 6`, `items 5, 6 and 7`, `items 10 to 12`, `items 10-12`.
+NUMBER_LIST = rf"{NUMBER}(?:{NUMBER_JOINER}{NUMBER})*(?![\d.]\d)"
+VALUE_COUNT = re.compile(rf"^items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b)?", re.I)
+HEADING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
+NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
 # A record from one of these starts a turn even when Claude Code marks it isMeta.
 TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator", "task-notification")
 
@@ -92,7 +100,7 @@ UNUSABLE_INSTRUCTIONS = (
     "{minutes} to `Next to present: none, closed.` and end the turn.",
     "Otherwise, correct that line so that it names the items the user has yet to "
     "answer by their headings in the walk-document {document}, as `Next to "
-    "present: item 3 of 9.`, `item 4.1 of 9.` or `items 5 and 6 of 9.`; change a "
+    "present: item 3 of 9.`, `item 4.1 of 9.`, `items 5 and 6 of 9.` or `items 10 to 12 of 54.`; change a "
     "heading in the walk-document only when the heading itself is misnumbered.",
     "Then end the turn: this hook shows the user the items the line names.",
 )
@@ -161,29 +169,74 @@ def checkout_top(directory):
     return Path(os.fsdecode(output).rstrip("\n"))
 
 
-def next_to_present(minutes_text):
-    """Return the value of the minutes' last `Next to present:` line, or None."""
-    values = NEXT_LINE.findall(minutes_text)
-    return values[-1] if values else None
+def markdown_parser():
+    return load_module("markdown_edit_hard_wrapped_paragraph_reminder_hook",
+                       MARKDOWN_PARSER_MODULE_FILE).markdown_parser()
+
+
+def code_line_numbers(tokens):
+    lines = set()
+    for token in tokens:
+        if token.map is not None and token.type in ("fence", "code_block"):
+            lines.update(range(*token.map))
+    return lines
+
+
+def without_code_spans(line):
+    return CODE_SPAN.sub(" ", line)
+
+
+def next_to_present(minutes_text, parser):
+    """Return the value after the minutes' last `Next to present:` outside code, or None."""
+    code_lines = code_line_numbers(parser.parse(minutes_text))
+    values = []
+    for number, line in enumerate(minutes_text.split("\n")):
+        if number not in code_lines:
+            values += NEXT_MARKER.findall(without_code_spans(line))
+    return values[-1].strip() if values else None
+
+
+def is_closed(value):
+    return bool(CLOSED_VALUE.match(value))
+
+
+def expand_numbers(number_list):
+    """Return the item numbers a list such as `5, 6 and 7` or `10 to 12` names, or None."""
+    pieces = NUMBER_OR_JOINER.findall(number_list)
+    numbers, index = [], 0
+    while index < len(pieces):
+        if index + 2 < len(pieces) and pieces[index + 1].lower() in ("to", "-", "\u2013"):
+            first, last = pieces[index], pieces[index + 2]
+            first_head, _, first_tail = first.rpartition(".")
+            last_head, _, last_tail = last.rpartition(".")
+            if first_head != last_head or int(first_tail) > int(last_tail):
+                return None
+            prefix = first_head + "." if first_head else ""
+            numbers += [prefix + str(n) for n in range(int(first_tail), int(last_tail) + 1)]
+            index += 3
+        elif pieces[index].lower() in ("to", "-", "\u2013"):
+            return None
+        else:
+            numbers.append(pieces[index])
+            index += 1
+    return numbers or None
 
 
 def parse_items(value):
-    """Return (item numbers, M) from a line value such as `items 5 and 6 of 9.`, or None."""
-    match = ITEMS_VALUE.match(value.strip().strip("`").strip())
+    """Return (item numbers, M or None) from a value such as `items 10 to 12 of 54.`, or None."""
+    match = VALUE_COUNT.match(value)
     if not match:
         return None
-    numbers = ITEM_NUMBER.findall(match[1])
-    if not numbers:
-        return None
-    return numbers, match[2]
+    numbers = expand_numbers(match[1])
+    return (numbers, match[2]) if numbers else None
 
 
-def open_walk(walk_directory):
-    """Return (minutes path, line value) for the open approval-walk, or None."""
+def open_walk(walk_directory, parser):
+    """Return (minutes path, value) for the open approval-walk, or None."""
     candidates = []
     for minutes in walk_directory.glob("*" + MINUTES_SUFFIX):
-        value = next_to_present(minutes.read_text(encoding="utf-8"))
-        if value is None or CLOSED_VALUE.match(value.strip("`").strip()):
+        value = next_to_present(minutes.read_text(encoding="utf-8"), parser)
+        if value is None or is_closed(value):
             continue
         candidates.append((minutes.stat().st_mtime, minutes, value))
     if not candidates:
@@ -192,15 +245,29 @@ def open_walk(walk_directory):
     return minutes, value
 
 
-def item_units(document_text, total):
-    """Return [(item numbers, text)] for each running-count heading in the walk-document."""
-    heading = re.compile(r"^[ \t]*(?:#{1,6}[ \t]+|\*\*)[ \t]*(?:\*\*)?[ \t]*"
-                         + RUNNING_COUNT.format(total=re.escape(total)), re.I | re.M)
-    starts = list(heading.finditer(document_text))
+def item_units(document_text, parser):
+    """Return [(item numbers, M, text)] for each running count that starts an item.
+
+    A count starts an item on a heading, or on a paragraph opening with `**`.
+    """
+    lines = document_text.split("\n")
+    starts = []
+    tokens = parser.parse(document_text)
+    for index, token in enumerate(tokens):
+        if token.map is None or token.type not in ("heading_open", "paragraph_open"):
+            continue
+        first_line = token.map[0]
+        if token.type == "paragraph_open" and not lines[first_line].lstrip().startswith("**"):
+            continue
+        content = tokens[index + 1].content.split("\n")[0] if index + 1 < len(tokens) else ""
+        match = HEADING_COUNT.match(content)
+        numbers = expand_numbers(match[1]) if match else None
+        if numbers:
+            starts.append((first_line, numbers, match[2]))
     units = []
-    for index, match in enumerate(starts):
-        end = starts[index + 1].start() if index + 1 < len(starts) else len(document_text)
-        units.append((ITEM_NUMBER.findall(match[1]), document_text[match.start():end]))
+    for index, (first_line, numbers, total) in enumerate(starts):
+        end = starts[index + 1][0] if index + 1 < len(starts) else len(lines)
+        units.append((numbers, total, "\n".join(lines[first_line:end])))
     return units
 
 
@@ -262,7 +329,8 @@ def run(stdin_text, environment):
     top = checkout_top(Path(payload["cwd"]))
     if top is None or not (top / WALK_DIRECTORY).is_dir():
         return None
-    walk = open_walk(top / WALK_DIRECTORY)
+    parser = markdown_parser()
+    walk = open_walk(top / WALK_DIRECTORY, parser)
     if walk is None:
         return None
     reply = last_reply_text(Path(transcript_path).expanduser())
@@ -275,23 +343,28 @@ def run(stdin_text, environment):
     parsed = parse_items(value)
     if parsed is None:
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
-            f"its minutes' last `Next to present:` line, `{value}`, names no "
-            f"item in the form `item N of M` or `items N and P of M`."), **values)
+            f"its minutes' last `Next to present:` line, `{value}`, does not open "
+            f"with an item in the form `item N of M` or `items N and P of M`."), **values)
     numbers, total = parsed
     if not document.is_file():
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
             f"its walk-document {document} does not exist."), **values)
-    units = [unit for unit in item_units(document.read_text(encoding="utf-8"), total)
-             if set(unit[0]) & set(numbers)]
+    all_units = item_units(document.read_text(encoding="utf-8"), parser)
+    if total is None:
+        totals = {unit_total for _, unit_total, _ in all_units}
+        if len(totals) != 1:
+            return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
+                f"its minutes' last `Next to present:` line, `{value}`, gives no `of M`, "
+                f"and the walk-document's headings do not carry one total."), **values)
+        total = totals.pop()
+    units = [unit for unit in all_units if unit[1] == total and set(unit[0]) & set(numbers)]
     missing = [number for number in numbers if not any(number in unit[0] for unit in units)]
     if missing:
         named = ", ".join(f"`Item {number} of {total}`" for number in missing)
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
             f"its walk-document has no heading {named}, which the minutes name."), **values)
-    parser = load_module("markdown_edit_hard_wrapped_paragraph_reminder_hook",
-                         MARKDOWN_PARSER_MODULE_FILE).markdown_parser()
     shown = without_heading_and_bold_marks(
-        "\n".join(unit_text.strip("\n") for _, unit_text in units), parser)
+        "\n".join(unit_text.strip("\n") for _, _, unit_text in units), parser)
     return json.dumps({"systemMessage": shown + "\n\n" + ANSWERS_LINE}, ensure_ascii=False)
 
 
