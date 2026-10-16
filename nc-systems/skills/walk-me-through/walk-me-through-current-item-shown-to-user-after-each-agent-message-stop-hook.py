@@ -90,7 +90,7 @@ NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
 # A record from one of these starts a turn even when Claude Code marks it isMeta.
 TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator", "task-notification")
 
-ANSWERS_LINE = "Answer Y, N, D to defer, or R to repeat the item."
+ANSWERS_LINE = "Answer Y to approve, N to decline, D to defer, or R to repeat the item."
 UNUSABLE_OPENING_TEMPLATE = (
     "approval-walk current-item check: the open approval-walk {walk} could not "
     "be checked: {problem}"
@@ -344,7 +344,8 @@ def run(stdin_text, environment):
     if parsed is None:
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
             f"its minutes' last `Next to present:` line, `{value}`, does not open "
-            f"with an item in the form `item N of M` or `items N and P of M`."), **values)
+            f"with an item in one of the forms `item N of M`, `item N.K of M`, "
+            f"`items N and P of M` or `items N to P of M`."), **values)
     numbers, total = parsed
     if not document.is_file():
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
@@ -355,7 +356,9 @@ def run(stdin_text, environment):
         if len(totals) != 1:
             return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
                 f"its minutes' last `Next to present:` line, `{value}`, gives no `of M`, "
-                f"and the walk-document's headings do not carry one total."), **values)
+                f"and the walk-document's headings give more than one total, so the line "
+                f"must say which: write it as `item N of M`, with M the total of the "
+                f"heading meant."), **values)
         total = totals.pop()
     units = [unit for unit in all_units if unit[1] == total and set(unit[0]) & set(numbers)]
     missing = [number for number in numbers if not any(number in unit[0] for unit in units)]

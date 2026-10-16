@@ -171,7 +171,7 @@ def check_silent(case_name, result):
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
-ANSWERS_LINE = "Answer Y, N, D to defer, or R to repeat the item."
+ANSWERS_LINE = "Answer Y to approve, N to decline, D to defer, or R to repeat the item."
 
 
 def without_bold_marks_outside_code_spans(line):
