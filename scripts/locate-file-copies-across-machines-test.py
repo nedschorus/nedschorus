@@ -107,11 +107,13 @@ if mode == "found":
     print()
     print("Recoverable from: log-store.")
     sys.exit(0)
-if mode == "copy-command-printed":
+if mode in ("copy-command-printed", "copy-command-printed-some-unsearched"):
     print("time machine    FOUND")
     print("    $ mkdir -p /scratch/found && cp -n a /scratch/found/timemachine-x")
     print()
     print("Recoverable from: time machine.")
+    if mode == "copy-command-printed-some-unsearched":
+        print("Could NOT search: local snapshots -- see each one's line above.")
     sys.exit(5)
 if mode == "not-copied":
     print("log-store       FOUND")
@@ -688,7 +690,8 @@ with scratch() as directory:
           "check their content before calling it recoverable",
           code == 1 and output.rstrip().splitlines()[-1].startswith(
               "The backup search found it: open the copies its \"copied to\" "
-              "lines name, and check that one holds the file's content"), output)
+              "lines name, and check that one holds the file's content")
+          and "transcript" not in output.rstrip().splitlines()[-1], output)
     code, output, runs = handed("never-anywhere.md", backup_mode="not-copied")
     check("when the backup search found it but copied no version, the last "
           "line says to tell the user what its FOUND lines say, and does not "
@@ -702,9 +705,16 @@ with scratch() as directory:
           "the last line sends the agent to the summary that says who runs "
           "each command, not to the user for every one",
           code == 1 and output.rstrip().splitlines()[-1].startswith(
-              "The backup search found it but copied nothing yet: each "
-              "command it printed under a FOUND surface copies a version")
+              "The backup search found it but copied nothing yet: the "
+              "commands it printed under each FOUND surface copy a version")
           and "which commands you run yourself" in output.rstrip().splitlines()[-1], output)
+    code, output, runs = handed("never-anywhere.md",
+                                backup_mode="copy-command-printed-some-unsearched")
+    check("when the backup search found it but could not search some places, "
+          "the last line also says to tell the user which",
+          code == 1 and output.rstrip().splitlines()[-1].startswith(
+              "It also could NOT search some places: tell the user which")
+          and "The backup search found it but copied nothing yet" in output, output)
     code, output, runs = handed("never-anywhere.md", backup_mode="incomplete")
     check("when the backup search could not search a place, the last line "
           "says to tell the user which, and why",

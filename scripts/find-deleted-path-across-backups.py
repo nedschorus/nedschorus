@@ -391,8 +391,9 @@ MAC_DATA_VOLUME = "/System/Volumes/Data"
 # Only .local snapshots hold local user files; .backup is external and os.update is system-only.
 LOCAL_SNAPSHOT_NAME_SUFFIX = ".local"
 
-# Use /private/tmp because mount reports the resolved path, not the /tmp symlink.
-LOCAL_SNAPSHOT_MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro"
+# Use /private/tmp because mount reports the resolved path, not the /tmp symlink. The process ID keeps two
+# runs at once off one mount point, so whatever already sits on this one was left by a run that has ended.
+LOCAL_SNAPSHOT_MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro-%d" % os.getpid()
 
 # Bound waits so an ssh to a sleeping box cannot hang recovery.
 SHORT_TIMEOUT_SECONDS = 20
@@ -536,7 +537,9 @@ def _remove_partial(temporary):
 
 
 def _write_new_file(path, content):
-    """Write content to path, or to path with -2, -3 ... added when path is taken; return the path used.
+    """Write content to path, or to path with -2, -3 ... added when path is taken.
+
+    Return the path used, and the temporary file's path when it could not be removed afterwards, else None.
 
     The content goes to a hidden temporary file first and is linked to its name only once complete, so a
     write that fails partway never leaves a cut-off file under a copy's name.
@@ -559,8 +562,7 @@ def _write_new_file(path, content):
             continue
         except OSError as error:
             raise CopyWriteFailed(error, _remove_partial(temporary))
-        _remove_partial(temporary)
-        return candidate
+        return candidate, _remove_partial(temporary)
 
 
 def copy_found_versions(report, folder=None, fetch=None):
@@ -574,7 +576,7 @@ def copy_found_versions(report, folder=None, fetch=None):
         if content is not None:
             try:
                 os.makedirs(folder.path, exist_ok=True)
-                written = _write_new_file(folder.destination(version.name), content)
+                written, duplicate_left = _write_new_file(folder.destination(version.name), content)
             except CopyWriteFailed as error:
                 left = ("a partial file was left at %s and is not a copy" % error.partial_left
                         if error.partial_left else "no partial file was left")
@@ -586,7 +588,8 @@ def copy_found_versions(report, folder=None, fetch=None):
             report.lines.append("could NOT copy %s — %s" % (version.described(), why))
             continue
         report.copied.append(written)
-        report.lines.append("copied to %s" % written)
+        report.lines.append("copied to %s" % written + (
+            "; a hidden second link to it, %s, could not be removed" % duplicate_left if duplicate_left else ""))
     return report
 
 
@@ -696,8 +699,7 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
         )
 
     already_mounted = _local_snapshots_already_mounted(runner)
-    # An occupied mount point blocks later mounts, but may belong to a live seat.
-    # Report how to clear it; never unmount another run's snapshot automatically.
+    # An occupied mount point blocks later mounts; it was left by an ended run, so the printed clear is safe.
     occupying = sorted(name for name, where in already_mounted.items() if where == mount_point)
     hits = []
     searched = []
@@ -1958,12 +1960,12 @@ def render_summary(reports):
             if agent_runs or user_runs:
                 steps = []
                 if agent_runs:
-                    steps.append("run the command printed under %s yourself, since it asks for no password"
+                    steps.append("run the commands printed under %s yourself, in order, since they ask for no password"
                                  % ", ".join(agent_runs))
                 if user_runs:
-                    steps.append("give the user the command printed under %s, since its sudo may ask for his "
-                                 "password" % ", ".join(user_runs))
-                out.append("Nothing was copied yet: %s. Each copies a version into %s."
+                    steps.append("give the user the commands printed under %s, in order, since their sudo may ask "
+                                 "for his password" % ", ".join(user_runs))
+                out.append("Nothing was copied yet: %s. Each surface's commands copy a version into %s."
                            % ("; ".join(steps), found_copies_folder().path))
             else:
                 out.append("No version was copied: what was found is only what each FOUND surface's lines "

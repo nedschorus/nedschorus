@@ -46,6 +46,7 @@ BACKUP_SEARCH_SURFACES_ALREADY_SEARCHED = ("git", "reflog")
 # Without a summary line, the backup search did not finish.
 BACKUP_SEARCH_SUMMARY_OPENINGS = (
     "Recoverable from: ", "No surface that could be searched has it.")
+BACKUP_SEARCH_UNSEARCHED_OPENING = "Could NOT search: "
 BACKUP_SEARCH_FOUND_EXIT = 0
 BACKUP_SEARCH_INCOMPLETE_EXIT = 3
 BACKUP_SEARCH_FOUND_BUT_NOT_COPIED_EXIT = 4
@@ -1027,11 +1028,14 @@ def run_backup_search_after_nothing_found(query, git_search_complete):
         return [f"The backup search could not start ({error}): tell the user "
                 f"it did not run, and do not say the file does not exist."]
     summary_printed = False
+    some_place_unsearched = False
     for line in process.stdout:
         text = line.decode("utf-8", "replace")
         write_text(text)
         summary_printed = summary_printed or text.startswith(
             BACKUP_SEARCH_SUMMARY_OPENINGS)
+        some_place_unsearched = some_place_unsearched or text.startswith(
+            BACKUP_SEARCH_UNSEARCHED_OPENING)
     code = process.wait()
     if not summary_printed:
         how = (f"it was stopped by signal {-code}" if code < 0
@@ -1039,24 +1043,26 @@ def run_backup_search_after_nothing_found(query, git_search_complete):
         return [f"The backup search did not finish ({how} before its summary "
                 f"line): tell the user that the places it did not print were "
                 f"not searched, and do not say the file does not exist."]
+    unsearched = (["It also could NOT search some places: tell the user "
+                   "which, as its \"Could NOT search\" line names them."]
+                  if some_place_unsearched else [])
     if code == BACKUP_SEARCH_FOUND_EXIT:
         return ["The backup search found it: open the copies its \"copied to\" "
                 "lines name, and check that one holds the file's content before "
-                "you say it can be recovered, since a transcript matches whenever "
-                "the path was only typed in it. Restore a copy to the file's own "
-                "path only when asked to."]
+                "you say it can be recovered. Restore a copy to the file's own "
+                "path only when asked to."] + unsearched
     if code == BACKUP_SEARCH_FOUND_BUT_NOT_COPIED_EXIT:
         return ["The backup search found it but copied no version: tell the "
                 "user what its FOUND lines say, such as a \"could NOT copy\" line "
                 "or a transcript where the path may only have been typed, and do "
-                "not say the file does not exist."]
+                "not say the file does not exist."] + unsearched
     if code == BACKUP_SEARCH_FOUND_COPY_COMMAND_PRINTED_EXIT:
-        return ["The backup search found it but copied nothing yet: each "
-                "command it printed under a FOUND surface copies a version into "
-                "its found-copies folder. Its \"Nothing was copied yet\" line says "
+        return ["The backup search found it but copied nothing yet: the "
+                "commands it printed under each FOUND surface copy a version "
+                "into its found-copies folder. Its \"Nothing was copied yet\" line says "
                 "which commands you run yourself and which you give the user "
                 "because their sudo may ask for his password; do as it says, and "
-                "do not say the file does not exist."]
+                "do not say the file does not exist."] + unsearched
     if code == BACKUP_SEARCH_INCOMPLETE_EXIT:
         return ["Tell the user which places the backup search could NOT "
                 "search, and why: its Could NOT search line names them."]
