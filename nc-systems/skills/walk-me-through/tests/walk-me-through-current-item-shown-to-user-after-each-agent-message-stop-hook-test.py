@@ -433,17 +433,41 @@ def test_range_headings_and_values():
     check_shown("a dotted range shows its parts", case.run(),
                 range_section("## Item 12.1 of 54", "## Item 12.2 of 54"),
                 range_section("## Item 12.2 of 54", "## Item 13 of 54: last"))
+    backwards_document = ("# A walk\n\n## Item 9 of 54: first\n\nText.\n\n"
+                          "## Items 12 to 10 of 54: backwards\n\nMore.\n\n"
+                          "## Item 13 of 54: last\n\nEnd.\n")
     case = Case()
-    case.walk_files(minutes="#next_to_present item 9 of 54.",
-                    document="# A walk\n\n## Item 9 of 54: first\n\nText.\n\n"
-                             "## Items 12 to 10 of 54: backwards\n\nMore.\n\n"
-                             "## Item 13 of 54: last\n\nEnd.\n")
+    case.walk_files(minutes="#next_to_present item 9 of 54.", document=backwards_document)
     case.reply("Recorded.")
-    result = case.run()
-    shown = json.loads(result.stdout or "{}").get("systemMessage", "") if result.returncode == 0 else ""
-    check("a heading whose range runs backwards starts no item, and the hook shows the item before it",
-          "Text." in shown and "More." in shown and "End." not in shown,
-          f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+    check_shown("a heading whose range runs backwards still ends the item before it", case.run(),
+                wanted_text="Item 9 of 54: first\n\nText.")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 10 of 54.", document=backwards_document)
+    case.reply("Recorded.")
+    check_blocked("minutes naming an item of a heading whose range runs backwards are told that heading",
+                  case.run(), "no heading `Item 10 of 54`",
+                  "heading `Items 12 to 10 of 54: backwards` names no item", "`12 to 10` runs backwards")
+    item_and_parts = ("# A walk\n\n## Item 11 of 54: before\n\nBefore.\n\n"
+                      "## Items 12 to 12.2 of 54: an item and its inserted questions\n\nTogether.\n\n"
+                      "## Item 13 of 54: after\n\nAfter.\n")
+    for case_name, minutes in (
+            ("minutes naming an item and its parts show the heading that groups them",
+             "#next_to_present items 12 to 12.2 of 54."),
+            ("minutes naming one part show the heading that groups the item and its parts",
+             "#next_to_present item 12.1 of 54."),
+            ("minutes naming the item alone show the heading that groups it with its parts",
+             "#next_to_present item 12 of 54.")):
+        case = Case()
+        case.walk_files(minutes=minutes, document=item_and_parts)
+        case.reply("Recorded.")
+        check_shown(case_name, case.run(),
+                    wanted_text="Items 12 to 12.2 of 54: an item and its inserted questions\n\nTogether.")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 5 of 9.",
+                    document=WALK_DOCUMENT + "\n## Item 5 of 9: a misnumbered copy\n\nText.\n")
+    case.reply("Recorded.")
+    check_blocked("minutes naming an item two headings carry are told the heading is misnumbered",
+                  case.run(), "more than one heading for `Item 5 of 9`", "misnumbered")
     case = Case()
     case.walk_files(minutes="#next_to_present items 12 to 10 of 54.", document=RANGE_WALK_DOCUMENT)
     case.reply("Recorded.")
@@ -480,6 +504,10 @@ def test_where_the_minutes_line_sits():
              "#next_to_present item 2 (awaiting answer), then item 5, then item 6."),
             ("a comma and a note after the count are ignored",
              "#next_to_present item 2 of 9, the poem page (item 1 was dropped)."),
+            ("a value inside a code span is read without its backticks", "#next_to_present `item 2 of 9.`"),
+            ("of two markers on one line, the second counts",
+             "#next_to_present item 5 of 9. Then #next_to_present item 2 of 9."),
+            ("a colon after the hashtag is read as the old form's colon was", "#next_to_present: item 2 of 9."),
             ("a marker inside a code span or a fence is not the last line",
              "#next_to_present item 2 of 9.\n\nThe hook asks for `#next_to_present item 5 of 9.`\n\n"
              "```\n#next_to_present item 6 of 9.\n```")):
@@ -490,7 +518,13 @@ def test_where_the_minutes_line_sits():
     for case_name, minutes in (
             ("a walk closed mid-sentence is not open",
              "#next_to_present item 2 of 9.\n\nSwept into another walk; #next_to_present none, closed."),
-            ("a walk closed with `closed` alone is not open", "#next_to_present closed.")):
+            ("a walk closed with `closed` alone is not open", "#next_to_present closed."),
+            ("a walk closed with a colon after the hashtag is not open",
+             "#next_to_present item 2 of 9.\n\n#next_to_present: none, closed."),
+            ("a walk closed after a stale marker on the same line is not open",
+             "#next_to_present item 2 of 9. Swept; #next_to_present none, closed."),
+            ("a closed value inside a code span is read", "#next_to_present item 2 of 9.\n\n"
+             "Next to present: `none, closed.`")):
         case = Case()
         case.walk_files(minutes=minutes)
         case.reply("Recorded.")
@@ -583,6 +617,11 @@ def test_old_marker_is_migrated():
     case.reply("Recorded.")
     check_shown("a hashtag line below an old-form line counts", case.run(), item_2)
     case = Case()
+    case.walk_files(minutes="Next to present: `item 2 of 9.`")
+    case.reply("Recorded.")
+    check_blocked("an old-form value inside a code span is carried whole into the line to add",
+                  case.run(), "leave the old lines as they are: #next_to_present item 2 of 9\n")
+    case = Case()
     case.walk_files(minutes="Next to present: item 2 of 9.\n\nNext to present: none, closed.")
     case.reply("All done.")
     check_silent("a walk closed with the old form is not open", case.run())
@@ -624,6 +663,24 @@ def test_silent_cases():
     outside = Case(in_git=False)
     outside.reply("No item here.")
     check_silent("a cwd outside any checkout shows nothing", outside.run())
+
+
+def test_nothing_is_installed_while_the_agent_answers_a_stop_hook():
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    case.reply("No item here.")
+    shadow = case.root / "shadow"
+    (shadow / "markdown_it").mkdir(parents=True)
+    (shadow / "markdown_it" / "__init__.py").write_text(
+        'raise ImportError("markdown-it-py hidden by this case")\n')
+    result = case.run(stop_hook_active=True,
+                      environment_extra={"PYTHONPATH": str(shadow), "PYTHONDONTWRITEBYTECODE": "1",
+                                         # A hook that wrongly installs writes its install state here.
+                                         "HOME": str(case.root)})
+    check("while the agent answers a Stop hook, a missing markdown-it-py is a fault, not an install",
+          result.returncode == 1 and "markdown-it-py hidden by this case" in result.stderr
+          and "MarkdownParserMissing" not in result.stderr and result.stdout == "",
+          f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
 def test_faults_are_reported():

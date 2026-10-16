@@ -50,7 +50,9 @@ THE ONE EXEMPTION: A NOTICE FOR THE USER. Output that is a JSON object whose
 only key is `systemMessage` is shown to the user and does not keep the agent
 going, so it cannot start the loop. A hook whose job is such a notice may,
 while the agent answers a Stop hook, still compute it and print it, if it
-writes no state and prints nothing else: it asks
+writes no state and prints nothing else on stdout; a fault it names on stderr
+with exit 1 is allowed, because Claude Code records a Stop hook's exit 1 as a
+non-blocking error and the agent is not kept going. It asks
 stop_hook_output_may_be_printed_while_agent_answers_a_stop_hook(payload, output)
 before printing, and prints nothing when that answers False. Any other output,
 a block, additionalContext or a systemMessage beside other keys, stays silent.
