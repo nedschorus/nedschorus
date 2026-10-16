@@ -301,20 +301,29 @@ a fast suite can spike far past any multiple
 (scripts/run-suite-in-signal-sandbox-test.py passed in 10.8 s and in 297 s),
 which the floor covers; no pass exceeded this limit measured from the suite's
 fastest pass. 1800 s is six times the longest pass seen. A suite past its limit
-is killed with SIGKILL: the init of its PID namespace, which ends every process
-inside, and every process of its process group, since each suite starts in a
-session of its own; a process it started in a session of its own outside a PID
-namespace is not reached. It is reported FAIL with `TIMEOUT after <n>s (limit
-<m>s from recorded <r>s)`, or `from no passing recording`; its cgroup counters are lost with the shell that
-keeps them, and the other suites run on. Its recording keeps the kill's exit,
-so the next run starts it first, under the limit for no passing recording.
+has its process group killed with SIGKILL; each suite starts in a session of
+its own, so the group holds every process it started except one that starts a
+session of its own. In a test sandbox the group holds the init of the suite's
+PID namespace, whose end ends every process inside, so nothing is left; outside
+one, such a process is not reached. It is reported FAIL with `TIMEOUT after
+<n>s (limit <m>s, <k> times recorded <r>s)`, `(limit <m>s, the floor, more than
+<k> times recorded <r>s)` or `(limit <m>s from no passing recording)`; its
+cgroup counters are lost with the shell that keeps them, and the other suites
+run on. Its recording keeps the kill's exit, so the next run starts it first,
+under the limit for no passing recording.
 
 A STOPPED RUN KILLS ITS SUITES. Since each suite runs in a session of its own,
 a signal sent to the runner's process group no longer reaches them. So once its
 suites start, the runner handles SIGTERM, SIGHUP and SIGINT: it kills every
 running suite as a timeout does, starts no other, prints a line naming the
-signal, and exits 2. The handler only records the signal; each suite's thread
-and the loop collecting results act on it within RUN_STOP_SIGNAL_CHECK_SECONDS.
+signal, and exits 2; a signal that comes after the last suite ended stops
+nothing, and the run is reported as usual. Since the handlers are set before the
+first suite starts, and a handled signal is reset to its default action when a
+suite's process is started, every suite starts with the default action for
+these three signals, even when the runner was started with them ignored, as a
+command put in the background in a subshell is. The handler only records the
+signal; each suite's thread and the loop collecting results act on it within
+RUN_STOP_SIGNAL_CHECK_SECONDS.
 A runner killed with SIGKILL cannot do this: its suites in bwrap still die with
 it, and a suite outside bwrap outlives it.
 
@@ -2568,10 +2577,10 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
     """Run one suite; return its result, on Linux with each case line it printed timed.
 
     time_limit is (limit seconds, recorded seconds or None) from
-    suite_timeout_and_the_recorded_seconds_it_came_from(); a suite still running at its limit is
-    killed with every process it started, and its result carries "timeout". Once
-    run_stop_signals, a list a signal handler appends to, is not empty, the suite is
-    killed the same way, and its result carries "stopped by".
+    suite_timeout_and_the_recorded_seconds_it_came_from(); a suite still running at its limit
+    has its process group killed, and its result carries "timeout". Once run_stop_signals,
+    a list a signal handler appends to, is not empty, the suite is killed the same way,
+    and its result carries "stopped by".
 
     With in_cgroup_scope, the suite runs in a cgroup scope of its own and its CPU seconds
     and peak memory are read from there; with nice, at low priority. Inside its test
@@ -2615,14 +2624,6 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
         sandbox_prefix = command_prefix_starting_one_suite_in_its_test_sandbox(
             sandbox_prefix, top, writable_paths, suite, read_only_paths)
     status_read = status_write = None
-    namespace_inits = []
-    if note_suite_process is not None:
-        noted = note_suite_process
-
-        def note_suite_process(pid, namespace_init):
-            if namespace_init:
-                namespace_inits.append(pid)
-            noted(pid, namespace_init=namespace_init)
     if sandbox_prefix and note_suite_process is not None:
         status_read_fd, status_write = os.pipe()
         status_read = os.fdopen(status_read_fd, "r")
@@ -2698,7 +2699,7 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
                 timed_out = time_limit
             else:
                 continue
-            kill_test_suite_and_every_process_it_started(process, namespace_inits)
+            kill_test_suite_process_group(process)
             exit_code = process.wait()
             break
         seconds = time.monotonic() - started
@@ -2748,15 +2749,14 @@ def run_one_suite(top, interpreter, suite, log_dir, recorder=None, sandbox_prefi
     return result
 
 
-def kill_test_suite_and_every_process_it_started(process, namespace_inits):
-    """SIGKILL the suite's PID namespace, whose init's end ends every process inside it,
-    and its process group, which holds every process it started outside one.
+def kill_test_suite_process_group(process):
+    """SIGKILL the suite's process group, which every process it started stays in unless
+    it starts a session of its own.
 
+    In a test sandbox the group holds the init of the suite's PID namespace, since bwrap
+    is not given --new-session, and the init's end ends every process in the namespace.
     Called before the suite's first process is reaped, so its process group id is still
     its own."""
-    for init in namespace_inits:
-        with contextlib.suppress(ProcessLookupError):
-            os.kill(init, signal.SIGKILL)
     with contextlib.suppress(ProcessLookupError):
         os.killpg(process.pid, signal.SIGKILL)
 
@@ -3229,10 +3229,15 @@ def why_suite_failed(result):
     timeout = result.get("timeout")
     if timeout is None:
         return describe_exit(result["exit"])
-    source = ("no passing recording" if timeout["recorded"] is None
-              else f"recorded {timeout['recorded']:.0f}s")
-    return (f"TIMEOUT after {result['seconds']:.0f}s "
-            f"(limit {timeout['limit']:.0f}s from {source})")
+    recorded = timeout["recorded"]
+    multiple = TEST_SUITE_TIMEOUT_MULTIPLE_OF_RECORDED_SECONDS
+    if recorded is None:
+        source = " from no passing recording"
+    elif timeout["limit"] > multiple * recorded:
+        source = f", the floor, more than {multiple} times recorded {recorded:.0f}s"
+    else:
+        source = f", {multiple} times recorded {recorded:.0f}s"
+    return f"TIMEOUT after {result['seconds']:.0f}s (limit {timeout['limit']:.0f}s{source})"
 
 
 def suite_line(result):
@@ -3558,6 +3563,8 @@ def main(argv=None, platform=None):
             # is safe, since raising inside subprocess code can leave a child unreaped.
             run_stop_signals.append(signal.Signals(signal_number).name)
 
+        # Set even when the runner was started with a signal ignored: a handled signal
+        # starts each suite with its default action, while an ignored one would pass on.
         for stop_signal in RUN_STOP_SIGNALS:
             signal_handlers_replaced[stop_signal] = signal.signal(stop_signal, record_run_stop)
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
@@ -3605,10 +3612,16 @@ def main(argv=None, platform=None):
                     if result.get("output_note"):
                         report.line(f"{result['suite']}: {result['output_note']}")
         restore_signal_handlers(signal_handlers_replaced)
-        if run_stop_signals:
+        # A stop that came after the last suite ended cut nothing short, so the run is
+        # reported and recorded as usual.
+        if run_stop_signals and (len(results) < len(chosen)
+                                 or any(result.get("stopped by") for result in results)):
             report.line(f"{PROGRAM}: not run to the end — stopped by {run_stop_signals[0]}. "
-                        f"Every suite still running was killed with every process it started, "
-                        f"and the suites not yet started were not run.")
+                        f"The process group of every suite still running was killed, which "
+                        f"in a test sandbox ends every process the suite started; outside "
+                        f"one, a process a suite started in a session of its own is not "
+                        f"reached and may still be running. The suites not yet started "
+                        f"were not run.")
             report.close()
             if run_record is not None:
                 run_record.finish()

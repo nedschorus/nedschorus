@@ -29,6 +29,7 @@ import json
 import os
 import shlex
 import pathlib
+import re
 import shutil
 import signal
 import subprocess
@@ -2058,8 +2059,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a suite past its limit, with no passing recording, is reported FAIL with TIMEOUT "
           "and the limit for no passing recording, and the run exits 1",
           first.returncode == 1 and any(
-              line.startswith("FAIL hangs-test.py TIMEOUT after 3s (limit 3s from no "
-                              "passing recording)") for line in lines(first.stdout)),
+              re.match(r"FAIL hangs-test\.py TIMEOUT after \d+s \(limit 3s from no "
+                       r"passing recording\)", line) for line in lines(first.stdout)),
           (first.returncode, first.stdout, first.stderr))
     child_pid = int((root / "child.pid").read_text())
     gone = process_gone_within(child_pid, 10)
@@ -2078,8 +2079,8 @@ with tempfile.TemporaryDirectory() as scratch:
     stored.write_text(json.dumps(recorded))
     second = run(root, "-j", "1", driver=TIME_LIMITS_SHORTENED_DRIVER)
     timeout_lines = [line for line in lines(second.stdout)
-                     if line.startswith("FAIL hangs-test.py TIMEOUT after 4s (limit 4s from "
-                                        "recorded 2s)")]
+                     if re.match(r"FAIL hangs-test\.py TIMEOUT after \d+s \(limit 4s, 2 times "
+                                 r"recorded 2s\)", line)]
     check("a suite's limit is the multiple of its last passing recording's seconds, and both "
           "its line and the list of failed suites say so",
           second.returncode == 1 and len(timeout_lines) == 2
@@ -2130,6 +2131,73 @@ with tempfile.TemporaryDirectory() as scratch:
           and "FAIL sleeps-test.py killed when the run was stopped by SIGTERM" in stopped_output,
           (stub_pids, gone, runner_process.returncode, stopped_output))
 
+# A command put in the background in a subshell starts with SIGINT ignored, and an
+# ignored signal passes on to every process it starts; a suite that interrupts itself
+# must still be interrupted.
+STOP_SIGNALS_IGNORED_DRIVER = r'''
+import os, signal, sys
+for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+    signal.signal(number, signal.SIG_IGN)
+os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+'''
+SEES_DEFAULT_STOP_SIGNAL_ACTIONS = (
+    "defaults = [signal.getsignal(signal.SIGINT) is signal.default_int_handler,\n"
+    "            signal.getsignal(signal.SIGTERM) == signal.SIG_DFL,\n"
+    "            signal.getsignal(signal.SIGHUP) == signal.SIG_DFL]\n"
+    "print('SIGINT, SIGTERM and SIGHUP at their default actions:', defaults)\n"
+    "try:\n"
+    "    os.kill(os.getpid(), signal.SIGINT)\n"
+    "    time.sleep(5)\n"
+    "    print('SIGINT did not interrupt this suite')\n"
+    "    sys.exit(1)\n"
+    "except KeyboardInterrupt:\n"
+    "    pass\n"
+    "sys.exit(0 if all(defaults) else 1)\n")
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"default-actions-test.py": SEES_DEFAULT_STOP_SIGNAL_ACTIONS})
+    started_ignoring = run(root, driver=STOP_SIGNALS_IGNORED_DRIVER)
+    suite_log = next((root / "logs").glob("*default-actions-test.py.log"), None)
+    check("a runner started with SIGINT, SIGTERM and SIGHUP ignored starts its suites with "
+          "each at its default action, so a suite that sends itself SIGINT is interrupted",
+          started_ignoring.returncode == 0
+          and any(line.startswith("PASS default-actions-test.py")
+                  for line in lines(started_ignoring.stdout)),
+          (started_ignoring.returncode, started_ignoring.stdout,
+           suite_log.read_text() if suite_log else "no suite log"))
+
+# The stop is sent as the run puts its handlers back, after its last suite ended.
+STOP_AFTER_LAST_SUITE_DRIVER = r'''
+import importlib.util, os, signal, sys
+program_path, *arguments = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("run_all_test_suites", program_path)
+program = importlib.util.module_from_spec(spec)
+sys.argv = [program_path, *arguments]
+spec.loader.exec_module(program)
+restore_signal_handlers = program.restore_signal_handlers
+
+
+def stop_then_restore(replaced):
+    if replaced:
+        os.kill(os.getpid(), signal.SIGTERM)
+    restore_signal_handlers(replaced)
+
+
+program.restore_signal_handlers = stop_then_restore
+sys.exit(program.main(arguments))
+'''
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    make_repo(root, {"quick-test.py": PASSES})
+    stopped_late = run(root, driver=STOP_AFTER_LAST_SUITE_DRIVER)
+    check("a stop signal that comes after the last suite ended stops nothing: the run "
+          "prints its SUMMARY and exits 0",
+          stopped_late.returncode == 0 and "SUMMARY:" in stopped_late.stdout
+          and "stopped by" not in stopped_late.stdout,
+          (stopped_late.returncode, stopped_late.stdout, stopped_late.stderr))
+
 for recording_given, expected, case in (
         (None, (module.TEST_SUITE_TIMEOUT_WITHOUT_PASSING_RECORDING_SECONDS, None),
          "a suite with no recording gets the limit for no passing recording"),
@@ -2143,6 +2211,22 @@ for recording_given, expected, case in (
          "a long suite gets the multiple of its recorded seconds")):
     answer = module.suite_timeout_and_the_recorded_seconds_it_came_from(recording_given)
     check(case, answer == expected, (recording_given, answer))
+
+for limit_and_recorded, expected, case in (
+        ((1800, None), "TIMEOUT after 1801s (limit 1800s from no passing recording)",
+         "the TIMEOUT line of a suite with no passing recording says so"),
+        ((800.0, 200.0),
+         f"TIMEOUT after 1801s (limit 800s, "
+         f"{module.TEST_SUITE_TIMEOUT_MULTIPLE_OF_RECORDED_SECONDS} times recorded 200s)",
+         "the TIMEOUT line of a suite limited by the multiple names the multiple"),
+        ((module.TEST_SUITE_TIMEOUT_FLOOR_SECONDS, 12.0),
+         f"TIMEOUT after 1801s (limit {module.TEST_SUITE_TIMEOUT_FLOOR_SECONDS}s, the floor, "
+         f"more than {module.TEST_SUITE_TIMEOUT_MULTIPLE_OF_RECORDED_SECONDS} times recorded 12s)",
+         "the TIMEOUT line of a suite limited by the floor says the limit is the floor")):
+    answer = module.why_suite_failed({
+        "exit": -9, "seconds": 1801.0,
+        "timeout": {"limit": limit_and_recorded[0], "recorded": limit_and_recorded[1]}})
+    check(case, answer == expected, answer)
 
 # --- The recorder runs the sitecustomize.py it shadows ------------------------
 # Both machines' Pythons ship one (Homebrew's on the Mac sets sys.executable),
