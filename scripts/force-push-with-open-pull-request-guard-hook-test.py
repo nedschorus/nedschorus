@@ -852,6 +852,10 @@ for case_name, command in [
      "X=\"$(b \"$(case x in x) git push --force origin the-pr-branch;; esac)\")\""),
     ("a backticked command inside double quotes is read: the force push in it is found",
      "echo $'it\\'s' \"'`git push --force origin the-pr-branch`\""),
+    ("a line continuation inside <( is removed, as bash removes it: the force push is found",
+     "git push --repo <\\\n(true) --force origin the-pr-branch"),
+    ("an unquoted body ends at a delimiter a line continuation splits: the force push after is found",
+     "cat <<EOF\nE\\\nOF\ngit push --force origin the-pr-branch\nEOF"),
 ]:
     runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
     decision, reason = decide(command, runner)
