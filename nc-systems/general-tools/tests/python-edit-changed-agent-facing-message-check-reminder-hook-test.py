@@ -96,6 +96,15 @@ def write_then_run(cwd, file_path, content):
                      "tool_response": {}})
 
 
+FAST_READ_COMMAND_PREFIX = "  python3 nc-systems/cold-read/cold-read-fast-read.py --target "
+
+
+def fast_read_targets(text):
+    """The --target files of the cold-read-fast-read commands a reminder gives."""
+    return [Path(line[len(FAST_READ_COMMAND_PREFIX):]) for line in text.split("\n")
+            if line.startswith(FAST_READ_COMMAND_PREFIX)]
+
+
 def silent(result):
     return result.returncode == 0 and result.stdout.strip() == "" and result.stderr.strip() == ""
 
@@ -135,10 +144,10 @@ REMINDER_INSTRUCTION_LINES = (
     "that asserts the message's text.",
     "Each command prints the path of its report; the report's directory under "
     "cold-read-records/ is that message's cold-read-record.",
-    "If a report shows the message misread, rewrite the message and run its command again.",
-    "Name each message's cold-read-record in the pull request's description; the merge lane "
-    "runs its own cold-read-fast-read only on a message the description names no "
-    "cold-read-record for.",
+    "If a report shows the message misread, rewrite the message, then run the command from "
+    "the reminder your rewrite brings; a command from an earlier reminder names the earlier "
+    "text, and its file is gone once that text is.",
+    "Name each message's cold-read-record in the pull request's description.",
     "If every listed message passes, carry on; nothing needs saying to the user.",
     "If your edit changed a message held in a local variable or built any other way, check "
     "that message against the page too.",
@@ -176,20 +185,36 @@ with tempfile.TemporaryDirectory() as temporary:
     check("the reminder names the page by path", PAGE_PATH in text, text)
     for line in REMINDER_INSTRUCTION_LINES:
         check(f"the reminder carries the instruction line: {line[:60]}", line in text.split("\n"), text)
-    target = hook_temporary_directory / FAST_READ_TARGET_DIRECTORY_NAME / \
-        "scripts-tool-line-8-agent-facing-message.md"
-    check("the reminder gives the changed message's cold-read-fast-read command",
-          "  python3 nc-systems/cold-read/cold-read-fast-read.py --target " + str(target)
-          in text.split("\n"), text)
+    targets = fast_read_targets(text)
+    check("the reminder gives the changed message's cold-read-fast-read command, its file named "
+          "by path and line under the temporary directory",
+          len(targets) == 1
+          and targets[0].parent.parent == hook_temporary_directory / FAST_READ_TARGET_DIRECTORY_NAME
+          and targets[0].name.startswith("scripts-tool-line-8-")
+          and targets[0].name.endswith("-agent-facing-message.md"), text)
     check("the command's file holds the changed message's text",
-          target.is_file() and target.read_text(encoding="utf-8") == "first message, reworded\n",
-          target)
+          len(targets) == 1 and targets[0].read_text(encoding="utf-8") == "first message, reworded\n",
+          targets)
     check("the reminder says why each message gets its cold-read-fast-read",
           "because a fresh reader shows whether an agent with only the message understands it"
           in text, text)
     check("the reminder names every name suffix and hook output key the collector recognizes",
           "_ADVICE, _INSTRUCTION, _LINE, _MESSAGE, _NOTICE, _REASON, _REFUSAL or _TEMPLATE" in text
           and "additionalContext, permissionDecisionReason, reason or stopReason" in text, text)
+
+    reset()
+    reworded = COMMITTED_SOURCE.replace("second message to the agent", "second, reworded")
+    first_targets = fast_read_targets(agent_text(edit_then_run(
+        repository, program, COMMITTED_SOURCE, "second message to the agent", "second, reworded")))
+    result = edit_then_run(repository, program, reworded, 'sys.stderr.write("second, reworded\\n")',
+                           'sys.stderr.write(\n        "second, rewritten\\n")')
+    second_targets = fast_read_targets(agent_text(result))
+    check("a rewrite that moves a message's first line gives a command whose file holds the new text",
+          len(second_targets) == 1 and "scripts/tool.py:10  second, rewritten" in agent_text(result)
+          and second_targets[0].read_text(encoding="utf-8") == "second, rewritten\n",
+          (second_targets, result))
+    check("after a rewrite, the earlier reminder's command no longer reads the earlier text",
+          len(first_targets) == 1 and not first_targets[0].exists(), first_targets)
 
     reset()
     result = edit_then_run(repository, program, COMMITTED_SOURCE, '"first message to the agent"',
@@ -207,9 +232,67 @@ with tempfile.TemporaryDirectory() as temporary:
     check("an Edit that only removes a message is silent", silent(result), result)
 
     reset()
-    result = edit_then_run(repository, program, COMMITTED_SOURCE, '"on three lines "\n', "")
+    result = edit_then_run(repository, program, COMMITTED_SOURCE, '          "on three lines "\n', "")
     check("an Edit that deletes one line of a message held on several lines lists the message",
           "scripts/tool.py:10  a message held of source" in agent_text(result), result)
+
+    reset()
+    reworded = COMMITTED_SOURCE.replace("first message to the agent", "first message, reworded")
+    edit_then_run(repository, program, COMMITTED_SOURCE, "first message to the agent",
+                  "first message, reworded")
+    result = edit_then_run(repository, program, reworded, "second message to the agent",
+                           "second, reworded")
+    text = agent_text(result)
+    check("a second Edit lists only its own message, not an earlier uncommitted change",
+          "scripts/tool.py:9  second, reworded" in text and "first message" not in text
+          and "changed 1 " in text, text)
+    result = edit_then_run(repository, program, reworded.replace(
+        "second message to the agent", "second, reworded"), "LIMIT = 3", "LIMIT = 4")
+    check("an Edit of code after earlier uncommitted message changes is silent", silent(result), result)
+
+    reset()
+    earlier_targets = fast_read_targets(agent_text(edit_then_run(
+        repository, program, COMMITTED_SOURCE, "second message to the agent", "second, reworded")))
+    result = edit_then_run(repository, program, COMMITTED_SOURCE.replace(
+        "second message to the agent", "second, reworded"), "LIMIT = 3\n", "LIMIT = 3\nOTHER = 4\n")
+    moved_targets = sorted(earlier_targets[0].parent.iterdir()) if earlier_targets else []
+    check("an Edit that moves an earlier-listed message, writing no message, is silent and moves "
+          "the message's file to the message's new line",
+          silent(result) and len(earlier_targets) == 1 and not earlier_targets[0].exists()
+          and len(moved_targets) == 1 and moved_targets[0].name.startswith("scripts-tool-line-10-")
+          and moved_targets[0].read_text(encoding="utf-8") == "second, reworded\n",
+          (result, moved_targets))
+
+    reset()
+    both_old = 'print("first message to the agent")\n    sys.stderr.write("second message to the agent\\n")'
+    both_new = 'print("first, reworded")\n    sys.stderr.write("second, reworded\\n")'
+    both_targets = fast_read_targets(agent_text(edit_then_run(
+        repository, program, COMMITTED_SOURCE, both_old, both_new)))
+    both_source = COMMITTED_SOURCE.replace(both_old, both_new)
+    result = edit_then_run(repository, program, both_source, '    print("first, reworded")\n', "")
+    check("when another changed message moves onto a removed message's line, the removed message's "
+          "command reads no file rather than the other message",
+          silent(result) and len(both_targets) == 2 and both_targets[0].name.startswith("scripts-tool-line-8-")
+          and not both_targets[0].exists(), (result, both_targets))
+
+    # Root writes through a 0o500 directory, so the refresh cannot fail there.
+    if os.geteuid() == 0:
+        print("SKIP  earlier targets that cannot be brought up to date: this test runs as root")
+    else:
+        reset()
+        locked_targets = fast_read_targets(agent_text(edit_then_run(
+            repository, program, COMMITTED_SOURCE, "second message to the agent", "second, reworded")))
+        locked_directory = locked_targets[0].parent if locked_targets else Path(temporary) / "none"
+        locked_directory.chmod(0o500)
+        try:
+            result = edit_then_run(repository, program, COMMITTED_SOURCE.replace(
+                "second message to the agent", "second, reworded"), "LIMIT = 3\n", "LIMIT = 3\nOTHER = 4\n")
+        finally:
+            locked_directory.chmod(0o700)
+        text = agent_text(result)
+        check("earlier targets that cannot be brought up to date are reported as not inspected, exit 0",
+              result.returncode == 0 and "could not inspect your Edit of scripts/tool.py" in text
+              and "fast-read target files" in text and "could not be brought up to date" in text, result)
 
     reset()
     result = edit_then_run(repository, program, COMMITTED_SOURCE,
@@ -287,10 +370,28 @@ with tempfile.TemporaryDirectory() as temporary:
           and "and 10 more in scripts/many.py, not listed here" in text
           and "changed 30 " in text, text)
     long_messages = "".join(f'print("{"x" * 5000} {index}")\n' for index in range(30))
-    result = write_then_run(repository, repository / "scripts" / "long.py", long_messages)
+    long_path = repository / "nc-systems" / ("a-directory-with-a-long-name-" * 3) / \
+        "python-edit-changed-agent-facing-message-check-reminder-hook.py"
+    long_temporary_directory = Path(temporary) / ("a-long-temporary-directory-name-" * 4)
+    long_temporary_directory.mkdir()
+    long_path.parent.mkdir(parents=True)
+    long_path.write_text(long_messages, encoding="utf-8")
+    result = run_hook({"session_id": "test", "cwd": str(repository), "hook_event_name": "PostToolUse",
+                       "tool_name": "Write", "tool_input": {"file_path": str(long_path),
+                                                            "content": long_messages},
+                       "tool_response": {}}, temporary_directory=long_temporary_directory)
     text = agent_text(result)
-    check("the reminder stays under Claude Code's 10,000-character cut, first lines truncated",
-          0 < len(text) < 10000 and ("x" * 100 + "...") in text, len(text))
+    check("with a long path and a long temporary directory, the reminder stays under Claude Code's "
+          "10,000-character cut by listing fewer messages, first lines truncated",
+          0 < len(text) < 10000 and ("x" * 100 + "...") in text and " more in nc-systems/" in text
+          and "Before you write or change an agent-facing-message from now on" in text, len(text))
+
+    result = write_then_run(repository, repository / "scripts" / "joined.py",
+                            'print("stopped: " + NAME + ".")\nprint("" + NAME)\n')
+    text = agent_text(result)
+    check("a string with no letter in it, such as a separator joined with +, is not listed",
+          "scripts/joined.py:1  stopped:" in text and "scripts/joined.py:1  ." not in text
+          and "changed 1 " in text, text)
 
     reset()
     not_a_directory = Path(temporary) / "tmp-whose-target-directory-is-a-file"

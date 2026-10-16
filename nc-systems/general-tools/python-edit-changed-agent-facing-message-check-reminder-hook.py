@@ -6,6 +6,15 @@ its cold-read-fast-read command: the hook writes each message's text to a file
 of its own under the temporary directory, because cold-read-fast-read.py reads
 only files, and the file's name becomes the cold-read-record's name.
 
+Each source file in each checkout has its own target directory. Each hook run
+that inspects the file and writes a message, or finds that directory present,
+refreshes it to hold
+one file for each message in the source file whose text is not at HEAD, named
+by the message's line and a digest of its text, and removes every other file
+there. A command from an earlier reminder therefore reads either the message's
+current text or no file at all, which cold-read-fast-read.py refuses, never a
+text the agent has since rewritten or moved with an Edit, MultiEdit or Write.
+
 A PostToolUse hook: the act has happened, and the agent rewrites any message
 that fails the page. The reminder goes in hookSpecificOutput.additionalContext,
 which the agent reads next; a PostToolUse hook's plain stdout reaches only the
@@ -22,7 +31,9 @@ a "-" line left inside a message, so a message shortened by a deleted line
 counts; a Write wrote every line. A message the tool call removed needs no
 reminder.
 
-The hook never blocks and always exits 0. When it cannot inspect the file,
+The hook never blocks, and main always exits 0; the two modules loaded below
+run before main, so a missing or broken module exits 1 with a traceback, which
+Claude Code treats as a non-blocking error. When it cannot inspect the file,
 because the payload has no usable structuredPatch, the file cannot be read, git
 cannot read HEAD or the hook itself fails, the agent is told that no message
 was listed and to check its changed messages by hand. A file that does not
@@ -35,6 +46,7 @@ checkout is compared with that worktree's HEAD.
 """
 
 import ast
+import hashlib
 import importlib.util
 import json
 import re
@@ -63,6 +75,9 @@ FAST_READ_TARGET_DIRECTORY_NAME = "agent-facing-message-fast-read-targets"
 EDIT_TOOL_NAMES = ("Edit", "MultiEdit")
 INSPECTED_TOOL_NAMES = (*EDIT_TOOL_NAMES, "Write")
 LISTED_MESSAGE_LIMIT = 20
+# Claude Code shows the agent only a 2,000-character preview of hook output
+# longer than 10,000 characters.
+REMINDER_CHARACTER_LIMIT = 9500
 FIRST_LINE_CHARACTER_LIMIT = 100
 REASON_CHARACTER_LIMIT = 300
 GIT_TIMEOUT_SECONDS = 10
@@ -94,10 +109,10 @@ FAST_READ_MESSAGE_TEMPLATE = (
     "{commands}\n"
     "Each command prints the path of its report; the report's directory under "
     "cold-read-records/ is that message's cold-read-record.\n"
-    "If a report shows the message misread, rewrite the message and run its command again.\n"
-    "Name each message's cold-read-record in the pull request's description; the merge lane "
-    "runs its own cold-read-fast-read only on a message the description names no "
-    "cold-read-record for."
+    "If a report shows the message misread, rewrite the message, then run the command from "
+    "the reminder your rewrite brings; a command from an earlier reminder names the earlier "
+    "text, and its file is gone once that text is.\n"
+    "Name each message's cold-read-record in the pull request's description."
 )
 FAST_READ_FILES_NOT_WRITTEN_TEMPLATE = (
     "This hook could not write the listed messages to files for their cold-read-fast-read, "
@@ -106,8 +121,7 @@ FAST_READ_FILES_NOT_WRITTEN_TEMPLATE = (
     "own and run " + FAST_READ_COMMAND.format(target="<that file>") + " from your checkout "
     "on each.\n"
     "Name each message's cold-read-record, the report's directory under cold-read-records/, "
-    "in the pull request's description; the merge lane runs its own cold-read-fast-read "
-    "only on a message the description names no cold-read-record for."
+    "in the pull request's description."
 )
 LISTING_LINE_TEMPLATE = "  {path}:{line}  {first_line}"
 MORE_NOT_LISTED_LINE_TEMPLATE = (
@@ -134,13 +148,6 @@ FILE_DID_NOT_PARSE_MESSAGE_TEMPLATE = (
 
 class HookCouldNotInspect(Exception):
     """The reason, worded to follow "because", that the edit was not inspected."""
-
-
-def repository_relative_path(file_path: str, working_directory: str):
-    """The file's path relative to the checkout holding working_directory, or
-    None when either is outside a checkout or the file is outside that checkout."""
-    found = checkout_path.checkout_relative_path(file_path, Path(working_directory))
-    return None if found is None else found[1]
 
 
 def edit_written_lines_and_gaps(tool_response):
@@ -205,55 +212,79 @@ def first_line_of(text: str) -> str:
     return first_line
 
 
-def changed_message_entries(payload, file_path: Path, source: str):
-    entries = collector.agent_facing_string_nodes_in_source(source)
-    if payload["tool_name"] in EDIT_TOOL_NAMES:
-        added, gaps = edit_written_lines_and_gaps(payload.get("tool_response"))
-        entries = [entry for entry in entries if entry_was_written(entry, added, gaps)]
-    if not entries:
-        return []
+def messages_not_at_head(entries, file_path: Path):
+    """The entries whose text the file at HEAD holds in no message, each line
+    and text once; an entry with no letter in it, such as a separator joined
+    into a message with +, is no message for a fast read."""
     texts_at_head = message_texts_at_head(file_path)
     changed, seen = [], set()
     for entry in entries:
-        if entry["text"] in texts_at_head or (entry["line"], entry["text"]) in seen:
+        key = (entry["line"], entry["text"])
+        if entry["text"] in texts_at_head or key in seen or not re.search(r"[A-Za-z]", entry["text"]):
             continue
-        seen.add((entry["line"], entry["text"]))
+        seen.add(key)
         changed.append(entry)
     return changed
 
 
-def fast_read_target_path(directory: Path, relative_path: str, line: int) -> Path:
+def fast_read_target_directory(checkout_root: Path, relative_path: str) -> Path:
+    """The directory of one source file's targets. Checkouts on one machine
+    share the temporary directory, and two source paths can share a slug, so
+    the name is a digest of both."""
+    digest = hashlib.sha256(f"{checkout_root}\0{relative_path}".encode()).hexdigest()[:16]
+    return Path(tempfile.gettempdir()) / FAST_READ_TARGET_DIRECTORY_NAME / digest
+
+
+def fast_read_target_path(directory: Path, relative_path: str, entry) -> Path:
     """The file for one message; its name becomes the cold-read-record's name."""
     slug = re.sub(r"[^A-Za-z0-9]+", "-", relative_path.removesuffix(".py")).strip("-")
-    return directory / f"{slug}-line-{line}-agent-facing-message.md"
+    digest = hashlib.sha256(entry["text"].encode()).hexdigest()[:8]
+    return directory / f"{slug}-line-{entry['line']}-{digest}-agent-facing-message.md"
 
 
-def fast_read_text(relative_path, entries):
-    """The fast-read instruction, after writing each message's text to its own file."""
-    directory = Path(tempfile.gettempdir()) / FAST_READ_TARGET_DIRECTORY_NAME
-    try:
-        directory.mkdir(parents=True, exist_ok=True)
-        commands = []
-        for entry in entries:
-            target = fast_read_target_path(directory, relative_path, entry["line"])
-            target.write_text(entry["text"].rstrip("\n") + "\n", encoding="utf-8")
-            commands.append("  " + FAST_READ_COMMAND.format(target=target))
-    except OSError as error:
-        return FAST_READ_FILES_NOT_WRITTEN_TEMPLATE.format(
-            reason=f"{type(error).__name__}: {error}"[:REASON_CHARACTER_LIMIT])
-    return FAST_READ_MESSAGE_TEMPLATE.format(commands="\n".join(commands))
+def fast_read_targets_refreshed(directory: Path, relative_path: str, changed):
+    """Write a target for each changed message and remove every other file in
+    the directory. Returns each changed message's target path, keyed by line
+    and text."""
+    targets = {(entry["line"], entry["text"]): fast_read_target_path(directory, relative_path, entry)
+               for entry in changed}
+    if not targets and not directory.is_dir():
+        return targets
+    directory.mkdir(parents=True, exist_ok=True)
+    for stale in set(directory.iterdir()) - set(targets.values()):
+        stale.unlink()
+    for (_, text), target in targets.items():
+        target.write_text(text.rstrip("\n") + "\n", encoding="utf-8")
+    return targets
 
 
-def reminder_text(tool_name, relative_path, entries):
+def reminder_text(tool_name, relative_path, entries, targets, targets_error):
+    """The reminder, listing as many entries as fit under REMINDER_CHARACTER_LIMIT."""
+    for listed_count in range(min(len(entries), LISTED_MESSAGE_LIMIT), 0, -1):
+        text = reminder_text_listing(tool_name, relative_path, entries, listed_count, targets,
+                                     targets_error)
+        if len(text) <= REMINDER_CHARACTER_LIMIT:
+            break
+    return text
+
+
+def reminder_text_listing(tool_name, relative_path, entries, listed_count, targets, targets_error):
+    listed = entries[:listed_count]
     listing = [LISTING_LINE_TEMPLATE.format(path=relative_path, line=entry["line"],
                                             first_line=first_line_of(entry["text"]))
-               for entry in entries[:LISTED_MESSAGE_LIMIT]]
-    if len(entries) > LISTED_MESSAGE_LIMIT:
+               for entry in listed]
+    if len(entries) > listed_count:
         listing.append(MORE_NOT_LISTED_LINE_TEMPLATE.format(
-            more=len(entries) - LISTED_MESSAGE_LIMIT, path=relative_path))
+            more=len(entries) - listed_count, path=relative_path))
+    if targets_error is None:
+        fast_read = FAST_READ_MESSAGE_TEMPLATE.format(commands="\n".join(
+            "  " + FAST_READ_COMMAND.format(target=targets[(entry["line"], entry["text"])])
+            for entry in listed))
+    else:
+        fast_read = FAST_READ_FILES_NOT_WRITTEN_TEMPLATE.format(reason=targets_error)
     return REMINDER_MESSAGE_TEMPLATE.format(
         tool=tool_name, path=relative_path, count=len(entries), listing="\n".join(listing),
-        fast_read=fast_read_text(relative_path, entries[:LISTED_MESSAGE_LIMIT]),
+        fast_read=fast_read,
         suffixes=words_joined_with_or(collector.AGENT_STRING_NAME_SUFFIXES),
         keys=words_joined_with_or(collector.AGENT_FACING_HOOK_OUTPUT_KEYS))
 
@@ -262,8 +293,11 @@ def words_joined_with_or(words):
     return ", ".join(words[:-1]) + " or " + words[-1]
 
 
-def inspection_text(payload, relative_path):
-    """The text to hand the agent, or None when the edit changed no message."""
+def inspection_text(payload, checkout_root: Path, relative_path: str):
+    """The text to hand the agent, or None when the edit changed no message.
+    Refreshes the source file's fast-read targets whenever the edit wrote a
+    message or targets from an earlier reminder exist, since an edit that
+    writes no message can still move one."""
     tool_name = payload["tool_name"]
     file_path = Path(payload["tool_input"]["file_path"])
     try:
@@ -274,8 +308,26 @@ def inspection_text(payload, relative_path):
         ast.parse(source)
     except (SyntaxError, ValueError) as error:
         return FILE_DID_NOT_PARSE_MESSAGE_TEMPLATE.format(path=relative_path, tool=tool_name, error=error)
-    entries = changed_message_entries(payload, file_path, source)
-    return reminder_text(tool_name, relative_path, entries) if entries else None
+    entries = collector.agent_facing_string_nodes_in_source(source)
+    written = entries
+    if tool_name in EDIT_TOOL_NAMES:
+        added, gaps = edit_written_lines_and_gaps(payload.get("tool_response"))
+        written = [entry for entry in entries if entry_was_written(entry, added, gaps)]
+    directory = fast_read_target_directory(checkout_root, relative_path)
+    if not written and not directory.is_dir():
+        return None
+    changed = messages_not_at_head(entries, file_path)
+    written_ids = {id(entry) for entry in written}
+    listed = [entry for entry in changed if id(entry) in written_ids]
+    try:
+        targets, targets_error = fast_read_targets_refreshed(directory, relative_path, changed), None
+    except OSError as error:
+        if not listed:
+            raise HookCouldNotInspect(
+                f"the earlier reminders' fast-read target files in {directory} could not be "
+                f"brought up to date: {type(error).__name__}: {error}") from error
+        targets, targets_error = {}, f"{type(error).__name__}: {error}"[:REASON_CHARACTER_LIMIT]
+    return reminder_text(tool_name, relative_path, listed, targets, targets_error) if listed else None
 
 
 def main() -> int:
@@ -291,11 +343,12 @@ def main() -> int:
     if (not isinstance(file_path, str) or not file_path.endswith(".py")
             or not isinstance(working_directory, str)):
         return 0
-    relative_path = repository_relative_path(file_path, working_directory)
-    if relative_path is None or collector.path_is_test_file(relative_path):
+    found = checkout_path.checkout_relative_path(file_path, Path(working_directory))
+    if found is None or collector.path_is_test_file(found[1]):
         return 0
+    checkout_root, relative_path = found
     try:
-        text = inspection_text(payload, relative_path)
+        text = inspection_text(payload, checkout_root, relative_path)
     except Exception as error:
         reason = str(error) if isinstance(error, HookCouldNotInspect) else (
             f"the hook failed with {type(error).__name__}: {error}")
