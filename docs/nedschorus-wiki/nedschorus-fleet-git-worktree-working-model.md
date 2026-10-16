@@ -466,7 +466,7 @@ rulings; listed here to keep the numbering complete.
 | R10 | Instruction files must be approved-by-walk | block | built-live; shell gap ruled unguarded |
 | R11 | Backups read-only to agents | block (no lane) | built-live; lane removed |
 | R12 | Agents never push to main | impossible (account tier) + text (agent tier) | partial; required reviews live 2026-08-20; C2 pending |
-| R13 | PR process + deputization | text (process) | built-live; deputization in CLAUDE.md, PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedschorus/nedschorus/pull/93) |
+| R13 | PR process + deputization | text (process) | built-live; deputization recorded at R13, PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedschorus/nedschorus/pull/93) |
 | R14 | One branch, one writer | default | satisfied by defaults; push check retired |
 | R15 | Landed changes reach running agent-seats | default + block (attention) | built, PRs [checkout freshness: mid-session catch-up Stop hook, status-line display, reference-checkout pull](https://github.com/nedschorus/nedschorus/pull/87)/PR [catch-up: the abort-failed state alone is delivered to the agent as a forced turn](https://github.com/nedschorus/nedschorus/pull/90) |
 | R16 | Binary updates at launch only | default | built-live; version check closed 2026-08-22, PR [Launcher update banner removed: background auto-update off fleet-wide, launch stays the one update moment](https://github.com/nedschorus/nedschorus/pull/135) — banner off via settings env |
