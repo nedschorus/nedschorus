@@ -5,6 +5,7 @@ Usage:
   scripts/log-store-past-discussions-regex-search-newest-first.py PATTERN
       [--kind KIND]... [--seat SUBSTRING] [--machine {ned-box,mac}]
       [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--context N] [--limit N] [--skip N] [--jobs N]
+      [--include-own-session]
 
 WHAT IT SEARCHES. Five kinds of record in the log-store,
 /home/nedlern/nedschorus-logs/ on ned-box:
@@ -38,9 +39,12 @@ shows them, its file and line, and the matching line with --context lines
 either side (default 1); a user's message is shown as an excerpt around the
 match. The date is the one in the file's name for walk, cold-read-records and
 analysis, or the file's modification date when the name has none; the time
-the user sent a message; and for a session dialog the session's last
-activity, the last timestamp in its transcript, since a dialog's turns carry
-no time and the dialog file's modification time is when it was last written. A walk file's agent-seat is
+the user sent a message; and for a session dialog the time of the turn that
+holds the matching line: a dialog's turns carry no time, so the line is found
+in the session's transcript, and the first record that holds it gives the
+time. A line shorter than TURN_LOOKUP_MINIMUM_CHARACTERS, or one no record
+holds, is dated by the session's last activity, the last timestamp in its
+transcript, and the hit says so. A walk file's agent-seat is
 the one its header says ran the approval-walk. A session's agent-seat is read
 from its project-key, the transcript folder Claude Code names after the
 session's directory.
@@ -49,8 +53,12 @@ FILTERS. --kind limits the search to the kinds named. --seat keeps sessions
 whose project-key contains SUBSTRING, and --machine those of one machine;
 either one searches only session-dialogs and user-messages, the two kinds
 that record a session. --since and --until bound the hit's date, inclusive,
-in UTC; a session dialog is kept when the session was active at any time in
-the window. Hits come newest first; --limit (default 30) caps how many are
+in UTC; a session dialog's hit dated by the session's last activity is kept
+when the session was active at any time in the window. The agent-session
+running the search, which $CLAUDE_CODE_SESSION_ID names, is left out, its
+dialog and its messages both, since its own hits only echo the search;
+--include-own-session searches it too, and the closing lines say which. Hits
+come newest first, hits with one date in file and line order; --limit (default 30) caps how many are
 shown and --skip passes over the first N, so the closing line says how to see
 the next ones.
 
@@ -67,7 +75,8 @@ FROM THE MAC. The whole log-store, the Mac's mirrored transcripts and session
 dialogs included, is on ned-box. When the log-store is not on this machine
 and this machine is not ned-box, the program runs ned-box's copy,
 /home/nedlern/Projects/nedschorus/scripts/<this program>, over
-`ssh nedlern@ned-box` with the same arguments. Reading eleven gigabytes of
+`ssh nedlern@ned-box` with the same arguments, and passes the running
+agent-session's identity, which ned-box's copy cannot see. Reading eleven gigabytes of
 transcripts through the Mac's mount /Volumes/nedhome/nedschorus-logs would
 be slow, and ripgrep is not reliably on the Mac's PATH.
 
@@ -165,6 +174,11 @@ SEAT_IN_PROJECT_KEY = re.compile(r"-agents-(.+?)(?:--claude-worktrees-.*|-worktr
 DIALOG_FILE_SUFFIX = "-dialog-complete.md"
 MODIFICATION_TIME_MARGIN_SECONDS = 2
 TRANSCRIPT_TAIL_BYTES = 64 * 1024
+# Shorter lines, such as "yes", occur in too many records to say which turn holds them.
+TURN_LOOKUP_MINIMUM_CHARACTERS = 12
+TURN_LOOKUP_MAXIMUM_CHARACTERS = 160
+OWN_SESSION_VARIABLE = "CLAUDE_CODE_SESSION_ID"
+NOT_FOUND_IN_TRANSCRIPT_NOTE = "session's last activity: its turn was not found in the transcript"
 
 
 def load_handoff_extractor():
@@ -389,16 +403,16 @@ def file_hits(root, kinds, pattern, context, failures):
             start_byte = submatches[0]["start"] if submatches else 0
             # ripgrep counts bytes; the excerpt counts characters.
             start = len(text.encode("utf-8")[:start_byte].decode("utf-8", "ignore"))
-            matches.append((path, number, excerpt(text, start)))
+            matches.append((path, number, excerpt(text, start), text))
     hits = []
     facts_by_file = {}
-    for path_text, number, shown in matches:
+    for path_text, number, shown, text in matches:
         if path_text not in facts_by_file:
             facts_by_file[path_text] = file_facts(Path(path_text), root, failures)
         if facts_by_file[path_text] is None:
             continue
         nearby = lines_by_file[path_text]
-        hit = {"path": path_text, "line": number, "shown": shown,
+        hit = {"path": path_text, "line": number, "shown": shown, "text": text,
                "before": [(n, nearby[n][:CONTEXT_CHARACTERS]) for n in range(number - context, number)
                           if n in nearby],
                "after": [(n, nearby[n][:CONTEXT_CHARACTERS]) for n in range(number + 1, number + context + 1)
@@ -413,19 +427,101 @@ def session_transcript(root, hit):
     return root / "transcripts" / hit["machine"] / "projects" / hit["project_key"] / f"{session_id}.jsonl"
 
 
-def dated_file_hits(hits, root, seat, machine, since, until, failures):
+def turn_lookup_needle(line):
+    """The text to find a dialog line's turn by in the raw transcript, or None when it is too short.
+
+    A dialog line is a line of a message's text, which the transcript holds as a JSON string.
+    """
+    text = line.strip()
+    if len(text) < TURN_LOOKUP_MINIMUM_CHARACTERS:
+        return None
+    return json.dumps(text[:TURN_LOOKUP_MAXIMUM_CHARACTERS], ensure_ascii=False)[1:-1]
+
+
+def turn_times(transcript, needles, failures):
+    """Map each needle to the timestamp of the first transcript record that holds it.
+
+    A needle no record holds is left out. One ripgrep pass reads the transcript.
+    """
+    if not needles:
+        return {}
+    arguments = ["--no-filename", "--fixed-strings"]
+    for needle in needles:
+        arguments += ["-e", needle]
+    ripgrep = os.environ.get(RIPGREP_OVERRIDE) or "rg"
+    try:
+        completed = subprocess.run([ripgrep, "--no-ignore", "--hidden", *arguments, "--", str(transcript)],
+                                   stdin=subprocess.DEVNULL, capture_output=True)
+    except FileNotFoundError:
+        raise RipgrepMissing(ripgrep)
+    said = completed.stderr.decode("utf-8", "replace").strip()
+    if completed.returncode not in (0, 1) or said:
+        failures.append(f"could not read the transcript {transcript} to date the session dialog's hits "
+                        f"by their turns: {said or f'ripgrep exited {completed.returncode}'}")
+    found = {}
+    waiting = set(needles)
+    for line in completed.stdout.decode("utf-8", "replace").splitlines():
+        if not waiting:
+            break
+        stamp = timestamp_of(line)
+        if not stamp:
+            continue
+        for needle in [n for n in waiting if n in line]:
+            found[needle] = stamp
+            waiting.discard(needle)
+    return found
+
+
+def session_id_of(path):
+    name = Path(path).name
+    if name.endswith(DIALOG_FILE_SUFFIX):
+        return name[:-len(DIALOG_FILE_SUFFIX)]
+    return Path(path).stem
+
+
+def dialog_turn_dates(hits, root, failures):
+    """Set each session-dialog hit's "turn_date": its own turn's timestamp, or "" when not found."""
+    needles_by_transcript = {}
+    for hit in hits:
+        hit["needle"] = turn_lookup_needle(hit.get("text", ""))
+        if hit["needle"]:
+            needles_by_transcript.setdefault(session_transcript(root, hit), set()).add(hit["needle"])
+    times = {}
+    if needles_by_transcript:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(needles_by_transcript))) as threads:
+            futures = {transcript: threads.submit(turn_times, transcript, sorted(needles), failures)
+                       for transcript, needles in needles_by_transcript.items() if transcript.is_file()}
+            for transcript, future in futures.items():
+                times[transcript] = future.result()
+    for hit in hits:
+        hit["turn_date"] = times.get(session_transcript(root, hit), {}).get(hit["needle"], "")
+
+
+def dated_file_hits(hits, root, seat, machine, since, until, failures, own_session=""):
     """Fill in each hit's date and drop those outside the filters."""
     kept = []
     modification_dates = {}
     last_activities = {}
     starts = {}
+    selected = []
     for hit in hits:
-        path = Path(hit["path"])
         if hit["kind"] == SESSION_DIALOGS:
             if machine and hit["machine"] != machine:
                 continue
             if seat and seat not in hit["project_key"]:
                 continue
+            if own_session and session_id_of(hit["path"]) == own_session:
+                continue
+        selected.append(hit)
+    dialog_turn_dates([hit for hit in selected if hit["kind"] == SESSION_DIALOGS], root, failures)
+    for hit in selected:
+        path = Path(hit["path"])
+        if hit["kind"] == SESSION_DIALOGS and hit["turn_date"]:
+            hit["date"] = hit["turn_date"]
+            if not in_window(hit["date"], since, until):
+                continue
+            kept.append(hit)
+            continue
         if hit["kind"] == SESSION_DIALOGS:
             if hit["path"] not in last_activities:
                 transcript = session_transcript(root, hit)
@@ -446,7 +542,7 @@ def dated_file_hits(hits, root, seat, machine, since, until, failures):
             hit["date"] = modification_dates[hit["path"]]
         if hit["kind"] == SESSION_DIALOGS:
             if hit["date"]:
-                hit["date_note"] = "last activity"
+                hit["date_note"] = NOT_FOUND_IN_TRANSCRIPT_NOTE
             last = hit["date"][:10]
             if since and last and last < since:
                 continue
@@ -556,7 +652,7 @@ def every_transcript(directories, failures):
     return paths
 
 
-def transcript_candidates(root, pattern, seat, machine, since, failures):
+def transcript_candidates(root, pattern, seat, machine, since, failures, own_session=""):
     """The transcripts ripgrep finds the pattern in, as (path, modification time), in path order.
 
     Returns None when Python cannot read the pattern, since then no transcript is read.
@@ -588,6 +684,8 @@ def transcript_candidates(root, pattern, seat, machine, since, failures):
     for line in sorted(paths):
         path = Path(line)
         if seat and seat not in session_parts(path, root)[1]:
+            continue
+        if own_session and path.stem == own_session:
             continue
         try:
             modified = path.stat().st_mtime
@@ -751,6 +849,10 @@ def argument_parser():
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1, metavar="N",
                         help="read transcripts in N processes (default: one per core); 1 reads them in this one")
     parser.add_argument("--skip", type=int, default=0, metavar="N", help="pass over the newest N hits")
+    parser.add_argument("--include-own-session", action="store_true",
+                        help=f"also search the agent-session running this search, which ${OWN_SESSION_VARIABLE} "
+                             f"names and which is left out by default")
+    parser.add_argument("--own-session", metavar="SESSION_ID", default=None, help=argparse.SUPPRESS)
     return parser
 
 
@@ -759,9 +861,15 @@ def main(argv=None):
     parsed = argument_parser().parse_args(arguments)
     root_override = os.environ.get(ROOT_OVERRIDE)
     root = Path(root_override) if root_override else DEFAULT_LOG_STORE_ROOT
+    own_session = "" if parsed.include_own_session else (
+        parsed.own_session if parsed.own_session is not None else os.environ.get(OWN_SESSION_VARIABLE, ""))
     if not root.is_dir():
         if this_machine() != NED_BOX_HOSTNAME:
-            return run_on_ned_box_over_ssh(arguments)
+            forwarded = list(arguments)
+            if parsed.own_session is None and not parsed.include_own_session:
+                # ned-box's copy cannot see this machine's environment.
+                forwarded += ["--own-session", own_session]
+            return run_on_ned_box_over_ssh(forwarded)
         print(f"FAILED: there is no log-store at {root} on {this_machine()}, so nothing was searched.\n"
               f"The log-store is on ned-box at {DEFAULT_LOG_STORE_ROOT}; run this program there.",
               file=sys.stderr)
@@ -778,9 +886,10 @@ def main(argv=None):
             file_search = threads.submit(
                 lambda: dated_file_hits(
                     file_hits(root, kinds, parsed.pattern, max(0, parsed.context), file_failures),
-                    root, parsed.seat, parsed.machine, parsed.since, parsed.until, file_failures))
+                    root, parsed.seat, parsed.machine, parsed.since, parsed.until, file_failures,
+                    own_session))
             transcript_search = (threads.submit(transcript_candidates, root, parsed.pattern, parsed.seat,
-                                                parsed.machine, parsed.since, user_failures)
+                                                parsed.machine, parsed.since, user_failures, own_session)
                                  if USER_MESSAGES in kinds else None)
             hits = file_search.result()
             candidates = transcript_search.result() if transcript_search else None
@@ -795,6 +904,8 @@ def main(argv=None):
         return EXIT_FAILED
     failures = file_failures + user_failures
 
+    # Path and line break ties, so --skip pages through one fixed order.
+    hits.sort(key=lambda hit: (hit["path"], hit["line"] or 0))
     hits.sort(key=lambda hit: hit["date"] or "", reverse=True)
     shown = hits[parsed.skip:parsed.skip + parsed.limit] if parsed.limit > 0 else hits[parsed.skip:]
     for hit in shown:
@@ -813,6 +924,14 @@ def main(argv=None):
             print(f"{len(hits) - last} more: rerun with --skip {last}, or narrow with --since or --kind.")
     else:
         print(f"No hits shown of {len(hits)}. Searched: {searched}.")
+    if parsed.include_own_session:
+        pass
+    elif own_session:
+        print(f"Left out this agent-session's own records, session {own_session}; "
+              f"--include-own-session searches them too.")
+    else:
+        print(f"This agent-session could not be identified, since ${OWN_SESSION_VARIABLE} is not set, "
+              f"so its own records, if any, are among the hits.")
     for failure in failures:
         print(f"FAILED: {failure}", file=sys.stderr)
     if failures:

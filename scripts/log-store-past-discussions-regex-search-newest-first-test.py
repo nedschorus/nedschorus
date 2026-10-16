@@ -74,7 +74,7 @@ def build_store(root):
           "# Complete session dialog\n\n## Agent\n\nShall we start the heron plan?\n",
           mtime=DIALOG_IMPORTED_AT)
     write(root / "transcripts" / "ned-box" / "projects" / key / "s1.jsonl",
-          transcript_records(agent("Shall we?", "2026-09-28T09:00:00Z"),
+          transcript_records(agent("Shall we start the heron plan?", "2026-09-28T09:00:00Z"),
                              typed("go with the heron plan", "2026-09-28T09:01:00Z"),
                              agent("Done.", "2026-10-05T10:00:00Z")),
           mtime=epoch("2026-10-05"))
@@ -90,6 +90,8 @@ def build_store(root):
 
 def run(root, *arguments, environment=None):
     env = dict(os.environ)
+    # The agent-session running these tests is not one of the store's sessions.
+    env.pop("CLAUDE_CODE_SESSION_ID", None)
     env[PREFIX + "LOG_STORE_ROOT_OVERRIDE"] = str(root)
     env[PREFIX + "THIS_MACHINE_OVERRIDE"] = "ned-box"
     env.update(environment or {})
@@ -135,9 +137,10 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a hit shows its file and line, and its context",
           "fast-read.md:2" in result.stdout and "line one" in result.stdout
           and "line three" in result.stdout, result.stdout)
-    check("a session dialog is dated by its transcript's last timestamp, not the dialog's modification time",
-          "2026-10-05T10:00:00Z (last activity)  session-dialogs" in result.stdout
-          and "2026-12-01" not in result.stdout, result.stdout)
+    check("a session dialog's hit is dated by its own turn, not the session's last activity "
+          "or the dialog's modification time",
+          "2026-09-28T09:00:00Z  session-dialogs  ned-box  prime-intellect" in result.stdout
+          and "2026-10-05" not in result.stdout and "2026-12-01" not in result.stdout, result.stdout)
     check("a user's message carries the time he sent it",
           "2026-09-28T09:01:00Z  user-messages" in result.stdout, result.stdout)
 
@@ -149,12 +152,67 @@ with tempfile.TemporaryDirectory() as scratch:
     write(long_tail, transcript_records(agent("heron plan tail", "2026-10-04T00:00:00Z"),
                                         {"type": "summary", "summary": "x" * 300000}))
     write(root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-z" / "s8-dialog-complete.md",
-          "## Agent\n\nheron plan tail\n", mtime=DIALOG_IMPORTED_AT)
+          "## Agent\n\nheron plan tail, as the dialog words it\n", mtime=DIALOG_IMPORTED_AT)
     finding = run(root, "heron plan tail", "--kind", "session-dialogs")
     long_tail.unlink()
     (root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-z" / "s8-dialog-complete.md").unlink()
-    check("a transcript's last timestamp is found behind a long record with none",
-          "2026-10-04T00:00:00Z (last activity)" in finding.stdout, finding.stdout)
+    check("a hit whose turn is not in the transcript is dated by the session's last activity, found behind "
+          "a long record with none, and says so",
+          "2026-10-04T00:00:00Z (session's last activity: its turn was not found in the transcript)"
+          in finding.stdout, finding.stdout)
+
+    turns_key = "-home-nedlern-agents-turns"
+    turns_transcript = root / "transcripts" / "ned-box" / "projects" / turns_key / "s20.jsonl"
+    write(turns_transcript, transcript_records(
+        agent("We keep one egret seat for the egret work.", "2026-09-10T08:00:00Z"),
+        typed("yes, egret", "2026-09-10T08:01:00Z"),
+        agent("As agreed: We keep one egret seat for the egret work.", "2026-09-20T08:00:00Z"),
+        agent('The user said "keep the heron egret" today.', "2026-09-12T08:00:00Z"),
+        agent("Done.", "2026-10-20T08:00:00Z")))
+    turns_dialog = write(root / "session-dialogs" / "ned-box" / turns_key / "s20-dialog-complete.md",
+                         "## Agent\n\nWe keep one egret seat for the egret work.\n\n## User\n\nyes, egret\n\n"
+                         "## Agent\n\nThe user said \"keep the heron egret\" today.\n",
+                         mtime=DIALOG_IMPORTED_AT)
+    finding = run(root, "egret", "--kind", "session-dialogs")
+    check("a dialog line said twice is dated by the first record that holds it",
+          "2026-09-10T08:00:00Z  session-dialogs  ned-box  turns" in finding.stdout, finding.stdout)
+    check("a dialog line too short to tell its turn apart is dated by the session's last activity, and says so",
+          "2026-10-20T08:00:00Z (session's last activity" in finding.stdout, finding.stdout)
+    check("a dialog line holding a quote mark is found in the transcript, where JSON escapes it",
+          "2026-09-12T08:00:00Z  session-dialogs  ned-box  turns" in finding.stdout, finding.stdout)
+    finding = run(root, "one egret seat", "--kind", "session-dialogs", "--since", "2026-10-01")
+    check("--since bounds a dialog hit by its turn's date, not the session's last activity",
+          finding.returncode == 1 and not hit_headers(finding.stdout), finding.stdout)
+    finding = run(root, "one egret seat", "--kind", "session-dialogs", "--until", "2026-09-15")
+    check("--until keeps a dialog hit whose turn is inside the window",
+          finding.returncode == 0 and "2026-09-10T08:00:00Z" in finding.stdout, finding.stdout)
+    turns_dialog.unlink()
+    turns_transcript.unlink()
+
+    own = run(root, "heron plan", environment={"CLAUDE_CODE_SESSION_ID": "s1"})
+    check("the agent-session running the search is left out, its dialog and its messages both, and the "
+          "closing line says so",
+          own.returncode == 0 and "prime-intellect" not in own.stdout
+          and "Left out this agent-session's own records, session s1;" in own.stdout, own.stdout)
+    own = run(root, "heron plan", "--include-own-session", environment={"CLAUDE_CODE_SESSION_ID": "s1"})
+    check("--include-own-session searches the running agent-session too",
+          "session-dialogs  ned-box  prime-intellect" in own.stdout
+          and "user-messages  ned-box  prime-intellect" in own.stdout
+          and "Left out" not in own.stdout and "could not be identified" not in own.stdout, own.stdout)
+    own = run(root, "heron plan")
+    check("when the running agent-session cannot be identified, everything is searched and the closing "
+          "line says so",
+          "prime-intellect" in own.stdout and "could not be identified" in own.stdout, own.stdout)
+
+    write(root / "walk" / "a-tie-2026-09-01.md", "kingfisher\n")
+    write(root / "walk" / "b-tie-2026-09-01.md", "kingfisher\n")
+    first = run(root, "kingfisher", "--limit", "1")
+    second = run(root, "kingfisher", "--limit", "1", "--skip", "1")
+    (root / "walk" / "a-tie-2026-09-01.md").unlink()
+    (root / "walk" / "b-tie-2026-09-01.md").unlink()
+    check("hits with the same date keep one order, by file, so --skip pages through them",
+          "a-tie-2026-09-01.md" in first.stdout and "b-tie-2026-09-01.md" in second.stdout,
+          first.stdout + second.stdout)
 
     write(root / "session-dialogs" / ".dialogs-written-by-extractor-sha256", "heron plan\n")
     result = run(root, "heron plan", "--kind", "session-dialogs")
@@ -215,7 +273,8 @@ with tempfile.TemporaryDirectory() as scratch:
     finding = run(root, "start the heron plan", "--kind", "session-dialogs")
     hidden_transcript.chmod(0o644)
     check("a session dialog whose transcript cannot be read is a failure, not an undated hit",
-          finding.returncode == 2 and "to date the session dialog" in finding.stderr
+          finding.returncode == 2 and "to date the session dialog " in finding.stderr
+          and "to date the session dialog's hits by their turns" in finding.stderr
           and str(hidden) in finding.stderr, finding.stderr)
 
     walk_file = root / "walk" / "heron-walk-2026-10-01-minutes.md"
@@ -281,7 +340,8 @@ print(failures)
                   for h in headers)
           and any(h.startswith("2026-09-28") for h in headers)
           and any(h.startswith("2026-09-20") for h in headers), headers)
-    check("a session dialog active within the window is kept though its last activity is after it",
+    check("a session dialog hit whose turn is within the window is kept though its session's last "
+          "activity is after it",
           any("session-dialogs  ned-box  prime-intellect" in h for h in headers), headers)
     result = run(root, "heron plan", "--until", "2026-09-27", "--kind", "session-dialogs")
     check("a session dialog whose session began after --until is left out",
@@ -492,7 +552,13 @@ locked.chmod(0o644)
           result.returncode == 1 and "ARG:nedlern@ned-box" in result.stdout
           and ("ARG:python3 /home/nedlern/Projects/nedschorus/scripts/"
                "log-store-past-discussions-regex-search-newest-first.py "
-               "'heron'\"'\"'s plan' --seat prime") in result.stdout.splitlines(), result.stdout)
+               "'heron'\"'\"'s plan' --seat prime --own-session ''") in result.stdout.splitlines(), result.stdout)
+    result = run(Path(scratch) / "absent", "heron",
+                 environment={PREFIX + "THIS_MACHINE_OVERRIDE": "mac", PREFIX + "SSH_PROGRAM_OVERRIDE": echoing,
+                              "CLAUDE_CODE_SESSION_ID": "mac-session-1"})
+    check("from the Mac, the running agent-session is passed to ned-box's copy, which cannot see it",
+          any(line.endswith("newest-first.py heron --own-session mac-session-1")
+              for line in result.stdout.splitlines()), result.stdout)
 
 print(f"{'FAILED' if failures else 'all cases passed'}: {len(failures)} failure(s)")
 sys.exit(1 if failures else 0)
