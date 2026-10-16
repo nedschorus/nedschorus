@@ -78,6 +78,7 @@ CHILD_SHELL_NODE_TYPES = {"command_substitution", "process_substitution", "subsh
 # Nodes that are a command name followed by words, as a guard reads them.
 SIMPLE_COMMAND_NODE_TYPES = {"command", "declaration_command", "unset_command"}
 REDIRECT_NODE_TYPES = {"file_redirect", "heredoc_redirect", "herestring_redirect"}
+CLOSING_REDIRECTION_OPERATOR_TYPES = {">&-", "<&-"}
 # Nodes that only group commands; tree-sitter-bash's grouping of these is not trusted.
 SEQUENCE_NODE_TYPES = {"pipeline", "list", "redirected_statement", "negated_command"}
 PIPE_OPERATORS = {"|", "|&"}
@@ -625,8 +626,8 @@ def _bytes_restored(text, start, restored):
     """Return text, which starts at offset start of the text parsed, with its repairs undone.
 
     restored maps an offset in the text parsed to (length, written): the repair
-    put length bytes there in place of written, a case terminator written as ;;
-    or a backslash put before a misread #.
+    put length bytes there in place of written, a case terminator written as ;;,
+    a backslash put before a misread #, or a space in place of a closing redirection's -.
     """
     for offset in sorted((offset for offset in restored or ()
                           if start <= offset < start + len(text)), reverse=True):
@@ -760,12 +761,22 @@ def _redirect_destinations(node):
 def _redirect_parts(node, glob_markers, source, limit=None, restored=None):
     """Return ((operator, target), words after the target) for one file redirect.
 
-    source is the text parsed. limit, when given, is how many of its destination nodes belong to it.
+    A closing redirection, such as 2>&-, has no target, so its target is "" and
+    every word after it is returned as a word of the command. source is the text parsed. limit, when given, is how many of its destination nodes belong to it.
     """
-    operator = _descriptor_written_before(node) + "".join(
-        _text(child) for child in node.children
-        if child.type in ("file_descriptor",) or not child.is_named)
+    operator_parts = [child for child in node.children
+                      if child.type == "file_descriptor" or not child.is_named]
+    operator = _descriptor_written_before(node) + "".join(_text(child) for child in operator_parts)
+    closing = operator.endswith("&-")
+    if operator_parts and (restored or {}).get(operator_parts[-1].end_byte) == (1, b"-"):
+        # See _source_with_closing_redirections_standing_alone.
+        operator, closing = operator + "-", True
     destinations = _redirect_destinations(node)[:limit]
+    if closing and operator_parts:
+        # What tree-sitter-bash puts before a closing operator, as the 2 of `>f\\<tab>2>&-`,
+        # is not a word after it.
+        destinations = [destination for destination in destinations
+                        if destination.start_byte >= operator_parts[-1].end_byte]
     # tree-sitter-bash reads the words after a redirect's target as more targets; bash
     # passes them to the command as arguments. It also splits a target such as
     # `$X/push$i.log` after its last `$`, and before an escaped tab; a part that touches the one
@@ -779,10 +790,39 @@ def _redirect_parts(node, glob_markers, source, limit=None, restored=None):
         else:
             gap_words, prefix = _escaped_blank_words_in_gap(source[previous_end:destination.start_byte])
             words.extend(gap_words)
+            if (closing or words) and not prefix and _descriptor_of_next_redirect(destination, source):
+                # tree-sitter-bash reads the 0 of a later 0<f as a target; it is that redirect's
+                # descriptor. A redirection's first target, as the 1 of 2>&1>f, is its own, and
+                # escaped blanks before it would make it part of a word.
+                previous_end = destination.end_byte
+                continue
             words.append(prefix + value if prefix else value)
         blanks, previous_end = _escaped_blanks_continuing_word(source, destination.end_byte)
         words[-1] = _word_with_escaped_blanks_added(words[-1], blanks)
+    if closing:
+        # A closing redirection has no target: every word after it is an argument.
+        return (operator, ""), words
     return (operator, words[0] if words else ""), words[1:]
+
+
+def _descriptor_of_next_redirect(node, source):
+    """Return whether node is a number written against the redirect after it, as the 0 of 0<f."""
+    return (node.type == "number" and source[node.end_byte:node.end_byte + 1] in (b"<", b">")
+            and source[node.end_byte + 1:node.end_byte + 2] != b"(")
+
+
+def _redirect_end_with_escaped_blanks_continuing_target(source, node, limit=None):
+    """Return where a redirection ends, after the escaped blanks that continue its last target.
+
+    A redirection with no target, such as 2>&-, has no word for escaped blanks
+    to continue, so escaped blanks right after its operator start a word of
+    their own: bash passes a tab to the command in `zzq >&-\\<tab>`.
+    """
+    every_destination = _redirect_destinations(node)
+    destinations = every_destination[:limit]
+    if not destinations:
+        return every_destination[0].prev_sibling.end_byte if every_destination else node.end_byte
+    return _escaped_blanks_continuing_word(source, destinations[-1].end_byte if limit else node.end_byte)[1]
 
 
 def _descriptor_written_before(node):
@@ -905,9 +945,8 @@ class _Collector:
                     if previous_end is not None:
                         trailing_words.extend(_escaped_blank_words_before_operator(
                             self.source[previous_end:redirect.start_byte]))
-                        previous_end = _escaped_blanks_continuing_word(self.source, (
-                            _redirect_destinations(redirect)[limit - 1].end_byte
-                            if limit else redirect.end_byte))[1]
+                        previous_end = _redirect_end_with_escaped_blanks_continuing_target(
+                            self.source, redirect, limit)
                     shared_heredocs.extend(
                         self.redirect(redirect, unit_shell, redirects, trailing_words, limit))
                 if previous_end is not None:
@@ -960,7 +999,9 @@ class _Collector:
         `cat > f` and `cd /x`; bash runs each line as a command.
         """
         destinations = _redirect_destinations(node) if node.type == "file_redirect" else []
-        groups, previous_end = [[]], None
+        # A line end between the operator and its first target separates them too, after a
+        # closing redirection, which needs no target.
+        groups, previous_end = [[]], destinations[0].prev_sibling.end_byte if destinations else None
         for destination in destinations:
             if previous_end is not None and _separates_commands(
                     self.source[previous_end:destination.start_byte]):
@@ -1011,7 +1052,9 @@ class _Collector:
                                  if previous_end is not None else ([], ""))
             # A part that the last word runs on to, with no blank between them, is the same word.
             joins = continues and child.start_byte == previous_end and child.type not in REDIRECT_NODE_TYPES
-            blanks, previous_end = _escaped_blanks_continuing_word(self.source, child.end_byte)
+            blanks, previous_end = (("", _redirect_end_with_escaped_blanks_continuing_target(
+                self.source, child)) if child.type in REDIRECT_NODE_TYPES
+                else _escaped_blanks_continuing_word(self.source, child.end_byte))
             continues = False
             if joined is not None and child.type == "process_substitution" \
                     and child.start_byte == joined.end_byte:
@@ -1065,8 +1108,7 @@ class _Collector:
             words.append((_text(name) if name is not None else "") + operator
                          + (word_value(value, self.glob_markers, self.restored)
                             if value is not None else ""))
-        elif (child.type == "number" and self.source[child.end_byte:child.end_byte + 1] in (b"<", b">")
-              and self.source[child.end_byte + 1:child.end_byte + 2] != b"("):
+        elif _descriptor_of_next_redirect(child, self.source):
             # tree-sitter-bash reads the 0 of 0<f as a number; it is the redirect's descriptor.
             pass
         elif child.type == "command_name":
@@ -1271,7 +1313,34 @@ def _source_with_case_terminators_repaired(text, text_node_types, keep_first=Fal
             in_source = _offset_after_edits(at, edits[index + 1:])
             if in_source is not None:
                 restored[in_source] = (1, b"")
+    source, tree = _source_with_closing_redirections_standing_alone(source, tree, restored)
     return source, tree, taken, restored
+
+
+def _source_with_closing_redirections_standing_alone(source, tree, restored):
+    """Return (source, tree) with each closing redirection that has words after it written as >& or <&.
+
+    bash reads n>&- and n<&- as closing descriptor n, with no target, so every
+    word after one is an argument. tree-sitter-bash gives a closing operator at
+    most one target and misreads the words after it: as an error, or as a
+    command of their own after a ; that is not there. Written with a space in
+    place of its -, the operator takes every word after it as a target, as >f
+    does, and _redirect_parts gives them back to the command. The space is the
+    same length as the -, so no offset moves; restored records the - it replaces.
+    """
+    for _ in range(source.count(b"&-")):
+        operators = [operator for redirect in _nodes_of_type(tree.root_node, "file_redirect")
+                     for position, operator in enumerate(redirect.children)
+                     if operator.type in CLOSING_REDIRECTION_OPERATOR_TYPES
+                     and any(child.is_named for child in redirect.children[position + 1:])]
+        if not operators:
+            break
+        for operator in operators:
+            dash = operator.end_byte - 1
+            source = source[:dash] + b" " + source[dash + 1:]
+            restored[dash] = (1, b"-")
+        tree = parser().parse(source)
+    return source, tree
 
 
 def _with_heredocs_put_back_into_commands(commands, taken_out):

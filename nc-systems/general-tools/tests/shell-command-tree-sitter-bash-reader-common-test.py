@@ -332,6 +332,57 @@ words = list(reader.simple_commands("env -u 0<(printf x) git push")[-1])
 check("a wrapper's option value written as 0<(...) leaves the program after it",
       reader.simple_command_program_index_skipping_wrappers(words) == (3, True), words)
 
+# --- a closing redirection, which has no target ---
+# Each expected pair is the words bash passed to a shell function standing in for the command, and
+# its redirections. bash reads n>&- and n<&- as closing descriptor n, so every word after one is an
+# argument; tree-sitter-bash gives the operator a target, and misreads the words after it.
+for command, expected in [
+    ("zzp 2>&- --force origin main", [(["zzp", "--force", "origin", "main"], [("2>&-", "")])]),
+    ("git push 2>&- --force origin main",
+     [(["git", "push", "--force", "origin", "main"], [("2>&-", "")])]),
+    ("git push >&- --force origin br", [(["git", "push", "--force", "origin", "br"], [(">&-", "")])]),
+    ("git push <&- --force origin br", [(["git", "push", "--force", "origin", "br"], [("<&-", "")])]),
+    ("git push 3>&- --force origin br", [(["git", "push", "--force", "origin", "br"], [("3>&-", "")])]),
+    ("git push 2>&- -f origin br", [(["git", "push", "-f", "origin", "br"], [("2>&-", "")])]),
+    ("git push 2>&- --force-with-lease origin br",
+     [(["git", "push", "--force-with-lease", "origin", "br"], [("2>&-", "")])]),
+    # tree-sitter-bash ends this command after a, with a ; that is not written; a written ; still ends it.
+    ("zzp 2>&- a b", [(["zzp", "a", "b"], [("2>&-", "")])]),
+    ("zzp 2>&- a; b", [(["zzp", "a"], [("2>&-", "")]), (["b"], [])]),
+    ("zzp >&- a b", [(["zzp", "a", "b"], [(">&-", "")])]),
+    ("zzp <&- a", [(["zzp", "a"], [("<&-", "")])]),
+    ("zzp 1<&- a", [(["zzp", "a"], [("1<&-", "")])]),
+    ("zzp 12>&- a b", [(["zzp", "a", "b"], [("12>&-", "")])]),
+    ("zzp 2>&- a >f b", [(["zzp", "a", "b"], [("2>&-", ""), (">", "f")])]),
+    ("zzp a 2>&-", [(["zzp", "a"], [("2>&-", "")])]),
+    ("zzp >&-x", [(["zzp", "x"], [(">&-", "")])]),
+    ("zzp >&- a \"b c\" $(zzq x)", [(["zzq", "x"], []), (["zzp", "a", "b c", "$(zzq x)"], [(">&-", "")])]),
+    ("(zzp <&- a b)", [(["zzp", "a", "b"], [("<&-", "")])]),
+    ("zzp >&- \\\n a b", [(["zzp", "a", "b"], [(">&-", "")])]),
+    ("zzp >&- a\nzzq b", [(["zzp", "a"], [(">&-", "")]), (["zzq", "b"], [])]),
+    ("zzq <&- \n\\\n \"x y\"", [(["zzq"], [("<&-", "")]), (["x y"], [])]),
+    ("zzp 2>&- 0<&- a", [(["zzp", "a"], [("2>&-", ""), ("0<&-", "")])]),
+    ("zzp 2>f \\ 2>&-", [(["zzp", " 2"], [("2>", "f"), ("2>&-", "")])]),
+    # Escaped blanks after a closing operator start a word, since it has no target to continue.
+    ("zzq <&- ''\\ ;", [(["zzq", " "], [("<&-", "")])]),
+    ("zzq >&-\\\t", [(["zzq", "\t"], [(">&-", "")])]),
+    ("zzq <&-\\\n\\\t", [(["zzq", "\t"], [("<&-", "")])]),
+    ("zzq >&-\\ x", [(["zzq", " x"], [(">&-", "")])]),
+]:
+    found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
+    check(f"a closing redirection has no target, so the words after it are arguments, as bash "
+          f"passes them: {command!r}", found == expected, found)
+# tree-sitter-bash puts the 2 here before the closing operator; bash's target is f<tab>2, which this
+# reader does not yet read, so only the words are checked.
+check("what tree-sitter-bash puts before a closing operator is not a word after it",
+      words_of("zzp >f\\\t2>&- a") == [["zzp", "a"]], words_of("zzp >f\\\t2>&- a"))
+found = [(list(words), words.redirects) for words in reader.simple_commands("zzp 2>&1>f")]
+check("a number that is a redirection's first target stays its target, though the next redirection touches it",
+      found and found[0][1][0] == ("2>&", "1"), found)
+found = [(list(words), words.redirects) for words in reader.simple_commands("zzp >f a 0<g")]
+check("a descriptor written against the redirection after a target is that redirection's, not a word",
+      found == [(["zzp", "a"], [(">", "f"), ("0<", "g")])], found)
+
 # --- the program a command runs, after wrappers ---
 for words, expected in [
     (["A=1", "bash"], (1, True)),
