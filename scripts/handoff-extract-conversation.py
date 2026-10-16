@@ -573,15 +573,19 @@ def complete_dialog_turns_and_report(transcript_path: Path):
 
 
 def complete_dialog_lines_with_turn_timestamps(transcript_path: Path):
-    """Return each line of the text render_complete_dialog_of_transcript_as_markdown gives, paired with
-    the timestamp of the turn the line belongs to: "" for a heading line, or a turn whose record has none.
+    """Return (lines, left_out_notes) for the text render_complete_dialog_of_transcript_as_markdown gives.
+
+    lines pairs each line with the timestamp of the turn it belongs to: "" for a heading line, or a turn
+    whose record has none. left_out_notes holds the text of each note saying the subagent tracker failed,
+    so the lines lack every subagent turn; it is empty when the dialog is whole.
     """
     turns, report = complete_dialog_turns_and_report(transcript_path)
     lines = render_companion(turns, report).split("\n")
     stamps = []
     for turn in turns:
         stamps += [turn.get("timestamp") or ""] * len("\n".join(render_turn(turn)).split("\n"))
-    return list(zip(lines, [""] * (len(lines) - len(stamps)) + stamps))
+    return (list(zip(lines, [""] * (len(lines) - len(stamps)) + stamps)),
+            [note["text"] for note in turns_left_out_notes(turns)])
 
 
 def resolve_transcript_path(arguments) -> Path:

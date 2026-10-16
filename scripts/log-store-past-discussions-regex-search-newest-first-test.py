@@ -237,6 +237,28 @@ spec.loader.exec_module(search)
 print(search.dialog_line_turn_times({str(root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-prime-intellect" / "s1.jsonl")!r},
                                     {str(Path(scratch) / "no-such-dialog.md")!r}, [3]))
 """], capture_output=True, text=True)
+    broken_tracker = subprocess.run([sys.executable, "-c", f"""
+import importlib.util, os, sys
+os.environ[{PREFIX + "LOG_STORE_ROOT_OVERRIDE"!r}] = {str(root)!r}
+os.environ[{PREFIX + "THIS_MACHINE_OVERRIDE"!r}] = "ned-box"
+os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
+spec = importlib.util.spec_from_file_location("search", {str(PROGRAM)!r})
+search = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(search)
+extractor = search.load_handoff_extractor()
+def broken():
+    raise RuntimeError("the tracker is broken")
+extractor.new_subagent_tracker = broken
+search._extractor_in_this_process = extractor
+sys.exit(search.main(["start the heron plan", "--kind", "session-dialogs", "--jobs", "1"]))
+"""], capture_output=True, text=True)
+    check("when the subagent tracker fails, the dialog's hits keep the noted date, a FAILED line says why, "
+          "and the search exits nonzero",
+          broken_tracker.returncode == 2 and "lacks its subagent turns" in broken_tracker.stderr
+          and "RuntimeError: the tracker is broken" in broken_tracker.stderr
+          and "(session's last activity" in broken_tracker.stdout
+          and "2026-09-28T09:00:00Z  session-dialogs" not in broken_tracker.stdout,
+          broken_tracker.stdout + broken_tracker.stderr)
     check("a session dialog that cannot be read again to date its hits is a failure",
           "could not read the session dialog " in probe.stdout and "no-such-dialog.md" in probe.stdout,
           probe.stdout + probe.stderr)

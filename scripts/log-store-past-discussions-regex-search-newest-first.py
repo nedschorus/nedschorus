@@ -44,7 +44,9 @@ holds the matching line: a dialog's turns carry no time, so the dialog is
 built again from the session's transcript, with the extractor that wrote it,
 and the line's turn gives the time. A line said several times is matched by
 its place among them: its second appearance in the dialog takes the second
-turn's time. A line the dialog built again does not hold as often, or one
+turn's time. When the extractor's subagent tracker fails, the dialog built
+again lacks its subagent turns, so no hit in it is dated by turn, and a
+FAILED line says why. A line the dialog built again does not hold as often, or one
 whose turn's record has no time, is dated by the session's last activity, the
 last timestamp in its transcript, and the hit says so. A walk file's agent-seat is
 the one its header says ran the approval-walk. A session's agent-seat is read
@@ -85,7 +87,8 @@ be slow, and ripgrep is not reliably on the Mac's PATH.
 FAILURES. A record that could not be searched prints a line opening FAILED,
 naming what failed and what to do, after the hits found elsewhere: a missing
 log-store or kind directory, a file ripgrep could not read, a transcript the
-reader could not read, ripgrep missing, ned-box unreachable from the Mac.
+reader could not read, a session dialog the extractor could not build again
+whole, ripgrep missing, ned-box unreachable from the Mac.
 After the FAILED lines, one closing line says what the failures mean for the
 page: when hits were printed, that they are real matches but the page may lack
 hits from the failed records; when none were, that a match may be in those
@@ -450,10 +453,15 @@ def dialog_line_turn_times(transcript_text, dialog_text, line_numbers):
     except OSError as error:
         return {}, f"could not read the session dialog {dialog_text} to date its hits by their turns: {error}"
     try:
-        built = _extractor_in_this_process.complete_dialog_lines_with_turn_timestamps(Path(transcript_text))
+        built, left_out_notes = _extractor_in_this_process.complete_dialog_lines_with_turn_timestamps(
+            Path(transcript_text))
     except OSError as error:
         return {}, (f"could not read the transcript {transcript_text} to date the session dialog's hits "
                     f"by their turns: {error}")
+    if left_out_notes:
+        return {}, (f"could not date the hits in the session dialog {dialog_text} by their turns, since the "
+                    f"dialog built again from {transcript_text} lacks its subagent turns: "
+                    f"{' '.join(left_out_notes)}")
     stamps_by_line = collections.defaultdict(list)
     for line, stamp in built:
         stamps_by_line[line].append(stamp)
