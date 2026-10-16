@@ -179,6 +179,11 @@ for command, expected in [("echo \\ <<<x y", [["echo", " ", "y"]]),
                           ("zzp \\ &&zzq", [["zzp", " "], ["zzq"]]),
                           ("zzp \\  #c", [["zzp", " "]]),
                           ("zzp \\ \nzzq", [["zzp", " "], ["zzq"]]),
+                          ("zzq \\ \\\n;", [["zzq", " "]]),
+                          ("zzq \\ |zzp", [["zzq", " "], ["zzp"]]),
+                          ("zzq \\ ", [["zzq", " "]]),
+                          ("(zzq \\ )", [["zzq", " "]]),
+                          ("zzp `zzq \\ `", [["zzq", " "], ["zzp", "`zzq \\ `"]]),
                           ("zzp \\ 0<(zzq) x", [["zzq"], ["zzp", " 0<(zzq)", "x"]]),
                           ("zzp a \\ 0<(zzq)", [["zzq"], ["zzp", "a", " 0<(zzq)"]]),
                           # tree-sitter-bash folds the lines after this pipeline into its redirections.
@@ -194,6 +199,40 @@ for command, expected in [("zzp >\\ f", (["zzp"], [(">", " f")])),
     check(f"escaped blanks before a redirection's target start the target, as bash reads it: "
           f"{command!r}", (list(found[0]), found[0].redirects) == expected,
           [(list(words), words.redirects) for words in found])
+# Each expected pair is the words bash passed to a shell function standing in for the command, and
+# the file it wrote. tree-sitter-bash ends a word before a backslash and tab, and before a line
+# continuation; bash keeps the escaped blanks that touch a word's end in that word.
+for command, expected in [("zzq >f\\\t;", [(["zzq"], [(">", "f\t")])]),
+                          ("zzq a\\\t;", [(["zzq", "a\t"], [])]),
+                          ("git push origin br >f\\\t",
+                           [(["git", "push", "origin", "br"], [(">", "f\t")])]),
+                          ("zzq a\\\t\t2", [(["zzq", "a\t", "2"], [])]),
+                          ("zzq a\\ ;", [(["zzq", "a "], [])]),
+                          ("zzq >f\\\t\t2", [(["zzq", "2"], [(">", "f\t")])]),
+                          ("zzq <<<x\\\t;", [(["zzq"], [("<<<", "x\t")])]),
+                          ("zzq a\\\t\\ \tb", [(["zzq", "a\t ", "b"], [])]),
+                          ("zzq a\\\n\\\t;", [(["zzq", "a\t"], [])]),
+                          ("zzq \"a\"\\\t;", [(["zzq", "a\t"], [])]),
+                          ("zzq a >f\\\t b", [(["zzq", "a", "b"], [(">", "f\t")])]),
+                          ("zzq a\\\t>f", [(["zzq", "a\t"], [(">", "f")])]),
+                          ("zzq >\\\tf;", [(["zzq"], [(">", "\tf")])]),
+                          ("zzq a b\\\t", [(["zzq", "a", "b\t"], [])]),
+                          ("zzq a\\\tb", [(["zzq", "a\tb"], [])]),
+                          ("zzq >f\\\tg", [(["zzq"], [(">", "f\tg")])]),
+                          ("zzq a\\\nb", [(["zzq", "ab"], [])]),
+                          ("zzq >f\\\ng", [(["zzq"], [(">", "fg")])]),
+                          ("zzq 0<(zzp)\\\t;", [(["zzp"], []), (["zzq", "0<(zzp)\t"], [])]),
+                          ("zzq $(zzp)\\\tb", [(["zzp"], []), (["zzq", "$(zzp)\tb"], [])])]:
+    found = reader.simple_commands(command)
+    check(f"escaped blanks that touch a word's end stay in that word, as bash reads it: {command!r}",
+          [(list(words), words.redirects) for words in found] == expected,
+          [(list(words), words.redirects) for words in found])
+found = reader.simple_commands("ls ~\\\t ~/x\\\t")
+check("an escaped blank added to a word before its first / quotes its ~, so bash does not expand it",
+      list(found[0]) == ["ls", "~\t", "~/x\t"]
+      and [type(word) for word in found[0][1:]]
+      == [str, reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand],
+      [(word, type(word).__name__) for word in found[0]])
 found = reader.simple_commands("ls \\ ~/x")
 check("a word that starts with an escaped space is not a word whose ~ bash expands",
       list(found[0]) == ["ls", " ~/x"]
@@ -214,6 +253,21 @@ except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
 check("a 4,000-line here-document whose lines each hold a # after an escaped space is read well inside "
       "a guard's 30 s, and the command after it is read",
       isinstance(timing, float) and timing < 10 and last == "['tmux', 'kill-server']", (timing, last))
+# Run in its own process under a deadline: copying the redirection's text once per target would take
+# about 15 s here; reading it in place takes about 2 s.
+timing_code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+               "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); "
+               "found = r.simple_commands('echo >f' + ' a' * 512000 + '\\ntmux kill-server'); "
+               "print(len(found[0]), list(found[-1]))")
+try:
+    started = time.monotonic()
+    last = subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=60, check=True,
+                          capture_output=True, text=True).stdout.strip()
+    timing = time.monotonic() - started
+except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
+    last, timing = None, repr(problem)
+check("a redirection followed by 512,000 words is read in linear time, and the command after it is read",
+      isinstance(timing, float) and timing < 10 and last == "512001 ['tmux', 'kill-server']", (timing, last))
 found = words_of("cat <<EOF\n$(echo a \\ #x; rm y\n)\nEOF\n")
 check("a # after an escaped space in a substitution in a here-document body is part of its word, "
       "so the commands after it in the substitution are read",

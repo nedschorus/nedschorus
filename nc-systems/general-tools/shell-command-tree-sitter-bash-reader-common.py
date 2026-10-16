@@ -544,6 +544,18 @@ def _word_with_text(word, text):
     return text
 
 
+def _word_with_escaped_blanks_added(word, blanks):
+    """Return word with escaped blanks added at its end.
+
+    Escaped blanks before a word's first / quote its tilde prefix, so bash no longer expands its ~.
+    """
+    if not blanks:
+        return word
+    if "/" in word:
+        return _word_with_text(word, word + blanks)
+    return str(word) + blanks
+
+
 def shell_word_tilde_prefix_expand_as_bash_would(word):
     """Return word with its leading ~ expanded when bash expands it, else word as it is."""
     if isinstance(word, ShellWordWithUnexpandedTildePrefixBashWouldExpand):
@@ -745,10 +757,10 @@ def _redirect_destinations(node):
         child for child in node.named_children if child.type != "file_descriptor"][:1]
 
 
-def _redirect_parts(node, glob_markers, limit=None, restored=None):
+def _redirect_parts(node, glob_markers, source, limit=None, restored=None):
     """Return ((operator, target), words after the target) for one file redirect.
 
-    limit, when given, is how many of its destination nodes belong to it.
+    source is the text parsed. limit, when given, is how many of its destination nodes belong to it.
     """
     operator = _descriptor_written_before(node) + "".join(
         _text(child) for child in node.children
@@ -756,19 +768,20 @@ def _redirect_parts(node, glob_markers, limit=None, restored=None):
     destinations = _redirect_destinations(node)[:limit]
     # tree-sitter-bash reads the words after a redirect's target as more targets; bash
     # passes them to the command as arguments. It also splits a target such as
-    # `$X/push$i.log` after its last `$`; a part that touches the one before it is the same word.
+    # `$X/push$i.log` after its last `$`, and before an escaped tab; a part that touches the one
+    # before it, or the escaped blanks that continue it, is the same word.
     words = []
     previous_end = destinations[0].prev_sibling.end_byte if destinations else None
     for destination in destinations:
         value = word_value(destination, glob_markers, restored)
-        gap_words, prefix = _escaped_blank_words_in_gap(
-            node.text[previous_end - node.start_byte:destination.start_byte - node.start_byte])
         if words and destination.start_byte == previous_end:
             words[-1] = _word_with_text(words[-1], words[-1] + value)
         else:
+            gap_words, prefix = _escaped_blank_words_in_gap(source[previous_end:destination.start_byte])
             words.extend(gap_words)
             words.append(prefix + value if prefix else value)
-        previous_end = destination.end_byte
+        blanks, previous_end = _escaped_blanks_continuing_word(source, destination.end_byte)
+        words[-1] = _word_with_escaped_blanks_added(words[-1], blanks)
     return (operator, words[0] if words else ""), words[1:]
 
 
@@ -886,13 +899,15 @@ class _Collector:
                                                         pipeline_start),)
                               if len(pipeline) > 1 else child_shell)
                 redirects, trailing_words = [], []
-                previous_end = unit["children"][-1].end_byte if unit["children"] else None
+                previous_end = (_escaped_blanks_continuing_word(
+                    self.source, unit["children"][-1].end_byte)[1] if unit["children"] else None)
                 for redirect, limit in unit["redirects"]:
                     if previous_end is not None:
                         trailing_words.extend(_escaped_blank_words_before_operator(
                             self.source[previous_end:redirect.start_byte]))
-                        previous_end = (_redirect_destinations(redirect)[limit - 1].end_byte
-                                        if limit else redirect.end_byte)
+                        previous_end = _escaped_blanks_continuing_word(self.source, (
+                            _redirect_destinations(redirect)[limit - 1].end_byte
+                            if limit else redirect.end_byte))[1]
                     shared_heredocs.extend(
                         self.redirect(redirect, unit_shell, redirects, trailing_words, limit))
                 if previous_end is not None:
@@ -969,7 +984,7 @@ class _Collector:
             heredoc = _heredoc_of(node)
             redirects.append(("<<", heredoc.body))
             return [heredoc]
-        pair, extra = _redirect_parts(node, self.glob_markers, limit, self.restored)
+        pair, extra = _redirect_parts(node, self.glob_markers, self.source, limit, self.restored)
         trailing_words.extend(extra)
         return self.heredoc_or_redirect(pair, child_shell, redirects)
 
@@ -989,16 +1004,22 @@ class _Collector:
         words, own_redirects, own_heredocs = [], [], []
         joined = None
         previous_end = None
+        # Whether the last word runs on through escaped blanks or line continuations to previous_end.
+        continues = False
         for child in children:
             gap_words, prefix = (_escaped_blank_words_in_gap(self.source[previous_end:child.start_byte])
                                  if previous_end is not None else ([], ""))
-            previous_end = child.end_byte
+            # A part that the last word runs on to, with no blank between them, is the same word.
+            joins = continues and child.start_byte == previous_end and child.type not in REDIRECT_NODE_TYPES
+            blanks, previous_end = _escaped_blanks_continuing_word(self.source, child.end_byte)
+            continues = False
             if joined is not None and child.type == "process_substitution" \
                     and child.start_byte == joined.end_byte:
                 # bash passes 0<(cmd) as one word, the 0 joined to the substitution's path.
                 self._read_command_part(child, child_shell, words, own_redirects, own_heredocs)
-                words[-1] = joined_prefix + _text(joined) + words[-1]
+                words[-1] = joined_prefix + _text(joined) + words[-1] + blanks
                 joined = None
+                continues = previous_end > child.end_byte
                 continue
             if joined is not None:
                 words.append(word_value(joined, self.glob_markers, self.restored))
@@ -1016,6 +1037,11 @@ class _Collector:
             self._read_command_part(child, child_shell, words, own_redirects, own_heredocs)
             if prefix and len(words) > count:
                 words[count] = prefix + words[count]
+            if len(words) > count and child.type not in REDIRECT_NODE_TYPES:
+                if joins:
+                    words[count - 1] = _word_with_text(words[count - 1], words[count - 1] + words.pop(count))
+                words[-1] = _word_with_escaped_blanks_added(words[-1], blanks)
+                continues = previous_end > child.end_byte
         if joined is not None:
             words.append(word_value(joined, self.glob_markers, self.restored))
         words.extend(trailing_words)
@@ -1028,7 +1054,7 @@ class _Collector:
         # Substitutions anywhere in the command run before it.
         self.visit_inside(child, child_shell)
         if child.type in REDIRECT_NODE_TYPES:
-            pair, extra = _redirect_parts(child, self.glob_markers, restored=self.restored)
+            pair, extra = _redirect_parts(child, self.glob_markers, self.source, restored=self.restored)
             heredocs.extend(self.heredoc_or_redirect(pair, child_shell, redirects))
             words.extend(extra)
         elif child.type == "variable_assignment":
@@ -1052,14 +1078,34 @@ class _Collector:
             words.append(_text(child))
 
 
+def _escaped_blanks_continuing_word(source, end):
+    """Return (blanks, end after them) for the escaped blanks that continue the word ending at end.
+
+    tree-sitter-bash ends a word before a backslash and tab, and before a line
+    continuation; bash keeps escaped blanks that touch a word's last character
+    in that word, so `zzq a\\<tab>;` passes "a<tab>". A gap read for escaped
+    blank words starts at the end this returns, or right after an operator.
+    """
+    blanks = ""
+    while True:
+        pair = source[end:end + 2]
+        if pair in (b"\\ ", b"\\\t"):
+            blanks += pair[1:].decode()
+        elif pair != b"\\\n":
+            return blanks, end
+        end += 2
+
+
 def _escaped_blank_words_in_gap(gap):
     """Return (words, prefix) for the escaped blanks tree-sitter-bash skipped between two words.
 
     tree-sitter-bash reads a backslash before a space or tab at a word's start
     as space between words, so `echo \\ x` loses the space bash passes in
     " x". words are the ones made only of escaped blanks; prefix is the escaped
-    blanks that run into the next word and start it. A gap holding anything but
-    blanks, escaped blanks and line continuations is left alone.
+    blanks that run into the next word and start it. The gap must not start
+    with escaped blanks that continue the word before it: see
+    _escaped_blanks_continuing_word. A gap holding anything but blanks, escaped
+    blanks and line continuations is left alone.
     """
     words, current, index = [], "", 0
     while index < len(gap):
