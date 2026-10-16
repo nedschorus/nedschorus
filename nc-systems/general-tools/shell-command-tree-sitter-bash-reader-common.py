@@ -79,6 +79,8 @@ CHILD_SHELL_NODE_TYPES = {"command_substitution", "process_substitution", "subsh
 SIMPLE_COMMAND_NODE_TYPES = {"command", "declaration_command", "unset_command"}
 REDIRECT_NODE_TYPES = {"file_redirect", "heredoc_redirect", "herestring_redirect"}
 CLOSING_REDIRECTION_OPERATOR_TYPES = {">&-", "<&-"}
+# bash reads only a run of decimal digits touching < or > as a redirection's descriptor.
+DECIMAL_DIGITS_PATTERN = re.compile(rb"[0-9]+")
 # Nodes that only group commands; tree-sitter-bash's grouping of these is not trusted.
 SEQUENCE_NODE_TYPES = {"pipeline", "list", "redirected_statement", "negated_command"}
 PIPE_OPERATORS = {"|", "|&"}
@@ -759,24 +761,30 @@ def _redirect_destinations(node):
 
 
 def _redirect_parts(node, glob_markers, source, limit=None, restored=None):
-    """Return ((operator, target), words after the target) for one file redirect.
+    """Return ((operator, target), the command's words read inside it) for one file redirect.
 
     A closing redirection, such as 2>&-, has no target, so its target is "" and
     every word after it is returned as a word of the command. source is the text parsed. limit, when given, is how many of its destination nodes belong to it.
     """
+    # tree-sitter-bash reads the -3 of -3>f as a descriptor; bash passes it as a word.
+    words_before = [_unescape_unquoted(_text(child), glob_markers) for child in node.children
+                    if child.type == "file_descriptor" and child.text
+                    and not DECIMAL_DIGITS_PATTERN.fullmatch(child.text)]
     operator_parts = [child for child in node.children
-                      if child.type == "file_descriptor" or not child.is_named]
-    operator = _descriptor_written_before(node) + "".join(_text(child) for child in operator_parts)
+                      if (child.type == "file_descriptor" and not words_before) or not child.is_named]
+    operator = _descriptor_written_before(node, source) + "".join(_text(child) for child in operator_parts)
     closing = operator.endswith("&-")
     if operator_parts and (restored or {}).get(operator_parts[-1].end_byte) == (1, b"-"):
         # See _source_with_closing_redirections_standing_alone.
         operator, closing = operator + "-", True
     destinations = _redirect_destinations(node)[:limit]
-    if closing and operator_parts:
-        # What tree-sitter-bash puts before a closing operator, as the 2 of `>f\\<tab>2>&-`,
-        # is not a word after it.
+    if operator_parts:
+        # What tree-sitter-bash puts before the operator is not a word after it.
         destinations = [destination for destination in destinations
                         if destination.start_byte >= operator_parts[-1].end_byte]
+        descriptor, text_words = _redirect_text_before_operator(node, operator_parts[-1], source, glob_markers)
+        operator = descriptor + operator
+        words_before += text_words
     # tree-sitter-bash reads the words after a redirect's target as more targets; bash
     # passes them to the command as arguments. It also splits a target such as
     # `$X/push$i.log` after its last `$`, and before an escaped tab; a part that touches the one
@@ -801,14 +809,54 @@ def _redirect_parts(node, glob_markers, source, limit=None, restored=None):
         words[-1] = _word_with_escaped_blanks_added(words[-1], blanks)
     if closing:
         # A closing redirection has no target: every word after it is an argument.
-        return (operator, ""), words
-    return (operator, words[0] if words else ""), words[1:]
+        return (operator, ""), words_before + words
+    return (operator, words[0] if words else ""), words_before + words[1:]
+
+
+def _redirect_text_before_operator(node, operator, source, glob_markers):
+    """Return (descriptor, words) for what tree-sitter-bash puts inside a redirect before its operator.
+
+    After a word that escaped blanks continue, as in `zzp ''\\  -3>&-`,
+    tree-sitter-bash starts the redirect at the backslash and puts the text
+    touching the operator before it. After a blank, bash reads that text as the
+    operator's descriptor when it is decimal digits, and as a word otherwise.
+    Text that touches the escaped blanks is the end of the word before, as the 2
+    of `>f\\<tab>2>&-`, which this reader does not read.
+    """
+    before = [child for child in node.named_children
+              if child.type != "file_descriptor" and child.end_byte <= operator.start_byte]
+    if not before:
+        return "", []
+    start = node.start_byte
+    if node.prev_sibling is not None and node.prev_sibling.end_byte == start:
+        start = _escaped_blanks_continuing_word(source, start)[1]
+    first = before[0].start_byte
+    if start >= first:
+        return "", []
+    text = source[first:operator.start_byte]
+    gap_words, prefix = _escaped_blank_words_in_gap(source[start:first])
+    if not prefix and DECIMAL_DIGITS_PATTERN.fullmatch(text):
+        return text.decode(), gap_words
+    return "", gap_words + [prefix + _unescape_unquoted(text.decode("utf-8", SHELL_TEXT_ERRORS), glob_markers)]
+
+
+def _offset_after_line_continuations(source, offset):
+    """Return offset moved past the line continuations that start there, which bash removes first."""
+    while source[offset:offset + 2] == b"\\\n":
+        offset += 2
+    return offset
+
+
+def _decimal_number(node):
+    """Return whether node is a number bash can read as a descriptor: decimal digits only, not 0x1, -3 or 2#1."""
+    return node.type == "number" and DECIMAL_DIGITS_PATTERN.fullmatch(node.text) is not None
 
 
 def _descriptor_of_next_redirect(node, source):
     """Return whether node is a number written against the redirect after it, as the 0 of 0<f."""
-    return (node.type == "number" and source[node.end_byte:node.end_byte + 1] in (b"<", b">")
-            and source[node.end_byte + 1:node.end_byte + 2] != b"(")
+    after = _offset_after_line_continuations(source, node.end_byte)
+    return (_decimal_number(node) and source[after:after + 1] in (b"<", b">")
+            and source[after + 1:after + 2] != b"(")
 
 
 def _redirect_end_with_escaped_blanks_continuing_target(source, node, limit=None):
@@ -825,13 +873,14 @@ def _redirect_end_with_escaped_blanks_continuing_target(source, node, limit=None
     return _escaped_blanks_continuing_word(source, destinations[-1].end_byte if limit else node.end_byte)[1]
 
 
-def _descriptor_written_before(node):
+def _descriptor_written_before(node, source):
     """Return the descriptor tree-sitter-bash read as a number just before a redirect, as in 0<f, or ""."""
     previous = node.prev_sibling
     while previous is not None and previous.type != "number" and previous.children \
-            and previous.end_byte == node.start_byte:
+            and _offset_after_line_continuations(source, previous.end_byte) == node.start_byte:
         previous = previous.children[-1]
-    if previous is not None and previous.type == "number" and previous.end_byte == node.start_byte:
+    if previous is not None and _decimal_number(previous) \
+            and _offset_after_line_continuations(source, previous.end_byte) == node.start_byte:
         return _text(previous)
     return ""
 

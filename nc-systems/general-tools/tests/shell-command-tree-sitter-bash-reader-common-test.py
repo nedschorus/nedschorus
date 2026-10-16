@@ -368,6 +368,8 @@ for command, expected in [
     ("zzq >&-\\\t", [(["zzq", "\t"], [(">&-", "")])]),
     ("zzq <&-\\\n\\\t", [(["zzq", "\t"], [("<&-", "")])]),
     ("zzq >&-\\ x", [(["zzq", " x"], [(">&-", "")])]),
+    # Escaped blanks after a redirect that comes before the program start the program's name.
+    ("<&-\\\tzzp a b", [(["\tzzp", "a", "b"], [("<&-", "")])]),
 ]:
     found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
     check(f"a closing redirection has no target, so the words after it are arguments, as bash "
@@ -376,6 +378,39 @@ for command, expected in [
 # reader does not yet read, so only the words are checked.
 check("what tree-sitter-bash puts before a closing operator is not a word after it",
       words_of("zzp >f\\\t2>&- a") == [["zzp", "a"]], words_of("zzp >f\\\t2>&- a"))
+# After a word that escaped blanks continue, tree-sitter-bash starts the redirect at the backslash
+# and puts the text touching the operator inside it, before the operator. After a blank, bash reads
+# that text as the descriptor when it is decimal digits, and as a word otherwise.
+for command, expected in [
+    ("zzp ''\\  2>&-", [(["zzp", " "], [("2>&-", "")])]),
+    ("zzp ''\\  -3>&-", [(["zzp", " ", "-3"], [(">&-", "")])]),
+    ("zzp ''\\  -f3>&- b", [(["zzp", " ", "-f3", "b"], [(">&-", "")])]),
+    ("zzp ''\\  -3>f b", [(["zzp", " ", "-3", "b"], [(">", "f")])]),
+]:
+    found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
+    check(f"text tree-sitter-bash puts before an operator after escaped blanks is a descriptor or a word, "
+          f"as bash reads it: {command!r}", found == expected, found)
+# bash reads only decimal digits touching < or > as a descriptor, after it removes line continuations.
+for command, expected in [
+    ("env -u 2>&1 0x1</dev/null zzp push --force origin br",
+     [(["env", "-u", "0x1", "zzp", "push", "--force", "origin", "br"], [("2>&", "1"), ("<", "/dev/null")])]),
+    ("env -u 0x1</dev/null zzp push --force origin br",
+     [(["env", "-u", "0x1", "zzp", "push", "--force", "origin", "br"], [("<", "/dev/null")])]),
+    ("env 3>&- 0\\\n</dev/null zzp push --force origin br",
+     [(["env", "zzp", "push", "--force", "origin", "br"], [("3>&-", ""), ("0<", "/dev/null")])]),
+    ("env 0\\\n</dev/null zzp push --force origin br",
+     [(["env", "zzp", "push", "--force", "origin", "br"], [("0<", "/dev/null")])]),
+    ("zzp 2#1>f a", [(["zzp", "2#1", "a"], [(">", "f")])]),
+    ("zzp -3>f a", [(["zzp", "-3", "a"], [(">", "f")])]),
+    ("zzp -3>&- a", [(["zzp", "-3", "a"], [(">&-", "")])]),
+    ("zzp push -f4>&- origin br", [(["zzp", "push", "-f4", "origin", "br"], [(">&-", "")])]),
+    ("zzp a \\ -3>&- b", [(["zzp", "a", " -3", "b"], [(">&-", "")])]),
+    ("zzp 12\\\n>f a", [(["zzp", "a"], [("12>", "f")])]),
+    ("zzp 0\\\n\\\n<f a", [(["zzp", "a"], [("0<", "f")])]),
+]:
+    found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
+    check(f"a descriptor is decimal digits touching the operator once line continuations are removed, "
+          f"as bash reads it: {command!r}", found == expected, found)
 found = [(list(words), words.redirects) for words in reader.simple_commands("zzp 2>&1>f")]
 check("a number that is a redirection's first target stays its target, though the next redirection touches it",
       found and found[0][1][0] == ("2>&", "1"), found)
