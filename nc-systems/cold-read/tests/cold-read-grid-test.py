@@ -1241,6 +1241,46 @@ with tempfile.TemporaryDirectory() as scratch:
         grid_module.stop_process_tree(process)
         check("a group with no live member left still reaps its launcher", process.wait.called)
 
+    # --- The reference pre-pass: a web link is not a path, a bare name is looked up --
+    reference_directory = scratch / "reference-pre-pass"
+    reference_directory.mkdir()
+    reference_target = reference_directory / "target.md"
+    reference_target.write_text(
+        "See [PR 661](https://github.com/nedschorus/nedschorus/pull/661) and"
+        " defect-hunt.md, then no-such-prompt-anywhere.md and"
+        " nc-systems/cold-read/no-such-file.py.\n", encoding="utf-8")
+    grid_module.reference_integrity_pre_pass(reference_target, reference_directory)
+    reference_lines = (reference_directory / "reference-check.md").read_text(
+        encoding="utf-8").splitlines()
+    check("reference pre-pass: when git lists files, no skipped-lookup line",
+          not any("not looked up" in line for line in reference_lines), repr(reference_lines))
+    check("reference pre-pass: a web link is not listed as a path",
+          not any("github.com" in line for line in reference_lines), repr(reference_lines))
+    check("reference pre-pass: a bare file name that a tracked file has is ok",
+          "- ok: `defect-hunt.md`" in reference_lines, repr(reference_lines))
+    check("reference pre-pass: a bare file name no tracked file has is UNRESOLVED",
+          "- UNRESOLVED: `no-such-prompt-anywhere.md`" in reference_lines, repr(reference_lines))
+    check("reference pre-pass: a missing path is UNRESOLVED",
+          "- UNRESOLVED: `nc-systems/cold-read/no-such-file.py`" in reference_lines,
+          repr(reference_lines))
+    with mock.patch.dict(os.environ, {"GIT_DIR": str(scratch / "no-such-git-directory")}):
+        grid_module.reference_integrity_pre_pass(reference_target, reference_directory)
+    reference_lines = (reference_directory / "reference-check.md").read_text(
+        encoding="utf-8").splitlines()
+    check("reference pre-pass: an inherited GIT_DIR does not stop the bare-name lookup",
+          "- ok: `defect-hunt.md`" in reference_lines, repr(reference_lines))
+    not_a_repository = scratch / "reference-pre-pass-not-a-repository"
+    not_a_repository.mkdir()
+    with mock.patch.object(grid_module, "REPO_ROOT", not_a_repository):
+        grid_module.reference_integrity_pre_pass(reference_target, reference_directory)
+    reference_lines = (reference_directory / "reference-check.md").read_text(
+        encoding="utf-8").splitlines()
+    check("reference pre-pass: when git cannot list files, the check says the lookup was skipped",
+          any(line.startswith("- bare file names were not looked up: git ls-files exited 128")
+              for line in reference_lines), repr(reference_lines))
+    check("reference pre-pass: when git cannot list files, the bare name is still listed",
+          "- UNRESOLVED: `defect-hunt.md`" in reference_lines, repr(reference_lines))
+
     clock_at_1042 = datetime.datetime(2026, 9, 16, 10, 42)
 
     # Every run in this suite overrides the poll, so no run shows the default.
