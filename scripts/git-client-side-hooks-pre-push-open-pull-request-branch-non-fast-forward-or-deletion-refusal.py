@@ -23,7 +23,6 @@ through unchecked; scripts/force-push-with-open-pull-request-guard-hook.py reads
 
 import json
 import os
-import socket
 import subprocess
 import sys
 
@@ -66,26 +65,8 @@ ESCAPE_HATCH_INSTRUCTION = (
 LOOKUP_FAILED_REFUSAL = (
     "this push is refused, because it {action} branch {branch} on origin, and whether {branch} "
     "has an open pull request could not be checked: {detail}.")
-LOOKUP_FAILED_INSTRUCTIONS = [
-    "Run gh auth status to see whether gh on {machine} is logged in.",
-    "If gh's error above says gh is not logged in: tell the user this whole message; he logs gh in "
-    "himself, on the Mac with gh auth login in a Terminal, and on ned-box from a Terminal on his "
-    "Mac with ssh -t nedlern@ned-box 'gh auth login'. Push again only after he says gh is "
-    "logged in.",
-    "If gh's error above says gh did not answer in time, or printed output that is not JSON: push "
-    "again once. If that push is refused the same way, tell the user this whole message.",
-    "If gh's error above says no git remote points to a known GitHub host: gh finds the "
-    "repository from the remotes of this clone, not from the URL git handed this hook. Run git "
-    "remote get-url origin, tell the user what it prints, and do not push {branch} again until "
-    "he answers.",
-    "If gh's error above is none of these: tell the user this whole message, and do not push "
-    "{branch} again until he answers.",
-    "If gh pr list --state open --head {branch} lists a pull request: {instead}",
-]
-LOOKUP_FAILED_REWRITE_INSTEAD = (
-    "do not force the push; put your change in a new commit on top of origin/{branch} instead.")
-LOOKUP_FAILED_DELETION_INSTEAD = (
-    "close the pull request with a comment that says why before you delete the branch.")
+LOOKUP_FAILED_INSTRUCTION = (
+    "Tell the user this whole message, and do not push {branch} again until he answers.")
 
 
 class OpenPullRequestLookupFailed(Exception):
@@ -165,10 +146,7 @@ def refusal_lines(pushed_refs_text, runner):
         branch, deletes, detail = lookup_failures[0]
         return [LOOKUP_FAILED_REFUSAL.format(action="deletes" if deletes else "forces an update to",
                                              branch=branch, detail=detail),
-                *(line.format(branch=branch, machine=socket.gethostname(), instead=(
-                    LOOKUP_FAILED_DELETION_INSTEAD if deletes
-                    else LOOKUP_FAILED_REWRITE_INSTEAD.format(branch=branch)))
-                  for line in LOOKUP_FAILED_INSTRUCTIONS),
+                LOOKUP_FAILED_INSTRUCTION.format(branch=branch),
                 ESCAPE_HATCH_INSTRUCTION]
     return []
 
