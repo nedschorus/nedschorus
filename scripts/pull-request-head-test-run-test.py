@@ -1145,9 +1145,10 @@ def run_cases_on_ned_box(workspace: Path):
     record_lines = (fixture.record("ned-box", fixture.commit_of_main) or "").splitlines()
     check("with no --since and no merge base the runner is not run, and the program exits 4",
           result.code == 4 and result.runner_calls == [], repr(result))
+    # new_records holds the record of the stderr-closed run above, which is under mac/ on the Mac.
     check("that failed step is written to the record of that checkout's head, beside the "
           "other head's record",
-          fixture.record_files() == sorted([record_path, other_record_path])
+          fixture.record_files() == sorted({record_path, other_record_path, *new_records})
           and any(line.startswith(f"not run — git finds no merge base of "
                                   f"{fixture.commit_of_main} and refs/remotes/origin/main in "
                                   f"{cut_off}: ") for line in record_lines)

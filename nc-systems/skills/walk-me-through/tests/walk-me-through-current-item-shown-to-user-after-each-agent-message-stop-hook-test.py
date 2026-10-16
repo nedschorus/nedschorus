@@ -29,7 +29,7 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 HOOK_SCRIPT = (Path(__file__).resolve().parents[1]
                / "walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py")
-SUITE_ROOT = Path(tempfile.mkdtemp(prefix="approval-walk-current-item-hook-test-"))
+SUITE_ROOT = Path(tempfile.mkdtemp(prefix="approval-walk-current-item-hook-test-")).resolve()
 failures = []
 
 WALK_DOCUMENT = """# A walk: approval-walk
