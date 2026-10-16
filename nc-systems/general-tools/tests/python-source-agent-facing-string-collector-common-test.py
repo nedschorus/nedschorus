@@ -84,11 +84,27 @@ CHAINS = (
     ("a chain with a variable in the middle", 'X_MESSAGE = "first " + name + " second"\n',
      [(1, 1, "first {name} second")]),
     ("a parenthesised multi-line chain", 'X_MESSAGE = (\n    "a"\n    + "b"\n)\n', [(2, 3, "ab")]),
+    ("a chain with a parenthesised chain on the right", 'X_MESSAGE = "a" + ("b" + x)\n', [(1, 1, "ab{x}")]),
     ("a chain nested in a call argument", 'print(str("a " + x + " b"))\n', [(1, 1, "a {x} b")]),
 )
 for case_name, source, expected in CHAINS:
     found = [(entry["line"], entry["end_line"], entry["text"]) for entry in entries(source)]
     check(f"concatenation: {case_name} is one message", found == expected, found)
+
+def chain_text(source):
+    return entries(source)[0]["text"]
+
+
+spec_one = chain_text('X_MESSAGE = "Elapsed: " + f"{seconds:.1f}"\n')
+spec_three = chain_text('X_MESSAGE = "Elapsed: " + f"{seconds:.3f}"\n')
+check("an f-string field in a chain keeps its format spec, so .1f and .3f differ",
+      spec_one == "Elapsed: {seconds:.1f}" and spec_three == "Elapsed: {seconds:.3f}", (spec_one, spec_three))
+check("an f-string field in a chain keeps its conversion", chain_text('X_MESSAGE = "v " + f"{x!r}"\n') == "v {x!r}")
+check("a chain's field text matches the field in the same standalone f-string",
+      "{seconds:.1f}" in chain_text('X_MESSAGE = f"{seconds:.1f}"\n'))
+found = entries('print(report.render() + "\\n")\nprint("Failed: " + name + f" {n!r}")\n')
+check("literal_text leaves out every {...} placeholder",
+      [entry["literal_text"] for entry in found] == ["\n", "Failed:  "], found)
 
 NOT_RECOGNIZED_FORMS = (
     ("a systemMessage, which the user sees and the agent does not",
