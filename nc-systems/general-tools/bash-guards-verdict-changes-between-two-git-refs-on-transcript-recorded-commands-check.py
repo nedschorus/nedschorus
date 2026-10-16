@@ -96,8 +96,31 @@ def raise_pair_timed_out(*_):
     raise PairTimedOut()
 
 
+# A stop signal must not raise SystemExit inside subprocess's own code: raised between Popen._wait()'s
+# lock acquire and its try, it leaves the lock held, and the wait() that subprocess.run() or
+# run_step_in_child() then makes blocks forever with the child unreaped. Every subprocess call in the
+# replay parent runs inside stop_deferred(), in which the handler only records the stop; the block's
+# exit raises SystemExit(2) from the replay's own code.
+STOP_STATE = {"deferred": 0, "stop_requested": False}
+
+
 def raise_terminated(*_):
+    if STOP_STATE["deferred"]:
+        STOP_STATE["stop_requested"] = True
+        return
     raise SystemExit(2)  # So the finally blocks remove the checkouts when the run is stopped.
+
+
+@contextlib.contextmanager
+def stop_deferred():
+    STOP_STATE["deferred"] += 1
+    try:
+        yield
+    finally:
+        STOP_STATE["deferred"] -= 1
+        if STOP_STATE["stop_requested"] and not STOP_STATE["deferred"]:
+            STOP_STATE["stop_requested"] = False
+            raise SystemExit(2)
 
 
 # ---------------------------------------------------------------- step 1: the pairs
@@ -484,13 +507,17 @@ def child_environment():
 
 def run_git(repository, *arguments):
     try:
-        completed = subprocess.run(["git", "-C", repository, *arguments], capture_output=True, text=True,
-                                   env=child_environment(), timeout=GIT_TIMEOUT_SECONDS)
+        with stop_deferred():
+            completed = subprocess.run(["git", "-C", repository, *arguments], capture_output=True, text=True,
+                                       env=child_environment(), timeout=GIT_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as error:
         raise ReplayFailed(f"git {' '.join(arguments)} did not finish in {GIT_TIMEOUT_SECONDS} s") from error
     if completed.returncode != 0:
         raise ReplayFailed(f"git {' '.join(arguments)} exited {completed.returncode}: {completed.stderr.strip()}")
     return completed.stdout.strip()
+
+
+STOP_CHECK_INTERVAL_SECONDS = 0.2  # How soon a stop signal received during a step's wait takes effect.
 
 
 def step_deadline_seconds(pair_count, jobs, timeout):
@@ -503,13 +530,15 @@ def run_step_in_child(arguments, log_path, deadline_seconds):
     """Run one ref's step in a fresh interpreter, so each ref's modules load from that ref alone."""
     # In its own process group, so a step that ends, fails or is stopped takes its workers with it;
     # they would otherwise go on reading checkouts the replay is removing.
-    with open(log_path, "w") as log:
+    with stop_deferred(), open(log_path, "w") as log:
         step = subprocess.Popen([sys.executable, "-B", __file__, *arguments], stdout=log,
                                 stderr=subprocess.STDOUT, env=child_environment(), start_new_session=True)
         try:
-            returncode = step.wait(timeout=deadline_seconds)
-        except subprocess.TimeoutExpired:
             returncode = None
+            deadline = time.monotonic() + deadline_seconds
+            while returncode is None and time.monotonic() < deadline and not STOP_STATE["stop_requested"]:
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    returncode = step.wait(timeout=min(STOP_CHECK_INTERVAL_SECONDS, max(deadline - time.monotonic(), 0)))
         finally:
             # macOS answers EPERM, not ESRCH, when every process left in the group has exited but is not yet
             # reaped, as the step is after a normal exit; the processes are this replay's own, so EPERM can

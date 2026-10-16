@@ -393,31 +393,81 @@ try:
         "_refusal_for_as_written = refusal_for\n"
         "def refusal_for(command):\n"
         "    if command == 'ls -la':\n"
+        "        open(os.environ.get('REPLAY_TEST_READY_FILE', os.devnull), 'w').close()\n"
         "        time.sleep(120)\n"
         "    return _refusal_for_as_written(command)\n"
-        "import time"), scratch)
+        "import os, time"), scratch)
     for stop_signal in (signal.SIGTERM, signal.SIGHUP):
         stopped_scratch = Path(scratch) / f"run-stopped-by-{stop_signal.name}"
         (Path(scratch) / "fixture-pairs.json").write_text(json.dumps(FIXTURE_PAIRS))
+        ready_file = Path(scratch) / f"ready-{stop_signal.name}"
         stopped = subprocess.Popen(
             [sys.executable, str(SCRIPT_PATH), "--repository", str(TEST_REPOSITORY), "--base-ref", slow_on_ls,
              "--head-ref", slow_on_ls, "--pairs-file", str(Path(scratch) / "fixture-pairs.json"), "--jobs", "2",
              "--per-pair-timeout-seconds", "300", "--scratch-directory", str(stopped_scratch)],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        deadline = time.monotonic() + 120
-        while time.monotonic() < deadline and not (
-                len(worktrees_registered_under(stopped_scratch)) == 2
-                and list(stopped_scratch.glob("verdicts-in-process-base.log"))):
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True,
+            env={**os.environ, "REPLAY_TEST_READY_FILE": str(ready_file)})
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline and not ready_file.exists():  # A pool worker is inside the slow reading.
             time.sleep(0.5)
-        time.sleep(3)  # The step's pool workers are now reading the fixture.
         stopped.send_signal(stop_signal)
-        stopped_output = stopped.communicate(timeout=60)[0]
+        try:
+            stopped_output = stopped.communicate(timeout=60)[0]
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(stopped.pid, signal.SIGKILL)
+            stopped_output = stopped.communicate()[0]
+            check(f"a replay stopped by {stop_signal.name} in the middle of a step exits within 60 s", False,
+                  f"still running 60 s after the signal (ready file present: {ready_file.exists()}); "
+                  f"its process group was killed\n{stopped_output}")
+            continue
         still_running = subprocess.run(["pgrep", "-f", str(stopped_scratch)], capture_output=True, text=True).stdout.split()
         check(f"a replay stopped by {stop_signal.name} in the middle of a step: exit 2, its checkouts removed, "
               f"no process left",
               stopped.returncode == 2 and not worktrees_registered_under(stopped_scratch) and not still_running,
               f"exit {stopped.returncode}; registered {worktrees_registered_under(stopped_scratch)}; "
               f"running {still_running}\n{stopped_output}")
+
+    # SystemExit raised by the stop handler between Popen._wait()'s lock acquire and its try used to leave
+    # the lock held, so the next wait() on that process blocked forever. The signal is delivered at exactly
+    # that point, in a child process so a hang is a timeout and not a stuck test.
+    gap_script = (
+        "import importlib.util, os, signal, subprocess, sys\n"
+        "spec = importlib.util.spec_from_file_location('replay', sys.argv[1])\n"
+        "replay = importlib.util.module_from_spec(spec); spec.loader.exec_module(replay)\n"
+        "signal.signal(signal.SIGHUP, replay.raise_terminated)\n"
+        "fired = []\n"
+        "def profiler(frame, event, arg):\n"
+        "    if (event == 'c_return' and not fired and frame.f_code is subprocess.Popen._wait.__code__\n"
+        "            and getattr(arg, '__name__', '') == 'acquire'):\n"
+        "        fired.append(1)\n"
+        "        signal.raise_signal(signal.SIGHUP)\n"
+        "replay.__file__ = sys.argv[2]\n"
+        "sys.setprofile(profiler)\n"
+        "try:\n"
+        "    if sys.argv[3] == 'step':\n"
+        "        replay.run_step_in_child(['--step', 'stand-in'], os.devnull, 600)\n"
+        "    else:\n"
+        "        replay.run_git(sys.argv[4], 'rev-parse', 'HEAD')\n"
+        "except SystemExit as stop:\n"
+        "    sys.setprofile(None)\n"
+        "    print('exit', stop.code, 'signal delivered', bool(fired))\n"
+    )
+    gap_directory = Path(scratch) / "gap"
+    gap_directory.mkdir()
+    (gap_directory / "stand-in-step.py").write_text("import time\ntime.sleep(1000)\n")
+    for gap_call, gap_extra in (("step", []), ("git", [str(REPOSITORY_ROOT)])):
+        try:
+            gap = subprocess.run([sys.executable, "-c", gap_script, str(SCRIPT_PATH),
+                                  str(gap_directory / "stand-in-step.py"), gap_call.split()[0], *gap_extra],
+                                 capture_output=True, text=True, timeout=30)
+            gap_detail = f"exit {gap.returncode}\n{gap.stdout}{gap.stderr}"
+            gap_ok = gap.returncode == 0 and "exit 2 signal delivered True" in gap.stdout
+        except subprocess.TimeoutExpired:
+            gap_ok, gap_detail = False, f"the {gap_call} call was still waiting 30 s after a stop signal landed in Popen._wait()"
+            subprocess.run(["pkill", "-f", str(gap_directory / "stand-in-step.py")])
+        check(f"a stop signal landing inside subprocess's wait during the {gap_call} call does not hang: exit 2",
+              gap_ok, gap_detail)
 
     step_deadline_as_written = replay.step_deadline_seconds
     replay.step_deadline_seconds = lambda pair_count, jobs, timeout: 10
