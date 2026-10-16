@@ -72,6 +72,10 @@ LOOKUP_FAILED_INSTRUCTIONS = [
     "auth login, and on ned-box from a Terminal on his Mac with ssh -t nedlern@ned-box "
     "'gh auth login'. Push again once gh pr list works.",
     "If gh did not answer in time, or its answer could not be read: push again.",
+    "If gh is logged in, or its error names the repository: gh finds the repository from the "
+    "remotes of this clone, not from the URL git handed this hook, and may be unable to resolve "
+    "origin as a GitHub repository. Run git remote get-url origin and tell the user what it "
+    "prints.",
     "If gh pr list --state open --head {branch} lists a pull request: {instead}",
 ]
 LOOKUP_FAILED_REWRITE_INSTEAD = (

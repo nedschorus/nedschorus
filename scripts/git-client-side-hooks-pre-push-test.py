@@ -1588,6 +1588,7 @@ def run_open_pull_request_branch_cases(scratch):
           was_refused(result) and "it forces an update to branch clean on origin, and "
           + lookup_failed + "gh pr list exited with status 4: " + FAKE_GH_LOGGED_OUT in result.stderr
           and "Run gh auth status" in result.stderr
+          and "Run git remote get-url origin and tell the user what it prints" in result.stderr
           and "ssh -t nedlern@ned-box 'gh auth login'" in result.stderr
           and scenario.origin_ref("clean") == pushed, result.describe())
     result = scenario.push("origin", "--delete", "conflicting")
@@ -1633,6 +1634,17 @@ def run_open_pull_request_branch_cases(scratch):
                 return subprocess.CompletedProcess(command, 1, "", "")
             return gh_behaviour(command)
         return run
+
+    gh_options = []
+
+    def recording_runner(command, **options):
+        gh_options.append(options)
+        return subprocess.CompletedProcess(command, 0, "[]", "")
+
+    loaded.open_pull_request("clean", recording_runner)
+    check("open pull request check: the gh call is given the gh timeout",
+          [o.get("timeout") for o in gh_options] == [loaded.GH_TIMEOUT_SECONDS]
+          and loaded.GH_TIMEOUT_SECONDS > 0, repr(gh_options))
 
     def raises(error):
         def behaviour(command):
