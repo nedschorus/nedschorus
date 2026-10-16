@@ -37,3 +37,7 @@ Build the idle check, item 2, as its own pull request; a subagent of the agent-s
 ## Trigger to close
 
 The idle check runs in every agent-seat, the hourly sweep runs on both machines, and a task carrying a due time or a prerequisite is raised to its agent-seat without anyone remembering it.
+
+## Provisional additions (not yet vetted by the user)
+
+- fleet-restart-at-login, 2026-10-14: If the idle check's raised tasks ever repeat or go missing, move the hook's state file into a small SQLite table (task #150).

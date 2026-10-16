@@ -12,7 +12,8 @@ def read_marker_approval(marker_path: Path):
     # Approval is evidenced by quoted user words; an empty marker is not consent.
     try:
         content = marker_path.read_text(encoding="utf-8").strip()
-    except (FileNotFoundError, OSError):
+    except (OSError, UnicodeDecodeError):
+        # A decoding error would crash the guard, and a crashed hook does not block.
         return None
     return content or None
 

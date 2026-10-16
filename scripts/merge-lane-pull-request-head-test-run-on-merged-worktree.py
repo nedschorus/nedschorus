@@ -11,7 +11,9 @@ request cannot pass by changing its runner. Under the worktrees and outputs
 directory it tests wt/pr<n>-merged, files the record under
 hr/pr<n>/log-store, uses hr/pr<n>/tmp as its temporary directory and
 hr/store as the recorded inputs, and writes its output to hr/pr<n>/stdout and
-hr/pr<n>/stderr. tripwire-bin/ goes first on PATH: its claude and codex log
+hr/pr<n>/stderr; each line of the run's stderr, where it copies the
+runner's progress, is also printed on this program's stderr as it arrives,
+so a run stopped before it ends has shown how far it got. tripwire-bin/ goes first on PATH: its claude and codex log
 the call and exit 1, so no suite starts a real agent.
 
 pull-request-head-test-run.py waits for the machine's test lock itself, so
@@ -75,14 +77,41 @@ def main(argv=None):
         (outputs / "log-store").mkdir(parents=True, exist_ok=True)
         (outputs / "tmp").mkdir(parents=True, exist_ok=True)
         with open(outputs / "stdout", "w") as stdout, open(outputs / "stderr", "w") as stderr:
-            completed = subprocess.run(
+            run = subprocess.Popen(
                 [sys.executable, str(review_tools_worktree / HEAD_TEST_RUNNER),
                  "--checkout", str(helpers / "wt" / f"pr{number}-merged"),
                  "--log-store-root", str(outputs / "log-store"),
                  "--temporary-directory", str(outputs / "tmp"),
                  "--recorded-inputs-directory", str(helpers / "hr" / "store")],
                 cwd=helpers, env=environment, stdin=subprocess.DEVNULL,
-                stdout=stdout, stderr=stderr)
+                stdout=stdout, stderr=subprocess.PIPE, text=True, errors="replace")
+            copy_failures = {}
+            # A failed write stops copying to that target only; the pipe is still read
+            # to its end, so the run is never left blocked on it.
+            for line in run.stderr:
+                for target, name in ((stderr, f"{outputs}/stderr"), (sys.stderr, "stderr")):
+                    if name in copy_failures:
+                        continue
+                    try:
+                        target.write(line)
+                        target.flush()
+                    except (OSError, ValueError) as error:
+                        copy_failures[name] = f"{type(error).__name__}: {error}"
+                        if target is sys.stderr:
+                            # Python flushes sys.stderr again at exit, and a failure there
+                            # would replace this program's exit code with 120.
+                            sys.stderr = open(os.devnull, "w")
+            completed = subprocess.CompletedProcess(run.args, run.wait())
+        for name, failure in copy_failures.items():
+            print(f"PR {number} head test run, process {run.pid}: writing its stderr to "
+                  f"{name} failed ({failure}); the run went on to its end, "
+                  "and its stderr from that line on is not in that copy.\n"
+                  f"The run's verdict still stands: the SUMMARY line below comes from the run's "
+                  f"stdout, not from this copy; this program exits 2 to show the copy failed.\n"
+                  f"When you need the stderr after that line, run the head test run for PR "
+                  f"{number} again with a stderr that can be written.", flush=True)
+            if first_failure == 0:
+                first_failure = 2
         summaries = [line for line in (outputs / "stdout").read_text().splitlines()
                      if line.startswith(SUMMARY_LINE_PREFIX)]
         summary = summaries[-1] if summaries else f"no SUMMARY line; see {outputs}/stderr"

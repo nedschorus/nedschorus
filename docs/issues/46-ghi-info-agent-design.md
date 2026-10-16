@@ -19,7 +19,7 @@ Issue [Build ghi-info — the GHI knowledge agent](https://github.com/nedschorus
 - **The ask wrapper:** `scripts/ghi-info-ask.py`.
 - **The write tool:** `scripts/ghi-issue-write.py`, with its create and edit operations. It has no comment operation: the user ruled on 2026-09-24 that agents write no issue comments.
 - **The redirect hook:** `.claude/hooks/ghi-issue-write-redirect.py`. It refuses a hand-typed write rather than rewriting it into the tool as § The GHI write path describes; its docstring says why.
-- **The corpus migration:** done 2026-09-27, when every open issue's body became the links to its files (`scripts/ghi-prose-body-migration.py`).
+- **The corpus migration:** done 2026-09-27, when every open issue's body became the links to its files (by a one-time migration program, deleted once the migration finished).
 - **Not built:** the maintenance sweep and fixer spawning (§ Maintenance and fixers).
 
 Build considerations beyond this design: the md-review rider, item 9 of `git show ad2c5156:md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md`. § Verify at build lists the assumptions to test, each with its failure branch.
@@ -86,7 +86,7 @@ GHI authors write with `gh` as trained for create, edit, and close; comments are
 
 The tool is a script, not the `ghi-info` agent: it calls the agent once, at step 2, and does every other step itself. It runs in the agent's checkout on ned-box, re-executing over ssh when called from the Mac, as `scripts/ghi-info-ask.py` already does, and the file's content travels with the call the way an ask's question does. Before any write it fetches and fast-forwards; a dirty checkout, or one that will not fast-forward, refuses the write. A read may fall back to stale disk; a write never does.
 
-**Editing an issue** is editing its GHI-MD, through `scripts/ghi-issue-write.py edit <path>`. No author ever writes an issue body. The tool rewrites it from the pairing whenever the file set changes — a file added, a file moved into its system's directory when code starts — and leaves it alone otherwise. The change lands through the tool's pull request; the tool refuses on conflict, as `scripts/ghi-issue-body-edit.py` does today under the 2026-09-08 ruling — no retry, no lock, no merge; show the diff and hand it back. The tool absorbs that guard (user-ruled 2026-09-15). When the edit changes the file's first heading, the tool updates the issue's title to match, which is a title-only edit and passes the hook.
+**Editing an issue** is editing its GHI-MD, through `scripts/ghi-issue-write.py edit <path>`. No author ever writes an issue body. The tool rewrites it from the pairing whenever the file set changes — a file added, a file moved into its system's directory when code starts — and leaves it alone otherwise. The change lands through the tool's pull request; the tool refuses on conflict, under the 2026-09-08 ruling — no retry, no lock, no merge; show the diff and hand it back. The tool absorbs that guard (user-ruled 2026-09-15). When the edit changes the file's first heading, the tool updates the issue's title to match, which is a title-only edit and passes the hook.
 
 **Where the tool may write.** Any path holding a file paired with an issue: `docs/issues/` before code starts, and the system's own directory after. It writes nowhere else. A closed GHI's GHI-MD stays where it is (user-ruled 2026-09-15).
 

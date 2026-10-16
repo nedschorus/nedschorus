@@ -15,8 +15,8 @@ replies, about four fires in five were correct. Matches inside code, quoted
 text and block quotes do not count.
 
 THE HOOK STAYS SILENT when any of these holds:
-  - stop_hook_active is set: the agent is already continuing because of a
-    Stop hook, and blocking again could loop;
+  - this Stop ends the agent's answer to a Stop hook's output (the shared
+    rule of nc-systems/general-tools/claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py);
   - the agent ran the locator this turn (a Bash command naming
     locate-file-copies-across-machines.py) or invoked the skill
     locate-before-saying-a-file-is-missing;
@@ -28,9 +28,11 @@ THE HOOK STAYS SILENT when any of these holds:
     become the child's last words, which its caller reads as the answer;
   - a SubagentStop payload names no agent_transcript_path: the main
     transcript holds the parent's reply, not the subagent's;
-  - a SubagentStop payload names an agent_transcript_path that does not
-    exist: Claude Code sends that for most subagent stops, so it is the
-    ordinary case, not a fault, and nothing is logged for it.
+  - the transcript the payload names does not exist (reading it raises
+    FileNotFoundError): Claude Code sends that for most subagent stops, and
+    rarely for a Stop, so it is the ordinary case, not a fault, and nothing
+    is logged for it. Any other error reading it, such as a permission
+    error, is a fault.
 
 OUTPUT when it reminds: {"decision": "block", "reason": <reminder>}, which
 keeps the agent going with the reminder as its next instruction. At
@@ -56,7 +58,9 @@ is seen. Claude Code records a Stop or SubagentStop hook's exit 1 as a
 non-blocking error and still ends the turn. Exit 2 would continue the
 conversation, and a fault that recurs at every stop would then never let the
 agent stop. A log line that cannot be written is not a fault: the log is for
-rechecking precision, and the reminder still goes out.
+rechecking precision, and the reminder still goes out. The hook then exits 0
+and puts the failure in its JSON output's systemMessage, which Claude Code
+shows the user; stderr at exit 0 is shown to no one.
 
 --measure-precision LABELS_CSV runs absence_claim_matches() over a labelled
 reply file (columns reply_id, label, reply_text; label CORRECT, INCORRECT or
@@ -64,6 +68,7 @@ UNCLEAR) and prints the fire counts by label and the precision.
 """
 import argparse
 import csv
+import importlib.util
 import json
 import os
 import re
@@ -71,6 +76,14 @@ import socket
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Every Stop hook obeys this rule first: see the module's docstring.
+_stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
+    "claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
+stop_hooks_stay_silent_rule = importlib.util.module_from_spec(_stop_hooks_stay_silent_rule_specification)
+_stop_hooks_stay_silent_rule_specification.loader.exec_module(stop_hooks_stay_silent_rule)
 
 SKILL_NAME = "locate-before-saying-a-file-is-missing"
 LOCATOR_PROGRAM_NAME = "locate-file-copies-across-machines.py"
@@ -306,12 +319,14 @@ def state_directory(environment, home):
 
 
 def append_log_line(path, entry):
+    """Append entry to the log at path; return None, or why it could not be written."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as log:
             log.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except OSError:
-        pass
+    except OSError as error:
+        return f"{type(error).__name__}: {error}"
+    return None
 
 
 def claim_once_per_session(directory, key):
@@ -330,9 +345,9 @@ def run(stdin_text, environment, home, now):
     """Return the text to print, or None; append what it decided to the log."""
     payload = json.loads(stdin_text)
     if not isinstance(payload, dict):
-        raise ValueError(f"the input on the hook's stdin is a JSON {type(payload).__name__}, not an object")
+        raise ValueError("the input on the hook's stdin is JSON, but not an object")
     event = payload.get("hook_event_name") or "Stop"
-    if payload.get("stop_hook_active"):
+    if stop_hooks_stay_silent_rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
     if event == "SubagentStop":
         transcript_path = payload.get("agent_transcript_path")
@@ -340,9 +355,10 @@ def run(stdin_text, environment, home, now):
         transcript_path = payload.get("transcript_path")
     if not transcript_path:
         return None
-    if event == "SubagentStop" and not Path(transcript_path).expanduser().exists():
+    try:
+        reply, locator_ran = read_turn(Path(transcript_path).expanduser())
+    except FileNotFoundError:
         return None
-    reply, locator_ran = read_turn(Path(transcript_path).expanduser())
     matches = absence_claim_matches(reply)
     if not matches:
         return None
@@ -359,7 +375,8 @@ def run(stdin_text, environment, home, now):
         outcome = "reminded"
     else:
         outcome = "already_reminded"
-    append_log_line(log_path(environment, home), {
+    path = log_path(environment, home)
+    log_failure = append_log_line(path, {
         "time": now.isoformat(),
         "event": event,
         "session_id": payload.get("session_id"),
@@ -369,13 +386,20 @@ def run(stdin_text, environment, home, now):
         "matches": [{"pattern": number, "phrase": phrase} for number, phrase in matches],
         "reply": reply[:REPLY_TEXT_LOGGED_CHARACTERS],
     })
-    if outcome != "reminded":
-        return None
-    matched = ", ".join(f'"{phrase}"' for _, phrase in matches[:3])
-    template = SUBAGENT_REMINDER_TEMPLATE if event == "SubagentStop" else REMINDER_TEMPLATE
-    return json.dumps({"decision": "block",
-                       "reason": template.format(matched=matched)},
-                      ensure_ascii=False)
+    output = {}
+    if outcome == "reminded":
+        matched = ", ".join(f'"{phrase}"' for _, phrase in matches[:3])
+        template = SUBAGENT_REMINDER_TEMPLATE if event == "SubagentStop" else REMINDER_TEMPLATE
+        output.update({"decision": "block", "reason": template.format(matched=matched)})
+    if log_failure:
+        reached = ("The reminder to run the locator was still sent to the agent."
+                   if outcome == "reminded" else "No reminder was due, so none was sent to the agent.")
+        output["systemMessage"] = (
+            f"absence-claim-locator-reminder-hook: the outcome {outcome!r} of checking the last "
+            f"reply was not logged to {path}: {log_failure}. {reached} A recheck of the hook's "
+            f"precision will miss this reply; make {path} a file that can be written, or set "
+            f"{LOG_ENVIRONMENT_VARIABLE} to one.")
+    return json.dumps(output, ensure_ascii=False) if output else None
 
 
 def measure_precision(labels_path):
@@ -404,16 +428,20 @@ def main(argv=None):
             print(output)
     except Exception as error:
         try:
-            append_log_line(log_path(os.environ, Path.home()), {
+            log_failure = append_log_line(log_path(os.environ, Path.home()), {
                 "time": datetime.now(timezone.utc).isoformat(),
                 "outcome": "error",
                 "error": f"{type(error).__name__}: {error}",
             })
-        except Exception:
-            pass  # the stderr line below reports the fault whether or not it was logged
-        print(f"absence-claim-locator-reminder-hook: the last reply was not checked for a "
-              f"claim that a file is missing, because the hook failed; the turn ends as "
-              f"usual: {type(error).__name__}: {error}", file=sys.stderr)
+        except Exception as log_error:
+            log_failure = f"{type(log_error).__name__}: {log_error}"
+        not_logged = f"; the failure was not logged either: {log_failure}" if log_failure else ""
+        print(f"absence-claim-locator-reminder-hook: the hook failed with "
+              f"{type(error).__name__}: {error}{not_logged}. So the last reply was not checked "
+              f"for a claim that a file is missing, no reminder reached the agent, and the turn "
+              f"ends as usual. If this recurs, run python3 "
+              f"scripts/absence-claim-locator-reminder-hook-test.py and tell the user what it "
+              f"reports.", file=sys.stderr)
         return 1
     return 0
 

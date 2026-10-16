@@ -44,3 +44,7 @@ Precedent for the failure shapes: `ghi-info-ask.py` already separates ssh unreac
 User-approved 2026-09-11 as item 7 of the cold-read-research open-items walk, as an amendment correcting a "no action needed" recommendation.
 
 Search receipt: `gh issue list --state all --search "box unavailable health check"` and `--search "ned-box down report"` returned nothing on this matter (2026-09-11). The ghi-info ask was attempted first per the ghi-write skill and failed with the defect filed as GHI [checkout-freshness catch-up's block decision overwrites the answer of a claude -p subprocess whose output a program reads](https://github.com/nedschorus/nedschorus/issues/334).
+
+## Provisional additions (not yet vetted by the user)
+
+- fleet-restart-at-login, 2026-10-14: This GHI-MD contradicts its own 2026-09-30 update: the sentence "Do not build the shared check speculatively" still stands beside the update that says the build is no longer speculative. Remove or reconcile the older sentence (task #129).

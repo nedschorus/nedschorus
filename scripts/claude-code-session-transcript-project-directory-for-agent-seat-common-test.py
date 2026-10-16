@@ -13,6 +13,14 @@ Code names the folder after the resolved path the session runs in. That
 directory's path is known only at run time, so the case computes its
 expected name with its own character test, independent of the function
 under test.
+
+The callers case loads every program that names a seat's transcript folder
+and checks each against the same hard-coded name, so a caller that keeps a
+rule of its own (the handoff-supervisor and the conversation extractor once
+kept "_") fails here instead of searching a folder that does not exist. It
+then compares each caller with the shared function over paths holding every
+character class the rule treats, and over a symlinked seat path, so a copy
+of the rule that drifts on any of them fails too.
 """
 
 import importlib.util
@@ -40,6 +48,60 @@ def check(case_name, condition, detail=""):
 def mangled_name(seat):
     return project_directory_module.project_directory_for_seat(
         Path(seat), Path("/proj")).name
+
+
+def load(name, path):
+    specification = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+FOLDER_NAMING_CALLERS = [
+    ("handoff_supervisor_for_folder_name_test",
+     REPOSITORY_ROOT / "nc-systems" / "handoff" / "handoff-supervisor.py"),
+    ("handoff_extract_conversation_for_folder_name_test",
+     REPOSITORY_ROOT / "scripts" / "handoff-extract-conversation.py"),
+]
+
+
+def run_callers_case():
+    seat = Path("/mangle-probe-root/agents/mangle_probe")
+    for name, path in FOLDER_NAMING_CALLERS:
+        found = load(name, path).project_directory_for_working_directory(seat).name
+        check(f"{path.name} names an underscore seat's folder as Claude Code does (hard-coded)",
+              found == "-mangle-probe-root-agents-mangle-probe", found)
+
+    # One path per character class the rule treats: letters of both cases,
+    # digits, "-", "_", ".", "/", space, and non-ASCII letters and symbols.
+    character_class_seats = [
+        "/mangle-probe-root/agents/MixedCase",
+        "/mangle-probe-root/agents/seat2026",
+        "/mangle-probe-root/agents/dashed-seat",
+        "/mangle-probe-root/agents/under_score",
+        "/mangle-probe-root/.claude/dotted.seat",
+        "/mangle-probe-root/a/b/c/d",
+        "/mangle-probe-root/agents/spaced seat",
+        "/mangle-probe-root/agents/caf\u00e9-\u00df\u00f1",
+        "/mangle-probe-root/agents/\u65e5\u672c\u8a9e\u2603+@~",
+    ]
+    with tempfile.TemporaryDirectory() as scratch:
+        real_seat = Path(scratch).resolve() / "real" / "seat"
+        real_seat.mkdir(parents=True)
+        linked_seat = Path(scratch) / "link-to-seat"
+        linked_seat.symlink_to(real_seat)
+        seats = [Path(seat) for seat in character_class_seats] + [linked_seat]
+        for name, path in FOLDER_NAMING_CALLERS:
+            caller = load(name, path)
+            disagreements = [
+                (str(seat), caller.project_directory_for_working_directory(seat).name,
+                 project_directory_module.project_directory_for_seat(seat, Path("/proj")).name)
+                for seat in seats
+                if caller.project_directory_for_working_directory(seat).name
+                != project_directory_module.project_directory_for_seat(seat, Path("/proj")).name]
+            check(f"{path.name} names every character class and a symlinked seat as the shared function does",
+                  not disagreements, disagreements)
 
 
 def run_all_cases():
@@ -77,6 +139,7 @@ def run_all_cases():
 
 if __name__ == "__main__":
     run_all_cases()
+    run_callers_case()
     print()
     if failures:
         print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

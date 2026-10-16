@@ -95,7 +95,7 @@ WHAT IT DOES NOT FAIL, said plainly so no one reads cover into it:
     name bound to the string. Only the first hop is followed.
 
 Only the cold-read family is checked, with the hooks in RECORD_FINDING_HOOKS
-that find cold-read-records from outside it. scripts/sanity-check-attacks.py
+that find cold-read-records from outside it. scripts/sanity-check-adversarial-prompts.py
 and scripts/design-to-main/design-to-main-state-tables.py name their own
 record kinds, which are theirs to name.
 

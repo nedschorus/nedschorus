@@ -16,6 +16,19 @@ The cold-read-record holds one report per cold-read-cell, the reference-check
 file, and under target/ the exact bytes reviewed at the cold-read-target's own
 repository path (frozen at launch, the same read that fingerprints it).
 
+AT MOST THREE COLD-READ-FULL-RUNS OF A CHANGE, THEN THE USER DECIDES. Before
+it creates anything, the grid lists the cold-read-records in the log-store and
+in this checkout, counts those that froze this document, under its present
+path or an earlier one `git log --follow` shows, and hold a grid report written
+after the commit on origin/main's first-parent line that last changed the
+document -- for a merged topic branch, the merge, not the topic's own commit --
+prints
+"cold-read-full-run N of 3", and refuses a fourth. A flag saying the user
+decided to run again or to change the design makes the run number 1, and the
+marker file it leaves in its record starts the count again for later runs. A log-store or git history that cannot be read does not stop the read, as
+with shipping: the run goes ahead and says EARLIER COLD-READ-FULL-RUNS NOT COUNTED
+instead of a count.
+
 THE FROZEN COPY IS WHAT THE COLD-READ-CELLS READ, and it is read-only
 (user-ruled 2026-08-28). Every cell used to open the live document, so an edit
 part-way through a run left some reports describing the old text and some the
@@ -98,6 +111,7 @@ import importlib.util
 import os
 import pathlib
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -116,6 +130,10 @@ CELL_LAUNCHERS = {
     "codex": pathlib.Path(__file__).with_name("cold-read-codex-cell.py"),
 }
 RECORD_SHIPPER = pathlib.Path(__file__).with_name("cold-read-record-ship.py")
+_record_shipper_spec = importlib.util.spec_from_file_location(
+    "cold_read_record_ship", RECORD_SHIPPER)
+record_shipper = importlib.util.module_from_spec(_record_shipper_spec)
+_record_shipper_spec.loader.exec_module(record_shipper)
 # Import shared status phrases so launcher output and grid parsing cannot drift.
 _common_spec = importlib.util.spec_from_file_location(
     "cold_read_cell_common", pathlib.Path(__file__).with_name("cold-read-cell-common.py")
@@ -144,7 +162,8 @@ AGENT_BINARY_DOWN_PREFIX = "AGENT-BINARY DOWN:"
 STOPPED_CELL_WRITE_CHECK_LINE = (
     "this cell was stopped before its stray-write check ran, which is a failure "
     "to look, not a clean result. Before the new run, read `git status` against "
-    "the edits you know are your own and revert only what you did not write.")
+    "the edits you know are your own, revert only what a reviewer evidently wrote, "
+    "and ask the user about any other change you did not make.")
 
 ALL_LANDED_OPENING = "All six reports landed in {record_dir}, one file per reviewer."
 SOME_LANDED_OPENING = (
@@ -202,6 +221,125 @@ def record_clock_reading() -> datetime.datetime:
 
 record_name_for_target = record_names.record_name_for_target
 record_directory_name_for_target = record_names.record_directory_name_for_target
+
+
+FULL_RUN_LIMIT = 3
+USER_RULED_COUNT_RESTART_FLAG = "--user-ruled-cold-read-full-run-count-restart"
+USER_RULED_COUNT_RESTART_MARKER_NAME = "user-ruled-cold-read-full-run-count-restart-marker.txt"
+# A grid report's name. Older records prefix each report with "<record name>--".
+# A fast read's record holds fast-read.md and, beside it, a copy of the target
+# marked with sentence ids, whose name matches this pattern too when the
+# target's stem starts claude- or codex-, so that copy is excluded by suffix.
+FULL_RUN_REPORT_NAME_PATTERN = re.compile(r"^(?:.*--)?(?:claude|codex)-.*\.md$")
+
+
+class FullRunCountUnavailable(Exception):
+    """The log-store or the document's git history could not be read."""
+
+
+def git_output(target: pathlib.Path, *arguments) -> str:
+    completed = subprocess.run(["git", "-C", str(target.parent), *arguments],
+                               capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        raise FullRunCountUnavailable(
+            f"git {' '.join(arguments)} on {target} exited {completed.returncode}: "
+            f"{completed.stderr.strip()}")
+    return completed.stdout
+
+
+def frozen_paths_and_landing_time(target: pathlib.Path) -> tuple:
+    """The paths a record freezes this document under -- its present one and
+    every earlier one git shows -- and when main last took a change to it, so
+    that only the runs reviewing the change in hand count. A document outside
+    any git repository has one path and no landing time."""
+    resolved = target.resolve()
+    top = subprocess.run(["git", "-C", str(target.parent), "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True, check=False)
+    if top.returncode != 0:
+        return {str(pathlib.Path(*resolved.parts[1:]))}, None
+    relative = str(resolved.relative_to(pathlib.Path(top.stdout.strip()).resolve()))
+    history = git_output(target, "log", "--follow", "--name-only", "--format=", "--", target.name)
+    paths = {relative} | {line for line in history.splitlines() if line.strip()}
+    has_main = subprocess.run(
+        ["git", "-C", str(target.parent), "rev-parse", "--verify", "--quiet", "origin/main"],
+        capture_output=True, text=True, check=False).returncode == 0
+    # --first-parent: a merge commit is TREESAME to its topic parent, so plain
+    # `git log` simplifies it away and reports the topic commit's older time.
+    # Every path is given, so a document renamed on a branch not yet merged is
+    # found on main under its earlier name.
+    landed = git_output(target, "log", "-1", "--first-parent", "--format=%ct", "origin/main", "--",
+                        *(f":(top,literal){path}" for path in sorted(paths))).strip() \
+        if has_main else ""
+    return paths, float(landed) if landed else None
+
+
+def record_file_listing(host, store) -> list:
+    """Every '<record directory>/<path>\t<mtime>' under one cold-read-records tree."""
+    if not host:
+        # Listed in Python: the Mac's find has no -printf.
+        store = pathlib.Path(store)
+        if not store.is_dir():
+            raise FullRunCountUnavailable(f"listing {store} failed: no such directory")
+        def unreadable(error):
+            raise FullRunCountUnavailable(f"listing {store} failed: {error}") from error
+        try:
+            listing = []
+            for directory, _, files in os.walk(store, onerror=unreadable):
+                if pathlib.Path(directory) == store:
+                    continue
+                for name in files:
+                    path = pathlib.Path(directory, name)
+                    listing.append(f"{path.relative_to(store)}\t{path.stat().st_mtime}")
+            return sorted(listing)
+        except OSError as error:
+            raise FullRunCountUnavailable(f"listing {store} failed: {error}") from error
+    # The store a remote host holds is on ned-box, whose find is GNU find.
+    command = record_shipper.SSH_COMMAND + [host, shlex.join(
+        ["find", str(store), "-mindepth", "2", "-type", "f", "-printf", "%P\t%T@\n"])]
+    listing = subprocess.run(command, capture_output=True, text=True, check=False)
+    if listing.returncode != 0:
+        raise FullRunCountUnavailable(
+            f"listing {host}:{store} exited {listing.returncode}: {listing.stderr.strip()}")
+    return listing.stdout.splitlines()
+
+
+def earlier_full_runs_since_count_start(frozen_paths: set, landed_at, listing: list) -> list:
+    """The record directories of this document's cold-read-full-runs since
+    main last took a change to it, oldest first, from the last one started on
+    the user's ruling onward."""
+    records = {}
+    for line in listing:
+        path, _, mtime = line.rpartition("\t")
+        directory, _, inside = path.partition("/")
+        # An interrupted shipment's staging copy holds the same files as its record.
+        if directory.startswith(record_shipper.STAGING_DIRECTORY_PREFIX):
+            continue
+        record = records.setdefault(directory, {"frozen": False, "reported": None, "marked": None})
+        frozen = inside.removeprefix(record_names.FROZEN_TARGET_DIRECTORY_NAME + "/")
+        if frozen != inside and any(frozen == p or frozen.endswith("/" + p) for p in frozen_paths):
+            record["frozen"] = True
+        elif (FULL_RUN_REPORT_NAME_PATTERN.match(inside)
+              and not inside.endswith(record_names.GENERATED_INPUT_COPY_SUFFIXES)):
+            record["reported"] = max(record["reported"] or 0.0, float(mtime))
+        elif inside == USER_RULED_COUNT_RESTART_MARKER_NAME:
+            record["marked"] = float(mtime)
+    # The marker is written when its run starts, before any report, so a run
+    # whose every cell failed still restarts the count.
+    count_start = max([landed_at or 0.0] + [record["marked"] for record in records.values()
+                                             if record["frozen"] and record["marked"] is not None])
+    runs = sorted((record["reported"], directory) for directory, record in records.items()
+                  if record["frozen"] and record["reported"] and record["reported"] > count_start)
+    return [directory for _, directory in runs]
+
+
+def earlier_full_runs_of(target: pathlib.Path) -> list:
+    """Counted from the log-store and from this checkout's own records, which
+    hold a run whose shipping failed."""
+    frozen_paths, landed_at = frozen_paths_and_landing_time(target)
+    listing = record_file_listing(*record_shipper.destination_for_this_machine())
+    if RECORDS_DIR.is_dir():
+        listing += record_file_listing(None, RECORDS_DIR)
+    return earlier_full_runs_since_count_start(frozen_paths, landed_at, listing)
 
 
 def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Path:
@@ -609,6 +747,11 @@ def main() -> int:
     parser.add_argument(
         "--target", required=True, help="document path, relative to the repo root or absolute"
     )
+    parser.add_argument(
+        USER_RULED_COUNT_RESTART_FLAG, action="store_true",
+        help=f"the user ruled, after this document's cold-read-full-run {FULL_RUN_LIMIT} "
+             f"of {FULL_RUN_LIMIT}, to run again or to change the design; this run "
+             f"starts the count again at 1")
     args = parser.parse_args()
 
     target = pathlib.Path(args.target)
@@ -636,7 +779,39 @@ def main() -> int:
             print(f"cold-read-grid: {runtime} cell launcher missing: {launcher}", file=sys.stderr)
             return 2
 
+    user_ruled_count_restart = args.user_ruled_cold_read_full_run_count_restart
+    # Like shipping, counting needs ned-box, and a review must not wait on ned-box.
+    count_unavailable = None
+    earlier_runs = []
+    try:
+        earlier_runs = earlier_full_runs_of(target)
+    except FullRunCountUnavailable as error:
+        count_unavailable = str(error)
+    run_number = 1 if user_ruled_count_restart else len(earlier_runs) + 1
+    if run_number > FULL_RUN_LIMIT and count_unavailable is None:
+        print(f"cold-read-grid: refusing cold-read-full-run {run_number} of "
+              f"{target.name}: a change to a document gets at most {FULL_RUN_LIMIT} "
+              f"before the user decides whether it gets more, and {len(earlier_runs)} "
+              f"were made since origin/main last took a change to it: "
+              f"{', '.join(earlier_runs)}. No reviewer was "
+              f"launched and no record directory was created.\n"
+              f"Bring the user the number of findings each of those runs' triage.md "
+              f"in the log-store lists, and ask whether to stop, run again, or change "
+              f"the document's design.\n"
+              f"If the user rules to run again, run again with "
+              f"{USER_RULED_COUNT_RESTART_FLAG}.\n"
+              f"If the user rules to change the design, make the change first, then "
+              f"run again with {USER_RULED_COUNT_RESTART_FLAG}.\n"
+              f"If the user rules to stop, give the user the document to read as it "
+              f"stands.", file=sys.stderr)
+        return 2
+
     record_dir = make_record_dir(target, record_clock_reading())
+    if user_ruled_count_restart:
+        # The marker restarts the count for every later run of this document.
+        (record_dir / USER_RULED_COUNT_RESTART_MARKER_NAME).write_text(
+            "The user ruled to run this document's cold-read-full-runs again.\n",
+            encoding="utf-8")
     reference_integrity_pre_pass(target, record_dir)
 
     # All reviewers read the frozen bytes so live edits cannot split the review across versions.
@@ -651,6 +826,13 @@ def main() -> int:
               file=sys.stderr)
         return 2
     # Freezing can fail, so announce launch only after the copy succeeds.
+    if count_unavailable is None:
+        print(f"cold-read-full-run {run_number} of {FULL_RUN_LIMIT} for {target.name}.")
+    else:
+        print(f"EARLIER COLD-READ-FULL-RUNS NOT COUNTED: this run went ahead without "
+              f"counting the earlier cold-read-full-runs of {target.name}: "
+              f"{count_unavailable}\n"
+              f"Tell the user what this line says.")
     print(f"Launched six reviewers against {target}. Reports appear in "
           f"{record_dir} as each completes — read each as it arrives.")
 

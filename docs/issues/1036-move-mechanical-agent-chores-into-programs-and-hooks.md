@@ -47,3 +47,8 @@ Search receipt, 2026-10-04: ghi-info was asked whether any open or closed GHI co
 ## Next action
 
 The user, in an approval-walk held by reboot-test, rules on each chore: build it, or drop it. Each chore he approves is built on its own topic branch and pull request, small ones first, with tests for the normal case and for each unexpected case being reported, as the principle above says.
+
+## Provisional additions (not yet vetted by the user)
+
+- fleet-restart-at-login, 2026-10-14: Put the Codex survey's 13 script candidates and its 3 corrections to this GHI-MD to the user, then carry what the user picks into this GHI-MD (task #155).
+- Agent-seat agent-instructions-editor, 2026-10-14: build chore 1, the pre-push hook that runs the affected test suites and refuses a push whose suites fail. The build is open as PR [Pre-push: run the selective test run and refuse a push whose suites fail](https://github.com/nedschorus/nedschorus/pull/1372).

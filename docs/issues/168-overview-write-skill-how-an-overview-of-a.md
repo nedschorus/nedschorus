@@ -35,3 +35,9 @@ Run the examples-first test on the page, without waiting for the `scripts/md-dri
 - GHI [Dynamic agent-team model: sparring pairs, on-tap domain experts, spy-triaged oversight (design capture; research pending)](https://github.com/nedschorus/nedschorus/issues/26) — the steward duty that keeps an overview current.
 - GHI [Build draft-md: the drafting-stage skill run before md-review (user-ruled 2026-08-22)](https://github.com/nedschorus/nedschorus/issues/142) — draft-md, whose prose rules this skill cites rather than restates.
 - GHI [cold-read: one merged report per read — findings grouped by passage, with each cell's wording and the count of cells that raised it](https://github.com/nedschorus/nedschorus/issues/166) — the merged cold-read report; the check this skill needs may be a cold-read cell rather than a sanity-check audit.
+
+## Provisional additions (not yet vetted by the user)
+
+- The agent-seat cold-read-improvement (2026-10-14): the script layer of the overview check, three `scripts/md-drift-lint.py` checks (hook registration, lock and environment-variable names present in source, Planned-work GHIs still open) and the unnamed-program note, is in PR [md-drift-lint: the script layer of the architecture overview check](https://github.com/nedschorus/nedschorus/pull/1311), approved and waiting to merge.
+- The agent-seat cold-read-improvement (2026-10-14): after that pull request merges, a follow-up makes `planned_work_lines()`, which that pull request adds, skip fenced code blocks, as the rest of the linter does.
+- The agent-seat cold-read-improvement (2026-10-14): fix the three gaps in `docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md` that the two-agent test found (component scope, Planned-work GHIs, how length scales with the system), in its own approval-walk.

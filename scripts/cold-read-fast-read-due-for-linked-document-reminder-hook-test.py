@@ -88,6 +88,9 @@ class Case:
                                               "content": [{"type": "text", "text": reply}]}},
         ]
         self.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
+        return self.run_on_written_transcript(payload_extra, stdin_text, environment_extra)
+
+    def run_on_written_transcript(self, payload_extra=None, stdin_text=None, environment_extra=None):
         payload = {"hook_event_name": "Stop", "session_id": "s1",
                    "transcript_path": str(self.transcript), "cwd": str(self.checkout)}
         payload.update(payload_extra or {})
@@ -308,6 +311,88 @@ def main():
           completed.returncode == 1 and completed.stdout == ""
           and "made no check" in completed.stderr
           and len(completed.stderr.strip().splitlines()) == 1,
+          f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
+
+    def name_agent_session(report, session_id, target):
+        """What cold-read-fast-read.py writes beside a finished report."""
+        written = report.parent / (report.name + ".agent-session.json")
+        written.write_text(
+            json.dumps({"agent_session_id": session_id, "target": str(target.resolve())}))
+        os.utime(written, (4_000_000, 4_000_000))
+
+    case = Case()
+    document = case.document("docs/plan-of-record.md", modified=5_000_000)
+    record = case.record("plan-of-record-2026-10-14", 4_000_000, "docs/plan-of-record.md",
+                         "before the fix\n")
+    expect("a record with no agent-session file, then a change, is raised",
+           case.run("Applied the findings to docs/plan-of-record.md."), [document])
+    name_agent_session(record / "fast-read.md", "s1", document)
+    expect("a document this agent-session fast-read, then changed, is not raised again",
+           case.run("Applied the findings to docs/plan-of-record.md."), None)
+    expect("another agent-session's fast read, then this agent-session's change, is raised",
+           case.run("Applied the findings to docs/plan-of-record.md.", {"session_id": "s2"}),
+           [document])
+    expect("a payload with no session_id judges by file times",
+           case.run("Applied the findings to docs/plan-of-record.md.", {"session_id": None}),
+           [document])
+    name_agent_session(record / "fast-read.md", "s1", case.checkout / "docs" / "other.md")
+    expect("this agent-session's fast read of another document with the same stem does not count",
+           case.run("Applied the findings to docs/plan-of-record.md."), [document])
+    (record / "fast-read.md.agent-session.json").write_text("not json\n")
+    completed = case.run("Applied the findings to docs/plan-of-record.md.")
+    check("an agent-session file that is not JSON is a fault naming the file: exit 1, one stderr line, no output",
+          completed.returncode == 1 and completed.stdout == ""
+          and "made no check" in completed.stderr
+          and str(record / "fast-read.md.agent-session.json") in completed.stderr
+          and len(completed.stderr.strip().splitlines()) == 1,
+          f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
+    for label, content in (("empty", b""), ("not UTF-8", b"\xff\xfe{")):
+        (record / "fast-read.md.agent-session.json").write_bytes(content)
+        completed = case.run("Applied the findings to docs/plan-of-record.md.")
+        check(f"an agent-session file that is {label} is a fault naming the file: exit 1",
+              completed.returncode == 1
+              and str(record / "fast-read.md.agent-session.json") in completed.stderr,
+              f"exit {completed.returncode}, stderr {completed.stderr!r}")
+    (record / "fast-read.md.agent-session.json").write_text('{"agent_session_id": "s1"}\n')
+    completed = case.run("Applied the findings to docs/plan-of-record.md.")
+    check("an agent-session file without a target is a fault: exit 1",
+          completed.returncode == 1 and "not an agent-session record" in completed.stderr,
+          f"exit {completed.returncode}, stderr {completed.stderr!r}")
+
+    case = Case()
+    draft = case.document("docs/walk/naming-rules-draft.md", modified=5_000_000)
+    suggestions = case.document("docs/walk/naming-rules-suggestions.md", modified=4_000_000)
+    expect("a walk-document changed after another agent-session's read is raised",
+           case.run("The walk-document is docs/walk/naming-rules-draft.md."), [draft])
+    name_agent_session(suggestions, "s1", draft)
+    expect("a walk-document this agent-session fast-read, then changed, is not raised again",
+           case.run("The walk-document is docs/walk/naming-rules-draft.md."), None)
+
+    case = Case()
+    draft = case.document("docs/walk/naming-rules-draft.md", modified=4_000_000)
+    suggestions = case.document("docs/walk/naming-rules-suggestions.md", modified=5_000_000)
+    malformed = suggestions.parent / (suggestions.name + ".agent-session.json")
+    malformed.write_text("not json\n")
+    completed = case.run("The walk-document is docs/walk/naming-rules-draft.md.")
+    check("a malformed agent-session file beside suggestions newer than the walk-document is a fault naming the file",
+          completed.returncode == 1 and completed.stdout == ""
+          and str(malformed) in completed.stderr,
+          f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
+
+    case = Case()
+    case.document("docs/plan-of-record.md", modified=5_000_000)
+    case.run("Updated docs/plan-of-record.md.")
+    case.transcript.chmod(0)
+    try:
+        completed = case.run_on_written_transcript()
+    finally:
+        case.transcript.chmod(0o644)
+    context = (json.loads(completed.stdout)["hookSpecificOutput"]["additionalContext"]
+               if completed.returncode == 0 and completed.stdout.strip() else "")
+    check("a transcript that cannot be read is reported to the agent and on stderr, exit 0",
+          completed.returncode == 0
+          and "could not read this agent-session's transcript" in context
+          and "could not read this agent-session's transcript" in completed.stderr,
           f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
 
     # The Mac mount maps to ned-box's /home/nedlern; point that prefix at a scratch directory.

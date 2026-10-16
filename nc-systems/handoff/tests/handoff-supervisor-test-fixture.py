@@ -6,7 +6,8 @@ own copy of the supervisor module: the cases patch the module's globals, and
 two suites sharing one copy would see each other's patches.
 
 Loading it puts in place, for the rest of the process, the sandboxes every
-case relies on: an ssh first on PATH that never reaches ned-box, an empty
+case relies on: a scratch HOME, so no launch writes the real ~/.claude.json;
+an ssh first on PATH that never reaches ned-box, an empty
 directory standing in for the overview reminders' marks, and a directory of
 the process's own for the agent-binary update lock.
 
@@ -33,6 +34,19 @@ SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
 REPOSITORY_ROOT = SYSTEM_DIRECTORY.parent.parent
 
 SCRIPT_PATH = SYSTEM_DIRECTORY / "handoff-supervisor.py"
+
+# No case may write the real ~/.claude.json: every agent-session launch writes
+# Claude Code's onboarding presets into it, in this process and in every
+# supervisor the cases start. HOME is a scratch directory for this process and
+# every process it starts, set before the supervisor is loaded so its paths
+# under HOME land there too. Git still reads the real ~/.gitconfig, for the
+# identity the cases' commits need.
+REAL_GIT_GLOBAL_CONFIG = Path.home() / ".gitconfig"
+os.environ.setdefault("GIT_CONFIG_GLOBAL", str(REAL_GIT_GLOBAL_CONFIG))
+SCRATCH_HOME_DIRECTORY = Path(tempfile.mkdtemp(prefix="handoff-supervisor-test-home-"))
+atexit.register(shutil.rmtree, SCRATCH_HOME_DIRECTORY, True)
+os.environ["HOME"] = str(SCRATCH_HOME_DIRECTORY)
+SCRATCH_CLAUDE_JSON_PATH = SCRATCH_HOME_DIRECTORY / ".claude.json"
 
 _spec = importlib.util.spec_from_file_location("handoff_supervisor", SCRIPT_PATH)
 supervisor = importlib.util.module_from_spec(_spec)

@@ -46,6 +46,19 @@ Writing the marker on the `next-step:` line instead would be the obvious
 design and is wrong: an older supervisor would boot its successor with the
 marker string as its entire instruction, silently.
 
+Before it writes the handoff, the writer prunes the completed tasks from the
+agent-seat's task list, the one CLAUDE_CODE_TASK_LIST_ID names, because Claude
+Code lists every completed task in each task reminder and never removes one
+itself. A completed task is removed only when the log-store holds a copy with
+the same bytes, so nothing is lost; it is kept when an open task links to it
+in either direction, or when the next step names its id or its subject. The
+high-water mark is raised before anything is removed, so Claude Code never
+gives a removed task's id to a new task, which would overwrite the
+log-store's copy. A prune that fails keeps the tasks and prints one line;
+it never stops the handoff, and the next handoff tries again. It runs before
+the handoff is written because the handoff-supervisor ends this session
+seconds after the file appears.
+
 The liveness report is part of this script rather than a second command
 because the two are one decision: a handoff nobody is watching must not stop
 the agent working, and an agent that runs only the first half of a two-step
@@ -56,10 +69,12 @@ watching, 2 bad invocation or an empty next step.
 """
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -72,6 +87,12 @@ _supervisor_spec = importlib.util.spec_from_file_location(
 )
 supervisor = importlib.util.module_from_spec(_supervisor_spec)
 _supervisor_spec.loader.exec_module(supervisor)
+
+_transcript_mirror_spec = importlib.util.spec_from_file_location(
+    "transcript_mirror_to_log_store", REPOSITORY_ROOT / "scripts" / "transcript-mirror-to-log-store.py"
+)
+transcript_mirror = importlib.util.module_from_spec(_transcript_mirror_spec)
+_transcript_mirror_spec.loader.exec_module(transcript_mirror)
 
 
 NEXT_STEP_VERBATIM_FIELD = "next-step-verbatim"
@@ -354,6 +375,233 @@ def write_handoff_file(handoff_path: Path, next_step: str, counter: int, dont_re
 
 
 
+TASK_LIST_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_TASK_LIST_ID"
+TASK_FILE_NAME_PATTERN = re.compile(r"[1-9][0-9]*\.json")
+TASK_HIGH_WATER_MARK_FILE_NAME = ".highwatermark"
+LOG_STORE_TASK_FILE_COPIES_HASH_SSH_TIMEOUT_SECONDS = 30
+COMPLETED_TASKS_PRUNED_LABEL = "completed tasks pruned:"
+
+
+def tasks_mirror_row():
+    """Return the mirror's (home-relative source directory, store directory) for task lists."""
+    for name, relative, store_directory, _select in transcript_mirror.SOURCES:
+        if name == "tasks":
+            return relative, store_directory
+    raise LookupError("the transcript mirror has no tasks source")
+
+
+def task_list_directory_name(list_id: str) -> str:
+    # Claude Code maps these characters the same way when it names the directory.
+    return re.sub(r"[^A-Za-z0-9_-]", "-", list_id)
+
+
+def log_store_task_list_copy_location_in_scp_form(host, store_list_directory) -> str:
+    """Return the log-store directory in scp form, as citations of the log-store use."""
+    if host:
+        return f"{host}:{store_list_directory}"
+    if os.environ.get(transcript_mirror.DESTINATION_ENVIRONMENT_VARIABLE):
+        return str(store_list_directory)
+    store_host, _ = transcript_mirror.split_destination(transcript_mirror.LOG_STORE_TRANSCRIPTS_DESTINATION)
+    return f"{store_host}:{store_list_directory}"
+
+
+class LogStoreUnreachable(Exception):
+    """The log-store's copy of the task list could not be checked at all."""
+
+
+class LogStoreCopyUnreadable(Exception):
+    """ssh reached the log-store, but sha256sum could not read some copies."""
+
+    def __init__(self, said: str, unreadable_names: list):
+        super().__init__(said)
+        self.unreadable_names = unreadable_names
+
+
+def log_store_copy_sha256_of_each_task_file(host, store_list_directory, file_names) -> dict:
+    """Return {file name: sha256 hex} for the named files the log-store holds."""
+    if host is None:
+        hashes = {}
+        for file_name in file_names:
+            stored = Path(store_list_directory) / file_name
+            if stored.is_file():
+                hashes[file_name] = hashlib.sha256(stored.read_bytes()).hexdigest()
+        return hashes
+    command = (f"cd -- {shlex.quote(str(store_list_directory))} && sha256sum -- "
+               + " ".join(shlex.quote(name) for name in file_names))
+    try:
+        completed = subprocess.run(transcript_mirror.SSH_COMMAND + [host, command], capture_output=True,
+                                   text=True, check=False, timeout=LOG_STORE_TASK_FILE_COPIES_HASH_SSH_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        raise LogStoreUnreachable(f"ssh to {host} gave no answer in "
+                                   f"{LOG_STORE_TASK_FILE_COPIES_HASH_SSH_TIMEOUT_SECONDS} seconds") from None
+    # sha256sum exits 1 when some named files are missing and still prints the rest; it
+    # exits 1 too when it cannot read a file, and that is a failure, not a missing copy.
+    if completed.returncode not in (0, 1):
+        said = collapse_to_one_line(completed.stderr) or "nothing on stderr"
+        raise LogStoreUnreachable(f"ssh to {host} exited {completed.returncode}: {said}")
+    unexplained = [line for line in completed.stderr.splitlines()
+                   if line.strip() and not line.rstrip().endswith(": No such file or directory")]
+    if completed.returncode == 1 and unexplained:
+        raise LogStoreCopyUnreadable(
+            f"sha256sum on {host} could not read every copy: {collapse_to_one_line(chr(10).join(unexplained))}",
+            [name for name in file_names if any(f": {name}:" in line for line in unexplained)])
+    hashes = {}
+    for line in completed.stdout.splitlines():
+        digest, _, name = line.partition(" ")
+        name = name.lstrip(" *")
+        if name in file_names:
+            hashes[name] = digest
+    return hashes
+
+
+def raise_task_high_water_mark(list_directory: Path, highest_id: int) -> None:
+    """Make the high-water mark at least highest_id; raises OSError if it cannot be written."""
+    # Claude Code numbers a new task max(highest file id, high-water mark) + 1.
+    mark_path = list_directory / TASK_HIGH_WATER_MARK_FILE_NAME
+    current = 0
+    if mark_path.is_file():
+        try:
+            current = int(mark_path.read_text(encoding="utf-8").strip())
+        except ValueError:
+            current = 0
+    if current >= highest_id:
+        return
+    partial = list_directory / (TASK_HIGH_WATER_MARK_FILE_NAME + ".partial")
+    try:
+        partial.write_text(str(highest_id), encoding="utf-8")
+        os.replace(partial, mark_path)
+    except OSError:
+        partial.unlink(missing_ok=True)
+        raise
+
+
+def prune_completed_tasks(next_step_text: str) -> str:
+    """Remove completed tasks the log-store holds; return the console line, never raise."""
+    try:
+        return COMPLETED_TASKS_PRUNED_LABEL + " " + prune_completed_tasks_unguarded(next_step_text)
+    except Exception as error:  # noqa: BLE001 - the prune never blocks a handoff
+        return (f"{COMPLETED_TASKS_PRUNED_LABEL} failed, every completed task kept — "
+                f"{type(error).__name__}: {error}. The next handoff tries again. "
+                "Tell the user this line in your last message before you wait.")
+
+
+def prune_completed_tasks_unguarded(next_step_text: str) -> str:
+    list_id = os.environ.get(TASK_LIST_ENVIRONMENT_VARIABLE, "").strip()
+    if not list_id:
+        return f"not run — {TASK_LIST_ENVIRONMENT_VARIABLE} is unset, so no task list is known"
+    list_name = task_list_directory_name(list_id)
+    relative, store_directory = tasks_mirror_row()
+    list_directory = Path.home() / relative / list_name
+    if not list_directory.is_dir():
+        return (f"not run — {TASK_LIST_ENVIRONMENT_VARIABLE} is {list_id}, but there is no task "
+                f"folder at {list_directory}. If Claude Code has moved where it keeps task lists, "
+                "this prune has stopped working. Tell the user this line in your last message "
+                "before you wait.")
+
+    tasks = {}
+    for path in list_directory.iterdir():
+        if not TASK_FILE_NAME_PATTERN.fullmatch(path.name):
+            continue
+        # A task that cannot be read could be an open task whose links protect a completed one.
+        try:
+            content = path.read_bytes()
+            task = json.loads(content)
+            if not isinstance(task, dict):
+                raise ValueError("it does not hold a JSON object")
+        except (OSError, ValueError) as error:
+            return (f"kept every completed task in {list_name}, because the task file {path} "
+                    f"could not be read ({error}). Tell the user this line in your last message "
+                    "before you wait.")
+        tasks[int(path.stem)] = (path, content, task)
+    if not tasks:
+        return f"no tasks in {list_name}"
+
+    def status_of(task_id: int):
+        return tasks[task_id][2].get("status")
+
+    def linked_ids(task: dict):
+        ids = set()
+        for key in ("blocks", "blockedBy"):
+            for linked in task.get(key) or ():
+                if str(linked).isdigit():
+                    ids.add(int(linked))
+        return ids
+
+    completed = sorted(task_id for task_id in tasks if status_of(task_id) == "completed")
+    if not completed:
+        return f"no completed tasks in {list_name}"
+    # An id with no task file links nothing: it would otherwise pin a completed task for good.
+    open_ids = {task_id for task_id, (_, _, task) in tasks.items()
+                if task.get("status") != "completed"}
+    linked_to_open = set()
+    for task_id in open_ids:
+        linked_to_open |= linked_ids(tasks[task_id][2])
+    # A subject the next step wraps across a line break still cites its task.
+    next_step_words = " ".join(next_step_text.split())
+    kept_linked, kept_cited, candidates = [], [], []
+    for task_id in completed:
+        task = tasks[task_id][2]
+        if task_id in linked_to_open or linked_ids(task) & open_ids:
+            kept_linked.append(task_id)
+            continue
+        subject = " ".join(str(task.get("subject") or "").split())
+        if re.search(rf"\b{task_id}\b", next_step_text) or (subject and subject in next_step_words):
+            kept_cited.append(task_id)
+            continue
+        candidates.append(task_id)
+
+    host, machine_path = transcript_mirror.destination_for_this_machine()
+    store_list_directory = machine_path / store_directory / list_name
+    store_text = log_store_task_list_copy_location_in_scp_form(host, store_list_directory)
+    kept_parts = [f"{len(kept_linked)} linked to open tasks", f"{len(kept_cited)} cited by the next step"]
+    try:
+        store_hashes = log_store_copy_sha256_of_each_task_file(host, store_list_directory,
+                                         [tasks[task_id][0].name for task_id in candidates]) \
+            if candidates else {}
+    except LogStoreUnreachable as error:
+        return (f"kept every completed task in {list_name}, because the log-store copy at "
+                f"{store_text} could not be checked ({error}). Check that ned-box is up and that "
+                f"`ssh {host} true` works; the next handoff prunes them. Tell the user this line "
+                "in your last message before you wait.")
+    except LogStoreCopyUnreadable as error:
+        # ssh worked, so the ssh remedy would send the reader the wrong way.
+        copies = ", ".join(error.unreadable_names) or "the copies sha256sum named"
+        return (f"kept every completed task in {list_name}, because ned-box answered but the "
+                f"log-store copy at {store_text} could not be read ({error}). On ned-box, run "
+                f"`ls -l` on {copies} in {store_list_directory} and make each a file nedlern can "
+                "read; the next handoff prunes them. Tell the user this line in your last message "
+                "before you wait.")
+    verified = [task_id for task_id in candidates
+                if store_hashes.get(tasks[task_id][0].name)
+                == hashlib.sha256(tasks[task_id][1]).hexdigest()]
+    kept_parts.append(f"{len(candidates) - len(verified)} not yet in the log-store copy")
+    if not verified:
+        return (f"removed 0 of {len(completed)} completed tasks from {list_name}; kept "
+                f"{len(completed)} ({', '.join(kept_parts)})")
+
+    try:
+        raise_task_high_water_mark(list_directory, max(tasks))
+    except OSError as error:
+        return (f"removed nothing from {list_name}, because the high-water mark "
+                f"{list_directory / TASK_HIGH_WATER_MARK_FILE_NAME} could not be raised ({error}); "
+                "without it Claude Code could give a removed task's id to a new task. "
+                "Tell the user this line in your last message before you wait.")
+    removed, unlink_failures = 0, []
+    for task_id in verified:
+        try:
+            tasks[task_id][0].unlink()
+            removed += 1
+        except OSError as error:
+            unlink_failures.append(f"{tasks[task_id][0]}: {error}")
+    if unlink_failures:
+        kept_parts.append(f"{len(unlink_failures)} could not be removed")
+    line = (f"removed {removed} of {len(completed)} completed tasks from {list_name}; kept "
+            f"{len(completed) - removed} ({', '.join(kept_parts)}); removed tasks stay at {store_text}")
+    if unlink_failures:
+        line += (f". Could not remove {'; '.join(unlink_failures)}. Tell the user this line in "
+                 "your last message before you wait.")
+    return line
+
 
 def run_branch_protection_audit() -> str:
     """Return an audit status line without letting audit failures block handoff."""
@@ -486,11 +734,14 @@ def main(argv=None) -> int:
 
     counter = next_restart_counter(handoff_path, state_path)
     spawned_subagent_lines, roster_report = spawned_subagent_roster_for_this_session(seat_directory)
+    prune_report = prune_completed_tasks(next_step_text)
     write_handoff_file(handoff_path, next_step, counter, arguments.dont_restart, seat_directory,
                        spawned_subagent_lines=spawned_subagent_lines,
                        verbatim_lines=verbatim_lines)
-    print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (restart-counter {counter})")
-    print(f"handoff-write-and-check-supervisor: {roster_report}")
+    # Flushed at once: the supervisor may end this session soon after the handoff file appears.
+    print(f"handoff-write-and-check-supervisor: wrote {handoff_path} (restart-counter {counter})", flush=True)
+    print(f"handoff-write-and-check-supervisor: {roster_report}", flush=True)
+    print(f"handoff-write-and-check-supervisor: {prune_report}", flush=True)
     print(f"handoff-write-and-check-supervisor: {run_branch_protection_audit()}")
 
     alive, explanation = supervisor.supervisor_liveness(state_path)

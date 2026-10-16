@@ -45,7 +45,7 @@ A note, never a refusal, handed to the agent with the user's next message, listi
 - GHI [Cite files by name, not by path](https://github.com/nedschorus/nedschorus/issues/610): how a file is cited in committed text so a search finds every reference. A reply's link is for the user to click; the two do not conflict.
 - GHI [cold-read-record-ship.py prints a citation without its host when it runs on ned-box, where the seats run](https://github.com/nedschorus/nedschorus/issues/299), closed: an earlier case of a citation that did not resolve from where the reader sat, fixed in one program.
 
-## What is not decided
+## Deferred-decisions
 
 1. **Sessions on the Mac.** A Mac agent-session can cite a document in its own clone or a ned-box document through the mount; the hook as proposed checks ned-box paths only and says nothing in a session on the Mac.
 2. **Documents that do not exist yet**, such as a report a reply says it will write: the finder skips them, so the hook says nothing.
@@ -54,3 +54,7 @@ A note, never a refusal, handed to the agent with the user's next message, listi
 ## Next action
 
 Ask the user which place the 2026-10-12 test was in; he clicks one `file:///Volumes/nedhome/...` link to a ned-box document in the other place, and says whether it opened. Then put the three undecided points to him, and build the hook with tests that feed it transcripts: a last reply naming a document by a bare repository path, for which the note gives that document's `file:///Volumes/nedhome/...` link; a reply naming the same document both bare and as a `/Volumes/nedhome` link, and a reply holding the path only in a fenced command, for both of which the hook prints nothing.
+
+## Provisional additions (not yet vetted by the user)
+
+- cold-read-research, 2026-10-14: PR [ned-box path reply warning hook: note /home/nedlern/ paths the user cannot open on the Mac, with the /Volumes/nedhome link to write](https://github.com/nedschorus/nedschorus/pull/1358) merged as 7bb5aead, covering ned-box paths in replies. Its review left five non-blocking points for a follow-up pull request: (1) a bare file URL whose name holds `(`, `)` or `*` is cut at that character; (2) the same for an angle autolink such as `<file:///home/nedlern/report(1).md>`; (3) a link destination holding paired backticks yields NUL characters in the suggestion, so the destination should be read from the original text; (4) `previous_reply_note` and `note_record_path_for` should move into a `-common.py` module that both reply hooks import, instead of the new hook reaching into the bare-number hook's private functions; (5) a file URL inside underscore emphasis is not noted.

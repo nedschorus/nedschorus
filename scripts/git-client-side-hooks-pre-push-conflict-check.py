@@ -158,8 +158,9 @@ def unchecked_lines(branches):
 
 
 def say_no_branch_checked(stream, cause, branches):
-    say(stream, MESSAGE_PREFIX + "%s, so no branch in this push was checked for "
-        "conflicts with %s: %s." % (cause, BASE_NAME_FOR_MESSAGES, branch_list(branches)))
+    say(stream, MESSAGE_PREFIX + "%s, so this push goes ahead with none of its branches "
+        "checked for conflicts with %s: %s." % (cause, BASE_NAME_FOR_MESSAGES,
+                                                 branch_list(branches)))
     for line in unchecked_lines(branches):
         say(stream, line)
     say(stream, TELL_USER_LINE)
@@ -167,8 +168,8 @@ def say_no_branch_checked(stream, cause, branches):
 
 def say_error_before_branches_read(stream, error_text):
     say(stream, MESSAGE_PREFIX + "the pre-push conflict check failed with %s before "
-        "reading which branches this push sends, so no branch in this push was checked "
-        "for conflicts with %s." % (error_text, BASE_NAME_FOR_MESSAGES))
+        "reading which branches this push sends, so this push goes ahead with none of its "
+        "branches checked for conflicts with %s." % (error_text, BASE_NAME_FOR_MESSAGES))
     say(stream, "For each branch this push sends to %s, other than main, run from your "
         "worktree: %s" % (CHECKED_REMOTE_NAME, HAND_CHECK_COMMAND % "<branch name>"))
     say(stream, TELL_USER_LINE)

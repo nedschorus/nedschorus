@@ -69,7 +69,7 @@ cold-read-records/
 md-review-records/
 
 # sanity-check records: the second review instrument's output
-# (scripts/sanity-check-attacks.py) — same class and disposal as
+# (scripts/sanity-check-adversarial-prompts.py) — same class and disposal as
 # cold-read-records: never committed, and kept as logs in the log-store, which
 # scripts/sanity-check-record-ship.py puts them in (user-ruled 2026-09-15)
 sanity-check-records/

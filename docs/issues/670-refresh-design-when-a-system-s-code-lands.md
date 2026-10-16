@@ -65,3 +65,7 @@ The staleness check of item 5 is built: `nc-systems/handoff/handoff-supervisor.p
 ## Next action
 
 Settle the draft definition and the pinned line's format with the user, then build: the fleet seat builds the supervisor's staleness check; the refresh itself is built as a skill a subagent runs over one system and one commit range. Add the glossary entry in the pull request that makes the step exist.
+
+## Provisional additions (not yet vetted by the user)
+
+- The agent-seat cold-read-improvement (2026-10-14): rewrite this GHI-MD's definition of how an overview is refreshed to point at `docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md`, through /ghi-write and a short approval-walk.

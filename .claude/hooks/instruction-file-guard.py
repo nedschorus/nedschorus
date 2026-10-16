@@ -44,6 +44,15 @@ MISSING_SESSION_DIRECTORY_DENY_MESSAGE = (
     "unrelated checkout approve this write."
 )
 
+# The marker's opening words stay exact: the glossary's obvious-fix marker is
+# defined by them, and a check that exempts such markers would match on them.
+OBVIOUS_FIX_MARKER_LINES = (
+    "\nFor an obvious error, write \"Obvious fix under CLAUDE.md's standing approval:\" "
+    "and what you are fixing into {marker} at the root of your session's own checkout, "
+    "then resubmit.\n"
+    "If the edit then does not happen, delete {marker}."
+)
+
 # Each refusal ends with these lines, one for each way cooperative agents went
 # around the refusal by accident: moving the text into code, editing by another
 # route so the marker was never spent, and quoting approval of something else.
@@ -77,7 +86,7 @@ REUSABLE_PROMPT_DENY_MESSAGE = (
     "write it outside "
     "the checkout, in your scratchpad. If it is a draft for his walk, write it in a queue "
     "directory or docs/drafts/."
-) + ROUTE_AROUND_LINES
+) + OBVIOUS_FIX_MARKER_LINES + ROUTE_AROUND_LINES
 
 REVIEWED_DOCUMENT_DENY_MESSAGE = (
     "Get the user's approval before you change {path}; he reviews every change to a file here.\n"
@@ -93,17 +102,17 @@ REVIEWED_DOCUMENT_DENY_MESSAGE = (
     "report the change to the agent that dispatched you instead.\n"
     "If this is a first draft, write it in docs/drafts/ or in a queue directory such as "
     "docs/issues/queue/, docs/agents/queue/ or docs/nedschorus-wiki/queue/ instead."
-) + ROUTE_AROUND_LINES
+) + OBVIOUS_FIX_MARKER_LINES + ROUTE_AROUND_LINES
 
 MEMORY_WRITE_DENY_MESSAGE = (
-    "Refusing to write {path}: it is in a Claude Code memory directory. Nothing makes a "
-    "later agent read a memory file at the moment it would matter, and a note read later, "
-    "without the conversation that produced it, often makes little sense or no longer fits "
-    "the situation.\n"
+    "Refusing to write {path}: it is in a Claude Code memory directory, where nothing "
+    "recalls a note at the moment it applies.\n"
     "If what you meant to save would change how agents work, propose to the user the exact "
     "edit, with its wording, to the instruction file, skill or program where an agent would "
     "meet it.\n"
-    "Otherwise drop it: do not show the note to the user.\n"
+    "If you cannot tell where it belongs, tell the user in one sentence what you meant to "
+    "remember, and ask him where to save it so that an agent recalls it when it applies.\n"
+    "If it matters only to this conversation, drop it.\n"
     "If you are a subagent, put this to the agent that dispatched you instead.\n"
     "No {marker} marker lets a write into a memory directory through, so do not write one "
     "for this."
@@ -121,7 +130,7 @@ DENY_MESSAGE = (
     "session sits in the machine's reference checkout, another guard refuses that Write "
     "and the edit itself: make the change from your own worktree, and put {marker} at "
     "that worktree's root."
-) + ROUTE_AROUND_LINES
+) + OBVIOUS_FIX_MARKER_LINES + ROUTE_AROUND_LINES
 
 
 def enclosing_repository_root(path: Path):

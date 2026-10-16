@@ -26,12 +26,15 @@ REMOTE_TIMEOUT_SECONDS = 30
 LOCAL_COMMAND_TIMEOUT_SECONDS = 30
 
 # Remove Git redirects so each command answers for the named repository.
-GIT_REDIRECTING_VARIABLES = (
+# A copy of nc-systems/general-tools/git-redirecting-environment-variables-removal-common.py's
+# list, the one copy allowed: this file is sent over ssh alone, so it cannot load the module.
+# Its test fails when the two lists differ.
+GIT_REDIRECTING_ENVIRONMENT_VARIABLES = (
     "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
-    "GIT_COMMON_DIR", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR")
 # Printed recovery commands must also remove redirects from the shell where they are pasted.
 PRINTED_GIT_INVOCATION_WITHOUT_REDIRECTING_VARIABLES = "env %s git" % " ".join(
-    "-u %s" % name for name in GIT_REDIRECTING_VARIABLES)
+    "-u %s" % name for name in GIT_REDIRECTING_ENVIRONMENT_VARIABLES)
 
 PLAN_ENVIRONMENT_VARIABLE = "LOCATE_FILE_COPIES_ACROSS_MACHINES_PLAN"
 THIS_MACHINE_JSON_FLAG = "--this-machine-json"
@@ -43,8 +46,11 @@ BACKUP_SEARCH_SURFACES_ALREADY_SEARCHED = ("git", "reflog")
 # Without a summary line, the backup search did not finish.
 BACKUP_SEARCH_SUMMARY_OPENINGS = (
     "Recoverable from: ", "No surface that could be searched has it.")
+BACKUP_SEARCH_UNSEARCHED_OPENING = "Could NOT search: "
 BACKUP_SEARCH_FOUND_EXIT = 0
 BACKUP_SEARCH_INCOMPLETE_EXIT = 3
+BACKUP_SEARCH_FOUND_BUT_NOT_COPIED_EXIT = 4
+BACKUP_SEARCH_FOUND_COPY_COMMAND_PRINTED_EXIT = 5
 
 # Bound hashing cost, the only search cost that grows with file size.
 HASH_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
@@ -293,7 +299,7 @@ def place_of_file(path, layout, spellings, this_git_dirs, cache):
 def environment_without_git_redirecting_variables():
     # Keep this helper local: the complete program is sent over ssh without sibling modules.
     return {key: value for key, value in os.environ.items()
-            if key not in GIT_REDIRECTING_VARIABLES}
+            if key not in GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
 
 
 def tracked_in_checkout(root, relative_paths):
@@ -1003,9 +1009,11 @@ def run_backup_search_after_nothing_found(query, git_search_complete):
     program = (os.environ.get(BACKUP_SEARCH_PROGRAM_VARIABLE)
                or str(pathlib.Path(__file__).resolve().parent
                       / BACKUP_SEARCH_PROGRAM_NAME))
-    command = [sys.executable, program, query]
+    command = [sys.executable, program]
     for surface in BACKUP_SEARCH_SURFACES_ALREADY_SEARCHED:
         command += ["--skip", surface]
+    # Without "--", a query opening with a dash is read as an option.
+    command += ["--", query]
     covered = (", which the git search above covered" if git_search_complete
                else "")
     write_text("\nNo copy was found, so the backup search runs now, without "
@@ -1020,11 +1028,14 @@ def run_backup_search_after_nothing_found(query, git_search_complete):
         return [f"The backup search could not start ({error}): tell the user "
                 f"it did not run, and do not say the file does not exist."]
     summary_printed = False
+    some_place_unsearched = False
     for line in process.stdout:
         text = line.decode("utf-8", "replace")
         write_text(text)
         summary_printed = summary_printed or text.startswith(
             BACKUP_SEARCH_SUMMARY_OPENINGS)
+        some_place_unsearched = some_place_unsearched or text.startswith(
+            BACKUP_SEARCH_UNSEARCHED_OPENING)
     code = process.wait()
     if not summary_printed:
         how = (f"it was stopped by signal {-code}" if code < 0
@@ -1032,11 +1043,26 @@ def run_backup_search_after_nothing_found(query, git_search_complete):
         return [f"The backup search did not finish ({how} before its summary "
                 f"line): tell the user that the places it did not print were "
                 f"not searched, and do not say the file does not exist."]
+    unsearched = (["It also could NOT search some places: tell the user "
+                   "which, as its \"Could NOT search\" line names them."]
+                  if some_place_unsearched else [])
     if code == BACKUP_SEARCH_FOUND_EXIT:
-        return ["The backup search found it: before you say it can be "
-                "recovered, check that the place a FOUND line names holds the "
-                "file's content, since a transcript matches whenever the path "
-                "was only typed in it."]
+        return ["The backup search found it: open the copies its \"copied to\" "
+                "lines name, and check that one holds the file's content before "
+                "you say it can be recovered. Restore a copy to the file's own "
+                "path only when asked to."] + unsearched
+    if code == BACKUP_SEARCH_FOUND_BUT_NOT_COPIED_EXIT:
+        return ["The backup search found it but copied no version: tell the "
+                "user what its FOUND lines say, such as a \"could NOT copy\" line "
+                "or a transcript where the path may only have been typed, and do "
+                "not say the file does not exist."] + unsearched
+    if code == BACKUP_SEARCH_FOUND_COPY_COMMAND_PRINTED_EXIT:
+        return ["The backup search found it but copied nothing yet: the "
+                "commands it printed under each FOUND surface copy a version "
+                "into its found-copies folder. Its \"Nothing was copied yet\" line says "
+                "which commands you run yourself and which you give the user "
+                "because their sudo may ask for his password; do as it says, and "
+                "do not say the file does not exist."] + unsearched
     if code == BACKUP_SEARCH_INCOMPLETE_EXIT:
         return ["Tell the user which places the backup search could NOT "
                 "search, and why: its Could NOT search line names them."]
@@ -1050,9 +1076,18 @@ def main(argv=None) -> int:
                     "ned-box, newest first: checkouts, the log-store, the "
                     "handoffs, and git history including the reflog.")
     parser.add_argument("query", help="a file name or a path, which may be "
-                        "written in the scp form nedlern@ned-box:<path>; its "
-                        "name's stem is matched, case-insensitively, anywhere "
-                        "in a file's name")
+                        "written in the scp form nedlern@ned-box:<path>. Its "
+                        "name without the extension is matched, case-insensitively, "
+                        "anywhere in a file's name: report.md lists old-report.txt "
+                        "as a candidate. For a name, only a file with the same name, in "
+                        "any case, counts as found; for a path, only a file at the "
+                        "same path, in any case, counts as found, and a file with the same name "
+                        "elsewhere is listed as a candidate. A query with no dot in "
+                        "its name also counts a file whose name without its "
+                        "extension is the same, so report finds report.md; a name "
+                        "with a dot anywhere, such as .gitignore, counts only that "
+                        "name. A name that opens with a "
+                        "dash goes after --, as in -- -nbd-test.py")
     parser.add_argument(THIS_MACHINE_JSON_FLAG, metavar="SURFACES_JSON",
                         help="search only this machine, over these surfaces, "
                              "and print the answer as JSON: what the program "

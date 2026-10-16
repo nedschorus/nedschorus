@@ -7,7 +7,8 @@ with the log file and the once-per-session marker directory pointed into a
 directory this suite made, so no case writes the live log-store or
 ~/.local/state/claude. The exit code is asserted on every case: a Stop hook
 that exits 2 blocks the turn from ending, so the hook exits 0, or 1 with one
-stderr line on a fault, and never 2.
+stderr line on a fault, and never 2; a log that cannot be written is told in
+a systemMessage.
 
 The precision case reads the labelled replies the trigger was measured on,
 which stay in the log-store because they are transcript text and this
@@ -234,10 +235,19 @@ for case_name, text in [
     ("B03's claim fires", 'I did not locate your "y" to item 5 itself or to item 2, and the review says so.'),
     ("no reply in between fires", "There was no reply from you in between those two messages."),
     ("a ruling never given fires", "That item rests on a ruling you never gave."),
-    ("a backquoted home path fires", "The copy at `~/.local/state/claude/fires.jsonl` is gone."),
-    ("a backquoted file name fires", "The file `fires.jsonl` is gone."),
+    ("a backquoted home path fires", "`~/.local/state/claude/fires.jsonl` is gone."),
+    ("a backquoted file name fires", "`fires.jsonl` is gone."),
 ]:
     check(f"trigger: {case_name}", bool(hook.absence_claim_matches(text)), text)
+
+# Pattern 2 fires only after a word naming a stored artifact, so a sentence
+# whose only such word comes from a backquoted path tests the FILE substitution.
+for case_name, text in [
+    ("a backquoted home path", "`~/.local/state/claude/fires.jsonl` is gone."),
+    ("a backquoted file name", "`fires.jsonl` is gone."),
+]:
+    check(f"strip_noise: {case_name} becomes the word FILE",
+          hook.strip_noise(text).split() == ["FILE", "is", "gone."], hook.strip_noise(text))
 
 for case_name, text in [
     ("processes gone are not files", "The child processes are gone now, so the file lock is free."),
@@ -410,19 +420,49 @@ check("a SubagentStop whose agent_transcript_path does not exist: exit 0, silent
       result.returncode == 0 and result.stdout == "" and result.stderr == ""
       and case.log_lines() == [], (result.returncode, result.stdout, result.stderr, case.log_lines()))
 
-# --- faults: exit 1, one stderr line, nothing on stdout, the error logged -----------
-
 case = Case()
 result = case.run({"transcript_path": str(case.root / "no-such-transcript.jsonl")})
-check("a missing transcript: reported on stderr, exit 1, nothing on stdout",
-      reported(result, "FileNotFoundError"), (result.returncode, result.stdout, result.stderr))
-check("a missing transcript: the error is logged",
-      [line.get("outcome") for line in case.log_lines()] == ["error"]
-      and "FileNotFoundError" in case.log_lines()[0].get("error", ""), case.log_lines())
+check("a Stop whose transcript_path does not exist: exit 0, silent, nothing logged",
+      result.returncode == 0 and result.stdout == "" and result.stderr == ""
+      and case.log_lines() == [], (result.returncode, result.stdout, result.stderr, case.log_lines()))
+
+# --- faults: exit 1, one stderr line, nothing on stdout, the error logged -----------
+
+
+def run_with_unsearchable_transcript(case, payload_key="transcript_path", **payload):
+    """Run the hook on a transcript inside a directory without search permission."""
+    locked_directory = case.root / "locked"
+    locked_directory.mkdir()
+    (locked_directory / "transcript.jsonl").write_text(case.transcript.read_text())
+    locked_directory.chmod(0)
+    try:
+        return case.run(dict(payload, **{payload_key: str(locked_directory / "transcript.jsonl")}))
+    finally:
+        locked_directory.chmod(0o700)
+
+
+if os.geteuid() == 0:
+    print("SKIP  a transcript that cannot be read: root reads through a directory without "
+          "search permission")
+else:
+    case = Case().user("Where are the transcripts?").assistant_text(B01_CLAIM).write()
+    result = run_with_unsearchable_transcript(case)
+    check("a transcript that cannot be read: reported on stderr, exit 1, nothing on stdout",
+          reported(result, "PermissionError"), (result.returncode, result.stdout, result.stderr))
+    check("a transcript that cannot be read: the error is logged",
+          [line.get("outcome") for line in case.log_lines()] == ["error"]
+          and "PermissionError" in case.log_lines()[0].get("error", ""), case.log_lines())
+
+    case = Case().user("Where are the transcripts?").assistant_text(B01_CLAIM).write()
+    result = run_with_unsearchable_transcript(
+        case, payload_key="agent_transcript_path", hook_event_name="SubagentStop",
+        agent_id="agent-five")
+    check("a subagent transcript that cannot be read: reported on stderr, exit 1",
+          reported(result, "PermissionError"), (result.returncode, result.stdout, result.stderr))
 
 for case_name, stdin_text, fault_words in (
         ("stdin that is not JSON", "not json", "JSONDecodeError"),
-        ("stdin that is a JSON list", "[1, 2]", "a JSON list, not an object"),
+        ("stdin that is a JSON list", "[1, 2]", "JSON, but not an object"),
         ("empty stdin", "", "JSONDecodeError")):
     case = Case()
     result = case.run(stdin_text=stdin_text)
@@ -433,16 +473,46 @@ for case_name, stdin_text, fault_words in (
 
 case = Case()
 case.log.mkdir()
-result = case.run({"transcript_path": str(case.root / "no-such-transcript.jsonl")})
-check("a fault whose error cannot be logged: still reported on stderr, exit 1",
-      reported(result, "FileNotFoundError"), (result.returncode, result.stdout, result.stderr))
+result = case.run(stdin_text="not json")
+check("a fault whose error cannot be logged: still reported on stderr, exit 1, "
+      "and stderr says the fault was not logged",
+      reported(result, "JSONDecodeError")
+      and "the failure was not logged either: IsADirectoryError" in result.stderr,
+      (result.returncode, result.stdout, result.stderr))
+check("a fault's stderr line names the error before it says the turn ends as usual",
+      result.stderr.find("JSONDecodeError") < result.stderr.find("the turn ends as usual")
+      and "no reminder reached the agent" in result.stderr,
+      result.stderr)
+
+
+def system_message(result):
+    try:
+        return json.loads(result.stdout).get("systemMessage")
+    except ValueError:
+        return None
+
 
 case = Case().user("Where are the transcripts?").assistant_text(B01_CLAIM).write()
 case.log.mkdir()
 result = case.run()
-check("a log path that cannot be written: still reminds, exit 0",
-      result.returncode == 0 and blocked_reason(result) == REMINDER_FOR_B01,
-      (result.returncode, result.stdout))
+check("a log path that cannot be written: still reminds, exit 0, and the systemMessage, not "
+      "stderr, says the outcome was not logged and that the reminder was sent",
+      result.returncode == 0 and blocked_reason(result) == REMINDER_FOR_B01
+      and result.stderr == ""
+      and "'reminded'" in (system_message(result) or "")
+      and "IsADirectoryError" in (system_message(result) or "")
+      and "was still sent to the agent" in (system_message(result) or ""),
+      (result.returncode, result.stdout, result.stderr))
+
+case = Case().user("Where are the transcripts?").assistant_text(B01_CLAIM).write()
+case.log.mkdir()
+result = case.run(CLAUDE_CODE_SESSION_ATTENDED="0")
+check("a log path that cannot be written, with no reminder due: exit 0, no decision, and a "
+      "systemMessage saying the outcome was not logged and no reminder was sent",
+      result.returncode == 0 and blocked_reason(result) is None and result.stderr == ""
+      and "'headless'" in (system_message(result) or "")
+      and "none was sent to the agent" in (system_message(result) or ""),
+      (result.returncode, result.stdout, result.stderr))
 
 shutil.rmtree(SUITE_ROOT, ignore_errors=True)
 print()

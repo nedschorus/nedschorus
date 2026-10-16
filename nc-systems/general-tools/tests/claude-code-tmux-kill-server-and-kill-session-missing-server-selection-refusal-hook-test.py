@@ -103,6 +103,8 @@ def refusal_cases():
             "cat > probes.txt <<'EOF'\necho a\ncat <<EOF\nEOF\ntmux kill-server\nEOF\n",
         "heredoc ended early, then env -u TMUX kill":
             "cat > probes.txt <<'EOF'\ncat <<EOF\ntmux kill-server\nEOF\nenv -u TMUX tmux kill-server\nEOF\n",
+        "after a heredoc whose opening line holds a # after an escaped space and an open quote":
+            'cat <<EOF; echo \\ #word"\ninside"\nEOF\ntmux kill-server',
         "after do, as a real agent typed it": 'for s in a b; do tmux kill-session -t "$s"; done',
         "after then": "if true; then TMUX_TMPDIR=/tmp/a tmux kill-server; fi",
         "after else": "if false; then :; else tmux kill-server; fi",

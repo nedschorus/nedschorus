@@ -44,3 +44,7 @@ Extend the citation check under GHI [Reference-integrity checker: links resolve 
 ## Search receipt
 
 `scripts/ghi-info-ask.py` over both mirrors, 2026-08-31: no issue covers periodic fleet maintenance, scheduling `clean-worktrees.py`, or a pre-deletion citation check. GHI [Queue drain procedure — the review process that empties wiki/queue, the pair queue, and the draft-label issue queue](https://github.com/nedschorus/nedschorus/issues/24) (queue drain) is deliberately on-demand and ruled that way; GHI [Build ghi-info — the GHI knowledge agent](https://github.com/nedschorus/nedschorus/issues/46)'s "maintenance sweep" is scoped to the GHI corpus only.
+
+## Provisional additions (not yet vetted by the user)
+
+- fleet-restart-at-login, 2026-10-14: Check this GHI-MD's sentence on what `scripts/clean-worktrees.py` removes against the current script (task #160).

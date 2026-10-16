@@ -127,13 +127,8 @@ def code_file_marks(line: str, document: pathlib.Path,
 def line_number_citations(document: pathlib.Path, repository_root: pathlib.Path, lint):
     """Yield (document_line, cited_file, first, last, written_text) for each citation."""
     # Attach line-number phrases only to the nearest preceding path on the same line to avoid attributing unrelated prose.
-    inside_code_fence = False
-    for number, line in enumerate(document.read_text(encoding="utf-8").splitlines(), 1):
-        if line.lstrip().startswith("```"):
-            inside_code_fence = not inside_code_fence
-            continue
-        if inside_code_fence:
-            continue
+    lines = document.read_text(encoding="utf-8").splitlines()
+    for number, line in lint.lines_outside_fenced_code_blocks(lines):
         if any(marker in line
                for marker in lint.HISTORY_MARKERS + lint.FOREIGN_ROOT_MARKERS):
             continue
@@ -152,18 +147,12 @@ def line_number_citations(document: pathlib.Path, repository_root: pathlib.Path,
             yield number, earlier[-1], first, last, match.group(0)
 
 
-def heading_sections(text: str):
+def heading_sections(text: str, lint):
     """Yield (first_line, last_line, text) per heading block, including the preamble."""
     lines = text.splitlines()
-    starts = []
-    inside_code_fence = False
-    for index, line in enumerate(lines):
-        if line.lstrip().startswith("```"):
-            inside_code_fence = not inside_code_fence
-            continue
-        # A # inside a fence is not a heading; splitting there would remove citations from their pinned section.
-        if not inside_code_fence and line.startswith("#"):
-            starts.append(index)
+    # A # inside a fence is not a heading; splitting there would remove citations from their pinned section.
+    starts = [number - 1 for number, line in lint.lines_outside_fenced_code_blocks(lines)
+              if line.startswith("#")]
     if not starts or starts[0] != 0:
         starts.insert(0, 0)
     for position, start in enumerate(starts):
@@ -184,11 +173,11 @@ def names_a_commit(text: str, repository_root: pathlib.Path) -> bool:
     return False
 
 
-def pinned_line_ranges(text: str, repository_root: pathlib.Path) -> list:
+def pinned_line_ranges(text: str, repository_root: pathlib.Path, lint) -> list:
     """Return the line ranges of sections whose numbers are pinned to a commit."""
     # A citation pinned to an existing commit cannot drift because commits are immutable.
     pinned = []
-    for first, last, section in heading_sections(text):
+    for first, last, section in heading_sections(text, lint):
         if PINNED_SECTION_PHRASE not in section.lower():
             continue
         if names_a_commit(section, repository_root):
@@ -322,7 +311,7 @@ def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
                  f"write a day the calendar has, as YYYY-MM-DD, so a cited "
                  f"file's history can be compared against it")], 0
 
-    pinned = pinned_line_ranges(text, repository_root)
+    pinned = pinned_line_ranges(text, repository_root, lint)
     findings = []
     pinned_count = 0
     for number, relative, first, last in citations:

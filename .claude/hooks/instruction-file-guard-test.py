@@ -124,10 +124,15 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a memory write gets the memory refusal, not the generic one",
           "it is in a Claude Code memory directory" in result.stderr
           and "get the user's approval" not in result.stderr, result.stderr)
-    check("the memory refusal says to propose the exact edit or drop the note, never show it",
-          "propose to the user the exact edit" in result.stderr
-          and "Otherwise drop it: do not show the note to the user." in result.stderr
-          and "quote the text you meant to save" not in result.stderr, result.stderr)
+    check("the memory refusal says to propose the exact edit, ask the user where to save, "
+          "or drop a note that matters only to this conversation",
+          "where nothing recalls a note at the moment it applies." in result.stderr
+          and "propose to the user the exact edit" in result.stderr
+          and "If you cannot tell where it belongs, tell the user in one sentence what you "
+              "meant to remember, and ask him where to save it so that an agent recalls it "
+              "when it applies." in result.stderr
+          and "If it matters only to this conversation, drop it." in result.stderr
+          and "Otherwise drop it" not in result.stderr, result.stderr)
 
     # A marker approves instruction edits, never a memory write, and is left unspent.
     session_marker = workspace / ".walk-approved"
@@ -269,8 +274,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "If he has not, show him the change and wait for his answer; if you are a subagent, "
           "report the change to the agent that dispatched you instead."
           in result.stderr.splitlines(), result.stderr)
-    check("the block is one instruction per line, the three route-around lines included",
-          len(result.stderr.strip().splitlines()) == 10, result.stderr)
+    check("the block is one instruction per line, the obvious-fix and route-around lines included",
+          len(result.stderr.strip().splitlines()) == 12, result.stderr)
     draft_places = [
         ("a draft in docs/agents/queue/", workspace / "docs" / "agents" / "queue" / "x.md"),
         ("a draft in docs/nedschorus-wiki/queue/", workspace / "docs" / "nedschorus-wiki" / "queue" / "x.md"),
@@ -456,6 +461,22 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         check(f"the refusal for {label} ends with the three route-around lines",
               result.returncode == 2
               and result.stderr.strip().splitlines()[-3:] == route_around_lines,
+              result.stderr)
+
+    # Every refusal says how to write an obvious-fix marker, just before the route-around lines.
+    obvious_fix_lines = [
+        "For an obvious error, write \"Obvious fix under CLAUDE.md's standing approval:\" "
+        "and what you are fixing into .walk-approved at the root of your session's own "
+        "checkout, then resubmit.",
+        "If the edit then does not happen, delete .walk-approved."]
+    for label, target in (
+            ("an instruction file", workspace / "CLAUDE.md"),
+            ("a reusable prompt", workspace / "docs" / "agents" / "some-seat-instructions.md"),
+            ("a reviewed document", workspace / "docs" / "nedschorus-wiki" / "a-page.md")):
+        result = run_hook(decoy, workspace, str(target))
+        check(f"the refusal for {label} carries the two obvious-fix marker lines",
+              result.returncode == 2
+              and result.stderr.strip().splitlines()[-5:-3] == obvious_fix_lines,
               result.stderr)
 
     # Each approval refusal asks for a cold read of the change before it goes to the user.

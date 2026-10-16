@@ -78,7 +78,7 @@ for arguments, case_name in (([], "no path"), ([str(document), str(document)], "
 
 result, sent, _ = run_caller([str(document)], home, ssh_body="echo 'opened it'; exit 0")
 check("the request travels as one remote-command argument: the verb and the absolute path",
-      sent is not None and sent[-1] == f"open-in-typora {document}" and sent[-2] == "el@10.0.1.23" and sent[-3] == "--", sent)
+      sent is not None and sent[-1] == f"open-in-typora {document}" and sent[-2] == "el@edwards-macbook-air.local" and sent[-3] == "--", sent)
 check("ssh uses only the Mac-side-action key, never prompts, and gives up on a dead link",
       sent is not None and sent[1].endswith("/.ssh/id_ed25519_mac_side_action")
       and "IdentitiesOnly=yes" in sent and "BatchMode=yes" in sent and "ConnectTimeout=10" in sent, sent)
@@ -99,11 +99,11 @@ for arguments, case_name, expected in (
           result.returncode == 2 and sent is None and "no request was sent, because" in result.stderr and expected in result.stderr,
           (result.returncode, sent, result.stderr))
 
-result, sent, _ = run_caller([str(document)], home, ssh_body="echo 'el@10.0.1.23: Permission denied (publickey).' >&2; exit 255")
+result, sent, _ = run_caller([str(document)], home, ssh_body="echo 'el@edwards-macbook-air.local: Permission denied (publickey).' >&2; exit 255")
 check("a refused key says Typora was not opened, and that the Mac does not admit the key",
       result.returncode == 1 and "so Typora was not opened" in result.stderr and "does not admit this key yet" in result.stderr, result.stderr)
 
-result, sent, _ = run_caller([str(document)], home, ssh_body="echo 'ssh: connect to host 10.0.1.23 port 22: Operation timed out' >&2; exit 255")
+result, sent, _ = run_caller([str(document)], home, ssh_body="echo 'ssh: connect to host edwards-macbook-air.local port 22: Operation timed out' >&2; exit 255")
 check("an unreachable Mac says so, with ssh's own error and the file's path on the Mac to tell the user",
       result.returncode == 1 and "could not reach the Mac" in result.stderr and "Operation timed out" in result.stderr
       and f"which is /Volumes/nedhome/{document.relative_to(home)} on the Mac" in result.stderr, result.stderr)

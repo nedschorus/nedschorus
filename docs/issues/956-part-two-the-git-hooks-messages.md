@@ -81,7 +81,7 @@ pre-push: the conflict check did not run (/Users/el/Projects/nedschorus/scripts/
 **Proposed text** (`{path}` is the missing file):
 
 ```
-pre-push: the pre-push conflict check did not run, because {path} is missing, so no branch in this push was checked for conflicts with origin/main: {branches}.
+pre-push: the pre-push conflict check did not run, because {path} is missing, so this push goes ahead with none of its branches checked for conflicts with origin/main: {branches}.
 {unchecked_lines}
 {tell_user_line}
 ```
@@ -101,7 +101,7 @@ pre-push: the conflict check failed (exit 1); the push goes ahead unchecked.
 **Proposed text** (`{status}` is the exit status):
 
 ```
-pre-push: the pre-push conflict check exited with status {status}, so no branch in this push was checked for conflicts with origin/main: {branches}.
+pre-push: the pre-push conflict check exited with status {status}, so this push goes ahead with none of its branches checked for conflicts with origin/main: {branches}.
 {unchecked_lines}
 {tell_user_line}
 ```
@@ -121,7 +121,7 @@ pre-push: the conflict check did not run (/Users/el/Projects/nedschorus/scripts/
 **Proposed text** (`{path}` is the missing file):
 
 ```
-pre-push: the pre-push conflict check did not run, because {path} is missing, so no branch in this push was checked for conflicts with origin/main: {branches}.
+pre-push: the pre-push conflict check did not run, because {path} is missing, so this push goes ahead with none of its branches checked for conflicts with origin/main: {branches}.
 {unchecked_lines}
 {tell_user_line}
 ```
@@ -188,7 +188,7 @@ pre-push: the conflict check failed (<exception type>: <exception text>); the pu
 **Proposed text, when the program had read the pushed branches** (`{error}` is the exception's type and text, as today):
 
 ```
-pre-push: the pre-push conflict check failed with {error}, so no branch in this push was checked for conflicts with origin/main: {branches}.
+pre-push: the pre-push conflict check failed with {error}, so this push goes ahead with none of its branches checked for conflicts with origin/main: {branches}.
 {unchecked_lines}
 {tell_user_line}
 ```
@@ -196,7 +196,7 @@ pre-push: the pre-push conflict check failed with {error}, so no branch in this 
 **Proposed text, when the error came before the program had read them:**
 
 ```
-pre-push: the pre-push conflict check failed with {error} before reading which branches this push sends, so no branch in this push was checked for conflicts with origin/main.
+pre-push: the pre-push conflict check failed with {error} before reading which branches this push sends, so this push goes ahead with none of its branches checked for conflicts with origin/main.
 For each branch this push sends to origin, other than main, run from your worktree: python3 scripts/branch-conflict-check.py --head <branch name>
 {tell_user_line}
 ```

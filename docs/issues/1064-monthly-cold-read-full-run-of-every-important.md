@@ -37,14 +37,14 @@ GHI [Daily maintenance in one daily step, starting with a daily check of every w
 
 ## What the 10-day cycle does
 
-This section is the outline the user asked for. How each step works is open, under What is not decided.
+This section is the outline the user asked for. How each step works is open, under Deferred-decisions.
 
 - Takes the list of important files from one definition, the one step 2 of the /cold-read skill makes, held once rather than in two copies that can disagree.
 - Keeps a simple record, one entry per file: the file's path in the repository, and the date, the content and the cold-read-record of the file's last cold-read-full-run. A file is due when the record has no entry for the file, or when the file's content on main differs from the content the entry records.
 - Spreads the due files across the 10 days, so a few come due each day instead of all on one day.
 - Gives each due file a cold-read-full-run, with the triage and the approval-walk the /cold-read skill requires, and updates the record once the file's revision has merged to main.
 
-## What is not decided
+## Deferred-decisions
 
 1. **What the record stores as the content and when the record is written.** The frozen copy is the text before the rewrite, so the record must store the content that merged, such as the blob hash or commit on main, and be written after the merge. Whether the record is a file in the repository, a file in the log-store, or a small database, and whether existing cold-read-records are used to seed the record or every file starts as due, is open.
 2. **How a change is counted.** Whether any change makes a file due, or only a change larger than the exception in step 2 of the /cold-read skill (one sentence, or a mechanical search-and-replace change such as a rename), which gets a cold-read-fast-read instead.

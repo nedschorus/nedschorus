@@ -289,6 +289,10 @@ in the nedschorus repository, which this machine also clones:
   machine's weekly check that the work-snapshot hook finds a real claude
   session, written by
   `nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py`
+- `guarded-file-versions-and-approvals/` -- each machine's copies of every
+  version of a guarded file and the record of which versions the user
+  approved, written by
+  `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`
 
 To change this file, edit STORE_README in
 nc-systems/cold-read/cold-read-record-ship.py. The next shipment rewrites this file

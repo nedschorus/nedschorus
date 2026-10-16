@@ -4,10 +4,11 @@ them identical.
 
 `docs/agents/pr-reviewer-instructions.md` is the rule's home: its text is
 pasted whole into every Claude reviewer's prompt. CLAUDE.md carries the
-rule's "Review scope" section a second time, because the Codex reviewer
-(scripts/code-review-codex-cell.py, Codex's built-in review) takes no custom
-prompt and reads the repository's rules through AGENTS.md -> CLAUDE.md, so
-CLAUDE.md is the only channel by which it receives the rule (user-ruled
+rule's "Review scope" section a second time. The Codex reviewer
+(scripts/code-review-codex-cell.py, Codex's built-in review) now receives
+main's file as developer_instructions, but it still reads the checkout's
+rules through AGENTS.md -> CLAUDE.md too, so the two copies must agree until
+CLAUDE.md's copy is removed. CLAUDE.md was once its only channel (user-ruled
 2026-09-19, walk on nedschorus#210). Two copies drift: by 2026-09-18 the
 CLAUDE.md paragraph and the file no longer said the same thing, and nothing
 noticed for weeks. This test is what notices.

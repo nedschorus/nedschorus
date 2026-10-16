@@ -45,3 +45,7 @@ Draft the skill from the three scripts' docstrings and the 2026-08-25 measuremen
 - GHI [run-agent: one CLI to invoke a Claude or Codex agent headlessly from any caller (Python, shell, either runtime)](https://github.com/nedschorus/nedschorus/issues/41) — the CLI primitive; this skill is its instruction text and its first consumer once built.
 - GHI [Deferred: pr-merge-decision-codex — machine merge-decision review; revisit after code-review-codex-cell accrues lane experience](https://github.com/nedschorus/nedschorus/issues/105) — the ruling that per-script wrappers stay small; this skill documents them, it does not consolidate them.
 - GHI [md-review-grid reports eight reviews saved when eight cells produced nothing](https://github.com/nedschorus/nedschorus/issues/164) — the md-review empty-report defect; the absence-as-failure rule this skill carries is the fix's shape.
+
+## Provisional additions (not yet vetted by the user)
+
+- cold-read-research, 2026-10-14: a draft /codex skill exists. It describes `scripts/run-codex-task-from-brief.py`, the one program that runs a Codex task, which PR [Run Codex tasks through one program, with network, writable folders and web search; refuse a hand-typed codex exec](https://github.com/nedschorus/nedschorus/pull/1246) added (merged as f3a170c5). The draft has had its cold-read-full-run, cold-read-record SKILL-codex-skill-2026-10-13-2, and its 14-item approval-walk is prepared in the cold-read-research agent-seat, waiting to be presented to the user.

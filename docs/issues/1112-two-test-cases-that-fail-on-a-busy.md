@@ -74,3 +74,12 @@ Reproduce both cases under load, with the hold kept long enough to see when the 
 - Each case either waits for its event with only a long ceiling against a hung test, or has a deadline measured to hold on ned-box under load.
 - If the cause is in `scripts/sanity-check-attacks.py`, the fix is there, and comes with a test case that fails on the code before the fix and passes with the fix.
 - In either case, `python3 scripts/run-suite-in-signal-sandbox.py scripts/sanity-check-attacks-test.py` passes 20 runs in a row, with the test as committed, while the load run of step 2 of the next action runs over and over until the 20th run ends.
+
+## Outcome
+
+Both cases are fixed, and the cause was in the runner, not in the tests' timers. PR [Sanity-check runner: the stop handler runs soon after a stop signal, whichever thread receives it](https://github.com/nedschorus/nedschorus/pull/1320) merged on 2026-10-15 as `d7ed3bd5`. While the cells ran, the main thread waited in `concurrent.futures.as_completed`, so a stop signal that a cell's thread received ran the stop handler late; the fix makes the stop handler run soon after a stop signal, whichever thread receives it. The pull request adds a test case that fails on the runner before the fix and passes with it. The runner and its test have since been renamed by PR [The /sanity-check skill's attacks are adversarial prompts](https://github.com/nedschorus/nedschorus/pull/1330) to `scripts/sanity-check-adversarial-prompts.py` and `scripts/sanity-check-adversarial-prompts-test.py`. Both cases passed 20 of 20 full-suite runs on ned-box under multi-agent load, as the reviewer of PR 1320 (review 5531928635) and merge-lane-2 reported at the merge. The third case had already gone with its watcher in PR 1262.
+
+## Provisional additions (not yet vetted by the user)
+
+- ned-box-helper, 2026-10-14: ask the user about the "Next action for case 3" paragraph of this GHI-MD, which ned-box-helper could not settle alone.
+- fleet-restart-at-login, 2026-10-14: Fix or quarantine the timing test cases that failed merge-lane-2's head test runs on pull requests 1032, 1071 and 1075 and passed on rerun (task #168).

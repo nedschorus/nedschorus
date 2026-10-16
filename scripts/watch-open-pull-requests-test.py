@@ -271,6 +271,9 @@ def run_unit_cases():
           from_node({"number": 3, "title": "t"})[0] is None
           and "head commit sha" in from_node({"number": 3, "title": "t"})[1],
           str(from_node({"number": 3, "title": "t"})))
+    check("pull_request_from_node reports a node that is not an object",
+          from_node([1, 2]) == (None, "a pull request came back as JSON that is not an object"),
+          str(from_node([1, 2])))
 
     # The case above tests the HELPER. The property that matters is the
     # CALLER's: fetch_open_pull_requests must return the failure rather than

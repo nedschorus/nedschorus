@@ -35,6 +35,8 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 SCRIPTS = Path(__file__).resolve().parent
 PROGRAM = SCRIPTS / "stale-code-citation-check.py"
 LINT = SCRIPTS / "md-drift-lint.py"
+LINT_OVERVIEW_PATH_MODULE = (
+    SCRIPTS / "architecture-overview-path-template-and-checked-against-commit-reader.py")
 GIT_OUTPUT_MODULE = (SCRIPTS.parent / "nc-systems" / "general-tools"
                      / "git-machine-readable-output-runner-and-parser-common.py")
 
@@ -67,11 +69,12 @@ def git(root: Path, *arguments, date=None):
 
 
 def new_repository(workspace: str) -> Path:
-    """A repository holding the two scripts, committed before every test date."""
+    """A repository holding the two scripts and the modules they load, committed before every test date."""
     root = Path(workspace)
     (root / "scripts").mkdir()
     shutil.copy(PROGRAM, root / "scripts" / PROGRAM.name)
     shutil.copy(LINT, root / "scripts" / LINT.name)
+    shutil.copy(LINT_OVERVIEW_PATH_MODULE, root / "scripts" / LINT_OVERVIEW_PATH_MODULE.name)
     (root / "nc-systems" / "general-tools").mkdir(parents=True)
     shutil.copy(GIT_OUTPUT_MODULE, root / "nc-systems" / "general-tools" / GIT_OUTPUT_MODULE.name)
     git(root, "init", "-q", "-b", "main")
@@ -299,6 +302,16 @@ with tempfile.TemporaryDirectory() as workspace:
     check("a section after the pinned one is still checked",
           code == 1 and "lines 40-44" in out and "lines 20-24" not in out,
           f"{code} {out}")
+
+    # A heading-section starts on its heading line, so a pin written only in
+    # the heading pins the section below it.
+    write_document(root, "docs/pin-heading.md", document(
+        body=f"## 1. Facts from origin/main at {pinned_commit}; "
+             f"line numbers are that commit's\n\n"
+             f"- The test is `scripts/moved.py` lines 20-24.\n"))
+    code, out, err = run(root, "docs/pin-heading.md")
+    check("a pin written only on the heading line pins the section under it",
+          code == 0 and out == "", f"{code} {out}")
 
 
 # --- The frontmatter the check reads --------------------------------------

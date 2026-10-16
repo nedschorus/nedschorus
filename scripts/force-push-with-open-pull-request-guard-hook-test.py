@@ -190,8 +190,9 @@ check("the refusal teaches the remedy: a new commit on top, pushed without --for
       reason and "new commit on top" in reason and "without --force" in reason,
       reason)
 # A conflict with main cannot be cleared by a commit on top; the refusal sends
-# it to the hand-merge on a line of its own (CLAUDE.md, "How a change reaches
-# main", worded 2026-09-30). Pinned by equality on the line.
+# it to the hand-merge on a line of its own, the hand-merge that the
+# VERDICT: CONFLICT report of scripts/branch-conflict-check.py describes.
+# Pinned by equality on the line.
 check("the refusal sends a conflict with main to the hand-merge, as a line of its own",
       "If the branch conflicts with main, clear the conflict with the hand-merge "
       "that scripts/branch-conflict-check.py describes, and push without --force."

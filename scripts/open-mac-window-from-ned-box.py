@@ -30,7 +30,8 @@ import sys
 from pathlib import Path
 
 PROGRAM = "open-mac-window-from-ned-box"
-DEFAULT_MAC_SSH_DESTINATION = "el@10.0.1.23"
+# By mDNS name: the router assigns the Mac its address by DHCP, and the address changes.
+DEFAULT_MAC_SSH_DESTINATION = "el@edwards-macbook-air.local"
 MAC_SIDE_ACTION_KEY = Path.home() / ".ssh" / "id_ed25519_mac_side_action"
 SSH_EXIT_CONNECTION_FAILED = 255
 SSH_TIMEOUT_SECONDS = 60
@@ -69,8 +70,9 @@ def explain_connection_failure(stderr, destination, program=PROGRAM, not_done="n
         return [f"{program}: the Mac refused the key {MAC_SIDE_ACTION_KEY}, so {not_done}.",
                 "The Mac's ~/.ssh/authorized_keys does not admit this key yet: tell the user, who adds the line the helper's pull request gives."]
     if "Host key verification failed" in stderr:
+        # Not ssh-keyscan: it cannot resolve the Mac's mDNS .local name on ned-box, where ssh can.
         return [f"{program}: this machine does not know the Mac's host key, so ssh stopped before connecting and {not_done}.",
-                f"Tell the user; the one-time fix, run on ned-box, is: ssh-keyscan -t ed25519 {destination.split('@')[-1]} >> ~/.ssh/known_hosts"]
+                f"Tell the user; the one-time fix, run on ned-box, is: ssh -o StrictHostKeyChecking=accept-new {destination} true — it records the Mac's host key, and the Mac then refuses the command true, which is expected."]
     return [f"{program}: could not reach the Mac at {destination}, so {not_done}: {stderr.strip() or 'ssh exited 255'}.",
             f"Tell the user what this says, and {fallback}."]
 

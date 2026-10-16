@@ -54,9 +54,12 @@ import errno
 import fcntl
 import os
 import pty
+import selectors
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -305,35 +308,71 @@ class MacLaunchSandbox:
                 if path.is_file() else "")
 
 
-def run_with_stdout_on_terminal(command, working_directory, environment):
+def run_with_stdout_on_terminal(command, working_directory, environment,
+                                timeout_seconds=60):
     """Run command with a pseudo-terminal as its stdout, so `[ -t 1 ]` holds
     in it, and return a CompletedProcess whose stdout is what it wrote
-    there. The terminal is read while the command runs: a full terminal
-    buffer would otherwise block the command forever."""
+    there.
+
+    The terminal and the stderr pipe are read together while the command
+    runs: a command blocked on either full buffer never closes the other,
+    so reading one to its end before the other can wait forever.
+    timeout_seconds bounds the whole read. When it runs out, the command's
+    process group is killed and subprocess.TimeoutExpired is raised, so a
+    hung case fails the suite instead of holding the machine's test lock."""
     controller, terminal = pty.openpty()
     process = subprocess.Popen(
         command, stdin=subprocess.DEVNULL, stdout=terminal,
-        stderr=subprocess.PIPE, cwd=working_directory, env=environment)
+        stderr=subprocess.PIPE, cwd=working_directory, env=environment,
+        start_new_session=True)
     os.close(terminal)
-    written = bytearray()
-    while True:
+    stderr_descriptor = process.stderr.fileno()
+    written = {controller: bytearray(), stderr_descriptor: bytearray()}
+    deadline = time.monotonic() + timeout_seconds
+
+    def stop_command_and_raise_timeout():
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        raise subprocess.TimeoutExpired(
+            command, timeout_seconds,
+            output=bytes(written[controller]),
+            stderr=bytes(written[stderr_descriptor]))
+
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(controller, selectors.EVENT_READ)
+            selector.register(stderr_descriptor, selectors.EVENT_READ)
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    stop_command_and_raise_timeout()
+                for key, _ in selector.select(remaining):
+                    try:
+                        chunk = os.read(key.fd, 65536)
+                    except OSError as error:
+                        # Linux reports the last writer closing the
+                        # terminal as EIO.
+                        if error.errno != errno.EIO:
+                            raise
+                        chunk = b""
+                    if chunk:
+                        written[key.fd].extend(chunk)
+                    else:
+                        selector.unregister(key.fd)
+        # A command can close both streams and keep running, so the wait
+        # is bounded by the same deadline and stopped the same way.
         try:
-            chunk = os.read(controller, 4096)
-        except OSError as error:
-            # Linux reports the last writer closing the terminal as EIO.
-            if error.errno != errno.EIO:
-                raise
-            break
-        if not chunk:
-            break
-        written.extend(chunk)
-    os.close(controller)
-    stderr = process.stderr.read().decode("utf-8", errors="replace")
-    process.stderr.close()
-    returncode = process.wait(timeout=60)
+            returncode = process.wait(
+                timeout=max(deadline - time.monotonic(), 0.1))
+        except subprocess.TimeoutExpired:
+            stop_command_and_raise_timeout()
+    finally:
+        os.close(controller)
+        process.stderr.close()
     return subprocess.CompletedProcess(
         command, returncode,
-        written.decode("utf-8", errors="replace"), stderr)
+        written[controller].decode("utf-8", errors="replace"),
+        written[stderr_descriptor].decode("utf-8", errors="replace"))
 
 
 class AnotherUpdateHoldsTheLock:
@@ -905,6 +944,84 @@ def main() -> int:
         check("attached: the after-exit shell keeps the seat's credential",
               sandbox.after_exit_environment().get("GH_TOKEN") == seat_token,
               sandbox.after_exit_environment().get("GH_TOKEN"))
+
+        # --- the pseudo-terminal helper itself. A command that fills the
+        # stderr pipe before it writes to or closes the terminal must not
+        # hang the helper, and a command that never closes the terminal must
+        # be stopped at the helper's timeout. The helper runs in a thread
+        # joined with a time limit, so a helper that hangs fails this case
+        # instead of hanging the suite.
+        stderr_flood_bytes = 200_000
+        flood_outcome = {}
+
+        def run_flood():
+            flood_outcome["result"] = run_with_stdout_on_terminal(
+                [sys.executable, "-c",
+                 f"import sys; sys.stderr.write('e' * {stderr_flood_bytes}); "
+                 "sys.stderr.flush(); print('terminal-done')"],
+                str(root), dict(os.environ), timeout_seconds=20)
+
+        flood_thread = threading.Thread(target=run_flood, daemon=True)
+        flood_thread.start()
+        flood_thread.join(timeout=30)
+        flood_result = flood_outcome.get("result")
+        check("pseudo-terminal helper: more than 64 KiB on stderr before the "
+              "terminal closes is read whole, without hanging",
+              flood_result is not None
+              and flood_result.returncode == 0
+              and len(flood_result.stderr) == stderr_flood_bytes
+              and "terminal-done" in flood_result.stdout,
+              "the helper did not return within 30 seconds"
+              if flood_result is None else
+              (flood_result.returncode, len(flood_result.stderr),
+               repr(flood_result.stdout[-100:])))
+
+        started = time.monotonic()
+        try:
+            run_with_stdout_on_terminal(
+                [sys.executable, "-c", "import time; time.sleep(600)"],
+                str(root), dict(os.environ), timeout_seconds=2)
+            timed_out = False
+        except subprocess.TimeoutExpired:
+            timed_out = True
+        elapsed = time.monotonic() - started
+        check("pseudo-terminal helper: a command that never closes the "
+              "terminal is stopped at the timeout",
+              timed_out and elapsed < 15,
+              (timed_out, f"{elapsed:.1f}s"))
+
+        # --- the pseudo-terminal helper: a command that closes its terminal
+        # and its stderr and then keeps running is stopped at the timeout
+        # too, and does not outlive the helper.
+        pid_file = root / "helper-closed-streams-command.pid"
+        started = time.monotonic()
+        try:
+            run_with_stdout_on_terminal(
+                [sys.executable, "-c",
+                 "import os, sys, time; "
+                 f"open({str(pid_file)!r}, 'w').write(str(os.getpid())); "
+                 "os.close(1); os.close(2); time.sleep(600)"],
+                str(root), dict(os.environ), timeout_seconds=2)
+            closed_streams_timed_out = False
+        except subprocess.TimeoutExpired:
+            closed_streams_timed_out = True
+        elapsed = time.monotonic() - started
+        closed_streams_command_survived = False
+        if pid_file.is_file():
+            closed_streams_pid = int(pid_file.read_text(encoding="utf-8"))
+            try:
+                os.kill(closed_streams_pid, 0)
+                closed_streams_command_survived = True
+                os.kill(closed_streams_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        check("pseudo-terminal helper: a command that closes both streams "
+              "and keeps running is stopped at the timeout and does not "
+              "survive",
+              closed_streams_timed_out and elapsed < 15
+              and pid_file.is_file() and not closed_streams_command_survived,
+              (closed_streams_timed_out, f"{elapsed:.1f}s",
+               pid_file.is_file(), closed_streams_command_survived))
 
         # --- the iTerm2 background colour: written on an attached launch from
         # an iTerm2 terminal, before tmux, and nowhere else. A pipe, another
