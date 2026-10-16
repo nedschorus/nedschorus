@@ -96,7 +96,17 @@ def raise_pair_timed_out(*_):
     raise PairTimedOut()
 
 
+# While the replay waits for a step child, a stop signal must not raise inside subprocess's own code:
+# SystemExit raised between Popen._wait()'s lock acquire and its try leaves the lock held, and the
+# reaping wait() in run_step_in_child() then blocks forever with the child unreaped. In that wait the
+# handler only records the stop, and run_step_in_child() raises at a safe point.
+WAITING_FOR_STEP = {"waiting": False, "stop_requested": False}
+
+
 def raise_terminated(*_):
+    if WAITING_FOR_STEP["waiting"]:
+        WAITING_FOR_STEP["stop_requested"] = True
+        return
     raise SystemExit(2)  # So the finally blocks remove the checkouts when the run is stopped.
 
 
@@ -493,6 +503,9 @@ def run_git(repository, *arguments):
     return completed.stdout.strip()
 
 
+STOP_CHECK_INTERVAL_SECONDS = 0.2  # How soon a stop signal received during a step's wait takes effect.
+
+
 def step_deadline_seconds(pair_count, jobs, timeout):
     """The longest one step can take if every reading of every pair runs to its timeout."""
     readings_per_pair = len(GUARDS) + 1  # The guards, or search-file main(); plus the smoke check's share.
@@ -503,13 +516,17 @@ def run_step_in_child(arguments, log_path, deadline_seconds):
     """Run one ref's step in a fresh interpreter, so each ref's modules load from that ref alone."""
     # In its own process group, so a step that ends, fails or is stopped takes its workers with it;
     # they would otherwise go on reading checkouts the replay is removing.
+    WAITING_FOR_STEP["stop_requested"] = False
+    WAITING_FOR_STEP["waiting"] = True  # Before the start, so a stop during it cannot leave the step unreaped.
     with open(log_path, "w") as log:
         step = subprocess.Popen([sys.executable, "-B", __file__, *arguments], stdout=log,
                                 stderr=subprocess.STDOUT, env=child_environment(), start_new_session=True)
         try:
-            returncode = step.wait(timeout=deadline_seconds)
-        except subprocess.TimeoutExpired:
             returncode = None
+            deadline = time.monotonic() + deadline_seconds
+            while returncode is None and time.monotonic() < deadline and not WAITING_FOR_STEP["stop_requested"]:
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    returncode = step.wait(timeout=min(STOP_CHECK_INTERVAL_SECONDS, max(deadline - time.monotonic(), 0)))
         finally:
             # macOS answers EPERM, not ESRCH, when every process left in the group has exited but is not yet
             # reaped, as the step is after a normal exit; the processes are this replay's own, so EPERM can
@@ -517,6 +534,9 @@ def run_step_in_child(arguments, log_path, deadline_seconds):
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(step.pid, signal.SIGKILL)
             step.wait()
+            WAITING_FOR_STEP["waiting"] = False
+    if WAITING_FOR_STEP["stop_requested"]:
+        raise SystemExit(2)
     if returncode is None:
         raise ReplayFailed(f"the step {arguments[1]} ran past its deadline of {deadline_seconds} s and was stopped; "
                            f"log {log_path}")
