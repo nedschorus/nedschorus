@@ -109,7 +109,8 @@ FAST_READ_MESSAGE_TEMPLATE = (
     "Each command prints the path of its report; the report's directory under "
     "cold-read-records/ is that message's cold-read-record.\n"
     "If a report shows the message misread, rewrite the message and run the command from the "
-    "reminder your rewrite brings; an earlier reminder's command still reads the earlier text.\n"
+    "reminder your rewrite brings; an earlier reminder's command reads the earlier text, or "
+    "finds no file once the temporary directory has been cleaned.\n"
     "Name each message's cold-read-record in the pull request's description."
 )
 FAST_READ_FILES_NOT_WRITTEN_TEMPLATE = (
@@ -238,14 +239,19 @@ def fast_read_target_path(relative_path: str, text: str) -> Path:
 def fast_read_target_written(relative_path: str, text: str) -> Path:
     """The text's target file, written if missing. It is written under a
     temporary name and renamed into place, so a concurrent hook run never reads
-    or leaves a half-written file."""
+    or leaves a half-written file, and a failed write or rename removes the
+    temporary file."""
     target = fast_read_target_path(relative_path, text)
     if not target.exists():
         target.parent.mkdir(parents=True, exist_ok=True)
         descriptor, partial = tempfile.mkstemp(dir=target.parent, prefix=".", suffix=".partial")
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(text.rstrip("\n") + "\n")
-        os.replace(partial, target)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(text.rstrip("\n") + "\n")
+            os.replace(partial, target)
+        except OSError:
+            Path(partial).unlink(missing_ok=True)
+            raise
     return target
 
 

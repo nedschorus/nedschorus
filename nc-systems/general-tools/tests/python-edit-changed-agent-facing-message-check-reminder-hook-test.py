@@ -15,6 +15,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import resource
 import subprocess
 import sys
 import tempfile
@@ -155,7 +156,8 @@ REMINDER_INSTRUCTION_LINES = (
     "Each command prints the path of its report; the report's directory under "
     "cold-read-records/ is that message's cold-read-record.",
     "If a report shows the message misread, rewrite the message and run the command from the "
-    "reminder your rewrite brings; an earlier reminder's command still reads the earlier text.",
+    "reminder your rewrite brings; an earlier reminder's command reads the earlier text, or "
+    "finds no file once the temporary directory has been cleaned.",
     "Name each message's cold-read-record in the pull request's description.",
     "If every listed message passes, carry on; nothing needs saying to the user.",
     "If your edit changed a message held in a local variable or built any other way, check "
@@ -448,6 +450,37 @@ with tempfile.TemporaryDirectory() as temporary:
           and "could not write the listed messages to files for their cold-read-fast-read" in text
           and "python3 nc-systems/cold-read/cold-read-fast-read.py --target <that file>" in text, result)
     reset()
+
+    # A repository with no commit has no HEAD, so git ls-tree fails; an edit that wrote no
+    # message must stay silent without asking git.
+    empty_repository = Path(temporary) / "empty-repository"
+    empty_repository.mkdir()
+    git(empty_repository, "init", "-q")
+    result = write_then_run(empty_repository, empty_repository / "plain.py", "LIMIT = 3\n")
+    check("an edit that wrote no message is silent in a repository with no commit",
+          silent(result), result)
+
+    # A file-size limit of 8 bytes lets tempfile's 4-byte probe of the temporary directory pass
+    # and fails the longer message write, as a full disk would.
+    def forbid_file_writes():
+        resource.setrlimit(resource.RLIMIT_FSIZE, (8, 8))
+
+    failing_directory = Path(temporary) / "tmp-whose-writes-fail"
+    failing_directory.mkdir()
+    failing_content = 'print("a message whose file cannot be written")\n'
+    (repository / "scripts" / "failing.py").write_text(failing_content, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(HOOK_PATH)], capture_output=True, text=True, timeout=60,
+        env=dict(os.environ, TMPDIR=str(failing_directory)), preexec_fn=forbid_file_writes,
+        input=json.dumps({"session_id": "test", "cwd": str(repository),
+                          "hook_event_name": "PostToolUse", "tool_name": "Write",
+                          "tool_input": {"file_path": str(repository / "scripts" / "failing.py"),
+                                         "content": failing_content},
+                          "tool_response": {}}))
+    leftovers = sorted(str(path) for path in failing_directory.rglob("*") if path.is_file())
+    check("a message file whose write fails leaves no temporary file behind, and the failure is reported",
+          "could not write the listed messages to files" in agent_text(result) and not leftovers,
+          (leftovers, result))
 
     (repository / ".git" / "HEAD").write_text("not a reference\n", encoding="utf-8")
     result = write_then_run(repository, program,
