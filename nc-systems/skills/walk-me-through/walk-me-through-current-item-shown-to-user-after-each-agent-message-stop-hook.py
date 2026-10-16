@@ -19,7 +19,11 @@ the turn's start holds text.
 THE OPEN APPROVAL-WALK. The walk-me-through skill keeps a `#next_to_present`
 line in each walk's docs/walk/<name>-minutes.md; agents write it at a line's
 start, in a bullet, or mid-sentence, so the marker is found anywhere outside
-code, and the last one in a minutes file counts. Minutes written before the
+code, and the last one in a minutes file counts, also when two share a line.
+A marker inside a code span is a quotation, not a marker; a value inside one,
+as in ``#next_to_present `item 3 of 9` ``, is read without its backticks, and a
+colon after the hashtag, `#next_to_present: none`, is read as the old form's
+colon was. Minutes written before the
 hashtag carry the old marker `Next to present:`; the last marker of either
 form counts, and when it is the old form on a walk that is not closed, the
 hook blocks with the line to add instead of showing an item. Its value is `none` or
@@ -32,12 +36,21 @@ modified one whose value is not closed. Minutes with no such line, as every
 walk before the line existed, are not open walks.
 
 ITEMS IN THE WALK-DOCUMENT. An item starts at its running count, `Item N of
-M`, `Items 5 and 6 of M` or `Items 10 to 12 of M`, on a heading or on a
-paragraph opening with `**`, as markdown-it-py reads the document, so a count
-inside code starts nothing; it runs to the next running count, so headings
-inside an item, such as an original and a proposed section, stay in it. A
-heading that names several items is one unit. When the minutes' value has no
-`of M`, the walk-document's own total is used, if its headings carry only one.
+M`, `Items 5 and 6 of M`, `Items 10 to 12 of M` or `Items 12 to 12.3 of M`
+(item 12 and its parts 12.1 to 12.3), on a heading or on a paragraph opening
+with `**`, as markdown-it-py reads the document, so a count inside code starts
+nothing; it runs to the next running count, so headings inside an item, such
+as an original and a proposed section, stay in it. A heading that names
+several items is one unit, and so are the paragraphs under it that open with
+the count of one of its items, such as `**Item 10 of 12: ...**` under `##
+Items 10 and 11 of 12`. A heading that keeps an earlier item beside its
+revision says `revised` after its count, as in `## Item 27 of 72 (revised)`;
+only the latest revision is shown. A running count that names no item, such
+as a range that runs backwards, still ends the item before it, so that item is
+not shown with the next one's text; when the minutes name an item such a
+heading was meant to hold, or name an item that two headings carry when
+neither is a revision, the hook blocks naming the heading. When the minutes' value has no `of M`, the walk-document's
+own total is used, if its headings carry only one.
 
 WHAT IS SHOWN is the text of the units the minutes name, taken from the
 walk-document in the walk-document's order, without heading marks, bold marks
@@ -50,7 +63,9 @@ the old text.
 WHILE THE AGENT ANSWERS A STOP HOOK (stop_hook_active set), the item notice
 is still shown, under the one exemption in the Stop-hook silence rule's module,
 because it does not keep the agent going; a block on unusable minutes is not
-printed then. SILENT when the agent-session is a headless `claude -p` child (its
+printed then. The hook then installs nothing, so a missing markdown-it-py is a
+fault there, which the Stop before it in the same turn, which installs it, has
+already met. SILENT when the agent-session is a headless `claude -p` child (its
 last words are its caller's answer), when the transcript is missing, when the
 turn's last reply is empty, when the cwd is not in a git checkout, and when no
 approval-walk is open.
@@ -84,7 +99,10 @@ CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 WALK_DIRECTORY = Path("docs") / "walk"
 MINUTES_SUFFIX = "-minutes.md"
 # Group 1 is set only for the hashtag; the old form is read so that open walks it marks are migrated.
-NEXT_MARKER = re.compile(r"(?:(#next_to_present)\b|Next to present:)[*_`\s]*([^\n]*)", re.I)
+# The value runs to the line's end or the next marker, so two markers on a line are read as two.
+NEXT_MARKER = re.compile(
+    r"(?:(#next_to_present)\b|Next to present:)[*_`\s:]*((?:(?!#next_to_present\b|Next to present:)[^\n])*)",
+    re.I)
 CLOSED_VALUE = re.compile(r"^(?:none|closed)\b", re.I)
 NUMBER = r"\d+(?:\.\d+)*"
 NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
@@ -92,6 +110,7 @@ NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
 NUMBER_LIST = rf"{NUMBER}(?:{NUMBER_JOINER}{NUMBER})*(?![\d.]\d)"
 VALUE_COUNT = re.compile(rf"^items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b)?", re.I)
 HEADING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
+REVISED = re.compile(r"\brevised\b", re.I)
 NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
 # A record from one of these starts a turn even when Claude Code marks it isMeta.
 TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator", "task-notification")
@@ -107,7 +126,7 @@ NOT_A_FORM_PROBLEM = (
 
 
 class UnusableRange(ValueError):
-    """The `#next_to_present` value names no item; its argument says why."""
+    """A running count names no item; its argument says why."""
 
 
 UNUSABLE_INSTRUCTIONS = (
@@ -193,9 +212,12 @@ def checkout_top(directory):
     return Path(os.fsdecode(output).rstrip("\n"))
 
 
-def markdown_parser():
-    return load_module("markdown_edit_hard_wrapped_paragraph_reminder_hook",
-                       MARKDOWN_PARSER_MODULE_FILE).markdown_parser()
+def markdown_parser(may_install):
+    """Return the parser; raise ImportError when markdown-it-py is missing and may_install is false."""
+    module = load_module("markdown_edit_hard_wrapped_paragraph_reminder_hook", MARKDOWN_PARSER_MODULE_FILE)
+    if may_install:
+        return module.markdown_parser()
+    return module.import_markdown_it()("commonmark").enable("table")
 
 
 def code_line_numbers(tokens):
@@ -206,21 +228,21 @@ def code_line_numbers(tokens):
     return lines
 
 
-def without_code_spans(line):
-    return CODE_SPAN.sub(" ", line)
-
-
 def next_to_present(minutes_text, parser):
     """Return (value, whether the marker is the old form) for the minutes' last marker outside code, or None."""
     code_lines = code_line_numbers(parser.parse(minutes_text))
     markers = []
     for number, line in enumerate(minutes_text.split("\n")):
-        if number not in code_lines:
-            markers += NEXT_MARKER.findall(without_code_spans(line))
+        if number in code_lines:
+            continue
+        spans = [span.span() for span in CODE_SPAN.finditer(line)]
+        for marker in NEXT_MARKER.finditer(line):
+            if not any(start <= marker.start() < end for start, end in spans):
+                markers.append((marker[1], marker[2].replace("`", "").strip()))
     if not markers:
         return None
     hashtag, value = markers[-1]
-    return value.strip(), not hashtag
+    return value, not hashtag
 
 
 def is_closed(value):
@@ -240,11 +262,17 @@ def expand_numbers(number_list):
             first, last = pieces[index], pieces[index + 2]
             first_head, _, first_tail = first.rpartition(".")
             last_head, _, last_tail = last.rpartition(".")
+            if not first_head and last_head == first:
+                # `12 to 12.3`: item 12 and its parts up to 12.3.
+                numbers += [first] + [f"{first}.{n}" for n in range(1, int(last_tail) + 1)]
+                index += 3
+                continue
             if first_head != last_head:
                 raise UnusableRange(
                     f"its range `{first} to {last}` runs between parts of different items; "
                     f"a range runs within one item's parts, such as `items 12.1 to 12.3`, "
-                    f"or between whole items, such as `items 10 to 12`")
+                    f"between whole items, such as `items 10 to 12`, or from an item to "
+                    f"one of its parts, such as `items 12 to 12.3`")
             if int(first_tail) > int(last_tail):
                 raise UnusableRange(
                     f"its range `{first} to {last}` runs backwards; a range runs from the "
@@ -257,8 +285,6 @@ def expand_numbers(number_list):
         else:
             numbers.append(pieces[index])
             index += 1
-    if not numbers:
-        raise UnusableRange(NOT_A_FORM_PROBLEM)
     return numbers
 
 
@@ -288,12 +314,18 @@ def open_walk(walk_directory, parser):
 
 
 def item_units(document_text, parser):
-    """Return [(item numbers, M, text)] for each running count that starts an item.
+    """Return [(item numbers, M, text, problem)] for each running count that starts an item.
 
-    A count starts an item on a heading, or on a paragraph opening with `**`.
+    A count starts an item on a heading, or on a paragraph opening with `**`, except a
+    paragraph whose items the count heading above it already names, with no other count
+    between them, which stays in that heading's unit. A count that names no item still
+    ends the unit before it; its unit has no numbers, and problem names the heading and
+    says why. problem is None for every other unit. A unit is left out when a later
+    heading whose text says `revised` names all of its items.
     """
     lines = document_text.split("\n")
     starts = []
+    group = None
     tokens = parser.parse(document_text)
     for index, token in enumerate(tokens):
         if token.map is None or token.type not in ("heading_open", "paragraph_open"):
@@ -306,15 +338,24 @@ def item_units(document_text, parser):
         if not match:
             continue
         try:
-            numbers = expand_numbers(match[1])
-        except UnusableRange:
-            # A heading whose count names no item starts no unit, as an uncounted heading does.
+            numbers, problem = expand_numbers(match[1]), None
+        except UnusableRange as error:
+            numbers, problem = [], f"its walk-document's heading `{content.strip()}` names no item: {error}"
+        if token.type == "heading_open":
+            group = (set(numbers), match[2])
+        elif group and set(numbers) <= group[0] and match[2] == group[1]:
             continue
-        starts.append((first_line, numbers, match[2]))
+        else:
+            group = None
+        revised = bool(REVISED.search(content[match.end():]))
+        starts.append((first_line, numbers, match[2], problem, revised))
     units = []
-    for index, (first_line, numbers, total) in enumerate(starts):
+    for index, (first_line, numbers, total, problem, _) in enumerate(starts):
+        if numbers and any(revised and later_total == total and set(numbers) <= set(later_numbers)
+                           for _, later_numbers, later_total, _, revised in starts[index + 1:]):
+            continue
         end = starts[index + 1][0] if index + 1 < len(starts) else len(lines)
-        units.append((numbers, total, "\n".join(lines[first_line:end])))
+        units.append((numbers, total, "\n".join(lines[first_line:end]), problem))
     return units
 
 
@@ -353,7 +394,7 @@ def without_heading_and_bold_marks(text, parser):
     return "\n".join(shown).strip("\n")
 
 
-def block(opening, instructions, **values):
+def block_output(opening, instructions, **values):
     lines = [opening.format(**values)] + [line.format(**values) for line in instructions]
     return json.dumps({"decision": "block", "reason": "\n".join(lines)}, ensure_ascii=False)
 
@@ -364,14 +405,19 @@ def run(stdin_text, environment):
     rule = load_module("claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
                        STOP_HOOKS_STAY_SILENT_RULE_FILE)
     # The item notice is the rule's one exemption; a block on unusable minutes stays silent.
-    output = output_for(payload, environment)
+    output = output_for(payload, environment,
+                        rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload))
     if not rule.stop_hook_output_may_be_printed_while_agent_answers_a_stop_hook(payload, output):
         return None
     return output
 
 
-def output_for(payload, environment):
-    """The item notice, a block naming why there is no item to show, or None."""
+def output_for(payload, environment, answering_a_stop_hook):
+    """The item notice, a block naming why there is no item to show, or None.
+
+    While the agent answers a Stop hook, nothing is installed, because only a notice may be
+    printed then and computing it may write no state.
+    """
     if (environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
             or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0"):
         return None
@@ -383,7 +429,7 @@ def output_for(payload, environment):
     top = checkout_top(Path(payload["cwd"]))
     if top is None or not (top / WALK_DIRECTORY).is_dir():
         return None
-    parser = markdown_parser()
+    parser = markdown_parser(may_install=not answering_a_stop_hook)
     walk = open_walk(top / WALK_DIRECTORY, parser)
     if walk is None:
         return None
@@ -394,42 +440,55 @@ def output_for(payload, environment):
     name = minutes.name[:-len(MINUTES_SUFFIX)]
     document = minutes.with_name(name + ".md")
     values = {"walk": name, "minutes": minutes, "document": document, "value": value}
+
+    def block(opening, instructions, **more):
+        return block_output(opening, instructions, **more, **values)
+
     if old_form:
         new_line = "#next_to_present " + value.rstrip(". ")
         return block(UNUSABLE_OPENING_TEMPLATE, OLD_MARKER_INSTRUCTIONS,
-                     problem=OLD_MARKER_PROBLEM.format(minutes=minutes), new_line=new_line, **values)
+                     problem=OLD_MARKER_PROBLEM.format(minutes=minutes), new_line=new_line)
     try:
         numbers, total = parse_items(value)
     except UnusableRange as problem:
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
-            f"its minutes' last `#next_to_present` line, `{value}`, {problem}."), **values)
+            f"its minutes' last `#next_to_present` line, `{value}`, {problem}."))
     if not document.is_file():
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
-            f"its walk-document {document} does not exist."), **values)
+            f"its walk-document {document} does not exist."))
     all_units = item_units(document.read_text(encoding="utf-8"), parser)
     if total is None:
-        totals = {unit_total for _, unit_total, _ in all_units}
+        totals = {unit[1] for unit in all_units}
         if not totals:
             return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
                 f"its walk-document {document} has no heading with a running count, such "
                 f"as `## Item 3 of 9: <the point>`, so the hook cannot find the item the "
-                f"minutes name: give each item's heading its count `Item N of M`."), **values)
+                f"minutes name: give each item's heading its count `Item N of M`."))
         if len(totals) > 1:
             listed = ", ".join(f"`of {each}`" for each in sorted(totals, key=int))
             return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
                 f"its minutes' last `#next_to_present` line, `{value}`, gives no `of M`, "
                 f"and the walk-document's headings give more than one total ({listed}), "
                 f"so the line must say which: write it as `item N of M`, with M the total "
-                f"of the heading meant."), **values)
+                f"of the heading meant."))
         total = totals.pop()
     units = [unit for unit in all_units if unit[1] == total and set(unit[0]) & set(numbers)]
     missing = [number for number in numbers if not any(number in unit[0] for unit in units)]
     if missing:
         named = ", ".join(f"`Item {number} of {total}`" for number in missing)
+        unreadable = [unit[3] for unit in all_units if unit[1] == total and unit[3]]
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
-            f"its walk-document has no heading {named}, which the minutes name."), **values)
+            f"its walk-document has no heading {named}, which the minutes name"
+            + "".join(f"; {each}" for each in unreadable) + "."))
+    repeated = [number for number in numbers if sum(number in unit[0] for unit in units) > 1]
+    if repeated:
+        named = ", ".join(f"`Item {number} of {total}`" for number in repeated)
+        return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
+            f"its walk-document has more than one heading for {named}, so the hook cannot tell "
+            f"which one the minutes name: the heading that is misnumbered needs its own number, and "
+            f"a heading that revises an earlier one says `(revised)` after its count."))
     shown = without_heading_and_bold_marks(
-        "\n".join(unit_text.strip("\n") for _, _, unit_text in units), parser)
+        "\n".join(unit[2].strip("\n") for unit in units), parser)
     return json.dumps({"systemMessage": shown + "\n\n" + ANSWERS_LINE}, ensure_ascii=False)
 
 
