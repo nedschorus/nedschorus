@@ -33,6 +33,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **create-GHI** — the ghi-write-tool operation that files a new GHI for a GHI-MD that has none, refusing when an open GHI already covers the same ground.
 - **deferred-decisions** — the section of a design or GHI-MD, headed `Deferred-decisions` at any heading level, that lists the cases and decisions the document leaves for its build, for later evidence or for the user to settle; a reviewer does not report a case listed there as missing.
 - **design-contract** — the file beside a design listing what the component promises its component-consumers, one testable clause per observable effect.
+- **design-requirement** — one statement of what a design requires, with a name no other design-requirement in the repository has, such as `cleaner-removes-worktree-after-30-quiet-days`. A design's design-requirements are its list of them.
 - **design-to-main** — the workflow that takes an approved design to code, tests and a pull request; its design and its own glossary are in `docs/design-to-main/`.
 - **detect-instruct-correct (aka DIC)** — a check, usually a hook, that detects when an agent has broken a rule, instructs the agent what is wrong and what to do, and lets the agent correct it, so a rule written for agents also holds in practice.
 - **edit-GHI** — the ghi-write-tool operation that merges an edit of a filed GHI-MD into main and updates the GHI from main.
@@ -73,7 +74,8 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **session-handoff** — the act of transferring the key context and state of one agent-session to the next, and the file that carries it, `~/.claude/handoffs/<seat>-handoff.md`, on the agent-seat's machine only and never committed.
 - **soft-block** — a refusal the agent clears by writing its own reasoning into the marker the refusal names.
 - **system-term** — a term used by one system or subsystem alone, defined in that system's own glossary rather than here; a term used by more than one is a project-term, defined here and in no system glossary. The system glossaries are listed at the top of this page.
-- **test-design** — the document, written from a design and its design-contract, listing one requirement per promise a test must observe, each with the coverage-type of the test that will cover it.
+- **test-design** — the document, written from a design and its design-contract, listing one test-requirement per design-requirement a test must observe, each with the coverage-type of the test that will cover it.
+- **test-requirement** — one line of a test-design: one design-requirement, the coverage-type and names of the tests that check it, or `no-tests` with the reason.
 - **user-block** — a refusal that only the user's approval, quoted into the marker the refusal names, clears.
 - **user-ruling** — a decision by the user, recorded where it applies in the form (user-ruled YYYY-MM-DD).
 - **work-snapshot** — a git commit, kept under `refs/work-snapshots/` and never on a branch, that copies one worktree's uncommitted changes so they survive a crash.
