@@ -581,9 +581,8 @@ def remove_checkouts(repository, checkouts):
     removed, with the reason."""
     failed = []
     try:
-        with stop_deferred():
-            listed = subprocess.run(["git", "-C", repository, "worktree", "list", "--porcelain"], capture_output=True,
-                                    text=True, env=child_environment(), timeout=GIT_TIMEOUT_SECONDS)
+        listed = subprocess.run(["git", "-C", repository, "worktree", "list", "--porcelain"], capture_output=True,
+                                text=True, env=child_environment(), timeout=GIT_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         return [f"{checkout}: git worktree list did not finish in {GIT_TIMEOUT_SECONDS} s" for checkout in checkouts]
     if listed.returncode != 0:
@@ -601,10 +600,9 @@ def remove_checkouts(repository, checkouts):
                 failed.append(f"{checkout}: not registered with git, and it could not be deleted")
             continue
         try:
-            with stop_deferred():
-                completed = subprocess.run(["git", "-C", repository, "worktree", "remove", "--force", str(checkout)],
-                                           capture_output=True, text=True, env=child_environment(),
-                                           timeout=GIT_TIMEOUT_SECONDS)
+            completed = subprocess.run(["git", "-C", repository, "worktree", "remove", "--force", str(checkout)],
+                                       capture_output=True, text=True, env=child_environment(),
+                                       timeout=GIT_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             failed.append(f"{checkout}: git worktree remove did not finish in {GIT_TIMEOUT_SECONDS} s")
             continue

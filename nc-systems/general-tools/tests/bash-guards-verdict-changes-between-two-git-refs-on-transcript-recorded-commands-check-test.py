@@ -447,10 +447,8 @@ try:
         "try:\n"
         "    if sys.argv[3] == 'step':\n"
         "        replay.run_step_in_child(['--step', 'stand-in'], os.devnull, 600)\n"
-        "    elif sys.argv[3] == 'git':\n"
-        "        replay.run_git(sys.argv[4], 'rev-parse', 'HEAD')\n"
         "    else:\n"
-        "        replay.remove_checkouts(sys.argv[4], [sys.argv[5]])\n"
+        "        replay.run_git(sys.argv[4], 'rev-parse', 'HEAD')\n"
         "except SystemExit as stop:\n"
         "    sys.setprofile(None)\n"
         "    print('exit', stop.code, 'signal delivered', bool(fired))\n"
@@ -458,8 +456,7 @@ try:
     gap_directory = Path(scratch) / "gap"
     gap_directory.mkdir()
     (gap_directory / "stand-in-step.py").write_text("import time\ntime.sleep(1000)\n")
-    for gap_call, gap_extra in (("step", []), ("git", [str(REPOSITORY_ROOT)]),
-                                ("worktree list and remove", [str(REPOSITORY_ROOT), str(gap_directory)])):
+    for gap_call, gap_extra in (("step", []), ("git", [str(REPOSITORY_ROOT)])):
         try:
             gap = subprocess.run([sys.executable, "-c", gap_script, str(SCRIPT_PATH),
                                   str(gap_directory / "stand-in-step.py"), gap_call.split()[0], *gap_extra],
