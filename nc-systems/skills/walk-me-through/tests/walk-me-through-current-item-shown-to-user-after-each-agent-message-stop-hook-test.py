@@ -494,6 +494,111 @@ def test_range_headings_and_values():
                   "does not open with an item" not in (blocked_reason(result) or ""), result.stdout)
 
 
+GROUPED_WALK_DOCUMENT = """# A walk with grouped items
+
+## Item 9 of 12: before
+
+Before. Recommendation: Y.
+
+## Items 10 and 11 of 12: two small changes
+
+**Item 10 of 12: the hook's message carries the diff.** Proposed: a diff. Recommendation: Y.
+
+**Item 11 of 12: drop the timed test.** Proposed: a benchmark. Recommendation: Y.
+
+## Item 12 of 12: after
+
+After. Recommendation: Y.
+"""
+
+REVISED_WALK_DOCUMENT = """# A walk with a kept original
+
+## Item 26 of 72: before
+
+Before. Recommendation: Y.
+
+## Item 27 of 72: keeping the design true
+
+The original. Recommendation: Y.
+
+## Item 27 of 72 (revised): keeping code and design in step
+
+The revision. Recommendation: Y.
+
+## Item 28 of 72: after
+
+After. Recommendation: Y.
+"""
+
+
+def test_grouped_heading_paragraphs_and_kept_revisions_are_shown():
+    whole_group = ("Items 10 and 11 of 12: two small changes\n\n"
+                   "Item 10 of 12: the hook's message carries the diff. Proposed: a diff. Recommendation: Y.\n\n"
+                   "Item 11 of 12: drop the timed test. Proposed: a benchmark. Recommendation: Y.")
+    for case_name, minutes in (
+            ("minutes naming a grouped heading show it with its items' bold paragraphs",
+             "#next_to_present items 10 and 11 of 12."),
+            ("minutes naming one item of a grouped heading show the whole group",
+             "#next_to_present item 11 of 12."),
+            ("minutes naming a grouped item without a total show the whole group",
+             "#next_to_present item 10.")):
+        case = Case()
+        case.walk_files(minutes=minutes, document=GROUPED_WALK_DOCUMENT)
+        case.reply("Recorded.")
+        check_shown(case_name, case.run(), wanted_text=whole_group)
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 11 of 12.",
+                    document=GROUPED_WALK_DOCUMENT.replace(
+                        "## Item 12 of 12: after\n\nAfter.",
+                        "## Item 12 of 12: after\n\n**Item 11 of 12: misplaced.** Text.\n\nAfter."))
+    case.reply("Recorded.")
+    check_blocked("a bold paragraph naming an item its heading does not name still starts an item",
+                  case.run(), "more than one heading for `Item 11 of 12`")
+    for case_name, minutes in (
+            ("minutes naming an item kept beside its revision show only the revision",
+             "#next_to_present item 27 of 72."),
+            ("minutes naming a revised item without a total show only the revision",
+             "#next_to_present item 27.")):
+        case = Case()
+        case.walk_files(minutes=minutes, document=REVISED_WALK_DOCUMENT)
+        case.reply("Recorded.")
+        check_shown(case_name, case.run(),
+                    wanted_text="Item 27 of 72 (revised): keeping code and design in step\n\n"
+                                "The revision. Recommendation: Y.")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 26 of 72.", document=REVISED_WALK_DOCUMENT)
+    case.reply("Recorded.")
+    check_shown("an item before a kept original still ends at the original", case.run(),
+                wanted_text="Item 26 of 72: before\n\nBefore. Recommendation: Y.")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 10 of 13.",
+                    document=GROUPED_WALK_DOCUMENT.replace(
+                        "**Item 11 of 12: drop", "**Item 10 of 13: another count.** Text.\n\n**Item 11 of 12: drop"))
+    case.reply("Recorded.")
+    check_shown("a bold paragraph with another total under a grouped heading starts its own item", case.run(),
+                wanted_text="Item 10 of 13: another count. Text.")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 27 of 72.",
+                    document=REVISED_WALK_DOCUMENT.replace("## Item 27 of 72 (revised)", "## Item 27 of 76 (revised)"))
+    case.reply("Recorded.")
+    check_shown("a revision under another total leaves the original shown", case.run(),
+                wanted_text="Item 27 of 72: keeping the design true\n\nThe original. Recommendation: Y.")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 10 of 54.",
+                    document=("# A walk\n\n## Item 9 of 54: first\n\nText.\n\n"
+                              "## Items 12 to 10 of 54: backwards\n\nMore.\n\n"
+                              "## Item 13 of 54 (revised): last\n\nEnd.\n"))
+    case.reply("Recorded.")
+    check_blocked("a later revision leaves a heading that names no item named in the block", case.run(),
+                  "heading `Items 12 to 10 of 54: backwards` names no item")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 27 of 72.",
+                    document=REVISED_WALK_DOCUMENT.replace("## Item 27 of 72 (revised)", "## Item 27 of 72"))
+    case.reply("Recorded.")
+    check_blocked("two headings for one item, neither a revision, still block", case.run(),
+                  "more than one heading for `Item 27 of 72`", "misnumbered", "`(revised)`")
+
+
 def test_where_the_minutes_line_sits():
     item_2 = section("## Item 2 of 9", "## Item 4.1 of 9")
     for case_name, minutes in (

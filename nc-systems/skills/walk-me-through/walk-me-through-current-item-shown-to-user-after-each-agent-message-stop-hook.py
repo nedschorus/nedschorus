@@ -41,11 +41,15 @@ M`, `Items 5 and 6 of M`, `Items 10 to 12 of M` or `Items 12 to 12.3 of M`
 with `**`, as markdown-it-py reads the document, so a count inside code starts
 nothing; it runs to the next running count, so headings inside an item, such
 as an original and a proposed section, stay in it. A heading that names
-several items is one unit. A running count that names no item, such as a
-range that runs backwards, still ends the item before it, so that item is not
-shown with the next one's text; when the minutes name an item such a heading
-was meant to hold, or name an item that two headings carry, the hook blocks
-naming the heading. When the minutes' value has no `of M`, the walk-document's
+several items is one unit, and so are the paragraphs under it that open with
+the count of one of its items, such as `**Item 10 of 12: ...**` under `##
+Items 10 and 11 of 12`. A heading that keeps an earlier item beside its
+revision says `revised` after its count, as in `## Item 27 of 72 (revised)`;
+only the latest revision is shown. A running count that names no item, such
+as a range that runs backwards, still ends the item before it, so that item is
+not shown with the next one's text; when the minutes name an item such a
+heading was meant to hold, or name an item that two headings carry when
+neither is a revision, the hook blocks naming the heading. When the minutes' value has no `of M`, the walk-document's
 own total is used, if its headings carry only one.
 
 WHAT IS SHOWN is the text of the units the minutes name, taken from the
@@ -106,6 +110,7 @@ NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
 NUMBER_LIST = rf"{NUMBER}(?:{NUMBER_JOINER}{NUMBER})*(?![\d.]\d)"
 VALUE_COUNT = re.compile(rf"^items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b)?", re.I)
 HEADING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
+REVISED = re.compile(r"\brevised\b", re.I)
 NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
 # A record from one of these starts a turn even when Claude Code marks it isMeta.
 TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator", "task-notification")
@@ -311,12 +316,16 @@ def open_walk(walk_directory, parser):
 def item_units(document_text, parser):
     """Return [(item numbers, M, text, problem)] for each running count that starts an item.
 
-    A count starts an item on a heading, or on a paragraph opening with `**`. A count that
-    names no item still ends the unit before it; its unit has no numbers, and problem names
-    the heading and says why. problem is None for every other unit.
+    A count starts an item on a heading, or on a paragraph opening with `**`, except a
+    paragraph whose items the count heading above it already names, with no other count
+    between them, which stays in that heading's unit. A count that names no item still
+    ends the unit before it; its unit has no numbers, and problem names the heading and
+    says why. problem is None for every other unit. A unit is left out when a later
+    heading whose text says `revised` names all of its items.
     """
     lines = document_text.split("\n")
     starts = []
+    group = None
     tokens = parser.parse(document_text)
     for index, token in enumerate(tokens):
         if token.map is None or token.type not in ("heading_open", "paragraph_open"):
@@ -332,9 +341,19 @@ def item_units(document_text, parser):
             numbers, problem = expand_numbers(match[1]), None
         except UnusableRange as error:
             numbers, problem = [], f"its walk-document's heading `{content.strip()}` names no item: {error}"
-        starts.append((first_line, numbers, match[2], problem))
+        if token.type == "heading_open":
+            group = (set(numbers), match[2])
+        elif group and set(numbers) <= group[0] and match[2] == group[1]:
+            continue
+        else:
+            group = None
+        revised = bool(REVISED.search(content[match.end():]))
+        starts.append((first_line, numbers, match[2], problem, revised))
     units = []
-    for index, (first_line, numbers, total, problem) in enumerate(starts):
+    for index, (first_line, numbers, total, problem, _) in enumerate(starts):
+        if numbers and any(revised and later_total == total and set(numbers) <= set(later_numbers)
+                           for _, later_numbers, later_total, _, revised in starts[index + 1:]):
+            continue
         end = starts[index + 1][0] if index + 1 < len(starts) else len(lines)
         units.append((numbers, total, "\n".join(lines[first_line:end]), problem))
     return units
@@ -466,7 +485,8 @@ def output_for(payload, environment, answering_a_stop_hook):
         named = ", ".join(f"`Item {number} of {total}`" for number in repeated)
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
             f"its walk-document has more than one heading for {named}, so the hook cannot tell "
-            f"which one the minutes name: the heading that is misnumbered needs its own number."))
+            f"which one the minutes name: the heading that is misnumbered needs its own number, and "
+            f"a heading that revises an earlier one says `(revised)` after its count."))
     shown = without_heading_and_bold_marks(
         "\n".join(unit[2].strip("\n") for unit in units), parser)
     return json.dumps({"systemMessage": shown + "\n\n" + ANSWERS_LINE}, ensure_ascii=False)
