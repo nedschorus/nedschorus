@@ -1,147 +1,49 @@
 # Notes on using the Codex and Gemini (Antigravity) agents from an agent-seat
 
-Written 2026-09-04 by the cold-read-research agent-seat after a day of running both as
-cold-read-cells. Every item here was measured, not read from docs, unless it
-says otherwise. The measurements it cites are in the record
-`nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/`. Claude Code is not covered: it is the runtime the agent-seats run in.
+This page tells an agent-seat how to run Codex and Gemini, and what to expect from them. Facts about an installed program say which machine and date they were checked on, because the programs update often. Measurements the cold-read-research agent-seat made from 2026-09-03 to 2026-09-07 are in their own section near the end, and the campaign's data is in the record `nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/2026-09-03-cold-read-tier-roster-campaign/`. Claude Code, the program the agent-seats themselves run in, is covered elsewhere; it appears here only where it was measured beside the other two or where it broke their runs.
 
-The one rule that saved the most time: **when a runtime's behaviour is not
-obvious, ask the runtime itself, with permissions granted, before reading its
-docs.** Both CLIs know their own customization systems better than their
-changelogs do. Give them permission to run commands or fetch pages first, or
-the headless run auto-denies the tool call and returns nothing (Antigravity) or
-gives a non-answer (Codex declines to guess its own model ids).
+## Run them through the project's programs
+
+- To give Codex a task, run `scripts/run-codex-task-from-brief.py -C <checkout> --brief <file> -o <report>`. Never type `codex exec` by hand: without that program, Codex waits forever on stdin, nothing stops a run that hangs, and nothing keeps Codex out of credential files. The program's own options cover what a task needs: `--sandbox`, which takes `read-only` (the default) or `workspace-write` to let Codex edit, `-m <model>`, `--effort <effort>`, `--outside-git-checkout` for a folder that is not a git checkout, `--network` and `--web-search` to let Codex reach the web, and `--deadline-minutes` (default 60). Run it with `--help` for the rest.
+- To run one reviewer on a document, use the cold-read-cell launchers: `nc-systems/cold-read/cold-read-claude-cell.py`, `nc-systems/cold-read/cold-read-codex-cell.py` and `nc-systems/cold-read/cold-read-agy-cell.py`. Each takes `--cell`, which names the reviewer prompt under `.claude/skills/cold-read/prompts/` (`restate`, `defect-hunt`, `fast-clarify` or `terminology`), `--tier`, `--target` and `--report`. The Claude and Codex launchers take `--tier deep` or `second`, and the Gemini launcher only `--tier fast`. To use a prompt of your own, add `--prompt-file <path>`; `--cell` is then a label of your choosing, lowercase letters and digits joined by single hyphens, recorded in the report's provenance stamp.
+- Never run `agy` outside the Gemini launcher, `nc-systems/cold-read/cold-read-agy-cell.py`; the project has no program for giving Gemini other tasks. With the permissions a headless run needs, `agy` reads credential files, and its own `--sandbox` switch does not stop it; the launcher runs it inside `bwrap` on Linux or `sandbox-exec` on macOS, and refuses to run without one.
 
 ## Codex (`codex`, OpenAI)
 
-**Install and update.** Installed through npm, not brew: on the Mac `/opt/homebrew/bin/codex`
-is a symlink into `node_modules/@openai/codex`, and on ned-box `/usr/local/bin/codex` is a symlink into
-`/usr/local/lib/node_modules/@openai/codex`. `brew upgrade codex` fails
-("Cask 'codex' is not installed") even though a brew formula exists. Use
-`codex update` (it runs `npm install -g @openai/codex`). Check with
-`codex --version`. No live `codex exec` should be running when you update; the
-binary is shared by every agent-seat on the machine.
+**Install and update.** Codex is installed through npm, not Homebrew: on ned-box `/usr/local/bin/codex` is a symlink into `/usr/local/lib/node_modules/@openai/codex`, and on the Mac `/opt/homebrew/bin/codex` is a symlink into npm's `node_modules/@openai/codex`, so `brew upgrade codex` fails. Update with `codex update`, which runs `npm install -g @openai/codex`, and check with `codex --version` (codex-cli 0.159.3 on ned-box on 2026-10-17). Every agent-seat on a machine shares the one binary, so before you update, check with `pgrep -af codex` that no Codex run is in progress; if one is, wait for it to finish. Running Codex tasks side by side is fine; only the update must wait.
 
-**Model ids.** The CLI does not list models on the command line. The list it
-knows is cached at `~/.codex/models_cache.json`, refreshed on each run; read the
-`slug` fields. A new model appears there only after the CLI is new enough:
-`gpt-6-astra` was absent at 0.149.1 and present at 0.153.4 on the same account
-and day. A model id the CLI does not know hangs the run rather than failing
-fast (measured: eight minutes with no output before it was killed). The model
-cannot tell you its own id ("not exposed to me") and will not guess a new one.
+**Model ids.** The CLI has no command that lists models. It caches the list it knows in `~/.codex/models_cache.json`, refreshed on each run; the ids are the `slug` fields. A model appears there only once the CLI is new enough for it: the Codex launcher's `gpt-6.1-sol` needs codex-cli 0.159.1 or later. A model id the CLI does not know makes the run hang instead of failing (measured: eight minutes with no output, then killed), so take the id from the cache; `scripts/run-codex-task-from-brief.py` stops such a run at its deadline. The model cannot tell you its own id.
 
-**Running non-interactively.** `codex exec` with the prompt as the last
-positional argument, or on stdin. An agent runs a Codex task with
-`scripts/run-codex-task-from-brief.py -C <checkout> --brief <file> -o <report>`
-(add `--sandbox workspace-write` to let it edit), which closes stdin, logs
-Codex's output and stops Codex at a deadline, never with a hand-typed
-`codex exec`. Flags the cells use:
-`--sandbox read-only` (or `workspace-write` when it must write the report),
-`--disable memories`, `-C <repo>`, `-m <model>`, `-c model_reasoning_effort=<low|medium|high|xhigh|max>`.
-Outside a trusted git checkout it refuses with "Not inside a trusted directory";
-add `--skip-git-repo-check` for scratch directories. Its stdout carries a
-bracketed trace and a `tokens used` line before and after the answer; the
-repo's `nc-systems/cold-read/cold-read-codex-cell.py` already strips these, and a direct
-runner must (the terminology runner keeps everything after the last
-`] codex` banner line).
+**Effort.** Effort is set per run, with `--effort`, not in the model id.
 
-**Effort.** `max` is accepted by every 5.6 model and by astra; the cell stamp
-records what was asked. Effort is per run, in the `-c` override, not in the id.
-
-**Project rules.** Codex injects the repository's `AGENTS.md`. Ours is a pointer
-("read CLAUDE.md and follow it"), user-ruled, and codex follows it by reading
-the file when it may read files — measured with a canary on 2026-08-22 and
-again today. A run told not to read files sees only the pointer and says so.
-That is the intended behaviour for a cold-read-cell, which is meant to be
-context-free.
-
-**Time and quota.** A max-effort run on a 1,500–2,300-word document takes
-13–20 minutes. Sol-max is the slowest cell in the campaign (mean 1,339 s).
-Codex has never hit an account limit in this campaign; Claude hit it three
-times in one day, so when both are queued, the Codex leg is the one that
-finishes.
+**Project rules.** Codex reads the repository's `AGENTS.md`, which tells it to read `CLAUDE.md` and follow it. Measured with a canary on 2026-08-22 and 2026-09-04: Codex reads `CLAUDE.md` when it may read files.
 
 ## Gemini via Antigravity (`agy`, Google)
 
-**What it is.** There is no `gemini` CLI on this machine. Gemini runs through
-the Antigravity CLI, `agy` (`~/.local/bin/agy`), which is the agent behind the
-Antigravity IDE. On ned-box its config lives under `~/.gemini/antigravity-cli/`. `agy update`
-checks and updates; `agy --version` reports it. The user's Google account
-upgrade on 2026-09-04 removed the quota that stopped every Gemini cell in the
-08-29 trial ("Individual quota reached ... Resets in 95h").
+**What it is.** Gemini runs through the Antigravity CLI, `agy`, the agent behind the Antigravity IDE; there is no `gemini` command. On ned-box `agy` is `~/.local/bin/agy` and its configuration is under `~/.gemini/antigravity-cli/` (version 1.4.0 on 2026-10-17). `agy update` updates it and `agy --version` reports it.
 
-**Model ids carry the effort.** `agy models` lists them live:
-`gemini-3.8-flash-high`, `-medium`, `-low`, and the same for `gemini-4-argon`
-(on ned-box, 2026-10-15). Pass the whole id to `--model`; `--effort` exists too
-and should agree with the suffix. The list also offers Claude and GPT-OSS ids
-through Antigravity, which we do not use.
+**Model ids carry the effort.** `agy models` lists them: `gemini-3.8-flash-high`, `gemini-3.8-flash-medium`, `gemini-3.8-flash-low`, `gemini-4-argon-high`, `gemini-4-argon-medium` and `gemini-4-argon-low` (ned-box, 2026-10-17). The cold-read-fast-read runs on `gemini-3.8-flash-medium`.
 
-**Running non-interactively — the three things that bite.**
+**What a new runner must handle.** The launcher handles all of these; they matter only to someone changing it.
 
-1. **The prompt is the VALUE of `--print`.** `agy --print --model X "prompt"`
-   silently takes `--model` as the prompt and ignores yours, with an error
-   only at the end. Put `--model`, `--effort`, `--add-dir` first and `--print`
-   last with the prompt as its argument, or use `--print='...'`.
-2. **Pass the repository with `--add-dir <repo>`**, or nothing from the
-   repository loads: no `AGENTS.md`, no `GEMINI.md`, no `.agents/rules/`.
-   Measured both ways with a canary from the repo root; only `--add-dir`
-   made the AGENTS.md pointer appear in context. Once it does, the model
-   follows the pointer into CLAUDE.md the same way Codex does, and quoted the
-   naming rule verbatim.
-3. **Headless runs auto-deny every tool permission.** A run that needs to
-   write its report, read a URL, or run a command returns "no output produced
-   — a tool required the X permission that headless mode cannot prompt for".
-   Add `--dangerously-skip-permissions` (or an allow-rule in
-   `~/.gemini/settings.json`). With it, the cell writes its own report file
-   at the path the prompt names, exactly as the Claude cell does.
+1. The prompt is the value of `--print`. In `agy --print --model X "prompt"`, agy takes `--model` as the prompt and ignores yours. Put every other option first and `--print` last, with the prompt as its value.
+2. Pass the repository with `--add-dir <repo>`, or nothing from the repository loads, `AGENTS.md` included.
+3. A headless run denies every tool permission unless it has `--dangerously-skip-permissions`; a run that needed one ends with "no output produced — a tool required the X permission that headless mode cannot prompt for". That flag is why agy must run inside the operating system's sandbox.
+4. Gemini sometimes writes the whole review as its answer instead of into the report file. The launcher then takes the answer as the report when it is at least 120 words; a shorter answer with no report file counts as a failed run.
+5. `--print-timeout` defaults to `0s`, no limit; the launcher sets `30m`, so a run that hangs is stopped.
 
-Also: `--print-timeout` defaults to `0s`, which waits until the turn completes; a high-effort read of a
-1,500-word document takes 3–3.5 minutes, so set 20–30m for anything larger.
-`--output-format text` gives the answer alone. The report the model writes
-carries no provenance stamp; the runner prepends one so the campaign's
-manifest and scorer treat the record like any other cell's.
+**Its own documentation.** On ned-box, agy's customization guide is `~/.gemini/antigravity-cli/builtin/skills/agy-customizations/SKILL.md`, with the rule-loading details in `~/.gemini/antigravity-cli/builtin/skills/agy-customizations/docs/rules.md`. Read it before asking agy about itself: asked about itself, agy may spend its whole run on experiments and time out.
 
-**Where its docs are.** The CLI ships its own customization guide as a skill:
-`~/.gemini/antigravity-cli/builtin/skills/agy-customizations/SKILL.md` on ned-box and
-`docs/rules.md` beside it. Rules load from `GEMINI.md` or `AGENTS.md` in any
-directory from the working directory up to the repository root, and from
-`.agents/rules/*.md`; standalone files have no frontmatter and are always on.
-None of that fires without `--add-dir` (item 2). Asking agy about itself
-works, but only with permissions granted; without them it tries to fetch its
-docs, is denied, and returns nothing — and even with them it may time out
-running experiments on itself, so read the shipped guide first.
+## Measured from 2026-09-03 to 2026-09-07
 
-**Speed.** This is the reason to have it. `gemini-3.8-flash-low` reads a
-700–1,500-word document in 21–31 seconds and reaches the same recall as
-`gpt-5.6-terra` at low effort in a quarter of the time, at better precision
-on a design. `gemini-3.8-flash-high` takes about 200 seconds. Neither found a
-defect no other cell found, so Gemini is a speed cell for interactive use,
-not a cold-read-cell in the cold-read-full-run.
+These are the cold-read-research agent-seat's results, on the models and CLI versions of those days; the campaign record above holds the data for all but the result of 2026-09-07.
 
-## Running a one-off prompt as a cold-read-cell
-
-Each runtime has its launcher: `nc-systems/cold-read/cold-read-claude-cell.py`,
-`nc-systems/cold-read/cold-read-codex-cell.py` and
-`nc-systems/cold-read/cold-read-agy-cell.py`. Each takes `--prompt-file <path>`
-to read a prompt template other than `.claude/skills/cold-read/prompts/<cell>.md`,
-with the same `{TARGET_PATH}` / `{REPORT_PATH}` substitution and the same
-provenance stamp, so a one-off prompt goes through the ordinary launcher and the
-existing placement, adjudication and scoring tools take the record unchanged.
-Before those existed (as of 2026-09-04), the working pattern was a direct
-invocation, as in that record's `tools/`: `run-terminology-cells-direct.py`
-(claude + codex) and `run-astra-and-gemini-cells.py` (codex via the launcher,
-agy direct).
+- A Codex run at `max` effort on a document of 1,500 to 2,300 words took 13 to 32 minutes (`gpt-6-astra` and `gpt-5.6-sol`).
+- Codex hit no account limit in the campaign; Claude hit its limit three times in one day.
+- `gemini-3.8-flash-low` read a 700 to 1,500-word skill in 21 to 31 seconds, found as many of the known defects as `gpt-5.6-terra` at low effort in a quarter of the time, and found no defect that no other reviewer found. Measured on 2026-09-07, as `nc-systems/cold-read/cold-read-agy-cell.py` records: on one defect list, `gemini-3.8-flash-medium` found 42% and low 19%, which is why the cold-read-fast-read runs on medium.
 
 ## Things that went wrong once and will again
 
-- A shared scratchpad directory with a generic script name (`build_clusters.py`)
-  let one agent run another's script. Name scratch files with the target and
-  the agent-seat.
-- Two runners writing one `manifest.json` drop each other's entries; run one at
-  a time and regenerate the manifest from the records afterwards.
-- The Claude account limit resets on a clock; a rerun pass should sleep until
-  the reset, then skip records that exist.
-- `/login` in an agent-seat's terminal kills that agent-seat's in-flight subagents with an
-  auth error, and the background `claude -p` cells with them; the OAuth token
-  also expired overnight once and hung a cell for six hours. Anything long
-  should be relaunchable with skip-existing.
+- In a scratch directory several agents shared, one agent ran another's script because both used a generic name, `build_clusters.py`. Put the name of the document you are working on and your agent-seat's name in a scratch file's name.
+- Give a shared file one writer. Each run writes its own record file, and one program builds any summary from the records; for a log, use one writer process that the others send to, as Python's `logging` documents.
+- `/login` in an agent-seat's terminal kills that agent-seat's running subagents and its background `claude -p` runs with an authentication error. A Claude login once expired overnight and left a run hanging for six hours. Give a long batch of runs a deadline per run, and make it able to start again without redoing the runs whose reports are complete.
