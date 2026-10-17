@@ -13,13 +13,13 @@ Prints one line per case and exits non-zero if any case fails.
 
 import contextlib
 import importlib.util
+import inspect
 import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -57,6 +57,82 @@ def check(case_name, condition, detail=""):
     else:
         print(f"FAIL  {case_name}: {detail}")
         failures.append(case_name)
+
+
+class CountingParser:
+    """Stands in for the reader's tree-sitter Parser and counts its parses."""
+
+    def __init__(self, real):
+        self.real, self.parses = real, 0
+
+    def parse(self, *arguments, **options):
+        self.parses += 1
+        return self.real.parse(*arguments, **options)
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
+# A reader that parses once per line or per word reads in quadratic time; counting its parses
+# shows that where a clock cannot, since a clock also measures the machine's load.
+PARSE_COUNTING_CHILD_CODE = (
+    "import importlib.util, json, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+    "r = importlib.util.module_from_spec(s); s.loader.exec_module(r)\n"
+    + inspect.getsource(CountingParser)
+    + "counting = r._parser = CountingParser(r.parser())\n"
+    "results = []\n"
+    "for n in json.loads(sys.argv[2]):\n"
+    " counting.parses = 0; found = r.simple_commands(eval(sys.argv[3]))\n"
+    " results.append([counting.parses, len(found), list(found[int(sys.argv[4])])])\n"
+    "print(json.dumps(results))")
+
+
+def parses_counted_in_a_child(text_expression, sizes, argument="", index=-1):
+    """Read text_expression's text at each of sizes in a new process under the guard's 30 s.
+
+    text_expression is Python that builds the command from n, the size, and a, the argument.
+    Return a list of [parses, commands read, command at index] per size, or the error as a string.
+    """
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", PARSE_COUNTING_CHILD_CODE, str(MODULE_PATH), json.dumps(sizes),
+             f"(lambda a: {text_expression})({argument!r})", str(index)],
+            timeout=30, check=True, capture_output=True, text=True)
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
+        return repr(problem)
+    return json.loads(completed.stdout)
+
+
+def parses_grow_by_a_constant(counted):
+    """True when counted, from parses_counted_in_a_child at two sizes, holds parses that grow by at most two."""
+    return (isinstance(counted, list) and 1 <= counted[0][0]
+            and counted[1][0] <= counted[0][0] + 2)
+
+
+# For a quadratic that is not a parse, the time at four times the size is compared with the time at
+# the size itself; the smaller size takes a good part of a second, so load does not dominate it.
+READ_TIME_RATIO_CHILD_CODE = (
+    "import importlib.util, json, sys, time; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+    "r = importlib.util.module_from_spec(s); s.loader.exec_module(r)\n"
+    "exec(sys.argv[2])\n"
+    "timings, outputs = [], []\n"
+    "for n in json.loads(sys.argv[3]):\n"
+    " runs = []\n"
+    " for _ in range(3):\n"
+    "  started = time.monotonic(); output = read(n); runs.append(time.monotonic() - started)\n"
+    " timings.append(min(runs)); outputs.append(output)\n"
+    "print(json.dumps([timings, outputs]))")
+
+
+def read_times_in_a_child(read_definition, sizes):
+    """Time read(n) at each of sizes, best of three, in a new process; return [timings, outputs] or the error."""
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", READ_TIME_RATIO_CHILD_CODE, str(MODULE_PATH), read_definition,
+             json.dumps(sizes)], timeout=300, check=True, capture_output=True, text=True)
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
+        return repr(problem)
+    return json.loads(completed.stdout)
 
 
 ANSI_C_WORDS = [r"$'a\nb'", r"$'\t\x41\101\e\cA\c?'", r"$'it\'s \"x\" \?'", r"$'keep \q and \x and \u'",
@@ -238,36 +314,21 @@ check("a word that starts with an escaped space is not a word whose ~ bash expan
       list(found[0]) == ["ls", " ~/x"]
       and not isinstance(found[0][1], reader.ShellWordWithUnexpandedTildePrefixBashWouldExpand),
       [(word, type(word).__name__) for word in found[0]])
-# Run in its own process under a deadline: correcting each body line would take minutes.
-timing_code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
-               "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); "
-               "print(list(r.simple_commands('cat <<EOF\\n' + 'line \\\\ #x\\n' * 4000 "
-               "+ 'EOF\\ntmux kill-server')[-1]))")
-try:
-    started = time.monotonic()
-    last = subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=60, check=True,
-                          capture_output=True, text=True).stdout.strip()
-    timing = time.monotonic() - started
-except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
-    last, timing = None, repr(problem)
-check("a 4,000-line here-document whose lines each hold a # after an escaped space is read well inside "
-      "a guard's 30 s, and the command after it is read",
-      isinstance(timing, float) and timing < 10 and last == "['tmux', 'kill-server']", (timing, last))
-# Run in its own process under a deadline: copying the redirection's text once per target would take
-# about 15 s here; reading it in place takes about 2 s.
-timing_code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
-               "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); "
-               "found = r.simple_commands('echo >f' + ' a' * 512000 + '\\ntmux kill-server'); "
-               "print(len(found[0]), list(found[-1]))")
-try:
-    started = time.monotonic()
-    last = subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=60, check=True,
-                          capture_output=True, text=True).stdout.strip()
-    timing = time.monotonic() - started
-except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
-    last, timing = None, repr(problem)
-check("a redirection followed by 512,000 words is read in linear time, and the command after it is read",
-      isinstance(timing, float) and timing < 10 and last == "512001 ['tmux', 'kill-server']", (timing, last))
+# Correcting each body line with a parse of its own would take minutes for 4,000 lines.
+counted = parses_counted_in_a_child("'cat <<EOF\\n' + 'line \\\\ #x\\n' * n + 'EOF\\ntmux kill-server'",
+                                    [1000, 4000])
+check("a 4,000-line here-document whose lines each hold a # after an escaped space is read in at most "
+      "two parses more than 1,000 such lines, inside a guard's 30 s, and the command after it is read",
+      parses_grow_by_a_constant(counted) and counted[1][2] == ["tmux", "kill-server"], counted)
+# Copying the redirection's text once per target is quadratic, without any parse to count: at
+# 512,000 words it took about 15 s, and reading the text in place takes about 2 s.
+timed = read_times_in_a_child(
+    "def read(n):\n found = r.simple_commands('echo >f' + ' a' * n + '\\ntmux kill-server')\n"
+    " return [len(found[0]), list(found[-1])]", [128000, 512000])
+check("a redirection followed by 512,000 words is read in less than 8 times the time of 128,000 words, "
+      "inside a guard's 30 s, and the command after it is read",
+      isinstance(timed, list) and timed[0][1] < 30 and timed[0][1] < 8 * timed[0][0]
+      and timed[1][1] == [512001, ["tmux", "kill-server"]], timed)
 found = words_of("cat <<EOF\n$(echo a \\ #x; rm y\n)\nEOF\n")
 check("a # after an escaped space in a substitution in a here-document body is part of its word, "
       "so the commands after it in the substitution are read",
@@ -510,33 +571,17 @@ for command in ("case a in a) zzp x;\\\n& esac; zzq", "case a in a) zzp x;\\\n;&
     found = [list(words) for words in reader.simple_commands(command)]
     check(f"a last case terminator a line continuation splits is repaired, so the command after esac "
           f"is read: {command!r}", found == [["zzp", "x"], ["zzq"]], found)
-# Each runs in its own process under a deadline: one parse per continued line takes minutes for 4,000 lines.
+# One parse per continued line would take minutes for 4,000 lines.
 for shape, line in [("plain, half of them holding a here-string",
                      "zzp a{n} \\\n  b c\nzzq <<< a{n} \\\n  c\n"),
                     ("each holding << in single quotes", "zzp '<<' a{n} \\\n  b c\n"),
                     ("each holding << in a comment", "zzp a{n} \\\n  b c # <<\n"),
                     ("each holding << in $(( ))", "zzp $((1<<2)) a{n} \\\n  b c\n")]:
-    timing_code = ("import importlib.util, sys, time; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
-                   "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); timings = []\n"
-                   "for lines in (1000, 4000):\n"
-                   " source = ''.join(sys.argv[2].format(n=n) for n in range(lines // sys.argv[2].count('zz')))\n"
-                   " runs = []\n"
-                   " for _ in range(3):\n"
-                   "  started = time.monotonic(); found = r.simple_commands(source + 'tmux kill-server')\n"
-                   "  runs.append(time.monotonic() - started)\n"
-                   " timings.append(min(runs))\n"
-                   "print(timings[0], timings[1], len(found), list(found[-1]))")
-    try:
-        measured = subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH), line], timeout=120,
-                                  check=True, capture_output=True, text=True).stdout.split(maxsplit=3)
-        small, large, count, last = float(measured[0]), float(measured[1]), measured[2], measured[3].strip()
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
-        small, large, count, last = None, None, None, repr(problem)
-    check(f"4,000 continued lines, {shape}, are read well inside a guard's 30 s, in time that grows about "
-          f"linearly from 1,000 lines, and the command after them is read",
-          large is not None and large < 10 and large < 10 * max(small, 0.01)
-          and count == "4001" and last == "['tmux', 'kill-server']",
-          (small, large, count, last))
+    counted = parses_counted_in_a_child(
+        "''.join(a.format(n=i) for i in range(n // a.count('zz'))) + 'tmux kill-server'", [1000, 4000], line)
+    check(f"4,000 continued lines, {shape}, are read in at most two parses more than 1,000 such lines, inside a "
+          f"guard's 30 s, and the command after them is read",
+          parses_grow_by_a_constant(counted) and counted[1][1:] == [4001, ["tmux", "kill-server"]], counted)
 command = "case a in a) zzp;\\\n;& esac; case b in b) zzq;& esac; zzr"
 found = [list(words) for words in reader.simple_commands(command)]
 check(f"a case terminator a line continuation splits is replaced over its whole length in the text "
@@ -685,14 +730,13 @@ timing_code = ("import importlib.util, sys; s = importlib.util.spec_from_file_lo
                "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); "
                "r.simple_commands('case x in x) :;& ' + '#' * 60 + ' y\\nesac; case z in z) :;& ' + '#' * 60)")
 try:
-    started = time.monotonic()
-    subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=20, check=True,
+    subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=30, check=True,
                    capture_output=True)
-    timing = time.monotonic() - started
-except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
-    timing = repr(problem)
-check("a run of # after a terminator is matched in linear time",
-      isinstance(timing, float) and timing < 10, timing)
+    problem = None
+except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
+    problem = repr(error)
+check("a run of # after a terminator is matched without backtracking that hangs, inside a guard's 30 s",
+      problem is None, problem)
 found = reader.simple_commands("ssh h $'true\\ntmux kill-server'")
 check("an ANSI-C quoted remote command keeps its newline, so the command after it is seen",
       found[0][2] == "true\ntmux kill-server", list(found[0]))
@@ -702,36 +746,23 @@ check("a repaired ;& leaves a quoted ;; elsewhere in the command as written", fo
 found = words_of("cat <<A\n$(echo 'a;&' 'a;;'; case x in x) :;& esac)\nA")
 check("a repaired ;& in a body leaves a quoted ;; elsewhere in the body as written",
       found[0] == ["echo", "a;&", "a;;"], found)
-timing_code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
-               "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); "
-               "print(list(r.simple_commands('cat <<A\\n' + '$(case x in x) :;& esac)\\n' * 2000 "
-               "+ '$(tmux kill-server)\\nA')[-2]))")
-try:
-    started = time.monotonic()
-    last = subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=60, check=True,
-                          capture_output=True, text=True).stdout.strip()
-    timing = time.monotonic() - started
-except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
-    last, timing = None, repr(problem)
-check("a body holding 2,000 cases ended by ;& is repaired in one pass, and the command after them is read",
-      isinstance(timing, float) and timing < 30 and last == "['tmux', 'kill-server']", (timing, last))
-# The offsets of the terminators one round writes are moved once, not once per terminator; with the
-# parse's own checks made free, 30,000 of them take seconds, and a quadratic shift takes minutes.
-timing_code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
-               "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); "
-               "r._inside_text = lambda *arguments, **options: False; "
-               "found = r._source_with_case_terminators_repaired("
-               "b'$(case x in x) :;& esac)\\n' * 30000, r.TEXT_NODE_TYPES, all_at_once=True); "
-               "print(len(found[3]))")
-try:
-    started = time.monotonic()
-    restored_count = subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=60,
-                                    check=True, capture_output=True, text=True).stdout.strip()
-    timing = time.monotonic() - started
-except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
-    restored_count, timing = None, repr(problem)
-check("30,000 terminators written in one round have their offsets moved in linear time",
-      isinstance(timing, float) and timing < 10 and restored_count == "30000", (timing, restored_count))
+counted = parses_counted_in_a_child(
+    "'cat <<A\\n' + '$(case x in x) :;& esac)\\n' * n + '$(tmux kill-server)\\nA'", [500, 2000], index=-2)
+check("a body holding 2,000 cases ended by ;& is repaired in at most two parses more than 500 such "
+      "cases, inside a guard's 30 s, and the command after them is read",
+      parses_grow_by_a_constant(counted) and counted[1][2] == ["tmux", "kill-server"], counted)
+# The offsets of the terminators one round writes are moved once, not once per terminator. That
+# leaves no parse to count, so the time for 30,000 is compared with the time for 7,500, with the
+# parse's own checks made free: moving them once per terminator took about 15 times as long, and
+# moving them once takes about 8 times as long.
+timed = read_times_in_a_child(
+    "r._inside_text = lambda *arguments, **options: False\n"
+    "def read(n):\n return len(r._source_with_case_terminators_repaired("
+    "b'$(case x in x) :;& esac)\\n' * n, r.TEXT_NODE_TYPES, all_at_once=True)[3])", [7500, 30000])
+check("30,000 terminators written in one round have their offsets moved in less than 12 times the time "
+      "of 7,500, inside a guard's 30 s",
+      isinstance(timed, list) and timed[0][1] < 30 and timed[0][1] < 12 * timed[0][0]
+      and timed[1] == [7500, 30000], timed)
 # Each ;;& written as ;; shortens the text, so a later terminator's offset in the command as written is further on.
 found = words_of("case a in a) :;;& esac; " * 20 + "echo 'x;;' $(case b in b) :;& esac)")
 check("a terminator repaired after twenty that shortened the text is put back where it was written",
@@ -1151,10 +1182,16 @@ tabbed = "cat <<A\n$(cat <<-'B'\n" + "\tx\n" * 30 + "\tB\n)\n$(echo '$(tmux kill
 check("a <<- heredoc inside a body's substitution is read once, and quoted text after it is no command",
       [list(f) for f in reader.simple_commands(tabbed)]
       == [["cat"], ["echo", "$(tmux kill-server)"], ["cat"]], [list(f) for f in reader.simple_commands(tabbed)])
-started = time.monotonic()
-found = reader.simple_commands("cat <<A\n" + "$(printf 1)\n" * 3500 + "A")
-check("a body of 3,500 substitutions is read in one parse, well inside a guard's 30 s",
-      len(found) == 3501 and time.monotonic() - started < 3, (len(found), time.monotonic() - started))
+counting = reader._parser = CountingParser(reader.parser())
+try:
+    found = reader.simple_commands("cat <<A\n" + "$(printf 1)\n" * 875 + "A")
+    parses_for_875 = counting.parses
+    counting.parses = 0
+    found = reader.simple_commands("cat <<A\n" + "$(printf 1)\n" * 3500 + "A")
+finally:
+    reader._parser = counting.real
+check("a body of 3,500 substitutions is read in no more parses than a body of 875",
+      len(found) == 3501 and 1 <= counting.parses <= parses_for_875, (len(found), parses_for_875, counting.parses))
 found = reader.simple_commands("cat <<A\n$(cd /x)\nA\ncat <<B\n$(git push -f o t)\nB")
 check("substitutions in two different bodies are different child shells, so a cd in one stays there",
       found[0].child_shell != found[2].child_shell
