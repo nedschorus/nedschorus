@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -49,13 +50,14 @@ def blob(text):
     return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
-def add_version(store, path, text, approved):
+def add_version(store, path, text, approved, copy=True):
     """Put one copy of path into the scratch store, as the hook does, with its seen line and,
-    when approved, its approved line."""
+    when approved, its approved line. With copy=False, only the seen line of a deletion."""
     directory = store / path.lstrip("/")
     directory.mkdir(parents=True, exist_ok=True)
-    key = blob(text)
-    (directory / key).write_text(text)
+    key = blob(text) if copy else hook.DELETED
+    if copy:
+        (directory / key).write_text(text)
     with open(directory / hook.LOG_FILE_NAME, "ab") as log:
         log.write(hook.checked_line("\t".join(["seen", "1", "session", "owner", key, key, ""])))
     if approved:
@@ -64,9 +66,10 @@ def add_version(store, path, text, approved):
     return directory / key
 
 
-def run(store, *arguments):
+def run(store, *arguments, **variables):
     environment = dict(os.environ, GUARDED_FILE_VERSIONS_MACHINE="ned-box",
                        GUARDED_FILE_VERSIONS_STORE_DIRECTORY=str(store))
+    environment.update(variables)
     return subprocess.run([sys.executable, str(PROGRAM), *arguments], capture_output=True,
                           text=True, env=environment, timeout=120)
 
@@ -107,6 +110,10 @@ def test_removed_checkouts_pruned_and_others_kept():
         check("--dry-run deletes nothing", removed.exists() and nested.exists(), dry.stdout)
         check("--dry-run names the removed checkout", f"would prune {agents}/removed:" in dry.stdout,
               dry.stdout)
+        check("--dry-run names no checkout that exists or keeps its copies",
+              all(f"would prune {name}" not in dry.stdout for name in
+                  (f"{agents}/live", f"{agents}/declined", f"{repository}:", f"{repository}/docs")),
+              dry.stdout)
         result = run(store)
         check("a run exits 0", result.returncode == 0, result.stderr)
         check("a removed checkout's approved copy is deleted", not removed.exists())
@@ -118,9 +125,90 @@ def test_removed_checkouts_pruned_and_others_kept():
         check("a directory deleted on a branch keeps its copies", branch_deleted_directory.exists())
         check("a file deleted in an existing directory keeps its copies",
               branch_deleted_file.exists())
-        check("the summary counts two checkouts and two kept copies",
-              "copies of 2 removed checkouts" in result.stdout and "kept 2 copies" in result.stdout,
+        check("the run names each path whose copies it deleted",
+              f"deleted 1 copies of {agents}/removed/CLAUDE.md" in result.stdout
+              and f"deleted 1 copies of {repository}/worktrees/gone/CLAUDE.md" in result.stdout,
               result.stdout)
+        check("the summary counts two checkouts, one copy not approved and one approved copy kept",
+              "copies of 2 removed checkouts" in result.stdout
+              and "kept 1 copies of versions not approved and 1 approved copies" in result.stdout,
+              result.stdout)
+
+
+def test_copies_of_paths_with_a_version_not_approved_kept():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory).resolve()
+        store, agents, _ = scratch(root)
+        before_declined_deletion = add_version(store, f"{agents}/removed/CLAUDE.md", "one\n",
+                                               approved=True)
+        add_version(store, f"{agents}/removed/CLAUDE.md", "", approved=False, copy=False)
+        accounted = add_version(store, f"{agents}/removed/AGENTS.md", "two\n", approved=True)
+        stray = accounted.parent / blob("never logged\n")
+        stray.write_text("never logged\n")
+        result = run(store)
+        check("a run with nothing to delete exits 0", result.returncode == 0, result.stderr)
+        check("the approved copy before a deletion never approved is kept",
+              before_declined_deletion.exists())
+        check("a copy neither approved nor logged is kept", stray.exists())
+        check("and so is the approved copy beside it", accounted.exists())
+        check("the summary counts the stray copy as not approved and the other two as approved",
+              "kept 1 copies of versions not approved and 2 approved copies" in result.stdout,
+              result.stdout)
+
+
+def test_outside_checkout_files_kept():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory).resolve()
+        store, _, _ = scratch(root)
+        home = root / "home"
+        home.mkdir()
+        instructions = add_version(store, f"{home}/.claude/CLAUDE.md", "one\n", approved=True)
+        settings = add_version(store, f"{home}/.claude/settings.json", "{}\n", approved=True)
+        result = run(store, HOME=str(home))
+        check("a run with ~/.claude missing exits 0", result.returncode == 0, result.stderr)
+        check("and keeps the copies of ~/.claude's files", instructions.exists() and settings.exists())
+
+
+def test_checkout_that_cannot_be_searched_kept():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory).resolve()
+        store, agents, _ = scratch(root)
+        (agents / "locked" / "repo").mkdir(parents=True)
+        (agents / "locked" / "repo" / "CLAUDE.md").write_text("one\n")
+        locked = add_version(store, f"{agents}/locked/repo/CLAUDE.md", "one\n", approved=True)
+        removed = add_version(store, f"{agents}/removed/CLAUDE.md", "two\n", approved=True)
+        (agents / "locked").chmod(0)
+        try:
+            dry = run(store, "--dry-run")
+            result = run(store)
+        finally:
+            (agents / "locked").chmod(0o700)
+        check("--dry-run does not name a checkout it cannot search",
+              f"{agents}/locked" not in dry.stdout, dry.stdout)
+        check("a checkout it cannot search exits 1", result.returncode == 1, result.stdout)
+        check("and keeps its copy", locked.exists())
+        check("and says why", f"{agents}/locked/repo/CLAUDE.md's copies were kept" in result.stderr
+              and "Permission denied" in result.stderr, result.stderr)
+        check("the other checkout is still pruned", not removed.exists())
+
+
+def test_recreated_checkout_kept():
+    specification = importlib.util.spec_from_file_location("prune", PROGRAM)
+    prune = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(prune)
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory).resolve()
+        store, _, repository = scratch(root)
+        copy = add_version(store, f"{repository}/worktrees/gone/CLAUDE.md", "one\n",
+                           approved=True)
+
+        def recreated_while_checked(checkout_root, relative):
+            (checkout_root / relative).mkdir(parents=True)
+            return True
+
+        result = prune.prune(store, False, check_ignore=recreated_while_checked)
+        check("a checkout re-created after it was found missing keeps its copies",
+              copy.exists() and not result["checkouts"], result)
 
 
 def test_unreadable_store_fails():
@@ -131,23 +219,35 @@ def test_unreadable_store_fails():
         check("and says the store could not be opened", "could not be opened" in result.stderr,
               result.stderr)
         store, agents, _ = scratch(root)
-        copy = add_version(store, f"{agents}/removed/CLAUDE.md", "one\n", approved=True)
-        unreadable = store / str(agents).lstrip("/")
+        copy = add_version(store, f"{agents}/removed-a/CLAUDE.md", "one\n", approved=True)
+        unreadable = copy.parent
         unreadable.chmod(0)
+        other = add_version(store, f"{agents}/removed-b/CLAUDE.md", "two\n", approved=True)
         try:
             result = run(store)
         finally:
             unreadable.chmod(0o700)
         check("a store directory that cannot be read exits 1", result.returncode == 1,
               result.stdout)
-        check("and names the directory", str(unreadable) in result.stderr, result.stderr)
+        check("and names the directory", f"{unreadable} could not be read" in result.stderr,
+              result.stderr)
+        check("and keeps its copy", copy.exists())
+        check("the other checkout is still pruned, and named", not other.exists()
+              and f"deleted 1 copies of {agents}/removed-b/CLAUDE.md" in result.stdout,
+              result.stdout)
+        other = add_version(store, f"{agents}/removed-b/CLAUDE.md", "two\n", approved=True)
         (copy.parent / hook.LOG_FILE_NAME).chmod(0)
         try:
             result = run(store)
         finally:
             (copy.parent / hook.LOG_FILE_NAME).chmod(0o600)
         check("a log that cannot be read exits 1", result.returncode == 1, result.stdout)
+        check("and names the log", f"{copy.parent / hook.LOG_FILE_NAME} could not be read"
+              in result.stderr, result.stderr)
         check("and keeps the copy", copy.exists())
+        check("the other checkout is still pruned, and named", not other.exists()
+              and f"deleted 1 copies of {agents}/removed-b/CLAUDE.md" in result.stdout,
+              result.stdout)
 
 
 def test_failing_delete_fails():
@@ -172,21 +272,61 @@ def test_git_failure_fails():
         root = Path(directory).resolve()
         store = root / "store"
         store.mkdir()
-        broken = root / "broken"
+        # Named to sort before agents/, so the walk reaches git's failure before the other copy.
+        broken = root / "a-broken"
         broken.mkdir()
         (broken / ".git").write_text(f"gitdir: {root}/no-such-git-directory\n")
         copy = add_version(store, f"{broken}/worktree/CLAUDE.md", "one\n", approved=True)
+        other = add_version(store, f"{root}/agents/removed/CLAUDE.md", "two\n", approved=True)
         result = run(store)
         check("git that cannot answer exits 1", result.returncode == 1, result.stdout)
         check("and says git failed", "check-ignore" in result.stderr, result.stderr)
-        check("and deletes nothing", copy.exists())
+        check("and keeps that checkout's copy", copy.exists())
+        check("and goes on to the end", "1 failures" in result.stdout, result.stdout)
+        check("the other checkout is still pruned, and named", not other.exists()
+              and f"deleted 1 copies of {root}/agents/removed/CLAUDE.md" in result.stdout,
+              result.stdout)
+
+
+def test_mac_deadline_names_what_was_deleted():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory).resolve()
+        store, agents, _ = scratch(root)
+        mount_point = root / "mount"
+        table = root / "mount-table"
+        table.write_text(f"//nedlern@ned-box/nedlern on {mount_point} (smbfs)\n")
+        deleted = add_version(store, f"{agents}/removed/CLAUDE.md", "one\n", approved=True)
+        # The walk lists a directory before the ones inside it; reading the FIFO below waits.
+        hanging = store / str(agents).lstrip("/") / "removed" / "CLAUDE.md" / "inner"
+        hanging.mkdir()
+        (hanging / blob("two\n")).write_text("two\n")
+        os.mkfifo(hanging / hook.LOG_FILE_NAME)
+        started = time.monotonic()
+        result = run(store, GUARDED_FILE_VERSIONS_MACHINE="mac",
+                     GUARDED_FILE_VERSIONS_MOUNT_TABLE=str(table),
+                     GUARDED_FILE_VERSIONS_MOUNT_POINT=str(mount_point),
+                     GUARDED_FILE_VERSIONS_DEADLINE_SECONDS="2")
+        check("a run stopped at the Mac's deadline exits 1", result.returncode == 1,
+              result.stdout + result.stderr)
+        check("and stops at the deadline", time.monotonic() - started < 60)
+        check("and has deleted the copy it reached", not deleted.exists())
+        check("and names that deletion", f"deleted 1 copies of {agents}/removed/CLAUDE.md, 4 bytes"
+              in result.stdout, result.stdout)
+        check("and says the run stopped, not that nothing was pruned",
+              "stopped: the store did not answer within 2.0 seconds" in result.stderr
+              and "not pruned" not in result.stderr, result.stderr)
 
 
 if __name__ == "__main__":
     test_removed_checkouts_pruned_and_others_kept()
+    test_copies_of_paths_with_a_version_not_approved_kept()
+    test_outside_checkout_files_kept()
+    test_checkout_that_cannot_be_searched_kept()
+    test_recreated_checkout_kept()
     test_unreadable_store_fails()
     test_failing_delete_fails()
     test_git_failure_fails()
+    test_mac_deadline_names_what_was_deleted()
     if failures:
         print(f"{len(failures)} case(s) failed")
         sys.exit(1)
