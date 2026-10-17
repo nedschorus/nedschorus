@@ -12,7 +12,10 @@ The parsers take the stdout of a -z command, as bytes or str, and return
 values; they run nothing, so a program keeps its own way of running git (its
 timeout, its environment, how it reports a failure). run_git_unless_outside_a_repository
 runs git itself, because telling "not a repository" from other failures needs
-git's message read in one fixed locale.
+git's message read in one fixed locale; a program that runs git its own way
+reads that message with git_stderr_says_outside_a_repository and
+git_stderr_says_worktree_git_directory_unusable, the one place that knows
+git's words.
 
 Load it by path, under the snake_case form of its file name:
 
@@ -296,20 +299,40 @@ def run_git(directory, arguments, *, accepted_exit_codes=(0,),
     return result.stdout
 
 
+# git exits 128 both for "not a repository" and for other fatal errors, and
+# its message, read with LC_ALL=C, is the one way to tell them apart. A
+# worktree whose .git file names a git directory that is missing or is not a
+# git directory: git 2.53 writes the first words, git 2.56 the second. The
+# first begins like the no-repository words, so it is checked first.
+OUTSIDE_A_REPOSITORY_MESSAGE = "not a git repository"
+WORKTREE_GIT_DIRECTORY_UNUSABLE_MESSAGES = (
+    "not a git repository: ", "gitfile does not point to a valid repository")
+
+
+def git_stderr_says_worktree_git_directory_unusable(stderr):
+    """True when git's LC_ALL=C stderr says the directory is in a worktree
+    whose .git file names a git directory git cannot use."""
+    return any(message in stderr for message in WORKTREE_GIT_DIRECTORY_UNUSABLE_MESSAGES)
+
+
+def git_stderr_says_outside_a_repository(stderr):
+    """True when git's LC_ALL=C stderr says the directory is in no repository."""
+    return (OUTSIDE_A_REPOSITORY_MESSAGE in stderr
+            and not git_stderr_says_worktree_git_directory_unusable(stderr))
+
+
 def run_git_unless_outside_a_repository(directory, arguments, **run_options):
     """Run `git -C <directory> <arguments>` and return its stdout as bytes, or
     None when directory is in no git repository.
 
-    Raises GitCommandFailed for any other failure.
+    Raises GitCommandFailed for any other failure, including a worktree whose
+    git directory git cannot use.
     """
-    # git exits 128 both for "not a repository" and for other fatal errors, and
-    # the message is the one way to tell them apart. LC_ALL=C keeps the message
-    # untranslated, and this is the one place in the project that reads it.
     environment = dict(run_options.pop("environment", None) or os.environ)
     environment["LC_ALL"] = "C"
     try:
         return run_git(directory, arguments, environment=environment, **run_options)
     except GitCommandFailed as failure:
-        if failure.returncode is not None and "not a git repository" in failure.stderr:
+        if failure.returncode is not None and git_stderr_says_outside_a_repository(failure.stderr):
             return None
         raise

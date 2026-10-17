@@ -283,6 +283,48 @@ def failure_cases(parent):
               failure.returncode is None and "did not finish" in failure.stderr, failure)
 
 
+# git's words, exit 128, as each git version on the two machines prints them;
+# a stand-in git prints them, so both wordings are tested on either machine.
+GIT_WORDINGS = (
+    ("no repository", "fatal: not a git repository (or any of the parent directories): .git",
+     "outside"),
+    ("broken worktree, git 2.53",
+     "fatal: not a git repository: /home/nedlern/repo/.git/worktrees/a-worktree", "unusable"),
+    ("broken worktree, git 2.56",
+     "fatal: gitfile does not point to a valid repository: /Volumes/nedhome/a-worktree/.git",
+     "unusable"),
+    ("another fatal error", "fatal: detected dubious ownership in repository at '/x'", "other"),
+)
+
+
+def stand_in_git_cases(parent):
+    stand_in_directory = Path(parent) / "stand-in-git-bin"
+    stand_in_directory.mkdir()
+    stand_in_git = stand_in_directory / "git"
+    stderr_file = stand_in_directory / "stderr"
+    stand_in_git.write_text(f"#!/bin/sh\ncat '{stderr_file}' >&2\nexit 128\n", encoding="utf-8")
+    stand_in_git.chmod(0o755)
+    environment = dict(os.environ, PATH=f"{stand_in_directory}{os.pathsep}{os.environ['PATH']}")
+    for label, stderr, kind in GIT_WORDINGS:
+        check(f"{label}: read as outside a repository only when it is",
+              git_output.git_stderr_says_outside_a_repository(stderr) == (kind == "outside"))
+        check(f"{label}: read as a worktree git directory git cannot use only when it is",
+              git_output.git_stderr_says_worktree_git_directory_unusable(stderr) == (kind == "unusable"))
+        stderr_file.write_text(stderr + "\n", encoding="utf-8")
+        try:
+            result = git_output.run_git_unless_outside_a_repository(
+                parent, ["rev-parse", "--git-dir"], environment=environment)
+            raised = None
+        except git_output.GitCommandFailed as failure:
+            result, raised = None, failure
+        if kind == "outside":
+            check(f"{label}: run_git_unless_outside_a_repository answers None",
+                  raised is None and result is None, raised)
+        else:
+            check(f"{label}: run_git_unless_outside_a_repository raises",
+                  raised is not None and raised.returncode == 128, result)
+
+
 def python_3_9_cases():
     # The Mac's system Python is 3.9: an annotation written X | None is
     # evaluated when a NamedTuple class is made, unless annotations are deferred.
@@ -313,6 +355,7 @@ def main():
         worktree_cases(repository, parent)
         merge_tree_cases(parent)
         failure_cases(parent)
+        stand_in_git_cases(parent)
     python_3_9_cases()
     if failures:
         print(f"{len(failures)} case(s) failed")

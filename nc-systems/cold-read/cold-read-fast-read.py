@@ -222,16 +222,14 @@ FULL_RUN_NAME_SUFFIXES = (
 FAST_READ_ONLY_NAMES = ("CLAUDE.md", "CLAUDE.local.md")
 
 
-# git's own words when it finds no worktree; LC_ALL=C keeps them in English.
-GIT_FOUND_NO_WORKTREE_MESSAGES = ("not a git repository", "cannot change to")
-# git's words when a worktree's .git file names a directory that is missing,
-# such as a ned-box worktree read from the Mac through /Volumes/nedhome, or
-# that exists but is not a git directory: git 2.53 writes the first, and git
-# 2.56 the second. The first begins like the no-worktree words above, so
-# these are checked first: the target is in a worktree whose git directory
-# git cannot use.
-GIT_WORKTREE_GIT_DIRECTORY_MISSING_MESSAGES = (
-    "not a git repository: ", "gitfile does not point to a valid repository")
+_git_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_output = importlib.util.module_from_spec(_git_output_spec)
+_git_output_spec.loader.exec_module(git_output)
+# git's words when the -C directory does not exist; LC_ALL=C keeps them in English.
+GIT_DIRECTORY_MISSING_MESSAGE = "cannot change to"
 
 
 class CheckoutRootUnreadable(RuntimeError):
@@ -258,13 +256,15 @@ def checkout_root_holding(target: pathlib.Path) -> pathlib.Path:
     top = completed.stdout.strip()
     if completed.returncode == 0 and top:
         return pathlib.Path(top).resolve()
-    if any(message in completed.stderr for message in GIT_WORKTREE_GIT_DIRECTORY_MISSING_MESSAGES):
+    # Such as a ned-box worktree read from the Mac through /Volumes/nedhome.
+    if git_output.git_stderr_says_worktree_git_directory_unusable(completed.stderr):
         raise CheckoutRootUnreadable(
             f"{target} is inside a git worktree whose .git file names a git "
             f"directory that is missing or is not a git directory: "
             f"{completed.stderr.strip()}. Run the fast read on the machine that "
             f"made the worktree, or repair the worktree there with git worktree repair")
-    if any(message in completed.stderr for message in GIT_FOUND_NO_WORKTREE_MESSAGES):
+    if (git_output.git_stderr_says_outside_a_repository(completed.stderr)
+            or GIT_DIRECTORY_MISSING_MESSAGE in completed.stderr):
         return REPO_ROOT
     raise CheckoutRootUnreadable(
         f"git rev-parse --show-toplevel in {target.parent} failed "

@@ -1285,6 +1285,32 @@ with tempfile.TemporaryDirectory() as missing_git_directory_scratch:
           "names a git directory that is missing or is not a git directory" in not_a_git_directory_raised,
           repr(not_a_git_directory_raised))
 
+    # Each machine's git words a broken worktree its own way, git 2.53 on
+    # ned-box and git 2.56 on the Mac; a stand-in git prints both, so either
+    # wording lost is caught on either machine.
+    stand_in_git_directory = missing_git_directory_scratch / "stand-in-git-bin"
+    stand_in_git_directory.mkdir()
+    stand_in_git_stderr = stand_in_git_directory / "stderr"
+    (stand_in_git_directory / "git").write_text(
+        f"#!/bin/sh\ncat '{stand_in_git_stderr}' >&2\nexit 128\n", encoding="utf-8")
+    (stand_in_git_directory / "git").chmod(0o755)
+    path_before_stand_in = os.environ["PATH"]
+    os.environ["PATH"] = f"{stand_in_git_directory}{os.pathsep}{path_before_stand_in}"
+    try:
+        for git_version, wording in (
+                ("2.53", "fatal: not a git repository: /home/nedlern/repo/.git/worktrees/a-worktree"),
+                ("2.56", "fatal: gitfile does not point to a valid repository: /Volumes/nedhome/a-worktree/.git")):
+            stand_in_git_stderr.write_text(wording + "\n", encoding="utf-8")
+            try:
+                warning_module.checkout_root_holding(draft_in_worktree_with_missing_git_directory)
+                wording_raised = ""
+            except warning_module.CheckoutRootUnreadable as error:
+                wording_raised = str(error)
+            check(f"git {git_version}'s words for a broken worktree are raised with the repair step",
+                  "git worktree repair" in wording_raised, repr(wording_raised))
+    finally:
+        os.environ["PATH"] = path_before_stand_in
+
     # A bare repository has no worktree; git says so in words that are not the
     # no-worktree words, so the read fails rather than guessing a checkout.
     bare_repository = missing_git_directory_scratch / "a-bare-repository.git"
