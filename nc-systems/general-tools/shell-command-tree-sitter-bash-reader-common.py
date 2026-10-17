@@ -1524,15 +1524,24 @@ def _nodes_of_type(node, *kinds):
 
 
 _read_in_a_new_process = False
+_new_process_runner = subprocess.run
 
 
-def _use_a_new_process():
-    global _read_in_a_new_process
+def _use_a_new_process(runner=subprocess.run):
+    """Read every later command in a new process, started and answered through runner.
+
+    runner is called as subprocess.run is; the Bash guards replay passes one that answers from a
+    process it keeps running, started with
+    NEW_PROCESS_READ_ONE_REQUEST_PER_LINE_UNTIL_INPUT_CLOSES_FLAG.
+    """
+    global _read_in_a_new_process, _new_process_runner
     _read_in_a_new_process = True
+    _new_process_runner = runner
 
 
-def _simple_commands_in_a_new_process(command_text, glob_markers, runner=subprocess.run):
+def _simple_commands_in_a_new_process(command_text, glob_markers, runner=None):
     """Return simple_commands(command_text) as read by a new Python process running this file."""
+    runner = _new_process_runner if runner is None else runner
     request = json.dumps({"command": command_text, "glob_markers": glob_markers},
                          ensure_ascii=False)
     try:
@@ -1557,25 +1566,39 @@ def _simple_commands_in_a_new_process(command_text, glob_markers, runner=subproc
 
 
 NEW_PROCESS_READ_FLAG = "--read-command-on-standard-input"
+# One JSON request per line on standard input, one JSON reply per line on standard output, until
+# standard input closes. json.dumps escapes a newline inside a command, so each request is one line.
+NEW_PROCESS_READ_ONE_REQUEST_PER_LINE_UNTIL_INPUT_CLOSES_FLAG = \
+    "--read-one-request-per-line-until-input-closes"
+
+
+def _shell_command_read_request_to_reply(request):
+    """Return the reply, as JSON text, to one request {"command": ..., "glob_markers": ...}."""
+    try:
+        found = _reader_output_to_json(simple_commands(request["command"], request["glob_markers"]))
+    except ShellCommandUnreadable as error:
+        return json.dumps({"unreadable": error.install_output})
+    except ShellParserUnavailable as error:
+        # A parser this process cannot load reaches the guard as a missing parser, with its install advice.
+        return json.dumps({"parser_unavailable": error.install_output})
+    except Exception as error:
+        # Any other failure, such as one sending what was read, is the reader failing on the command.
+        return json.dumps({"unreadable": f"{type(error).__name__}: {error}"})
+    return json.dumps({"commands": found}, ensure_ascii=False)
 
 
 def _read_command_on_standard_input():
     request = json.loads(sys.stdin.buffer.read().decode("utf-8", SHELL_TEXT_ERRORS))
-    try:
-        found = _reader_output_to_json(simple_commands(request["command"], request["glob_markers"]))
-    except ShellCommandUnreadable as error:
-        sys.stdout.buffer.write(json.dumps({"unreadable": error.install_output}).encode())
-        return
-    except ShellParserUnavailable as error:
-        # A parser this process cannot load reaches the guard as a missing parser, with its install advice.
-        sys.stdout.buffer.write(json.dumps({"parser_unavailable": error.install_output}).encode())
-        return
-    except Exception as error:
-        # Any other failure, such as one sending what was read, is the reader failing on the command.
-        sys.stdout.buffer.write(json.dumps({"unreadable": f"{type(error).__name__}: {error}"}).encode())
-        return
-    sys.stdout.buffer.write(json.dumps({"commands": found},
-                                       ensure_ascii=False).encode("utf-8", SHELL_TEXT_ERRORS))
+    reply = _shell_command_read_request_to_reply(request)
+    sys.stdout.buffer.write(reply.encode("utf-8", SHELL_TEXT_ERRORS))
+
+
+def _read_one_request_per_line_until_input_closes():
+    for line in sys.stdin.buffer:
+        request = json.loads(line.decode("utf-8", SHELL_TEXT_ERRORS))
+        reply = _shell_command_read_request_to_reply(request)
+        sys.stdout.buffer.write(reply.encode("utf-8", SHELL_TEXT_ERRORS) + b"\n")
+        sys.stdout.buffer.flush()
 
 
 def _reader_output_to_json(value):
@@ -2038,3 +2061,6 @@ def _inside_text(root, byte, text_node_types):
 
 if __name__ == "__main__" and sys.argv[1:] == [NEW_PROCESS_READ_FLAG]:
     _read_command_on_standard_input()
+if __name__ == "__main__" and sys.argv[1:] == [
+        NEW_PROCESS_READ_ONE_REQUEST_PER_LINE_UNTIL_INPUT_CLOSES_FLAG]:
+    _read_one_request_per_line_until_input_closes()
