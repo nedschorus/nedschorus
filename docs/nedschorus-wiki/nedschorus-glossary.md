@@ -54,6 +54,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **ID-type** — the kind of thing an identifier names, and the word written before its name in a citation: `GHI` for a GitHub issue, `PR` for a pull request, agent-seat for an agent-seat, and the ordinary word for a commit, task or session.
 - **initial-agent-instructions** — the agent-instructions in the prompt that starts an agent or a subagent.
 - **instruction-file guard** — the hook `.claude/hooks/instruction-file-guard.py`, which refuses an edit to an agent-instructions file or a Claude Code settings file until the user's approval is written for it.
+- **launch-time-sync** — the fast-forward of an agent-seat's agent-home to `origin/main` that the handoff-supervisor attempts before it starts an agent-session; when a fast-forward is not possible or not safe, the agent-home is left as it is.
 - **leftover-shell** — the shell an agent-seat's tmux window drops to after its agent-session stops; `scripts/recover-crashed-seats.py` asks before closing it.
 - **link-only-GHI** — a GHI whose body is only links to its GHI-MD and supporting documents; the GHI-MD holds the text.
 - **log-store** — the directory on ned-box, `/home/nedlern/nedschorus-logs/`, holding the byproducts of the work that are not the system, cold-read records first.
@@ -69,6 +70,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **proposed-improvements-or-changes-file** — a file beside a GHI-MD or an architecture overview, named `<document name>-proposed-improvements-or-changes-<source>-<date>.md`, in which one reviewer records changes it proposes to that document or to what the document describes; GHI [Proposed improvements or changes to a GHI are handled by agents first, and reach the user only when they need him](https://github.com/nedschorus/nedschorus/issues/1132) says how its entries are settled.
 - **provisional-addition** — a line an agent adds to an issue's Markdown file under "Provisional additions (not yet vetted by the user)", which becomes a ruling only when the user reviews the issue.
 - **queue-drain** — the procedure that empties the queue directories and `docs/drafts/`, promoting, archiving or deleting each item; its issue is GHI [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, docs/drafts and the draft-label issue queue](https://github.com/nedschorus/nedschorus/issues/24).
+- **reference-checkout** — the main worktree of a machine's clone of the repository, `~/Projects/nedschorus` on the Mac and on ned-box, which stays on `main`; the git hooks of every checkout of that clone run from its `scripts/git-client-side-hooks/`, and no agent works in it.
 - **reincarnate-seat** — the handoff-supervisor replacing an agent-session with a fresh one that continues from the session-handoff, usually when the agent-session's context runs low.
 - **retire-seat** — to end an agent-seat for good so its name can be freed or reused; distinct from pausing it. The steps are in `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`.
 - **SDLC-term** — a standard term of software engineering or of another computing field, such as operating systems, networking or databases, used with its standard meaning, as `flock` is; `docs/nedschorus-wiki/nedschorus-sdlc-terms.md` lists those this project relies on.
@@ -80,6 +82,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **system-term** — a term used by one system or subsystem alone, defined in that system's own glossary rather than here; a term used by more than one is a project-term, defined here and in no system glossary. The system glossaries are listed at the top of this page.
 - **test-design** — the document, written from a design and its design-contract, listing one test-requirement per design-requirement a test must observe, each with the coverage-type of the test that will cover it.
 - **test-requirement** — one line of a test-design: one design-requirement, the coverage-type and names of the tests that check it, or `no-tests` with the reason.
+- **topic-worktree** — a linked worktree made together with its own topic branch, the branch being cut from `origin/main`, in which an agent does the work of that one topic branch.
 - **user-block** — a refusal that only the user's approval, quoted into the marker the refusal names, clears.
 - **user-ruling** — a decision by the user, recorded where it applies in the form (user-ruled YYYY-MM-DD).
 - **walk-runner** — the program that will run an approval-walk's bookkeeping: it hands the agent the current item, counts its words, and records each ruling in the walk-minutes.
