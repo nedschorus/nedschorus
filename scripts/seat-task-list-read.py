@@ -127,11 +127,29 @@ class ReadInFullWarning(str):
     """A problem reported about a store that was nevertheless read in full."""
 
 
+class MacSentWithWarning(str):
+    """What the Mac said on stderr while exiting 0, before its archive is unpacked."""
+
+
 def mac_sent_with_warning_notice(what_the_mac_said):
     return ReadInFullWarning(
         f"mac's task lists arrived in full and were read, but its forced "
         f"command also said: {what_the_mac_said}\n"
         f"Tell the user what it said.")
+
+
+def mac_warned_about_unreadable_archive_notice(what_the_mac_said):
+    return (f"mac's forced command also said: {what_the_mac_said}\n"
+            f"Tell the user what it said.")
+
+
+def settle_fetch_problem(problem, read_in_full):
+    """Turn what a Mac said while exiting 0 into a notice that matches whether its archive unpacked."""
+    if not isinstance(problem, MacSentWithWarning):
+        return problem
+    if read_in_full:
+        return mac_sent_with_warning_notice(problem)
+    return mac_warned_about_unreadable_archive_notice(problem)
 
 
 def mac_read_failed_notice(exit_code, what_the_mac_said):
@@ -142,7 +160,10 @@ def mac_read_failed_notice(exit_code, what_the_mac_said):
 
 
 def fetch_mac_task_store_archive(runner):
-    """Return (archive_bytes_or_None, problems) for the Mac's store, read from ned-box."""
+    """Return (archive_bytes_or_None, problems) for the Mac's store, read from ned-box.
+
+    A warning from a Mac that exited 0 comes back as MacSentWithWarning, which
+    read_task_lists settles once it knows whether the archive unpacked."""
     destination = (os.environ.get("NEDSCHORUS_MAC_SSH_DESTINATION")
                    or mac_window.DEFAULT_MAC_SSH_DESTINATION)
     completed = runner(mac_window.ssh_command(
@@ -150,7 +171,8 @@ def fetch_mac_task_store_archive(runner):
     what_it_said = (completed.stderr or b"").decode("utf-8", "replace").strip()
     if completed.returncode == 0:
         # The Mac exits 0 when it sent the store but could not log the outcome.
-        return completed.stdout, ([mac_sent_with_warning_notice(what_it_said)]
+        # Whether the store was read in full is known only after unpacking.
+        return completed.stdout, ([MacSentWithWarning(what_it_said)]
                                   if what_it_said else [])
     if completed.returncode == SSH_ITSELF_FAILED_EXIT:
         return None, ["\n".join(mac_window.explain_connection_failure(
@@ -248,11 +270,10 @@ def read_task_lists(machines, store, scratch, runner):
             continue
         archive_bytes, fetch_problems = fetch_task_store_archive(
             machine, runner)
-        problems.extend(fetch_problems)
-        if archive_bytes is None:
-            continue
-        unpacked, unpack_problems = unpack_task_store_archive(
-            archive_bytes, scratch, machine)
+        unpacked, unpack_problems = (None, []) if archive_bytes is None else (
+            unpack_task_store_archive(archive_bytes, scratch, machine))
+        problems.extend(settle_fetch_problem(problem, unpacked is not None)
+                        for problem in fetch_problems)
         problems.extend(unpack_problems)
         if unpacked is None:
             continue

@@ -708,6 +708,9 @@ with tempfile.TemporaryDirectory() as root:
           "merge-lane-2" in box_out and "cold-read-research" in box_out
           and "Machines read: mac, ned-box (this machine)." in box_out,
           box_out)
+    check("on ned-box, a clean read of both machines prints no "
+          "read-in-full warning heading",
+          "Read in full, but with a warning:" not in box_out, box_out)
     check("on ned-box, a clean read of both machines exits zero",
           box_code == reader.EXIT_EVERYTHING_ASKED_FOR_WAS_READ
           and box_message == "", f"{box_code!r} {box_message!r}")
@@ -791,6 +794,25 @@ with tempfile.TemporaryDirectory() as root:
           and "below" not in warned_out.split(
               "Read in full, but with a warning:")[-1],
           warned_out)
+
+    with pretending_the_host_is("ned-box"):
+        warned_cut_out, _, warned_cut_code = run_and_code(
+            ["--seats", "--store", str(store), "--machine", "both"],
+            runner=a_runner_returning(
+                stdout=MAC_TAR[:1536],
+                stderr=b"mac-window-opened-for-ned-box-forced-command: the "
+                       b"task lists were sent, but the outcome could not be "
+                       b"added to the request log"))
+    check("on ned-box, a Mac that warned and sent a truncated archive is "
+          "reported as not read, passes the warning on, and never says its "
+          "lists were read in full",
+          warned_cut_code == reader.EXIT_SOMETHING_COULD_NOT_BE_READ
+          and "did not arrive as a readable archive" in warned_cut_out
+          and "could not be added to the request log" in warned_cut_out
+          and "arrived in full and were read" not in warned_cut_out
+          and "Read in full, but with a warning:" not in warned_cut_out
+          and "Machines read: ned-box (this machine)." in warned_cut_out,
+          f"{warned_cut_code!r} {warned_cut_out!r}")
 
     # On the refusal path no task list prints, so the warning must not point at one.
     with pretending_the_host_is("ned-box"):
