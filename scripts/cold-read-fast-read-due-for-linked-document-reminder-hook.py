@@ -28,8 +28,12 @@ the payload's cwd: an agent-seat's cwd is its seat checkout, while the
 documents it changes sit in its topic branch's worktree. The ref is used as it
 stands, without a fetch. When that checkout has no origin/main, or git fails,
 is killed or outlasts its time limit while comparing, the hook cannot tell
-whether the document changed: it lists the document under its own heading
-with git's reason, says so on stderr, and goes on with the other documents. A document in no git
+whether the document changed: it treats the document as changed, so the
+record test below decides whether it is due, and lists it under its own
+heading with git's reason whether or not it is due, marked as read when it is
+not, so the agent sees git's failure on every Stop; it says so on stderr too,
+and goes on with the other documents. A failed merge-base, a timeout
+included, is found once per checkout per run. A document in no git
 checkout skips this test.
 A document that passes it is not due when a fast read of its
 current text is on record. A walk-document named docs/walk/<name>-draft.md
@@ -168,8 +172,11 @@ UNCHECKED_OPENING = (
     "compare each with origin/main in the git checkout that holds it, so this "
     "hook cannot tell whether that checkout changed it:")
 UNCHECKED_INSTRUCTION = (
-    "Give the fast read below to each of these that you changed since its last "
-    "cold-read-fast-read, and to each you cannot tell about.")
+    "Give the fast read below to each of these not marked as read that you "
+    "changed since its last cold-read-fast-read, and to each you cannot tell about.")
+UNCHECKED_ALREADY_READ_SUFFIX = (
+    " (marked as read: it has had a cold-read-fast-read since its last change, "
+    "so it needs none now)")
 UNCHECKED_STDERR_LINE = (
     "cold-read-fast-read-due-for-linked-document-reminder-hook: did not check "
     "{document}, because git could not compare it with origin/main: {reason}")
@@ -244,14 +251,22 @@ def git_failure(top, arguments, completed):
 
 
 def main_base(document_top, git_environment, bases):
-    """The checkout's fork point from origin/main, or its failure, found once per checkout per run."""
+    """The checkout's fork point from origin/main, or its failure, found once per checkout per run.
+
+    A timeout is kept like an exit-code failure: each document after the first
+    would otherwise wait out the time limit again, and enough of them outlast
+    the hook's own time limit, so no reminder is printed at all.
+    """
     if document_top not in bases:
         arguments = ["merge-base", "HEAD", MAIN_REFERENCE]
-        found = git_in_checkout(document_top, arguments, git_environment)
-        if found.returncode != 0:
-            bases[document_top] = git_failure(document_top, arguments, found)
+        try:
+            found = git_in_checkout(document_top, arguments, git_environment)
+        except GitComparisonFailure as failure:
+            bases[document_top] = failure
         else:
-            bases[document_top] = found.stdout.decode().strip()
+            bases[document_top] = (git_failure(document_top, arguments, found)
+                                   if found.returncode != 0
+                                   else found.stdout.decode().strip())
     if isinstance(bases[document_top], GitComparisonFailure):
         raise bases[document_top]
     return bases[document_top]
@@ -430,6 +445,7 @@ def run(stdin_text, environment):
         lambda path: is_skipped(path, log_store_directory, record_names))
     for document in documents:
         document_top = checkout_top(document.parent, git_environment)
+        reason = None
         if document_top is not None:
             try:
                 changed = document_differs_from_main(
@@ -438,27 +454,34 @@ def run(stdin_text, environment):
                 reason = " ".join(str(failure).split())
                 print(UNCHECKED_STDERR_LINE.format(document=document, reason=reason),
                       file=sys.stderr)
-                unchecked.append((document, reason))
-                continue
+                changed = True
             if not changed:
                 continue
         stores = [store]
         for top in (document_top, session_top):
             if top is not None and top / record_names.RECORDS_DIRECTORY_NAME not in stores:
                 stores.append(top / record_names.RECORDS_DIRECTORY_NAME)
-        if document_is_due(document, stores, document_top, record_names,
-                           payload.get("session_id")):
+        is_due = document_is_due(document, stores, document_top, record_names,
+                                 payload.get("session_id"))
+        if reason is not None:
+            # Listed even when not due: stderr alone would hide git's failure from the agent.
+            unchecked.append((document, reason, is_due))
+        elif is_due:
             due.append(document)
     if not due and not unchecked:
         return None
+    unchecked_due = [document for document, _, is_due in unchecked if is_due]
     lines = []
     if due:
         lines += [REMINDER_OPENING] + [f"  {document}" for document in due]
     if unchecked:
         lines += [UNCHECKED_OPENING]
-        lines += [f"- {document}: {reason}" for document, reason in unchecked]
-        lines += [UNCHECKED_INSTRUCTION]
-    lines += list(REMINDER_INSTRUCTIONS)
+        lines += [f"- {document}: {reason}" + ("" if is_due else UNCHECKED_ALREADY_READ_SUFFIX)
+                  for document, reason, is_due in unchecked]
+        if unchecked_due:
+            lines += [UNCHECKED_INSTRUCTION]
+    if due or unchecked_due:
+        lines += list(REMINDER_INSTRUCTIONS)
     return json.dumps({"hookSpecificOutput": {
         "hookEventName": "Stop",
         "additionalContext": "\n".join(lines),
