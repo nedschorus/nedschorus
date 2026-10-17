@@ -542,7 +542,7 @@ else:
     shutil.rmtree(pages)
     shutil.rmtree(outside_page.parent)
 
-def run_task_lists_read(request, with_store=True, tar_body=None, log_is_a_directory=False):
+def run_task_lists_read(request, with_store=True, tar_body=None, log_is_a_directory=False, program_path=PROGRAM_PATH):
     """Run the program as sshd would for a task-list read; return (result, log, stdout bytes)."""
     scratch = Path(tempfile.mkdtemp(prefix="mac-task-lists-read-test-"))
     if with_store:
@@ -559,7 +559,7 @@ def run_task_lists_read(request, with_store=True, tar_body=None, log_is_a_direct
         (fake_bin / "tar").chmod(0o755)
         path = f"{fake_bin}:{path}"
     environment = {"PATH": path, "HOME": str(scratch), "SSH_ORIGINAL_COMMAND": request}
-    result = subprocess.run([sys.executable, str(PROGRAM_PATH)], capture_output=True, env=environment)
+    result = subprocess.run([sys.executable, str(program_path)], capture_output=True, env=environment)
     log_path = scratch / ".claude" / "mac-window-opened-for-ned-box.log"
     log = log_path.read_text() if log_path.is_file() else ""
     shutil.rmtree(scratch)
@@ -610,6 +610,17 @@ shutil.rmtree(forwarder_scratch, ignore_errors=True)
 check("the old path, which the Mac's authorized_keys still names, runs this program",
       forwarder_result.returncode == 2 and forwarder_result.stderr.startswith(f"{forced_command.PROGRAM}: ") and "SSH_ORIGINAL_COMMAND is unset" in forwarder_result.stderr,
       (forwarder_result.returncode, forwarder_result.stderr))
+
+result, log, archive = run_task_lists_read(
+    "read-agent-seat-task-lists", program_path=PROGRAM_PATH.with_name("mac-window-opened-for-ned-box-forced-command.py"))
+try:
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as sent:
+        member_names = sent.getnames()
+except tarfile.TarError as unreadable:
+    member_names = [f"not a tar archive: {unreadable}"]
+check("the old path passes ned-box's request and the environment on: a task-list read through it exits 0 with the store's archive",
+      result.returncode == 0 and "./nedschorus-mac-seat-tasks/1.json" in member_names,
+      (result.returncode, result.stderr, member_names))
 
 print()
 if failures:
