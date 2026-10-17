@@ -20,6 +20,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -1962,20 +1963,25 @@ for command in ["cd ~/x && git -C ~/y push > ~/z", "env -C ~/w git push -f",
         in_a_new_process = error
     check(f"a new process reads {command!r} as this process does, classes and attributes included",
           same_reading(in_a_new_process, in_this_process), (in_a_new_process, in_this_process))
-# Every command this test read, through the same encoder in one child process.
-child_code = ("import importlib.util, json, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
-              "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); out = []\n"
-              "for command, markers in json.loads(sys.stdin.buffer.read().decode('utf-8', r.SHELL_TEXT_ERRORS)):\n"
-              "    try: out.append({'commands': r._reader_output_to_json(r.simple_commands(command, markers))})\n"
-              "    except r.ShellCommandUnreadable as error: out.append({'unreadable': error.install_output})\n"
-              "sys.stdout.buffer.write(json.dumps(out, ensure_ascii=False).encode('utf-8', r.SHELL_TEXT_ERRORS))")
+# Every command this test read, through the same encoder, in one child process that reads one request per
+# line, and in one new process per command as a hook reads it: both must give this process's reading.
 recorded = list(dict.fromkeys((text, json.dumps(markers)) for text, markers in COMMANDS_READ))
-child = subprocess.run([sys.executable, "-c", child_code, str(MODULE_PATH)], capture_output=True,
-                       input=json.dumps([[text, json.loads(markers)] for text, markers in recorded],
-                                        ensure_ascii=False).encode("utf-8", reader.SHELL_TEXT_ERRORS))
-differing = []
-if child.returncode == 0:
-    for (text, markers), read in zip(recorded, json.loads(child.stdout.decode("utf-8", reader.SHELL_TEXT_ERRORS))):
+requests = [json.dumps({"command": text, "glob_markers": json.loads(markers)}, ensure_ascii=False)
+            .encode("utf-8", reader.SHELL_TEXT_ERRORS) for text, markers in recorded]
+child = subprocess.run(
+    [sys.executable, str(MODULE_PATH), reader.NEW_PROCESS_READ_ONE_REQUEST_PER_LINE_UNTIL_INPUT_CLOSES_FLAG],
+    capture_output=True, input=b"".join(request + b"\n" for request in requests))
+from_one_child = child.stdout.split(b"\n")
+with ThreadPoolExecutor(8) as pool:
+    from_one_process_each = list(pool.map(lambda request: subprocess.run(
+        [sys.executable, str(MODULE_PATH), reader.NEW_PROCESS_READ_FLAG], input=request,
+        capture_output=True).stdout, requests))
+differing, differing_from_one_process_each = [], []
+if child.returncode == 0 and len(from_one_child) == len(recorded) + 1:
+    for (text, markers), line, alone in zip(recorded, from_one_child, from_one_process_each):
+        if line != alone:
+            differing_from_one_process_each.append(text)
+        read = json.loads(line.decode("utf-8", reader.SHELL_TEXT_ERRORS))
         try:
             here = reader.simple_commands(text, json.loads(markers))
         except reader.ShellCommandUnreadable as error:
@@ -1983,10 +1989,13 @@ if child.returncode == 0:
         there = (read if "unreadable" in read else reader._reader_output_from_json(read["commands"]))
         if not same_reading(there, here):
             differing.append(text)
-check(f"each of the {len(recorded)} commands this test read reads the same in a child process, "
-      f"through the encoder, classes and attributes included",
-      child.returncode == 0 and len(recorded) > 100 and not differing,
-      (child.returncode, child.stderr[-500:], differing[:5]))
+check(f"each of the {len(recorded)} commands this test read reads the same in a child process that reads "
+      f"one request per line, through the encoder, classes and attributes included",
+      child.returncode == 0 and len(recorded) > 100 and len(from_one_child) == len(recorded) + 1
+      and from_one_child[-1] == b"" and not differing,
+      (child.returncode, child.stderr[-500:], len(from_one_child), differing[:5]))
+check(f"each of the {len(recorded)} commands gets the same reply from that child as from a new process of its own",
+      child.returncode == 0 and not differing_from_one_process_each, differing_from_one_process_each[:5])
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

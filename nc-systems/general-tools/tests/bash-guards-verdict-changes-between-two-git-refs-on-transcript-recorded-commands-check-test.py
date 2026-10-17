@@ -26,6 +26,7 @@ SCRIPT_PATH = Path(__file__).resolve().parents[1] / "bash-guards-verdict-changes
 TMUX_KILL_GUARD = "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py"
 ISSUE_WRITE_GUARD = ".claude/hooks/ghi-issue-write-redirect.py"
 SEARCH_FILE_GUARD = "scripts/search-file-argument-read-as-option-guard-hook.py"
+SHELL_READER = "nc-systems/general-tools/shell-command-tree-sitter-bash-reader-common.py"
 
 spec = importlib.util.spec_from_file_location("bash_guards_replay", SCRIPT_PATH)
 replay = importlib.util.module_from_spec(spec)
@@ -65,6 +66,37 @@ def commit_with_change(change, scratch):
         return git("rev-parse", "HEAD", cwd=worktree)
     finally:
         git("worktree", "remove", "--force", str(worktree))
+
+
+def commit_with_reader_changed_in_its_long_running_child(code_on_ls, scratch):
+    """Return a commit whose shell reader runs code_on_ls before replying to `ls -la`, only in a child that
+    reads one request per line; the code goes before the reader's __main__ lines, which start that child's loop."""
+    def insert(worktree):
+        path = worktree / SHELL_READER
+        text = path.read_text()
+        at = text.index('if __name__ == "__main__"')
+        path.write_text(text[:at] + (
+            "_reply_as_written = _shell_command_read_request_to_reply\n"
+            "def _shell_command_read_request_to_reply(request):\n"
+            "    if (request['command'] == 'ls -la'\n"
+            "            and sys.argv[1:] == [NEW_PROCESS_READ_ONE_REQUEST_PER_LINE_UNTIL_INPUT_CLOSES_FLAG]):\n"
+            f"        {code_on_ls}\n"
+            "    return _reply_as_written(request)\n\n\n") + text[at:])
+    return commit_with_change(insert, scratch)
+
+
+def failed_new_process_readings_and_rows_differing_from_in_process(run_scratch):
+    """Return (the commands of the failed new-process readings, the commands other than `ls -la` whose
+    new-process verdicts at the head differ from their in-process verdicts); (None, None) when the run wrote none."""
+    if not (run_scratch / "differences-new-process.json").exists():
+        return None, None
+    failed = [entry[0][0] for entry in json.loads((run_scratch / "differences-new-process.json").read_text())["failed"]]
+    in_process = json.loads((run_scratch / "verdicts-in-process-head.json").read_text())["rows"]
+    new_process = json.loads((run_scratch / "verdicts-new-process-head.json").read_text())["rows"]
+    differing = [pair[0] for pair, here, there in zip(FIXTURE_PAIRS, in_process, new_process)
+                 if pair[0] != "ls -la" and {key: value[0] for key, value in here.items()}
+                 != {key: value[0] for key, value in there.items()}]
+    return failed, differing
 
 
 def commit_with_guard_changed(guard_path, appended_code, scratch):
@@ -141,10 +173,10 @@ try:
           "in-process: rows whose message differs and verdict does not: 0" in out, out)
     check("a replay that returns puts back the SIGTERM handler its caller had",
           signal.getsignal(signal.SIGTERM) is stopped_by_sigterm, signal.getsignal(signal.SIGTERM))
-    check("the same commit: the new-process subset holds only the heredoc command",
-          "new-process pairs: 1" in out, out)
+    check("the same commit: new-process mode reads every pair by default",
+          f"new-process pairs: {len(FIXTURE_PAIRS)}" in out, out)
     check("the same commit: new-process mode reads through a new process at both refs, in-process mode does not",
-          all(f"new-process, {label}: 1 rows" in out for label in ("base", "head"))
+          all(f"new-process, {label}: {len(FIXTURE_PAIRS)} rows" in out for label in ("base", "head"))
           and out.count(f"shell readers in a new process: {BASH_HOOK_COUNT}") == 2
           and out.count("shell readers in a new process: 0") == 4, out)
 
@@ -306,10 +338,106 @@ try:
           status == 2 and "could not be removed" in out and "a checkout: git worktree remove exited 128" in out,
           f"status {status}\n{out}\n{err}")
 
-    guards, switched = replay.guards_loaded(REPOSITORY_ROOT, True)
+    guards, switched, _, _ = replay.guards_loaded(REPOSITORY_ROOT, True)
     check("new-process mode switches the shell reader each guard loads",
           switched == BASH_HOOK_COUNT and all(guard.shell_reader._read_in_a_new_process for guard in guards.values()),
           {key: guard.shell_reader._read_in_a_new_process for key, guard in guards.items()})
+
+    killing_child_on_ls = commit_with_reader_changed_in_its_long_running_child(
+        "import signal; os.kill(os.getpid(), signal.SIGKILL)", scratch)
+    killed_child_scratch = Path(scratch) / "run-killed-child"
+    status, out, err = run_replay(killing_child_on_ls, scratch, "--jobs", "1", "--scratch-directory",
+                                  str(killed_child_scratch), base_ref=killing_child_on_ls)
+    failed, differing = failed_new_process_readings_and_rows_differing_from_in_process(killed_child_scratch)
+    check("a shell reader child killed while reading `ls -la`: exit 2, only that pair's readings fail, and a fresh "
+          "child reads the pairs after it as the in-process mode does",
+          status == 2 and "EXCEPTION ShellReaderLongRunningChildProcessDiedMidRequest" in out
+          and failed and set(failed) == {"ls -la"} and not differing and "in-process, " not in out.split("REPLAY FAILED")[-1],
+          f"status {status}; failed {failed}; differing {differing}\n{out}\n{err}")
+
+    hanging_child_on_ls = commit_with_reader_changed_in_its_long_running_child("import time; time.sleep(60)", scratch)
+    hung_child_scratch = Path(scratch) / "run-hung-child"
+    started = time.monotonic()
+    status, out, err = run_replay(hanging_child_on_ls, scratch, "--jobs", "1", "--per-pair-timeout-seconds", "2",
+                                  "--scratch-directory", str(hung_child_scratch), base_ref=hanging_child_on_ls)
+    failed, differing = failed_new_process_readings_and_rows_differing_from_in_process(hung_child_scratch)
+    check("a shell reader child that hangs on `ls -la`: exit 2 by the per-pair timeout, only that pair's readings "
+          "fail, and its late reply answers no later request",
+          status == 2 and "TIMEOUT" in out and failed and set(failed) == {"ls -la"} and not differing
+          and time.monotonic() - started < 120,
+          f"status {status} after {time.monotonic() - started:.0f}s; failed {failed}; differing {differing}\n{out}\n{err}")
+
+    def reader_without_the_long_running_child_flag(worktree):
+        with open(worktree / SHELL_READER, "a") as handle:
+            handle.write("\ndel NEW_PROCESS_READ_ONE_REQUEST_PER_LINE_UNTIL_INPUT_CLOSES_FLAG\n")
+    older_reader = commit_with_change(reader_without_the_long_running_child_flag, scratch)
+    status, out, err = run_replay("HEAD", scratch, base_ref=older_reader)
+    check("a base ref whose shell reader predates the long-running child reads one command per process, "
+          "with the same verdicts as the head's long-running child",
+          status == 0 and "NO VERDICT CHANGED" in out
+          and f"new-process, base: {len(FIXTURE_PAIRS)} rows" in out
+          and f"of which one command per process: {BASH_HOOK_COUNT}" in out.split("new-process, head")[0]
+          and "of which one command per process" not in out.split("new-process, head")[1],
+          f"status {status}\n{out}\n{err}")
+
+    # Each reply the reader sends crosses the long-running child's pipe and is decoded as a one-command
+    # process's output is: a missing parser and a command the reader fails on reach the guard as each does today.
+    failing_reader = Path(scratch) / "shell-reader-failing-on-two-commands.py"
+    failing_reader.write_text(
+        "import importlib.util, sys\n"
+        f"spec = importlib.util.spec_from_file_location('r', {str(REPOSITORY_ROOT / SHELL_READER)!r})\n"
+        "r = importlib.util.module_from_spec(spec); spec.loader.exec_module(r)\n"
+        "read_as_written = r._simple_commands_read\n"
+        "def read(command, markers):\n"
+        "    if command == 'needs the parser':\n"
+        "        raise r.ShellParserUnavailable('pip exited 1: no network')\n"
+        "    if command == 'fails the reader':\n"
+        "        raise ValueError('injected')\n"
+        "    return read_as_written(command, markers)\n"
+        "r._simple_commands_read = read\n"
+        "if sys.argv[1:] == [r.NEW_PROCESS_READ_ONE_REQUEST_PER_LINE_UNTIL_INPUT_CLOSES_FLAG]:\n"
+        "    r._read_one_request_per_line_until_input_closes()\n")
+    reader_module_spec = importlib.util.spec_from_file_location("shell_reader_for_the_replay_test",
+                                                                REPOSITORY_ROOT / SHELL_READER)
+    reader_module = importlib.util.module_from_spec(reader_module_spec)
+    reader_module_spec.loader.exec_module(reader_module)
+    sender = replay.ShellReaderLongRunningChildProcessRequestSender(
+        failing_reader, reader_module.NEW_PROCESS_READ_ONE_REQUEST_PER_LINE_UNTIL_INPUT_CLOSES_FLAG)
+    reader_module._use_a_new_process(sender)
+    replies = []
+    try:
+        for command in ("needs the parser", "fails the reader", "ls -la | head"):
+            try:
+                replies.append([list(found) for found in reader_module.simple_commands(command)])
+            except reader_module.ShellParserUnavailable as error:
+                replies.append((type(error).__name__, error.install_output))
+        child_pid = sender.child.pid if sender.child else None
+    finally:
+        sender.close()
+    check("a missing parser and a reader failure each cross the long-running child as one-command processes send "
+          "them, and the same child then reads the next command",
+          replies == [("ShellParserUnavailable", "pip exited 1: no network"),
+                      ("ShellCommandUnreadable", "ValueError: injected"), [["ls", "-la"], ["head"]]]
+          and child_pid is not None, replies)
+
+    # A child that has exited between two requests cannot be written to; that request is a failed reading too.
+    exiting_after_one_reply = Path(scratch) / "child-exiting-after-one-reply.py"
+    exiting_after_one_reply.write_text("import sys\nsys.stdin.readline()\nprint('{}', flush=True)\n")
+    sender = replay.ShellReaderLongRunningChildProcessRequestSender(exiting_after_one_reply, "--unused")
+    outcomes = [sender(["unused"], input=b"{}").stdout]
+    sender.child.wait()
+    try:
+        sender(["unused"], input=b"{}")
+        outcomes.append("no exception")
+    except replay.ShellReaderLongRunningChildProcessDiedMidRequest as error:
+        outcomes.append(str(error))
+    except Exception as error:
+        outcomes.append(f"not a failed reading: {type(error).__name__}: {error}")
+    finally:
+        sender.close()
+    check("a request to a child that has already exited: the reading fails, naming the child's reader file",
+          outcomes[0] == b"{}\n" and "failed (" in outcomes[1] and str(exiting_after_one_reply) in outcomes[1],
+          outcomes)
 
     def exit_on_ls(worktree):
         with open(worktree / TMUX_KILL_GUARD, "a") as handle:
@@ -344,7 +472,7 @@ try:
               False, "the replay was still running after 180 s")
         subprocess.run(["pkill", "-f", str(Path(scratch) / "run-exiting")])
 
-    codex_guard, _ = replay.guards_loaded(REPOSITORY_ROOT, False)
+    codex_guard, _, _, _ = replay.guards_loaded(REPOSITORY_ROOT, False)
     codex_path = "scripts/hand-typed-codex-exec-redirect-hook.py"
     check("the codex exec guard's reading refuses a hand-typed codex exec and passes ls",
           replay.GUARDS[codex_path](codex_guard[codex_path], 'codex exec -C /tmp/x "do the task"', "/", "/")[0] == "refused"

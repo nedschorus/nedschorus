@@ -18,8 +18,10 @@ Steps:
   3. At each ref, run the guards' analysis functions on every pair, with the guards' probes
      of git and gh stubbed so a verdict depends only on the command text and the working directory
      (in-process mode). Run the search-file guard's main() with each pair's own working
-     directory. Then run the analysis again with the shell reader in new-process mode, on all
-     pairs or on the subset --new-process-pairs names.
+     directory. Then run the analysis again on every pair with the shell reader in new-process
+     mode, unless --new-process-pairs is none: each pool worker keeps one shell reader child
+     process running and sends it one command at a time, through the same JSON conversion a
+     hook's new process uses.
   4. Compare the two refs row by row and print each difference.
 
 Exit status: 0 when no verdict differs; 1 when a verdict differs; 2 when the replay itself
@@ -55,11 +57,6 @@ DEFAULT_TRANSCRIPT_DIRECTORIES = [
     "/home/nedlern/nedschorus-logs/transcripts/recovered",
 ]
 
-# A new process per read is about 50 times slower than reading in-process, so by default
-# new-process mode reads only the commands whose reading carries the most structure across
-# the transport: a heredoc, a case terminator, or ~.
-NEW_PROCESS_SUBSET_PATTERN = re.compile(r"<<|case|;&|~")
-
 DEFAULT_PER_PAIR_TIMEOUT_SECONDS = 20
 # Pairs a worker reads per task; a worker that dies loses at most this many, and they are named.
 PAIRS_PER_TASK = 200
@@ -94,6 +91,14 @@ class PairTimedOut(BaseException):
 
 def raise_pair_timed_out(*_):
     raise PairTimedOut()
+
+
+class ShellReaderLongRunningChildProcessDiedMidRequest(BaseException):
+    """The shell reader's long-running child process exited, or could not be written to, before it replied.
+
+    A BaseException, as PairTimedOut is, so the shell reader's and the guards' own `except Exception`
+    cannot turn the lost reading into a verdict.
+    """
 
 
 # A stop signal must not raise SystemExit inside subprocess's own code: raised between Popen._wait()'s
@@ -212,20 +217,77 @@ def load_module(checkout, relative_path, name):
     return module
 
 
+class ShellReaderLongRunningChildProcessRequestSender:
+    """Answers one shell reader file's new-process reads from one child process that reads one request per line.
+
+    The reader calls it as it calls subprocess.run, with the request as input, and decodes the reply
+    exactly as it decodes a one-command process's output. The child is started at the first request
+    and again at the first request after a failure.
+    """
+
+    def __init__(self, reader_path, flag):
+        self.reader_path, self.flag, self.child = str(reader_path), flag, None
+
+    def __call__(self, argv, input, **_):
+        # The per-pair alarm, not the reader's own timeout, bounds the wait for a reply.
+        try:
+            if self.child is None:
+                self.child = subprocess.Popen([sys.executable, self.reader_path, self.flag],
+                                              stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            self.child.stdin.write(input + b"\n")
+            self.child.stdin.flush()
+            reply = self.child.stdout.readline()
+        except OSError as error:
+            status = self.close()
+            raise ShellReaderLongRunningChildProcessDiedMidRequest(
+                f"the shell reader child process for {self.reader_path} failed ({error}; exit {status}); "
+                f"its error output is in this step's log") from error
+        except BaseException:
+            self.close()  # A PairTimedOut: a reply the child sends late must not answer the next request.
+            raise
+        if not reply.endswith(b"\n"):
+            status = self.close()
+            raise ShellReaderLongRunningChildProcessDiedMidRequest(
+                f"the shell reader child process for {self.reader_path} exited {status} before it replied; "
+                f"its error output is in this step's log")
+        return subprocess.CompletedProcess(argv, 0, reply, b"")
+
+    def close(self):
+        """Stop the child, if one runs, and return its exit status."""
+        child, self.child = self.child, None
+        if child is None:
+            return None
+        child.kill()
+        for pipe in (child.stdin, child.stdout):
+            with contextlib.suppress(OSError):
+                pipe.close()
+        return child.wait()
+
+
 def guards_loaded(checkout, new_process):
-    """Return (guards, how many shell reader modules were switched to read in a new process)."""
+    """Return (guards, how many shell reader modules were switched to read in a new process,
+    the senders of the long-running child processes, how many of those modules read one command per
+    process because their reader has no flag for a long-running child)."""
     guards = {path: load_module(checkout, path, "replayed_" + re.sub(r"\W", "_", path))
               for path in GUARDS}
-    switched = 0
+    switched, one_command_per_process, senders = 0, 0, {}
     if new_process:
         for guard in guards.values():
             for value in vars(guard).values():
                 if type(value).__name__ == "module" and hasattr(value, "_use_a_new_process"):
-                    value._use_a_new_process()
+                    flag = getattr(value, "NEW_PROCESS_READ_ONE_REQUEST_PER_LINE_UNTIL_INPUT_CLOSES_FLAG", None)
+                    if flag is None:
+                        # A ref older than the flag, such as the base ref of the pull request that added it.
+                        value._use_a_new_process()
+                        one_command_per_process += 1
+                    else:
+                        reader_path = Path(value.__file__).resolve()
+                        value._use_a_new_process(senders.setdefault(
+                            reader_path, ShellReaderLongRunningChildProcessRequestSender(reader_path, flag)))
                     switched += 1
         if switched == 0:
             raise ReplayFailed(f"no guard at {checkout} loads a shell reader that has _use_a_new_process()")
-    return guards, switched
+    return guards, switched, list(senders.values()), one_command_per_process
 
 
 class StubbedProbeRunner:
@@ -342,7 +404,8 @@ def guard_readings(guards, command, working_directory, search_file_directory):
             readings[path] = (verdict, message)
         except PairTimedOut:
             readings[path] = ("TIMEOUT", None)
-        except (Exception, SystemExit) as error:  # A failed reading; is_failed_reading() makes the run exit 2.
+        except (Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
+            # A failed reading; is_failed_reading() makes the run exit 2.
             # SystemExit too: one escaping a worker would end that worker.
             readings[path] = (f"EXCEPTION {type(error).__name__}", str(error))
         finally:
@@ -355,7 +418,7 @@ def worker_start(checkout, new_process, search_file_directory, timeout):
     WORKER["timeout"] = timeout
     WORKER["checkout"] = str(checkout)
     signal.signal(signal.SIGALRM, raise_pair_timed_out)
-    WORKER["guards"], WORKER["switched"] = guards_loaded(checkout, new_process)
+    WORKER["guards"], WORKER["switched"], _, _ = guards_loaded(checkout, new_process)
     WORKER["search_file_directory"] = search_file_directory
 
 
@@ -398,7 +461,8 @@ def worker_search_file_main_rows(pairs):
             row = [verdict, message]
         except PairTimedOut:
             row = ["TIMEOUT", None]
-        except (Exception, SystemExit) as error:  # A failed reading; is_failed_reading() makes the run exit 2.
+        except (Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
+            # A failed reading; is_failed_reading() makes the run exit 2.
             row = [f"EXCEPTION {type(error).__name__}", str(error)]
         finally:
             signal.alarm(0)
@@ -409,9 +473,9 @@ def worker_search_file_main_rows(pairs):
 def smoke_check(checkout, new_process, search_file_directory, timeout):
     """Fail the replay when a guard cannot read even `true`: the replay no longer fits the guards' code.
 
-    Return how many shell reader modules read in a new process.
+    Return (how many shell reader modules read in a new process, how many of them one command per process).
     """
-    guards, switched = guards_loaded(checkout, new_process)
+    guards, switched, senders, one_command_per_process = guards_loaded(checkout, new_process)
     signal.signal(signal.SIGALRM, raise_pair_timed_out)
     WORKER["timeout"] = timeout
     readings = guard_readings(guards, "true", "/", search_file_directory)
@@ -420,20 +484,23 @@ def smoke_check(checkout, new_process, search_file_directory, timeout):
         readings["search-file main()"] = search_file_main_outcome(guards[SEARCH_FILE_GUARD], "true", "/")
     except PairTimedOut:
         readings["search-file main()"] = ("TIMEOUT", None)
-    except (Exception, SystemExit) as error:
+    except (Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
         readings["search-file main()"] = (f"EXCEPTION {type(error).__name__}", str(error))
     finally:
         signal.alarm(0)
+        for sender in senders:
+            sender.close()  # Before the pool starts, so no worker inherits the child's pipes.
     for key, (verdict, detail) in readings.items():
         if is_failed_reading(verdict):
             raise ReplayFailed(
                 f"the {key} guard at {checkout} gave {verdict} ({detail}) on the command `true`; "
                 f"its functions no longer match what this replay calls")
-    return switched
+    return switched, one_command_per_process
 
 
 def ref_verdicts(checkout, pairs, jobs, new_process, search_file_directory, search_file_main, timeout):
-    switched = smoke_check(checkout, new_process, search_file_directory, timeout)
+    """Return (rows, shell readers switched to a new process, how many of them read one command per process)."""
+    switched, one_command_per_process = smoke_check(checkout, new_process, search_file_directory, timeout)
     tasks = [pairs[start:start + PAIRS_PER_TASK] for start in range(0, len(pairs), PAIRS_PER_TASK)]
     read = worker_search_file_main_rows if search_file_main else worker_guard_rows
     # Not multiprocessing.Pool: when a Pool worker dies, its task is never finished and map() waits
@@ -462,7 +529,7 @@ def ref_verdicts(checkout, pairs, jobs, new_process, search_file_directory, sear
     if workers_switched - {switched}:
         raise ReplayFailed(f"the workers at {checkout} switched {sorted(workers_switched)} shell readers to a new "
                            f"process, where the check before them switched {switched}")
-    return rows, switched
+    return rows, switched, one_command_per_process
 
 
 # ---------------------------------------------------------------- step 4: compare
@@ -638,12 +705,7 @@ def replay_with_sigterm_handled(arguments):
         print(f"transcript lines naming Bash that are not JSON, skipped: {lines_not_json}")
     if not pairs:
         raise ReplayFailed("no recorded Bash commands were found")
-    if arguments.new_process_pairs == "all":
-        new_process_pairs = pairs
-    elif arguments.new_process_pairs == "subset":
-        new_process_pairs = [pair for pair in pairs if NEW_PROCESS_SUBSET_PATTERN.search(pair[0])]
-    else:
-        new_process_pairs = []
+    new_process_pairs = pairs if arguments.new_process_pairs == "all" else []
     (scratch / "pairs.json").write_text(json.dumps(pairs))
     (scratch / "new-process-pairs.json").write_text(json.dumps(new_process_pairs))
     print(f"pairs: {len(pairs)}; new-process pairs: {len(new_process_pairs)}")
@@ -690,9 +752,12 @@ def replay_with_sigterm_handled(arguments):
                 failed = failed_readings(mode_pairs, rows[label], label)
                 mode_failed.extend(failed)
                 all_failed.extend((pair, f"{mode}, {key}", at, reading) for pair, key, at, reading in failed)
+                one_command_per_process = written["shell_readers_reading_one_command_per_process"]
                 print(f"{mode}, {label}: {len(rows[label])} rows in {time.monotonic() - started:.0f}s; "
-                      f"shell readers in a new process: {written['shell_readers_in_a_new_process']}; "
-                      f"failed readings: {len(failed)}")
+                      f"shell readers in a new process: {written['shell_readers_in_a_new_process']}"
+                      + (f", of which one command per process: {one_command_per_process}"
+                         if one_command_per_process else "")
+                      + f"; failed readings: {len(failed)}")
             differences, message_differences = verdict_differences(mode_pairs, rows["base"], rows["head"])
             print_rows(f"{mode}: rows whose verdict differs", differences, arguments.show)
             print_rows(f"{mode}: rows whose message differs and verdict does not", message_differences, arguments.show)
@@ -729,9 +794,10 @@ def replay_with_sigterm_handled(arguments):
 def verdicts_step(checkout, pairs_path, out_path, jobs, new_process, search_file_main, search_file_directory,
                   timeout):
     pairs = json.loads(Path(pairs_path).read_text())
-    rows, switched = ref_verdicts(checkout, pairs, int(jobs), new_process == "1", search_file_directory,
-                                  search_file_main == "1", int(timeout))
-    Path(out_path).write_text(json.dumps({"rows": rows, "shell_readers_in_a_new_process": switched}))
+    rows, switched, one_command_per_process = ref_verdicts(
+        checkout, pairs, int(jobs), new_process == "1", search_file_directory, search_file_main == "1", int(timeout))
+    Path(out_path).write_text(json.dumps({"rows": rows, "shell_readers_in_a_new_process": switched,
+                                          "shell_readers_reading_one_command_per_process": one_command_per_process}))
     return 0
 
 
@@ -749,8 +815,9 @@ def main(argv=None):
                                  "by default both machines' transcripts on ned-box")
         parser.add_argument("--pairs-file", help="a JSON list of [command, working directory] pairs to replay "
                                                  "instead of reading the transcripts")
-        parser.add_argument("--new-process-pairs", choices=("subset", "all", "none"), default="subset")
-        parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) - 1))
+        parser.add_argument("--new-process-pairs", choices=("all", "none"), default="all")
+        # Half the processors, so the replay leaves the machine room for other agents' work.
+        parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
         parser.add_argument("--scratch-directory", help="kept after the run; by default a temporary directory, "
                                                         "removed when no verdict changed")
         parser.add_argument("--per-pair-timeout-seconds", type=int, default=DEFAULT_PER_PAIR_TIMEOUT_SECONDS,
