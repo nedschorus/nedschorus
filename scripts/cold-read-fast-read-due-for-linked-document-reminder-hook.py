@@ -27,8 +27,10 @@ what it can still change. The checkout that holds the document decides, not
 the payload's cwd: an agent-seat's cwd is its seat checkout, while the
 documents it changes sit in its topic branch's worktree. The ref is used as it
 stands, without a fetch. When that checkout has no origin/main, or git fails,
-the hook reports a fault, below. A document in no git checkout skips this
-test.
+is killed or outlasts its time limit while comparing, the hook cannot tell
+whether the document changed: it lists the document under its own heading
+with git's reason, says so on stderr, and goes on with the other documents. A document in no git
+checkout skips this test.
 A document that passes it is not due when a fast read of its
 current text is on record. A walk-document named docs/walk/<name>-draft.md
 in any git worktree, fast-read from that checkout or another, writes
@@ -84,9 +86,8 @@ that directory; the log-store is its parent directory.
 
 OUTPUT: {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": ...}},
 which continues the conversation with the text as the agent's next input.
-ON A FAULT, such as input that is not JSON, a module that will not load, a
-record directory it cannot read, or a checkout without origin/main,
-the hook prints one line naming it on stderr and exits 1: Claude Code records
+ON A FAULT, such as input that is not JSON, a module that will not load, or a
+record directory it cannot read, the hook prints one line naming it on stderr and exits 1: Claude Code records
 a Stop hook's exit 1 as a non-blocking error and still ends the turn.
 """
 import importlib.util
@@ -158,8 +159,20 @@ RELATIVE_PATH_PATTERN = re.compile(
 
 REMINDER_OPENING = (
     "cold-read-fast-read due: your last reply linked these documents for the "
-    "user; its checkout changed each from main, and none of them has "
-    "had a cold-read-fast-read since the document's last change:")
+    "user, and none of them has had a cold-read-fast-read since the document's "
+    "last change. Each is either outside any git checkout, or new or changed in "
+    "the git checkout that holds it, compared with the commit where that "
+    "checkout's branch left origin/main:")
+UNCHECKED_OPENING = (
+    "cold-read-fast-read due check failed for these documents: git could not "
+    "compare each with origin/main in the git checkout that holds it, so this "
+    "hook cannot tell whether that checkout changed it:")
+UNCHECKED_INSTRUCTION = (
+    "Give the fast read below to each of these that you changed since its last "
+    "cold-read-fast-read, and to each you cannot tell about.")
+UNCHECKED_STDERR_LINE = (
+    "cold-read-fast-read-due-for-linked-document-reminder-hook: did not check "
+    "{document}, because git could not compare it with origin/main: {reason}")
 REMINDER_INSTRUCTIONS = (
     "Run on each document, from your checkout: python3 " + FAST_READ_PROGRAM
     + " --target <document path>",
@@ -212,25 +225,35 @@ def checkout_top(directory, git_environment):
     return Path(completed.stdout.strip()).resolve()
 
 
+class GitComparisonFailure(Exception):
+    """git could not compare a document with origin/main."""
+
+
 def git_in_checkout(top, arguments, git_environment):
-    return subprocess.run(["git", "-C", str(top), *arguments], capture_output=True,
-                          timeout=GIT_TIMEOUT_SECONDS, env=git_environment)
+    try:
+        return subprocess.run(["git", "-C", str(top), *arguments], capture_output=True,
+                              timeout=GIT_TIMEOUT_SECONDS, env=git_environment)
+    except subprocess.TimeoutExpired as error:
+        raise GitComparisonFailure(f"git {' '.join(arguments)} in {top}: {error!r}") from error
 
 
 def git_failure(top, arguments, completed):
-    return RuntimeError(
+    return GitComparisonFailure(
         f"git {' '.join(arguments)} failed in {top} with exit {completed.returncode}: "
         f"{completed.stderr.decode(errors='replace').strip()}")
 
 
 def main_base(document_top, git_environment, bases):
-    """The checkout's fork point from origin/main, found once per checkout per run."""
+    """The checkout's fork point from origin/main, or its failure, found once per checkout per run."""
     if document_top not in bases:
         arguments = ["merge-base", "HEAD", MAIN_REFERENCE]
         found = git_in_checkout(document_top, arguments, git_environment)
         if found.returncode != 0:
-            raise git_failure(document_top, arguments, found)
-        bases[document_top] = found.stdout.decode().strip()
+            bases[document_top] = git_failure(document_top, arguments, found)
+        else:
+            bases[document_top] = found.stdout.decode().strip()
+    if isinstance(bases[document_top], GitComparisonFailure):
+        raise bases[document_top]
     return bases[document_top]
 
 
@@ -400,15 +423,25 @@ def run(stdin_text, environment):
     git_environment = environment_without_git_redirection()
     session_top = checkout_top(cwd, git_environment) if cwd else None
     due = []
+    unchecked = []
     main_bases = {}
     documents = find_markdown_file_paths_linked_or_named_in_agent_reply(
         reply, cwd, git_environment,
         lambda path: is_skipped(path, log_store_directory, record_names))
     for document in documents:
         document_top = checkout_top(document.parent, git_environment)
-        if document_top is not None and not document_differs_from_main(
-                document, document_top, git_environment, main_bases):
-            continue
+        if document_top is not None:
+            try:
+                changed = document_differs_from_main(
+                    document, document_top, git_environment, main_bases)
+            except GitComparisonFailure as failure:
+                reason = " ".join(str(failure).split())
+                print(UNCHECKED_STDERR_LINE.format(document=document, reason=reason),
+                      file=sys.stderr)
+                unchecked.append((document, reason))
+                continue
+            if not changed:
+                continue
         stores = [store]
         for top in (document_top, session_top):
             if top is not None and top / record_names.RECORDS_DIRECTORY_NAME not in stores:
@@ -416,9 +449,15 @@ def run(stdin_text, environment):
         if document_is_due(document, stores, document_top, record_names,
                            payload.get("session_id")):
             due.append(document)
-    if not due:
+    if not due and not unchecked:
         return None
-    lines = [REMINDER_OPENING] + [f"  {document}" for document in due]
+    lines = []
+    if due:
+        lines += [REMINDER_OPENING] + [f"  {document}" for document in due]
+    if unchecked:
+        lines += [UNCHECKED_OPENING]
+        lines += [f"- {document}: {reason}" for document, reason in unchecked]
+        lines += [UNCHECKED_INSTRUCTION]
     lines += list(REMINDER_INSTRUCTIONS)
     return json.dumps({"hookSpecificOutput": {
         "hookEventName": "Stop",

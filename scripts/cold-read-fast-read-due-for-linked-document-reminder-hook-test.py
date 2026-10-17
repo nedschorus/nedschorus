@@ -61,12 +61,39 @@ def object_file(checkout, revision):
     return Path(checkout) / ".git" / "objects" / name[:2] / name[2:]
 
 
-def expect_fault(case_name, completed, stderr_part):
-    check(f"{case_name}: exit 1, one stderr line, no output",
-          completed.returncode == 1 and completed.stdout == ""
-          and "made no check" in completed.stderr and stderr_part in completed.stderr
-          and len(completed.stderr.strip().splitlines()) == 1,
-          f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
+def expect_unchecked(case_name, completed, document, reason_part, due_paths=None):
+    """The document is listed as not checked, with git's reason, and the others are still judged."""
+    check(f"{case_name}: exit 0", completed.returncode == 0,
+          f"exit {completed.returncode}, stderr {completed.stderr!r}")
+    context = (json.loads(completed.stdout)["hookSpecificOutput"]["additionalContext"]
+               if completed.returncode == 0 and completed.stdout.strip() else "")
+    listed = [line for line in context.splitlines() if line.startswith("- ")]
+    check(f"{case_name}: listed as not checked, with git's reason",
+          "due check failed" in context and len(listed) == 1
+          and listed[0].startswith(f"- {document.resolve()}: ") and reason_part in listed[0],
+          f"context {context!r}")
+    check(f"{case_name}: one stderr line naming the document and git's reason",
+          len(completed.stderr.strip().splitlines()) == 1
+          and "did not check" in completed.stderr and str(document.resolve()) in completed.stderr
+          and reason_part in completed.stderr,
+          f"stderr {completed.stderr!r}")
+    expected = [str(path.resolve()) for path in due_paths or []]
+    check(f"{case_name}: the other documents are still judged",
+          reported_paths(completed) == expected,
+          f"reported {reported_paths(completed)!r}, expected {expected!r}")
+
+
+def git_that_on(subcommand, action):
+    """A PATH entry whose git runs the shell action when given the subcommand, else runs git."""
+    directory = SUITE_ROOT / f"git-{action.split()[0]}-on-{subcommand}"
+    directory.mkdir(exist_ok=True)
+    fake = directory / "git"
+    fake.write_text(
+        "#!/bin/sh\n"
+        f'for argument in "$@"; do [ "$argument" = "{subcommand}" ] && {action}; done\n'
+        f'exec "{shutil.which("git")}" "$@"\n')
+    fake.chmod(0o755)
+    return {"PATH": f"{directory}{os.pathsep}{os.environ['PATH']}"}
 
 
 def check(case_name, condition, detail=""):
@@ -476,10 +503,18 @@ def main():
            case.run(f"See file://{elsewhere}."), [elsewhere])
 
     case = Case()
-    case.document("docs/plan-of-record.md")
     git(case.checkout, "update-ref", "-d", "refs/remotes/origin/main")
-    expect_fault("a checkout without origin/main is a fault",
-                 case.run("See docs/plan-of-record.md."), "git merge-base")
+    no_main = case.document("docs/plan-of-record.md")
+    expect_unchecked("a checkout without origin/main lists its document as not checked",
+                     case.run("See docs/plan-of-record.md."), no_main, "git merge-base")
+    other = case.root / "other-checkout-with-main"
+    make_checkout_with_main(other)
+    changed_elsewhere = other / "docs" / "design.md"
+    changed_elsewhere.parent.mkdir(parents=True)
+    changed_elsewhere.write_text("new there\n")
+    expect_unchecked("a document that cannot be checked does not stop the check of another",
+                     case.run(f"See file://{no_main} and file://{changed_elsewhere}."),
+                     no_main, "git merge-base", [changed_elsewhere])
 
     case = Case()
     document = case.document("docs/plan-of-record.md", text="when the branch was cut\n")
@@ -499,15 +534,35 @@ def main():
     case.document("docs/plan-of-record.md", text="on main\n")
     commit_to_main(case.checkout, "docs/plan-of-record.md")
     object_file(case.checkout, "refs/remotes/origin/main^{tree}").unlink()
-    expect_fault("a main whose tree git cannot read is a fault",
-                 case.run("See docs/plan-of-record.md."), "git ls-tree")
+    expect_unchecked("a main whose tree git cannot read lists the document as not checked",
+                     case.run("See docs/plan-of-record.md."),
+                     case.checkout / "docs/plan-of-record.md", "git ls-tree")
 
     case = Case()
     case.document("docs/plan-of-record.md", text="on main\n")
     commit_to_main(case.checkout, "docs/plan-of-record.md")
     object_file(case.checkout, "refs/remotes/origin/main:docs/plan-of-record.md").unlink()
-    expect_fault("a main whose copy of the document git cannot read is a fault",
-                 case.run("See docs/plan-of-record.md."), "git cat-file")
+    expect_unchecked("a main whose copy of the document git cannot read lists it as not checked",
+                     case.run("See docs/plan-of-record.md."),
+                     case.checkout / "docs/plan-of-record.md", "git cat-file")
+
+    # A git killed by a signal exits with a negative code, which is a failure too.
+    for subcommand in ("merge-base", "ls-tree", "cat-file"):
+        case = Case()
+        on_main = case.document("docs/plan-of-record.md", text="on main\n")
+        commit_to_main(case.checkout, "docs/plan-of-record.md")
+        expect_unchecked(f"a git {subcommand} killed by a signal lists the document as not checked",
+                         case.run("See docs/plan-of-record.md.",
+                                  environment_extra=git_that_on(subcommand, "kill -9 $$")),
+                         on_main, f"git {subcommand}")
+
+    case = Case()
+    on_main = case.document("docs/plan-of-record.md", text="on main\n")
+    commit_to_main(case.checkout, "docs/plan-of-record.md")
+    expect_unchecked("a git merge-base that outlasts its time limit lists the document as not checked",
+                     case.run("See docs/plan-of-record.md.",
+                              environment_extra=git_that_on("merge-base", "exec sleep 30")),
+                     on_main, "TimeoutExpired")
 
     loose = SUITE_ROOT / "in-no-checkout" / "notes.md"
     loose.parent.mkdir(parents=True)
