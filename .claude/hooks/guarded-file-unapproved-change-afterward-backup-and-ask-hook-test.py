@@ -145,7 +145,7 @@ def fresh(scratch_root, name, machine="ned-box"):
 
 def main():
     with tempfile.TemporaryDirectory() as scratch:
-        cases(scratch)
+        cases(os.path.realpath(scratch))
     print(f"\n{'FAILED' if failures else 'PASSED'}: {failures} failing case(s)")
     return 1 if failures else 0
 

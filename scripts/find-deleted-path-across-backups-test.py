@@ -1444,7 +1444,7 @@ for variable in ("GIT_COMMON_DIR", "GIT_DIR"):
         check("real git: with %s naming another clone, the git surface still FINDS a file only the "
               "searched repository's history holds" % variable,
               report.status == FOUND and git_sources(report) and git_sources(report)[0].endswith(":a/b.md")
-              and [version.repo for version in report.versions] == [str(repo)],
+              and [version.repo for version in report.versions] == [os.path.realpath(repo)],
               "%s %s %s" % (report.status, report.lines, git_sources(report)))
         check("real git: with %s naming another clone, the reflog surface searches the repository asked "
               "about: NOT FOUND, because every ref there already reaches the file" % variable,
