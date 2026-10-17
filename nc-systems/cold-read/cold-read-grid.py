@@ -25,7 +25,11 @@ document -- for a merged topic branch, the merge, not the topic's own commit --
 prints
 "cold-read-full-run N of 3", and refuses a fourth. A flag saying the user
 decided to run again or to change the design makes the run number 1, and the
-marker file it leaves in its record starts the count again for later runs. A log-store or git history that cannot be read does not stop the read, as
+marker file it leaves in its record starts the count again for later runs.
+Inside design-to-main, whose own limit of two rounds bounds a writer's cold
+reads, a second flag skips the count: the run is neither counted nor refused,
+and the marker file it leaves keeps its record out of every later count. The
+two flags say opposite things, so the grid refuses both together. A log-store or git history that cannot be read does not stop the read, as
 with shipping: the run goes ahead and says EARLIER COLD-READ-FULL-RUNS NOT COUNTED
 instead of a count.
 
@@ -240,6 +244,9 @@ record_directory_name_for_target = record_names.record_directory_name_for_target
 FULL_RUN_LIMIT = 3
 USER_RULED_COUNT_RESTART_FLAG = "--user-ruled-cold-read-full-run-count-restart"
 USER_RULED_COUNT_RESTART_MARKER_NAME = "user-ruled-cold-read-full-run-count-restart-marker.txt"
+COUNT_SKIPPED_INSIDE_DESIGN_TO_MAIN_FLAG = "--cold-read-full-run-count-skipped-inside-design-to-main"
+COUNT_SKIPPED_INSIDE_DESIGN_TO_MAIN_MARKER_NAME = (
+    "cold-read-full-run-count-skipped-inside-design-to-main-marker.txt")
 # A grid report's name. Older records prefix each report with "<record name>--".
 # A fast read's record holds fast-read.md and, beside it, a copy of the target
 # marked with sentence ids, whose name matches this pattern too when the
@@ -328,7 +335,8 @@ def earlier_full_runs_since_count_start(frozen_paths: set, landed_at, listing: l
         # An interrupted shipment's staging copy holds the same files as its record.
         if directory.startswith(record_shipper.STAGING_DIRECTORY_PREFIX):
             continue
-        record = records.setdefault(directory, {"frozen": False, "reported": None, "marked": None})
+        record = records.setdefault(directory, {"frozen": False, "reported": None, "marked": None,
+                                                "inside_design_to_main": False})
         frozen = inside.removeprefix(record_names.FROZEN_TARGET_DIRECTORY_NAME + "/")
         if frozen != inside and any(frozen == p or frozen.endswith("/" + p) for p in frozen_paths):
             record["frozen"] = True
@@ -337,12 +345,15 @@ def earlier_full_runs_since_count_start(frozen_paths: set, landed_at, listing: l
             record["reported"] = max(record["reported"] or 0.0, float(mtime))
         elif inside == USER_RULED_COUNT_RESTART_MARKER_NAME:
             record["marked"] = float(mtime)
+        elif inside == COUNT_SKIPPED_INSIDE_DESIGN_TO_MAIN_MARKER_NAME:
+            record["inside_design_to_main"] = True
     # The marker is written when its run starts, before any report, so a run
     # whose every cell failed still restarts the count.
     count_start = max([landed_at or 0.0] + [record["marked"] for record in records.values()
                                              if record["frozen"] and record["marked"] is not None])
     runs = sorted((record["reported"], directory) for directory, record in records.items()
-                  if record["frozen"] and record["reported"] and record["reported"] > count_start)
+                  if record["frozen"] and not record["inside_design_to_main"]
+                  and record["reported"] and record["reported"] > count_start)
     return [directory for _, directory in runs]
 
 
@@ -819,6 +830,10 @@ def main() -> int:
         help=f"the user ruled, after this document's cold-read-full-run {FULL_RUN_LIMIT} "
              f"of {FULL_RUN_LIMIT}, to run again or to change the design; this run "
              f"starts the count again at 1")
+    parser.add_argument(
+        COUNT_SKIPPED_INSIDE_DESIGN_TO_MAIN_FLAG, action="store_true",
+        help="this run is a writer's cold read inside design-to-main, whose own limit "
+             "bounds it; the run is not counted, refused or counted later")
     args = parser.parse_args()
 
     target = pathlib.Path(args.target)
@@ -847,15 +862,28 @@ def main() -> int:
             return 2
 
     user_ruled_count_restart = args.user_ruled_cold_read_full_run_count_restart
+    count_skipped_inside_design_to_main = args.cold_read_full_run_count_skipped_inside_design_to_main
+    if user_ruled_count_restart and count_skipped_inside_design_to_main:
+        print(f"cold-read-grid: refusing to run with both {USER_RULED_COUNT_RESTART_FLAG} and "
+              f"{COUNT_SKIPPED_INSIDE_DESIGN_TO_MAIN_FLAG}: the first restarts the count of "
+              f"this document's cold-read-full-runs, the second keeps this run out of the "
+              f"count. No reviewer was launched and no record directory was created.\n"
+              f"Inside design-to-main, run again with {COUNT_SKIPPED_INSIDE_DESIGN_TO_MAIN_FLAG} "
+              f"alone.\n"
+              f"Outside design-to-main, after the user ruled to run again, run again with "
+              f"{USER_RULED_COUNT_RESTART_FLAG} alone.", file=sys.stderr)
+        return 2
     # Like shipping, counting needs ned-box, and a review must not wait on ned-box.
     count_unavailable = None
     earlier_runs = []
-    try:
-        earlier_runs = earlier_full_runs_of(target)
-    except FullRunCountUnavailable as error:
-        count_unavailable = str(error)
+    if not count_skipped_inside_design_to_main:
+        try:
+            earlier_runs = earlier_full_runs_of(target)
+        except FullRunCountUnavailable as error:
+            count_unavailable = str(error)
     run_number = 1 if user_ruled_count_restart else len(earlier_runs) + 1
-    if run_number > FULL_RUN_LIMIT and count_unavailable is None:
+    if (run_number > FULL_RUN_LIMIT and count_unavailable is None
+            and not count_skipped_inside_design_to_main):
         print(f"cold-read-grid: refusing cold-read-full-run {run_number} of "
               f"{target.name}: a change to a document gets at most {FULL_RUN_LIMIT} "
               f"before the user decides whether it gets more, and {len(earlier_runs)} "
@@ -879,6 +907,11 @@ def main() -> int:
         (record_dir / USER_RULED_COUNT_RESTART_MARKER_NAME).write_text(
             "The user ruled to run this document's cold-read-full-runs again.\n",
             encoding="utf-8")
+    if count_skipped_inside_design_to_main:
+        # Written at the start, like the restart marker, so a run whose every cell failed is still left out.
+        (record_dir / COUNT_SKIPPED_INSIDE_DESIGN_TO_MAIN_MARKER_NAME).write_text(
+            "This cold-read-full-run ran inside design-to-main and is not counted.\n",
+            encoding="utf-8")
     reference_integrity_pre_pass(target, record_dir)
 
     # All reviewers read the frozen bytes so live edits cannot split the review across versions.
@@ -893,7 +926,9 @@ def main() -> int:
               file=sys.stderr)
         return 2
     # Freezing can fail, so announce launch only after the copy succeeds.
-    if count_unavailable is None:
+    if count_skipped_inside_design_to_main:
+        print(f"cold-read-full-run count skipped for {target.name}: this run is inside design-to-main.")
+    elif count_unavailable is None:
         print(f"cold-read-full-run {run_number} of {FULL_RUN_LIMIT} for {target.name}.")
     else:
         print(f"EARLIER COLD-READ-FULL-RUNS NOT COUNTED: this run went ahead without "

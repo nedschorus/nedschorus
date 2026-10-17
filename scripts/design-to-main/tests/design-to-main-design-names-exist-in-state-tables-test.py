@@ -151,6 +151,12 @@ BACKTICKED_TOKENS_THAT_ARE_NOT_MACHINE_NAMES = {
     "main-moving-too-fast": "a gatekeeper error code, the gatekeeper's catalog (section 3.4)",
     "gatekeeper-source-refused": "a gatekeeper error code, the gatekeeper's catalog (section 3.4)",
     "malformed-field": "a gatekeeper error code, the gatekeeper's catalog (section 3.4)",
+    "Deferred-decisions": "a section heading of a design, whose unsorted lines "
+                          "design-acceptance-by-agent rejects (sections 6.2 and 11)",
+    "Decided elsewhere": "a section heading of a design, whose lines each name the owner "
+                         "of their decision (sections 6.2, 6.6 and 11)",
+    "#rejected": "the hashtag that begins a deferred-decisions line the user turned down "
+                 "(sections 6.2 and 6.6)",
 }
 
 # Names in the design that no code defines, found when this test was
