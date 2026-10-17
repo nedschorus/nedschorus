@@ -109,9 +109,17 @@ def main(argv=None):
               f"cd {checkout} && python3 scripts/branch-conflict-check.py --head {head_full} "
               f"--pull-request {number}\n"
               f"If that reports VERDICT: CONFLICT, send pull request {number} back to its "
-              f"author for the hand-merge that report describes, and review it again after "
-              f"the author pushes.\n"
-              f"If it reports no conflict, run this again with the current main commit.")
+              f"author, who replaces it with a new pull request cut from current main as "
+              f"that report describes, and review the new pull request when it opens.\n"
+              f"If it reports no conflict, the conflict is with main commit "
+              f"{arguments.main_commit[:8]}, not with current origin/main: run this "
+              f"program again with the current main commit:\n"
+              f"cd {checkout} && git fetch -q origin && python3 "
+              f"scripts/merge-lane-pull-request-head-and-merged-worktrees-rebuild.py "
+              f"{number} {head_full} \"$(git rev-parse origin/main)\" "
+              f"--merge-lane-worktrees-and-outputs-directory "
+              f"{arguments.merge_lane_worktrees_and_outputs_directory} "
+              f"--review-tools-worktree-at-main {checkout}")
         return 1
     except GitStepFailed as failure:
         print(f"PR {number}: worktrees not rebuilt: {failure}\n"

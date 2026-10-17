@@ -560,7 +560,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               "branch from origin/main. If this seat has "
               "open pull requests, check their state with `gh`: merge-lane-2 reviews "
               "and merges them; when one has a review with findings, dispatch a forked "
-              "subagent to fix it \u2014 never extend a head you've already pushed. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes."),
+              "subagent to fix it \u2014 never extend a head you've already pushed. When one conflicts with main, run scripts/branch-conflict-check.py and do what its report says: the pull request is replaced by a new one cut from current main."),
           repr(supervisor.BRANCH_STATE_INSTRUCTION))
     # This fixture passes no roster and its verbatim block is not
     # unterminated, so the branch-state segment ends the preamble and only the
@@ -582,7 +582,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               "from origin/main. If this seat has "
               "open pull requests, check their state with `gh`: merge-lane-2 reviews "
               "and merges them; when one has a review with findings, dispatch a "
-              "forked subagent to fix it — never extend a head you've already pushed. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes.",
+              "forked subagent to fix it — never extend a head you've already pushed. When one conflicts with main, run scripts/branch-conflict-check.py and do what its report says: the pull request is replaced by a new one cut from current main.",
               expected_rest_after_the_branch_state_line),
           "rest after the pinned line: "
           + repr(synced_prompt.split("branch-conflict-check.py describes.", 1)[-1])
@@ -608,7 +608,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               "start new work on a branch from origin/main. If this seat has open "
               "pull requests, check their state with `gh`: merge-lane-2 reviews and "
               "merges them; when one has a review with findings, dispatch a forked "
-              "subagent to fix it — never extend a head you've already pushed. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes."),
+              "subagent to fix it — never extend a head you've already pushed. When one conflicts with main, run scripts/branch-conflict-check.py and do what its report says: the pull request is replaced by a new one cut from current main."),
           repr(boot_recovery_prompt))
     # The branch-state half of that instruction, pinned as its own exact line
     # (user-ruled 2026-09-16, "y", item 1 of nedschorus#418, verbatim). It
@@ -2021,7 +2021,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
         "from origin/main. If this seat has "
         "open pull requests, check their state with `gh`: merge-lane-2 reviews "
         "and merges them; when one has a review with findings, dispatch a "
-        "forked subagent to fix it — never extend a head you've already pushed. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes.")
+        "forked subagent to fix it — never extend a head you've already pushed. When one conflicts with main, run scripts/branch-conflict-check.py and do what its report says: the pull request is replaced by a new one cut from current main.")
     fields = {"written-at": "2026-09-28T17:20:00Z", "next-step": "finish the supervisor"}
     try:
         prompt = supervisor.build_ignition_prompt(
@@ -2551,7 +2551,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
         "from origin/main. If this seat has "
         "open pull requests, check their state with `gh`: merge-lane-2 reviews "
         "and merges them; when one has a review with findings, dispatch a "
-        "forked subagent to fix it — never extend a head you've already pushed. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes.")
+        "forked subagent to fix it — never extend a head you've already pushed. When one conflicts with main, run scripts/branch-conflict-check.py and do what its report says: the pull request is replaced by a new one cut from current main.")
     fields = {"written-at": "2026-09-30T19:20:00Z", "next-step": "finish the review"}
     try:
         prompt = supervisor.build_ignition_prompt(
@@ -2708,7 +2708,7 @@ def run_boot_ignition_case(workspace: Path):
           "on a branch from origin/main. If this seat has open pull requests, "
           "check their state with `gh`: merge-lane-2 reviews and merges them; "
           "when one has a review with findings, dispatch a forked subagent to "
-          "fix it — never extend a head you've already pushed. When one conflicts with main, clear the conflict with the hand-merge that scripts/branch-conflict-check.py describes."
+          "fix it — never extend a head you've already pushed. When one conflicts with main, run scripts/branch-conflict-check.py and do what its report says: the pull request is replaced by a new one cut from current main."
           in launched,
           launched[:700])
     state = supervisor.read_supervisor_state(handoff_directory / "bootignite-supervisor-state.json")
