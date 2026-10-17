@@ -174,12 +174,13 @@ UNCHECKED_OPENING = (
 UNCHECKED_INSTRUCTION = (
     "Give the fast read below to each of these not marked as read that you "
     "changed since its last cold-read-fast-read, and to each you cannot tell about.")
-UNCHECKED_ALREADY_READ_SUFFIX = (
+UNCHECKED_ALREADY_READ_NOTICE = (
     " (marked as read: it has had a cold-read-fast-read since its last change, "
-    "so it needs none now)")
+    "or this agent-session has given it one, so it needs none now)")
 UNCHECKED_STDERR_LINE = (
-    "cold-read-fast-read-due-for-linked-document-reminder-hook: did not check "
-    "{document}, because git could not compare it with origin/main: {reason}")
+    "cold-read-fast-read-due-for-linked-document-reminder-hook: could not tell "
+    "whether the git checkout that holds {document} changed it, because git could not "
+    "compare it with origin/main: {reason}")
 REMINDER_INSTRUCTIONS = (
     "Run on each document, from your checkout: python3 " + FAST_READ_PROGRAM
     + " --target <document path>",
@@ -476,7 +477,7 @@ def run(stdin_text, environment):
         lines += [REMINDER_OPENING] + [f"  {document}" for document in due]
     if unchecked:
         lines += [UNCHECKED_OPENING]
-        lines += [f"- {document}: {reason}" + ("" if is_due else UNCHECKED_ALREADY_READ_SUFFIX)
+        lines += [f"- {document}: {reason}" + ("" if is_due else UNCHECKED_ALREADY_READ_NOTICE)
                   for document, reason, is_due in unchecked]
         if unchecked_due:
             lines += [UNCHECKED_INSTRUCTION]

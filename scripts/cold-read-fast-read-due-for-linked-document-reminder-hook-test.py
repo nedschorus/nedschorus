@@ -65,8 +65,8 @@ def expect_unchecked(case_name, completed, document, reason_part, due_paths=None
                      already_read=False):
     """The document is listed as not checked, with git's reason, and the others are still judged.
 
-    A document with a fast read on record since its last change is marked as read, and no
-    fast read is asked for it; any other is asked a fast read.
+    A document with a fast read on record since its last change, or one this agent-session
+    fast-read, is marked as read, and no fast read is asked for it; any other is asked a fast read.
     """
     check(f"{case_name}: exit 0", completed.returncode == 0,
           f"exit {completed.returncode}, stderr {completed.stderr!r}")
@@ -79,14 +79,16 @@ def expect_unchecked(case_name, completed, document, reason_part, due_paths=None
           f"context {context!r}")
     check(f"{case_name}: one stderr line naming the document and git's reason",
           len(completed.stderr.strip().splitlines()) == 1
-          and "did not check" in completed.stderr and str(document.resolve()) in completed.stderr
+          and "could not tell whether" in completed.stderr and str(document.resolve()) in completed.stderr
           and reason_part in completed.stderr,
           f"stderr {completed.stderr!r}")
     fast_read_asked = "Run on each document" in context and "not marked as read" in context
     if already_read:
         check(f"{case_name}: marked as read, and no fast read asked for it",
-              listed and "(marked as read" in listed[0] and not fast_read_asked,
+              listed and "(marked as read" in listed[0] and "not marked as read" not in context,
               f"context {context!r}")
+        check(f"{case_name}: the fast read's command is given only when another document is due",
+              ("Run on each document" in context) == bool(due_paths), f"context {context!r}")
     else:
         check(f"{case_name}: not marked as read, and a fast read asked for it",
               listed and "(marked as read" not in listed[0] and fast_read_asked,
