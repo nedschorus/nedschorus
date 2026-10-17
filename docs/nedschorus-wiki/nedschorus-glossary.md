@@ -41,6 +41,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **fix-round** — one cycle of a pull request answering review findings, written by a forked subagent that inherits the author's full context, as one commit on top of the frozen-head.
 - **fresh-agent** — a minimal-context agent: one that has read only its agent-instructions, the documents selected for it to read, and (recursively) the documents linked from the selected documents.
 - **fresh-reader** — a fresh-agent, or a person, reading a document with no context beyond the document and what it links.
+- **frozen-copy** — the copy of a document that a cold read's reviewers read, taken when the run starts.
 - **frozen-head** — a pull request's head commit once pushed, which is never amended or force-pushed; a fix is a new commit on top.
 - **GHI** — GitHub issue
 - **ghi-info** — the GHI knowledge agent, which an agent asks, with `scripts/ghi-info-ask.py`, which issues to read before filing or editing an issue.
@@ -57,6 +58,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **link-only-GHI** — a GHI whose body is only links to its GHI-MD and supporting documents; the GHI-MD holds the text.
 - **log-store** — the directory on ned-box, `/home/nedlern/nedschorus-logs/`, holding the byproducts of the work that are not the system, cold-read records first.
 - **main-gatekeeper** — the program that will be the only way a change reaches main. Until it is live, changes reach main by PR through merge-lane.
+- **maintenance-job** — a job that runs on a regular schedule, some of them daily, to catch what an immediate check, such as a hook, missed, or to clear what builds up, such as old worktrees.
 - **merge-lane** — the role that reviews and merges every PR into main, held by the agent-seat merge-lane-2 on ned-box.
 - **NBD** — nice-but-dirty.
 - **NC** — this project, NedsChorus.
@@ -65,6 +67,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **obvious-fix marker** — a `.walk-approved` marker that begins 'Obvious fix under CLAUDE.md's standing approval:', which lets an agent fix one of the four obvious errors CLAUDE.md lists, in a guarded file, without asking the user first.
 - **project-term** — a name with a meaning specific to this project and used by more than one of its systems or subsystems, listed in this glossary: an abbreviation such as GHI, a skill's slash name such as /handoff, or a hyphenated phrase such as agent-seat, or a filename suffix such as -draft, whose leading hyphen marks it as a project-term. A word this glossary does not list is not a project-term; a term one system uses alone is a system-term.
 - **proposed-improvements-or-changes-file** — a file beside a GHI-MD or an architecture overview, named `<document name>-proposed-improvements-or-changes-<source>-<date>.md`, in which one reviewer records changes it proposes to that document or to what the document describes; GHI [Proposed improvements or changes to a GHI are handled by agents first, and reach the user only when they need him](https://github.com/nedschorus/nedschorus/issues/1132) says how its entries are settled.
+- **provisional-addition** — a line an agent adds to an issue's Markdown file under "Provisional additions (not yet vetted by the user)", which becomes a ruling only when the user reviews the issue.
 - **queue-drain** — the procedure that empties the queue directories and `docs/drafts/`, promoting, archiving or deleting each item; its issue is GHI [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, docs/drafts and the draft-label issue queue](https://github.com/nedschorus/nedschorus/issues/24).
 - **reincarnate-seat** — the handoff-supervisor replacing an agent-session with a fresh one that continues from the session-handoff, usually when the agent-session's context runs low.
 - **retire-seat** — to end an agent-seat for good so its name can be freed or reused; distinct from pausing it. The steps are in `docs/nedschorus-wiki/nedschorus-agent-seat-model.md`.
@@ -72,10 +75,12 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **seat-branch** — the long-lived git branch of one agent-seat, named for the agent-seat, that the handoff-supervisor's launcher creates; its agent-sessions work on topic branches cut from main.
 - **seat-brief** — the `CLAUDE.local.md` at the root of an agent-seat's checkout, which git does not track: the file an agent-seat's occupant reads to learn its job.
 - **session-handoff** — the act of transferring the key context and state of one agent-session to the next, and the file that carries it, `~/.claude/handoffs/<seat>-handoff.md`, on the agent-seat's machine only and never committed.
+- **shared-log** — the one log that every program on a machine writes to through Python's logging, one JSON line per event, copied to the log-store.
 - **soft-block** — a refusal the agent clears by writing its own reasoning into the marker the refusal names.
 - **system-term** — a term used by one system or subsystem alone, defined in that system's own glossary rather than here; a term used by more than one is a project-term, defined here and in no system glossary. The system glossaries are listed at the top of this page.
 - **test-design** — the document, written from a design and its design-contract, listing one test-requirement per design-requirement a test must observe, each with the coverage-type of the test that will cover it.
 - **test-requirement** — one line of a test-design: one design-requirement, the coverage-type and names of the tests that check it, or `no-tests` with the reason.
 - **user-block** — a refusal that only the user's approval, quoted into the marker the refusal names, clears.
 - **user-ruling** — a decision by the user, recorded where it applies in the form (user-ruled YYYY-MM-DD).
+- **walk-runner** — the program that will run an approval-walk's bookkeeping: it hands the agent the current item, counts its words, and records each ruling in the walk-minutes.
 - **work-snapshot** — a git commit, kept under `refs/work-snapshots/` and never on a branch, that copies one worktree's uncommitted changes so they survive a crash.
