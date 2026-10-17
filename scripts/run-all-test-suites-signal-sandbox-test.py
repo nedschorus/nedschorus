@@ -296,7 +296,7 @@ def run_runner(scratch, repository, path):
     return completed, report
 
 
-OUTSIDE_SUITE = "scripts/mac-window-opened-for-ned-box-forced-command-test.py"
+OUTSIDE_SUITE = "scripts/mac-request-from-ned-box-forced-command-test.py"
 
 if linux_only_cases_run_here("the report's sandbox lines"):
     with tempfile.TemporaryDirectory() as scratch_name:

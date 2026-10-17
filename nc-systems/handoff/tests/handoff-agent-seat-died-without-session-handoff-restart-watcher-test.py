@@ -33,7 +33,7 @@ _spec.loader.exec_module(watcher_module)
 
 _forced_spec = importlib.util.spec_from_file_location(
     "mac_window_opened_for_ned_box_forced_command",
-    REPOSITORY / "scripts" / "mac-window-opened-for-ned-box-forced-command.py")
+    REPOSITORY / "scripts" / "mac-request-from-ned-box-forced-command.py")
 forced_command = importlib.util.module_from_spec(_forced_spec)
 _forced_spec.loader.exec_module(forced_command)
 

@@ -746,7 +746,7 @@ with tempfile.TemporaryDirectory() as root:
              "could not reach the Mac"),
             ("a Mac whose clone predates the request",
              a_runner_returning(
-                 stderr=b"mac-window-opened-for-ned-box-forced-command: no "
+                 stderr=b"mac-request-from-ned-box-forced-command: no "
                         b"window was opened, because the request does not "
                         b"start with the verb 'open-window'.",
                  returncode=reader.mac_forced_command.EXIT_REFUSED),
@@ -775,7 +775,7 @@ with tempfile.TemporaryDirectory() as root:
             ["--seats", "--store", str(store), "--machine", "both"],
             runner=a_runner_returning(
                 stdout=MAC_TAR, calls=warned_calls,
-                stderr=b"mac-window-opened-for-ned-box-forced-command: the "
+                stderr=b"mac-request-from-ned-box-forced-command: the "
                        b"task lists were sent, but the outcome could not be "
                        b"added to the request log"))
     check("on ned-box, a Mac that sent its store but warned keeps the "
@@ -821,7 +821,7 @@ with tempfile.TemporaryDirectory() as root:
              "--machine", "both"],
             runner=a_runner_returning(
                 stdout=MAC_TAR,
-                stderr=b"mac-window-opened-for-ned-box-forced-command: the "
+                stderr=b"mac-request-from-ned-box-forced-command: the "
                        b"task lists were sent, but the outcome could not be "
                        b"added to the request log"))
     check("on ned-box, a refusal after a Mac that warned passes the warning "

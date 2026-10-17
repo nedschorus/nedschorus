@@ -14,7 +14,7 @@ The copy of the Mac's task lists that `scripts/transcript-mirror-to-log-store.py
 
 ## What exists
 
-ned-box already has one constrained route into the Mac. ned-box's key `~/.ssh/id_ed25519_mac_side_action` is admitted by the Mac's `~/.ssh/authorized_keys` for one forced command only, `scripts/mac-window-opened-for-ned-box-forced-command.py`, which accepts only the requests its docstring lists (open a window, open an agent-seat's window, open a file in Typora, open a page in the browser), logs every request, and refuses everything else. `scripts/open-mac-window-from-ned-box.py` sends those requests from ned-box, with that key, the Mac's address and a ten-second connection timeout.
+ned-box already has one constrained route into the Mac. ned-box's key `~/.ssh/id_ed25519_mac_side_action` is admitted by the Mac's `~/.ssh/authorized_keys` for one forced command only, `scripts/mac-request-from-ned-box-forced-command.py`, which accepts only the requests its docstring lists (open a window, open an agent-seat's window, open a file in Typora, open a page in the browser), logs every request, and refuses everything else. `scripts/open-mac-window-from-ned-box.py` sends those requests from ned-box, with that key, the Mac's address and a ten-second connection timeout.
 
 On the Mac, `scripts/seat-task-list-read.py` already reads ned-box's lists as one tar stream over ssh (`tar -C "$HOME/.claude/tasks" -cf - .`) and checks that the archive is complete before trusting it.
 

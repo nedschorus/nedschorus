@@ -820,14 +820,14 @@ def run_mac_window_cases(root: Path):
         capture_launches(workspace)
         patch("run_tmux", tmux_reports_clients(""))
         recovery.subprocess.run = opener_answers(
-            0, "opened\n", error_output="mac-window-opened-for-ned-box-forced-command: the window "
+            0, "opened\n", error_output="mac-request-from-ned-box-forced-command: the window "
             "opened, but its outcome could not be added to the request log: disk full\n")
         exit_code, output = recover_through_main(workspace)
         recovery.subprocess.run = real_subprocess_run
         check("MAC WINDOW: a window the Mac opened with a warning keeps the warning in the "
               "report, and the run exits 0",
               exit_code == 0 and "a window onto it opened on the Mac, which also reported: "
-              "mac-window-opened-for-ned-box-forced-command: the window opened, but its outcome "
+              "mac-request-from-ned-box-forced-command: the window opened, but its outcome "
               "could not be added to the request log: disk full" + reach in output,
               (exit_code, output))
 
