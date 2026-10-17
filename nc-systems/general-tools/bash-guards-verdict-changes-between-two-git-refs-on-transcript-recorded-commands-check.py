@@ -104,8 +104,9 @@ class ShellReaderLongRunningChildProcessDiedMidRequest(BaseException):
 # A stop signal must not raise SystemExit inside subprocess's own code: raised between Popen._wait()'s
 # lock acquire and its try, it leaves the lock held, and the wait() that subprocess.run() or
 # run_step_in_child() then makes blocks forever with the child unreaped. Every subprocess call in the
-# replay parent runs inside stop_deferred(), in which the handler only records the stop; the block's
-# exit raises SystemExit(2) from the replay's own code.
+# replay parent runs inside stop_deferred(), in which the handler only records the stop and the block's
+# exit raises SystemExit(2) from the replay's own code, except remove_checkouts(), which runs after the
+# stop signals are set to SIG_IGN.
 STOP_STATE = {"deferred": 0, "stop_requested": False}
 
 
