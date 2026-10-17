@@ -84,6 +84,20 @@
         },
         "ned-box": {"scheduler": "cron", "schedule": "30 4 * * 0"}
       }
+    },
+    {
+      "name": "daily-guarded-file-versions-and-approvals-store-removed-checkout-copies-prune",
+      "program": "nc-systems/general-tools/guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py",
+      "arguments": [],
+      "output": ".claude/daily-guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.log",
+      "on": {
+        "mac": {
+          "scheduler": "launchd",
+          "label": "com.nedschorus.daily-guarded-file-versions-and-approvals-store-removed-checkout-copies-prune",
+          "launchd_keys": {"StartCalendarInterval": {"Hour": 7, "Minute": 0}}
+        },
+        "ned-box": {"scheduler": "cron", "schedule": "0 7 * * *"}
+      }
     }
   ]
 }
