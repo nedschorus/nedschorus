@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""Stop hook: while an approval-walk is open, show the user the current item
-in full after each message the agent writes to him in answer to him, with the
-answers he can give.
+"""Stop hook: while an approval-walk is open, block the agent's stop when its
+reply to the user does not name the item waiting for his answer.
 
-Wired as a Stop hook in .claude/settings.json. The user answers the item at the
-end of what he reads, so the item is shown there by code rather than left to
-the agent to repeat. A turn that wrote nothing to the user, such as a silent
-turn after a background-task notice, shows nothing.
+Wired as a Stop hook in .claude/settings.json. The agent shows each item in
+full in its own message; a hook notice showing the item again was printed by
+the Claude Mac app as one "Stop says:" line per line of text, which the user
+took for a broken hook. A reply that names the waiting item by its running
+count, `Item N of M`, anywhere in its text passes: the item shown in full
+opens with its count, and any other reply can end with a line such as
+"Item 4 of 9 is waiting for your answer." A turn that wrote nothing to the
+user, such as a silent turn after a background-task notice, is not checked.
 
-ONLY A TURN THAT ANSWERS THE USER shows the item or blocks: a turn started by
+ONLY A TURN THAT ANSWERS THE USER is checked or blocks: a turn started by
 his own prompt, typed, queued or a slash command. A turn started by another
 agent-seat's message, a background-task notice, a coordinator's message or a
 scheduled prompt shows and blocks nothing, so a walk left open while the agent
-does other work does not repeat its item under every report, and the minutes,
+does other work is not sent back over every report, and the minutes,
 which change only when he answers, are not checked then. Claude Code records
 on each turn's opening prompt a `turnOrigin`, `human` for his own; the last
 user record carrying one names the current turn's origin, because a message
@@ -29,8 +32,8 @@ message, another agent-seat's message, a parent's message to its subagent,
 a background-task notice, or a local command. An injection is a record
 marked isMeta with no such origin, such as a loaded skill's text or a system
 reminder. Claude Code marks another agent-seat's message isMeta too, so the
-origin decides first. The item is shown only when an assistant message after
-the turn's start holds text.
+origin decides first. The reply is checked only when an assistant message
+after the turn's start holds text.
 
 THE OPEN APPROVAL-WALK. The walk-me-through skill keeps a `#next_to_present`
 line in each walk's docs/walk/<name>-minutes.md; agents write it at a line's
@@ -42,7 +45,7 @@ colon after the hashtag, `#next_to_present: none`, is read as the old form's
 colon was. Minutes written before the
 hashtag carry the old marker `Next to present:`; the last marker of either
 form counts, and when it is the old form on a walk that is not closed, the
-hook blocks with the line to add instead of showing an item. Its value is `none` or
+hook blocks with the line to add instead of checking the reply. Its value is `none` or
 `closed` for a closed walk, or opens with a running count, `item N`,
 `item 4.1`, `items 5 and 6`, `items 10 to 12`, with or without `of M`, and
 anything after the count, such as `(awaiting answer), then item 24`, is
@@ -59,40 +62,31 @@ nothing; it runs to the next running count, so headings inside an item, such
 as an original and a proposed section, stay in it. A heading that names
 several items is one unit, and so are the paragraphs under it that open with
 the count of one of its items, such as `**Item 10 of 12: ...**` under `##
-Items 10 and 11 of 12`; when the minutes name only some of its items, the
-text before its first such paragraph is shown with the paragraphs of the
-items named. A heading that keeps an earlier item beside its
+Items 10 and 11 of 12`. A heading that keeps an earlier item beside its
 revision says `revised` after its count, as in `## Item 27 of 72 (revised)`;
-only the latest revision is shown. A running count that names no item, such
-as a range that runs backwards, still ends the item before it, so that item is
-not shown with the next one's text; when the minutes name an item such a
-heading was meant to hold, or name an item that two headings carry when
-neither is a revision, the hook blocks naming the heading. When the minutes' value has no `of M`, the walk-document's
-own total is used, if its headings carry only one.
+only the latest revision counts. A running count that names no item, such
+as a range that runs backwards, still ends the item before it; when the
+minutes name an item such a heading was meant to hold, or name an item that
+two headings carry when neither is a revision, the hook blocks naming the
+heading. When the minutes' value has no `of M`, the walk-document's own total
+is used, if its headings carry only one.
 
-WHAT IS SHOWN is the text of the units the minutes name, taken from the
-walk-document in the walk-document's order, without heading marks, bold marks
-and separator lines, which Claude Code would show as written, followed by
-ANSWERS_LINE. Code spans and code blocks are shown as written: a `#` or `**`
-there is part of the code. So an
-agent that rewords an item edits the walk-document first, or the user is shown
-the old text.
+THE REPLY NAMES AN ITEM when its text holds a running count with the walk's
+total that covers it, in any of the forms above: `Item 11 of 12`, or
+`Items 10 and 11 of 12` for both. A count with another total, such as `item
+2 of 90` for item 2 of 9, names nothing.
 
-WHILE THE AGENT ANSWERS A STOP HOOK (stop_hook_active set), the item notice
-is still shown, under the one exemption in the Stop-hook silence rule's module,
-because it does not keep the agent going; a block on unusable minutes is not
-printed then. The hook then installs nothing, so a missing markdown-it-py is a
-fault there, which the Stop before it in the same turn, which installs it, has
-already met. SILENT when the agent-session is a headless `claude -p` child (its
-last words are its caller's answer), when the transcript is missing, when the
-turn's last reply is empty, when the cwd is not in a git checkout, and when no
-approval-walk is open.
+SILENT while the agent answers a Stop hook (stop_hook_active set), as the
+Stop-hook silence rule's module requires, when the agent-session is a
+headless `claude -p` child (its last words are its caller's answer), when the
+transcript is missing, when the turn's last reply is empty, when the cwd is
+not in a git checkout, when no approval-walk is open, and when the reply
+names every item the minutes name.
 
-OUTPUT: {"systemMessage": <the item and ANSWERS_LINE>}, which Claude Code
-shows the user and which does not keep the agent going. When the open walk's
-minutes line or walk-document cannot be used, there is no item to show, so the
-hook prints {"decision": "block", "reason": <message>} instead, which keeps
-the agent going with the message as its next instruction. ON A
+OUTPUT: {"decision": "block", "reason": <message>}, which keeps the agent
+going with the message as its next instruction: when the reply leaves out a
+waiting item, or when the open walk's minutes line or walk-document cannot be
+used, so the waiting item is unknown. ON A
 FAULT, such as input that is not JSON or a file it cannot read, the hook
 prints one line naming it on stderr and exits 1: Claude Code records a Stop
 hook's exit 1 as a non-blocking error and still ends the turn.
@@ -128,6 +122,7 @@ NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
 NUMBER_LIST = rf"{NUMBER}(?:{NUMBER_JOINER}{NUMBER})*(?![\d.]\d)"
 VALUE_COUNT = re.compile(rf"^items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b)?", re.I)
 HEADING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
+REPLY_COUNT = re.compile(rf"\bitems?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
 # Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
 REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
 NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
@@ -135,7 +130,6 @@ NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
 TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator", "task-notification")
 USER_TURN_ORIGIN = "human"
 
-ANSWERS_LINE = "Answer Y to approve, N to decline, D to defer, R to repeat the item, or E to have it explained."
 UNUSABLE_OPENING_TEMPLATE = (
     "approval-walk current-item check: the open approval-walk {walk} could not "
     "be checked: {problem}"
@@ -157,15 +151,30 @@ UNUSABLE_INSTRUCTIONS = (
     "`#next_to_present item 3 of 9`, `item 4.1 of 9`, `items 5 and 6 of 9` or `items 10 to 12 of 54`; "
     "change a heading in the walk-document only when the heading itself is misnumbered or "
     "lacks its running count `of M`.",
-    "Then end the turn: this hook shows the user the items the line names.",
+    "Then name in your reply the items the line names, showing them in full if the user has not "
+    "yet seen them, and end the turn.",
 )
 OLD_MARKER_PROBLEM = (
     "the newest marker line in its minutes {minutes} is the old form `Next to present:`, "
     "and the hook reads the current item only from a `#next_to_present` line.")
+REPLY_LEAVES_OUT_OPENING_TEMPLATE = (
+    "approval-walk current-item check: your reply to the user does not name {named}, which "
+    "the open approval-walk {walk} has waiting for his answer, so he cannot tell which item "
+    "his next answer goes to.")
+REPLY_LEAVES_OUT_INSTRUCTIONS = (
+    "If he has not yet seen the item, or asked to see it again, show it in full, word for word "
+    "as the walk-document {document} has it, starting with its running count, as in "
+    "`Item 4 of 9: <the point>`.",
+    "Otherwise, end your reply with one line naming it, as in `{example} {verb} waiting for "
+    "your answer.`",
+    "If his answer moved the approval-walk on, first set the `#next_to_present` line in "
+    "{minutes} to the items now waiting, then name those.",
+)
 OLD_MARKER_INSTRUCTIONS = (
     "Add this line at the end of {minutes}, below every earlier marker line, and leave "
     "the old lines as they are: {new_line}",
-    "Then end the turn: this hook shows the user the items the new line names.",
+    "Then name in your reply the items the new line names, showing them in full if the user has "
+    "not yet seen them, and end the turn.",
 )
 
 
@@ -265,12 +274,9 @@ def checkout_top(directory):
     return Path(os.fsdecode(output).rstrip("\n"))
 
 
-def markdown_parser(may_install):
-    """Return the parser; raise ImportError when markdown-it-py is missing and may_install is false."""
-    module = load_module("markdown_edit_hard_wrapped_paragraph_reminder_hook", MARKDOWN_PARSER_MODULE_FILE)
-    if may_install:
-        return module.markdown_parser()
-    return module.import_markdown_it()("commonmark").enable("table")
+def markdown_parser():
+    return load_module("markdown_edit_hard_wrapped_paragraph_reminder_hook",
+                       MARKDOWN_PARSER_MODULE_FILE).markdown_parser()
 
 
 def code_line_numbers(tokens):
@@ -367,28 +373,23 @@ def open_walk(walk_directory, parser):
 
 
 def item_units(document_text, parser):
-    """Return [(item numbers, M, text, problem, head, parts)] for each running count that starts an item.
+    """Return [(item numbers, M, problem)] for each running count that starts an item.
 
     A count starts an item on a heading, or on a paragraph opening with `**`, except a
     paragraph whose items the count heading above it already names, with no other count
-    between them, which stays in that heading's unit as one of its parts, [(item numbers,
-    text)], each running to the next; head is the unit's text before its first part, and
-    text holds head and parts. A
-    count that names no item still ends the unit before it; its unit has no numbers, and
-    problem names the heading and says why. problem is None for every other unit. A unit
-    is left out when a later heading that says `revised` right after its count names all
-    of its items.
+    between them, which stays in that heading's unit. A count that names no item still
+    ends the unit before it; its unit has no numbers, and problem names the heading and
+    says why. problem is None for every other unit. A unit is left out when a later
+    heading that says `revised` right after its count names all of its items.
     """
     lines = document_text.split("\n")
     starts = []
-    parts_by_start = {}
     group = None
     tokens = parser.parse(document_text)
     for index, token in enumerate(tokens):
         if token.map is None or token.type not in ("heading_open", "paragraph_open"):
             continue
-        first_line = token.map[0]
-        if token.type == "paragraph_open" and not lines[first_line].lstrip().startswith("**"):
+        if token.type == "paragraph_open" and not lines[token.map[0]].lstrip().startswith("**"):
             continue
         content = tokens[index + 1].content.split("\n")[0] if index + 1 < len(tokens) else ""
         match = HEADING_COUNT.match(content)
@@ -401,70 +402,27 @@ def item_units(document_text, parser):
         if token.type == "heading_open":
             group = (set(numbers), match[2])
         elif group and numbers and set(numbers) <= group[0] and match[2] == group[1]:
-            parts_by_start.setdefault(len(starts) - 1, []).append((first_line, numbers))
             continue
         else:
             group = None
         revised = bool(REVISED.match(content[match.end():]))
-        starts.append((first_line, numbers, match[2], problem, revised))
-    units = []
-    for index, (first_line, numbers, total, problem, _) in enumerate(starts):
-        if numbers and any(revised and later_total == total and set(numbers) <= set(later_numbers)
-                           for _, later_numbers, later_total, _, revised in starts[index + 1:]):
+        starts.append((numbers, match[2], problem, revised))
+    return [(numbers, total, problem) for index, (numbers, total, problem, _) in enumerate(starts)
+            if not (numbers and any(revised and later_total == total and set(numbers) <= set(later_numbers)
+                                    for later_numbers, later_total, _, revised in starts[index + 1:]))]
+
+
+def items_named_in(reply, total):
+    """Return the item numbers the reply's running counts with total M name."""
+    named = set()
+    for match in REPLY_COUNT.finditer(reply):
+        if match[2] != total:
             continue
-        end = starts[index + 1][0] if index + 1 < len(starts) else len(lines)
-        part_starts = parts_by_start.get(index, [])
-        part_ends = [part_line for part_line, _ in part_starts[1:]] + [end]
-        parts = [(part_numbers, "\n".join(lines[part_line:part_end]))
-                 for (part_line, part_numbers), part_end in zip(part_starts, part_ends)]
-        head = "\n".join(lines[first_line:part_starts[0][0] if part_starts else end])
-        units.append((numbers, total, "\n".join(lines[first_line:end]), problem, head, parts))
-    return units
-
-
-def shown_text(unit, numbers):
-    """Return the unit's text, or, when the minutes name only some of a grouped heading's
-    items and some of those have a part of their own, its head with those parts."""
-    unit_numbers, _, text, _, head, parts = unit
-    named_parts = [part_text for part_numbers, part_text in parts if set(part_numbers) & set(numbers)]
-    if set(unit_numbers) <= set(numbers) or not named_parts:
-        return text
-    return "\n".join([head] + named_parts)
-
-
-def without_bold_marks_outside_code_spans(line):
-    pieces, end = [], 0
-    for span in CODE_SPAN.finditer(line):
-        pieces += [line[end:span.start()].replace("**", ""), span[0]]
-        end = span.end()
-    return "".join(pieces + [line[end:].replace("**", "")])
-
-
-def without_heading_and_bold_marks(text, parser):
-    """Return text without heading marks, bold marks and separator lines, code left as written."""
-    lines = text.split("\n")
-    code_lines, heading_lines, separator_lines = set(), set(), set()
-    for token in parser.parse(text):
-        if token.map is None:
+        try:
+            named.update(expand_numbers(match[1]))
+        except UnusableRange:
             continue
-        span = range(*token.map)
-        if token.type in ("fence", "code_block"):
-            code_lines.update(span)
-        elif token.type == "heading_open" and token.markup.startswith("#"):
-            heading_lines.update(span)
-        elif token.type == "hr":
-            separator_lines.update(span)
-    shown = []
-    for number, line in enumerate(lines):
-        if number in code_lines:
-            shown.append(line)
-            continue
-        if number in separator_lines:
-            line = ""
-        elif number in heading_lines:
-            line = re.sub(r"^[ \t]{0,3}#{1,6}(?:[ \t]+|$)", "", line)
-        shown.append(without_bold_marks_outside_code_spans(line))
-    return "\n".join(shown).strip("\n")
+    return named
 
 
 def block_output(opening, instructions, **values):
@@ -477,20 +435,13 @@ def run(stdin_text, environment):
     payload = json.loads(stdin_text)
     rule = load_module("claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
                        STOP_HOOKS_STAY_SILENT_RULE_FILE)
-    # The item notice is the rule's one exemption; a block on unusable minutes stays silent.
-    output = output_for(payload, environment,
-                        rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload))
-    if not rule.stop_hook_output_may_be_printed_while_agent_answers_a_stop_hook(payload, output):
+    if rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
-    return output
+    return output_for(payload, environment)
 
 
-def output_for(payload, environment, answering_a_stop_hook):
-    """The item notice, a block naming why there is no item to show, or None.
-
-    While the agent answers a Stop hook, nothing is installed, because only a notice may be
-    printed then and computing it may write no state.
-    """
+def output_for(payload, environment):
+    """A block naming the waiting items the reply leaves out, or why they are unknown; or None."""
     if (environment.get("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER")
             or environment.get("CLAUDE_CODE_SESSION_ATTENDED") == "0"):
         return None
@@ -502,12 +453,13 @@ def output_for(payload, environment, answering_a_stop_hook):
     top = checkout_top(Path(payload["cwd"]))
     if top is None or not (top / WALK_DIRECTORY).is_dir():
         return None
-    parser = markdown_parser(may_install=not answering_a_stop_hook)
+    parser = markdown_parser()
     walk = open_walk(top / WALK_DIRECTORY, parser)
     if walk is None:
         return None
     records = transcript_records(Path(transcript_path).expanduser())
-    if not turn_answers_user(records) or not last_reply_text(records).strip():
+    reply = last_reply_text(records)
+    if not turn_answers_user(records) or not reply.strip():
         return None
     minutes, value, old_form = walk
     name = minutes.name[:-len(MINUTES_SUFFIX)]
@@ -549,7 +501,7 @@ def output_for(payload, environment, answering_a_stop_hook):
     missing = [number for number in numbers if not any(number in unit[0] for unit in units)]
     if missing:
         named = ", ".join(f"`Item {number} of {total}`" for number in missing)
-        unreadable = [unit[3] for unit in all_units if unit[1] == total and unit[3]]
+        unreadable = [unit[2] for unit in all_units if unit[1] == total and unit[2]]
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
             f"its walk-document has no heading {named}, which the minutes name"
             + "".join(f"; {each}" for each in unreadable) + "."))
@@ -559,18 +511,24 @@ def output_for(payload, environment, answering_a_stop_hook):
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
             f"its walk-document has more than one heading for {named}, so the hook cannot tell "
             f"which one the minutes name."))
-    shown = without_heading_and_bold_marks(
-        "\n".join(shown_text(unit, numbers).strip("\n") for unit in units), parser)
-    return json.dumps({"systemMessage": shown + "\n\n" + ANSWERS_LINE}, ensure_ascii=False)
+    named_in_reply = items_named_in(reply, total)
+    left_out = [number for number in numbers if number not in named_in_reply]
+    if not left_out:
+        return None
+    example = (f"Item {numbers[0]} of {total}" if len(numbers) == 1
+               else f"Items {', '.join(numbers[:-1])} and {numbers[-1]} of {total}")
+    return block(REPLY_LEAVES_OUT_OPENING_TEMPLATE, REPLY_LEAVES_OUT_INSTRUCTIONS,
+                 named=" and ".join(f"`Item {number} of {total}`" for number in left_out),
+                 example=example, verb="is" if len(numbers) == 1 else "are")
 
 
 def main():
     try:
         output = run(sys.stdin.read(), os.environ)
     except Exception as error:
-        print(f"walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook: the hook "
-              f"failed, so the user was not shown the approval-walk's current item; the agent "
-              f"need not act: {error!r}", file=sys.stderr)
+        print(f"walk-me-through-current-item-missing-from-reply-to-user-agent-stop-refusal-hook: "
+              f"the hook failed, so it did not check that the reply names the approval-walk's "
+              f"waiting item; the agent need not act: {error!r}", file=sys.stderr)
         return 1
     if output is not None:
         print(output)
