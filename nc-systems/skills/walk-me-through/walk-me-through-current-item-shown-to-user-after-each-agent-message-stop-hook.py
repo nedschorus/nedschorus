@@ -32,8 +32,13 @@ message, another agent-seat's message, a parent's message to its subagent,
 a background-task notice, or a local command. An injection is a record
 marked isMeta with no such origin, such as a loaded skill's text or a system
 reminder. Claude Code marks another agent-seat's message isMeta too, so the
-origin decides first. The reply is checked only when an assistant message
-after the turn's start holds text.
+origin decides first.
+
+THE REPLY is the text of every assistant message after the turn's start, or
+after the last prompt the user typed into the turn, if that comes later: a
+turn may show the item, make tool calls, and end with a short line such as
+"Recorded.", and it still names the item. It is checked only when it holds
+text.
 
 THE OPEN APPROVAL-WALK. The walk-me-through skill keeps a `#next_to_present`
 line in each walk's docs/walk/<name>-minutes.md; agents write it at a line's
@@ -71,7 +76,7 @@ two headings carry when neither is a revision, the hook blocks naming the
 heading. When the minutes' value has no `of M`, the walk-document's own total
 is used, if its headings carry only one.
 
-THE REPLY NAMES AN ITEM when its text holds a running count with the walk's
+THE REPLY NAMES AN ITEM when it holds a running count with the walk's
 total that covers it, in any of the forms above: `Item 11 of 12`, or
 `Items 10 and 11 of 12` for both. A count with another total, such as `item
 2 of 90` for item 2 of 9, names nothing.
@@ -79,7 +84,7 @@ total that covers it, in any of the forms above: `Item 11 of 12`, or
 SILENT while the agent answers a Stop hook (stop_hook_active set), as the
 Stop-hook silence rule's module requires, when the agent-session is a
 headless `claude -p` child (its last words are its caller's answer), when the
-transcript is missing, when the turn's last reply is empty, when the cwd is
+transcript is missing, when the turn wrote no text to the user, when the cwd is
 not in a git checkout, when no approval-walk is open, and when the reply
 names every item the minutes name.
 
@@ -169,6 +174,8 @@ REPLY_LEAVES_OUT_INSTRUCTIONS = (
     "your answer.`",
     "If his answer moved the approval-walk on, first set the `#next_to_present` line in "
     "{minutes} to the items now waiting, then name those.",
+    "If he ended or abandoned the approval-walk, add the line `#next_to_present none, closed` "
+    "at the end of {minutes} instead of naming the item, and end the turn.",
 )
 OLD_MARKER_INSTRUCTIONS = (
     "Add this line at the end of {minutes}, below every earlier marker line, and leave "
@@ -240,12 +247,16 @@ def turn_answers_user(records):
     return opened_by_user or any(typed_while_working(record) for record in records[index + 1:])
 
 
-def last_reply_text(records):
-    """Return the text of the last assistant message of the transcript's last turn."""
+def turn_reply_text(records):
+    """Return the text of every assistant message since the last turn's start, or since the
+    last prompt the user typed into that turn, if later."""
     start = turn_start(records)
     start = 0 if start is None else start + 1
-    texts_by_message = {}
-    last_text_message_id = None
+    for index in range(len(records) - 1, start - 1, -1):
+        if typed_while_working(records[index]):
+            start = index + 1
+            break
+    texts = []
     for record in records[start:]:
         if record.get("type") != "assistant":
             continue
@@ -253,12 +264,9 @@ def last_reply_text(records):
         content = message.get("content")
         if not isinstance(content, list):
             continue
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                message_id = message.get("id") or id(record)
-                texts_by_message.setdefault(message_id, []).append(block.get("text", ""))
-                last_text_message_id = message_id
-    return "\n".join(texts_by_message.get(last_text_message_id, []))
+        texts.extend(block.get("text", "") for block in content
+                     if isinstance(block, dict) and block.get("type") == "text")
+    return "\n".join(texts)
 
 
 def checkout_top(directory):
@@ -458,7 +466,7 @@ def output_for(payload, environment):
     if walk is None:
         return None
     records = transcript_records(Path(transcript_path).expanduser())
-    reply = last_reply_text(records)
+    reply = turn_reply_text(records)
     if not turn_answers_user(records) or not reply.strip():
         return None
     minutes, value, old_form = walk
@@ -526,7 +534,7 @@ def main():
     try:
         output = run(sys.stdin.read(), os.environ)
     except Exception as error:
-        print(f"walk-me-through-current-item-missing-from-reply-to-user-agent-stop-refusal-hook: "
+        print(f"walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook: "
               f"the hook failed, so it did not check that the reply names the approval-walk's "
               f"waiting item; the agent need not act: {error!r}", file=sys.stderr)
         return 1

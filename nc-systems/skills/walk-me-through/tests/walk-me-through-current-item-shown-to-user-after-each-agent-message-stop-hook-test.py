@@ -28,7 +28,7 @@ _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 HOOK_SCRIPT = (Path(__file__).resolve().parents[1]
-               / "walk-me-through-current-item-missing-from-reply-to-user-agent-stop-refusal-hook.py")
+               / "walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py")
 SUITE_ROOT = Path(tempfile.mkdtemp(prefix="approval-walk-current-item-hook-test-")).resolve()
 failures = []
 
@@ -94,12 +94,6 @@ ITEM_2_REPLY = """Recorded your answer to item 1.
 The poem page goes in the wiki, next to the glossary and the style guide, so that agents find it where they already look for project terms. Its name is checked against the naming page before the file is created.
 
 **The strongest case for N:** a page in the wiki is one more document agents must be told to read. **Recommendation: Y.**"""
-
-
-def section(start, end=None):
-    """The walk-document's text from one running-count heading to another."""
-    return WALK_DOCUMENT[WALK_DOCUMENT.index(start):
-                         WALK_DOCUMENT.index(end) if end else len(WALK_DOCUMENT)]
 
 
 def check(case_name, condition, detail=""):
@@ -214,7 +208,34 @@ def test_a_reply_naming_the_waiting_item_passes_and_one_leaving_it_out_is_sent_b
           and str(case.walk / "poem-page-2026-10-12-minutes.md") in reason, reason)
 
 
-def test_items_shown_together():
+def test_every_text_of_the_turn_counts():
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    case.reply(ITEM_2_REPLY, None, "Recorded.")
+    check_silent("a turn that shows the item, makes a tool call and ends with a short line passes", case.run())
+    case.reply("Recorded.", None, "Item 2 of 9 is waiting for your answer.")
+    check_silent("a turn naming the item in its last text passes", case.run())
+    shown_before_answer = [USER_PROMPT, {"type": "assistant", "message": {"id": "m1", "content": [
+        {"type": "text", "text": ITEM_2_REPLY}]}}, TOOL_CALL, USER_ANSWER_WHILE_WORKING, TOOL_RESULT,
+        {"type": "assistant", "message": {"id": "m4", "content": [{"type": "text", "text": "Recorded."}]}}]
+    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in shown_before_answer))
+    check_reminded("an item named before the user typed into the turn does not count after it", case.run())
+
+
+def test_an_ended_walk_is_closed_by_the_line_the_reminder_gives():
+    case = Case()
+    minutes = case.walk_files(minutes="#next_to_present item 2 of 9.")
+    case.reply("We are stopping this walk.")
+    reason = blocked_reason(case.run()) or ""
+    closing_line = "#next_to_present none, closed"
+    check("the reminder tells the agent how to close an ended or abandoned walk",
+          f"If he ended or abandoned the approval-walk, add the line `{closing_line}` at the end of {minutes}"
+          in reason, reason)
+    minutes.write_text(minutes.read_text() + "\n" + closing_line + "\n")
+    check_silent("minutes ending with the reminder's closing line are not an open walk", case.run())
+
+
+def test_items_waiting_together():
     case = Case()
     case.walk_files(minutes="#next_to_present items 5 and 6 of 9.")
     case.reply("Recorded.")
@@ -234,21 +255,21 @@ def test_items_under_one_heading():
     case = Case()
     case.walk_files(minutes="#next_to_present items 7 and 8 of 9.")
     case.reply("Recorded.")
-    check_reminded("items under one heading are shown whole", case.run())
+    check_reminded("a reply naming neither item under one heading is sent back", case.run())
 
 
 def test_part_without_recommendation():
     case = Case()
     case.walk_files(minutes="#next_to_present item 4.1 of 9.")
     case.reply("Recorded.")
-    check_reminded("a part is shown alone, without the next part", case.run())
+    check_reminded("a reply leaving out a waiting part is sent back", case.run())
 
 
 def test_item_holding_original_and_proposed_sections():
     case = Case()
     case.walk_files(minutes="#next_to_present item 9 of 9.")
     case.reply("Recorded.")
-    check_reminded("an item holding its own headings is shown whole", case.run())
+    check_reminded("a reply leaving out an item that holds its own headings is sent back", case.run())
 
 
 def turn_records(*middle):
@@ -279,8 +300,7 @@ LATER_TEXT = {"type": "assistant", "message": {"id": "m3", "content": [
 def test_where_the_turn_starts():
     case = Case()
     case.walk_files(minutes="#next_to_present item 2 of 9.")
-    item = section("## Item 2 of 9", "## Item 4.1 of 9")
-    for case_name, records, shown in (
+    for case_name, records, checked in (
             ("a turn that wrote to the user, then made tool calls, is checked",
              turn_records(TOOL_CALL, TOOL_RESULT), True),
             ("a skill loaded inside the turn does not start a new turn",
@@ -292,7 +312,7 @@ def test_where_the_turn_starts():
             ("a turn after a notice that wrote text is not checked, because it does not answer the user",
              turn_records(NOTICE, TOOL_CALL, TOOL_RESULT, LATER_TEXT), False)):
         case.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
-        if shown:
+        if checked:
             check_reminded(case_name, case.run())
         else:
             check_silent(case_name, case.run())
@@ -325,9 +345,8 @@ REPLY_TEXT = {"type": "assistant", "message": {"id": "m9", "content": [
     {"type": "text", "text": "PR 1188 merged; nothing waits on you."}]}}
 
 
-def test_only_a_turn_that_answers_the_user_shows_or_blocks():
-    item = section("## Item 2 of 9", "## Item 4.1 of 9")
-    for case_name, records, shown in (
+def test_only_a_turn_that_answers_the_user_is_checked():
+    for case_name, records, checked in (
             ("a turn opened by the user's own prompt is checked",
              [PEER_PROMPT, REPLY_TEXT, USER_PROMPT, REPLY_TEXT], True),
             ("a queued prompt of the user's is checked",
@@ -356,13 +375,13 @@ def test_only_a_turn_that_answers_the_user_shows_or_blocks():
         case = Case()
         case.walk_files(minutes="#next_to_present item 2 of 9.")
         case.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
-        if shown:
+        if checked:
             check_reminded(case_name, case.run())
         else:
             check_silent(case_name, case.run())
     without_turn_origin = {"type": "user", "origin": {"kind": "human"},
                            "message": {"role": "user", "content": "what is PR 1188?"}}
-    for case_name, records, shown in (
+    for case_name, records, checked in (
             ("without turnOrigin, a prompt whose origin is the user's is checked",
              [without_turn_origin, REPLY_TEXT], True),
             ("without turnOrigin, a prompt with another origin is not checked",
@@ -379,7 +398,7 @@ def test_only_a_turn_that_answers_the_user_shows_or_blocks():
         case = Case()
         case.walk_files(minutes="#next_to_present item 2 of 9.")
         case.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
-        if shown:
+        if checked:
             check_reminded(case_name, case.run())
         else:
             check_silent(case_name, case.run())
@@ -420,25 +439,20 @@ Last. Recommendation: Y.
 """
 
 
-def range_section(start, end=None):
-    text = RANGE_WALK_DOCUMENT
-    return text[text.index(start):text.index(end) if end else len(text)]
-
-
 def test_range_headings_and_values():
-    for case_name, minutes, start, end in (
+    for case_name, minutes in (
             ("an item before a range heading ends at the range heading",
-             "#next_to_present item 9 of 54.", "## Item 9 of 54", "## Items 10 to 12 of 54"),
-            ("minutes naming a range show the range heading's unit",
-             "#next_to_present items 10 to 12 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
-            ("minutes listing the range's items show the same unit",
-             "#next_to_present items 10, 11 and 12 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
+             "#next_to_present item 9 of 54."),
+            ("minutes naming a range find the range heading",
+             "#next_to_present items 10 to 12 of 54."),
+            ("minutes listing the range's items find the same heading",
+             "#next_to_present items 10, 11 and 12 of 54."),
             ("a dashed range is read as a range",
-             "#next_to_present items 10-12 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
-            ("one item inside a range heading shows the range's unit",
-             "#next_to_present item 11 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
+             "#next_to_present items 10-12 of 54."),
+            ("one item inside a range heading is found under it",
+             "#next_to_present item 11 of 54."),
             ("a running count inside a code fence starts no item",
-             "#next_to_present item 12.1 of 54.", "## Item 12.1 of 54", "## Item 12.2 of 54")):
+             "#next_to_present item 12.1 of 54.")):
         case = Case()
         case.walk_files(minutes=minutes, document=RANGE_WALK_DOCUMENT)
         case.reply("Recorded.")
@@ -446,7 +460,7 @@ def test_range_headings_and_values():
     case = Case()
     case.walk_files(minutes="#next_to_present items 12.1 to 12.2 of 54.", document=RANGE_WALK_DOCUMENT)
     case.reply("Recorded.")
-    check_reminded("a dotted range shows its parts", case.run())
+    check_reminded("a dotted range finds its parts", case.run())
     backwards_document = ("# A walk\n\n## Item 9 of 54: first\n\nText.\n\n"
                           "## Items 12 to 10 of 54: backwards\n\nMore.\n\n"
                           "## Item 13 of 54: last\n\nEnd.\n")
@@ -464,11 +478,11 @@ def test_range_headings_and_values():
                       "## Items 12 to 12.2 of 54: an item and its inserted questions\n\nTogether.\n\n"
                       "## Item 13 of 54: after\n\nAfter.\n")
     for case_name, minutes in (
-            ("minutes naming an item and its parts show the heading that groups them",
+            ("minutes naming an item and its parts find the heading that groups them",
              "#next_to_present items 12 to 12.2 of 54."),
-            ("minutes naming one part show the heading that groups the item and its parts",
+            ("minutes naming one part find the heading that groups the item and its parts",
              "#next_to_present item 12.1 of 54."),
-            ("minutes naming the item alone show the heading that groups it with its parts",
+            ("minutes naming the item alone find the heading that groups it with its parts",
              "#next_to_present item 12 of 54.")):
         case = Case()
         case.walk_files(minutes=minutes, document=item_and_parts)
@@ -543,28 +557,21 @@ After. Recommendation: Y.
 """
 
 
-def test_grouped_heading_paragraphs_and_kept_revisions_are_shown():
-    whole_group = ("Items 10 and 11 of 12: two small changes\n\n"
-                   "Item 10 of 12: the hook's message carries the diff. Proposed: a diff. Recommendation: Y.\n\n"
-                   "Item 11 of 12: drop the timed test. Proposed: a benchmark. Recommendation: Y.")
+def test_grouped_heading_paragraphs_and_kept_revisions_are_found():
     for case_name, minutes in (
-            ("minutes naming a grouped heading show it with its items' bold paragraphs",
+            ("minutes naming a grouped heading find it",
              "#next_to_present items 10 and 11 of 12."),
-            ("minutes naming every item of a grouped heading without a total show the whole group",
+            ("minutes naming every item of a grouped heading without a total find the group",
              "#next_to_present items 10 to 11.")):
         case = Case()
         case.walk_files(minutes=minutes, document=GROUPED_WALK_DOCUMENT)
         case.reply("Recorded.")
         check_reminded(case_name, case.run())
-    for case_name, minutes, wanted_text in (
-            ("minutes naming one item of a grouped heading show the heading and that item's paragraph",
-             "#next_to_present item 11 of 12.",
-             "Items 10 and 11 of 12: two small changes\n\n"
-             "Item 11 of 12: drop the timed test. Proposed: a benchmark. Recommendation: Y."),
-            ("minutes naming a grouped item without a total show the heading and that item's paragraph",
-             "#next_to_present item 10.",
-             "Items 10 and 11 of 12: two small changes\n\n"
-             "Item 10 of 12: the hook's message carries the diff. Proposed: a diff. Recommendation: Y.")):
+    for case_name, minutes in (
+            ("minutes naming one item of a grouped heading find that item",
+             "#next_to_present item 11 of 12."),
+            ("minutes naming a grouped item without a total find that item",
+             "#next_to_present item 10.")):
         case = Case()
         case.walk_files(minutes=minutes, document=GROUPED_WALK_DOCUMENT)
         case.reply("Recorded.")
@@ -578,9 +585,9 @@ def test_grouped_heading_paragraphs_and_kept_revisions_are_shown():
     check_blocked("a bold paragraph naming an item its heading does not name still starts an item",
                   case.run(), "more than one heading for `Item 11 of 12`")
     for case_name, minutes in (
-            ("minutes naming an item kept beside its revision show only the revision",
+            ("minutes naming an item kept beside its revision find only the revision",
              "#next_to_present item 27 of 72."),
-            ("minutes naming a revised item without a total show only the revision",
+            ("minutes naming a revised item without a total find only the revision",
              "#next_to_present item 27.")):
         case = Case()
         case.walk_files(minutes=minutes, document=REVISED_WALK_DOCUMENT)
@@ -600,7 +607,7 @@ def test_grouped_heading_paragraphs_and_kept_revisions_are_shown():
     case.walk_files(minutes="#next_to_present item 27 of 72.",
                     document=REVISED_WALK_DOCUMENT.replace("## Item 27 of 72 (revised)", "## Item 27 of 76 (revised)"))
     case.reply("Recorded.")
-    check_reminded("a revision under another total leaves the original shown", case.run())
+    check_reminded("a revision under another total leaves the original in force", case.run())
     case = Case()
     case.walk_files(minutes="#next_to_present item 10 of 54.",
                     document=("# A walk\n\n## Item 9 of 54: first\n\nText.\n\n"
@@ -633,7 +640,7 @@ def test_grouped_heading_paragraphs_and_kept_revisions_are_shown():
     case = Case()
     case.walk_files(minutes="#next_to_present item 6 of 9.", document=partial)
     case.reply("Recorded.")
-    check_reminded("a revision of one item of a grouped heading leaves the group shown for the other item", case.run())
+    check_reminded("a revision of one item of a grouped heading leaves the group in force for the other item", case.run())
     case = Case()
     case.walk_files(minutes="#next_to_present item 5 of 9.", document=partial)
     case.reply("Recorded.")
@@ -646,16 +653,15 @@ def test_grouped_heading_paragraphs_and_kept_revisions_are_shown():
     case.reply("Recorded.")
     check_reminded("a heading whose bold closes before `(revised)` is a revision", case.run())
     for case_name, document in (
-            ("minutes naming a grouped item whose paragraph is not bold show the whole group",
+            ("minutes naming a grouped item whose paragraph is not bold find the group",
              "# A walk\n\n## Items 5 and 6 of 9: two\n\n**Item 5 of 9: five.** Five.\n\n"
              "Item 6 of 9: six. Six.\n\n## Item 7 of 9: seven\n\nSeven.\n"),
-            ("minutes naming a grouped item with no paragraph of its own show the whole group",
+            ("minutes naming a grouped item with no paragraph of its own find the group",
              "# A walk\n\n## Items 5 and 6 of 9: two\n\n**Item 5 of 9: five.** Five.\n\n"
              "Both together. Recommendation: Y.\n\n## Item 7 of 9: seven\n\nSeven.\n")):
         case = Case()
         case.walk_files(minutes="#next_to_present item 6 of 9.", document=document)
         case.reply("Recorded.")
-        group = document.split("## Items 5 and 6 of 9: ", 1)[1].split("\n\n## Item 7", 1)[0]
         check_reminded(case_name, case.run())
     case = Case()
     case.walk_files(minutes="#next_to_present item 10 of 54.",
@@ -671,7 +677,6 @@ def test_grouped_heading_paragraphs_and_kept_revisions_are_shown():
 
 
 def test_where_the_minutes_line_sits():
-    item_2 = section("## Item 2 of 9", "## Item 4.1 of 9")
     for case_name, minutes in (
             ("a line inside a bullet counts", "- #next_to_present item 2 of 9."),
             ("a bold marker counts", "**#next_to_present** item 2 of 9"),
@@ -725,7 +730,7 @@ def test_where_the_minutes_line_sits():
     case.walk_files(minutes="#next_to_present item 2 of 9.",
                     document=WALK_DOCUMENT + "\n## Item 2 of 10: a re-planned copy\n\nText.\n")
     case.reply("Recorded.")
-    check_reminded("only the heading with the minutes' total is shown", case.run())
+    check_reminded("only the heading with the minutes' total is checked", case.run())
 
 
 def test_unparseable_line():
@@ -771,7 +776,6 @@ def test_minutes_without_line_are_not_open():
 
 
 def test_old_marker_is_migrated():
-    item_2 = section("## Item 2 of 9", "## Item 4.1 of 9")
     case = Case()
     minutes = case.walk_files(minutes="Next to present: item 2 of 9.")
     case.reply("Recorded.")
@@ -817,7 +821,7 @@ def test_newest_open_walk_is_checked():
     case.walk_files(name="older-walk", minutes="#next_to_present item 5 of 9.", modified=1_000)
     case.walk_files(name="newer-walk", minutes="#next_to_present item 2 of 9.", modified=2_000)
     case.reply("Recorded.")
-    check_reminded("the most recently modified open walk's item is the one shown", case.run())
+    check_reminded("the most recently modified open walk's item is the one checked", case.run())
 
 
 def test_silent_cases():
@@ -832,7 +836,7 @@ def test_silent_cases():
     check_blocked("unusable minutes block when the agent is not answering a Stop hook", unusable.run())
     check_silent("while the agent answers a Stop hook, a block on unusable minutes is not printed",
                  unusable.run(stop_hook_active=True))
-    check_silent("a headless child is shown nothing",
+    check_silent("a headless child is not checked",
                  case.run(environment_extra={"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
     case.reply(None)
     check_silent("a turn that wrote nothing to the user is not checked", case.run())
