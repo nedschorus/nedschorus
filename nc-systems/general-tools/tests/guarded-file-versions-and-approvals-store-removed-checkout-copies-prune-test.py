@@ -11,6 +11,7 @@ Prints one line per case and exits non-zero if any case fails.
 import hashlib
 import importlib.util
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -70,8 +71,23 @@ def run(store, *arguments, **variables):
     environment = dict(os.environ, GUARDED_FILE_VERSIONS_MACHINE="ned-box",
                        GUARDED_FILE_VERSIONS_STORE_DIRECTORY=str(store))
     environment.update(variables)
-    return subprocess.run([sys.executable, str(PROGRAM), *arguments], capture_output=True,
-                          text=True, env=environment, timeout=120)
+    return run_in_own_process_group([sys.executable, str(PROGRAM), *arguments], environment)
+
+
+def run_in_own_process_group(command, environment):
+    """Run command and kill its whole process group afterwards, so a child it forked and left
+    blocked does not outlive the test. A timeout raises, after the kill."""
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                               env=environment, start_new_session=True)
+    try:
+        stdout, stderr = process.communicate(timeout=120)
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
 def git(*arguments):
@@ -125,10 +141,9 @@ def test_removed_checkouts_pruned_and_others_kept():
         check("a directory deleted on a branch keeps its copies", branch_deleted_directory.exists())
         check("a file deleted in an existing directory keeps its copies",
               branch_deleted_file.exists())
-        check("the run names each path whose copies it deleted",
-              f"deleted 1 copies of {agents}/removed/CLAUDE.md" in result.stdout
-              and f"deleted 1 copies of {repository}/worktrees/gone/CLAUDE.md" in result.stdout,
-              result.stdout)
+        check("the run names each copy it deletes before deleting it",
+              f"deleting {removed}\n" in result.stdout and f"deleting {nested}\n" in result.stdout
+              and "deleting " + str(live) not in result.stdout, result.stdout)
         check("the summary counts two checkouts, one copy not approved and one approved copy kept",
               "copies of 2 removed checkouts" in result.stdout
               and "kept 1 copies of versions not approved and 1 approved copies" in result.stdout,
@@ -192,10 +207,15 @@ def test_checkout_that_cannot_be_searched_kept():
         check("the other checkout is still pruned", not removed.exists())
 
 
-def test_recreated_checkout_kept():
+def load_program():
     specification = importlib.util.spec_from_file_location("prune", PROGRAM)
     prune = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(prune)
+    return prune
+
+
+def test_recreated_checkout_kept():
+    prune = load_program()
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory).resolve()
         store, _, repository = scratch(root)
@@ -209,6 +229,106 @@ def test_recreated_checkout_kept():
         result = prune.prune(store, False, check_ignore=recreated_while_checked)
         check("a checkout re-created after it was found missing keeps its copies",
               copy.exists() and not result["checkouts"], result)
+
+
+def test_recheck_that_cannot_be_told_keeps_copies():
+    prune = load_program()
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory).resolve()
+        store, _, repository = scratch(root)
+        copy = add_version(store, f"{repository}/worktrees/gone/CLAUDE.md", "one\n",
+                           approved=True)
+
+        def made_unsearchable_while_checked(checkout_root, relative):
+            checkout_root.chmod(0)
+            return True
+
+        try:
+            result = prune.prune(store, False, check_ignore=made_unsearchable_while_checked)
+        finally:
+            repository.chmod(0o700)
+        check("a recheck that cannot be told keeps the copies", copy.exists()
+              and not result["checkouts"], result)
+        check("and reports it", any("could not be told" in failure
+                                    for failure in result["failures"]), result)
+
+
+def test_volume_that_may_not_be_mounted_kept():
+    prune = load_program()
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory).resolve()
+        store, agents, _ = scratch(root)
+        volumes = root / "Volumes"
+        (volumes / "empty-mount-point").mkdir(parents=True)
+        (volumes / "mounted" / "other").mkdir(parents=True)
+        gone = add_version(store, f"{volumes}/gone/repo/CLAUDE.md", "a\n", approved=True)
+        empty = add_version(store, f"{volumes}/empty-mount-point/repo/CLAUDE.md", "b\n",
+                            approved=True)
+        removed_on_mounted = add_version(store, f"{volumes}/mounted/repo/CLAUDE.md", "c\n",
+                                         approved=True)
+        removed = add_version(store, f"{agents}/removed/CLAUDE.md", "d\n", approved=True)
+        result = prune.prune(store, False, mount_parents=(volumes,))
+        check("copies under a missing volume directory are kept", gone.exists())
+        check("copies under an empty volume directory are kept", empty.exists())
+        check("and both are reported", sum("may not be mounted" in failure
+                                          for failure in result["failures"]) == 2, result)
+        check("a checkout removed from a volume with other content is pruned",
+              not removed_on_mounted.exists())
+        check("a checkout removed outside any volume is pruned", not removed.exists())
+
+
+def test_run_stopped_between_two_unlinks_names_every_deleted_copy():
+    # The wrapper makes the run wait forever, after creating a marker file, once the first unlink
+    # of the run has finished: the stop lands between two unlinks of one path.
+    wrapper = (
+        "import importlib.util, pathlib, sys, time\n"
+        "marker, program = sys.argv[1:3]\n"
+        "spec = importlib.util.spec_from_file_location('prune', program)\n"
+        "prune = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(prune)\n"
+        "original, calls = pathlib.Path.unlink, []\n"
+        "def unlink(self, *arguments, **keywords):\n"
+        "    original(self, *arguments, **keywords)\n"
+        "    calls.append(self)\n"
+        "    if len(calls) == 1:\n"
+        "        pathlib.Path(marker).write_text('waiting')\n"
+        "        time.sleep(600)\n"
+        "pathlib.Path.unlink = unlink\n"
+        "sys.exit(prune.main([]))\n")
+    for stop in (signal.SIGTERM, signal.SIGKILL):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            store, agents, _ = scratch(root)
+            copies = [add_version(store, f"{agents}/removed/CLAUDE.md", text, approved=True)
+                      for text in ("one\n", "two\n", "three\n")]
+            marker = root / "marker"
+            output = root / "output"
+            environment = dict(os.environ, GUARDED_FILE_VERSIONS_MACHINE="ned-box",
+                               GUARDED_FILE_VERSIONS_STORE_DIRECTORY=str(store))
+            with open(output, "w") as output_file:
+                process = subprocess.Popen([sys.executable, "-c", wrapper, str(marker),
+                                            str(PROGRAM)], stdout=output_file,
+                                           stderr=subprocess.STDOUT, env=environment,
+                                           start_new_session=True)
+            try:
+                deadline = time.monotonic() + 60
+                while not marker.exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                reached = marker.exists()
+                os.killpg(process.pid, stop)
+                process.wait(timeout=30)
+            finally:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            name = stop.name
+            named = output.read_text().splitlines()
+            deleted = [copy for copy in copies if not copy.exists()]
+            check(f"{name}: the run was stopped between two unlinks of one path",
+                  reached and len(deleted) == 1, (reached, deleted))
+            check(f"{name}: every copy deleted before the stop is named on a deleting line",
+                  all(f"deleting {copy}" in named for copy in deleted), (named, deleted))
 
 
 def test_unreadable_store_fails():
@@ -233,7 +353,7 @@ def test_unreadable_store_fails():
               result.stderr)
         check("and keeps its copy", copy.exists())
         check("the other checkout is still pruned, and named", not other.exists()
-              and f"deleted 1 copies of {agents}/removed-b/CLAUDE.md" in result.stdout,
+              and f"deleting {other}\n" in result.stdout,
               result.stdout)
         other = add_version(store, f"{agents}/removed-b/CLAUDE.md", "two\n", approved=True)
         (copy.parent / hook.LOG_FILE_NAME).chmod(0)
@@ -246,7 +366,7 @@ def test_unreadable_store_fails():
               in result.stderr, result.stderr)
         check("and keeps the copy", copy.exists())
         check("the other checkout is still pruned, and named", not other.exists()
-              and f"deleted 1 copies of {agents}/removed-b/CLAUDE.md" in result.stdout,
+              and f"deleting {other}\n" in result.stdout,
               result.stdout)
 
 
@@ -284,7 +404,7 @@ def test_git_failure_fails():
         check("and keeps that checkout's copy", copy.exists())
         check("and goes on to the end", "1 failures" in result.stdout, result.stdout)
         check("the other checkout is still pruned, and named", not other.exists()
-              and f"deleted 1 copies of {root}/agents/removed/CLAUDE.md" in result.stdout,
+              and f"deleting {other}\n" in result.stdout,
               result.stdout)
 
 
@@ -310,8 +430,7 @@ def test_mac_deadline_names_what_was_deleted():
               result.stdout + result.stderr)
         check("and stops at the deadline", time.monotonic() - started < 60)
         check("and has deleted the copy it reached", not deleted.exists())
-        check("and names that deletion", f"deleted 1 copies of {agents}/removed/CLAUDE.md, 4 bytes"
-              in result.stdout, result.stdout)
+        check("and names that deletion", f"deleting {deleted}\n" in result.stdout, result.stdout)
         check("and says the run stopped, not that nothing was pruned",
               "stopped: the store did not answer within 2.0 seconds" in result.stderr
               and "not pruned" not in result.stderr, result.stderr)
@@ -323,6 +442,9 @@ if __name__ == "__main__":
     test_outside_checkout_files_kept()
     test_checkout_that_cannot_be_searched_kept()
     test_recreated_checkout_kept()
+    test_recheck_that_cannot_be_told_keeps_copies()
+    test_volume_that_may_not_be_mounted_kept()
+    test_run_stopped_between_two_unlinks_names_every_deleted_copy()
     test_unreadable_store_fails()
     test_failing_delete_fails()
     test_git_failure_fails()

@@ -12,8 +12,8 @@ of its paths still exists.
 
     python3 <this file> [--dry-run]
 
-A run prints a line for each path whose copies it deletes, as it deletes them, so the log
-names every deletion even when the run is stopped part way; then a line for each checkout it
+A real run prints `deleting <copy path>`, flushed, before it deletes each copy, so the log
+names every copy a run stopped part way may have deleted; then a line for each checkout it
 pruned, with its size, and a summary. --dry-run prints the checkouts whose copies would be
 deleted, and deletes nothing.
 
@@ -27,8 +27,11 @@ file's path stands for its checkout, and that checkout no longer exists when eit
   .claude/worktrees/, so the missing directory was a checkout of its own.
 A missing directory that git does not ignore was the enclosing checkout's own, deleted on a
 branch, and its copies are kept. A directory counts as missing only when the system says it does
-not exist; when it cannot tell, as for a directory this process may not search or a volume that is
-not mounted, the path's copies are kept and the failure is reported. The hook's files outside any
+not exist; when it cannot tell, as for a directory this process may not search, the path's copies
+are kept and the failure is reported. So are the copies of a path under a volume that may not be
+mounted: a path under /Volumes/<name>, /mnt/<name> or /media/<name> whose <name> directory is
+missing or empty. A removed checkout that was the only content of its volume is kept too, and
+reported. The hook's files outside any
 checkout, ~/.claude/CLAUDE.md and ~/.claude/settings.json, are never pruned.
 
 WHAT IS KEPT. A copy whose version is in the path's approved set is deleted. Every copy of a
@@ -88,7 +91,8 @@ EXIT_FAILED = 1
 
 def is_missing(path: Path):
     """True when path does not exist. Any failure but "no such file" or "not a directory" is
-    raised, since a directory that cannot be searched or a volume not mounted still exists."""
+    raised, since a directory that cannot be searched still exists. A volume not mounted looks
+    missing here; removed_checkout keeps its paths."""
     try:
         os.lstat(path)
     except (FileNotFoundError, NotADirectoryError):
@@ -96,7 +100,23 @@ def is_missing(path: Path):
     return False
 
 
-def removed_checkout(path: str, check_ignore):
+MOUNT_PARENTS = (Path("/Volumes"), Path("/mnt"), Path("/media"))
+
+
+def unmounted_volume_root(path: str, mount_parents):
+    """The directory <mount parent>/<name> that holds path when it is missing or empty, so the
+    volume may not be mounted; else None."""
+    for parent in mount_parents:
+        try:
+            root = parent / Path(path).relative_to(parent).parts[0]
+        except (ValueError, IndexError):
+            continue
+        if is_missing(root) or not any(root.iterdir()):
+            return root
+    return None
+
+
+def removed_checkout(path: str, check_ignore, mount_parents=MOUNT_PARENTS):
     """The first missing directory on the path of a file, when that directory stands for a
     checkout that no longer exists; else None. check_ignore(root, relative) is True when git in
     root ignores the directory relative/."""
@@ -107,6 +127,9 @@ def removed_checkout(path: str, check_ignore):
     while is_missing(missing.parent):
         missing = missing.parent
     existing = missing.parent
+    volume = unmounted_volume_root(path, mount_parents)
+    if volume is not None:
+        raise RuntimeError(f"{volume} is missing or empty, so its volume may not be mounted")
     root = hook.guard().enclosing_repository_root(existing)
     if root is None:
         return str(missing)
@@ -139,11 +162,12 @@ def copies_to_delete(path_directory: Path, names):
     return copies, 0, 0
 
 
-def prune(store_directory: Path, dry_run: bool, check_ignore=git_ignores_directory):
+def prune(store_directory: Path, dry_run: bool, check_ignore=git_ignores_directory,
+          mount_parents=MOUNT_PARENTS):
     """Walk the store and delete what may go. Returns a dict and raises for no failure inside
     the store, so the result can cross the Mac's deadline child: a path that fails is listed in
-    "failures", its copies are kept, and the walk goes on. A real run prints each path's
-    deletion as it happens, so a run killed part way has already named what it deleted."""
+    "failures", its copies are kept, and the walk goes on. A real run prints each copy's path
+    before deleting it, so a run killed part way has named every copy it may have deleted."""
     result = {"checkouts": {}, "bytes": 0, "kept_not_approved": 0, "kept_approved": 0,
               "failures": []}
     outside_files = set(hook.outside_files())
@@ -160,7 +184,7 @@ def prune(store_directory: Path, dry_run: bool, check_ignore=git_ignores_directo
         if path in outside_files:
             continue
         try:
-            checkout = removed_checkout(path, check_ignore)
+            checkout = removed_checkout(path, check_ignore, mount_parents)
         except OSError as error:
             result["failures"].append(f"{path}'s copies were kept: whether {error.filename} "
                                       f"exists could not be told: {error.strerror}")
@@ -194,14 +218,13 @@ def prune(store_directory: Path, dry_run: bool, check_ignore=git_ignores_directo
             try:
                 size = copy.stat().st_size
                 if not dry_run:
+                    print(f"deleting {copy}", flush=True)
                     copy.unlink()
             except OSError as error:
                 result["failures"].append(f"{copy} could not be deleted: {error.strerror}")
                 continue
             deleted += 1
             deleted_bytes += size
-        if deleted and not dry_run:
-            print(f"deleted {deleted} copies of {path}, {deleted_bytes} bytes", flush=True)
         result["bytes"] += deleted_bytes
         if deleted:
             result["checkouts"][checkout] = result["checkouts"].get(checkout, 0) + deleted_bytes
@@ -232,8 +255,8 @@ def main(arguments=None):
         sys.stdout.flush()
         print(f"{Path(__file__).name}: the prune of the store "
               f"{hook.store_directory(hook.this_machine())} stopped: {error}. Every copy it "
-              f"deleted before it stopped is named above on a line that starts with 'deleted'; "
-              f"with no such line, it deleted nothing.", file=sys.stderr)
+              f"may have deleted is named above on a line that starts with 'deleting', printed "
+              f"before the copy was deleted; with no such line, it deleted nothing.", file=sys.stderr)
         return EXIT_FAILED
     verb = "would prune" if options.dry_run else "pruned"
     for checkout, size in sorted(result["checkouts"].items()):
