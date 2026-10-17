@@ -45,41 +45,10 @@ acted on it.
 
 A payload that is not a JSON object answers False, so the hook's own input
 check still reports it.
-
-THE ONE EXEMPTION: A NOTICE FOR THE USER. Output that is a JSON object whose
-only key is `systemMessage` is shown to the user and does not keep the agent
-going, so it cannot start the loop. A hook whose job is such a notice may,
-while the agent answers a Stop hook, still compute it and print it, if it
-writes no state and prints nothing else on stdout; a fault it names on stderr
-with exit 1 is allowed, because Claude Code records a Stop hook's exit 1 as a
-non-blocking error and the agent is not kept going. It asks
-stop_hook_output_may_be_printed_while_agent_answers_a_stop_hook(payload, output)
-before printing, and prints nothing when that answers False. Any other output,
-a block, additionalContext or a systemMessage beside other keys, stays silent.
 """
-import json
 
 
 def stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
     """True when this Stop ends the agent's answer to a Stop hook's output: the hook must say nothing."""
     return isinstance(payload, dict) and payload.get("stop_hook_active") is True
 
-
-def stop_hook_output_only_shows_the_user_a_notice(output):
-    """True when output, the text a Stop hook would print, is a JSON object whose only key is a
-    non-empty string systemMessage: Claude Code shows it to the user and the agent need not answer."""
-    try:
-        parsed = json.loads(output)
-    except (TypeError, ValueError):
-        return False
-    return (isinstance(parsed, dict) and set(parsed) == {"systemMessage"}
-            and isinstance(parsed["systemMessage"], str) and bool(parsed["systemMessage"].strip()))
-
-
-def stop_hook_output_may_be_printed_while_agent_answers_a_stop_hook(payload, output):
-    """True when output may be printed at this Stop: always when the agent is not answering a
-    Stop hook, and otherwise only when the output only shows the user a notice."""
-    if output is None:
-        return False
-    return (not stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload)
-            or stop_hook_output_only_shows_the_user_a_notice(output))

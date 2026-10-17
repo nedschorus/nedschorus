@@ -9,12 +9,10 @@ a Stop hook says nothing at a Stop that ends the agent's answer to a Stop
 hook's output, or the agent keeps answering hooks instead of stopping.
 
 Each registered Stop or SubagentStop hook is checked two ways:
-  - its source calls stop_hook_stays_silent_while_agent_answers_a_stop_hook, or
-    stop_hook_output_may_be_printed_while_agent_answers_a_stop_hook for a hook
-    under the rule's one exemption, a notice for the user;
+  - its source calls stop_hook_stays_silent_while_agent_answers_a_stop_hook;
   - run with stop_hook_active true, from an empty directory and with HOME set
-    to an empty directory, it exits 0, prints nothing on stderr and nothing on
-    stdout but a notice-only output, and writes nothing under HOME, which
+    to an empty directory, it exits 0, prints nothing on stdout or stderr, and
+    writes nothing under HOME, which
     catches a hook that cannot load the rule's module.
 That run has nothing for most hooks to speak about, so it cannot show that
 the rule's check comes before the hook's work; each hook's own test does that, with
@@ -25,7 +23,6 @@ A hook whose source lacks the call is not run, because a hook that skips the
 rule's check may act on the checkout it is started in.
 """
 import ast
-import importlib.util
 import json
 import os
 import subprocess
@@ -38,7 +35,6 @@ SETTINGS = REPOSITORY / ".claude" / "settings.json"
 RULE_MODULE = ("nc-systems/general-tools/"
                 "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
 RULE_FUNCTION = "stop_hook_stays_silent_while_agent_answers_a_stop_hook"
-EXEMPTION_FUNCTION = "stop_hook_output_may_be_printed_while_agent_answers_a_stop_hook"
 STOP_EVENTS = ("Stop", "SubagentStop")
 HOOK_RUN_TIMEOUT_SECONDS = 60
 
@@ -110,7 +106,7 @@ def source_calls_rule_function(source):
             called = node.func
             name = (called.attr if isinstance(called, ast.Attribute)
                     else called.id if isinstance(called, ast.Name) else None)
-            if name in (RULE_FUNCTION, EXEMPTION_FUNCTION):
+            if name == RULE_FUNCTION:
                 return True
     return False
 
@@ -132,50 +128,11 @@ def run_hook_while_agent_answers(hook_path, event):
         return completed.returncode, completed.stdout, completed.stderr, written
 
 
-def load_rule_module():
-    spec = importlib.util.spec_from_file_location("stop_hooks_stay_silent_rule", REPOSITORY / RULE_MODULE)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-rule_module = load_rule_module()
-
-
-def check_exemption():
-    notice = json.dumps({"systemMessage": "Item 3 of 9: the point"})
-    answering = {"stop_hook_active": True}
-    not_answering = {"stop_hook_active": False}
-    check("a systemMessage-only output is a notice", rule_module.stop_hook_output_only_shows_the_user_a_notice(notice))
-    for name, output in [
-            ("a block", json.dumps({"decision": "block", "reason": "fix it"})),
-            ("a notice beside a block", json.dumps({"systemMessage": "x", "decision": "block", "reason": "y"})),
-            ("additionalContext", json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": "x"}})),
-            ("an empty systemMessage", json.dumps({"systemMessage": "  "})),
-            ("a systemMessage that is not text", json.dumps({"systemMessage": 3})),
-            ("text that is not JSON", "Item 3 of 9"),
-            ("a JSON list", json.dumps(["systemMessage"]))]:
-        check(f"{name} is not a notice", not rule_module.stop_hook_output_only_shows_the_user_a_notice(output))
-    check("a notice may be printed while the agent answers a Stop hook",
-          rule_module.stop_hook_output_may_be_printed_while_agent_answers_a_stop_hook(answering, notice))
-    block_output = json.dumps({"decision": "block", "reason": "fix it"})
-    check("a block may not be printed while the agent answers a Stop hook",
-          not rule_module.stop_hook_output_may_be_printed_while_agent_answers_a_stop_hook(answering, block_output))
-    check("a block may be printed when the agent is not answering a Stop hook",
-          rule_module.stop_hook_output_may_be_printed_while_agent_answers_a_stop_hook(not_answering, block_output))
-    check("no output is never printed",
-          not rule_module.stop_hook_output_may_be_printed_while_agent_answers_a_stop_hook(not_answering, None))
-
-
 def main():
     rule_module_source = (REPOSITORY / RULE_MODULE).read_text(encoding="utf-8")
     check("the rule module defines the rule function",
           f"def {RULE_FUNCTION}(" in rule_module_source,
           f"{RULE_MODULE} no longer defines {RULE_FUNCTION}")
-    check_exemption()
-    check("the source check finds a call of the exemption function",
-          source_calls_rule_function(f"if not rule.{EXEMPTION_FUNCTION}(payload, output):\n    pass\n"))
-
     check("the source check finds no call in a hook without one",
           not source_calls_rule_function("import json\nprint(json.dumps({'decision': 'block'}))\n"))
     check("the source check finds a call through the loaded module",
@@ -208,7 +165,7 @@ def main():
         problems = []
         if returncode != 0:
             problems.append(f"exited {returncode}")
-        if stdout.strip() and not rule_module.stop_hook_output_only_shows_the_user_a_notice(stdout):
+        if stdout.strip():
             problems.append(f"printed on stdout: {stdout.strip()[:200]}")
         if stderr.strip():
             problems.append(f"printed on stderr: {stderr.strip()[:200]}")

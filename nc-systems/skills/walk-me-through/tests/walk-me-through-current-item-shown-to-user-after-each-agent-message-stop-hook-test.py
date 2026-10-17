@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Cases for the Stop hook that, during an open approval-walk, shows the user
-the current item in full after each message the agent writes to him.
+"""Cases for the Stop hook that, during an open approval-walk, blocks the
+agent's stop when its reply to the user does not name the waiting item.
 
 Each case runs the hook as a subprocess, its real stdin-to-stdout path, in a
 scratch checkout this suite made, with a transcript this suite wrote. The exit
@@ -96,12 +96,6 @@ The poem page goes in the wiki, next to the glossary and the style guide, so tha
 **The strongest case for N:** a page in the wiki is one more document agents must be told to read. **Recommendation: Y.**"""
 
 
-def section(start, end=None):
-    """The walk-document's text from one running-count heading to another."""
-    return WALK_DOCUMENT[WALK_DOCUMENT.index(start):
-                         WALK_DOCUMENT.index(end) if end else len(WALK_DOCUMENT)]
-
-
 def check(case_name, condition, detail=""):
     if condition:
         print(f"PASS  {case_name}")
@@ -171,39 +165,9 @@ def check_silent(case_name, result):
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
-ANSWERS_LINE = "Answer Y to approve, N to decline, D to defer, R to repeat the item, or E to have it explained."
-
-
-def without_bold_marks_outside_code_spans(line):
-    """The line's `**` left out, except inside `code` spans; the fixtures' spans use one backtick."""
-    pieces = line.split("`")
-    return "`".join(piece if index % 2 else piece.replace("**", "")
-                    for index, piece in enumerate(pieces))
-
-
-def check_shown(case_name, result, *units, wanted_text=None):
-    """The hook shows the user the units' walk-document text, then the answers.
-
-    Heading and bold marks and separator lines are left out, because Claude Code shows
-    them as written; lines inside a ``` fence and text inside a `code` span stay as written.
-    wanted_text, when given, is the shown text itself, for fixtures the rule above cannot derive.
-    """
-    if wanted_text is None:
-        shown_lines, in_fence = [], False
-        for line in "\n".join(unit.strip("\n") for unit in units).splitlines():
-            if line.startswith("```"):
-                in_fence = not in_fence
-                shown_lines.append(line)
-            elif in_fence:
-                shown_lines.append(line)
-            elif line.strip() != "---":
-                line = line[line.index(" ") + 1:] if line.startswith("#") else line
-                shown_lines.append(without_bold_marks_outside_code_spans(line))
-        wanted_text = "\n".join(shown_lines).strip("\n")
-    wanted = wanted_text + "\n\n" + ANSWERS_LINE
-    output = json.loads(result.stdout) if result.returncode == 0 and result.stdout.strip() else {}
-    check(case_name, output == {"systemMessage": wanted},
-          f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+def check_reminded(case_name, result, *phrases):
+    """The hook sends the agent back to name the waiting item its reply left out."""
+    check_blocked(case_name, result, "does not name", "waiting for his answer", *phrases)
 
 
 def check_blocked(case_name, result, *phrases):
@@ -212,121 +176,100 @@ def check_blocked(case_name, result, *phrases):
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
-def test_shows_current_item_whatever_the_reply_says():
+def test_a_reply_naming_the_waiting_item_passes_and_one_leaving_it_out_is_sent_back():
     case = Case()
     case.walk_files(minutes="#next_to_present item 2 of 9.")
-    item = section("## Item 2 of 9", "## Item 4.1 of 9")
     for case_name, reply in (
-            ("a reply that already holds the item is followed by the item", ITEM_2_REPLY),
-            ("a one-line summary of the item is followed by the item",
-             "The background job finished. Waiting on item 2 of 9; Recommendation: Y."),
-            ("a reply that never mentions the item is followed by the item",
-             "The background job finished and its report is in the log-store.")):
+            ("a reply showing the item in full passes", ITEM_2_REPLY),
+            ("a reply ending with a line naming the item passes",
+             "The background job finished.\n\nItem 2 of 9 is waiting for your answer."),
+            ("a reply naming the item in lower case mid-sentence passes",
+             "Recorded. Waiting on item 2 of 9; Recommendation: Y."),
+            ("a reply naming the item in a heading passes", "## Item 2 of 9: where the poem page lives\n\nText."),
+            ("a reply naming the item in a range passes", "Items 1 to 3 of 9 are waiting.")):
         case.reply(reply)
-        check_shown(case_name, case.run(), item)
-    shown = json.loads(case.run().stdout)["systemMessage"]
-    check("the item is shown from its heading's words, without Markdown marks",
-          shown.startswith("Item 2 of 9: where the poem page lives\n") and "**" not in shown
-          and shown.endswith("Recommendation: Y.\n\n" + ANSWERS_LINE), repr(shown))
+        check_silent(case_name, case.run())
+    for case_name, reply in (
+            ("a reply that never mentions the item is sent back",
+             "The background job finished and its report is in the log-store."),
+            ("a reply naming the item without its total is sent back", "Answer item 2: Y or N."),
+            ("a reply naming the item with another total is sent back", "Item 2 of 90 is waiting."),
+            ("a reply naming another item is sent back", "Item 5 of 9 is waiting for your answer."),
+            ("a reply naming the item's part is sent back", "Item 2.1 of 9 is waiting."),
+            ("a word ending in `item` is not a running count", "Lineitem 2 of 9 is fixed."),
+            ("a reply naming the item in a backwards range is sent back", "Items 3 to 1 of 9 are waiting.")):
+        case.reply(reply)
+        check_reminded(case_name, case.run(), "`Item 2 of 9`",
+                       "`Item 2 of 9 is waiting for your answer.`")
+    case.reply("Nothing here.")
+    reason = blocked_reason(case.run()) or ""
+    check("the reminder names the walk, its walk-document and its minutes",
+          "poem-page-2026-10-12" in reason and str(case.walk / "poem-page-2026-10-12.md") in reason
+          and str(case.walk / "poem-page-2026-10-12-minutes.md") in reason, reason)
 
 
-CODE_WALK_DOCUMENT = """# A walk with code
-
-## Item 1 of 2: the log-store path
-
-The search reads `/home/nedlern/**` and **every** record under it. The steps:
-
-```bash
-# list the walks
-ls docs/walk/**/*-minutes.md
-```
-
-The settings file opens:
-
-```yaml
----
-name: x
-```
-
-    ## an indented **code** line stays
-
-**Recommendation: Y.**
-
----
-
-## Item 2 of 2: done
-
-Nothing.
-"""
-CODE_ITEM_SHOWN = """Item 1 of 2: the log-store path
-
-The search reads `/home/nedlern/**` and every record under it. The steps:
-
-```bash
-# list the walks
-ls docs/walk/**/*-minutes.md
-```
-
-The settings file opens:
-
-```yaml
----
-name: x
-```
-
-    ## an indented **code** line stays
-
-Recommendation: Y."""
-
-
-def test_code_is_shown_as_written():
+def test_every_text_of_the_turn_counts():
     case = Case()
-    case.walk_files(minutes="#next_to_present item 1 of 2.", document=CODE_WALK_DOCUMENT)
-    case.reply("Recorded.")
-    result = case.run()
-    check_shown("marks inside code spans, fenced blocks and indented code are shown as written",
-                result, wanted_text=CODE_ITEM_SHOWN)
-    shown = json.loads(result.stdout)["systemMessage"] if result.returncode == 0 and result.stdout else ""
-    check("a code span keeps its **", "`/home/nedlern/**`" in shown, repr(shown))
-    check("a fenced bash comment keeps its #", "\n# list the walks\n" in shown, repr(shown))
-    check("an indented code line keeps its ## and **", "    ## an indented **code** line stays" in shown,
-          repr(shown))
-    check("a fenced line keeps its **", "ls docs/walk/**/*-minutes.md" in shown, repr(shown))
-    check("a fenced yaml --- line is kept", "```yaml\n---\nname: x" in shown, repr(shown))
-    check("bold marks outside code are still left out", "and every record" in shown, repr(shown))
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    case.reply(ITEM_2_REPLY, None, "Recorded.")
+    check_silent("a turn that shows the item, makes a tool call and ends with a short line passes", case.run())
+    case.reply("Recorded.", None, "Item 2 of 9 is waiting for your answer.")
+    check_silent("a turn naming the item in its last text passes", case.run())
+    shown_before_answer = [USER_PROMPT, {"type": "assistant", "message": {"id": "m1", "content": [
+        {"type": "text", "text": ITEM_2_REPLY}]}}, TOOL_CALL, USER_ANSWER_WHILE_WORKING, TOOL_RESULT,
+        {"type": "assistant", "message": {"id": "m4", "content": [{"type": "text", "text": "Recorded."}]}}]
+    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in shown_before_answer))
+    check_reminded("an item named before the user typed into the turn does not count after it", case.run())
 
 
-def test_items_shown_together():
+def test_an_ended_walk_is_closed_by_the_line_the_reminder_gives():
+    case = Case()
+    minutes = case.walk_files(minutes="#next_to_present item 2 of 9.")
+    case.reply("We are stopping this walk.")
+    reason = blocked_reason(case.run()) or ""
+    closing_line = "#next_to_present none, closed"
+    check("the reminder tells the agent how to close an ended or abandoned walk",
+          f"If he ended or abandoned the approval-walk, add the line `{closing_line}` at the end of {minutes}"
+          in reason, reason)
+    minutes.write_text(minutes.read_text() + "\n" + closing_line + "\n")
+    check_silent("minutes ending with the reminder's closing line are not an open walk", case.run())
+
+
+def test_items_waiting_together():
     case = Case()
     case.walk_files(minutes="#next_to_present items 5 and 6 of 9.")
     case.reply("Recorded.")
-    check_shown("items shown together are both shown, in the walk-document's order", case.run(),
-                section("## Item 5 of 9", "## Item 6 of 9"),
-                section("## Item 6 of 9", "## Items 7 and 8 of 9"))
+    check_reminded("a reply naming neither of two waiting items is sent back with both", case.run(),
+                   "`Item 5 of 9` and `Item 6 of 9`", "`Items 5 and 6 of 9 are waiting for your answer.`")
+    case.reply("Item 5 of 9: the hook. Text.")
+    check_reminded("a reply naming one of two waiting items is sent back with the other", case.run(),
+                   "does not name `Item 6 of 9`,")
+    for case_name, reply in (
+            ("a reply naming both waiting items together passes", "Items 5 and 6 of 9 are waiting."),
+            ("a reply naming both waiting items apart passes", "Item 5 of 9: one.\n\nItem 6 of 9: two.")):
+        case.reply(reply)
+        check_silent(case_name, case.run())
 
 
 def test_items_under_one_heading():
     case = Case()
     case.walk_files(minutes="#next_to_present items 7 and 8 of 9.")
     case.reply("Recorded.")
-    check_shown("items under one heading are shown whole", case.run(),
-                section("## Items 7 and 8 of 9", "## Item 9 of 9"))
+    check_reminded("a reply naming neither item under one heading is sent back", case.run())
 
 
 def test_part_without_recommendation():
     case = Case()
     case.walk_files(minutes="#next_to_present item 4.1 of 9.")
     case.reply("Recorded.")
-    check_shown("a part is shown alone, without the next part", case.run(),
-                section("## Item 4.1 of 9", "## Item 5 of 9"))
+    check_reminded("a reply leaving out a waiting part is sent back", case.run())
 
 
 def test_item_holding_original_and_proposed_sections():
     case = Case()
     case.walk_files(minutes="#next_to_present item 9 of 9.")
     case.reply("Recorded.")
-    check_shown("an item holding its own headings is shown whole", case.run(),
-                section("## Item 9 of 9"))
+    check_reminded("a reply leaving out an item that holds its own headings is sent back", case.run())
 
 
 def turn_records(*middle):
@@ -357,21 +300,20 @@ LATER_TEXT = {"type": "assistant", "message": {"id": "m3", "content": [
 def test_where_the_turn_starts():
     case = Case()
     case.walk_files(minutes="#next_to_present item 2 of 9.")
-    item = section("## Item 2 of 9", "## Item 4.1 of 9")
-    for case_name, records, shown in (
-            ("a turn that wrote to the user, then made tool calls, shows the item",
+    for case_name, records, checked in (
+            ("a turn that wrote to the user, then made tool calls, is checked",
              turn_records(TOOL_CALL, TOOL_RESULT), True),
             ("a skill loaded inside the turn does not start a new turn",
              turn_records(TOOL_CALL, TOOL_RESULT, SKILL_LOADED, TOOL_CALL, TOOL_RESULT), True),
-            ("a silent turn after a background-task notice shows nothing",
+            ("a silent turn after a background-task notice is not checked",
              turn_records(NOTICE, TOOL_CALL, TOOL_RESULT), False),
-            ("a silent turn after another agent-seat's message shows nothing",
+            ("a silent turn after another agent-seat's message is not checked",
              turn_records(PEER_MESSAGE, TOOL_CALL), False),
-            ("a turn after a notice that wrote text shows nothing, because it does not answer the user",
+            ("a turn after a notice that wrote text is not checked, because it does not answer the user",
              turn_records(NOTICE, TOOL_CALL, TOOL_RESULT, LATER_TEXT), False)):
         case.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
-        if shown:
-            check_shown(case_name, case.run(), item)
+        if checked:
+            check_reminded(case_name, case.run())
         else:
             check_silent(case_name, case.run())
 
@@ -403,30 +345,29 @@ REPLY_TEXT = {"type": "assistant", "message": {"id": "m9", "content": [
     {"type": "text", "text": "PR 1188 merged; nothing waits on you."}]}}
 
 
-def test_only_a_turn_that_answers_the_user_shows_or_blocks():
-    item = section("## Item 2 of 9", "## Item 4.1 of 9")
-    for case_name, records, shown in (
-            ("a turn opened by the user's own prompt shows the item",
+def test_only_a_turn_that_answers_the_user_is_checked():
+    for case_name, records, checked in (
+            ("a turn opened by the user's own prompt is checked",
              [PEER_PROMPT, REPLY_TEXT, USER_PROMPT, REPLY_TEXT], True),
-            ("a queued prompt of the user's shows the item",
+            ("a queued prompt of the user's is checked",
              [opening_prompt("human", "and 5?", origin={"kind": "human"}, promptSource="queued"), REPLY_TEXT],
              True),
-            ("a turn opened by another agent-seat's message shows nothing",
+            ("a turn opened by another agent-seat's message is not checked",
              [USER_PROMPT, REPLY_TEXT, PEER_PROMPT, REPLY_TEXT], False),
-            ("a turn opened by a background-task notice shows nothing",
+            ("a turn opened by a background-task notice is not checked",
              [USER_PROMPT, REPLY_TEXT, NOTICE_PROMPT, REPLY_TEXT], False),
-            ("a turn opened by a scheduled prompt shows nothing",
+            ("a turn opened by a scheduled prompt is not checked",
              [USER_PROMPT, REPLY_TEXT, SCHEDULED_PROMPT, TOOL_CALL, TOOL_RESULT, REPLY_TEXT], False),
             ("a message that arrives while the agent answers the user leaves the turn the user's",
              [USER_PROMPT, TOOL_CALL, TOOL_RESULT, PEER_MESSAGE_WHILE_WORKING, REPLY_TEXT], True),
-            ("the user's answer typed into a turn another agent-seat's message opened shows the item",
+            ("the user's answer typed into a turn another agent-seat's message opened is checked",
              [USER_PROMPT, REPLY_TEXT, PEER_PROMPT, TOOL_CALL, USER_ANSWER_WHILE_WORKING, TOOL_RESULT, REPLY_TEXT],
              True),
-            ("the user's answer typed into a turn a background-task notice opened shows the item",
+            ("the user's answer typed into a turn a background-task notice opened is checked",
              [NOTICE_PROMPT, USER_ANSWER_WHILE_WORKING, REPLY_TEXT], True),
-            ("the user's answer typed into a turn a scheduled prompt opened shows the item",
+            ("the user's answer typed into a turn a scheduled prompt opened is checked",
              [SCHEDULED_PROMPT, TOOL_CALL, USER_ANSWER_WHILE_WORKING, TOOL_RESULT, REPLY_TEXT], True),
-            ("another agent-seat's message typed into a turn another agent-seat's message opened shows nothing",
+            ("another agent-seat's message typed into a turn another agent-seat's message opened is not checked",
              [USER_PROMPT, REPLY_TEXT, PEER_PROMPT, TOOL_CALL, PEER_MESSAGE_WHILE_WORKING, TOOL_RESULT, REPLY_TEXT],
              False),
             ("the user's answer typed into an earlier turn does not make a later agent-started turn his",
@@ -434,31 +375,31 @@ def test_only_a_turn_that_answers_the_user_shows_or_blocks():
         case = Case()
         case.walk_files(minutes="#next_to_present item 2 of 9.")
         case.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
-        if shown:
-            check_shown(case_name, case.run(), item)
+        if checked:
+            check_reminded(case_name, case.run())
         else:
             check_silent(case_name, case.run())
     without_turn_origin = {"type": "user", "origin": {"kind": "human"},
                            "message": {"role": "user", "content": "what is PR 1188?"}}
-    for case_name, records, shown in (
-            ("without turnOrigin, a prompt whose origin is the user's shows the item",
+    for case_name, records, checked in (
+            ("without turnOrigin, a prompt whose origin is the user's is checked",
              [without_turn_origin, REPLY_TEXT], True),
-            ("without turnOrigin, a prompt with another origin shows nothing",
+            ("without turnOrigin, a prompt with another origin is not checked",
              [dict(without_turn_origin, origin={"kind": "coordinator"}), REPLY_TEXT], False),
-            ("a transcript with no prompt at all shows nothing", [REPLY_TEXT], False),
-            ("without turnOrigin, the user's answer typed into another origin's turn shows the item",
+            ("a transcript with no prompt at all is not checked", [REPLY_TEXT], False),
+            ("without turnOrigin, the user's answer typed into another origin's turn is checked",
              [dict(without_turn_origin, origin={"kind": "coordinator"}), USER_ANSWER_WHILE_WORKING, REPLY_TEXT],
              True),
             ("without turnOrigin, an answer typed into another origin's turn before it starts does not count",
              [USER_ANSWER_WHILE_WORKING, dict(without_turn_origin, origin={"kind": "coordinator"}), REPLY_TEXT],
              False),
-            ("with no prompt at all, the user's answer typed while working shows the item",
+            ("with no prompt at all, the user's answer typed while working is checked",
              [USER_ANSWER_WHILE_WORKING, REPLY_TEXT], True)):
         case = Case()
         case.walk_files(minutes="#next_to_present item 2 of 9.")
         case.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
-        if shown:
-            check_shown(case_name, case.run(), item)
+        if checked:
+            check_reminded(case_name, case.run())
         else:
             check_silent(case_name, case.run())
     case = Case()
@@ -498,43 +439,35 @@ Last. Recommendation: Y.
 """
 
 
-def range_section(start, end=None):
-    text = RANGE_WALK_DOCUMENT
-    return text[text.index(start):text.index(end) if end else len(text)]
-
-
 def test_range_headings_and_values():
-    for case_name, minutes, start, end in (
+    for case_name, minutes in (
             ("an item before a range heading ends at the range heading",
-             "#next_to_present item 9 of 54.", "## Item 9 of 54", "## Items 10 to 12 of 54"),
-            ("minutes naming a range show the range heading's unit",
-             "#next_to_present items 10 to 12 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
-            ("minutes listing the range's items show the same unit",
-             "#next_to_present items 10, 11 and 12 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
+             "#next_to_present item 9 of 54."),
+            ("minutes naming a range find the range heading",
+             "#next_to_present items 10 to 12 of 54."),
+            ("minutes listing the range's items find the same heading",
+             "#next_to_present items 10, 11 and 12 of 54."),
             ("a dashed range is read as a range",
-             "#next_to_present items 10-12 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
-            ("one item inside a range heading shows the range's unit",
-             "#next_to_present item 11 of 54.", "## Items 10 to 12 of 54", "## Item 12.1 of 54"),
+             "#next_to_present items 10-12 of 54."),
+            ("one item inside a range heading is found under it",
+             "#next_to_present item 11 of 54."),
             ("a running count inside a code fence starts no item",
-             "#next_to_present item 12.1 of 54.", "## Item 12.1 of 54", "## Item 12.2 of 54")):
+             "#next_to_present item 12.1 of 54.")):
         case = Case()
         case.walk_files(minutes=minutes, document=RANGE_WALK_DOCUMENT)
         case.reply("Recorded.")
-        check_shown(case_name, case.run(), range_section(start, end))
+        check_reminded(case_name, case.run())
     case = Case()
     case.walk_files(minutes="#next_to_present items 12.1 to 12.2 of 54.", document=RANGE_WALK_DOCUMENT)
     case.reply("Recorded.")
-    check_shown("a dotted range shows its parts", case.run(),
-                range_section("## Item 12.1 of 54", "## Item 12.2 of 54"),
-                range_section("## Item 12.2 of 54", "## Item 13 of 54: last"))
+    check_reminded("a dotted range finds its parts", case.run())
     backwards_document = ("# A walk\n\n## Item 9 of 54: first\n\nText.\n\n"
                           "## Items 12 to 10 of 54: backwards\n\nMore.\n\n"
                           "## Item 13 of 54: last\n\nEnd.\n")
     case = Case()
     case.walk_files(minutes="#next_to_present item 9 of 54.", document=backwards_document)
     case.reply("Recorded.")
-    check_shown("a heading whose range runs backwards still ends the item before it", case.run(),
-                wanted_text="Item 9 of 54: first\n\nText.")
+    check_reminded("a heading whose range runs backwards still ends the item before it", case.run())
     case = Case()
     case.walk_files(minutes="#next_to_present item 10 of 54.", document=backwards_document)
     case.reply("Recorded.")
@@ -545,17 +478,16 @@ def test_range_headings_and_values():
                       "## Items 12 to 12.2 of 54: an item and its inserted questions\n\nTogether.\n\n"
                       "## Item 13 of 54: after\n\nAfter.\n")
     for case_name, minutes in (
-            ("minutes naming an item and its parts show the heading that groups them",
+            ("minutes naming an item and its parts find the heading that groups them",
              "#next_to_present items 12 to 12.2 of 54."),
-            ("minutes naming one part show the heading that groups the item and its parts",
+            ("minutes naming one part find the heading that groups the item and its parts",
              "#next_to_present item 12.1 of 54."),
-            ("minutes naming the item alone show the heading that groups it with its parts",
+            ("minutes naming the item alone find the heading that groups it with its parts",
              "#next_to_present item 12 of 54.")):
         case = Case()
         case.walk_files(minutes=minutes, document=item_and_parts)
         case.reply("Recorded.")
-        check_shown(case_name, case.run(),
-                    wanted_text="Items 12 to 12.2 of 54: an item and its inserted questions\n\nTogether.")
+        check_reminded(case_name, case.run())
     case = Case()
     case.walk_files(minutes="#next_to_present item 5 of 9.",
                     document=WALK_DOCUMENT + "\n## Item 5 of 9: a misnumbered copy\n\nText.\n")
@@ -625,32 +557,25 @@ After. Recommendation: Y.
 """
 
 
-def test_grouped_heading_paragraphs_and_kept_revisions_are_shown():
-    whole_group = ("Items 10 and 11 of 12: two small changes\n\n"
-                   "Item 10 of 12: the hook's message carries the diff. Proposed: a diff. Recommendation: Y.\n\n"
-                   "Item 11 of 12: drop the timed test. Proposed: a benchmark. Recommendation: Y.")
+def test_grouped_heading_paragraphs_and_kept_revisions_are_found():
     for case_name, minutes in (
-            ("minutes naming a grouped heading show it with its items' bold paragraphs",
+            ("minutes naming a grouped heading find it",
              "#next_to_present items 10 and 11 of 12."),
-            ("minutes naming every item of a grouped heading without a total show the whole group",
+            ("minutes naming every item of a grouped heading without a total find the group",
              "#next_to_present items 10 to 11.")):
         case = Case()
         case.walk_files(minutes=minutes, document=GROUPED_WALK_DOCUMENT)
         case.reply("Recorded.")
-        check_shown(case_name, case.run(), wanted_text=whole_group)
-    for case_name, minutes, wanted_text in (
-            ("minutes naming one item of a grouped heading show the heading and that item's paragraph",
-             "#next_to_present item 11 of 12.",
-             "Items 10 and 11 of 12: two small changes\n\n"
-             "Item 11 of 12: drop the timed test. Proposed: a benchmark. Recommendation: Y."),
-            ("minutes naming a grouped item without a total show the heading and that item's paragraph",
-             "#next_to_present item 10.",
-             "Items 10 and 11 of 12: two small changes\n\n"
-             "Item 10 of 12: the hook's message carries the diff. Proposed: a diff. Recommendation: Y.")):
+        check_reminded(case_name, case.run())
+    for case_name, minutes in (
+            ("minutes naming one item of a grouped heading find that item",
+             "#next_to_present item 11 of 12."),
+            ("minutes naming a grouped item without a total find that item",
+             "#next_to_present item 10.")):
         case = Case()
         case.walk_files(minutes=minutes, document=GROUPED_WALK_DOCUMENT)
         case.reply("Recorded.")
-        check_shown(case_name, case.run(), wanted_text=wanted_text)
+        check_reminded(case_name, case.run())
     case = Case()
     case.walk_files(minutes="#next_to_present item 11 of 12.",
                     document=GROUPED_WALK_DOCUMENT.replace(
@@ -660,34 +585,29 @@ def test_grouped_heading_paragraphs_and_kept_revisions_are_shown():
     check_blocked("a bold paragraph naming an item its heading does not name still starts an item",
                   case.run(), "more than one heading for `Item 11 of 12`")
     for case_name, minutes in (
-            ("minutes naming an item kept beside its revision show only the revision",
+            ("minutes naming an item kept beside its revision find only the revision",
              "#next_to_present item 27 of 72."),
-            ("minutes naming a revised item without a total show only the revision",
+            ("minutes naming a revised item without a total find only the revision",
              "#next_to_present item 27.")):
         case = Case()
         case.walk_files(minutes=minutes, document=REVISED_WALK_DOCUMENT)
         case.reply("Recorded.")
-        check_shown(case_name, case.run(),
-                    wanted_text="Item 27 of 72 (revised): keeping code and design in step\n\n"
-                                "The revision. Recommendation: Y.")
+        check_reminded(case_name, case.run())
     case = Case()
     case.walk_files(minutes="#next_to_present item 26 of 72.", document=REVISED_WALK_DOCUMENT)
     case.reply("Recorded.")
-    check_shown("an item before a kept original still ends at the original", case.run(),
-                wanted_text="Item 26 of 72: before\n\nBefore. Recommendation: Y.")
+    check_reminded("an item before a kept original still ends at the original", case.run())
     case = Case()
     case.walk_files(minutes="#next_to_present item 10 of 13.",
                     document=GROUPED_WALK_DOCUMENT.replace(
                         "**Item 11 of 12: drop", "**Item 10 of 13: another count.** Text.\n\n**Item 11 of 12: drop"))
     case.reply("Recorded.")
-    check_shown("a bold paragraph with another total under a grouped heading starts its own item", case.run(),
-                wanted_text="Item 10 of 13: another count. Text.")
+    check_reminded("a bold paragraph with another total under a grouped heading starts its own item", case.run())
     case = Case()
     case.walk_files(minutes="#next_to_present item 27 of 72.",
                     document=REVISED_WALK_DOCUMENT.replace("## Item 27 of 72 (revised)", "## Item 27 of 76 (revised)"))
     case.reply("Recorded.")
-    check_shown("a revision under another total leaves the original shown", case.run(),
-                wanted_text="Item 27 of 72: keeping the design true\n\nThe original. Recommendation: Y.")
+    check_reminded("a revision under another total leaves the original in force", case.run())
     case = Case()
     case.walk_files(minutes="#next_to_present item 10 of 54.",
                     document=("# A walk\n\n## Item 9 of 54: first\n\nText.\n\n"
@@ -714,16 +634,13 @@ def test_grouped_heading_paragraphs_and_kept_revisions_are_shown():
                     document=REVISED_WALK_DOCUMENT.replace("## Item 27 of 72 (revised): keeping",
                                                            "## Item 27 of 72, revised: keeping"))
     case.reply("Recorded.")
-    check_shown("a heading saying `, revised:` after its count is a revision", case.run(),
-                wanted_text="Item 27 of 72, revised: keeping code and design in step\n\n"
-                            "The revision. Recommendation: Y.")
+    check_reminded("a heading saying `, revised:` after its count is a revision", case.run())
     partial = ("# A walk\n\n## Items 5 and 6 of 9: two\n\nBoth. Recommendation: Y.\n\n"
                "## Item 5 of 9 (revised): five again\n\nFive. Recommendation: Y.\n")
     case = Case()
     case.walk_files(minutes="#next_to_present item 6 of 9.", document=partial)
     case.reply("Recorded.")
-    check_shown("a revision of one item of a grouped heading leaves the group shown for the other item",
-                case.run(), wanted_text="Items 5 and 6 of 9: two\n\nBoth. Recommendation: Y.")
+    check_reminded("a revision of one item of a grouped heading leaves the group in force for the other item", case.run())
     case = Case()
     case.walk_files(minutes="#next_to_present item 5 of 9.", document=partial)
     case.reply("Recorded.")
@@ -734,21 +651,18 @@ def test_grouped_heading_paragraphs_and_kept_revisions_are_shown():
                     document=REVISED_WALK_DOCUMENT.replace("## Item 27 of 72 (revised): keeping",
                                                            "## **Item 27 of 72** (revised): keeping"))
     case.reply("Recorded.")
-    check_shown("a heading whose bold closes before `(revised)` is a revision", case.run(),
-                wanted_text="Item 27 of 72 (revised): keeping code and design in step\n\n"
-                            "The revision. Recommendation: Y.")
+    check_reminded("a heading whose bold closes before `(revised)` is a revision", case.run())
     for case_name, document in (
-            ("minutes naming a grouped item whose paragraph is not bold show the whole group",
+            ("minutes naming a grouped item whose paragraph is not bold find the group",
              "# A walk\n\n## Items 5 and 6 of 9: two\n\n**Item 5 of 9: five.** Five.\n\n"
              "Item 6 of 9: six. Six.\n\n## Item 7 of 9: seven\n\nSeven.\n"),
-            ("minutes naming a grouped item with no paragraph of its own show the whole group",
+            ("minutes naming a grouped item with no paragraph of its own find the group",
              "# A walk\n\n## Items 5 and 6 of 9: two\n\n**Item 5 of 9: five.** Five.\n\n"
              "Both together. Recommendation: Y.\n\n## Item 7 of 9: seven\n\nSeven.\n")):
         case = Case()
         case.walk_files(minutes="#next_to_present item 6 of 9.", document=document)
         case.reply("Recorded.")
-        group = document.split("## Items 5 and 6 of 9: ", 1)[1].split("\n\n## Item 7", 1)[0]
-        check_shown(case_name, case.run(), wanted_text=("Items 5 and 6 of 9: " + group).replace("**", ""))
+        check_reminded(case_name, case.run())
     case = Case()
     case.walk_files(minutes="#next_to_present item 10 of 54.",
                     document=("# A walk\n\n## Item 9 of 54: nine\n\nNine.\n\n"
@@ -759,12 +673,10 @@ def test_grouped_heading_paragraphs_and_kept_revisions_are_shown():
     case.walk_files(minutes="#next_to_present item 9 of 54.",
                     document=("# A walk\n\n## Item 9 of 54: nine\n\nNine.\n\n"
                               "**Items 12 to 10 of 54: backwards.** Bad text.\n\n## Item 11 of 54: eleven\n\nEleven.\n"))
-    check_shown("a bold count that names no item still ends the item before it", case.run(),
-                wanted_text="Item 9 of 54: nine\n\nNine.")
+    check_reminded("a bold count that names no item still ends the item before it", case.run())
 
 
 def test_where_the_minutes_line_sits():
-    item_2 = section("## Item 2 of 9", "## Item 4.1 of 9")
     for case_name, minutes in (
             ("a line inside a bullet counts", "- #next_to_present item 2 of 9."),
             ("a bold marker counts", "**#next_to_present** item 2 of 9"),
@@ -783,7 +695,7 @@ def test_where_the_minutes_line_sits():
         case = Case()
         case.walk_files(minutes=minutes)
         case.reply("Recorded.")
-        check_shown(case_name, case.run(), item_2)
+        check_reminded(case_name, case.run())
     for case_name, minutes in (
             ("a walk closed mid-sentence is not open",
              "#next_to_present item 2 of 9.\n\nSwept into another walk; #next_to_present none, closed."),
@@ -818,7 +730,7 @@ def test_where_the_minutes_line_sits():
     case.walk_files(minutes="#next_to_present item 2 of 9.",
                     document=WALK_DOCUMENT + "\n## Item 2 of 10: a re-planned copy\n\nText.\n")
     case.reply("Recorded.")
-    check_shown("only the heading with the minutes' total is shown", case.run(), item_2)
+    check_reminded("only the heading with the minutes' total is checked", case.run())
 
 
 def test_unparseable_line():
@@ -827,7 +739,7 @@ def test_unparseable_line():
     case.reply(ITEM_2_REPLY)
     check_blocked("a #next_to_present line naming no item is sent back to be corrected",
                   case.run(), "could not be checked", "the poem question",
-                  "Then end the turn: this hook shows the user the items the line names.")
+                  "Then name in your reply the items the line names")
 
 
 def test_missing_walk_document():
@@ -853,8 +765,7 @@ def test_closed_and_last_line_wins():
     case = Case()
     case.walk_files(minutes="#next_to_present none, closed.\n\n#next_to_present item 2 of 9.")
     case.reply("All done.")
-    check_shown("a reopened walk's last line counts", case.run(),
-                section("## Item 2 of 9", "## Item 4.1 of 9"))
+    check_reminded("a reopened walk's last line counts", case.run())
 
 
 def test_minutes_without_line_are_not_open():
@@ -865,7 +776,6 @@ def test_minutes_without_line_are_not_open():
 
 
 def test_old_marker_is_migrated():
-    item_2 = section("## Item 2 of 9", "## Item 4.1 of 9")
     case = Case()
     minutes = case.walk_files(minutes="Next to present: item 2 of 9.")
     case.reply("Recorded.")
@@ -873,7 +783,7 @@ def test_old_marker_is_migrated():
     check_blocked("an open walk marked only with the old form is told the line to add", result,
                   "is the old form `Next to present:`", f"at the end of {minutes}",
                   "leave the old lines as they are: #next_to_present item 2 of 9\n",
-                  "Then end the turn: this hook shows the user the items the new line names.")
+                  "Then name in your reply the items the new line names")
     check("the old form's block shows no item", "where the poem page lives" not in result.stdout,
           result.stdout)
     case = Case()
@@ -889,7 +799,7 @@ def test_old_marker_is_migrated():
     case = Case()
     case.walk_files(minutes="Next to present: item 5 of 9.\n\n#next_to_present item 2 of 9")
     case.reply("Recorded.")
-    check_shown("a hashtag line below an old-form line counts", case.run(), item_2)
+    check_reminded("a hashtag line below an old-form line counts", case.run())
     case = Case()
     case.walk_files(minutes="Next to present: `item 2 of 9.`")
     case.reply("Recorded.")
@@ -911,35 +821,34 @@ def test_newest_open_walk_is_checked():
     case.walk_files(name="older-walk", minutes="#next_to_present item 5 of 9.", modified=1_000)
     case.walk_files(name="newer-walk", minutes="#next_to_present item 2 of 9.", modified=2_000)
     case.reply("Recorded.")
-    check_shown("the most recently modified open walk's item is the one shown", case.run(),
-                section("## Item 2 of 9", "## Item 4.1 of 9"))
+    check_reminded("the most recently modified open walk's item is the one checked", case.run())
 
 
 def test_silent_cases():
     case = Case()
     case.walk_files(minutes="#next_to_present item 2 of 9.")
     case.reply("No item here.")
-    check_shown("while the agent answers a Stop hook, the item notice is still shown",
-                case.run(stop_hook_active=True), section("## Item 2 of 9", "## Item 4.1 of 9"))
+    check_silent("while the agent answers a Stop hook, a reply leaving out the item is not sent back",
+                 case.run(stop_hook_active=True))
     unusable = Case()
     unusable.walk_files(minutes="#next_to_present item 12 to 10 of 9.")
     unusable.reply("No item here.")
     check_blocked("unusable minutes block when the agent is not answering a Stop hook", unusable.run())
     check_silent("while the agent answers a Stop hook, a block on unusable minutes is not printed",
                  unusable.run(stop_hook_active=True))
-    check_silent("a headless child is shown nothing",
+    check_silent("a headless child is not checked",
                  case.run(environment_extra={"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
     case.reply(None)
-    check_silent("a turn that wrote nothing to the user shows nothing", case.run())
+    check_silent("a turn that wrote nothing to the user is not checked", case.run())
     without_walk = Case(with_walk_directory=False)
     without_walk.reply("No item here.")
-    check_silent("a checkout without docs/walk shows nothing", without_walk.run())
+    check_silent("a checkout without docs/walk is not checked", without_walk.run())
     outside = Case(in_git=False)
     outside.reply("No item here.")
-    check_silent("a cwd outside any checkout shows nothing", outside.run())
+    check_silent("a cwd outside any checkout is not checked", outside.run())
 
 
-def test_nothing_is_installed_while_the_agent_answers_a_stop_hook():
+def test_nothing_is_read_or_installed_while_the_agent_answers_a_stop_hook():
     case = Case()
     case.walk_files(minutes="#next_to_present item 2 of 9.")
     case.reply("No item here.")
@@ -947,13 +856,15 @@ def test_nothing_is_installed_while_the_agent_answers_a_stop_hook():
     (shadow / "markdown_it").mkdir(parents=True)
     (shadow / "markdown_it" / "__init__.py").write_text(
         'raise ImportError("markdown-it-py hidden by this case")\n')
+    home = case.root / "home"
+    home.mkdir()
     result = case.run(stop_hook_active=True,
                       environment_extra={"PYTHONPATH": str(shadow), "PYTHONDONTWRITEBYTECODE": "1",
                                          # A hook that wrongly installs writes its install state here.
-                                         "HOME": str(case.root)})
-    check("while the agent answers a Stop hook, a missing markdown-it-py is a fault, not an install",
-          result.returncode == 1 and "markdown-it-py hidden by this case" in result.stderr
-          and "MarkdownParserMissing" not in result.stderr and result.stdout == "",
+                                         "HOME": str(home)})
+    check("while the agent answers a Stop hook, the hook stops before loading the parser or writing state",
+          result.returncode == 0 and result.stdout == "" and result.stderr == ""
+          and not any(home.iterdir()),
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
