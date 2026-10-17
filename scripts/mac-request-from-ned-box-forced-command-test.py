@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Tests for mac-window-opened-for-ned-box-forced-command.py.
+"""Tests for mac-request-from-ned-box-forced-command.py.
 
 No test opens a real window: the opener is replaced by a stub that records its
 arguments (NEDSCHORUS_MAC_WINDOW_OPENER), or the real opener runs in its dry-run
 mode, which prints the AppleScript instead of running it. HOME points at a
 scratch directory, so the request log is written there.
 
-Run: python3 scripts/mac-window-opened-for-ned-box-forced-command-test.py
+Run: python3 scripts/mac-request-from-ned-box-forced-command-test.py
 """
 
 import importlib.util
@@ -20,7 +20,7 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-PROGRAM_PATH = Path(__file__).with_name("mac-window-opened-for-ned-box-forced-command.py")
+PROGRAM_PATH = Path(__file__).with_name("mac-request-from-ned-box-forced-command.py")
 REAL_OPENER = Path(__file__).with_name("open-iterm-window-running-command")
 
 specification = importlib.util.spec_from_file_location("forced_command", PROGRAM_PATH)
@@ -117,7 +117,7 @@ else:
 
 
 def run_program(request, opener_body=None, use_real_opener=False, log_unwritable=False):
-    scratch = Path(tempfile.mkdtemp(prefix="mac-window-test-"))
+    scratch = Path(tempfile.mkdtemp(prefix="mac-request-test-"))
     if log_unwritable:
         (scratch / ".claude").write_text("a regular file where the log's directory belongs\n")
     environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(scratch), "SHELL": "/bin/zsh"}
@@ -599,6 +599,17 @@ check("task lists: a tar failure is logged", "tar-failed-2" in log, log)
 result, log, archive = run_task_lists_read("read-agent-seat-task-lists", log_is_a_directory=True)
 check("task lists: a read that cannot be logged sends nothing and exits 3",
       result.returncode == forced_command.EXIT_LOG_UNWRITABLE and archive == b"", (result.returncode, result.stderr))
+
+forwarder_scratch = Path(tempfile.mkdtemp(prefix="mac-request-forwarder-test-"))
+forwarder_environment = {key: value for key, value in os.environ.items() if key != "SSH_ORIGINAL_COMMAND"}
+forwarder_environment["HOME"] = str(forwarder_scratch)
+forwarder_result = subprocess.run(
+    [str(PROGRAM_PATH.with_name("mac-window-opened-for-ned-box-forced-command.py"))],
+    capture_output=True, text=True, env=forwarder_environment, timeout=30)
+shutil.rmtree(forwarder_scratch, ignore_errors=True)
+check("the old path, which the Mac's authorized_keys still names, runs this program",
+      forwarder_result.returncode == 2 and forwarder_result.stderr.startswith(f"{forced_command.PROGRAM}: ") and "SSH_ORIGINAL_COMMAND is unset" in forwarder_result.stderr,
+      (forwarder_result.returncode, forwarder_result.stderr))
 
 print()
 if failures:

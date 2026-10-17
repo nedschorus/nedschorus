@@ -11,7 +11,7 @@ The path may be relative to the current directory. It must name a file under
 The path is resolved here, symlinks included, and the request
 `open-in-typora <absolute path>` goes over ssh with the key
 ~/.ssh/id_ed25519_mac_side_action to the Mac's forced command,
-scripts/mac-window-opened-for-ned-box-forced-command.py. That program checks
+scripts/mac-request-from-ned-box-forced-command.py. That program checks
 the path again, maps it onto the mount, and runs `open -a Typora` on it. This
 program checks the request with the forced command's own function first, so a
 request the Mac would refuse for its text is refused here, before any

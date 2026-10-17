@@ -703,7 +703,7 @@ SUITES_RUN_WITHOUT_ANY_SANDBOX = {
         "it builds test sandboxes itself with bwrap, which cannot start inside bwrap",
     "scripts/run-all-test-suites-overlapping-runs-real-process-test.py":
         "it starts this program, whose suites run in bwrap, which cannot start inside bwrap",
-    "scripts/mac-window-opened-for-ned-box-forced-command-test.py":
+    "scripts/mac-request-from-ned-box-forced-command-test.py":
         "it runs the real ssh, which refuses its root-owned config files because "
         "inside the sandbox's user namespace they show as owned by nobody",
 }

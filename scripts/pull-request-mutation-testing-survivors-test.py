@@ -833,10 +833,10 @@ def run_cases():
 
         # A suite the runner lists as unable to work inside the sandbox runs
         # without the prefix in each mutant's test command, and the run says so.
-        outside_suite = "scripts/mac-window-opened-for-ned-box-forced-command-test.py"
+        outside_suite = "scripts/mac-request-from-ned-box-forced-command-test.py"
         with tempfile.TemporaryDirectory() as scratch_name:
             repository, base, head = scratch_repository(scratch_name, {
-                "scripts/mac-window-opened-for-ned-box-forced-command.py":
+                "scripts/mac-request-from-ned-box-forced-command.py":
                     "def double(x):\n    return x + x\n",
                 outside_suite: "import sys\nsys.exit(0)\n"})
             venv, control = fake_venv(scratch_name, {"dump": []})

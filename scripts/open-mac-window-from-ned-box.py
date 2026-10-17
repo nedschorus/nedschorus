@@ -13,7 +13,7 @@ which reconnects to the seat when the connection drops.
 
 The request goes over ssh with the key ~/.ssh/id_ed25519_mac_side_action. The
 Mac admits that key for one forced command only,
-scripts/mac-window-opened-for-ned-box-forced-command.py, which checks the
+scripts/mac-request-from-ned-box-forced-command.py, which checks the
 request word by word before anything runs. This program checks the words with
 that same function first, so a request the Mac would refuse is refused here,
 with the same reason, before any connection is made.
@@ -35,7 +35,7 @@ DEFAULT_MAC_SSH_DESTINATION = "el@edwards-macbook-air.local"
 MAC_SIDE_ACTION_KEY = Path.home() / ".ssh" / "id_ed25519_mac_side_action"
 SSH_EXIT_CONNECTION_FAILED = 255
 SSH_TIMEOUT_SECONDS = 60
-FORCED_COMMAND_PATH = Path(__file__).with_name("mac-window-opened-for-ned-box-forced-command.py")
+FORCED_COMMAND_PATH = Path(__file__).with_name("mac-request-from-ned-box-forced-command.py")
 
 EXIT_OPENED = 0
 EXIT_USAGE_OR_REFUSED = 2
