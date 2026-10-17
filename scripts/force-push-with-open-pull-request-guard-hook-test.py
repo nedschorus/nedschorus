@@ -856,6 +856,9 @@ for case_name, command in [
      "git push --repo <\\\n(true) --force origin the-pr-branch"),
     ("an unquoted body ends at a delimiter a line continuation splits: the force push after is found",
      "cat <<EOF\nE\\\nOF\ngit push --force origin the-pr-branch\nEOF"),
+    ("a case terminator a line continuation splits is repaired over its whole length: "
+     "the force push after the next case is found",
+     "case a in a) b;\\\n;& esac; case c in c) d;& esac; git push --force origin the-pr-branch"),
 ]:
     runner = ProbeRunner(open_pull_requests={"the-pr-branch": FAST_READ_PULL_REQUEST})
     decision, reason = decide(command, runner)

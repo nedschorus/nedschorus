@@ -1331,9 +1331,10 @@ def _source_with_case_terminators_repaired(text, text_node_types, keep_first=Fal
             break
         matches = [found for found in LAST_CASE_TERMINATOR_PATTERN.finditer(source)
                    if not _inside_text(tree.root_node, found.start(), text_node_types)]
-        starts = [(_offset_before_edits(found.start(), edits), found.start(1) - found.start())
-                  for found in (matches if all_at_once else matches[:1])]
-        starts = [(start, length) for start, length in starts if start is not None]
+        # A line continuation may split the terminator, so its end is mapped back to text too.
+        spans = [(_offset_before_edits(found.start(), edits), _offset_before_edits(found.start(1), edits))
+                 for found in (matches if all_at_once else matches[:1])]
+        starts = [(start, end - start) for start, end in spans if start is not None and end is not None]
         if not starts:
             break
         # Each terminator written as ;; shortens the text by its length less two, so an offset
@@ -1908,14 +1909,21 @@ def _heredoc_body_end(source, position, delimiter, dashed, inside_substitution, 
         while expanded and line_end != -1 and _escaped_by_backslashes(source, line_end):
             line_end = source.find(b"\n", line_end + 1)
         line_end = len(source) if line_end == -1 else line_end
-        line = source[position:line_end].replace(b"\\\n", b"")
+        line, joined = _line_continuations_removed(source[position:line_end])
         compared = line.lstrip(b"\t") if dashed else line
         if compared == delimiter:
             return position, min(line_end + 1, len(source))
         if inside_substitution and compared.startswith(delimiter + b")"):
-            return position, position + len(line) - len(compared) + len(delimiter)
+            return position, position + _offset_before_edits(
+                len(line) - len(compared) + len(delimiter), joined)
         position = line_end + 1
     return len(source), len(source)
+
+
+def _line_continuations_removed(text):
+    """Return (text with every backslash and newline removed, the edits that removed them)."""
+    found = [match.start() for match in re.finditer(rb"\\\n", text)]
+    return text.replace(b"\\\n", b""), [(at - 2 * number, 2, 0) for number, at in enumerate(found)]
 
 
 def _heredoc_body_start(source, delimiter_end):
