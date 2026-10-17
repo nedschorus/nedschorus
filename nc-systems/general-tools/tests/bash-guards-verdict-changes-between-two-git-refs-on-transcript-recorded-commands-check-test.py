@@ -439,6 +439,29 @@ try:
           outcomes[0] == b"{}\n" and "failed (" in outcomes[1] and str(exiting_after_one_reply) in outcomes[1],
           outcomes)
 
+    # A child that exits partway through its reply leaves a line with no newline; decoded, the part would
+    # reach the guard as the reader's own failure on the command, not as a lost reading.
+    exiting_mid_reply = Path(scratch) / "child-exiting-mid-reply.py"
+    exiting_mid_reply.write_text("import sys\nsys.stdin.readline()\nsys.stdout.write('{\"commands\"')\n")
+    mid_reply_guards, _, mid_reply_senders, _ = replay.guards_loaded(REPOSITORY_ROOT, True)
+    for sender in mid_reply_senders:
+        sender.reader_path = str(exiting_mid_reply)
+    alarm_handler = signal.signal(signal.SIGALRM, replay.raise_pair_timed_out)
+    try:
+        mid_reply_readings = replay.guard_readings(mid_reply_guards, "ls -la", "/", "/")
+    finally:
+        signal.signal(signal.SIGALRM, alarm_handler)
+        for sender in mid_reply_senders:
+            sender.close()
+    lost = [reading for reading in mid_reply_readings.values()
+            if reading[0] == "EXCEPTION ShellReaderLongRunningChildProcessDiedMidRequest"
+            and "before it replied" in reading[1] and str(exiting_mid_reply) in reading[1]]
+    check("a child that exits partway through its reply: the pair is a failed reading, the child lost mid-request",
+          mid_reply_senders and lost and all(replay.is_failed_reading(reading[0]) for reading in lost)
+          and not any(reading[0].startswith("EXCEPTION") and reading not in lost
+                      for reading in mid_reply_readings.values()),
+          mid_reply_readings)
+
     def exit_on_ls(worktree):
         with open(worktree / TMUX_KILL_GUARD, "a") as handle:
             handle.write("\n_refusal_for_as_written = refusal_for\n"
