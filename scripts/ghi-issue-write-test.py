@@ -218,6 +218,43 @@ def quiet(_line):
     pass
 
 
+class StagedReader(Recorder):
+    """Keeps every file the tool stages, path and text, as it stages it:
+    the throwaway worktree is gone by the time the run returns."""
+
+    def __init__(self, answers):
+        super().__init__(answers)
+        self.staged = {}
+
+    def __call__(self, arguments, timeout=None, cwd=None, check=True):
+        if arguments[:2] == ["git", "add"] and cwd:
+            candidate = Path(cwd) / arguments[2]
+            if candidate.is_file():
+                self.staged[arguments[2]] = candidate.read_text(
+                    encoding="utf-8")
+        return super().__call__(arguments, timeout, cwd, check)
+
+
+_ghi_info_ask_spec = TOOL.spec_from_file_location(
+    "ghi_info_ask_for_ruling_messages",
+    Path(__file__).resolve().with_name("ghi-info-ask.py"))
+_ghi_info_ask = TOOL.module_from_spec(_ghi_info_ask_spec)
+_ghi_info_ask_spec.loader.exec_module(_ghi_info_ask)
+
+
+def ruling_stderr(sentence, leading=""):
+    """What ghi-info-ask.py prints for ghi-info's reply `sentence`."""
+    return leading + _ghi_info_ask.caller_message_for_passthrough_reply(
+        "ask-user-about-ruling: " + sentence)[0] + "\n"
+
+
+def comes_before(order, first, second):
+    """Whether `first` was called before `second`; False, not a crash, when
+    either is missing, so one wrong case prints one FAIL line."""
+    return (first in order and second in order
+            and order.index(first) < order.index(second))
+
+
 def parsed_issue_value(frontmatter_line):
     """The `issue:` value read the way a YAML parser reads a double-quoted
     scalar. A value that is not quoted is not a scalar at all — it opens a
@@ -1257,12 +1294,16 @@ def run_cases(scratch: Path):
               "{sentence}\n")[1].startswith(
                   tool.GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END),
           tool.GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END)
+    held_in_783 = tool.GHI_INFO_ASK_RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_PATTERN.search(
+        "a sentence" + ask_module.RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE.format(
+            number=783))
+    check("the tool's pattern for the issue number after the ruling "
+          "question's sentence reads ghi-info-ask.py's",
+          held_in_783 is not None and held_in_783.group(1) == "783"
+          and held_in_783.start() == len("a sentence"),
+          ask_module.RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE)
 
     # --- A ruling question: the write goes ahead and records it ----------
-
-    def ruling_stderr(sentence, leading=""):
-        return leading + ask_module.RULING_QUESTION_MESSAGE_TEMPLATE.format(
-            sentence=sentence) + "\n"
 
     check("the request offers ghi-info the numbered ruling question",
           "ask-user-about-ruling: #<issue>" in " ".join(
@@ -1307,192 +1348,430 @@ def run_cases(scratch: Path):
           and lost_lines == ["adjudication skipped: ghi-info gave no "
                              "verdict: no detail"], lost_lines)
 
-    conflict_46 = tool.RulingConflict(46, "the ruling may not hold")
-    recorded_lines = []
-    recording = Recorder({"gh issue view 46": Completed(
-        "Closed issues are frozen\n")})
-    tool.record_ruling_conflict(REPO, 900, conflict_46, recording,
-                                recorded_lines.append,
-                                edit_not_yet_landed=False)
-    comment_calls = [call for call in recording.calls
-                     if call[:3] == ["gh", "issue", "comment"]]
-    check("recording labels the issue and comments ghi-info's question, "
-          "citing the ruling's issue by title and link",
-          recording.ran("gh label create conflicts-with-a-ruling")
-          and recording.ran("gh issue edit 900 --repo nedschorus/nedschorus "
-                            "--add-label conflicts-with-a-ruling")
-          and len(comment_calls) == 1 and "900" in comment_calls[0]
-          and ("GHI [Closed issues are frozen](https://github.com/"
-               "nedschorus/nedschorus/issues/46)") in comment_calls[0][-1]
-          and "the ruling may not hold" in comment_calls[0][-1],
-          recording.calls)
-    check("and tells the agent what happened and to follow the ruling",
-          recorded_lines and recorded_lines[-1].startswith(
-              "Filed issue 900; ghi-info thinks it conflicts with the ruling "
-              "in GHI [Closed issues are frozen](")
-          and "the ruling stands until he changes it." in recorded_lines[-1]
-          and recorded_lines[-1].endswith(
-              "\nFollow that ruling until the user changes it."),
-          recorded_lines)
-
-    unnamed = Recorder()
-    unnamed_lines = []
-    tool.record_ruling_conflict(REPO, 900, tool.RulingConflict(
-        None, "the ruling may not hold"), unnamed, unnamed_lines.append,
-        edit_not_yet_landed=True)
-    unnamed_comment = [call for call in unnamed.calls
-                       if call[:3] == ["gh", "issue", "comment"]]
-    check("a question naming no issue is recorded as naming none, and no "
-          "issue is looked up",
-          not unnamed.ran("--json title")
-          and len(unnamed_comment) == 1
-          and "ghi-info named no issue holding the ruling"
-          in unnamed_comment[0][-1]
-          and unnamed_lines[-1].startswith(
-              "Issue 900: ghi-info thinks this edit conflicts with a ruling "
-              "of the user's")
-          and unnamed_lines[-1].endswith(
-              "\nghi-info's question: the ruling may not hold")
-          and "Follow that ruling" not in unnamed_lines[-1],
-          (unnamed.calls, unnamed_lines))
-
-    failing = Recorder({"gh issue comment": Completed(
-        "", returncode=1, stderr="HTTP 502")})
+    original_date = tool.proposed_improvements_or_changes_file_date
+    tool.proposed_improvements_or_changes_file_date = lambda: "2026-10-03"
     try:
-        tool.record_ruling_conflict(REPO, 900, conflict_46, failing, quiet,
-                                    edit_not_yet_landed=False)
-        check("a failed comment exits nonzero, saying the issue is written "
-              "and what failed", False, "it reported success")
-    except tool.Refused as refusal:
-        check("a failed comment exits nonzero, saying the issue is written "
-              "and what failed",
-              refusal.code == 1
-              and str(refusal).startswith("Issue 900 was filed, but "
-                                          "recording ghi-info's ruling "
-                                          "question on it failed:")
-              and "HTTP 502" in str(refusal)
-              and "Tell the user that issue 900" in str(refusal),
-              str(refusal))
-        check("and says the filing is unfinished and a rerun finishes it, "
-              "without recording the question",
-              "the GHI-MD is not landed on main and the issue's body is not "
-              "yet the links to it" in str(refusal)
-              and "Rerun this command to land the GHI-MD and link the body"
-              in str(refusal)
-              and "files no second issue" in str(refusal)
-              and "The rerun does not ask ghi-info again, so it will not "
-              "record the question" in str(refusal)
-              and "Do not rerun" not in str(refusal),
-              str(refusal))
+        conflict_46 = tool.RulingConflict(46, "the ruling may not hold")
+        check("a file from ghi-info is one entry, E1, in rule 1's entry form, "
+              "citing the ruling's GHI by title and link and saying who "
+              "settles it",
+              tool.proposed_improvements_or_changes_file_text(
+                  REPO, conflict_46, "Closed issues are frozen",
+                  "2026-10-03", "filed")
+              == ("# Proposed improvements or changes from ghi-info, "
+                  "2026-10-03\n\n"
+                  "ghi-info reviewed the GHI-MD beside this file when "
+                  "scripts/ghi-issue-write.py filed it. Once this file is "
+                  "on main, the agent that ran the tool dispatches a forked "
+                  "subagent to settle each entry by rules 3 to 7 of § The "
+                  "design in "
+                  "docs/issues/1132-concerns-about-a-ghi-are-handled-by-"
+                  "agents.md.\n\n"
+                  "## E1 — possible problem: the GHI-MD's proposal may go "
+                  "against a user-ruling held in GHI [Closed issues are "
+                  "frozen](https://github.com/nedschorus/nedschorus/"
+                  "issues/46)\n"
+                  "ghi-info's question: the ruling may not hold\n"
+                  "Goes wrong when: the proposal is carried out while that "
+                  "user-ruling still applies.\n"
+                  "State: open\n"))
+        check("the GHI-MD the file points the subagent at is on main",
+              (Path(__file__).resolve().parents[1]
+               / tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD)
+              .is_file(),
+              tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD)
+        check("a question naming no GHI says so in the file",
+              "may go against a user-ruling for which ghi-info named no "
+              "GHI\n" in tool.proposed_improvements_or_changes_file_text(
+                  REPO, tool.RulingConflict(None, "the ruling may not hold"),
+                  None, "2026-10-03", "edited"))
+        line = ("This GHI has proposed improvements or changes: read every "
+                "file in this folder whose name starts with "
+                "`570-statusline-drops-branch-proposed-improvements-or-"
+                "changes-`.")
+        with_line = tool.with_pointer_line(FILE_TEXT,
+                                           "570-statusline-drops-branch")
+        check("the pointer line goes directly under the first heading, "
+              "after the frontmatter",
+              with_line == FILE_TEXT.replace(
+                  "# A statusline that drops its branch name\n",
+                  "# A statusline that drops its branch name\n\n" + line
+                  + "\n"), with_line)
+        check("a GHI-MD that already carries the line is left as it is",
+              tool.with_pointer_line(with_line,
+                                     "570-statusline-drops-branch")
+              == with_line)
+        check("a pointer line carried from an earlier name is replaced, not "
+              "joined by a second",
+              tool.with_pointer_line(with_line, "571-renamed")
+              == with_line.replace("570-statusline-drops-branch",
+                                   "571-renamed"))
+        check("a proposed-improvements-or-changes-file is not counted as a "
+              "GHI-MD",
+              tool.ghi_mds_among([
+                  "docs/issues/570-a.md",
+                  "docs/issues/570-a-proposed-improvements-or-changes-"
+                  "ghi-info-2026-10-03.md",
+                  "docs/issues/570-a-proposed-improvements-or-changes-"
+                  "ghi-info-2026-10-03-2.md"])
+              == ["docs/issues/570-a.md"])
+        check("such a file beside a GHI-MD does not stop the issue's title "
+              "from following a changed heading",
+              tool.title_follows_heading_in_this_edit(
+                  "# Older\n", "Newer", [
+                      "docs/issues/570-a.md",
+                      "docs/issues/570-a-proposed-improvements-or-changes-"
+                      "ghi-info-2026-10-03.md"],
+                  {"title": "Older"}))
 
-    timing_out = Recorder({"gh issue comment": subprocess.TimeoutExpired(
-        ["gh", "issue", "comment"], 120)})
-    try:
-        tool.record_ruling_conflict(REPO, 900, conflict_46, timing_out, quiet,
-                                    edit_not_yet_landed=False)
-        check("a timed-out gh call while recording exits nonzero, saying the "
-              "issue is written and what the user must be told", False,
-              "it reported success")
-    except tool.Refused as refusal:
-        check("a timed-out gh call while recording exits nonzero, saying the "
-              "issue is written and what the user must be told",
-              refusal.code == 1
-              and str(refusal).startswith("Issue 900 was filed, but "
-                                          "recording ghi-info's ruling "
-                                          "question on it failed:")
-              and "Tell the user that issue 900 may conflict with a ruling "
-              "of his: the ruling may not hold" in str(refusal),
-              str(refusal))
-    except subprocess.TimeoutExpired:
-        check("a timed-out gh call while recording exits nonzero, saying the "
-              "issue is written and what the user must be told", False,
-              "the timeout escaped without the message")
+        proposed_dir = scratch / "proposed-dir"
+        proposed_dir.mkdir()
+        (proposed_dir / "a-proposed-improvements-or-changes-ghi-info-"
+         "2026-10-03.md").write_text("earlier\n")
+        second = tool.write_proposed_improvements_or_changes_file(
+            proposed_dir, "a", REPO, conflict_46,
+            Recorder({"gh issue view 46": Completed("T\n")}), quiet,
+            "filed", scratch)
+        check("a file of the same name gets a numeric suffix, and the "
+              "earlier file is left as it was",
+              second.name == ("a-proposed-improvements-or-changes-ghi-info-"
+                              "2026-10-03-2.md")
+              and (proposed_dir / "a-proposed-improvements-or-changes-"
+                   "ghi-info-2026-10-03.md").read_text() == "earlier\n",
+              second.name)
 
-    already_there = Recorder({
-        "gh issue view 46": Completed("Closed issues are frozen\n"),
-        "gh issue view 900": Completed(tool.ruling_conflict_comment_body(
-            REPO, conflict_46, "Closed issues are frozen") + "\n"),
-    })
-    tool.record_ruling_conflict(REPO, 900, conflict_46, already_there, quiet,
-                                edit_not_yet_landed=True)
-    check("a question already commented on the issue is not commented twice",
-          not already_there.ran("gh issue comment")
-          and already_there.ran("--add-label conflicts-with-a-ruling"),
-          already_there.commands())
+        unwritable_dir = scratch / "unwritable-dir-is-a-file"
+        unwritable_dir.write_text("a file where the directory should be\n")
+        for failure_name, failing_answer, directory, detail in (
+                ("a ruling title lookup that fails writes nothing and says "
+                 "nothing was filed",
+                 Completed("", returncode=1, stderr="HTTP 502"),
+                 scratch / "lookup-fails", "HTTP 502"),
+                ("a ruling title lookup that times out is reported the same "
+                 "way", subprocess.TimeoutExpired(["gh", "issue", "view"],
+                                                  120),
+                 scratch / "lookup-times-out", "timed out"),
+                ("a file that cannot be written is reported the same way",
+                 Completed("T\n"), unwritable_dir, "Not a directory")):
+            if not directory.exists():
+                directory.mkdir()
+            try:
+                tool.write_proposed_improvements_or_changes_file(
+                    directory, "a", REPO, conflict_46,
+                    Recorder({"gh issue view 46": failing_answer}), quiet,
+                    "filed", scratch)
+                check(failure_name, False, "it reported success")
+            except tool.Refused as refusal:
+                lines_out = str(refusal).splitlines()
+                check(failure_name,
+                      refusal.code == 1 and len(lines_out) == 4
+                      and lines_out[0].startswith(
+                          "Nothing was filed: ghi-info raised a question "
+                          "about a ruling of the user's, and recording it in "
+                          "a proposed-improvements-or-changes-file failed:")
+                      and detail in lines_out[0]
+                      and lines_out[1] == ("ghi-info's question: the ruling "
+                                           "may not hold")
+                      and lines_out[2] == ("Rerun this command now; do not "
+                                           "wait for the user's answer.")
+                      and lines_out[3] == (
+                          "If this message appears again, do not rerun: tell "
+                          "the user that this draft may conflict with a "
+                          "ruling of his, and give him ghi-info's question.")
+                      and (not directory.is_dir()
+                           or not any(directory.iterdir())), lines_out)
+            except Exception as other:                # noqa: BLE001
+                check(failure_name, False, f"escaped unreported: {other!r}")
 
-    conflicting_source = written(
-        scratch, name="frozen-issue-reopened.md",
-        text="# Reopen a closed issue to add its last finding\n\nBody.\n")
-    conflicting_create = Recorder({
-        ASK: Completed("", returncode=3, stderr=ruling_stderr(
-            "#46 closed issues are frozen")),
-        "gh issue view 46": Completed("Closed issues are frozen\n"),
-        "gh issue list": Completed("[]"),
-        "gh issue create": Completed(
-            "https://github.com/nedschorus/nedschorus/issues/571\n"),
-        "git show": Completed("", returncode=1),
-        "git ls-remote": Completed(""),
-        "git ls-tree": Completed(""),
-        "gh pr create": Completed("https://github.com/x/y/pull/10\n"),
-    })
-    create_lines = []
-    try:
-        created_number, _ = tool.create(conflicting_source, REPO, scratch,
-                                         conflicting_create,
-                                         create_lines.append)
-        create_order = conflicting_create.commands()
-        check("create with a ruling question records it as soon as the "
-              "issue is filed, then lands the issue",
-              created_number == 571
-              and conflicting_create.count("gh issue create") == 1
-              and "gh pr create" in create_order
-              and "gh issue comment" in create_order
-              and create_order.index("gh issue comment")
-              < create_order.index("gh pr create")
-              and conflicting_create.ran("--add-label conflicts-with-a-ruling")
-              and any(line.startswith("Filed issue 571;")
-                      for line in create_lines),
-              (create_order, create_lines))
-    except tool.Refused as refusal:
-        check("create with a ruling question records it as soon as the "
-              "issue is filed, then lands the issue", False,
-              f"refused: {refusal}")
+        conflicting_text = ("# Reopen a closed issue to add its last "
+                            "finding\n\nBody.\n")
+        draft_dir = scratch / "draft-dir"
+        draft_dir.mkdir()
+        conflicting_source = written(draft_dir, name="frozen-issue-reopened.md",
+                                     text=conflicting_text)
+        draft_slug = tool.slug("Reopen a closed issue to add its last finding")
+        proposed_name = (f"{draft_slug}-proposed-improvements-or-changes-"
+                         "ghi-info-2026-10-03.md")
+        failing_create = StagedReader({
+            ASK: Completed("", returncode=3, stderr=ruling_stderr(
+                "#46 closed issues are frozen")),
+            "gh issue view 46": Completed("Closed issues are frozen\n"),
+            "gh issue list": Completed("[]"),
+            "gh issue create": Completed(
+                "https://github.com/nedschorus/nedschorus/issues/571\n"),
+            "git show": Completed("", returncode=1),
+            "git ls-remote": Completed(""),
+            "git ls-tree": Completed(""),
+            "git push": Completed("", returncode=1, stderr="network down"),
+        })
+        first_name = ("create with a ruling question writes the file beside "
+                      "the draft before filing, posts no comment and no "
+                      "label, and nothing is lost when landing fails")
+        try:
+            tool.create(conflicting_source, REPO, scratch, failing_create,
+                        quiet)
+            check(first_name, False, "the failed push reported success")
+        except tool.Refused:
+            check(first_name,
+                  (draft_dir / proposed_name).is_file()
+                  and "closed issues are frozen" in (
+                      draft_dir / proposed_name).read_text()
+                  and conflicting_source.read_text() == conflicting_text
+                  and comes_before(failing_create.commands(),
+                                   "gh issue view", "gh issue create")
+                  and not failing_create.ran("gh issue comment")
+                  and not failing_create.ran("--add-label")
+                  and not failing_create.ran("gh label"),
+                  sorted(item.name for item in draft_dir.iterdir()))
+        except Exception as other:                    # noqa: BLE001
+            check(first_name, False, f"escaped unreported: {other!r}")
 
-    # Step 4 failing after the question was drawn must not lose it: the
-    # rerun resumes without asking ghi-info, so only this run can record it.
-    failing_landing_create = Recorder({
-        **conflicting_create.answers,
-        "gh pr create": Completed("", returncode=1, stderr="HTTP 502"),
-    })
-    try:
-        tool.create(conflicting_source, REPO, scratch, failing_landing_create,
-                    quiet)
-        check("a create whose landing fails after a ruling question has "
-              "already recorded the question", False, "the landing passed")
-    except tool.Refused:
-        check("a create whose landing fails after a ruling question has "
-              "already recorded the question",
-              failing_landing_create.ran("gh issue comment 571")
-              and failing_landing_create.ran(
-                  "--add-label conflicts-with-a-ruling"),
-              failing_landing_create.commands())
+        # A first run that wrote the file and then failed to file the issue:
+        # the rerun finds no issue, so it would adjudicate, but the file says
+        # ghi-info was asked already.
+        unfiled_dir = scratch / "unfiled-draft-dir"
+        unfiled_dir.mkdir()
+        unfiled_source = written(unfiled_dir, name="frozen-issue-reopened.md",
+                                 text=conflicting_text)
+        unfiled_first = StagedReader({
+            ASK: Completed("", returncode=3, stderr=ruling_stderr(
+                "#46 closed issues are frozen")),
+            "gh issue view 46": Completed("Closed issues are frozen\n"),
+            "gh issue list": Completed("[]"),
+            "gh issue create": Completed("", returncode=1,
+                                         stderr="HTTP 502"),
+            "git show": Completed("", returncode=1),
+            "git ls-tree": Completed(""),
+        })
+        unfiled_rerun = StagedReader({
+            ASK: Completed("", returncode=3, stderr=ruling_stderr(
+                "#46 closed issues are frozen")),
+            "gh issue view 46": Completed("Closed issues are frozen\n"),
+            "gh issue list": Completed("[]"),
+            "gh issue create": Completed(
+                "https://github.com/nedschorus/nedschorus/issues/572\n"),
+            "git show": Completed("", returncode=1),
+            "git ls-remote": Completed(""),
+            "git ls-tree": Completed(""),
+            "gh pr create": Completed("https://github.com/x/y/pull/12\n"),
+        })
+        unfiled_lines = []
+        unfiled_name = ("a create rerun after filing failed asks ghi-info "
+                        "nothing, writes no second file, lands the first, "
+                        "deletes it from beside the draft once the pull "
+                        "request is open, and ends with the line to rerun after the merge")
+        try:
+            try:
+                tool.create(unfiled_source, REPO, scratch, unfiled_first,
+                            quiet)
+            except tool.Refused:
+                pass
+            tool.create(unfiled_source, REPO, scratch, unfiled_rerun,
+                        unfiled_lines.append)
+            check(unfiled_name,
+                  not unfiled_rerun.ran(ASK)
+                  and [item for item in unfiled_rerun.staged
+                       if "-proposed-improvements-or-changes-" in item]
+                  == [f"docs/issues/572-{proposed_name}"]
+                  and not any("-proposed-improvements-or-changes-"
+                              in item.name for item in unfiled_dir.iterdir())
+                  and unfiled_source.is_file()
+                  and bool(unfiled_lines)
+                  and unfiled_lines[-1].startswith("Filed GHI 572.")
+                  and "Once it merges, rerun this command" in unfiled_lines[-1]
+                  and "Dispatch a forked subagent now" not in unfiled_lines[-1],
+                  (unfiled_rerun.commands(), sorted(unfiled_rerun.staged),
+                   unfiled_lines[-1:]))
+        except Exception as other:                    # noqa: BLE001
+            check(unfiled_name, False, f"escaped unreported: {other!r}")
 
-    resumed_create = Recorder({
-        "gh issue list": Completed(json.dumps([{
-            "number": 571, "title": "t",
-            "body": "in progress " + tool.pairing_key(
-                conflicting_source.read_text())}])),
-        "git show": Completed("", returncode=1),
-        "git ls-remote": Completed(""),
-        "git ls-tree": Completed(""),
-        "gh pr create": Completed("https://github.com/x/y/pull/10\n"),
-    })
-    tool.create(conflicting_source, REPO, scratch, resumed_create, quiet)
-    check("a create that resumes its own issue asks nothing and records "
-          "nothing",
-          not resumed_create.ran(ASK)
-          and not resumed_create.ran("gh issue comment"),
-          resumed_create.commands())
+        # The rerun finds its issue by the pairing key, asks ghi-info
+        # nothing, and lands the file and the pointer line with the GHI-MD,
+        # because both are read from disk.
+        resumed_create = StagedReader({
+            "gh issue list": Completed(json.dumps([{
+                "number": 571, "title": "t",
+                "body": "in progress " + tool.pairing_key(
+                    conflicting_text)}])),
+            "git show": Completed("", returncode=1),
+            "git ls-remote": Completed(""),
+            "git ls-tree": Completed(""),
+            "gh pr create": Completed("https://github.com/x/y/pull/10\n"),
+        })
+        resumed_name = ("a create resumed after landing failed asks nothing "
+                        "and lands the file and the pointer line in the same "
+                        "pull request")
+        try:
+            tool.create(conflicting_source, REPO, scratch, resumed_create,
+                        quiet)
+            landed_ghi_md = resumed_create.staged.get(
+                f"docs/issues/571-{draft_slug}.md", "")
+            check(resumed_name,
+                  not resumed_create.ran(ASK)
+                  and f"docs/issues/571-{proposed_name}"
+                  in resumed_create.staged
+                  and ("This GHI has proposed improvements or changes: read "
+                       "every file in this folder whose name starts with "
+                       f"`571-{draft_slug}-proposed-improvements-or-"
+                       "changes-`.") in landed_ghi_md.splitlines()
+                  and resumed_create.count("git commit") == 1
+                  and not resumed_create.ran("gh issue comment"),
+                  (resumed_create.commands(),
+                   sorted(resumed_create.staged)))
+        except Exception as other:                    # noqa: BLE001
+            check(resumed_name, False,
+                  f"{other!r}; {resumed_create.commands()}")
+
+        # The pull request is what puts the file where a rerun no longer
+        # needs the copy beside the draft; until it is open, that copy is
+        # the only one a rerun can land.
+        no_pr_dir = scratch / "no-pull-request-draft-dir"
+        no_pr_dir.mkdir()
+        no_pr_source = written(no_pr_dir, name="frozen-issue-reopened.md",
+                               text=conflicting_text)
+        no_pr_answers = {
+            ASK: Completed("", returncode=3, stderr=ruling_stderr(
+                "#46 closed issues are frozen")),
+            "gh issue view 46": Completed("Closed issues are frozen\n"),
+            "gh issue list": Completed("[]"),
+            "gh issue create": Completed(
+                "https://github.com/nedschorus/nedschorus/issues/573\n"),
+            "git show": Completed("", returncode=1),
+            "git ls-remote": Completed(""),
+            "git ls-tree": Completed(""),
+            "gh pr create": Completed("", returncode=1, stderr="HTTP 502"),
+        }
+        no_pr_create = StagedReader(no_pr_answers)
+        no_pr_name = ("a filing whose pull request fails to open keeps its "
+                      "file beside the draft for the rerun")
+        try:
+            tool.create(no_pr_source, REPO, scratch, no_pr_create, quiet)
+            check(no_pr_name, False,
+                  "the failed pull request reported success")
+        except tool.Refused:
+            check(no_pr_name,
+                  no_pr_create.ran("git push")
+                  and (no_pr_dir / proposed_name).is_file(),
+                  sorted(item.name for item in no_pr_dir.iterdir()))
+        except Exception as other:                    # noqa: BLE001
+            check(no_pr_name, False, f"escaped unreported: {other!r}")
+        # Its rerun finds the branch pushed with no pull request, opens the
+        # pull request, and is the run that tells the agent to dispatch the
+        # subagent, since the run that pushed stopped before its last lines.
+        no_pr_rerun = StagedReader({
+            **no_pr_answers,
+            "gh issue list": Completed(json.dumps([{
+                "number": 573, "title": "t",
+                "body": "in progress " + tool.pairing_key(
+                    conflicting_text)}])),
+            "git ls-remote": Completed("abc refs/heads/ghi-573-x\n"),
+            "gh pr list": Completed("[]"),
+            "gh pr create": Completed("https://github.com/x/y/pull/13\n"),
+        })
+        no_pr_rerun_lines = []
+        no_pr_rerun_name = ("the rerun that opens the missing pull request "
+                            "deletes the file beside the draft and ends with "
+                            "the dispatch line")
+        try:
+            tool.create(no_pr_source, REPO, scratch, no_pr_rerun,
+                        no_pr_rerun_lines.append)
+            check(no_pr_rerun_name,
+                  no_pr_rerun.ran("gh pr create")
+                  and not no_pr_rerun.ran("git push")
+                  and not (no_pr_dir / proposed_name).exists()
+                  and bool(no_pr_rerun_lines)
+                  and no_pr_rerun_lines[-1].startswith("Filed GHI 573.")
+                  and f"docs/issues/573-{proposed_name}"
+                  in no_pr_rerun_lines[-1],
+                  (no_pr_rerun.commands(), no_pr_rerun_lines[-1:]))
+        except Exception as other:                    # noqa: BLE001
+            check(no_pr_rerun_name, False, f"escaped unreported: {other!r}")
+
+        create_lines = []
+        clean_dir = scratch / "clean-draft-dir"
+        clean_dir.mkdir()
+        clean_source = written(clean_dir, name="frozen-issue-reopened.md",
+                               text=conflicting_text)
+        other_filing_file = (
+            clean_dir / "another-draft-proposed-improvements-or-changes-"
+            "ghi-info-2026-10-03.md")
+        other_filing_file.write_text("another filing's\n")
+        clean_create = StagedReader({
+            ASK: Completed("", returncode=3, stderr=ruling_stderr(
+                "#46 closed issues are frozen")),
+            "gh issue view 46": Completed("Closed issues are frozen\n"),
+            "gh issue list": Completed("[]"),
+            "gh issue create": Completed(
+                "https://github.com/nedschorus/nedschorus/issues/571\n"),
+            "git show": Completed("", returncode=1),
+            "git ls-remote": Completed(""),
+            "git ls-tree": Completed(""),
+            "gh pr create": Completed("https://github.com/x/y/pull/10\n"),
+        })
+        clean_name = ("create with a ruling question lands the GHI-MD and its "
+                      "file together, deletes that file and no other from "
+                      "beside the draft, and ends the run with what "
+                      "conflicts, ghi-info's question and the line to rerun after the merge")
+        try:
+            tool.create(clean_source, REPO, scratch, clean_create,
+                        create_lines.append)
+            check(clean_name,
+                  f"docs/issues/571-{proposed_name}" in clean_create.staged
+                  and comes_before(clean_create.commands(),
+                                   "gh issue create", "git commit --quiet")
+                  and not (clean_dir / proposed_name).exists()
+                  and other_filing_file.read_text() == "another filing's\n"
+                  and ("wrote ghi-info's ruling question to "
+                       f"clean-draft-dir/{proposed_name}; it goes into the "
+                       "same pull request as the GHI-MD") in create_lines
+                  and create_lines[-1] == (
+                      "Filed GHI 571. ghi-info thinks the GHI-MD's proposal "
+                      "may go against a user-ruling held in GHI [Closed "
+                      "issues are frozen](https://github.com/nedschorus/"
+                      "nedschorus/issues/46).\n"
+                      "ghi-info's question: closed issues are frozen\n"
+                      "The question is entry E1 of "
+                      f"docs/issues/571-{proposed_name}, in this write's "
+                      "pull request.\n"
+                      "Do not settle the entry before that pull request "
+                      "merges: a commit pushed to it would move the head "
+                      "merge-lane-2 is reviewing.\n"
+                      "Once it merges, rerun this command; that run tells "
+                      "you to dispatch the forked subagent that settles the "
+                      "entry.")
+                  and "Dispatch a forked subagent now" not in "\n".join(
+                      create_lines)
+                  and not clean_create.ran("gh issue comment"),
+                  (clean_create.commands(), create_lines[-1:]))
+        except Exception as other:                    # noqa: BLE001
+            check(clean_name, False, f"escaped unreported: {other!r}")
+
+        quiet_create = StagedReader({
+            ASK: Completed("verdict: unrelated\n"),
+            "gh issue list": Completed("[]"),
+            "gh issue create": Completed(
+                "https://github.com/nedschorus/nedschorus/issues/574\n"),
+            "git show": Completed("", returncode=1),
+            "git ls-remote": Completed(""),
+            "git ls-tree": Completed(""),
+            "gh pr create": Completed("https://github.com/x/y/pull/14\n"),
+        })
+        quiet_lines = []
+        quiet_dir = scratch / "no-question-draft-dir"
+        quiet_dir.mkdir()
+        tool.create(written(quiet_dir, name="no-question.md"), REPO, scratch,
+                    quiet_create, quiet_lines.append)
+        check("a create with no ruling question writes no file, adds no "
+              "pointer line and prints no dispatch line",
+              not any("-proposed-improvements-or-changes-" in item
+                      for item in quiet_create.staged)
+              and not any("This GHI has proposed improvements" in text
+                          for text in quiet_create.staged.values())
+              and not any("Dispatch a forked subagent" in line
+                          for line in quiet_lines),
+              (sorted(quiet_create.staged), quiet_lines[-1:]))
+    finally:
+        tool.proposed_improvements_or_changes_file_date = original_date
 
     marker = scratch / tool.RECONSIDERED_MARKER_NAME
     marker.write_text("I checked #13 and it is a different matter.\n")
@@ -1945,9 +2224,9 @@ def run_edit_cases(scratch: Path):
           < landing.commands().index("git worktree add"),
           str(landing.commands()))
     check("the run is unfinished while its pull request waits", not finished)
-    check("an edit with no ruling question records nothing on the issue",
+    check("an edit with no ruling question posts no comment and no label",
           not landing.ran("gh issue comment")
-          and not landing.ran("conflicts-with-a-ruling"),
+          and not landing.ran("--add-label"),
           str(landing.commands()))
     check("the issue's file set is listed at the main commit the conflict "
           "check read, not at the ref a later fetch may have moved",
@@ -1955,102 +2234,134 @@ def run_edit_cases(scratch: Path):
           and not landing.ran("git ls-tree -r --name-only -z origin/main"),
           str(landing.commands()))
 
-    conflicting_edit = Recorder({
-        ASK: Completed("", returncode=3, stderr=(
-            "ghi-info found a ruling of the user's that it cannot tell "
-            "still applies: #46 closed issues are frozen\n"
-            "Ask the user whether that ruling still applies, and put the "
-            "question on your task list.\n")),
-        "gh issue view 46": Completed("Closed issues are frozen\n"),
-        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
-        "git merge-base": Completed(BASE_REVISION + "\n"),
-        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
-        "git ls-remote": Completed(""),
-        "gh pr create": Completed("https://github.com/x/y/pull/11\n"),
-        "gh issue view": issue_json("Older", one_link),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
-    })
-    edit_lines = []
+    original_date = tool.proposed_improvements_or_changes_file_date
+    tool.proposed_improvements_or_changes_file_date = lambda: "2026-10-03"
+    proposed_relative = (f"docs/issues/{EDIT_NAME[:-len('.md')]}-proposed-"
+                         "improvements-or-changes-ghi-info-2026-10-03.md")
+    proposed_on_disk = scratch / proposed_relative
+    edit_pointer_line = (
+        "This GHI has proposed improvements or changes: read every file in "
+        "this folder whose name starts with "
+        f"`{EDIT_NAME[:-len('.md')]}-proposed-improvements-or-changes-`.")
     try:
-        tool.edit(source, REPO, scratch, conflicting_edit, edit_lines.append)
-        edit_order = conflicting_edit.commands()
-        check("edit with a ruling question records it on the issue before "
-              "landing the edit",
-              "gh pr create" in edit_order
-              and "gh issue comment" in edit_order
-              and edit_order.index("gh issue comment")
-              < edit_order.index("gh pr create")
-              and conflicting_edit.ran("gh issue edit 570 --repo "
-                                       "nedschorus/nedschorus --add-label "
-                                       "conflicts-with-a-ruling")
-              and any(line.startswith("Issue 570: ghi-info thinks this "
-                                      "edit conflicts with")
-                      for line in edit_lines)
-              and not any("Edited issue" in line for line in edit_lines),
-              (edit_order, edit_lines))
-    except tool.Refused as refusal:
-        check("edit with a ruling question records it on the issue before "
-              "landing the edit", False, f"refused: {refusal}")
+        conflicting_edit_answers = {
+            ASK: Completed("", returncode=3, stderr=ruling_stderr(
+                "#46 closed issues are frozen")),
+            "gh issue view 46": Completed("Closed issues are frozen\n"),
+            f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
+            f"git show {MAIN_COMMIT}:{proposed_relative}": Completed(
+                "", returncode=128),
+            "git merge-base": Completed(BASE_REVISION + "\n"),
+            f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(
+                "# Older\n"),
+            "git ls-remote": Completed(""),
+            "gh pr create": Completed("https://github.com/x/y/pull/11\n"),
+            "gh issue view": issue_json("Older", one_link),
+            "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
+        }
+        failing_edit = StagedReader({
+            **conflicting_edit_answers,
+            "git push": Completed("", returncode=1, stderr="network down"),
+        })
+        first_name = ("edit with a ruling question writes the file and the "
+                      "pointer line to disk before pushing, posts no comment "
+                      "and no label, and nothing is lost when the push "
+                      "fails")
+        try:
+            tool.edit(source, REPO, scratch, failing_edit, quiet)
+            check(first_name, False, "the failed push reported success")
+        except tool.Refused:
+            check(first_name,
+                  proposed_on_disk.is_file()
+                  and "closed issues are frozen" in proposed_on_disk.read_text()
+                  and "scripts/ghi-issue-write.py edited it" in (
+                      proposed_on_disk.read_text())
+                  and edit_pointer_line in source.read_text().splitlines()
+                  and proposed_relative in failing_edit.staged
+                  and not failing_edit.ran("gh issue comment")
+                  and not failing_edit.ran("--add-label")
+                  and not failing_edit.ran("gh label"),
+                  (failing_edit.commands(), sorted(failing_edit.staged)))
+        except Exception as other:                    # noqa: BLE001
+            check(first_name, False, f"escaped unreported: {other!r}")
 
-    # Recording runs before the edit lands, so its failure must not claim
-    # the edit landed, and must send the agent to the rerun that asks
-    # ghi-info again.
-    failing_edit_recording = Recorder({
-        **conflicting_edit.answers,
-        "gh issue comment": Completed("", returncode=1, stderr="HTTP 502"),
-    })
-    edit_recording_case = ("an edit whose recording fails lands nothing and "
-                           "says so, sending the agent to rerun")
-    try:
-        tool.edit(source, REPO, scratch, failing_edit_recording, quiet)
-        check(edit_recording_case, False, "it reported success")
-    except tool.Refused as refusal:
-        refused_text = str(refusal)
-        check(edit_recording_case,
-              refusal.code == 1
-              and not failing_edit_recording.ran("git push")
-              and not failing_edit_recording.ran("gh pr create")
-              and "HTTP 502" in refused_text
-              and "was not landed" in refused_text
-              and "was edited" not in refused_text
-              and "Do not rerun" not in refused_text
-              and "the rerun asks ghi-info again" in refused_text
-              and "Tell the user that this edit of issue 570 may conflict "
-              "with a ruling of his: closed issues are frozen"
-              in refused_text,
-              (refused_text, failing_edit_recording.commands()))
-    rerun_after_failed_recording = Recorder(dict(conflicting_edit.answers))
-    try:
-        tool.edit(source, REPO, scratch, rerun_after_failed_recording, quiet)
-        check("the rerun after a failed recording asks ghi-info again, "
-              "records the question and lands the edit",
-              rerun_after_failed_recording.ran("ghi-info-ask.py")
-              and rerun_after_failed_recording.ran("gh issue comment 570")
-              and rerun_after_failed_recording.ran("gh pr create"),
-              rerun_after_failed_recording.commands())
-    except tool.Refused as refusal:
-        check("the rerun after a failed recording asks ghi-info again, "
-              "records the question and lands the edit", False,
-              f"refused: {refusal}")
+        rerun = StagedReader(dict(conflicting_edit_answers))
+        rerun_lines = []
+        rerun_name = ("the rerun after the failed push asks ghi-info nothing, "
+                      "writes no second file, lands the file and the pointer "
+                      "line with the edit, and ends with the line to rerun after the merge")
+        try:
+            tool.edit(source, REPO, scratch, rerun, rerun_lines.append)
+            check(rerun_name,
+                  not rerun.ran(ASK)
+                  and sorted(item.name for item in proposed_on_disk.parent
+                             .iterdir()
+                             if "-proposed-improvements-or-changes-"
+                             in item.name)
+                  == [proposed_on_disk.name]
+                  and proposed_relative in rerun.staged
+                  and edit_pointer_line in rerun.staged.get(
+                      EDIT_RELATIVE, "").splitlines()
+                  and rerun.count("git commit") == 1
+                  and bool(rerun_lines)
+                  and rerun_lines[-1].startswith(
+                      "Edited GHI 570. ghi-info thinks the GHI-MD's proposal "
+                      "may go against a user-ruling held in GHI [Closed "
+                      "issues are frozen](")
+                  and f"The question is entry E1 of {proposed_relative}, "
+                  in rerun_lines[-1]
+                  and "Once it merges, rerun this command" in rerun_lines[-1]
+                  and "Dispatch a forked subagent now" not in rerun_lines[-1],
+                  (rerun.commands(), rerun_lines[-1:]))
+        except Exception as other:                    # noqa: BLE001
+            check(rerun_name, False, f"escaped unreported: {other!r}")
+        proposed_on_disk.unlink(missing_ok=True)
+        source = filed_ghi_md(scratch)
 
-    # The landing failing after the push leaves state already-pushed, and a
-    # rerun from there skips adjudication; the question must be recorded
-    # by this run.
-    failing_edit_landing = Recorder({
-        **conflicting_edit.answers,
-        "gh pr create": Completed("", returncode=1, stderr="HTTP 502"),
-    })
-    try:
-        tool.edit(source, REPO, scratch, failing_edit_landing, quiet)
-        check("an edit whose landing fails after a ruling question has "
-              "already recorded the question", False, "the landing passed")
-    except tool.Refused:
-        check("an edit whose landing fails after a ruling question has "
-              "already recorded the question",
-              failing_edit_landing.ran("gh issue comment 570")
-              and failing_edit_landing.ran(
-                  "--add-label conflicts-with-a-ruling"),
-              failing_edit_landing.commands())
+        # The file is written before anything reaches GitHub, so a lookup
+        # that fails stops the run with nothing pushed and nothing on disk.
+        failing_lookup = StagedReader({
+            **conflicting_edit_answers,
+            "gh issue view 46": Completed("", returncode=1,
+                                          stderr="HTTP 502"),
+        })
+        lookup_name = ("an edit whose ruling title lookup fails writes "
+                       "nothing, pushes nothing and says nothing was "
+                       "edited, sending the agent to rerun now")
+        try:
+            tool.edit(source, REPO, scratch, failing_lookup, quiet)
+            check(lookup_name, False, "it reported success")
+        except tool.Refused as refusal:
+            check(lookup_name,
+                  refusal.code == 1
+                  and str(refusal).startswith("Nothing was edited:")
+                  and "Rerun this command now; do not wait for the user's "
+                  "answer." in str(refusal)
+                  and not failing_lookup.ran("git push")
+                  and not proposed_on_disk.exists()
+                  and source.read_text() == FILE_TEXT,
+                  (str(refusal), failing_lookup.commands()))
+        except Exception as other:                    # noqa: BLE001
+            check(lookup_name, False, f"escaped unreported: {other!r}")
+
+        quiet_rerun = StagedReader({
+            **conflicting_edit_answers,
+            ASK: Completed("verdict: unrelated\n"),
+        })
+        quiet_rerun_lines = []
+        tool.edit(source, REPO, scratch, quiet_rerun, quiet_rerun_lines.append)
+        check("an edit with no ruling question writes no file, adds no "
+              "pointer line and prints no dispatch line",
+              not proposed_on_disk.exists()
+              and source.read_text() == FILE_TEXT
+              and not any("Dispatch a forked subagent" in line
+                          for line in quiet_rerun_lines)
+              and not quiet_rerun.ran("gh issue comment"),
+              (quiet_rerun.commands(), quiet_rerun_lines[-1:]))
+    finally:
+        tool.proposed_improvements_or_changes_file_date = original_date
+        proposed_on_disk.unlink(missing_ok=True)
+        source = filed_ghi_md(scratch)
     check("a heading the edit did change renames the issue",
           ran_with(landing, "gh issue edit", "--title", EDIT_TITLE),
           str(landing.commands()))
@@ -2221,6 +2532,102 @@ def run_edit_cases(scratch: Path):
           < moved.commands().index("git worktree add"),
           str(moved.commands()))
 
+    # The proposed-improvements-or-changes-files main holds beside the
+    # moved-from path move with the GHI-MD, in the same commit, and the
+    # GHI-MD carries the pointer line naming them at their new place.
+    proposed_on_main = (f"docs/issues/{EDIT_NAME[:-len('.md')]}-proposed-"
+                        "improvements-or-changes-ghi-info-2026-10-03.md")
+    proposed_moved_to = (f"nc-systems/statusline/{EDIT_NAME[:-len('.md')]}-"
+                         "proposed-improvements-or-changes-ghi-info-"
+                         "2026-10-03.md")
+    other_proposed_on_main = ("docs/issues/570-test-design-proposed-"
+                              "improvements-or-changes-ghi-info-2026-10-03.md")
+    moved_pointer_line = ("This GHI has proposed improvements or changes: "
+                          "read every file in this folder whose name starts "
+                          f"with `{EDIT_NAME[:-len('.md')]}-proposed-"
+                          "improvements-or-changes-`.")
+    for case_name, author_text in (
+            ("a GHI-MD that carries the pointer line",
+             tool.with_pointer_line(FILE_TEXT, EDIT_NAME[:-len('.md')])),
+            ("a GHI-MD that lacks the pointer line", FILE_TEXT)):
+        moved_with_proposed = StagedReader({
+            f"git show {MAIN_COMMIT}:{proposed_on_main}": Completed(
+                "# Proposed improvements or changes from ghi-info, "
+                "2026-10-03\n"),
+            **moved.answers,
+            "git ls-tree": Completed(
+                EDIT_RELATIVE + "\0" + proposed_on_main + "\0"
+                + "docs/issues/570-test-design.md\0"
+                + other_proposed_on_main + "\0"),
+        })
+        moved_source = filed_ghi_md(scratch, text=author_text,
+                                    directory="nc-systems/statusline")
+        moving_lines = []
+        tool.edit(moved_source, REPO, scratch, moved_with_proposed,
+                  moving_lines.append)
+        landed_text = moved_with_proposed.staged.get(MOVED_RELATIVE, "")
+        check(f"a proposed-improvements-or-changes-file beside the "
+              f"moved-from path of {case_name} moves with the GHI-MD in the "
+              "same commit, and the GHI-MD carries the pointer line once",
+              ran_with(moved_with_proposed, "git rm", proposed_on_main)
+              and moved_with_proposed.staged.get(proposed_moved_to, "")
+              .startswith("# Proposed improvements or changes from ghi-info")
+              and comes_before(moved_with_proposed.commands(),
+                               "git rm --quiet", "git commit --quiet")
+              and moved_with_proposed.count("git commit") == 1
+              and landed_text.splitlines().count(moved_pointer_line) == 1
+              and moved_pointer_line in moved_source.read_text(
+                  encoding="utf-8").splitlines()
+              and f"moving {proposed_on_main} to {proposed_moved_to} with "
+                  "the GHI-MD" in moving_lines,
+              (moved_with_proposed.commands(),
+               sorted(moved_with_proposed.staged), moving_lines))
+        check(f"and the move of {case_name} leaves the "
+              "proposed-improvements-or-changes-files of the issue's other "
+              "GHI-MD where they are",
+              not ran_with(moved_with_proposed, "git rm",
+                           other_proposed_on_main)
+              and not any("570-test-design" in item
+                          for item in moved_with_proposed.staged),
+              str(moved_with_proposed.calls))
+        if author_text == FILE_TEXT:
+            check("the pointer line written into the author's moved file is "
+                  "reported with its path from the repository root",
+                  "added the line pointing to the "
+                  "proposed-improvements-or-changes-files under the first "
+                  f"heading of {MOVED_RELATIVE}" in moving_lines,
+                  moving_lines)
+    moved_source = filed_ghi_md(scratch, directory="nc-systems/statusline")
+
+    # Under a new name too, were the moved-from path known: the files take
+    # the GHI-MD's new name.
+    check("proposed-improvements-or-changes-files moving with a GHI-MD take "
+          "its new name, and only those beside the moved-from path",
+          tool.proposed_files_moving_with_ghi_md(
+              "docs/issues/570-old-name.md",
+              "nc-systems/statusline/570-new-name.md", "570-new-name", [
+                  "docs/issues/570-old-name.md",
+                  "docs/issues/570-old-name-proposed-improvements-or-changes-"
+                  "ghi-info-2026-10-03.md",
+                  "docs/issues/570-old-name-proposed-improvements-or-changes-"
+                  "ghi-info-2026-10-03-2.md",
+                  "docs/issues/570-old-name-extra.md",
+                  "nc-systems/other/570-old-name-proposed-improvements-or-"
+                  "changes-ghi-info-2026-10-03.md"])
+          == [("docs/issues/570-old-name-proposed-improvements-or-changes-"
+               "ghi-info-2026-10-03.md",
+               "nc-systems/statusline/570-new-name-proposed-improvements-or-"
+               "changes-ghi-info-2026-10-03.md"),
+              ("docs/issues/570-old-name-proposed-improvements-or-changes-"
+               "ghi-info-2026-10-03-2.md",
+               "nc-systems/statusline/570-new-name-proposed-improvements-or-"
+               "changes-ghi-info-2026-10-03-2.md")])
+    check("and nothing moves when the GHI-MD did not move",
+          tool.proposed_files_moving_with_ghi_md(
+              None, EDIT_RELATIVE, EDIT_NAME[:-len('.md')],
+              [proposed_on_main]) == [])
+    filed_ghi_md(scratch, directory="nc-systems/statusline")
+
     # A same-named copy in the other directory, while this run's own file
     # is where main has it, is not a move: it is an edit in place, and that
     # copy is not this edit's to delete.
@@ -2387,9 +2794,10 @@ def run_edit_cases(scratch: Path):
           and not conflicted.ran("gh issue edit"),
           str(conflicted.commands()))
 
-    # A draft the conflict refusal rejects must leave the issue as it was,
-    # ruling question or not: the refusals run before the question is
-    # recorded.
+    # A draft the conflict refusal rejects must leave no file behind, ruling
+    # question or not: the refusals run before the question is written, so
+    # a rerun after the author's hand-merge asks ghi-info about the new
+    # content rather than taking a stale file for an earlier run's.
     for case, extra in (
             ("a file that moved on main", {}),
             ("an earlier edit still open", {
@@ -2402,13 +2810,12 @@ def run_edit_cases(scratch: Path):
         rejected_with_question = Recorder({
             **extra,
             **conflicted.answers,
-            ASK: Completed("", returncode=3, stderr=(
-                "ghi-info found a ruling of the user's that it cannot tell "
-                "still applies: #46 closed issues are frozen\n")),
+            ASK: Completed("", returncode=3, stderr=ruling_stderr(
+                "#46 closed issues are frozen")),
             "gh issue view 46": Completed("Closed issues are frozen\n"),
         })
         rejected_case = (f"{case} with a ruling question refuses before "
-                         "labelling or commenting on the issue")
+                         "writing a proposed-improvements-or-changes-file")
         try:
             tool.edit(source, REPO, scratch, rejected_with_question, quiet)
             check(rejected_case, False, "it proceeded")
@@ -2416,7 +2823,12 @@ def run_edit_cases(scratch: Path):
             check(rejected_case,
                   refusal.code == 66
                   and rejected_with_question.ran(ASK)
-                  and not rejected_with_question.ran("conflicts-with-a-ruling")
+                  and not rejected_with_question.ran("gh issue view 46")
+                  and not any(
+                      "-proposed-improvements-or-changes-" in item.name
+                      for item in source.parent.iterdir())
+                  and "This GHI has proposed improvements" not in (
+                      source.read_text())
                   and not rejected_with_question.ran("gh issue comment"),
                   (refusal.code, rejected_with_question.commands()))
 
@@ -2718,6 +3130,70 @@ def run_edit_cases(scratch: Path):
     check("and it opens no second pull request",
           not resumed.ran("git worktree add")
           and not resumed.ran("gh pr create"), str(resumed.commands()))
+
+    # The subagent that settles a ruling question starts only once the pull
+    # request that carried its file has merged, so it is this rerun, finding
+    # the entry open on main, that says to dispatch it.
+    open_entry_relative = (f"docs/issues/{EDIT_NAME[:-len('.md')]}-proposed-"
+                           "improvements-or-changes-ghi-info-2026-10-03.md")
+    open_entry_text = (
+        "# Proposed improvements or changes from ghi-info, 2026-10-03\n\n"
+        "## E1 — possible problem: the GHI-MD's proposal may go against a "
+        "user-ruling held in GHI [Closed issues are frozen](https://github."
+        "com/nedschorus/nedschorus/issues/46)\n"
+        "ghi-info's question: closed issues are frozen\n"
+        "Goes wrong when: the proposal is carried out while that user-ruling "
+        "still applies.\n"
+        "State: open\n")
+    entry_listing = f"git ls-tree --name-only -z {MAIN_COMMIT} docs/issues/"
+    for state_line, expect_dispatch in (("State: open", True),
+                                        ("State: settled, not worth doing",
+                                         False)):
+        merged = Recorder({
+            entry_listing: Completed(EDIT_RELATIVE + "\0"
+                                     + open_entry_relative + "\0"),
+            f"git show {MAIN_COMMIT}:{open_entry_relative}": Completed(
+                open_entry_text.replace("State: open", state_line)),
+            f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(
+                staged_form(title="Stale title")),
+            "gh issue view": issue_json("Stale title", one_link),
+            "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
+        })
+        merged_lines = []
+        _, merged_done = tool.edit(source, REPO, scratch, merged,
+                                   merged_lines.append)
+        dispatched = any(
+            line.startswith(f"GHI 570's GHI-MD is on main with a ruling "
+                            f"question from ghi-info still open, in "
+                            f"{open_entry_relative}.")
+            and "ghi-info's question: closed issues are frozen" in line
+            and "Dispatch a forked subagent now to settle each open entry "
+                "by rules 3 to 7 of § The design in docs/issues/1132-"
+                "concerns-about-a-ghi-are-handled-by-agents.md" in line
+            for line in merged_lines)
+        check(f"a rerun after the merge with an entry whose line is "
+              f"{state_line!r} on main "
+              + ("ends with the line to dispatch the subagent that settles it"
+                 if expect_dispatch else "says nothing about dispatching"),
+              merged_done and dispatched == expect_dispatch,
+              merged_lines[-2:])
+
+    unlisted = Recorder({
+        entry_listing: Completed("", returncode=128, stderr="bad object"),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(
+            staged_form(title="Stale title")),
+        "gh issue view": issue_json("Stale title", one_link),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
+    })
+    unlisted_name = ("a rerun after the merge whose listing of the GHI-MD's "
+                     "folder fails stops and says so, rather than reading it "
+                     "as no open entry")
+    try:
+        tool.edit(source, REPO, scratch, unlisted, quiet)
+        check(unlisted_name, False, "the failed listing reported success")
+    except tool.Refused as refusal:
+        check(unlisted_name, "git ls-tree --name-only" in str(refusal),
+              str(refusal))
     check("a heading the edit did not change leaves the title alone, "
           "however far the title is from it",
           not ran_with(resumed, "gh issue edit", "--title"),
