@@ -1951,6 +1951,56 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and "cold-read-full-run 1 of 3 for" in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
+    # Inside design-to-main a writer's cold reads are bounded by the machine's
+    # own two rounds: such a run is neither counted nor refused, and its record
+    # never counts toward the three outside the machine.
+    repository = build_scratch_repository(scratch, "full-run-count-skipped-inside-design-to-main")
+    for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
+        seed_log_store_record(repository, f"cold-read-grid-test-target-{day}", ["claude-hunt-deep.md"])
+    skipped = run_grid(repository, stubs / "full-run-count-skipped-inside-design-to-main",
+                       extra_arguments=["--cold-read-full-run-count-skipped-inside-design-to-main"])
+    skipped_record = record_directory_of(repository)
+    check("inside design-to-main a fourth run goes ahead and says its count was skipped",
+          skipped.returncode == 0
+          and "cold-read-full-run count skipped for cold-read-grid-test-target.md: "
+              "this run is inside design-to-main." in skipped.stdout
+          and "cold-read-full-run 4" not in skipped.stdout + skipped.stderr,
+          f"exit {skipped.returncode}; stdout={skipped.stdout!r}; stderr={skipped.stderr!r}")
+    check("and its record holds the skip marker",
+          skipped_record is not None
+          and (skipped_record / "cold-read-full-run-count-skipped-inside-design-to-main-marker.txt").is_file(),
+          f"record {skipped_record}")
+    result = run_grid(repository, stubs / "full-run-count-skipped-inside-design-to-main",
+                      {RECORD_CLOCK_OVERRIDE_VARIABLE: "2026-09-17T10:42"})
+    check("a later run outside design-to-main is still refused, naming only the three counted runs",
+          result.returncode == 2 and "refusing cold-read-full-run 4" in result.stderr
+          and skipped_record.name not in result.stderr,
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch, "full-run-count-skip-marker-not-counted")
+    seed_log_store_record(repository, "cold-read-grid-test-target-2026-09-01", ["claude-hunt-deep.md"])
+    for day in ("2026-09-02", "2026-09-03"):
+        seed_log_store_record(repository, f"cold-read-grid-test-target-{day}",
+                              ["claude-hunt-deep.md",
+                               "cold-read-full-run-count-skipped-inside-design-to-main-marker.txt"])
+    result = run_grid(repository, stubs / "full-run-count-skip-marker-not-counted")
+    check("records holding the skip marker do not count: one counted run makes this 2 of 3",
+          result.returncode == 0 and "cold-read-full-run 2 of 3 for" in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch, "full-run-count-both-flags-refused")
+    result = run_grid(repository, stubs / "full-run-count-both-flags-refused",
+                      extra_arguments=["--cold-read-full-run-count-skipped-inside-design-to-main",
+                                       "--user-ruled-cold-read-full-run-count-restart"])
+    records_tree = repository / "cold-read-records"
+    check("both flags together are refused with exit 2, naming both, and create no record",
+          result.returncode == 2
+          and "--cold-read-full-run-count-skipped-inside-design-to-main" in result.stderr
+          and "--user-ruled-cold-read-full-run-count-restart" in result.stderr
+          and (not records_tree.exists() or not any(records_tree.iterdir()))
+          and "saved:" not in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
     # A document renamed on a branch main has not taken: main last took it
     # under its earlier name, and runs from before that do not count.
     repository = build_scratch_repository(scratch, "full-run-count-renamed-unmerged")
