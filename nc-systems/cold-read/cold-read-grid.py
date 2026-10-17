@@ -882,7 +882,7 @@ def main() -> int:
         except FullRunCountUnavailable as error:
             count_unavailable = str(error)
     run_number = 1 if user_ruled_count_restart else len(earlier_runs) + 1
-    if run_number > FULL_RUN_LIMIT and count_unavailable is None:
+    if run_number > FULL_RUN_LIMIT:
         print(f"cold-read-grid: refusing cold-read-full-run {run_number} of "
               f"{target.name}: a change to a document gets at most {FULL_RUN_LIMIT} "
               f"before the user decides whether it gets more, and {len(earlier_runs)} "
