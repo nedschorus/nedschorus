@@ -95,6 +95,10 @@ def constant_texts(module):
     return texts
 
 
+def declares_message_constants(texts):
+    return any(is_message_name(name) for name in texts)
+
+
 def citations_in(text):
     return [(kind, match.group(0)) for kind, pattern in CITATION_PATTERNS.items()
             for match in pattern.finditer(text)]
@@ -137,6 +141,11 @@ check("every string constant named in capitals is read, whatever its name ends i
       constant_texts(probe) == {"UNCHECKED_NOTE_SUFFIX": "see PR 12", "REMINDER_OPENINGS": "a\nb"},
       constant_texts(probe))
 
+bare_probe = type(sys)("bare_probe")
+bare_probe.REFUSAL = "stopped"
+check("a hook whose only string constant is a bare REFUSAL declares no message constant",
+      not declares_message_constants(constant_texts(bare_probe)), constant_texts(bare_probe))
+
 hook_paths = registered_hook_paths()
 check(".claude/settings.json registers hooks for this suite to read", len(hook_paths) > 5,
       hook_paths)
@@ -148,7 +157,7 @@ for relative_path in hook_paths:
         continue
     texts = constant_texts(module)
     check(f"{relative_path} declares its messages as named constants",
-          any(is_message_name(name) for name in texts),
+          declares_message_constants(texts),
           f"no module-level constant ending in one of {collector.AGENT_STRING_NAME_SUFFIXES}")
     for name, text in sorted(texts.items()):
         if (relative_path, name) in EXEMPTIONS:
