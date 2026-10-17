@@ -119,6 +119,27 @@ MAC_WEEKLY_LIVE_CHECK_PLIST = {
     "StandardErrorPath":
         "/Users/el/.claude/weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check.log",
 }
+# The daily prune of the guarded-file hook's copies of removed checkouts, last in the table.
+NED_BOX_GUARDED_FILE_PRUNE_LINE = (
+    "0 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
+    "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py >> "
+    "/home/nedlern/.claude/daily-guarded-file-versions-and-approvals-store-removed-checkout-"
+    "copies-prune.log 2>&1")
+MAC_GUARDED_FILE_PRUNE_PLIST = {
+    "Label": "com.nedschorus.daily-guarded-file-versions-and-approvals-store-removed-checkout-"
+             "copies-prune",
+    "ProgramArguments": ["/opt/homebrew/bin/python3",
+                         "/Users/el/Projects/nedschorus/nc-systems/general-tools/"
+                         "guarded-file-versions-and-approvals-store-removed-checkout-copies-prune.py"],
+    "EnvironmentVariables": {
+        "PATH": "/Users/el/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:"
+                "/usr/sbin:/sbin"},
+    "StartCalendarInterval": {"Hour": 7, "Minute": 0},
+    "StandardOutPath": "/Users/el/.claude/daily-guarded-file-versions-and-approvals-store-"
+                       "removed-checkout-copies-prune.log",
+    "StandardErrorPath": "/Users/el/.claude/daily-guarded-file-versions-and-approvals-store-"
+                         "removed-checkout-copies-prune.log",
+}
 DOMAIN = f"gui/{os.getuid()}"
 
 
@@ -225,8 +246,10 @@ check("the Mac's daily worktree cleanup is a launchd job at 06:30, so a run miss
       and list(mac_clean_plist) == list(MAC_CLEAN_PLIST), mac_clean_plist)
 check("the table's jobs are the two typed by hand before this program, the daily worktree "
       "cleanup, ned-box's crash restart watcher, the weekly owner check of the work-snapshot "
-      "hook and the session dialogs refresh, and no other",
+      "hook, the session dialogs refresh and the guarded-file store's daily prune, and no other",
       sorted(real_jobs) == ["daily-clean-worktrees", "daily-full-test-run-of-main",
+                            "daily-guarded-file-versions-and-approvals-store-removed-checkout-"
+                            "copies-prune",
                             "handoff-agent-seat-died-without-session-handoff-restart-watcher",
                             "log-store-session-dialogs-refresh", "transcript-mirror-to-log-store",
                             "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"],
@@ -250,6 +273,9 @@ mirror_documentation = (REPOSITORY_ROOT / mirror["program"]).read_text(encoding=
 daily_documentation = (REPOSITORY_ROOT / daily["program"]).read_text(encoding="utf-8")
 clean_documentation = (REPOSITORY_ROOT / clean["program"]).read_text(encoding="utf-8")
 watcher_documentation = (REPOSITORY_ROOT / watcher["program"]).read_text(encoding="utf-8")
+guarded_file_prune_documentation = (
+    REPOSITORY_ROOT / real_jobs["daily-guarded-file-versions-and-approvals-store-removed-"
+                                "checkout-copies-prune"]["program"]).read_text(encoding="utf-8")
 weekly_live_check_documentation = (
     REPOSITORY_ROOT / real_jobs["weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"]
     ["program"]).read_text(encoding="utf-8")
@@ -260,15 +286,17 @@ check("the lines each program documents are the table's lines, and each names th
       and f"    {NED_BOX_CLEAN_LINE}\n" in clean_documentation
       and f"    {NED_BOX_CRASH_RESTART_WATCHER_LINE}\n" in watcher_documentation
       and f"    {NED_BOX_WEEKLY_LIVE_CHECK_LINE}\n" in weekly_live_check_documentation
+      and f"    {NED_BOX_GUARDED_FILE_PRUNE_LINE}\n" in guarded_file_prune_documentation
       and all("nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py" in text
               for text in (mirror_documentation, daily_documentation, clean_documentation,
-                           watcher_documentation, weekly_live_check_documentation)))
+                           watcher_documentation, weekly_live_check_documentation,
+                           guarded_file_prune_documentation)))
 
 printed, errors = io.StringIO(), io.StringIO()
 stub = MachineStub()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="linux", home=Path("/home/nedlern"), run=stub)
-check("--print as ned-box prints ned-box's six cron lines from the real table and runs nothing",
+check("--print as ned-box prints ned-box's seven cron lines from the real table and runs nothing",
       exit_code == 0 and stub.commands == []
       and printed.getvalue().splitlines() == [
           "machine: ned-box (linux, /home/nedlern)",
@@ -279,7 +307,9 @@ check("--print as ned-box prints ned-box's six cron lines from the real table an
           "handoff-agent-seat-died-without-session-handoff-restart-watcher — cron line:",
           NED_BOX_CRASH_RESTART_WATCHER_LINE,
           "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — cron line:",
-          NED_BOX_WEEKLY_LIVE_CHECK_LINE],
+          NED_BOX_WEEKLY_LIVE_CHECK_LINE,
+          "daily-guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — cron "
+          "line:", NED_BOX_GUARDED_FILE_PRUNE_LINE],
       (exit_code, printed.getvalue(), errors.getvalue()))
 printed, errors = io.StringIO(), io.StringIO()
 with redirect_stdout(printed), redirect_stderr(errors):
@@ -291,9 +321,13 @@ weekly_heading = ("weekly-uncommitted-work-snapshot-hook-real-claude-session-own
                   "/Users/el/Library/LaunchAgents/com.nedschorus.weekly-uncommitted-work-snapshot-"
                   "hook-real-claude-session-owner-check.plist:\n")
 daily_part, _, clean_and_weekly_part = mac_printed.partition(clean_heading)
-clean_part, _, weekly_part = clean_and_weekly_part.partition(weekly_heading)
+clean_part, _, weekly_and_prune_part = clean_and_weekly_part.partition(weekly_heading)
+prune_heading = ("daily-guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — "
+                 "launchd job, /Users/el/Library/LaunchAgents/com.nedschorus.daily-guarded-file-"
+                 "versions-and-approvals-store-removed-checkout-copies-prune.plist:\n")
+weekly_part, _, prune_part = weekly_and_prune_part.partition(prune_heading)
 check("--print as the Mac prints the mirror's cron line, the two daily jobs' plists and the weekly "
-      "owner check's plist, and runs nothing",
+      "owner check's and the guarded-file prune's plists, and runs nothing",
       exit_code == 0 and stub.commands == [] and clean_part.startswith("<?xml")
       and daily_part.startswith(
           "machine: mac (darwin, /Users/el)\ntranscript-mirror-to-log-store — cron line:\n"
@@ -303,7 +337,9 @@ check("--print as the Mac prints the mirror's cron line, the two daily jobs' pli
       == MAC_DAILY_PLIST
       and plistlib.loads(clean_part.encode("utf-8")) == MAC_CLEAN_PLIST
       and weekly_part.startswith("<?xml")
-      and plistlib.loads(weekly_part.encode("utf-8")) == MAC_WEEKLY_LIVE_CHECK_PLIST,
+      and plistlib.loads(weekly_part.encode("utf-8")) == MAC_WEEKLY_LIVE_CHECK_PLIST
+      and prune_part.startswith("<?xml")
+      and plistlib.loads(prune_part.encode("utf-8")) == MAC_GUARDED_FILE_PRUNE_PLIST,
       (exit_code, mac_printed, errors.getvalue()))
 
 
