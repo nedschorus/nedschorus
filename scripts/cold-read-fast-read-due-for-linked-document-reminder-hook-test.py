@@ -61,8 +61,13 @@ def object_file(checkout, revision):
     return Path(checkout) / ".git" / "objects" / name[:2] / name[2:]
 
 
-def expect_unchecked(case_name, completed, document, reason_part, due_paths=None):
-    """The document is listed as not checked, with git's reason, and the others are still judged."""
+def expect_unchecked(case_name, completed, document, reason_part, due_paths=None,
+                     already_read=False):
+    """The document is listed as not checked, with git's reason, and the others are still judged.
+
+    A document with a fast read on record since its last change is marked as read, and no
+    fast read is asked for it; any other is asked a fast read.
+    """
     check(f"{case_name}: exit 0", completed.returncode == 0,
           f"exit {completed.returncode}, stderr {completed.stderr!r}")
     context = (json.loads(completed.stdout)["hookSpecificOutput"]["additionalContext"]
@@ -77,10 +82,22 @@ def expect_unchecked(case_name, completed, document, reason_part, due_paths=None
           and "did not check" in completed.stderr and str(document.resolve()) in completed.stderr
           and reason_part in completed.stderr,
           f"stderr {completed.stderr!r}")
+    fast_read_asked = "Run on each document" in context and "not marked as read" in context
+    if already_read:
+        check(f"{case_name}: marked as read, and no fast read asked for it",
+              listed and "(marked as read" in listed[0] and not fast_read_asked,
+              f"context {context!r}")
+    else:
+        check(f"{case_name}: not marked as read, and a fast read asked for it",
+              listed and "(marked as read" not in listed[0] and fast_read_asked,
+              f"context {context!r}")
     expected = [str(path.resolve()) for path in due_paths or []]
     check(f"{case_name}: the other documents are still judged",
           reported_paths(completed) == expected,
           f"reported {reported_paths(completed)!r}, expected {expected!r}")
+    if due_paths:
+        check(f"{case_name}: a fast read is asked for the other documents that are due",
+              "Run on each document" in context, f"context {context!r}")
 
 
 def git_that_on(subcommand, action):
@@ -517,6 +534,24 @@ def main():
                      no_main, "git merge-base", [changed_elsewhere])
 
     case = Case()
+    git(case.checkout, "update-ref", "-d", "refs/remotes/origin/main")
+    read = case.document("docs/plan-of-record.md", modified=1_000_000)
+    case.record("plan-of-record-2026-10-08", 2_000_000, "docs/plan-of-record.md", "older text\n")
+    expect_unchecked("a document that cannot be checked, fast-read since its last change, "
+                     "still shows git's failure",
+                     case.run("See docs/plan-of-record.md."), read, "git merge-base",
+                     already_read=True)
+    other = case.root / "other-checkout-with-main"
+    make_checkout_with_main(other)
+    changed_elsewhere = other / "docs" / "design.md"
+    changed_elsewhere.parent.mkdir(parents=True)
+    changed_elsewhere.write_text("new there\n")
+    expect_unchecked("a document that cannot be checked and is not due leaves the other "
+                     "documents' fast read asked for",
+                     case.run(f"See file://{read} and file://{changed_elsewhere}."),
+                     read, "git merge-base", [changed_elsewhere], already_read=True)
+
+    case = Case()
     document = case.document("docs/plan-of-record.md", text="when the branch was cut\n")
     commit_to_main(case.checkout, "docs/plan-of-record.md")
     git(case.checkout, "checkout", "-q", "-b", "main-moves-on")
@@ -563,6 +598,27 @@ def main():
                      case.run("See docs/plan-of-record.md.",
                               environment_extra=git_that_on("merge-base", "exec sleep 30")),
                      on_main, "TimeoutExpired")
+
+    case = Case()
+    first = case.document("docs/first.md")
+    second = case.document("docs/second.md")
+    calls = case.root / "merge-base-calls"
+    completed = case.run("See docs/first.md and docs/second.md.",
+                         environment_extra=git_that_on(
+                             "merge-base", f"{{ echo called >> {calls}; exec sleep 30; }}"))
+    check("a git merge-base that outlasts its time limit runs once per checkout: exit 0",
+          completed.returncode == 0, f"exit {completed.returncode}, stderr {completed.stderr!r}")
+    check("a git merge-base that outlasts its time limit runs once per checkout",
+          calls.is_file() and calls.read_text().count("called") == 1,
+          f"calls {calls.read_text() if calls.is_file() else None!r}")
+    context = (json.loads(completed.stdout)["hookSpecificOutput"]["additionalContext"]
+               if completed.returncode == 0 and completed.stdout.strip() else "")
+    listed = [line for line in context.splitlines() if line.startswith("- ")]
+    check("a timed-out merge-base lists each document of its checkout as not checked",
+          [line.split(": ")[0] for line in listed]
+          == [f"- {first.resolve()}", f"- {second.resolve()}"]
+          and all("TimeoutExpired" in line for line in listed),
+          f"context {context!r}")
 
     loose = SUITE_ROOT / "in-no-checkout" / "notes.md"
     loose.parent.mkdir(parents=True)
