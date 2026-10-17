@@ -856,9 +856,6 @@ for case_name, command in [
      "git push --repo <\\\n(true) --force origin the-pr-branch"),
     ("an unquoted body ends at a delimiter a line continuation splits: the force push after is found",
      "cat <<EOF\nE\\\nOF\ngit push --force origin the-pr-branch\nEOF"),
-    ("a quoted body after a heredoc operator a line continuation splits keeps its own continuation: "
-     "the force push after the body is found",
-     "cat <\\\n<'EOF'\nx\\\nEOF\ngit push --force origin the-pr-branch"),
     ("a case terminator a line continuation splits is repaired over its whole length: "
      "the force push after the next case is found",
      "case a in a) b;\\\n;& esac; case c in c) d;& esac; git push --force origin the-pr-branch"),

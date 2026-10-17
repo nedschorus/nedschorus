@@ -1678,69 +1678,20 @@ def _line_continuations_bash_removes(root, source, end):
     """Return the offset of each line continuation before end that bash removes, in order.
 
     bash removes a backslash and newline everywhere but inside single quotes,
-    $'...' and comments, and in a heredoc body whose delimiter is quoted. A body
-    starts only after a line end, and a continuation can split the operator that
-    opens one, so tree-sitter-bash does not see it: the continuations returned
-    stop at the first line end, from the line of the earliest one, after a line
-    that holds << once its continuations are removed, and the caller passes as
-    end the line end after the heredoc operator it sees. A body is then taken out
-    before its continuations are looked for. A line without << opens no body, so
-    a script without heredocs takes one round, not one per line. A << in quotes,
-    a comment or $(( )) stops a round early, which costs only another round.
+    $'...' and comments, and in a heredoc body whose delimiter is quoted, which
+    is taken out before the continuations after its operator are looked for.
     """
     found = []
     at = source.find(b"\\\n")
     while at != -1 and at < end:
         if not _escaped_by_backslashes(source, at) \
-                and not _inside_text(root, at, LINE_CONTINUATION_KEEPING_NODE_TYPES) \
-                and not _inside_single_quotes_of_a_heredoc_delimiter(root, source, at):
+                and not _inside_text(root, at, LINE_CONTINUATION_KEEPING_NODE_TYPES):
             found.append(at)
         at = source.find(b"\\\n", at + 2)
-    if not found:
-        return found
-    removed = {at + 1 for at in found}
-    line_start = line_end = source.rfind(b"\n", 0, found[0]) + 1
-    while line_end < end:
-        line_end = source.find(b"\n", line_end)
-        if line_end == -1 or line_end >= end:
-            break
-        if line_end not in removed:
-            if HEREDOC_OPERATOR_PATTERN.search(source[line_start:line_end].replace(b"\\\n", b"")):
-                return [at for at in found if at < line_end]
-            line_start = line_end + 1
-        line_end += 1
     return found
 
 
-# <<< is a here-string, which opens no body.
-HEREDOC_OPERATOR_PATTERN = re.compile(rb"(?<!<)<<(?!<)")
-
-
 LINE_CONTINUATION_KEEPING_NODE_TYPES = {"raw_string", "ansi_c_string", "comment"}
-
-
-def _inside_single_quotes_of_a_heredoc_delimiter(root, source, offset):
-    """Return whether offset lies inside single quotes of a heredoc's delimiter word.
-
-    tree-sitter-bash reads a delimiter such as 'E\\<newline>OF' as one node with no
-    quoted string inside, so the quotes are followed here as bash follows them.
-    """
-    node = root.descendant_for_byte_range(offset, offset + 1)
-    while node is not None and node.type != "heredoc_start":
-        node = node.parent
-    if node is None:
-        return False
-    quote, index = None, node.start_byte
-    while index < offset:
-        character = source[index:index + 1]
-        if quote == b"'":
-            quote = None if character == b"'" else quote
-        elif character == b"\\":
-            index += 1
-        elif character == b'"' or (quote is None and character == b"'"):
-            quote = character if quote is None else None
-        index += 1
-    return quote == b"'"
 
 
 def _comment_misread_after_an_escaped_blank(root, source):
@@ -1782,7 +1733,7 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
     heredoc's body that tree-sitter-bash misplaced, and a body is kept as written.
     A misread on the operator's own line is corrected where the body's start is
     found, and in source once that heredoc is taken out. Line continuations
-    before the next heredoc's body are removed, as bash removes them before
+    before the next heredoc operator are removed, as bash removes them before
     it reads tokens: tree-sitter-bash keeps one inside an operator such as <(
     and misreads the command. edits, when given, gets (offset, length removed, length inserted) for each
     change, in the order made.
@@ -1797,11 +1748,9 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
         if operator is None or operator.type not in ("<<", "<<-"):
             operator = None
         misread = _comment_misread_after_an_escaped_blank(tree.root_node, source)
-        # The operator's body starts after a line end, so the continuations on its line go first.
-        line_end = source.find(b"\n", operator.start_byte) if operator is not None else -1
-        continuations = _line_continuations_bash_removes(
-            tree.root_node, source, min(at for at in (misread, line_end, len(source))
-                                        if at is not None and at != -1))
+        first = min((at for at in (misread, operator and operator.start_byte) if at is not None),
+                    default=len(source))
+        continuations = _line_continuations_bash_removes(tree.root_node, source, first)
         if continuations:
             for at in reversed(continuations):
                 source = source[:at] + source[at + 2:]
@@ -1825,7 +1774,7 @@ def _source_with_heredoc_bodies_taken_out(source, keep_first=False, edits=None):
             operator_start, delimiter_start = descriptor.start(2), descriptor.end()
         delimiter_end, delimiter = _delimiter_word(source, delimiter_start)
         delimiter_as_written = source[delimiter_start:delimiter_end]
-        expanded = not any(mark in delimiter_as_written
+        expanded = not any(mark in delimiter_as_written.replace(b"\\\n", b"")
                            for mark in (b"'", b'"', b"\\"))
         body_start = _heredoc_body_start(source, delimiter_end)
         body_end, resume = _heredoc_body_end(source, body_start, delimiter, dashed,
@@ -1902,12 +1851,14 @@ def _delimiter_word(source, position):
     """Return (end, delimiter) for the heredoc delimiter word at position, by bash's rules.
 
     The word ends at an unquoted blank or operator character; the delimiter is
-    the word with its quotes and backslashes removed.
+    the word with its quotes, backslashes and line continuations removed.
     """
     word, index = bytearray(), position
     while index < len(source):
         character = source[index:index + 1]
-        if character == b"\\":
+        if source[index:index + 2] == b"\\\n":
+            index += 2
+        elif character == b"\\":
             word += source[index + 1:index + 2]
             index += 2
         elif character == b"'":
@@ -1919,6 +1870,9 @@ def _delimiter_word(source, position):
             # Inside double quotes a backslash keeps ", \\, $ and ` literal.
             index += 1
             while index < len(source) and source[index:index + 1] != b'"':
+                if source[index:index + 2] == b"\\\n":
+                    index += 2
+                    continue
                 if source[index:index + 1] == b"\\" and source[index + 1:index + 2] in b'"\\$`':
                     index += 1
                 word += source[index:index + 1]
