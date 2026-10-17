@@ -501,6 +501,10 @@ for command, expected in [
     ("zzq <<\"\\\nG\"\nx\nG\nzzr", [(["zzq"], [("<<", "x\n")]), (["zzr"], [])]),
     ("zzs \"$(zzq <<EOF\nE\\\nOF)\nEOF\n)\"",
      [(["zzq"], [("<<", "")]), (["zzs", "$(zzq <<EOF\nE\\\nOF)\nEOF\n)"], [])]),
+    ("zzs \"$(zzq <<EOF\nE\\\nO\\\nF)\nEOF\n)\"; zzr",
+     [(["zzq"], [("<<", "")]), (["zzs", "$(zzq <<EOF\nE\\\nO\\\nF)\nEOF\n)"], []), (["zzr"], [])]),
+    ("zzp <<x'A'\\\nB\nbody\nxAB\nzzr", [(["zzp"], [("<<", "body\n")]), (["zzr"], [])]),
+    ("zzp <<\\'E\\\nF\nx\n'EF\nzzr", [(["zzp"], [("<<", "x\n")]), (["zzr"], [])]),
 ]:
     found = [(list(words), words.redirects) for words in reader.simple_commands(command)]
     check(f"a line continuation is removed where bash removes it, and kept elsewhere: {command!r}",
@@ -509,6 +513,27 @@ for command in ("case a in a) zzp x;\\\n& esac; zzq", "case a in a) zzp x;\\\n;&
     found = [list(words) for words in reader.simple_commands(command)]
     check(f"a last case terminator a line continuation splits is repaired, so the command after esac "
           f"is read: {command!r}", found == [["zzp", "x"], ["zzq"]], found)
+# Run in its own process under a deadline: one parse per continued line takes minutes for 4,000 lines.
+timing_code = ("import importlib.util, sys, time; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+               "r = importlib.util.module_from_spec(s); s.loader.exec_module(r); timings = []\n"
+               "for lines in (1000, 4000):\n"
+               " source = ''.join(f'zzp a{n} \\\\\\n  b c\\nzzq <<< a{n} \\\\\\n  c\\n' for n in range(lines // 2))\n"
+               " runs = []\n"
+               " for _ in range(3):\n"
+               "  started = time.monotonic(); found = r.simple_commands(source + 'tmux kill-server')\n"
+               "  runs.append(time.monotonic() - started)\n"
+               " timings.append(min(runs))\n"
+               "print(timings[0], timings[1], len(found), list(found[-1]))")
+try:
+    measured = subprocess.run([sys.executable, "-c", timing_code, str(MODULE_PATH)], timeout=120, check=True,
+                              capture_output=True, text=True).stdout.split(maxsplit=3)
+    small, large, count, last = float(measured[0]), float(measured[1]), measured[2], measured[3].strip()
+except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
+    small, large, count, last = None, None, None, repr(problem)
+check("4,000 continued lines, half of them holding a here-string, are read well inside a guard's 30 s, in time "
+      "that grows about linearly from 1,000 lines, and the command after them is read",
+      large is not None and large < 10 and large < 10 * max(small, 0.01) and count == "4001"
+      and last == "['tmux', 'kill-server']", (small, large, count, last))
 command = "case a in a) zzp;\\\n;& esac; case b in b) zzq;& esac; zzr"
 found = [list(words) for words in reader.simple_commands(command)]
 check(f"a case terminator a line continuation splits is replaced over its whole length in the text "

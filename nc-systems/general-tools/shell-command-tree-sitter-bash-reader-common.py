@@ -1680,11 +1680,13 @@ def _line_continuations_bash_removes(root, source, end):
     bash removes a backslash and newline everywhere but inside single quotes,
     $'...' and comments, and in a heredoc body whose delimiter is quoted. A body
     starts only after a line end, and a continuation can split the operator that
-    opens one, so tree-sitter-bash does not see it: only the continuations before
-    the first line end after the earliest one are returned, and the caller passes
-    as end the line end after the heredoc operator it sees. A body is then taken
-    out before its continuations are looked for. A line end inside quotes ends
-    no line, so a round may stop early, which costs only another round.
+    opens one, so tree-sitter-bash does not see it: the continuations returned
+    stop at the first line end, from the line of the earliest one, after a line
+    that holds << once its continuations are removed, and the caller passes as
+    end the line end after the heredoc operator it sees. A body is then taken out
+    before its continuations are looked for. A line without << opens no body, so
+    a script without heredocs takes one round, not one per line. A << in quotes,
+    a comment or $(( )) stops a round early, which costs only another round.
     """
     found = []
     at = source.find(b"\\\n")
@@ -1696,11 +1698,22 @@ def _line_continuations_bash_removes(root, source, end):
         at = source.find(b"\\\n", at + 2)
     if not found:
         return found
-    line_end = min(found[0], end)
     removed = {at + 1 for at in found}
-    while line_end < end and (source[line_end:line_end + 1] != b"\n" or line_end in removed):
+    line_start = line_end = source.rfind(b"\n", 0, found[0]) + 1
+    while line_end < end:
+        line_end = source.find(b"\n", line_end)
+        if line_end == -1 or line_end >= end:
+            break
+        if line_end not in removed:
+            if HEREDOC_OPERATOR_PATTERN.search(source[line_start:line_end].replace(b"\\\n", b"")):
+                return [at for at in found if at < line_end]
+            line_start = line_end + 1
         line_end += 1
-    return [at for at in found if at < line_end]
+    return found
+
+
+# <<< is a here-string, which opens no body.
+HEREDOC_OPERATOR_PATTERN = re.compile(rb"(?<!<)<<(?!<)")
 
 
 LINE_CONTINUATION_KEEPING_NODE_TYPES = {"raw_string", "ansi_c_string", "comment"}
