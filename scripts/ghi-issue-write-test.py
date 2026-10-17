@@ -1476,8 +1476,9 @@ def run_cases(scratch: Path):
                                            "wait for the user's answer.")
                       and lines_out[3] == (
                           "If this message appears again, do not rerun: tell "
-                          "the user that this draft may conflict with a "
-                          "ruling of his, and give him ghi-info's question.")
+                          "the user what failed, that this draft may conflict "
+                          "with a ruling of his, and give him ghi-info's "
+                          "question.")
                       and (not directory.is_dir()
                            or not any(directory.iterdir())), lines_out)
             except Exception as other:                # noqa: BLE001
@@ -1578,7 +1579,9 @@ def run_cases(scratch: Path):
                   and unfiled_source.is_file()
                   and bool(unfiled_lines)
                   and unfiled_lines[-1].startswith("Filed GHI 572.")
-                  and "Once it merges, rerun this command" in unfiled_lines[-1]
+                  and ("Once it merges, run `git pull --ff-only`, then rerun "
+                       "scripts/ghi-issue-write.py create docs/issues/572-"
+                       in unfiled_lines[-1])
                   and "Dispatch a forked subagent now" not in unfiled_lines[-1],
                   (unfiled_rerun.commands(), sorted(unfiled_rerun.staged),
                    unfiled_lines[-1:]))
@@ -1736,9 +1739,11 @@ def run_cases(scratch: Path):
                       "Do not settle the entry before that pull request "
                       "merges: a commit pushed to it would move the head "
                       "merge-lane-2 is reviewing.\n"
-                      "Once it merges, rerun this command; that run tells "
-                      "you to dispatch the forked subagent that settles the "
-                      "entry.")
+                      "Once it merges, run `git pull --ff-only`, then rerun "
+                      "scripts/ghi-issue-write.py create "
+                      f"docs/issues/571-{proposed_name[:proposed_name.index('-proposed-improvements-or-changes-')]}.md; "
+                      "that run tells you to dispatch the forked subagent "
+                      "that settles the entry.")
                   and "Dispatch a forked subagent now" not in "\n".join(
                       create_lines)
                   and not clean_create.ran("gh issue comment"),
@@ -2251,6 +2256,8 @@ def run_edit_cases(scratch: Path):
             f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
             f"git show {MAIN_COMMIT}:{proposed_relative}": Completed(
                 "", returncode=128),
+            f"git show {BASE_REVISION}:{proposed_relative}": Completed(
+                "", returncode=128),
             "git merge-base": Completed(BASE_REVISION + "\n"),
             f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(
                 "# Older\n"),
@@ -2310,7 +2317,9 @@ def run_edit_cases(scratch: Path):
                       "issues are frozen](")
                   and f"The question is entry E1 of {proposed_relative}, "
                   in rerun_lines[-1]
-                  and "Once it merges, rerun this command" in rerun_lines[-1]
+                  and ("Once it merges, run `git pull --ff-only`, then rerun "
+                       f"scripts/ghi-issue-write.py edit {EDIT_RELATIVE}; "
+                       in rerun_lines[-1])
                   and "Dispatch a forked subagent now" not in rerun_lines[-1],
                   (rerun.commands(), rerun_lines[-1:]))
         except Exception as other:                    # noqa: BLE001
@@ -4334,6 +4343,179 @@ def run_pull_request_description_cases(directory):
               any(gate_line.match(line) for line in body.splitlines()), repr(body))
 
 
+def run_whole_file_set_cases(scratch: Path):
+    """The checks that a write is already done, or would discard main's
+    change, cover every file the write lands, not the GHI-MD alone."""
+    original_date = tool.proposed_improvements_or_changes_file_date
+    tool.proposed_improvements_or_changes_file_date = lambda: "2026-10-03"
+    try:
+        (scratch / "scripts").mkdir(exist_ok=True)
+        (scratch / "scripts" / "ghi-info-ask.py").write_text("# stand-in\n")
+        title = "Reopen a closed issue to add its last finding"
+        text = f"# {title}\n\nBody.\n"
+        draft_dir = scratch / "rerun-draft-dir"
+        draft_dir.mkdir()
+        source = written(draft_dir, name="frozen.md", text=text)
+        first = StagedReader({
+            ASK: Completed("", returncode=3, stderr=ruling_stderr(
+                "#46 closed issues are frozen")),
+            "gh issue view 46": Completed("Closed issues are frozen\n"),
+            "gh issue list": Completed("[]"),
+            "gh issue create": Completed(
+                "https://github.com/nedschorus/nedschorus/issues/571\n"),
+            "git show": Completed("", returncode=1),
+            "git ls-remote": Completed(""),
+            "git ls-tree": Completed(""),
+            "gh pr create": Completed("https://github.com/x/y/pull/10\n"),
+        })
+        tool.create(source, REPO, scratch, first, quiet)
+        destination = f"docs/issues/571-{tool.slug(title)}.md"
+        landed = first.staged[destination]
+        proposed = [item for item in first.staged
+                    if "-proposed-improvements-or-changes-" in item][0]
+
+        resumed_name = ("a create resumed after its merge on a draft whose "
+                        "question file it deleted finds main's GHI-MD with "
+                        "the pointer line already landed, and pushes nothing")
+        resumed_lines = []
+        resumed = StagedReader({
+            "gh issue list": Completed(json.dumps([{
+                "number": 571, "title": title,
+                "body": "placeholder " + tool.pairing_key(text)}])),
+            f"git show origin/main:{destination}": Completed(landed),
+            f"git show origin/main:{proposed}": Completed(
+                first.staged[proposed]),
+            "git show": Completed("", returncode=1),
+            "git ls-remote": Completed(""),
+            "git ls-tree": Completed(destination + "\0" + proposed + "\0"),
+        })
+        try:
+            tool.create(source, REPO, scratch, resumed, resumed_lines.append)
+            check(resumed_name,
+                  not resumed.ran("git push") and not resumed.ran("gh pr create")
+                  and any(line.startswith("step 4 already done")
+                          for line in resumed_lines),
+                  (resumed.commands(), resumed_lines))
+        except Exception as other:                    # noqa: BLE001
+            check(resumed_name, False, f"escaped unreported: {other!r}")
+
+        linked_name = ("a create rerun after its body is linked refuses the "
+                       "draft as already on main, though main's GHI-MD "
+                       "carries the pointer line the draft does not")
+        linked = Recorder({
+            "gh issue list": Completed("[]"),
+            GHI_MD_LISTING_CALL: Completed(destination + "\0"),
+            f"git show {MAIN_COMMIT}:{destination}": Completed(landed),
+            "git ls-tree": Completed(""),
+        })
+        try:
+            tool.create(source, REPO, scratch, linked, quiet)
+            check(linked_name, False, ("no refusal", linked.commands()))
+        except tool.Refused as refusal:
+            check(linked_name,
+                  f"already on main as {destination}" in str(refusal)
+                  and not linked.ran("gh issue create")
+                  and not linked.ran(ASK),
+                  (str(refusal), linked.commands()))
+        except Exception as other:                    # noqa: BLE001
+            check(linked_name, False, f"escaped unreported: {other!r}")
+    finally:
+        tool.proposed_improvements_or_changes_file_date = original_date
+
+    relative = "docs/issues/570-a-statusline.md"
+    question = ("docs/issues/570-a-statusline-proposed-improvements-or-"
+                "changes-ghi-info-2026-10-03.md")
+    unread_name = ("a question file main lists beside the GHI-MD that cannot "
+                   "be read stops the run with git's failure, rather than "
+                   "reading as no open entry")
+    unread = Recorder({
+        "git ls-tree": Completed(question + "\0"),
+        f"git show {MAIN_COMMIT}:{question}": Completed(
+            "", returncode=128, stderr="fatal: bad object"),
+    })
+    try:
+        found = tool.open_ghi_info_entries_on_main(relative, MAIN_COMMIT,
+                                                   scratch, unread)
+        check(unread_name, False, ("no refusal", found))
+    except tool.Refused as refusal:
+        check(unread_name, "fatal: bad object" in str(refusal)
+              and refusal.code != 0, str(refusal))
+
+    staged = "# A statusline\n"
+    carried = [(question, "State: settled, not worth doing\n")]
+    at_rest = Recorder({"git ls-remote": Completed("")})
+    state, branch = tool.edit_landing_state(570, staged, staged, scratch,
+                                            at_rest, carried)
+    check("an edit whose GHI-MD main already holds still lands a changed "
+          "question file beside it, on a branch named for both",
+          state == tool.EDIT_LANDING_NEW_CONTENT
+          and branch == tool.edit_landing_branch_name(570, staged, carried)
+          and branch != tool.edit_landing_branch_name(570, staged),
+          (state, branch))
+
+    stale_name = ("an edit carrying a stale copy of a question file main "
+                  "changed since the checkout started is refused with 66, "
+                  "naming that file")
+    stale = Recorder({
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{relative}": Completed(staged),
+        f"git show {BASE_REVISION}:{question}": Completed("State: open\n"),
+        f"git show {MAIN_COMMIT}:{question}": Completed(
+            "State: open\nTry 1: needs the user\n"),
+    })
+    try:
+        tool.refuse_on_conflict(relative, staged, None, None, MAIN_COMMIT,
+                                scratch, stale, quiet,
+                                [(question, "State: open\n")])
+        check(stale_name, False, "no refusal")
+    except tool.Refused as refusal:
+        check(stale_name, refusal.code == 66 and question in str(refusal),
+              str(refusal))
+    same = Recorder({
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{relative}": Completed(staged),
+        f"git show {BASE_REVISION}:{question}": Completed("State: open\n"),
+        f"git show {MAIN_COMMIT}:{question}": Completed("State: open\n"),
+    })
+    try:
+        tool.refuse_on_conflict(relative, staged, None, None, MAIN_COMMIT,
+                                scratch, same, quiet,
+                                [(question, "State: settled\n")])
+        check("an edit of a question file main has not changed since the "
+              "checkout started is not refused", True)
+    except tool.Refused as refusal:
+        check("an edit of a question file main has not changed since the "
+              "checkout started is not refused", False, str(refusal))
+
+    moved_to = ("nc-systems/x/docs/570-a-statusline-proposed-improvements-"
+                "or-changes-ghi-info-2026-10-03.md")
+    moving = [(question, moved_to)]
+    collide_name = ("a question file moving with the GHI-MD onto the path of "
+                    "a different question beside the author's file is "
+                    "refused with 66, naming both paths")
+    colliding = Recorder({
+        f"git show {MAIN_COMMIT}:{question}": Completed("older question\n")})
+    try:
+        tool.refuse_moving_over_proposed(
+            "nc-systems/x/docs/570-a-statusline.md",
+            [(moved_to, "new question\n")], moving, MAIN_COMMIT, scratch,
+            colliding)
+        check(collide_name, False, "no refusal")
+    except tool.Refused as refusal:
+        check(collide_name, refusal.code == 66 and question in str(refusal)
+              and moved_to in str(refusal), str(refusal))
+    try:
+        tool.refuse_moving_over_proposed(
+            "nc-systems/x/docs/570-a-statusline.md",
+            [(moved_to, "older question\n")], moving, MAIN_COMMIT, scratch,
+            colliding)
+        check("the same question file moved by the author too is not "
+              "refused", True)
+    except tool.Refused as refusal:
+        check("the same question file moved by the author too is not "
+              "refused", False, str(refusal))
+
+
 def main():
     import tempfile
     with tempfile.TemporaryDirectory(prefix="ghi-issue-pull-request-description-test-") as name:
@@ -4350,6 +4532,8 @@ def main():
         run_push_time_limit_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-main-test-") as name:
         run_main_dispatch_cases(Path(name))
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-file-set-test-") as name:
+        run_whole_file_set_cases(Path(name))
     # A checkout of its own: the reconsidered marker lives at the root of
     # one and is consumed by the write it passes, so two groups sharing a
     # directory would share that.

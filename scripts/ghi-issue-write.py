@@ -1230,9 +1230,9 @@ def write_proposed_improvements_or_changes_file(
             f"proposed-improvements-or-changes-file failed: {failure}\n"
             f"ghi-info's question: {conflict.sentence}\n"
             "Rerun this command now; do not wait for the user's answer.\n"
-            "If this message appears again, do not rerun: tell the user that "
-            "this draft may conflict with a ruling of his, and give him "
-            "ghi-info's question.", 1)
+            "If this message appears again, do not rerun: tell the user what "
+            "failed, that this draft may conflict with a ruling of his, and "
+            "give him ghi-info's question.", 1)
     report("wrote ghi-info's ruling question to "
            f"{path_shown_relative_to_repository_root(path, repository_root)}"
            "; it goes into the same pull request as the GHI-MD")
@@ -1287,12 +1287,14 @@ def with_pointer_line(text: str, prefix: str) -> str:
 
 
 def report_ruling_question(number: int, operation_done: str, landed: str,
-                           text: str, report):
+                           text: str, report, rerun: str):
     """The run's last lines when it put a file from ghi-info into a pull
     request: what ghi-info thinks, its question, where the entry is, and
     that the rerun after the merge says when to dispatch the subagent that
     settles it. `operation_done` is "filed" or "edited"; `landed` is the
-    file's path beside the GHI-MD and `text` its content."""
+    file's path beside the GHI-MD and `text` its content; `rerun` is the
+    command that works after the merge, on the GHI-MD's landed path: a
+    create's own draft path is gone by then when it was tracked."""
     problem, question = ruling_question_lines(text)
     lines = [f"{operation_done.capitalize()} GHI {number}. ghi-info thinks "
              f"{problem or 'the GHI-MD may go against a user-ruling'}."]
@@ -1302,8 +1304,9 @@ def report_ruling_question(number: int, operation_done: str, landed: str,
         f"The question is entry E1 of {landed}, in this write's pull request.",
         "Do not settle the entry before that pull request merges: a commit "
         "pushed to it would move the head merge-lane-2 is reviewing.",
-        "Once it merges, rerun this command; that run tells you to dispatch "
-        "the forked subagent that settles the entry."]
+        "Once it merges, run `git pull --ff-only`, then rerun "
+        f"{rerun}; that run tells you to dispatch the forked subagent that "
+        "settles the entry."]
     report("\n".join(lines))
 
 
@@ -1323,7 +1326,11 @@ def open_ghi_info_entries_on_main(relative: str, revision: str,
         if not (Path(item).name.startswith(head)
                 and is_proposed_improvements_or_changes_file(item)):
             continue
-        item_text = blob_at(revision, item, repository_root, runner) or ""
+        # Checked: the path came from a successful listing of this same
+        # commit, so a failed read is a git failure, not a file with no
+        # open entry.
+        item_text = runner(["git", "show", f"{revision}:{item}"],
+                           cwd=str(repository_root)).stdout or ""
         if "State: open" in item_text.splitlines():
             found.append((item, ruling_question_lines(item_text)[1]))
     return found
@@ -1461,19 +1468,32 @@ def refuse_if_already_landed_on_main(repo: str, text: str, title: str,
     revision = origin_main_commit_hash(repository_root, runner)
     for landed in ghi_md_paths_on_main(revision, repository_root, runner):
         number = issue_number_in_file_name(Path(landed))
-        staged = with_issue_frontmatter(text, repo, number, title)
         read = runner(["git", "show", f"{revision}:{landed}"],
                       cwd=str(repository_root))
-        if read.stdout == staged:
+        if read.stdout in landed_forms(text, repo, number, title,
+                                       Path(landed).name[:-len(".md")]):
             raise already_landed_refusal(repo, landed, title, number)
     for landed in landed_designs_on_main(revision, repository_root, runner):
         read = runner(["git", "show", f"{revision}:{landed}"],
                       cwd=str(repository_root))
         number = issue_number_in_frontmatter(read.stdout)
         if (number is not None
-                and read.stdout == with_issue_frontmatter(text, repo, number,
-                                                          title)):
+                and read.stdout in landed_forms(
+                    text, repo, number, title,
+                    Path(landed).name[:-len(".md")])):
             raise already_landed_refusal(repo, landed, title, number)
+
+
+def landed_forms(text: str, repo: str, number: int, title: str,
+                 prefix: str) -> tuple:
+    """What this source becomes when filed under `number`: without the
+    pointer line, and with it as `prefix`'s GHI-MD. The pointer line is added
+    only while files beside the draft exist, and the run that lands them
+    deletes them, so a rerun cannot tell from disk which form it landed;
+    every check that this source is already on main accepts either."""
+    return (with_issue_frontmatter(text, repo, number, title),
+            with_issue_frontmatter(with_pointer_line(text, prefix), repo,
+                                   number, title))
 
 
 def already_landed_refusal(repo: str, landed: str, title: str, number: int):
@@ -1555,7 +1575,8 @@ def land_file(repo: str, number: int, title: str, source: Path,
     when an earlier run did that."""
     branch = f"ghi-{number}-{slug(title)}"
     destination = f"{GHI_MD_DIRECTORY}/{number}-{slug(title)}.md"
-    text = source.read_text(encoding="utf-8")
+    source_text = source.read_text(encoding="utf-8")
+    text = source_text
     if proposed:
         text = with_pointer_line(text, f"{number}-{slug(title)}")
     staged = with_issue_frontmatter(text, repo, number, title)
@@ -1566,7 +1587,9 @@ def land_file(repo: str, number: int, title: str, source: Path,
          item.read_text(encoding="utf-8")) for item in proposed]
 
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
-    if blob_at("origin/main", destination, repository_root, runner) == staged:
+    if (blob_at("origin/main", destination, repository_root, runner)
+            in landed_forms(source_text, repo, number, title,
+                            f"{number}-{slug(title)}")):
         report(f"step 4 already done: main's copy of {destination} is this "
                "file")
         return destination, []
@@ -1845,7 +1868,9 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
         repo, number, title, path, repository_root, runner, report, proposed)
     finished = link_body(repo, number, repository_root, runner, report,
                          destination)
-    report_ruling_questions_landed(number, "filed", landed_proposed, report)
+    report_ruling_questions_landed(
+        number, "filed", landed_proposed, report,
+        f"scripts/ghi-issue-write.py create {destination}")
     if finished:
         report_open_ghi_info_entries(number, destination, "origin/main",
                                      repository_root, runner, report)
@@ -1853,7 +1878,7 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
 
 
 def report_ruling_questions_landed(number: int, operation_done: str,
-                                   landed_proposed, report):
+                                   landed_proposed, report, rerun: str):
     """The run's last lines, one block per file from ghi-info this run put
     into a pull request; a file an earlier run landed was reported by that
     run."""
@@ -1862,7 +1887,7 @@ def report_ruling_questions_landed(number: int, operation_done: str,
                 + PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_INFO + "-"
                 in Path(item_relative).name):
             report_ruling_question(number, operation_done, item_relative,
-                                   item_text, report)
+                                   item_text, report, rerun)
 
 
 # --- The edit operation -------------------------------------------------
@@ -2050,7 +2075,7 @@ def conflict_refusal(opening: str, fold: str, relative: str, revision: str,
 
 def refuse_on_conflict(relative: str, on_main, moved_from, moved_from_on_main,
                        main_commit: str, repository_root: Path, runner,
-                       report):
+                       report, proposed=()):
     """The 2026-09-08 conflict ruling applied to the file rather than the
     body (module docstring, THE CONFLICT THIS REFUSES ON). The base record
     is taken from git instead of asked for as a flag: the version the
@@ -2070,7 +2095,12 @@ def refuse_on_conflict(relative: str, on_main, moved_from, moved_from_on_main,
     PR [Build the GHI write tool's edit verb](https://github.com/nedschorus/nedschorus/pull/596):
     the branch that run pushed did not hold the other seat's line at all. So
     the check covers the path the `git rm` names, or it does not cover the
-    move."""
+    move.
+
+    AND EVERY PROPOSED-IMPROVEMENTS-OR-CHANGES-FILE THE EDIT LANDS, in
+    `proposed`. Each is staged over main's copy, so a checkout holding an
+    older copy would erase what main gained since, such as a try line or
+    a `needs the user` state."""
     located = runner(["git", "merge-base", "HEAD", main_commit],
                      cwd=str(repository_root), check=False)
     revision = (located.stdout or "").strip()
@@ -2088,6 +2118,17 @@ def refuse_on_conflict(relative: str, on_main, moved_from, moved_from_on_main,
             "change.",
             "Fold your edit into main's copy of the file.",
             relative, revision, main_commit, repository_root, runner)
+    for item_relative, _ in proposed:
+        if (blob_at(revision, item_relative, repository_root, runner)
+                != blob_at(main_commit, item_relative, repository_root,
+                           runner)):
+            raise conflict_refusal(
+                f"Refused: {item_relative} changed on main after the commit "
+                "your checkout started from, and landing your copy would "
+                "discard that change.",
+                "Fold your edit into main's copy of the file.",
+                item_relative, revision, main_commit, repository_root,
+                runner)
     if moved_from is None:
         return
     if blob_at(revision, moved_from, repository_root,
@@ -2276,16 +2317,20 @@ EDIT_LANDING_ALREADY_PUSHED = "already-pushed"
 EDIT_LANDING_NEW_CONTENT = "new-content"
 
 
-def edit_landing_branch_name(number: int, staged: str) -> str:
+def edit_landing_branch_name(number: int, staged: str,
+                             proposed=()) -> str:
     """The branch this edit lands on. Named for the content and not for the
     issue alone, so a rerun of the same edit names the same branch — which
     is what lets `edit_landing_state` recognise this tool's own earlier
-    push — and an edit that changed since names another."""
-    return f"ghi-{number}-edit-{pairing_key(staged)}"
+    push — and an edit that changed since names another. The content is
+    the whole file set the edit lands: the GHI-MD, and each
+    proposed-improvements-or-changes-file with it, by path and text."""
+    content = staged + "".join(f"\0{path}\0{text}" for path, text in proposed)
+    return f"ghi-{number}-edit-{pairing_key(content)}"
 
 
 def edit_landing_state(number: int, staged: str, on_main,
-                       repository_root: Path, runner):
+                       repository_root: Path, runner, proposed=()):
     """Whether step 3 has new content to land, and the branch it would land
     on. Asked BEFORE step 2, because the answer is what says whether step 2
     is asked at all.
@@ -2309,10 +2354,15 @@ def edit_landing_state(number: int, staged: str, on_main,
 
     The conflict check in `refuse_to_land_edit` sits behind this same
     answer, for the same reason: see the module docstring, THE ORDER
-    MATTERS FOR RESUMING."""
-    if on_main == staged:
+    MATTERS FOR RESUMING.
+
+    `proposed` is the (path, text) of each proposed-improvements-or-changes-
+    file this edit carries that main does not hold as it is. Main's copy of
+    the GHI-MD alone does not make the edit landed while one of those is
+    still to land, such as an entry a settling subagent changed."""
+    if on_main == staged and not proposed:
         return EDIT_LANDING_ALREADY_ON_MAIN, None
-    branch = edit_landing_branch_name(number, staged)
+    branch = edit_landing_branch_name(number, staged, proposed)
     on_remote = runner(["git", "ls-remote", "--heads", "origin", branch],
                        cwd=str(repository_root))
     if (on_remote.stdout or "").strip():
@@ -2323,7 +2373,7 @@ def edit_landing_state(number: int, staged: str, on_main,
 def refuse_to_land_edit(repo: str, number: int, relative: str, on_main,
                         moved_from, moved_from_on_main, branch,
                         main_commit: str, repository_root: Path, runner,
-                        report):
+                        report, proposed=()):
     """The two refusals of an edit with new content to land, run before a
     ruling question is written to a proposed-improvements-or-changes-file,
     so a draft they reject leaves no file behind for a rerun to take as an
@@ -2333,7 +2383,8 @@ def refuse_to_land_edit(repo: str, number: int, relative: str, on_main,
     refuse_on_an_earlier_edit_still_open(repo, number, relative, moved_from,
                                          branch, repository_root, runner)
     refuse_on_conflict(relative, on_main, moved_from, moved_from_on_main,
-                       main_commit, repository_root, runner, report)
+                       main_commit, repository_root, runner, report,
+                       proposed)
 
 
 def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
@@ -2387,6 +2438,8 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
                                             repository_root, runner, report)
         return True, True
 
+    refuse_moving_over_proposed(relative, proposed, moving_proposed,
+                                main_commit, repository_root, runner)
     worktree_parent = Path(tempfile.mkdtemp(prefix="ghi-issue-write-"))
     worktree = worktree_parent / "worktree"
     try:
@@ -2442,6 +2495,31 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
                cwd=str(repository_root), check=False)
         shutil.rmtree(worktree_parent, ignore_errors=True)
     return True, True
+
+
+def refuse_moving_over_proposed(relative: str, proposed, moving_proposed,
+                                main_commit: str, repository_root: Path,
+                                runner):
+    """Refuses when a proposed-improvements-or-changes-file moving with the
+    GHI-MD would land at the path of a different one beside the author's
+    file, such as a question this run just wrote under the same date: the
+    move is written second and would replace it. The same text at both is
+    the author having moved the file too, and is no loss."""
+    beside = dict(proposed)
+    for item_on_main, item_moved_to in moving_proposed:
+        if item_moved_to not in beside:
+            continue
+        moving_text = runner(["git", "show", f"{main_commit}:{item_on_main}"],
+                             cwd=str(repository_root)).stdout
+        if moving_text != beside[item_moved_to]:
+            raise Refused(
+                f"Refused: moving {relative} moves {item_on_main} to "
+                f"{item_moved_to}, but a different file is already at "
+                f"{item_moved_to}, so landing would replace that file.\n"
+                f"Rename the file already at {item_moved_to}: add -2 after "
+                "its date, or the lowest number from 2 that no file in that "
+                "folder or on main has.\n"
+                "Then run this command again.", 66)
 
 
 def read_issue(repo: str, number: int, relative: str, runner,
@@ -2831,7 +2909,7 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         issue_title_after_this_edit(document_before_this_edit, title, paths,
                                     issue))
     state, branch = edit_landing_state(number, staged, on_main,
-                                       repository_root, runner)
+                                       repository_root, runner, proposed)
     if state == EDIT_LANDING_NEW_CONTENT:
         # Nothing new to land is nothing new to adjudicate, so a rerun that
         # only finishes steps 4 and 5 costs no model call — the same reason
@@ -2851,7 +2929,7 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
                                   report, exclude_issue=number)
         refuse_to_land_edit(repo, number, relative, on_main, moved_from,
                             moved_from_on_main, branch, main_commit,
-                            repository_root, runner, report)
+                            repository_root, runner, report, proposed)
         if conflict is not None:
             write_proposed_improvements_or_changes_file(
                 directory, prefix, repo, conflict, runner, report, "edited",
@@ -2867,7 +2945,8 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
                 issue_title_after_this_edit(document_before_this_edit, title,
                                             paths, issue))
             state, branch = edit_landing_state(number, staged, on_main,
-                                               repository_root, runner)
+                                               repository_root, runner,
+                                               proposed)
     waiting, landed_now = land_edit(
         repo, number, title, relative, staged, on_main, moved_from,
         moved_from_on_main, state, branch, main_commit, repository_root, runner,
@@ -2882,7 +2961,9 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         report("the body follows main's copy of the files, so it changes "
                "when that pull request merges; rerun this command then")
     if landed_now:
-        report_ruling_questions_landed(number, "edited", proposed, report)
+        report_ruling_questions_landed(
+            number, "edited", proposed, report,
+            f"scripts/ghi-issue-write.py edit {relative}")
     if waiting:
         return number, False
     if finished:
