@@ -800,7 +800,7 @@ with tempfile.TemporaryDirectory() as root:
             ["--seats", "--store", str(store), "--machine", "both"],
             runner=a_runner_returning(
                 stdout=MAC_TAR[:1536],
-                stderr=b"mac-window-opened-for-ned-box-forced-command: the "
+                stderr=b"mac-request-from-ned-box-forced-command: the "
                        b"task lists were sent, but the outcome could not be "
                        b"added to the request log"))
     check("on ned-box, a Mac that warned and sent a truncated archive is "
