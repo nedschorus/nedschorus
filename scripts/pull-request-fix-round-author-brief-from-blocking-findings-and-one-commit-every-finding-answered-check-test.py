@@ -182,9 +182,15 @@ def brief_cases(root, repository, base, frozen_head):
     check("brief: says what to do when the check refuses and when a step fails after the push",
           "git commit --amend is allowed before the push" in out
           and "do not push again or rewrite the branch" in out, out)
-    check("brief: a conflict defers to the conflict check's report, and asks for no merge itself",
-          "If it reports VERDICT: CONFLICT, do what its report says." in out
-          and "merge origin/main as its report says" not in out and "merge nothing" not in out, out)
+    check("brief: a conflict defers to the conflict check's report and ends the round, with no merge",
+          "If it reports VERDICT: CONFLICT, do what its report says: the pull request is replaced, "
+          "and this round ends with that." in out
+          and "merge origin/main" not in out and "--after-conflict-merge" not in out, out)
+    check("brief: a fix that needs code changed on main is one commit only if it changes only "
+          "files the branch has; otherwise the pull request is replaced",
+          "If a fix needs code that changed on main, make that commit only if it changes only "
+          "files the branch already has. Otherwise the pull request is replaced, as for a "
+          "conflict" in out, out)
     check("brief: says what to do when a suite fails and when the push itself fails",
           "fix it in the same commit; if it fails for another cause, tell merge-lane-2 with "
           "SendMessage before pushing" in out
@@ -495,37 +501,17 @@ def check_cases(root, repository, base, frozen_head):
     merge = git(repository, "rev-parse", "HEAD")
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers)
-    check("check: a merge without --after-conflict-merge refuses", code == 1
-          and "one non-merge commit" in err, err)
-    code, out, err = run(root, repository, routes_for(merge, reviews),
-                         "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a merge of origin/main alone passes with --after-conflict-merge",
-          code == 0 and f"New head {merge}" in out, out + err)
+    check("check: a merge of origin/main refuses, and says to drop it", code == 1
+          and "one non-merge commit" in err and "drop any merge of main" in err
+          and "(2 parents)" in err, err)
     after_merge = commit_file(repository, "hook.py", "four\n", "fix after merge")
-    code, out, err = run(root, repository, routes_for(after_merge, reviews),
-                         "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a merge of origin/main and one commit pass with --after-conflict-merge, "
-          "and main's files are not listed", code == 0 and "main.txt" not in out, out + err)
-    commit_file(repository, "hook.py", "five\n", "a third commit")
+    code, out, err = run(root, repository, routes_for(after_merge, reviews), "--check", "--answers", answers)
+    check("check: a merge of origin/main and one commit refuse", code == 1
+          and "has 2 commits" in err, err)
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a merge and two commits refuse", code == 1 and "has 3 commits" in err, err)
-
-    git(repository, "reset", "-q", "--hard", frozen_head)
-    git(repository, "checkout", "-q", "-b", "elsewhere", base)
-    stray = commit_file(repository, "stray.txt", "s\n", "not on main")
-    git(repository, "checkout", "-q", "topic")
-    git(repository, "merge", "-q", "--no-edit", stray)
-    code, out, err = run(root, repository, routes_for(frozen_head, reviews),
-                         "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a merge of a commit not on origin/main refuses", code == 1
-          and "not on origin/main" in err, err)
-
-    git(repository, "update-ref", "-d", "refs/remotes/origin/main")
-    code, out, err = run(root, repository, routes_for(frozen_head, reviews),
-                         "--check", "--answers", answers, "--after-conflict-merge")
-    check("check: a missing origin/main fails with exit 2", code == 2
-          and "merge-base --is-ancestor" in err, err)
+    check("check: --after-conflict-merge is no longer accepted", code == 2
+          and "--after-conflict-merge" in err, err)
 
     git(repository, "reset", "-q", "--hard", base)
     rewritten = commit_file(repository, "hook.py", "rewritten\n", "rewritten")

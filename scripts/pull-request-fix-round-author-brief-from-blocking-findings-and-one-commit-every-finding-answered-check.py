@@ -3,7 +3,7 @@
 
 Usage:
   scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number>
-  scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --check [--answers FILE] [--commit REV] [--after-conflict-merge]
+  scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py <number> --check [--answers FILE] [--commit REV]
 
 The round is set by merge-lane-2's latest review that requests changes, together with every later
 review of merge-lane-2's that comments on the same commit, where merge-lane-2 can add or re-post
@@ -19,8 +19,7 @@ dispatch the fix-round subagent in a git worktree of its own and push from it, t
 and the --check command to finish with, which names the answers file in the author's checkout.
 
 With --check, run in the worktree or checkout that holds the round's commit: the commits from the frozen-head to --commit (default
-HEAD) must be none, or one non-merge commit, or with --after-conflict-merge a merge of origin/main
-followed by at most one non-merge commit. The answers file holds one entry per blocking finding,
+HEAD) must be none, or one non-merge commit. The answers file holds one entry per blocking finding,
 each starting "<n>. " on its own line; by default it is ANSWERS_FILE_NAME_FORMAT inside the
 checkout's own git directory, where git never commits it. It prints the files the fix commit changes that no blocking
 finding names, and, once GitHub's head is the checked commit or the frozen-head, the message for
@@ -292,14 +291,19 @@ def print_brief(number, reviewer_login):
         "For the subagent, the rules of the round, in order, run in your own worktree:",
         f"0. Make a local branch at the frozen-head and switch to it: git fetch origin && git switch -C {local_branch} {frozen_head}",
         f"1. Before changing anything, run: python3 scripts/branch-conflict-check.py --pull-request {number}",
-        "   If it reports VERDICT: CONFLICT, do what its report says.",
+        "   If it reports VERDICT: CONFLICT, do what its report says: the pull request is replaced, "
+        "and this round ends with that.",
         "2. Check each finding against the code. Fix each one that holds, root cause included, "
         "with a test that fails without the fix.",
         "3. Change nothing else, apart from the tests, callers, documents and citations that "
         "keep the pull request atomic. Findings that do not block, in this review or any other, "
         "are not part of this round: merge-lane-2 sends them after the merge.",
-        "4. Put every change in one commit on top of the branch as step 1 left it. "
-        "If no finding holds, make no commit.",
+        "4. Put every change in one commit on top of the frozen-head. If no finding holds, make "
+        "no commit.",
+        "   If a fix needs code that changed on main, make that commit only if it changes only "
+        "files the branch already has. Otherwise the pull request is replaced, as for a "
+        "conflict: do what branch-conflict-check.py's report says for a conflict, and this round "
+        "ends with that.",
         f"5. Write the answers file {answers_path}, one entry per finding above, each starting "
         "\"<n>. \" on its own line, with any further lines of the entry after it: what you fixed, "
         "or why the finding does not hold. It is inside git's own directory, so it is never "
@@ -308,8 +312,7 @@ def print_brief(number, reviewer_login):
         "   If a suite fails because of this round's change, fix it in the same commit; if it "
         "fails for another cause, tell merge-lane-2 with SendMessage before pushing.",
         f"7. Run the check: {check_command}",
-        "   adding --after-conflict-merge if step 1's report had you merge origin/main. If it refuses, change the "
-        "answers file or the unpushed commit as it says (git commit --amend is allowed before the "
+        "   If it refuses, change the answers file or the unpushed commit as it says (git commit --amend is allowed before the "
         "push) and run the check again.",
         f"8. When it passes with a commit not yet pushed, push once, with: git push origin HEAD:{shlex.quote(branch)}",
         "   Then run the same check command "
@@ -374,39 +377,24 @@ def commits_since(frozen_head, commit):
                       "its history, so the round rewrote or replaced the reviewed commits.\n"
                       "Put the fix in one commit on top of the frozen-head; never amend or rebase "
                       "a pushed head.")
-    # --first-parent leaves out the commits a merge of origin/main brings in.
+    # --first-parent lists a merge as one commit with two parents, which the round's rule refuses,
+    # instead of listing every commit the merge brings in.
     listing = git(["rev-list", "--reverse", "--first-parent", "--parents", f"{frozen_head}..{commit}"])
     return [(fields[0], fields[1:]) for fields in (line.split() for line in listing.splitlines())]
 
 
-def fix_commit_range(frozen_head, commits, after_conflict_merge):
+def fix_commit_range(frozen_head, commits):
     """Check the shape of the round; return (base, fix commit) for its file list, or None."""
-    described = ", ".join(f"{sha[:12]} ({len(parents)} parent{'' if len(parents) == 1 else 's'})"
-                          for sha, parents in commits)
     if not commits:
         return None
-    if after_conflict_merge:
-        merge_sha, merge_parents = commits[0]
-        shape_holds = (len(merge_parents) == 2 and merge_parents[0] == frozen_head
-                       and len(commits) <= 2
-                       and all(len(parents) == 1 for _, parents in commits[1:]))
-        if shape_holds:
-            if not is_ancestor(merge_parents[1], "origin/main"):
-                raise Refused(f"The merge {merge_sha[:12]} brings in {merge_parents[1][:12]}, "
-                              "which is not on origin/main.\n"
-                              "If origin/main is out of date, run git fetch origin and check again; "
-                              "otherwise merge origin/main itself.")
-            return (merge_sha, commits[1][0]) if len(commits) == 2 else None
-        rule = ("a merge of origin/main whose first parent is the frozen-head, followed by at most "
-                "one non-merge commit")
-    else:
-        if len(commits) == 1 and commits[0][1] == [frozen_head]:
-            return frozen_head, commits[0][0]
-        rule = "one non-merge commit whose parent is the frozen-head"
+    if len(commits) == 1 and commits[0][1] == [frozen_head]:
+        return frozen_head, commits[0][0]
+    described = ", ".join(f"{sha[:12]} ({len(parents)} parent{'' if len(parents) == 1 else 's'})"
+                          for sha, parents in commits)
     raise Refused(f"The round has {len(commits)} commits after the frozen-head {frozen_head[:12]}: "
-                  f"{described}. A fix-round is {rule}.\n"
+                  f"{described}. A fix-round is one non-merge commit whose parent is the frozen-head.\n"
                   "If the commits are not pushed, squash them into one commit on top of the "
-                  "frozen-head.\n"
+                  "frozen-head; drop any merge of main.\n"
                   "If they are pushed, tell merge-lane-2 with SendMessage; do not force-push.")
 
 
@@ -419,12 +407,12 @@ def unnamed_files(base, fix_commit, findings):
     return [path for path in changed if Path(path).name not in named_text]
 
 
-def check_round(number, reviewer_login, answers_path, commit_name, after_conflict_merge):
+def check_round(number, reviewer_login, answers_path, commit_name):
     url, head, _branch, review_link, _review_id, frozen_head, findings = round_facts(number, reviewer_login)
     answers = read_answers(answers_path or default_answers_path(number), len(findings))
     commit = git(["rev-parse", "--verify", f"{commit_name}^{{commit}}"]).strip()
     git(["cat-file", "-e", f"{frozen_head}^{{commit}}"])
-    fix_range = fix_commit_range(frozen_head, commits_since(frozen_head, commit), after_conflict_merge)
+    fix_range = fix_commit_range(frozen_head, commits_since(frozen_head, commit))
     leftovers = unnamed_files(*(fix_range or (None, None)), findings)
     lines = [f"PASS: the fix-round on {url} keeps to its rules; {len(findings)} findings answered."]
     if leftovers:
@@ -468,16 +456,13 @@ def main(argv=None):
                              + " in the checkout's git directory)")
     parser.add_argument("--commit", default="HEAD",
                         help="with --check: the round's last commit (default: HEAD)")
-    parser.add_argument("--after-conflict-merge", action="store_true",
-                        help="with --check: the round starts with a merge of origin/main, made "
-                             "because branch-conflict-check.py reported a conflict")
     parser.add_argument("--reviewer-login", default=MERGE_LANE_2_REVIEWER_LOGIN,
                         help=f"merge-lane-2's GitHub account (default: {MERGE_LANE_2_REVIEWER_LOGIN})")
     arguments = parser.parse_args(argv)
     try:
         if arguments.check:
             check_round(arguments.number, arguments.reviewer_login, arguments.answers,
-                        arguments.commit, arguments.after_conflict_merge)
+                        arguments.commit)
         else:
             print_brief(arguments.number, arguments.reviewer_login)
     except Refused as refusal:

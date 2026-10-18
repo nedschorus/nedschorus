@@ -1508,10 +1508,12 @@ def run_open_pull_request_branch_cases(scratch):
               f"request's head is refused, naming the branch and the pull request",
               was_refused(result) and refused_header in result.stderr
               and scenario.origin_ref("clean") == pushed, result.describe())
-    check("open pull request check: the refusal says to push a new commit on top, to clear a "
-          "conflict by the hand-merge, and how merge-lane-2 lets the push through",
+    check("open pull request check: the refusal says to push a new commit on top, that a "
+          "conflict replaces the pull request, and how merge-lane-2 lets the push through",
           "new commit on top of origin/clean" in result.stderr
-          and "the hand-merge that scripts/branch-conflict-check.py describes" in result.stderr
+          and "do what scripts/branch-conflict-check.py's report says; the pull request is "
+          "replaced by a new one cut from current main, so do not push this branch again."
+          in result.stderr and "hand-merge" not in result.stderr
           and f"{ESCAPE_HATCH_VARIABLE}=1 directly in front of the git push command"
           in result.stderr, result.describe())
 

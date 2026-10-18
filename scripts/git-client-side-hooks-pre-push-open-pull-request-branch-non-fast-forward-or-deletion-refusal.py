@@ -49,8 +49,9 @@ DELETION_REFUSAL = (
 REWRITE_INSTRUCTIONS = [
     "If you are adding work to the branch: run git fetch origin {branch}, put your change in a "
     "new commit on top of origin/{branch}, and push without --force.",
-    "If the branch conflicts with main: clear the conflict with the hand-merge that "
-    "scripts/branch-conflict-check.py describes, and push without --force.",
+    "If the branch conflicts with main: do what scripts/branch-conflict-check.py's report "
+    "says; the pull request is replaced by a new one cut from current main, so do not push "
+    "this branch again.",
     "If you already rebased or amended the branch locally: keep that work on another branch "
     "(git branch {branch}-rewritten), go back to the pushed head (git switch -C {branch} "
     "origin/{branch}), and redo your change as a new commit.",
