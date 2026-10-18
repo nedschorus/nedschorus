@@ -398,15 +398,17 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "Do not rebase or amend it" in agent_text(result)
           and "git checkout -b <name> origin/main" in agent_text(result), agent_text(result))
     # A conflict with main is the one case a commit on top cannot clear; the
-    # pushed-branch advice sends it to the hand-merge that the VERDICT: CONFLICT
-    # report of scripts/branch-conflict-check.py describes.
+    # pushed-branch advice sends it to the VERDICT: CONFLICT report of
+    # scripts/branch-conflict-check.py, which replaces the pull request.
     check("a pushed branch is told how to clear a conflict with main, byte for byte",
-          "If it conflicts with main, clear the conflict with the hand-merge that "
-          "scripts/branch-conflict-check.py describes." in agent_text(result),
+          "If it conflicts with main, run scripts/branch-conflict-check.py and do what "
+          "its report says: the pull request is replaced by a new one cut from current "
+          "main." in agent_text(result),
           agent_text(result))
     check("the pushed head's status says how a conflict is cleared, byte for byte",
           "(frozen: a fix is a new commit on top, never an amend; a conflict with "
-          "main is cleared by a hand-merge)" in agent_text(result), agent_text(result))
+          "main is cleared by a new pull request from current main)" in agent_text(result),
+          agent_text(result))
     check("the pushed-branch note ends by saying it is not for the user, byte for byte",
           agent_text(result).endswith("\n" + NOT_FOR_THE_USER_LINE), agent_text(result))
     check("the user hears nothing", display_text(result) == "", display_text(result))
@@ -510,8 +512,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "This branch's commits are already on GitHub under another branch name, so the "
           "branch is treated as pushed and is not rebased: a pushed head may be under "
           "review, and a rebase would rewrite it. Do not rebase or amend those commits. A "
-          "fix is a new commit on top. If it conflicts with main, clear the conflict with "
-          "the hand-merge that scripts/branch-conflict-check.py describes."
+          "fix is a new commit on top. If it conflicts with main, run "
+          "scripts/branch-conflict-check.py and do what its report says: the pull request "
+          "is replaced by a new one cut from current main."
           in agent_text(result), agent_text(result))
     check("the pushed-history note never tells the agent to rebase",
           "git rebase origin/main" not in agent_text(result), agent_text(result))
@@ -1469,358 +1472,173 @@ with tempfile.TemporaryDirectory() as abort_scratch:
 
 
 # ---------------------------------------------------------------------------
-# The conflict exception (user-ruled 2026-09-21, fix approved 2026-09-22)
-# ---------------------------------------------------------------------------
-# A merge from main whose parents CONFLICT is the hand merge the user allowed —
-# the author had no choice — and is NOT reported. One whose parents merge
-# cleanly is the catch-up nedschorus#324 banned and still is. The rename case
-# below is the head of PR "A conflict is the one case a commit on top cannot
-# clear" (600) in miniature: git's default rename detection re-merges it
-# CLEAN, so without `-X no-renames` the hook would keep reporting the pull
-# request that created the exception. Both not-reported cases FAIL
-# against this script without the fix, and the rename one fails again if the
-# flag alone is dropped — checked by running this file against each, not
-# assumed.
+# Every merge from main is reported, a merge that resolved a conflict included:
+# a conflicting pull request is replaced by a new one cut from current main, so
+# no merge of main into a topic branch is ever the right move.
 # ---------------------------------------------------------------------------
 
-with tempfile.TemporaryDirectory() as exception_scratch:
-    exception_tmp = Path(exception_scratch)
-    real_git = shutil.which("git")
+with tempfile.TemporaryDirectory() as merge_scratch:
+    merge_tmp = Path(merge_scratch)
 
     def seat_on_main(name: str):
         """A fresh origin, reference clone and seat worktree cut from main."""
-        exception_origin = exception_tmp / f"{name}-origin"
-        exception_origin.mkdir()
-        git(["init", "-q", "-b", "main"], exception_origin)
-        configure_identity(exception_origin)
-        commit_file(exception_origin, "shared.txt", "first\n", "first commit")
-        commit_file(exception_origin, "scripts/main-will-move-this.py", "held here\n",
-                    "a script main will later move")
-        exception_reference = exception_tmp / f"{name}-reference"
-        git(["clone", "-q", str(exception_origin), str(exception_reference)], exception_tmp)
-        configure_identity(exception_reference)
-        exception_seat = exception_tmp / f"{name}-seat"
-        git(["worktree", "add", "-q", "-b", "seat", str(exception_seat), "main"],
-            exception_reference)
-        configure_identity(exception_seat)
-        return exception_origin, exception_seat
+        merge_origin = merge_tmp / f"{name}-origin"
+        merge_origin.mkdir()
+        git(["init", "-q", "-b", "main"], merge_origin)
+        configure_identity(merge_origin)
+        commit_file(merge_origin, "shared.txt", "first\n", "first commit")
+        merge_reference = merge_tmp / f"{name}-reference"
+        git(["clone", "-q", str(merge_origin), str(merge_reference)], merge_tmp)
+        configure_identity(merge_reference)
+        merge_seat = merge_tmp / f"{name}-seat"
+        git(["worktree", "add", "-q", "-b", "seat", str(merge_seat), "main"],
+            merge_reference)
+        configure_identity(merge_seat)
+        return merge_origin, merge_seat
 
     def merge_main_into(seat_path: Path):
-        """Merge origin/main by hand, as the 2026-09-21 procedure has an author
-        do it; returns git's exit status so a conflict can be resolved."""
+        """Merge origin/main into the seat; returns git's exit status."""
         git(["fetch", "-q", "origin"], seat_path)
         return git(["-c", "core.editor=true", "merge", "--no-ff", "--no-edit", "origin/main"],
                    seat_path).returncode
 
-    def merge_tree_status(seat_path: Path, extra_arguments):
-        """What git says about re-merging the seat's merge commit's two parents."""
-        return git(["merge-tree", "--write-tree", *extra_arguments, "HEAD^1", "HEAD^2"],
-                   seat_path).returncode
-
-    # --- a clean catch-up merge is STILL reported ---------------------------
-    clean_origin, clean_seat = seat_on_main("clean-catch-up")
+    # --- a clean merge of main is reported ----------------------------------
+    clean_origin, clean_seat = seat_on_main("clean-merge-of-main")
     commit_file(clean_seat, "seat-own.txt", "mine\n", "the seat's own work")
     commit_file(clean_origin, "scripts/unrelated.py", "main's\n", "main advances elsewhere")
-    check("(fixture) a catch-up merge of main lands without a conflict",
+    check("(fixture) a merge of main lands without a conflict",
           merge_main_into(clean_seat) == 0)
-    check("(fixture) and its parents re-merge cleanly",
-          merge_tree_status(clean_seat, ["-X", "no-renames"]) == 0)
     clean_result = run_catch_up(["--cwd", str(clean_seat)])
-    check("a catch-up merge whose parents merge cleanly is still told to the agent",
+    check("a merge of main is told to the agent",
           "carries 1 merge commit(s) from main" in agent_text(clean_result),
           clean_result.stdout)
+    check("and the hook exits 0 and blocks no turn",
+          clean_result.returncode == 0 and never_blocks(clean_result),
+          str(clean_result.returncode))
 
-    # --- two catch-up merges are counted and named, newest first -------------
-    twice_origin, twice_seat = seat_on_main("two-catch-up-merges")
+    # --- two merges of main are counted and named, newest first -------------
+    twice_origin, twice_seat = seat_on_main("two-merges-of-main")
     commit_file(twice_seat, "seat-own.txt", "mine\n", "the seat's own work")
     commit_file(twice_origin, "scripts/unrelated-one.py", "main's\n", "main advances once")
-    check("(fixture) the first catch-up merge lands without a conflict",
+    check("(fixture) the first merge of main lands without a conflict",
           merge_main_into(twice_seat) == 0)
     older_merge = git(["rev-parse", "--short=12", "HEAD"], twice_seat).stdout.strip()
     commit_file(twice_origin, "scripts/unrelated-two.py", "main's\n", "main advances twice")
-    check("(fixture) the second catch-up merge lands without a conflict",
+    check("(fixture) the second merge of main lands without a conflict",
           merge_main_into(twice_seat) == 0)
     newer_merge = git(["rev-parse", "--short=12", "HEAD"], twice_seat).stdout.strip()
     twice_result = run_catch_up(["--cwd", str(twice_seat)])
-    check("a branch with two catch-up merges is told both, counted and named",
+    check("a branch with two merges of main is told both, counted and named",
           f"seat carries 2 merge commit(s) from main ({newer_merge}, {older_merge})."
           in agent_text(twice_result), twice_result.stdout)
 
-    # --- a merge that RESOLVED a conflict is not reported --------------------
-    def hand_resolved_seat(name: str):
-        """A seat that merged main by hand and resolved a real conflict — the
-        2026-09-21 procedure, end to end."""
-        its_origin, its_seat = seat_on_main(name)
-        commit_file(its_seat, "shared.txt", "the seat's line\n", "the seat edits shared")
-        commit_file(its_origin, "shared.txt", "main's line\n", "main edits shared")
-        conflicted = merge_main_into(its_seat) != 0
-        (its_seat / "shared.txt").write_text("resolved by hand\n", encoding="utf-8")
-        git(["add", "shared.txt"], its_seat)
-        git(["-c", "core.editor=true", "commit", "-q", "--no-edit"], its_seat)
-        return its_seat, conflicted
-
-    conflict_seat, conflicted = hand_resolved_seat("hand-resolved")
-    check("(fixture) merging main by hand conflicts, as it did on the two hand "
-          "merges of 2026-09-22", conflicted)
-    check("(fixture) the resolution is a merge commit whose second parent is on main",
-          git(["rev-list", "--merges", "--count", "origin/main..HEAD"],
-              conflict_seat).stdout.strip() == "1")
+    # --- a merge of main that resolved a conflict is reported too -----------
+    conflict_origin, conflict_seat = seat_on_main("merge-that-resolved-a-conflict")
+    commit_file(conflict_seat, "shared.txt", "the seat's line\n", "the seat edits shared")
+    commit_file(conflict_origin, "shared.txt", "main's line\n", "main edits shared")
+    check("(fixture) merging main conflicts", merge_main_into(conflict_seat) != 0)
+    (conflict_seat / "shared.txt").write_text("resolved by hand\n", encoding="utf-8")
+    git(["add", "shared.txt"], conflict_seat)
+    git(["-c", "core.editor=true", "commit", "-q", "--no-edit"], conflict_seat)
     conflict_result = run_catch_up(["--cwd", str(conflict_seat)])
-    check("a merge that resolved a real conflict is NOT reported: the author had no choice",
-          "merge commit(s) from main" not in agent_text(conflict_result),
+    check("a merge of main that resolved a conflict is reported: the conflict calls for "
+          "a new pull request from current main, not a merge",
+          "carries 1 merge commit(s) from main" in agent_text(conflict_result),
           conflict_result.stdout)
 
-    # --- the shape of that pull request's head: a file main RENAMED out ----
-    # Rename detection merges this silently, so the author's own git reported no
-    # conflict while GitHub reported CONFLICTING and refused the merge. The
-    # conflict that forced the hand merge is the one seen WITHOUT rename
-    # detection, which is why the flag is load-bearing.
-    rename_origin, rename_seat = seat_on_main("renamed-under-the-branch")
-    commit_file(rename_seat, "scripts/main-will-move-this.py", "the seat's edit\n",
-                "the seat edits the script at its old path")
-    (rename_origin / "nc-systems").mkdir()
-    git(["mv", "scripts/main-will-move-this.py", "nc-systems/main-moved-it-here.py"],
-        rename_origin)
-    git(["commit", "-q", "-m", "main moves the script out of scripts/"], rename_origin)
-    merge_main_into(rename_seat)
-    check("(fixture) the parents re-merge CLEAN under git's default rename detection",
-          merge_tree_status(rename_seat, []) == 0)
-    check("(fixture) and CONFLICT with rename detection off — the conflict GitHub saw",
-          merge_tree_status(rename_seat, ["-X", "no-renames"]) == 1)
-    rename_result = run_catch_up(["--cwd", str(rename_seat)])
-    check("the hand merge of a file main renamed away is NOT reported — the shape "
-          "of the head of the pull request that added the exception",
-          "merge commit(s) from main" not in agent_text(rename_result),
-          rename_result.stdout)
+    # --- a git command the check needs fails: a failure, told to both ------
+    real_git_path = shutil.which("git")
 
-    # --- an error from merge-tree is not an answer: the merge is reported ----
-    # merge-tree exits 1 for a conflict AND for an argument it cannot resolve,
-    # and a git too old for --write-tree or for -X exits 129 on usage. Neither
-    # may read as "conflict", or a misbehaviour disappears silently. Each shape
-    # is produced by a `git` shim first on PATH that intercepts only merge-tree.
-    def merge_tree_shim(name: str, body: str) -> Path:
-        directory = exception_tmp / name
+    def failing_git_shim(name: str, match: str) -> Path:
+        """A `git` first on PATH that fails the one command whose arguments
+        contain `match`, and passes every other call through."""
+        directory = merge_tmp / name
         directory.mkdir()
         script = directory / "git"
         script.write_text(
             "#!/bin/sh\n"
-            'if [ "$1" = "merge-tree" ]; then\n'
-            f"{body}\n"
-            "fi\n"
-            f'exec "{real_git}" "$@"\n',
-            encoding="utf-8")
+            f'case " $* " in *"{match}"*) echo "fatal: shimmed {name}" >&2; exit 128;; esac\n'
+            f'exec "{real_git_path}" "$@"\n', encoding="utf-8")
         script.chmod(0o755)
         return directory
 
-    unresolvable = merge_tree_shim(
-        "merge-tree-exits-one-with-nothing",
-        '  printf "shimmed: not something we can merge\\n" >&2\n'
-        "  exit 1")
-    old_git = merge_tree_shim(
-        "merge-tree-unsupported",
-        '  printf "shimmed: unknown option --write-tree\\n" >&2\n'
-        "  exit 129")
+    for shim_name, match, command in (
+            ("main-ref-fails", " --verify --quiet origin/main ",
+             "git rev-parse --verify --quiet origin/main"),
+            ("rev-list-fails", " --merges ", "git rev-list --merges origin/main..HEAD"),
+            ("second-parent-fails", "^2 ", "git rev-parse --verify --quiet "),
+            ("merge-base-fails", " --is-ancestor ", "git merge-base --is-ancestor")):
+        failing_origin, failing_seat = seat_on_main(f"merge-check-{shim_name}")
+        commit_file(failing_seat, "seat-own.txt", "mine\n", "the seat's own work")
+        commit_file(failing_origin, "scripts/unrelated.py", "main's\n", "main advances")
+        merge_main_into(failing_seat)
+        shim = failing_git_shim(shim_name, match)
+        failed = run_catch_up(["--cwd", str(failing_seat)], path_prefix=str(shim))
+        told = agent_text(failed)
+        check(f"({shim_name}) a failed git command is told to the agent as a failure, "
+              "naming the command and git's error, not as a forbidden merge",
+              f"seat could not be checked for merges from main, because `{command}"
+              in told and f"fatal: shimmed {shim_name}" in told
+              and "merge commit(s) from main" not in told, told)
+        check(f"({shim_name}) the agent is told the repository may be damaged and to run "
+              "git fsck before pushing again, and to tell the user",
+              "The repository may be damaged.\nRun `git fsck` before you push again, and "
+              "tell the user what it reports." in told
+              and not told.endswith(NOT_FOR_THE_USER_LINE), told)
+        check(f"({shim_name}) the user is told too, naming the command and git's error",
+              "the check for merges from main failed" in display_text(failed)
+              and f"fatal: shimmed {shim_name}" in display_text(failed),
+              display_text(failed))
+        check(f"({shim_name}) the hook exits 0 and blocks no turn",
+              failed.returncode == 0 and never_blocks(failed), str(failed.returncode))
+        again = run_catch_up(["--cwd", str(failing_seat)], path_prefix=str(shim))
+        check(f"({shim_name}) the same failure is not told again at the next turn's end",
+              "could not be checked for merges from main" not in agent_text(again)
+              and "the check for merges from main failed" not in display_text(again),
+              again.stdout)
+        recovered = run_catch_up(["--cwd", str(failing_seat)])
+        check(f"({shim_name}) once git works again, the merge is reported",
+              "carries 1 merge commit(s) from main" in agent_text(recovered),
+              recovered.stdout)
 
-    # A seat each, because a finding is reported once per stamp: the second run
-    # on one seat would be silent for that reason, not for the shim's.
-    old_git_seat, _ = hand_resolved_seat("merge-tree-unsupported-seat")
-    old_git_result = run_catch_up(["--cwd", str(old_git_seat)], path_prefix=str(old_git))
-    check("a git too old for the re-merge reports the merge, as the hook did before the exception",
-          "carries 1 merge commit(s) from main" in agent_text(old_git_result),
-          old_git_result.stdout + old_git_result.stderr)
-    unresolvable_seat, _ = hand_resolved_seat("merge-tree-exits-one-seat")
-    unresolvable_result = run_catch_up(["--cwd", str(unresolvable_seat)],
-                                       path_prefix=str(unresolvable))
-    check("merge-tree exiting 1 with no answer is an error, not a conflict: still reported",
-          "carries 1 merge commit(s) from main" in agent_text(unresolvable_result),
-          unresolvable_result.stdout + unresolvable_result.stderr)
-    check("and the hook still exits 0 under both, blocking no turn",
-          old_git_result.returncode == 0 and unresolvable_result.returncode == 0
-          and never_blocks(old_git_result) and never_blocks(unresolvable_result),
-          f"{old_git_result.returncode} {unresolvable_result.returncode}")
+    # --- a merge of main is told how a conflict is cleared ------------------
+    check("the merge note sends a conflict to a new pull request from current main",
+          "If it conflicts with main, run scripts/branch-conflict-check.py and do what its "
+          "report says: the pull request is replaced by a new one cut from current main."
+          in agent_text(clean_result), agent_text(clean_result))
 
-    # --- a hand-merge the conflict check called for is not reported ----------
-    # A pushed branch that scripts/branch-conflict-check.py reports as
-    # `VERDICT: CONFLICT` is cleared by a hand-merge, as that report says. That
-    # program asks git with rename detection ON, as `git merge` and the pre-push
-    # hook do; this hook once re-merged the two parents with rename detection
-    # OFF only. A file added under a directory the
-    # other side moved conflicts only WITH detection (CONFLICT (file location)).
-    # So the conflict check ordered the hand-merge, git's own merge stopped and
-    # was resolved by hand, and this hook then told the user that the branch did
-    # what was ruled out 2026-09-14. The first shape is the merge commit "Merge
-    # main to relocate #342's two drafts, and revert two commit-pinned paths"
-    # (6bd0aa5850ce) in miniature, the one such merge in main's history
-    # (merges_from_main's docstring); the second is the same conflict with the
-    # two sides swapped. Both not-reported checks FAIL against the script as it
-    # was when it re-merged without rename detection only, each printing the
-    # merge-from-main line — checked by running this file against that
-    # revision, not assumed.
-    conflict_check_path = SCRIPT_PATH.with_name("branch-conflict-check.py")
+    # --- a merge of another branch is not a merge from main -----------------
+    other_origin, other_seat = seat_on_main("merge-of-another-branch")
+    git(["checkout", "-q", "-b", "side"], other_seat)
+    commit_file(other_seat, "side.txt", "side\n", "work on a side branch")
+    git(["checkout", "-q", "seat"], other_seat)
+    commit_file(other_seat, "seat-own.txt", "mine\n", "the seat's own work")
+    git(["-c", "core.editor=true", "merge", "--no-ff", "--no-edit", "side"], other_seat)
+    other_result = run_catch_up(["--cwd", str(other_seat)])
+    check("a merge of a branch that is not on main is not reported",
+          "merge commit(s) from main" not in agent_text(other_result),
+          other_result.stdout)
+    check("a merge of a branch that is not on main is not a failed check either: "
+          "no one is told the repository may be damaged",
+          "could not be checked for merges from main" not in agent_text(other_result)
+          and "The repository may be damaged" not in agent_text(other_result)
+          and "the check for merges from main failed" not in display_text(other_result),
+          agent_text(other_result) + display_text(other_result))
 
-    def conflict_check_exit_and_verdict_line(seat_path: Path):
-        """(exit status, first line) of the real conflict check, run as the
-        pre-push hook runs it: git's answer alone, GitHub never asked."""
-        ran = subprocess.run([sys.executable, str(conflict_check_path), "--head", "HEAD"],
-                             cwd=str(seat_path), capture_output=True, text=True, check=False)
-        return ran.returncode, (ran.stdout.splitlines() or [""])[0]
-
-    def move_drafts_directory(repository: Path):
-        git(["mv", "docs/drafts", "docs/queue"], repository)
-        git(["commit", "-q", "-m", "move docs/drafts to docs/queue"], repository)
-
-    def add_third_draft(repository: Path):
-        commit_file(repository, "docs/drafts/third-draft.md", "the third draft\n",
-                    "add a third draft under docs/drafts")
-
-    for shape_name, seat_change, main_change, case_name in (
-            ("seat-moved-the-directory", move_drafts_directory, add_third_draft,
-             "the hand-merge that relocates a file main added under a directory the "
-             "branch moved is NOT reported — the conflict check called for it"),
-            ("main-moved-the-directory", add_third_draft, move_drafts_directory,
-             "the hand-merge that relocates a file the branch added under a directory "
-             "main moved is NOT reported — the conflict check called for it")):
-        shape_origin, shape_seat = seat_on_main(shape_name)
-        # A directory both sides start with, holding two drafts.
-        commit_file(shape_origin, "docs/drafts/first-draft.md", "the first draft\n",
-                    "main adds a first draft")
-        commit_file(shape_origin, "docs/drafts/second-draft.md", "the second draft\n",
-                    "main adds a second draft")
-        git(["fetch", "-q", "origin"], shape_seat)
-        git(["merge", "-q", "--ff-only", "origin/main"], shape_seat)
-        seat_change(shape_seat)
-        # Pushed, because the rule is about a pushed branch: its head is frozen,
-        # so a commit on top is the only other move, and that cannot clear a
-        # conflict.
-        git(["push", "-q", "origin", "seat"], shape_seat)
-        main_change(shape_origin)
-        git(["fetch", "-q", "origin"], shape_seat)
-
-        verdict_exit, verdict_line = conflict_check_exit_and_verdict_line(shape_seat)
-        check(f"(fixture, {shape_name}) the conflict check reports VERDICT: CONFLICT "
-              "and exits 1, on git's answer alone",
-              verdict_exit == 1 and verdict_line.startswith("VERDICT: CONFLICT -- "),
-              f"exit {verdict_exit}: {verdict_line}")
-        check(f"(fixture, {shape_name}) merging main by hand stops on a conflict",
-              merge_main_into(shape_seat) != 0)
-        # The resolution git itself suggests: the added file goes where the
-        # directory went. The merge's message names the resolved file, as
-        # the VERDICT: CONFLICT report of scripts/branch-conflict-check.py has a
-        # hand-merge do.
-        git(["add", "-A"], shape_seat)
-        git(["commit", "-q", "-m",
-             "Merge origin/main into seat by hand\n\n"
-             "Resolved: docs/queue/third-draft.md, moved from docs/drafts/ to "
-             "follow the directory."], shape_seat)
-        check(f"(fixture, {shape_name}) the resolution is one merge commit whose second "
-              "parent is on main, with the added file relocated",
-              git(["rev-list", "--merges", "--count", "origin/main..HEAD"],
-                  shape_seat).stdout.strip() == "1"
-              and git(["merge-base", "--is-ancestor", "HEAD^2", "origin/main"],
-                      shape_seat).returncode == 0
-              and git(["ls-files", "docs"], shape_seat).stdout.split()
-              == ["docs/queue/first-draft.md", "docs/queue/second-draft.md",
-                  "docs/queue/third-draft.md"],
-              git(["ls-files", "docs"], shape_seat).stdout)
-        check(f"(fixture, {shape_name}) the parents CONFLICT under git's default rename "
-              "detection, which is what the conflict check asked",
-              merge_tree_status(shape_seat, []) == 1)
-        check(f"(fixture, {shape_name}) and re-merge CLEAN with rename detection off, "
-              "which is all this hook once asked",
-              merge_tree_status(shape_seat, ["-X", "no-renames"]) == 0)
-        shape_result = run_catch_up(["--cwd", str(shape_seat)])
-        check(case_name, "merge commit(s) from main" not in agent_text(shape_result),
-              agent_text(shape_result))
-
-    # --- one re-merge errors: the other one's answer decides -----------------
-    # The hook re-merges twice, without rename detection and with it. An error
-    # from one is not an answer, so it is never a conflict: the merge is
-    # skipped only when the OTHER re-merge positively shows a conflict, and is
-    # reported when the other is clean. The two shim cases above make both
-    # re-merges error; these four make exactly one error, by a `git` shim that
-    # intercepts merge-tree only when rename detection is off, or only when it
-    # is on. A git with --write-tree but without -X for merge-tree is the real
-    # version of the first.
-    def merge_tree_shim_for_one_strategy(name: str, without_rename_detection: bool,
-                                         body: str) -> Path:
-        directory = exception_tmp / name
-        directory.mkdir()
-        script = directory / "git"
-        script.write_text(
-            "#!/bin/sh\n"
-            'if [ "$1" = "merge-tree" ]; then\n'
-            '  case " $* " in\n'
-            '    *" no-renames "*) without_rename_detection=yes ;;\n'
-            "    *) without_rename_detection=no ;;\n"
-            "  esac\n"
-            f'  if [ "$without_rename_detection" = "{"yes" if without_rename_detection else "no"}" ]; then\n'
-            f"{body}\n"
-            "  fi\n"
-            "fi\n"
-            f'exec "{real_git}" "$@"\n',
-            encoding="utf-8")
-        script.chmod(0o755)
-        return directory
-
-    no_renames_errors = merge_tree_shim_for_one_strategy(
-        "merge-tree-errors-without-rename-detection", True,
-        '    printf "shimmed: unknown option -X\\n" >&2\n'
-        "    exit 129")
-    default_errors = merge_tree_shim_for_one_strategy(
-        "merge-tree-errors-with-rename-detection", False,
-        '    printf "shimmed: fatal\\n" >&2\n'
-        "    exit 128")
-
-    def shimmed_merge_tree_statuses(shim_directory: Path, seat_path: Path):
-        """(exit without rename detection, exit with it) of re-merging the
-        seat's merge commit's parents through a shim, as the hook would."""
-        environment = dict(os.environ)
-        environment["PATH"] = f"{shim_directory}{os.pathsep}{environment['PATH']}"
-        return tuple(
-            subprocess.run(["git", "merge-tree", "--write-tree", *strategy_arguments,
-                            "HEAD^1", "HEAD^2"], cwd=str(seat_path), env=environment,
-                           capture_output=True, text=True, check=False).returncode
-            for strategy_arguments in (["-X", "no-renames"], []))
-
-    def clean_catch_up_seat(name: str):
-        """A seat that merged main with nothing to resolve: the banned catch-up."""
-        its_origin, its_seat = seat_on_main(name)
-        commit_file(its_seat, "seat-own.txt", "mine\n", "the seat's own work")
-        commit_file(its_origin, "scripts/unrelated.py", "main's\n", "main advances elsewhere")
-        merge_main_into(its_seat)
-        return its_seat
-
-    # A seat each, for the reason given above: a finding is reported once per stamp.
-    for (combination_name, shim_directory, build_seat, expected_statuses,
-         expected_reported, case_name) in (
-            ("no-renames-errors-default-conflicts", no_renames_errors,
-             lambda name: hand_resolved_seat(name)[0], (129, 1), False,
-             "an error without rename detection and a conflict with it: NOT reported, "
-             "the conflict is an answer"),
-            ("no-renames-conflicts-default-errors", default_errors,
-             lambda name: hand_resolved_seat(name)[0], (1, 128), False,
-             "a conflict without rename detection and an error with it: NOT reported, "
-             "the conflict is an answer"),
-            ("no-renames-errors-default-clean", no_renames_errors,
-             clean_catch_up_seat, (129, 0), True,
-             "an error without rename detection and a clean merge with it: still "
-             "reported, the error is not a conflict"),
-            ("no-renames-clean-default-errors", default_errors,
-             clean_catch_up_seat, (0, 128), True,
-             "a clean merge without rename detection and an error with it: still "
-             "reported, the error is not a conflict")):
-        combination_seat = build_seat(combination_name)
-        statuses = shimmed_merge_tree_statuses(shim_directory, combination_seat)
-        check(f"(fixture, {combination_name}) the shim makes exactly one re-merge error",
-              statuses == expected_statuses, str(statuses))
-        combination_result = run_catch_up(["--cwd", str(combination_seat)],
-                                          path_prefix=str(shim_directory))
-        reported = "carries 1 merge commit(s) from main" in agent_text(combination_result)
-        check(case_name, reported is expected_reported,
-              combination_result.stdout + combination_result.stderr)
-        check(f"and the hook exits 0 and blocks no turn ({combination_name})",
-              combination_result.returncode == 0 and never_blocks(combination_result),
-              str(combination_result.returncode))
+    # --- no origin/main at all: nothing to compare with, not damage ---------
+    bare_origin, bare_seat = seat_on_main("no-origin-main")
+    commit_file(bare_seat, "seat-own.txt", "mine\n", "the seat's own work")
+    git(["remote", "remove", "origin"], bare_seat)
+    bare_result = run_catch_up(["--cwd", str(bare_seat)])
+    check("a checkout with no origin/main is not told the repository may be damaged",
+          "The repository may be damaged" not in agent_text(bare_result)
+          and "the check for merges from main failed" not in display_text(bare_result),
+          agent_text(bare_result) + display_text(bare_result))
+    check("a checkout with no origin/main is told there is no origin/main, with the "
+          "fetch to run",
+          "there is no origin/main" in agent_text(bare_result)
+          and "git fetch origin" in agent_text(bare_result),
+          agent_text(bare_result))
 
 
 # ---------------------------------------------------------------------------
@@ -2362,10 +2180,11 @@ with tempfile.TemporaryDirectory() as notes_scratch:
     git(["commit", "-q", "--amend", "-m", "the merge, amended"], notes_seat)
     carried_run = stop_only(notes_seat, path_prefix=merges_unlisted)
     carried_kinds = sorted(note.get("kind") for note in queued_notes(notes_seat))
-    check("when git cannot list the merges and the head is rewritten, only the rewritten "
-          "head is told: the merges note already delivered is not queued again, and nothing crashes",
+    check("when git cannot list the merges and the head is rewritten, the failed check and "
+          "the rewritten head are told: the merges note already delivered is not queued again, "
+          "and nothing crashes",
           carried_run.returncode == 0 and "Traceback" not in carried_run.stderr
-          and carried_kinds == ["rewritten-head"],
+          and carried_kinds == ["merge-check-failed", "rewritten-head"],
           carried_run.stderr + str(queued_notes(notes_seat)))
 
     origin_repo, notes_seat = notes_fixture()

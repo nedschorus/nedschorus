@@ -332,7 +332,7 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
             "with a new name, but %s may have renamed one and changed it in the "
             "same commit, so much that git saw a deletion." % base)
         lines.append(
-            "Before you merge or close, find out for %s whether %s renamed it "
+            "Before you act, find out for %s whether %s renamed it "
             "or deleted it: compare the branch's version of it with %s's version "
             "of each file named after \"possibly\" on its line, and do each "
             "RENAME CHECK that names it. A file with no \"possibly\" on its line and "
@@ -343,22 +343,22 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
                 "If a deleting commit is not named above, find it with git log "
                 "--diff-filter=D %s -- <file>." % base)
         lines += [
+            "Do not merge %s into this branch, and do not push this branch "
+            "again: a conflicting pull request is replaced by a new one cut "
+            "from current %s." % (base, base),
             "If every file marked DELETED ON or DELETED OR RENAMED was renamed, "
-            "merge %s into the branch by hand, with the frozen head as first "
-            "parent, and carry the branch's change to each file onto its new "
-            "name." % base,
-            "In that hand-merge, resolve any ALSO CONFLICTS file too, change "
-            "nothing else, put any edit the resolution forces beyond the "
-            "conflicting lines in one ordinary commit after the merge, rerun the "
-            "test suites for what the merge touched, and push the merge and that "
-            "commit once, naming the files you resolved in the merge's commit "
-            "message and in the pull request's description.",
-            "If any file marked DELETED ON or DELETED OR RENAMED was deleted, do "
-            "not merge: close the pull request with a comment naming the commit "
-            "that deleted it, and carry what %s still lacks on a new topic "
-            "branch cut from current %s, in a new pull request that names the "
-            "closed one; on that branch, carry the branch's change to each "
-            "renamed file onto its new name%s."
+            "cut a new topic branch from current %s and apply this branch's "
+            "change to it, carrying the change to each file onto its new name "
+            "and resolving any ALSO CONFLICTS file too; rerun the test suites "
+            "for what the change touches, push the new branch once, open a new "
+            "pull request from it whose description links the old one, and "
+            "close the old one with a comment linking the new one." % base,
+            "If any file marked DELETED ON or DELETED OR RENAMED was deleted, "
+            "close the pull request with a comment naming the commit that "
+            "deleted it, and carry what %s still lacks on a new topic branch "
+            "cut from current %s, in a new pull request that names the closed "
+            "one; on that branch, carry the branch's change to each renamed "
+            "file onto its new name%s."
             % (base, base,
                ", and start each ALSO CONFLICTS file from %s's version and "
                "reapply the branch's change to it by hand" % base
@@ -366,9 +366,9 @@ def deleted_on_base_lines(head_hash, base, base_hash, stages, deleted,
         ]
         return lines
     lines.append(
-        "Do not merge %s into the branch: %s removed the file(s) above, so a "
-        "hand-merge would either bring a removed file back or drop the "
-        "branch's change to it." % (base, base))
+        "Do not merge %s into the branch: %s removed the file(s) above, so "
+        "the branch's change to each of them has nothing left to apply to."
+        % (base, base))
     if unnamed:
         lines.append(
             "If a deleting commit is not named above, find it with git log "
@@ -465,6 +465,34 @@ def github_verdict_for_base(pull_request, base, base_branch, lines,
     return github_mergeable(pull_request, runner, sleep, reads, sleep_seconds)
 
 
+def replacement_pull_request_lines(base):
+    """Return the instructions for clearing a conflict with a new pull request."""
+    return [
+        "Do not merge %s into this branch: a conflict with %s is never cleared "
+        "by a merge." % (base, base),
+        "If this branch has never been pushed, rebase it onto current %s, "
+        "resolving the conflict, rerun the test suites for what the change "
+        "touches, and push it; the lines below do not apply." % base,
+        "If it has been pushed, do not push it again: its pull request is "
+        "closed, and replaced by a new one only if %s still lacks some of its "
+        "work. To see which commits on %s changed each conflicting file, run "
+        "git log --oneline HEAD..%s -- <file>." % (base, base, base),
+        "If %s already holds all of this branch's work, close the pull request "
+        "with a comment naming the commit or pull request on %s that holds it, "
+        "and open no new pull request." % (base, base),
+        "Otherwise, cut a new topic branch from current %s and apply to it the "
+        "part of this branch's change that %s lacks, resolving the conflict."
+        % (base, base),
+        "Before pushing the new branch, rerun the test suites for what the "
+        "change touches.",
+        "Push the new branch once, and open a new pull request from it whose "
+        "description links the old pull request.",
+        "Then close the old pull request with one comment that links the new "
+        "pull request and names any commit or pull request on %s that already "
+        "holds part of the work." % base,
+    ]
+
+
 def unresolved_lines(side, rev):
     """Return the UNRESOLVED message for a rev that names no commit."""
     return [
@@ -522,7 +550,8 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
             "act on it as a conflict or as clean."
             % (merge_status, commit_label(head_hash, runner),
                commit_label(base_hash, runner)),
-            "Do not merge by hand on this result.",
+            "Do not act on this result: open no new pull request and close "
+            "none.",
             "If either commit is missing from this checkout, fetch it, then "
             "rerun.",
             "If the two commits share no history, check that --head and --base "
@@ -569,7 +598,8 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
                     lines.append(
                         "DISCLOSURE: git finds no conflict but GitHub reports "
                         "CONFLICTING; GitHub decides whether the merge is "
-                        "allowed, so the branch still needs the hand merge.")
+                        "allowed, so the pull request still needs replacing "
+                        "with a new one cut from current main.")
                     conflict = True
                 elif verdict == "MERGEABLE" and conflict:
                     lines.append(
@@ -590,21 +620,7 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
         lines[0:0] = [
             "VERDICT: CONFLICT -- %s conflicts with %s."
             % (commit_label(head_hash, runner), base),
-            "First see what the conflict is with: if main has already replaced "
-            "this branch's work, do not merge; close the pull request and carry "
-            "what main still lacks on a new topic branch cut from current main.",
-            "When you close the pull request, name in its closing comment the "
-            "commit or pull request on main that replaced the work.",
-            "Merge %s into the branch by hand, with the frozen head as first "
-            "parent." % base,
-            "Resolve the conflict and change nothing else in the merge.",
-            "If the resolution forces an edit beyond the conflicting lines, put "
-            "that edit in one ordinary commit after the merge.",
-            "Before pushing, rerun the test suites for what the merge touched.",
-            "Push the merge and that commit once, and name the files you "
-            "resolved in the merge's commit message and in the pull request's "
-            "description.",
-        ]
+        ] + replacement_pull_request_lines(base)
         return EXIT_CONFLICT, lines
 
     lines.insert(0, "VERDICT: CLEAN -- %s does not conflict with %s. Nothing to do."

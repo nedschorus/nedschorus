@@ -184,7 +184,7 @@ status, lines = run(fake_runner(merge_tree_status=1))
 case("a conflict exits 1", status == CHECK.EXIT_CONFLICT)
 case("a conflict says CONFLICT", lines[0].startswith("VERDICT: CONFLICT"))
 case("a conflict says what to do about it",
-     any("into the branch by hand" in l for l in lines))
+     any("cut a new topic branch from current origin/main" in l for l in lines))
 
 # A merge-tree status that is neither 0 nor 1 is NO ANSWER, not a conflict.
 # git 2.55.0 exits 129 for an option it does not know and 128 for unrelated
@@ -203,20 +203,21 @@ for no_answer_status in (128, 129, 2, 127):
          not lines[0].startswith("VERDICT: CLEAN"))
     case("merge-tree status %d is never reported CONFLICT" % no_answer_status,
          not lines[0].startswith("VERDICT: CONFLICT"))
-    case("merge-tree status %d never issues the hand-merge instruction"
+    case("merge-tree status %d never issues the new-pull-request instruction"
          % no_answer_status,
-         not any("into the branch by hand" in line for line in lines))
+         not any("cut a new topic branch" in line for line in lines))
     case("merge-tree status %d names the status git returned" % no_answer_status,
          str(no_answer_status) in lines[0])
 
-# The hand-merge instruction is the damage this prevents: before the ruling a
+# The conflict instructions are the damage this prevents: before the ruling a
 # 128 printed CONFLICT carrying it, sending an agent to resolve a conflict that
 # does not exist. 0 and 1 keep their meanings, asserted above.
 status, lines = run(fake_runner(merge_tree_status=128))
 case("a no-answer status says the run gave no verdict",
      lines[0].startswith("UNANSWERED:"))
-case("a no-answer status tells the agent not to hand-merge on it",
-     "Do not merge by hand on this result." in lines)
+case("a no-answer status tells the agent not to act on it",
+     "Do not act on this result: open no new pull request and close none."
+     in lines)
 
 # GitHub is not consulted when git could not answer: the run returns before the
 # pull-request branch, so no gh call is made and no verdict can overrule a
@@ -278,9 +279,8 @@ case("that disagreement is disclosed too",
 #   branch-conflict-check.py --no-fetch --head origin/main --pull-request 605
 # printed CONFLICT for origin/main against origin/main -- main conflicting with
 # ITSELF -- because 605 genuinely conflicts. In the workflow it is worse: after
-# the hand merge the CONFLICT message orders, the local HEAD is the merge commit
-# while GitHub still answers about the old pushed head, so a rerun orders the
-# merge that just happened.
+# a local commit not yet pushed, the local HEAD differs from the head GitHub
+# still answers about, so a rerun would act on the wrong commit's verdict.
 OTHER_COMMIT = "c" * 40
 
 # The matching case: nothing changes, GitHub still overrules a clean git.
@@ -411,19 +411,28 @@ case("UNRESOLVED head text is one instruction per line", lines == [
 status, lines = run(fake_runner(merge_tree_status=1))
 case("CONFLICT text is one instruction per line, naming the commit", lines == [
     "VERDICT: CONFLICT -- %s conflicts with origin/main." % HEAD_LABEL,
-    "First see what the conflict is with: if main has already replaced "
-    "this branch's work, do not merge; close the pull request and carry "
-    "what main still lacks on a new topic branch cut from current main.",
-    "When you close the pull request, name in its closing comment the "
-    "commit or pull request on main that replaced the work.",
-    "Merge origin/main into the branch by hand, with the frozen head as "
-    "first parent.",
-    "Resolve the conflict and change nothing else in the merge.",
-    "If the resolution forces an edit beyond the conflicting lines, put that "
-    "edit in one ordinary commit after the merge.",
-    "Before pushing, rerun the test suites for what the merge touched.",
-    "Push the merge and that commit once, and name the files you resolved in "
-    "the merge's commit message and in the pull request's description.",
+    "Do not merge origin/main into this branch: a conflict with origin/main is "
+    "never cleared by a merge.",
+    "If this branch has never been pushed, rebase it onto current origin/main, "
+    "resolving the conflict, rerun the test suites for what the change "
+    "touches, and push it; the lines below do not apply.",
+    "If it has been pushed, do not push it again: its pull request is "
+    "closed, and replaced by a new one only if origin/main still lacks some "
+    "of its work. To see which commits on origin/main changed each "
+    "conflicting file, run git log --oneline HEAD..origin/main -- <file>.",
+    "If origin/main already holds all of this branch's work, close the pull "
+    "request with a comment naming the commit or pull request on origin/main "
+    "that holds it, and open no new pull request.",
+    "Otherwise, cut a new topic branch from current origin/main and apply to "
+    "it the part of this branch's change that origin/main lacks, resolving "
+    "the conflict.",
+    "Before pushing the new branch, rerun the test suites for what the change "
+    "touches.",
+    "Push the new branch once, and open a new pull request from it whose "
+    "description links the old pull request.",
+    "Then close the old pull request with one comment that links the new "
+    "pull request and names any commit or pull request on origin/main that "
+    "already holds part of the work.",
 ])
 
 status, lines = run(fake_runner(merge_tree_status=128))
@@ -431,7 +440,7 @@ case("UNANSWERED text is one instruction per line, naming both commits",
      lines == [
     "UNANSWERED: git merge-tree exited 128 merging %s into %s; do not act on "
     "it as a conflict or as clean." % (HEAD_LABEL, BASE_LABEL),
-    "Do not merge by hand on this result.",
+    "Do not act on this result: open no new pull request and close none.",
     "If either commit is missing from this checkout, fetch it, then rerun.",
     "If the two commits share no history, check that --head and --base name "
     "the right commits, then rerun.",
@@ -450,11 +459,9 @@ status, lines = run(
     fake_runner(merge_tree_status=0, gh_results=[(0, "CONFLICTING")]),
     pull_request=353, reads=3)
 case("the CONFLICT block stays contiguous ahead of GitHub's lines",
-     len(lines) >= 9
-     and lines[7] == "Push the merge and that commit once, and name the files "
-                     "you resolved in the merge's commit message and in the "
-                     "pull request's description."
-     and lines[8].startswith("GITHUB:"))
+     len(lines) >= 10
+     and lines[8].startswith("Then close the old pull request with one comment")
+     and lines[9].startswith("GITHUB:"))
 
 # A commit git cannot read the subject of -- GitHub's pushed head, never
 # fetched -- is named by its hash alone; the run's verdict is unchanged.
@@ -593,19 +600,28 @@ def clean_block(base="origin/main", label=HEAD_LABEL):
 def conflict_block(base="origin/main", label=HEAD_LABEL):
     return [
         "VERDICT: CONFLICT -- %s conflicts with %s." % (label, base),
-        "First see what the conflict is with: if main has already replaced "
-        "this branch's work, do not merge; close the pull request and carry "
-        "what main still lacks on a new topic branch cut from current main.",
-        "When you close the pull request, name in its closing comment the "
-        "commit or pull request on main that replaced the work.",
-        "Merge %s into the branch by hand, with the frozen head as first "
-        "parent." % base,
-        "Resolve the conflict and change nothing else in the merge.",
-        "If the resolution forces an edit beyond the conflicting lines, put "
-        "that edit in one ordinary commit after the merge.",
-        "Before pushing, rerun the test suites for what the merge touched.",
-        "Push the merge and that commit once, and name the files you resolved "
-        "in the merge's commit message and in the pull request's description.",
+        "Do not merge %s into this branch: a conflict with %s is never "
+        "cleared by a merge." % (base, base),
+        "If this branch has never been pushed, rebase it onto current %s, "
+        "resolving the conflict, rerun the test suites for what the change "
+        "touches, and push it; the lines below do not apply." % base,
+        "If it has been pushed, do not push it again: its pull request is "
+        "closed, and replaced by a new one only if %s still lacks some of its "
+        "work. To see which commits on %s changed each conflicting file, run "
+        "git log --oneline HEAD..%s -- <file>." % (base, base, base),
+        "If %s already holds all of this branch's work, close the pull request "
+        "with a comment naming the commit or pull request on %s that holds it, "
+        "and open no new pull request." % (base, base),
+        "Otherwise, cut a new topic branch from current %s and apply to it the "
+        "part of this branch's change that %s lacks, resolving the conflict."
+        % (base, base),
+        "Before pushing the new branch, rerun the test suites for what the "
+        "change touches.",
+        "Push the new branch once, and open a new pull request from it whose "
+        "description links the old pull request.",
+        "Then close the old pull request with one comment that links the new "
+        "pull request and names any commit or pull request on %s that already "
+        "holds part of the work." % base,
     ]
 
 
@@ -623,8 +639,8 @@ GIT_ANSWERS = (
 GITHUB_FAILED = "GITHUB: could not be asked (gh failed) -- git's answer stands"
 GITHUB_DECIDES = (
     "DISCLOSURE: git finds no conflict but GitHub reports CONFLICTING; GitHub "
-    "decides whether the merge is allowed, so the branch still needs the hand "
-    "merge.")
+    "decides whether the merge is allowed, so the pull request still needs "
+    "replacing with a new one cut from current main.")
 NOT_ONE_TO_ATTEMPT = (
     "DISCLOSURE: git finds a conflict but GitHub reports MERGEABLE; treating "
     "it as a conflict, because a merge that git cannot do is not one to "
@@ -725,7 +741,7 @@ for github_name, gh_results, by_git, reads_taken, sleeps_taken in MATCHED_HEAD_C
              len(sleeps) == sleeps_taken)
 
 # Axis A different -- the case the user ruled on 2026-09-23 (walk item 3): the
-# commit checked is not the pull request's pushed head, as after a hand merge
+# commit checked is not the pull request's pushed head, as after a local commit
 # not yet pushed. The program keeps git's answer and says why in two lines,
 # whatever GitHub would have said: GitHub is not even asked for mergeability.
 MISMATCH_LINES = [
@@ -885,8 +901,8 @@ def merge_tree_z(*entries):
 # deleted_on_base_lines(), not recomputed by calling it.
 DO_NOT_MERGE_DELETED = (
     "Do not merge origin/main into the branch: origin/main removed the file(s) "
-    "above, so a hand-merge would either bring a removed file back or drop the "
-    "branch's change to it.")
+    "above, so the branch's change to each of them has nothing left to apply "
+    "to.")
 FIND_DELETING_COMMIT = (
     "If a deleting commit is not named above, find it with git log "
     "--diff-filter=D origin/main -- <file>.")
@@ -909,49 +925,50 @@ RENAME_NOT_PAIRED = (
     "a new name, but origin/main may have renamed one and changed it in the "
     "same commit, so much that git saw a deletion.")
 FIND_OUT_EACH = (
-    "Before you merge or close, find out for each file marked DELETED ON or "
+    "Before you act, find out for each file marked DELETED ON or "
     "DELETED OR RENAMED whether origin/main renamed it or deleted it: compare "
     "the branch's version of it with origin/main's version of each file named "
     "after \"possibly\" on its line, and do each RENAME CHECK that names it. "
     "A file with no \"possibly\" on its line and no RENAME CHECK naming it was "
     "deleted.")
-HAND_MERGE_IF_EVERY_RENAMED = (
-    "If every file marked DELETED ON or DELETED OR RENAMED was renamed, merge "
-    "origin/main into the branch by hand, with the frozen head as first "
-    "parent, and carry the branch's change to each file onto its new name.")
-HAND_MERGE_STEPS = (
-    "In that hand-merge, resolve any ALSO CONFLICTS file too, change nothing "
-    "else, put any edit the resolution forces beyond the conflicting lines in "
-    "one ordinary commit after the merge, rerun the test suites for what the "
-    "merge touched, and push the merge and that commit once, naming the files "
-    "you resolved in the merge's commit message and in the pull request's "
-    "description.")
+DO_NOT_PUSH_AGAIN = (
+    "Do not merge origin/main into this branch, and do not push this branch "
+    "again: a conflicting pull request is replaced by a new one cut from "
+    "current origin/main.")
+NEW_PULL_REQUEST_IF_EVERY_RENAMED = (
+    "If every file marked DELETED ON or DELETED OR RENAMED was renamed, cut a "
+    "new topic branch from current origin/main and apply this branch's change "
+    "to it, carrying the change to each file onto its new name and resolving "
+    "any ALSO CONFLICTS file too; rerun the test suites for what the change "
+    "touches, push the new branch once, open a new pull request from it whose "
+    "description links the old one, and close the old one with a comment "
+    "linking the new one.")
 CLOSE_IF_ANY_DELETED = (
-    "If any file marked DELETED ON or DELETED OR RENAMED was deleted, do not "
-    "merge: close the pull request with a comment naming the commit that "
+    "If any file marked DELETED ON or DELETED OR RENAMED was deleted, close "
+    "the pull request with a comment naming the commit that "
     "deleted it, and carry what origin/main still lacks on a new topic branch "
     "cut from current origin/main, in a new pull request that names the "
     "closed one; on that branch, carry the branch's change to each renamed "
     "file onto its new name.")
-RENAME_BLOCK = [RENAME_NOT_PAIRED, FIND_OUT_EACH, HAND_MERGE_IF_EVERY_RENAMED,
-                HAND_MERGE_STEPS, CLOSE_IF_ANY_DELETED]
+RENAME_BLOCK = [RENAME_NOT_PAIRED, FIND_OUT_EACH, DO_NOT_PUSH_AGAIN,
+                NEW_PULL_REQUEST_IF_EVERY_RENAMED, CLOSE_IF_ANY_DELETED]
 # Lines the one block replaced; none may print beside it.
 OLD_CLOSE_LINES = [DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION,
                    CARRY_WHAT_MAIN_LACKS]
 
 
 # The head deleted a file the base changed: stages 1 and 2, no 3. That is the
-# branch's own removal, an ordinary hand-merge, not the close-and-carry case.
+# branch's own removal, an ordinary conflict, not the close-and-carry case.
 status, lines = run(fake_runner(
     merge_tree_status=1, merge_tree_output=merge_tree_z(("1", "x"), ("2", "x"))))
-case("a file the head deleted is an ordinary hand-merge",
+case("a file the head deleted is an ordinary conflict",
      status == CHECK.EXIT_CONFLICT and lines == conflict_block())
 
 # A path with only the head's version has no ancestor, so main never had it to
-# delete: an ordinary hand-merge too.
+# delete: an ordinary conflict too.
 status, lines = run(fake_runner(
     merge_tree_status=1, merge_tree_output=merge_tree_z(("3", "new"))))
-case("a path with only the head's version is an ordinary hand-merge",
+case("a path with only the head's version is an ordinary conflict",
      status == CHECK.EXIT_CONFLICT and lines == conflict_block())
 
 # The base deleted the file, but the deleting commit cannot be found: the file
@@ -1516,13 +1533,12 @@ def real_repository_cases(root):
          status == CHECK.EXIT_NO_CONFLICT
          and lines == clean_block(label=clean_label))
 
-    # main deleted a file the branch changes: a hand-merge cannot resolve that,
-    # so the program sends the agent to close and carry forward instead.
+    # main deleted a file the branch changes, so the program sends the agent to
+    # close and carry forward.
     status, lines, _ = run_here("--head", "deleted-topic")
     case("real: a file main deleted and the branch changed exits 1",
          status == CHECK.EXIT_CONFLICT)
-    case("real: a file main deleted gets close-and-carry-forward, not a "
-         "hand-merge", lines == [
+    case("real: a file main deleted gets close-and-carry-forward", lines == [
              "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
              "origin/main deleted 1 file(s) the branch changes." % deleted_label,
              "DELETED ON origin/main: d, by %s" % deleting_label,
@@ -1574,7 +1590,7 @@ def real_repository_cases(root):
 
     # main renamed a file and changed it so much that git saw a deletion. The
     # program names the likely new file and sends the agent to check and
-    # hand-merge, not to close: by content similar enough for -M10%, and by
+    # open a new pull request carrying the change onto it: by content similar enough for -M10%, and by
     # a name that only lost a leading word, even with nothing in common.
     def rename_advice():
         return list(RENAME_BLOCK)
@@ -1587,7 +1603,7 @@ def real_repository_cases(root):
              name_rename_label, "by name alone")):
         status, lines, _ = run_here("--head", topic)
         case("real: a file main renamed and rewrote %s is named with its likely "
-             "new name and a hand-merge, not a close" % why,
+             "new name and a new pull request" % why,
              status == CHECK.EXIT_CONFLICT and lines == [
                  "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
                  "origin/main deleted 1 file(s) the branch changes."
@@ -1598,7 +1614,7 @@ def real_repository_cases(root):
 
     status, lines, _ = run_here("--head", "twice-renamed-topic")
     case("real: a file main renamed twice is named by its name on the base, "
-         "with a hand-merge, not a close",
+         "with a new pull request",
          status == CHECK.EXIT_CONFLICT and lines == [
              "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
              "origin/main deleted 1 file(s) the branch changes."
@@ -1653,10 +1669,12 @@ def real_repository_cases(root):
     status, lines, _ = run_here("--head", "unrelated-topic")
     case("real: unrelated histories exit 2, not a conflict",
          status == CHECK.EXIT_BAD_INVOCATION)
-    case("real: unrelated histories are UNANSWERED, with no hand merge",
+    case("real: unrelated histories are UNANSWERED, with no conflict "
+         "instructions",
          bool(lines) and lines[0].startswith("UNANSWERED: git merge-tree exited ")
-         and "Do not merge by hand on this result." in lines
-         and not any("into the branch by hand" in line for line in lines))
+         and "Do not act on this result: open no new pull request and close "
+         "none." in lines
+         and not any("cut a new topic branch" in line for line in lines))
 
     # A local branch is not moved by fetching origin: refused while fetching,
     # answered with the disclosure under --no-fetch. Local main never moved.

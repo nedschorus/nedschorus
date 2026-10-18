@@ -238,7 +238,8 @@ def main(argv, pushed_refs_text, stderr, environment):
             % (branch, BASE_NAME_FOR_MESSAGES))
         for line in result.lines:
             say(stderr, line)
-    say(stderr, "Once the merge is committed, push again.")
+    say(stderr, "Once the conflict is cleared as the lines above say, push the "
+        "branch they name.")
     return EXIT_REFUSE_PUSH
 
 
