@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Tests for scripts/run-codex-task-from-brief.py, with a fake `codex` on PATH.
 
+A fake `gh` on PATH stands in for the commands --prefetch-github runs: it
+logs its arguments and, by FAKE_GH_MODE, prints data, fails, or sleeps.
+
 The fake records its arguments and, by the FAKE_CODEX_MODE environment
 variable, writes a report, fails with or without a report, writes nothing,
 sleeps past the deadline with a child that may ignore SIGTERM, or blocks
@@ -62,6 +65,20 @@ elif mode == "read-stdin":
     open(report, "w").write(f"stdin held {len(data)} characters\n")
 '''
 
+FAKE_GH = r'''#!/usr/bin/env python3
+import json, os, sys, time
+with open(os.environ["FAKE_GH_LOG"], "a") as log:
+    log.write(json.dumps(sys.argv[1:]) + "\n")
+mode = os.environ.get("FAKE_GH_MODE", "data")
+if mode == "data":
+    print("gh data for " + " ".join(sys.argv[1:]))
+elif mode == "fail":
+    print("HTTP 404: Not Found", file=sys.stderr)
+    sys.exit(1)
+elif mode == "sleep":
+    time.sleep(60)
+'''
+
 failures = []
 
 
@@ -80,6 +97,10 @@ try:
     fake = bin_dir / "codex"
     fake.write_text(FAKE_CODEX)
     fake.chmod(0o755)
+    fake_gh = bin_dir / "gh"
+    fake_gh.write_text(FAKE_GH)
+    fake_gh.chmod(0o755)
+    gh_log = scratch / "gh-calls.jsonl"
     checkout = scratch / "checkout"
     checkout.mkdir()
     brief = scratch / "brief.md"
@@ -100,7 +121,7 @@ try:
     slow_find.chmod(0o755)
 
     def run(mode, *extra, stdin=None, timeout=60, path_first=None,
-            start_line_timeout=600):
+            start_line_timeout=600, gh_mode="data"):
         """Run the program; return (completed, report, seconds since it said it is running Codex).
 
         timeout counts from that stderr line, which the program prints after building
@@ -115,7 +136,8 @@ try:
                            HOME=str(scratch_home), FAKE_CODEX_MODE=mode,
                            FAKE_CODEX_ARGUMENTS_FILE=str(arguments_file),
                            FAKE_CODEX_CHILD_PID_FILE=str(child_pid_file),
-                           FAKE_CODEX_PID_FILE=str(codex_pid_file))
+                           FAKE_CODEX_PID_FILE=str(codex_pid_file),
+                           FAKE_GH_MODE=gh_mode, FAKE_GH_LOG=str(gh_log))
         report = scratch / f"report-{mode}.md"
         codex_pid_file.unlink(missing_ok=True)
         command = [sys.executable, str(PROGRAM), "-C", str(checkout), "--brief", str(brief),
@@ -387,6 +409,81 @@ try:
           "with Codex and the processes Codex started",
           timed_out and len(started_pids) == 2 and not left,
           f"timed out {timed_out}, started {started_pids}, left running {left}")
+
+    def gh_calls():
+        return [json.loads(line) for line in gh_log.read_text().splitlines()] \
+            if gh_log.exists() else []
+
+    def fresh_prefetch_case():
+        gh_log.unlink(missing_ok=True)
+        arguments_file.unlink(missing_ok=True)
+
+    fresh_prefetch_case()
+    data_folder = scratch / "report-report.md.github-data"
+    data_folder.mkdir(exist_ok=True)
+    (data_folder / "left-by-an-earlier-run.txt").write_text("stale\n")
+    completed, report, _ = run("report", "--prefetch-github", "pr list --state merged --limit 5",
+                               "--prefetch-github", "api 'repos/o/r/pulls?state=closed'")
+    arguments = json.loads(arguments_file.read_text()) if arguments_file.exists() else []
+    saved = sorted(data_folder.glob("*.txt"))
+    check("each --prefetch-github runs gh once, before Codex, with its words split as a shell would",
+          completed.returncode == 0 and gh_calls() == [
+              ["pr", "list", "--state", "merged", "--limit", "5"],
+              ["api", "repos/o/r/pulls?state=closed"]],
+          f"exit {completed.returncode}, gh calls {gh_calls()!r}, stderr {completed.stderr!r}")
+    check("each gh output is saved in <report>.github-data, and an earlier run's files are gone",
+          [path.read_text() for path in saved] == [
+              "gh data for pr list --state merged --limit 5\n",
+              "gh data for api repos/o/r/pulls?state=closed\n"],
+          repr([(path.name, path.read_text()) for path in saved]))
+    check("the brief Codex gets is the brief file followed by the list of saved files",
+          bool(arguments) and arguments[-1].startswith(brief.read_text().rstrip())
+          and all(str(path) in arguments[-1] for path in saved)
+          and "`gh pr list --state merged --limit 5`" in arguments[-1],
+          repr(arguments[-1:]))
+
+    for refused_arguments, reason in (("pr merge 12", "is not `pr list`"),
+                                      ("api -XPOST repos/o/r/issues", "with -X"),
+                                      ("api repos/o/r/issues --method=PATCH", "with --method"),
+                                      ("api repos/o/r/issues -f title=x", "with -f"),
+                                      ("issue view 'unclosed", "quoting cannot be read")):
+        fresh_prefetch_case()
+        completed, report, _ = run("report", "--prefetch-github", "pr view 1",
+                                   "--prefetch-github", refused_arguments)
+        check(f"--prefetch-github '{refused_arguments}' is refused with exit 2 before gh or Codex runs",
+              completed.returncode == 2 and reason in completed.stderr
+              and "may only read from GitHub" in completed.stderr
+              and not gh_calls() and not arguments_file.exists(),
+              f"exit {completed.returncode}, gh calls {gh_calls()!r}, stderr {completed.stderr!r}")
+
+    fresh_prefetch_case()
+    completed, report, _ = run("report", "--prefetch-github", "pr view 1", gh_mode="fail")
+    check("a failing gh command exits 1, names the command, its exit code and what gh said, "
+          "and Codex is not started",
+          completed.returncode == 1 and "`gh pr view 1` exited 1" in completed.stderr
+          and "HTTP 404: Not Found" in completed.stderr and not arguments_file.exists(),
+          f"exit {completed.returncode}, stderr {completed.stderr!r}")
+
+    fresh_prefetch_case()
+    completed, report, elapsed = run("report", "--prefetch-github", "pr view 1",
+                                     "--deadline-minutes", "0.02", gh_mode="sleep")
+    check("a gh command that passes the deadline is stopped, exits 1, and Codex is not started",
+          completed.returncode == 1 and "passed the deadline" in completed.stderr
+          and elapsed < 30 and not arguments_file.exists(),
+          f"exit {completed.returncode}, {elapsed:.1f}s, stderr {completed.stderr!r}")
+
+    fresh_prefetch_case()
+    no_gh_dir = scratch / "no-gh-bin"
+    no_gh_dir.mkdir()
+    completed = subprocess.run(
+        [sys.executable, str(PROGRAM), "-C", str(checkout), "--brief", str(brief),
+         "-o", str(scratch / "no-gh-report.md"), "--prefetch-github", "pr view 1"],
+        env=dict(os.environ, PATH=str(no_gh_dir), HOME=str(scratch_home)),
+        capture_output=True, text=True, check=False)
+    check("a missing gh exits 1, says gh could not run, and Codex is not started",
+          completed.returncode == 1 and "could not run `gh pr view 1`" in completed.stderr
+          and not arguments_file.exists(),
+          f"exit {completed.returncode}, stderr {completed.stderr!r}")
 
     empty_brief = scratch / "empty.md"
     empty_brief.write_text("  \n")

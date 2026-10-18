@@ -63,7 +63,8 @@ USAGE_LINE = (
     f"python3 {RUNNER_PATH} -C <checkout> --brief <file> -o <report> "
     "[--sandbox read-only|workspace-write] [-m <model>] [--effort <effort>] "
     "[--network] [--writable-root <folder>]... [--outside-git-checkout] "
-    "[--web-search] [--deadline-minutes <minutes>] [--run-log <file>]")
+    "[--web-search] [--deadline-minutes <minutes>] [--run-log <file>] "
+    "[--prefetch-github '<gh arguments>']...")
 
 REFUSAL = (
     "Refused: a hand-typed `codex exec`. Typed into a shell, `codex exec` keeps "
