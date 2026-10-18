@@ -818,7 +818,9 @@ with scratch() as directory:
                         "answer"),
             ("remote-fails", "the search there exited 127: python3: command "
                              "not found")):
-        plan = make_plan(base, timeout_seconds=1)
+        # Only the hanging stand-in ssh is meant to reach the timeout; the others
+        # fail at once, but a loaded machine can take over 1 s just to start them.
+        plan = make_plan(base, timeout_seconds=1) if mode == "hang" else make_plan(base)
         code, stdout, stderr = run(base, "absent-everywhere.md", mode, plan)
         check(f"ned-box {mode}: nothing found exits 3, not 1",
               code == 3, stdout + stderr)
