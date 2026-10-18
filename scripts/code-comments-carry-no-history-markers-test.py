@@ -171,7 +171,7 @@ ALLOWED_DATA_LINES = {
         "an example of the timestamp form the pass stamp file holds",
     "scripts/locate-user-approval-by-question-subject-test.py:743":
         "the time the epoch constant on the same line stands for",
-    "scripts/merge-gate-test.py:499":
+    "scripts/merge-gate-test.py:503":
         "the time the fixture's pinned review id stands for, in an outside project's data",
 }
 

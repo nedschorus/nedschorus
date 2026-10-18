@@ -181,6 +181,14 @@ def channel_items(path):
         items.extend(page)
 
 
+def scratch_file(suffix, text):
+    """A new file in the scratch directory holding text, with mkstemp's descriptor closed."""
+    descriptor, name = tempfile.mkstemp(dir=scratch, suffix=suffix)
+    with os.fdopen(descriptor, "w") as file:
+        file.write(text)
+    return Path(name)
+
+
 def captured_value(state_capture, field):
     return json.loads(captured(state_capture).read_text())[field]
 
@@ -188,9 +196,7 @@ def captured_value(state_capture, field):
 def arranged_state(state_capture, **fields):
     state = json.loads(captured(state_capture).read_text())
     state.update(fields)
-    path = Path(tempfile.mkstemp(dir=scratch, suffix="-state.json")[1])
-    path.write_text(json.dumps(state, separators=(",", ":")) + "\n")
-    return path
+    return scratch_file("-state.json", json.dumps(state, separators=(",", ":")) + "\n")
 
 
 def channel_prefix(channel_capture, through_id, changed_fields=None):
@@ -201,9 +207,7 @@ def channel_prefix(channel_capture, through_id, changed_fields=None):
     kept = items[:ids.index(through_id) + 1]
     for item_id, fields in (changed_fields or {}).items():
         kept[ids.index(item_id)].update(fields)
-    path = Path(tempfile.mkstemp(dir=scratch, suffix="-channel.json")[1])
-    path.write_text(json.dumps(kept))
-    return path
+    return scratch_file("-channel.json", json.dumps(kept))
 
 
 def channel_routes(channel, paginated, first_page=None):
@@ -1026,9 +1030,7 @@ def case_description_with_two_labelled_lines(gate):
 def unlabelled_description_with_line(line):
     description = json.loads(captured("nedschorus-nedschorus-1363-pr-view-body.json").read_text())
     description["body"] += "\n\n" + line
-    path = Path(tempfile.mkstemp(dir=scratch, suffix="-body.json")[1])
-    path.write_text(json.dumps(description))
-    return path
+    return scratch_file("-body.json", json.dumps(description))
 
 
 def case_description_no_defect_fixed_line(gate):
@@ -1342,6 +1344,10 @@ def run_mutations():
                   f"the case still passed against the mutated gate: {detail}")
 
 
+def open_file_descriptor_count():
+    return len(os.listdir("/dev/fd"))
+
+
 def run_cases(gate, label):
     passed = 0
     for name, function in CASES:
@@ -1356,12 +1362,16 @@ def main():
         raise SystemExit("merge-gate-test: bash is not on PATH")
     check_every_fixture_has_a_capture_record()
     check("the CLEAN spelling came from a capture", CLEAN == "CLEAN", f"read {CLEAN!r}")
+    open_before = open_file_descriptor_count()
     first = run_cases(GATE, "")
     run_mutations()
     # The control: an unmutated copy, run after every mutation.
     control_gate = Path(tempfile.mkdtemp(dir=scratch)) / "merge-gate.sh"
     shutil.copyfile(GATE, control_gate)
     control = run_cases(control_gate, "control after mutations: ")
+    open_after = open_file_descriptor_count()
+    check("no file descriptor is left open by the cases and mutations",
+          open_after == open_before, f"{open_before} open before them, {open_after} after")
     print(f"\n{first} of {len(CASES)} cases passed; the unmutated control after the "
           f"mutations passed {control} of {len(CASES)}")
     shutil.rmtree(scratch, ignore_errors=True)
