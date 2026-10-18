@@ -41,7 +41,7 @@ Other checkouts, the log-store, other agent-sessions' transcripts and GitHub's c
 
 On ned-box a second bubblewrap sandbox cannot start inside a first (`kernel.apparmor_restrict_unprivileged_userns = 1`), and the test runner runs each test suite in a bubblewrap sandbox of its own. So the sandbox sets `RUN_ALL_TEST_SUITES_INSIDE_SIGNAL_SANDBOX`, under which the test runner runs its suites without starting another, and Claude Code's own sandbox stays off. Run that way inside one bubblewrap sandbox, the test runner passed the 15 suites that `--only-suites-whose-recorded-inputs-changed-since HEAD~1` selected, on 2026-10-10: `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/prime-intellect/benchmark-sandbox-nesting-probe-2026-10-10.md`. The suites that main's test runner's `SUITES_RUN_WITHOUT_ANY_SANDBOX` names, six on 2026-10-15, fail inside the sandbox: five start a bubblewrap sandbox themselves or start the test runner, whose suites need one, and the sixth runs the real `ssh`, which refuses its configuration files when they show as owned by nobody.
 
-The probe starts `claude -p` inside such a sandbox, on main's files with the first arm laid over them, both taken from main when the user gives his go on the probe, the pilot's start, with a prompt that asks it to run the test runner with `--checkout` set to that tree, and checks three things: `claude` logs in, a hook runs on that command, and the test runner's report shows every test suite but those, as main's test runner names them at the pilot's start, passing; the test runner's own exit status is nonzero, because those fail. It spends usage, so it waits for the user's go. If any of the three fails, the user decides how to go on.
+The probe starts `claude -p` inside such a sandbox, on main's files with the first arm laid over them, both taken from main when the user gives his go on the probe, the pilot's start, with a prompt that asks it to run the test runner with `--checkout` set to that tree, and checks three things: `claude` logs in, a hook runs on that command, and the test runner's report shows every test suite but those, as main's test runner names them at the pilot's start, passing; the test runner's own exit status is nonzero, because those fail. It spends usage, so it waits for the user's go. After the probe, whatever it shows, the pilot stops until the user decides whether Step 2 follows.
 
 ## Step 2: three cases
 
@@ -125,7 +125,7 @@ The user decided the first ten in the approval-walks on the /sanity-check run of
 
 ## Next action
 
-After the second /sanity-check, file the GHI with create-GHI, then ask the user for his go on the sandbox probe.
+The pilot is parked by the user's ruling of 2026-10-17: nothing runs until he resumes it. When he does, prime-intellect runs Step 1, the sandbox probe, alone, and asks him whether Step 2 follows. If the probe fails, or he decides against spending more on a benchmark, the pilot stops there, and prime-intellect writes the page of GHI [A wiki page on the bubblewrap sandboxes that ned-box's programs run agents and test suites in](https://github.com/nedschorus/nedschorus/issues/1584) without the pilot's sandbox, as that GHI allows.
 
 ## Prior work
 
