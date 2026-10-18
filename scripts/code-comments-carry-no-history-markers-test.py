@@ -7,6 +7,7 @@ History belongs in the commit message and the pull request. Agents copy the
 comment style of the code around them, so one history comment breeds more.
 """
 import ast
+import contextlib
 import importlib.util
 import io
 import os
@@ -163,15 +164,18 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/walk-files-ship.py": 12,
 }
 
-# Lines whose marker is data the code needs, not history: "path:line": reason.
+# Lines whose marker is data the code needs, not history: (path, text): reason.
+# The text is part of the line, keyed by text rather than line number so that an
+# edit above the line does not move it; it must be found in exactly one comment
+# or docstring line of the file that holds a marker.
 ALLOWED_DATA_LINES = {
-    "scripts/agent-seat-due-task-raise-hook.py:18":
+    ("scripts/agent-seat-due-task-raise-hook.py", 'such as "2026-10-03T09:00:00Z"'):
         "an example of the timestamp form the due_utc field takes",
-    "scripts/transcript-mirror-to-log-store.py:87":
+    ("scripts/transcript-mirror-to-log-store.py", "like `2026-10-03T23:40:12Z`, to MIRROR_PASS_STAMP_FILE_NAME"):
         "an example of the timestamp form the pass stamp file holds",
-    "scripts/locate-user-approval-by-question-subject-test.py:743":
+    ("scripts/locate-user-approval-by-question-subject-test.py", "# 2026-10-01T02:00:00Z"):
         "the time the epoch constant on the same line stands for",
-    "scripts/merge-gate-test.py:503":
+    ("scripts/merge-gate-test.py", "# malfet's approval, 2023-12-14T15:16:51Z"):
         "the time the fixture's pinned review id stands for, in an outside project's data",
 }
 
@@ -259,16 +263,28 @@ def python_comment_and_docstring_lines(source):
                     yield first.lineno + offset, text
 
 
-def markers_in(path, source, language="python"):
-    """Return [(line, kind, marker)] for the history markers in one file."""
+def markers_and_allowed_line_counts(path, source, language="python", allowed=ALLOWED_DATA_LINES):
+    """Return ([(line, kind, marker)] for the history markers in one file, outside
+    its allowed lines, and {allowed key for this file: how many lines it was found in})."""
     found = []
+    counts = {key: 0 for key in allowed if key[0] == path}
     lines = shell_comment_lines(source) if language == "shell" else python_comment_and_docstring_lines(source)
     for line, text in lines:
-        if f"{path}:{line}" in ALLOWED_DATA_LINES:
+        markers = [(line, kind, match.group())
+                   for kind, pattern in MARKER_PATTERNS.items() for match in pattern.finditer(text)]
+        if not markers:
             continue
-        for kind, pattern in MARKER_PATTERNS.items():
-            found.extend((line, kind, match.group()) for match in pattern.finditer(text))
-    return found
+        allowing = [key for key in counts if key[1] in text]
+        for key in allowing:
+            counts[key] += 1
+        if not allowing:
+            found.extend(markers)
+    return found, counts
+
+
+def markers_in(path, source, language="python", allowed=ALLOWED_DATA_LINES):
+    """Return [(line, kind, marker)] for the history markers in one file, outside its allowed lines."""
+    return markers_and_allowed_line_counts(path, source, language, allowed)[0]
 
 
 def language_of(repository, path):
@@ -283,11 +299,13 @@ def language_of(repository, path):
         return "shell" if SHELL_SHEBANG.match(file.readline()) else None
 
 
-def scan_tree(repository):
-    """Return (failures, paths that do not parse, {language: number of files listed})."""
+def scan_tree(repository, allowed=ALLOWED_DATA_LINES):
+    """Return (failures, paths that do not parse, {language: number of files listed},
+    [(allowed key, number of lines it was found in)] for each key not found in exactly one)."""
     paths = subprocess.run(["git", "-C", str(repository), "ls-files", "-z"],
                            capture_output=True, text=True, check=True).stdout.split("\0")
     failures, unparseable, listed = [], [], {"python": 0, "shell": 0}
+    allowed_line_counts = {key: 0 for key in allowed}
     for path in filter(None, paths):
         language = language_of(repository, path)
         if language is None:
@@ -298,14 +316,16 @@ def scan_tree(repository):
             if language == "python":
                 ast.parse(source)
                 list(tokenize.generate_tokens(io.StringIO(source).readline))
-            found = markers_in(path, source, language)
+            found, counts = markers_and_allowed_line_counts(path, source, language, allowed)
         except (SyntaxError, tokenize.TokenError, ShellScriptDoesNotParse):
             unparseable.append(path)
             continue
+        allowed_line_counts.update(counts)
         ceiling = FILES_AWAITING_THE_COMMENT_TRIM.get(path, 0)
         if len(found) > ceiling:
             failures.append((path, found, ceiling))
-    return failures, unparseable, listed
+    misfits = [(key, count) for key, count in allowed_line_counts.items() if count != 1]
+    return failures, unparseable, listed, misfits
 
 
 def a_file_that_does_not_parse_is_reported():
@@ -314,7 +334,7 @@ def a_file_that_does_not_parse_is_reported():
         subprocess.run(["git", "init", "-q", str(scratch)], check=True)
         (scratch / "broken.py").write_text("def (:\n", encoding="utf-8")
         subprocess.run(["git", "-C", str(scratch), "add", "broken.py"], check=True)
-        _, unparseable, listed = scan_tree(scratch)
+        _, unparseable, listed, _ = scan_tree(scratch)
     return unparseable == ["broken.py"] and listed == {"python": 1, "shell": 0}
 
 
@@ -337,9 +357,69 @@ def a_shell_script_that_does_not_parse_is_reported():
         (scratch / "case-pattern.sh").write_text(
             'case "$x" in\n  *"a"*"b"*) echo hit ;;\nesac\n', encoding="utf-8")
         subprocess.run(["git", "-C", str(scratch), "add", "."], check=True)
-        _, unparseable, listed = scan_tree(scratch)
+        _, unparseable, listed, _ = scan_tree(scratch)
     return sorted(unparseable) == ["unclosed-heredoc.sh", "unclosed-quote"] \
         and listed == {"python": 0, "shell": 3}
+
+
+def scan_of_a_scratch_repository(files, allowed):
+    """Return scan_tree's (failures, allowed keys not found in exactly one line) for files {path: text}."""
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch = Path(scratch)
+        subprocess.run(["git", "init", "-q", str(scratch)], check=True)
+        for path, text in files.items():
+            (scratch / path).write_text(text, encoding="utf-8")
+        subprocess.run(["git", "-C", str(scratch), "add", "."], check=True)
+        failures, _, _, misfits = scan_tree(scratch, allowed)
+    return failures, misfits
+
+
+ALLOWED_IN_THE_SCRATCH_REPOSITORY = {("data.py", "such as 2026-10-03"): "an example"}
+
+
+def an_edit_above_an_allowed_line_does_not_break_the_suite():
+    edited = "# a new first line\n# and a second\n\n# the form, such as 2026-10-03\n"
+    return scan_of_a_scratch_repository({"data.py": edited}, ALLOWED_IN_THE_SCRATCH_REPOSITORY) == ([], [])
+
+
+def an_allowed_entry_that_matches_no_line_fails():
+    stale = [(("data.py", "such as 2026-10-03"), 0)]
+    line_changed = scan_of_a_scratch_repository({"data.py": "# such as 2026-10-04\n"},
+                                                ALLOWED_IN_THE_SCRATCH_REPOSITORY)
+    only_in_code = scan_of_a_scratch_repository({"data.py": "x = 'such as 2026-10-03'\n"},
+                                                ALLOWED_IN_THE_SCRATCH_REPOSITORY)
+    in_another_file = scan_of_a_scratch_repository({"other.py": "# such as 2026-10-03\n"},
+                                                   ALLOWED_IN_THE_SCRATCH_REPOSITORY)
+    return line_changed[1] == stale and len(line_changed[0]) == 1 \
+        and only_in_code == ([], stale) \
+        and in_another_file[1] == stale and len(in_another_file[0]) == 1
+
+
+def an_allowed_entry_is_counted_only_on_lines_that_hold_a_marker():
+    key = ("data.py", "the form")
+    _, misfits = scan_of_a_scratch_repository({"data.py": "# the form\n# the form, 2026-10-03\n"},
+                                              {key: "an example"})
+    return misfits == []
+
+
+def an_allowed_entry_that_matches_two_lines_fails():
+    twice = "# such as 2026-10-03\nx = 1\n# such as 2026-10-03, again\n"
+    _, misfits = scan_of_a_scratch_repository({"data.py": twice}, ALLOWED_IN_THE_SCRATCH_REPOSITORY)
+    return misfits == [(("data.py", "such as 2026-10-03"), 2)]
+
+
+def the_repository_checks_fail_on_an_allowed_entry_found_in_no_line():
+    def passes(allowed):
+        with tempfile.TemporaryDirectory() as scratch:
+            scratch = Path(scratch)
+            subprocess.run(["git", "init", "-q", str(scratch)], check=True)
+            (scratch / "data.py").write_text("# such as 2026-10-03\n", encoding="utf-8")
+            (scratch / "run.sh").write_text("echo hi\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(scratch), "add", "."], check=True)
+            with contextlib.redirect_stdout(io.StringIO()):
+                return all(repository_checks(scratch, allowed))
+    stale = {("data.py", "such as 2026-10-03"): "an example", ("data.py", "such as 2026-10-04"): "an example"}
+    return passes(ALLOWED_IN_THE_SCRATCH_REPOSITORY) and not passes(stale)
 
 
 def the_suite_run_with_git_dir_set_still_scans_this_repository():
@@ -352,6 +432,18 @@ def the_suite_run_with_git_dir_set_still_scans_this_repository():
     return child.returncode == 0 and "PASS  git ls-files lists this repository's .py files and shell scripts" in child.stdout
 
 
+def report_allowed_lines(misfits):
+    for (path, text), count in misfits:
+        print(f"FAILED: the ALLOWED_DATA_LINES entry for {path} with the text {text!r} is found in "
+              f"{count} comment or docstring lines that hold a marker, where it must be found in exactly one.")
+    if misfits:
+        print(f"When an entry is found in no line, because its line or its marker is gone, "
+              f"delete the entry from ALLOWED_DATA_LINES in {SUITE}.")
+        print("When an entry is found in no line because its line's text changed, "
+              "change the entry's text to part of the line as it now reads.")
+        print("When an entry is found in two or more lines, lengthen its text until it is found in one.")
+
+
 def report(failures):
     for path, found, ceiling in failures:
         print(f"FAILED: {path} — {len(found)} history markers in comments and docstrings, "
@@ -362,12 +454,30 @@ def report(failures):
     if failures:
         print("When a marker is history, delete it, or move what it records to your commit message.")
         print(f"When a marker is data the code needs, such as a date the code compares against, "
-              f"add its line to ALLOWED_DATA_LINES in {SUITE} with the reason.")
+              f"add the file and part of the line's text to ALLOWED_DATA_LINES in {SUITE} with the reason.")
 
 
 def check(name, condition):
     print(f"{'PASS' if condition else 'FAIL'}  {name}")
     return condition
+
+
+def repository_checks(repository, allowed=ALLOWED_DATA_LINES):
+    """Scan the repository, print each check and each failure, and return the checks' results."""
+    results = []
+    failures, unparseable, listed, misfits = scan_tree(repository, allowed)
+    results.append(check("git ls-files lists this repository's .py files and shell scripts",
+                         listed["python"] > 0 and listed["shell"] > 0))
+    results.append(check("every tracked .py file and every tracked shell script parses"
+                         + (f"; these do not: {', '.join(unparseable)}" if unparseable else ""),
+                         not unparseable))
+    report(failures)
+    report_allowed_lines(misfits)
+    results.append(check("each ALLOWED_DATA_LINES entry is found in exactly one comment or docstring line "
+                         "that holds a marker", not misfits))
+    results.append(check("no tracked .py file or shell script carries more history markers than it is allowed",
+                         not failures))
+    return results
 
 
 def main():
@@ -445,8 +555,10 @@ def main():
               shell_script_does_not_parse('echo "never closed\n')),
         check("a here-document that never closes raises, with no # in its body",
               shell_script_does_not_parse("cat <<EOF\nno end\n")),
-        check("a line in ALLOWED_DATA_LINES is skipped",
-              all(not markers_in(key.rsplit(":", 1)[0], "") for key in ALLOWED_DATA_LINES)),
+        check("a marker on a line ALLOWED_DATA_LINES names by its text is skipped, and one on another line is not",
+              [line for line, _, _ in markers_in(
+                  "data.py", "# such as 2026-10-03\n# on 2026-10-03\n", allowed=ALLOWED_IN_THE_SCRATCH_REPOSITORY)]
+              == [2]),
     ]
     if not os.environ.get("HISTORY_MARKER_SUITE_CHILD"):
         results.append(check("run with GIT_DIR set, the suite still scans this repository",
@@ -456,15 +568,17 @@ def main():
         results.append(check("a tracked shell script whose quote or here-document never closes "
                              "is reported, not skipped, and one tree-sitter-bash misreads with no # in the span is read",
                              a_shell_script_that_does_not_parse_is_reported()))
-    failures, unparseable, listed = scan_tree(REPOSITORY)
-    results.append(check("git ls-files lists this repository's .py files and shell scripts",
-                         listed["python"] > 0 and listed["shell"] > 0))
-    results.append(check("every tracked .py file and every tracked shell script parses"
-                         + (f"; these do not: {', '.join(unparseable)}" if unparseable else ""),
-                         not unparseable))
-    report(failures)
-    results.append(check("no tracked .py file or shell script carries more history markers than it is allowed",
-                         not failures))
+        results.append(check("lines added above an allowed line do not break the suite",
+                             an_edit_above_an_allowed_line_does_not_break_the_suite()))
+        results.append(check("an allowed entry found in no line fails: its line changed, its text is only in code, or it is in another file",
+                             an_allowed_entry_that_matches_no_line_fails()))
+        results.append(check("an allowed entry found in two lines fails",
+                             an_allowed_entry_that_matches_two_lines_fails()))
+        results.append(check("a comment line that holds an allowed entry's text but no marker is not counted",
+                             an_allowed_entry_is_counted_only_on_lines_that_hold_a_marker()))
+        results.append(check("the repository checks fail when an allowed entry is found in no line",
+                             the_repository_checks_fail_on_an_allowed_entry_found_in_no_line()))
+    results.extend(repository_checks(REPOSITORY))
     if all(results):
         print("all cases passed")
         return 0
