@@ -8,7 +8,7 @@ The user asked for this GHI on 2026-10-12 in the agent-session of the agent-seat
 
 ## Why
 
-A Claude subscription has two usage limits: one over a 5-hour window and one over a week. When an agent-seat reaches the 5-hour limit, it can resume within hours, once the window resets; GHI [Wake idle agent-seats that have unfinished work, after a usage limit resets and after a change request goes unanswered](https://github.com/nedschorus/nedschorus/issues/1152) covers waking it then. When an agent-seat reaches the weekly limit, it cannot work on that account until the weekly reset, which can be days away. Waiting is the only remedy today.
+A Claude subscription has two usage limits: one over a 5-hour window and one over a week. When an agent-seat reaches the 5-hour limit, it can resume within hours, once the window resets; GHI [Wake an agent-seat when its 5-hour session limit resets](https://github.com/nedschorus/nedschorus/issues/1152) covers waking it then. When an agent-seat reaches the weekly limit, it cannot work on that account until the weekly reset, which can be days away. Waiting is the only remedy today.
 
 Evidence from ned-box's transcripts (`~/.claude/projects/*/*.jsonl`, searched 2026-10-12 for "You've hit your weekly limit"):
 
@@ -21,18 +21,20 @@ The message is written into the transcript as an assistant message whose model i
 
 Switch the agent-seats to another of the user's Claude accounts that is under both its 5-hour and its weekly limit: log out of all devices, log in with the other account, and complete the login by the link or the code that the login sends by email. This works only when the user has such an account; when none has room, the agent-seats wait for the reset, as they do today.
 
+The switcher is a program outside Claude, already running before the limit is reached, such as a timer on ned-box: once the account is over its weekly limit, no Claude agent can act, so no agent can start or carry out the switch (user-ruled 2026-10-18, in prime-intellect's agent-session 1de807c5-e476-42c9-b4f9-6357a594345f: "the account switcher must be running before it's needed or an outside of Claude monitor").
+
 ## What exists today
 
 - `claude auth status` prints the login method, organization and email of the account `claude` is logged in to. `claude auth logout` logs out. `claude auth login` signs in, with `--claudeai` for a Claude subscription, the default, and `--email <email>` to fill in the address on the login page. `claude setup-token` sets up a long-lived token for a Claude subscription; whether such a token lets a switch skip the email step was not checked. All from `claude --help` and `claude auth <command> --help` on ned-box, 2026-10-12.
 - On ned-box, the login is stored in `~/.claude/.credentials.json`, one file for the user's account on the machine. Every running agent-seat on ned-box has `HOME=/home/nedlern` and no `CLAUDE_CONFIG_DIR` (read from `/proc/<pid>/environ` of each `claude` process, 2026-10-12), so all of them use that one login. Where the Mac stores its login was not checked.
 - Claude Code passes the status line a `rate_limits` object with a `five_hour` and a `seven_day` window, each with `resets_at` and `used_percentage`; `scripts/session-statusline-command.py` shows both. So the weekly limit's reset time, and how much of it is used, are known to a program before the limit is reached.
 - GHI [Tell the user when ned-box's claude is logged out or ned-box's subscription has run out](https://github.com/nedschorus/nedschorus/issues/337) covers telling the user when `claude` on ned-box is logged out or its subscription has run out; it stops at telling him.
-- GHI [Relaunch stopped agent-seats with open tasks daily](https://github.com/nedschorus/nedschorus/issues/936) relaunches agent-seats that are not running, once a day. After a switch, the agent-seats need to run again on the new login, and the 5-hour reset times that GHI 1152's wake-up uses become the new account's.
+- GHI [Relaunch stopped agent-seats with open tasks daily](https://github.com/nedschorus/nedschorus/issues/936) relaunches agent-seats that are not running, once a day. After a switch, the agent-seats need to run again on the new login.
 
 ## Questions for the user
 
 1. Which accounts take part, and in what order?
-2. Does a program switch accounts by itself, or does it propose the switch to the user and wait for his yes? And does it act when the limit is reached, or shortly before, from the status line's `seven_day` usage?
+2. Does the switcher switch accounts by itself, or does it propose the switch to the user and wait for his yes? And does it act when the limit is reached, or shortly before, from the status line's `seven_day` usage?
 3. How does the link or code from the login email reach the login: does the user click it or type it each time, or does a program read it?
 4. Both machines, or ned-box only? The Mac's login was not checked. "Log out of all devices" is the user's step; `claude auth logout` logs out one machine, and how all devices are logged out was not checked.
 5. What happens to agent-seats that are running when the login changes, since all of them on ned-box share one login file? And does a program switch back to the first account after its weekly reset?
