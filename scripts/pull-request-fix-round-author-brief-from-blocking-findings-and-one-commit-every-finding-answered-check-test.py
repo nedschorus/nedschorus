@@ -187,10 +187,18 @@ def brief_cases(root, repository, base, frozen_head):
           "and this round ends with that." in out
           and "merge origin/main" not in out and "--after-conflict-merge" not in out, out)
     check("brief: a fix that needs code changed on main is one commit only if it changes only "
-          "files the branch has; otherwise the pull request is replaced",
+          "files the pull request changes; otherwise the pull request is replaced",
           "If a fix needs code that changed on main, make that commit only if it changes only "
-          "files the branch already has. Otherwise the pull request is replaced, as for a "
+          "files the pull request already changes. Otherwise the pull request is replaced, as for a "
           "conflict" in out, out)
+    check("brief: a test main added later that fails is fixed by the round's one commit, tested "
+          "on a local merge with main that is never pushed",
+          "If a finding is a test that main added after the branch was cut and that fails "
+          "with this branch, the fix is this round's one commit." in out
+          and "git worktree add --detach <temporary folder> HEAD" in out
+          and "git merge --no-edit origin/main" in out
+          and "never pushed" in out
+          and "If one commit cannot fix it, the rule of step 4" in out, out)
     check("brief: says what to do when a suite fails and when the push itself fails",
           "fix it in the same commit; if it fails for another cause, tell merge-lane-2 with "
           "SendMessage before pushing" in out

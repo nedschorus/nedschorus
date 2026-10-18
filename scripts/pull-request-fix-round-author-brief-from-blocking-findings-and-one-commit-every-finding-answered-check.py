@@ -301,7 +301,7 @@ def print_brief(number, reviewer_login):
         "4. Put every change in one commit on top of the frozen-head. If no finding holds, make "
         "no commit.",
         "   If a fix needs code that changed on main, make that commit only if it changes only "
-        "files the branch already has. Otherwise the pull request is replaced, as for a "
+        "files the pull request already changes. Otherwise the pull request is replaced, as for a "
         "conflict: do what branch-conflict-check.py's report says for a conflict, and this round "
         "ends with that.",
         f"5. Write the answers file {answers_path}, one entry per finding above, each starting "
@@ -311,6 +311,12 @@ def print_brief(number, reviewer_login):
         f"6. Run the affected test suites: {PRE_PUSH_TEST_COMMAND}",
         "   If a suite fails because of this round's change, fix it in the same commit; if it "
         "fails for another cause, tell merge-lane-2 with SendMessage before pushing.",
+        "   If a finding is a test that main added after the branch was cut and that fails "
+        "with this branch, the fix is this round's one commit. Test that commit on a merge "
+        "with main made only on this machine and never pushed: git worktree add --detach "
+        "<temporary folder> HEAD, then in that folder git merge --no-edit origin/main and the "
+        "test command above, then git worktree remove --force <temporary folder>. If one commit "
+        "cannot fix it, the rule of step 4 for a fix that needs code changed on main applies.",
         f"7. Run the check: {check_command}",
         "   If it refuses, change the answers file or the unpushed commit as it says (git commit --amend is allowed before the "
         "push) and run the check again.",
