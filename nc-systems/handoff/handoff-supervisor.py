@@ -800,7 +800,7 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
 
 @dataclass
 class DialogIgnitionPlan:
-    """Prompt inputs held until the launch-time branch sync can supply its report."""
+    """Prompt inputs held until the launch-time-git-sync can supply its report."""
     extract_path: Path
     handoff_fields: dict
     predecessor_session_directory: Optional[Path] = None

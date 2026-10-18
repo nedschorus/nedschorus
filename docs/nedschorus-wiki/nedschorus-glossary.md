@@ -54,7 +54,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **ID-type** — the kind of thing an identifier names, and the word written before its name in a citation: `GHI` for a GitHub issue, `PR` for a pull request, agent-seat for an agent-seat, and the ordinary word for a commit, task or session.
 - **initial-agent-instructions** — the agent-instructions in the prompt that starts an agent or a subagent.
 - **instruction-file guard** — the hook `.claude/hooks/instruction-file-guard.py`, which refuses an edit to an agent-instructions file or a Claude Code settings file until the user's approval is written for it.
-- **launch-time-sync** — the fast-forward of an agent-seat's agent-home to `origin/main` that the handoff-supervisor attempts before it starts an agent-session; when a fast-forward is not possible or not safe, the agent-home is left as it is.
+- **launch-time-git-sync** — the fast-forward of an agent-seat's agent-home to `origin/main` that the handoff-supervisor attempts before it starts an agent-session; when a fast-forward is not possible or not safe, the agent-home is left as it is.
 - **leftover-shell** — the shell an agent-seat's tmux window drops to after its agent-session stops; `scripts/recover-crashed-seats.py` asks before closing it.
 - **link-only-GHI** — a GHI whose body is only links to its GHI-MD and supporting documents; the GHI-MD holds the text.
 - **log-store** — the directory on ned-box, `/home/nedlern/nedschorus-logs/`, holding the byproducts of the work that are not the system, cold-read records first.

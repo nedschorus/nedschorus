@@ -184,7 +184,7 @@ Scope, corrected 2026-08-19: the detached-HEAD test governs writes into
 the session's *own* checkout; a write landing in the reference checkout is
 R6+R7's block, which applies to any session however its HEAD is set.
 Writes into another agent-seat's agent-home stay unbuilt (R6). The adjacent
-*starting-stale* block was ruled **not built**: launch-time sync plus the
+*starting-stale* block was ruled **not built**: launch-time-git-sync plus the
 catch-up hook (R15) shrink exposure to one turn, and the motivating
 incident was a stale *read*, which no write-guard sees. Revisit trigger: a real incident traced to
 the one-turn window.
@@ -311,7 +311,7 @@ activation: a push is a shell operation no file-write hook sees.
 2026-08-17; delivery ruling PR [catch-up: the abort-failed state alone is delivered to the agent as a forced turn](https://github.com/nedschorus/nedschorus/pull/90)).**
 `scripts/checkout-freshness-catch-up.py` is the delivery; the status
 line's `⇣N` shows the lag; the launchers freshen the reference checkout
-at boot; the supervisor's launch-time sync remains the floor. Coverage
+at boot; the supervisor's launch-time-git-sync remains the floor. Coverage
 stated exactly: delivery happens at turn boundaries when the agent-seat is
 clean and conflict-free — an
 agent-seat that lags says so on its status line rather than silently. **Who
