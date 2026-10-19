@@ -2,7 +2,9 @@
 """Replay recorded real Bash commands through the Bash guards at two git refs, and compare the verdicts.
 
 Every pull request that changes a Bash guard or the shell command reader runs this at the base
-and at the pull request's head. A verdict that differs blocks the merge.
+and at the pull request's head. A verdict that differs blocks the merge. A guard the pull request
+adds, a Bash hook in the head's .claude/settings.json but not the base's, is read at the head only,
+and each recorded command it refuses blocks the merge until the reviewer accepts the refusal.
 
 Usage:
   python3 nc-systems/general-tools/bash-guards-verdict-changes-between-two-git-refs-on-transcript-recorded-commands-check.py \\
@@ -13,8 +15,8 @@ Steps:
      transcripts of both machines (--transcript-directory, repeatable), or read them from
      --pairs-file.
   2. Check out each ref as a detached worktree in the scratch directory, and check that the
-     guards this replay reads are exactly the Bash PreToolUse hooks in that checkout's
-     .claude/settings.json.
+     guards this replay reads are exactly the Bash PreToolUse hooks in the head checkout's
+     .claude/settings.json, and, less the guards the head adds, in the base checkout's.
   3. At each ref, run the guards' analysis functions on every pair, with the guards' probes
      of git and gh stubbed so a verdict depends only on the command text and the working directory
      (in-process mode). Run the search-file guard's main() with each pair's own working
@@ -22,9 +24,11 @@ Steps:
      mode, unless --new-process-pairs is none: each pool worker keeps one shell reader child
      process running and sends it one command at a time, through the same JSON conversion a
      hook's new process uses.
-  4. Compare the two refs row by row and print each difference.
+  4. Compare the two refs row by row and print each difference, then, for each guard the head
+     adds, every recorded command it refuses.
 
-Exit status: 0 when no verdict differs; 1 when a verdict differs; 2 when the replay itself
+Exit status: 0 when no verdict differs and no added guard refuses a recorded command; 1 when a
+verdict differs or an added guard refuses a recorded command; 2 when the replay itself
 failed, which includes a guard that raised or timed out on a recorded command at either ref,
 because that row has no verdict to compare. A message that differs while its verdict does not is
 printed, and does not change the exit status. The scratch directory is removed after an exit 0
@@ -64,6 +68,28 @@ PAIRS_PER_TASK = 200
 STEP_DEADLINE_MARGIN_SECONDS = 600
 GIT_TIMEOUT_SECONDS = 600
 PRINTED_TEXT_LENGTH = 300
+NEW_GUARD_REFUSES_MESSAGE = (
+    "NEW GUARD REFUSES RECORDED COMMANDS: a guard the head adds refuses each numbered command listed above "
+    "under a \"new guard ... would refuse\" line, so this check exits 1. Agents ran each of those commands, "
+    "and a guard that refuses a command agents need stops their work.\n"
+    "The pull request's reviewer answers each refused command in the review. A refused command is one guard, "
+    "one working directory and one command; when the in-process and the new-process modes both list it, it is "
+    "still one refused command, with one answer.\n"
+    "Where the refusal is right, the answer is a line of its own:\n"
+    "  refusal right: <guard file> | <working directory> | <command>\n"
+    "copying the guard file's path from its \"new guard\" line and the working directory and the command from "
+    "the numbered entry, the command last, quotes included, so a | inside it is part of the command; for "
+    "example, with a made-up guard path: refusal right: scripts/example-guard-hook.py | /tmp | 'tmux kill-server'.\n"
+    "Where the refusal is wrong, the answer is a finding instead, and the author then narrows the guard so that "
+    "it lets that command through. The other refused commands still each get their \"refusal right\" line.\n")
+NEW_GUARD_REFUSES_ONLY_ENDING = (
+    "merge-lane-2 holds the merge until every refused command this check lists, run at the head commit being "
+    "merged, has its \"refusal right\" line, and then merges despite the exit 1. A refusal answered with a "
+    "finding holds the merge until the author's narrowed guard no longer refuses that command, so the check "
+    "no longer lists it.")
+NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING = (
+    "The VERDICT CHANGED line above blocks the merge on its own: \"refusal right\" lines do not clear it, "
+    "so the merge also waits until each verdict difference is explained and intended.")
 
 # Copied from the parent, never inherited: a git variable would point the checkouts' git at
 # another repository, and the attendance variables change the guards' messages.
@@ -195,15 +221,22 @@ def bash_hook_files(checkout):
     return files
 
 
-def check_guards_match_settings(checkout, label):
-    hooks = bash_hook_files(checkout)
-    replayed = set(GUARDS)
+def check_guards_match_settings(hooks, replayed, label):
     if hooks != replayed:
         raise ReplayFailed(
             f"the Bash hooks in .claude/settings.json at the {label} ref are not the guards this replay reads; "
             f"not replayed: {sorted(hooks - replayed) or 'none'}; replayed but not a Bash hook: "
             f"{sorted(replayed - hooks) or 'none'}. Add each new hook to GUARDS in this script, with a function "
             f"that reads one command through it, in the pull request that adds the hook")
+
+
+def guards_added_at_head(checkouts):
+    """Return the guards in the head's settings.json but not the base's, after checking both against GUARDS."""
+    head_hooks, base_hooks = bash_hook_files(checkouts["head"]), bash_hook_files(checkouts["base"])
+    check_guards_match_settings(head_hooks, set(GUARDS), "head")
+    added = head_hooks - base_hooks
+    check_guards_match_settings(base_hooks, set(GUARDS) - added, "base")
+    return sorted(added)
 
 
 # ---------------------------------------------------------------- step 3: one ref's verdicts
@@ -265,12 +298,15 @@ class ShellReaderLongRunningChildProcessRequestSender:
         return child.wait()
 
 
-def guards_loaded(checkout, new_process):
+def guards_loaded(checkout, new_process, guards_left_out=()):
     """Return (guards, how many shell reader modules were switched to read in a new process,
     the senders of the long-running child processes, how many of those modules read one command per
-    process because their reader has no flag for a long-running child)."""
+    process because their reader has no flag for a long-running child).
+
+    guards_left_out are the guards the head adds, which the base checkout does not have.
+    """
     guards = {path: load_module(checkout, path, "replayed_" + re.sub(r"\W", "_", path))
-              for path in GUARDS}
+              for path in GUARDS if path not in guards_left_out}
     switched, one_command_per_process, senders = 0, 0, {}
     if new_process:
         for guard in guards.values():
@@ -395,10 +431,10 @@ SEARCH_FILE_GUARD = "scripts/search-file-argument-read-as-option-guard-hook.py"
 def guard_readings(guards, command, working_directory, search_file_directory):
     """Return {guard file: (verdict, message)} for one pair; the verdict is what decides the merge."""
     readings = {}
-    for path, read in GUARDS.items():
+    for path in guards:
         try:
             signal.alarm(WORKER.get("timeout", DEFAULT_PER_PAIR_TIMEOUT_SECONDS))
-            verdict, message = read(guards[path], command, working_directory, search_file_directory)
+            verdict, message = GUARDS[path](guards[path], command, working_directory, search_file_directory)
             if isinstance(message, str) and WORKER.get("checkout"):
                 # A message naming a file in the checkout would differ between the base and head checkouts.
                 message = message.replace(WORKER["checkout"], "<checkout>")
@@ -414,12 +450,12 @@ def guard_readings(guards, command, working_directory, search_file_directory):
     return readings
 
 
-def worker_start(checkout, new_process, search_file_directory, timeout):
+def worker_start(checkout, new_process, search_file_directory, timeout, guards_left_out):
     os.nice(15)
     WORKER["timeout"] = timeout
     WORKER["checkout"] = str(checkout)
     signal.signal(signal.SIGALRM, raise_pair_timed_out)
-    WORKER["guards"], WORKER["switched"], _, _ = guards_loaded(checkout, new_process)
+    WORKER["guards"], WORKER["switched"], _, _ = guards_loaded(checkout, new_process, guards_left_out)
     WORKER["search_file_directory"] = search_file_directory
 
 
@@ -471,12 +507,12 @@ def worker_search_file_main_rows(pairs):
     return rows, WORKER["switched"]
 
 
-def smoke_check(checkout, new_process, search_file_directory, timeout):
+def smoke_check(checkout, new_process, search_file_directory, timeout, guards_left_out):
     """Fail the replay when a guard cannot read even `true`: the replay no longer fits the guards' code.
 
     Return (how many shell reader modules read in a new process, how many of them one command per process).
     """
-    guards, switched, senders, one_command_per_process = guards_loaded(checkout, new_process)
+    guards, switched, senders, one_command_per_process = guards_loaded(checkout, new_process, guards_left_out)
     signal.signal(signal.SIGALRM, raise_pair_timed_out)
     WORKER["timeout"] = timeout
     readings = guard_readings(guards, "true", "/", search_file_directory)
@@ -499,15 +535,17 @@ def smoke_check(checkout, new_process, search_file_directory, timeout):
     return switched, one_command_per_process
 
 
-def ref_verdicts(checkout, pairs, jobs, new_process, search_file_directory, search_file_main, timeout):
+def ref_verdicts(checkout, pairs, jobs, new_process, search_file_directory, search_file_main, timeout,
+                 guards_left_out=()):
     """Return (rows, shell readers switched to a new process, how many of them read one command per process)."""
-    switched, one_command_per_process = smoke_check(checkout, new_process, search_file_directory, timeout)
+    switched, one_command_per_process = smoke_check(checkout, new_process, search_file_directory, timeout,
+                                                    guards_left_out)
     tasks = [pairs[start:start + PAIRS_PER_TASK] for start in range(0, len(pairs), PAIRS_PER_TASK)]
     read = worker_search_file_main_rows if search_file_main else worker_guard_rows
     # Not multiprocessing.Pool: when a Pool worker dies, its task is never finished and map() waits
     # forever. A ProcessPoolExecutor marks every unfinished task broken instead.
     executor = ProcessPoolExecutor(jobs, initializer=worker_start,
-                                   initargs=(checkout, new_process, search_file_directory, timeout))
+                                   initargs=(checkout, new_process, search_file_directory, timeout, guards_left_out))
     rows, not_read, workers_switched = [], [], set()
     try:
         futures = [executor.submit(read, task) for task in tasks]
@@ -542,7 +580,7 @@ def verdict_differences(pairs, base_rows, head_rows):
     differences, message_differences = [], []
     for pair, base, head in zip(pairs, base_rows, head_rows):
         if isinstance(base, dict):
-            for key in GUARDS:
+            for key in base:  # A guard the head adds is in the head's rows only.
                 if base[key][0] != head[key][0]:
                     differences.append((pair, key, base[key], head[key]))
                 elif base[key][1] != head[key][1]:
@@ -552,6 +590,17 @@ def verdict_differences(pairs, base_rows, head_rows):
         elif base[1] != head[1]:
             message_differences.append((pair, "search-file main()", base, head))
     return differences, message_differences
+
+
+def refuses(verdict):
+    decision = verdict[0] if isinstance(verdict, list) else verdict
+    return decision in ("refused", "deny")
+
+
+def added_guard_refusals(pairs, head_rows, added_guards):
+    """Return each (pair, guard, head reading) where a guard the head adds refuses the pair."""
+    return [(pair, guard, row[guard]) for pair, row in zip(pairs, head_rows) if isinstance(row, dict)
+            for guard in added_guards if refuses(row[guard][0])]
 
 
 def failed_readings(pairs, rows, label):
@@ -727,13 +776,15 @@ def replay_with_sigterm_handled(arguments):
             checkouts[label] = checkout  # Before the add, so a stop in the middle of the add is cleaned up too.
             run_git(repository, "worktree", "add", "--detach", str(checkout), commit)
             print(f"{label}: {ref} at {commit}")
-            check_guards_match_settings(checkout, label)
+        added_guards = guards_added_at_head(checkouts)
+        print(f"guards the head adds, read at the head only: {added_guards or 'none'}")
 
         modes = [("in-process", "pairs.json", False, False),
                  ("search-file main()", "pairs.json", False, True)]
         if new_process_pairs:
             modes.append(("new-process", "new-process-pairs.json", True, False))
         verdict_changed = False
+        added_guard_refused = False
         all_failed = []
         for mode, pairs_name, new_process, search_file_main in modes:
             rows, mode_failed = {}, []
@@ -744,7 +795,8 @@ def replay_with_sigterm_handled(arguments):
                 run_step_in_child(["--step", "verdicts", str(checkout), str(scratch / pairs_name), str(out),
                                    str(arguments.jobs), "1" if new_process else "0",
                                    "1" if search_file_main else "0", str(search_file_directory),
-                                   str(arguments.per_pair_timeout_seconds)],
+                                   str(arguments.per_pair_timeout_seconds),
+                                   json.dumps(added_guards if label == "base" else [])],
                                   scratch / f"verdicts-{mode.split()[0]}-{label}.log",
                                   step_deadline_seconds(len(mode_pairs), arguments.jobs,
                                                         arguments.per_pair_timeout_seconds))
@@ -762,16 +814,35 @@ def replay_with_sigterm_handled(arguments):
             differences, message_differences = verdict_differences(mode_pairs, rows["base"], rows["head"])
             print_rows(f"{mode}: rows whose verdict differs", differences, arguments.show)
             print_rows(f"{mode}: rows whose message differs and verdict does not", message_differences, arguments.show)
+            refusals = added_guard_refusals(mode_pairs, rows["head"], added_guards)
+            for guard in added_guards:
+                guard_refusals = [item for item in refusals if item[1] == guard]
+                if guard_refusals:
+                    # Every one, not the first --show: the reviewer accepts each refusal in the review.
+                    # The command in full: the reviewer's "refusal right" line names it, and two long
+                    # commands may differ only at the end.
+                    print(f"{mode}: new guard {guard} would refuse {len(guard_refusals)} recorded "
+                          + ("command, listed with its working directory" if len(guard_refusals) == 1
+                             else "commands, each listed with its working directory"))
+                    for number, ((command, working_directory), _, reading) in enumerate(guard_refusals, 1):
+                        print(f"  {number}. command: {command!r}\n     working directory: {working_directory}\n"
+                              f"     head: {shortened(reading)}")
             (scratch / f"differences-{mode.split()[0]}.json").write_text(
-                json.dumps({"verdict": differences, "message": message_differences, "failed": mode_failed}))
+                json.dumps({"verdict": differences, "message": message_differences, "failed": mode_failed,
+                            "added_guard_refusals": refusals}))
             verdict_changed = verdict_changed or bool(differences)
+            added_guard_refused = added_guard_refused or bool(refusals)
         if all_failed:
             print_rows("REPLAY FAILED: readings that raised or timed out, which have no verdict to compare",
                        [(pair, key, f"{at}: {reading}") for pair, key, at, reading in all_failed], arguments.show)
             status = 2
-        elif verdict_changed:
-            print("VERDICT CHANGED: a recorded command gets a different verdict at the head; the merge is blocked "
-                  "until each difference above is explained and intended.")
+        elif verdict_changed or added_guard_refused:
+            if verdict_changed:
+                print("VERDICT CHANGED: a recorded command gets a different verdict at the head; the merge is blocked "
+                      "until each difference above is explained and intended.")
+            if added_guard_refused:
+                print(NEW_GUARD_REFUSES_MESSAGE + (NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING if verdict_changed
+                                                   else NEW_GUARD_REFUSES_ONLY_ENDING))
             status = 1
         else:
             print("NO VERDICT CHANGED")
@@ -793,10 +864,11 @@ def replay_with_sigterm_handled(arguments):
 
 
 def verdicts_step(checkout, pairs_path, out_path, jobs, new_process, search_file_main, search_file_directory,
-                  timeout):
+                  timeout, guards_left_out):
     pairs = json.loads(Path(pairs_path).read_text())
     rows, switched, one_command_per_process = ref_verdicts(
-        checkout, pairs, int(jobs), new_process == "1", search_file_directory, search_file_main == "1", int(timeout))
+        checkout, pairs, int(jobs), new_process == "1", search_file_directory, search_file_main == "1", int(timeout),
+        json.loads(guards_left_out))
     Path(out_path).write_text(json.dumps({"rows": rows, "shell_readers_in_a_new_process": switched,
                                           "shell_readers_reading_one_command_per_process": one_command_per_process}))
     return 0
