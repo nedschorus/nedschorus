@@ -195,7 +195,9 @@ def brief_cases(root, repository, base, frozen_head):
           and f"git push origin HEAD:{BRANCH}" in out, out)
     check("brief: says who removes the worktree and its local branch, and to leave a harness-locked one",
           "   1. Run: git worktree remove <path>\n" in out
-          and "the agent harness holds the lock: stop, and start again at 1" in out, out)
+          and "the agent harness holds the lock: run step 1 again once git worktree list no longer shows" in out
+          and "If git worktree list still shows it locked when you end your turn, tell the user the worktree's path and "
+          "the lock reason, and go no further." in out, out)
     check("brief: the branch is deleted once, as the last step, after whichever removal command ran",
           out.count(f"git branch -D {local_branch}") == 1
           and out.index("git worktree remove --force <path>")
@@ -205,11 +207,14 @@ def brief_cases(root, repository, base, frozen_head):
           < out.index("For the subagent, the rules of the round") < out.index("0. Make a local branch at the frozen-head"), out)
     check("brief: says to leave a worktree the harness locked, and writes out each forced removal whole",
           "the lock reason starts with \"claude agent\"" in out
-          and "If none is work to keep, run: git worktree remove --force --force <path>" in out
-          and "If none is, run: git worktree remove --force <path>" in out, out)
-    check("brief: says what to do when a file in the worktree is work to keep",
-          "If one is work to keep, such as a fix the subagent did not push, copy it out of the worktree, "
-          "tell merge-lane-2 with SendMessage, and start again at 1 once that work is settled." in out, out)
+          and "tell merge-lane-2 about it with SendMessage. Then run: git worktree remove --force --force <path>" in out
+          and "tell merge-lane-2 about it with SendMessage. Then run: git worktree remove --force <path>\n" in out, out)
+    check("brief: work to keep is copied out, and then the removal goes on, so no branch loops back to 1",
+          "Copy out of the worktree any file that is work to keep, such as a fix the subagent did not push, "
+          "and tell merge-lane-2 about it with SendMessage." in out
+          and "read them, copy out any that is work to keep and tell merge-lane-2" in out
+          and out.count("run step 1 again") == 1 and "start again at 1" not in out
+          and out.count("and go no further.") == 2, out)
     answers_in_checkout = f"{git_directory}/fix-round-answers-pull-request-{NUMBER}.md"
     check("brief: the check command names the author's answers file, so it reads the same file in any worktree",
           f"{NUMBER} --check --answers {answers_in_checkout}" in out, out)
@@ -416,7 +421,7 @@ def brief_cases(root, repository, base, frozen_head):
           code == 2 and f"gh {PR_VIEW} printed JSON in which these fields are missing or empty: "
           "headRefOid, headRefName. Run " in err
           and f"Run gh {PR_VIEW} yourself: if it now prints an object with all three fields filled in, "
-          "run this program again.\n" in err
+          f"run python3 {PROGRAM} {NUMBER} again.\n" in err
           and "This program stopped there: it printed no brief and checked no round." in err, err)
 
     routes = routes_for(frozen_head, [review(commit_id=frozen_head)])

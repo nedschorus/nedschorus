@@ -73,16 +73,19 @@ WORKTREE_REMOVAL_INSTRUCTION = (
     "path, which the Agent tool reports when the subagent finishes.\n"
     "   1. Run: git worktree remove <path>\n"
     "      If git refuses because the worktree is locked and the lock reason starts with \"claude agent\", "
-    "the agent harness holds the lock: stop, and start again at 1 once git worktree list no longer "
-    "shows the worktree as locked.\n"
-    "      If git refuses because the worktree holds changed or untracked files, read them. If one is "
-    "work to keep, such as a fix the subagent did not push, copy it out of the worktree, tell "
-    "merge-lane-2 with SendMessage, and start again at 1 once that work is settled. If none is, run: "
-    "git worktree remove --force <path>\n"
-    "      If git refuses because the worktree is locked for any other reason, wait until nothing "
-    "uses the worktree, then read its changed or untracked files and keep any work as the line above "
-    "says. If none is work to keep, run: git worktree remove --force --force <path> (the second "
-    "--force removes a locked worktree).\n"
+    "the agent harness holds the lock: run step 1 again once git worktree list no longer shows the "
+    "worktree as locked. If git worktree list still shows it locked when you end your turn, tell the user the "
+    "worktree's path and the lock reason, and go no further.\n"
+    "      If git refuses because the worktree holds changed or untracked files, list them with "
+    "git -C <path> status --short and read them. Copy out of the worktree any file that is work to "
+    "keep, such as a fix the subagent did not push, and tell merge-lane-2 about it with SendMessage. "
+    "Then run: git worktree remove --force <path>\n"
+    "      If git refuses because the worktree is locked for any other reason, the lock reason names "
+    "who locked it. If whoever it names may still be using the worktree, tell the user the worktree's "
+    "path and the lock reason, and go no further. Otherwise list its changed or untracked files with "
+    "git -C <path> status --short, read them, copy out any that is work to keep and tell merge-lane-2 "
+    "about it with SendMessage. Then run: git worktree remove --force --force <path> (the second --force removes a "
+    "locked worktree).\n"
     "   2. Once the worktree is removed, run: git branch -D {local_branch}")
 PULL_REQUEST_FIELDS = ("url", "headRefOid", "headRefName")
 
@@ -143,7 +146,7 @@ def pull_request(number):
     arguments = ["pr", "view", str(number), "--json", ",".join(PULL_REQUEST_FIELDS)]
     command = "gh " + " ".join(arguments)
     rerun = (f" Run {command} yourself: if it now prints an object with all three fields filled in, "
-             "run this program again.")
+             f"run {shlex.join(['python3', *sys.argv])} again.")
     output = gh(arguments)
     try:
         facts = json.loads(output)
