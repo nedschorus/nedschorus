@@ -16,6 +16,7 @@ import importlib.util
 import json
 import os
 import resource
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -102,9 +103,14 @@ FAST_READ_COMMAND_PREFIX = "  python3 nc-systems/cold-read/cold-read-fast-read.p
 
 
 def fast_read_targets(text):
-    """The --target files of the cold-read-fast-read commands a reminder gives."""
-    return [Path(line[len(FAST_READ_COMMAND_PREFIX):]) for line in text.split("\n")
-            if line.startswith(FAST_READ_COMMAND_PREFIX)]
+    """The --target files of the cold-read-fast-read commands a reminder gives, each
+    read as a shell reads it, so a target the hook did not quote fails its case."""
+    targets = []
+    for line in text.split("\n"):
+        if line.startswith(FAST_READ_COMMAND_PREFIX):
+            words = shlex.split(line)
+            targets.append(Path(words[-1]) if len(words) == 4 else None)
+    return targets
 
 
 def file_text(path):
@@ -166,7 +172,8 @@ REMINDER_INSTRUCTION_LINES = (
 )
 
 with tempfile.TemporaryDirectory() as temporary:
-    hook_temporary_directory = Path(temporary) / "hook-tmp"
+    # A space and a quote in the temporary directory's name: each command must shell-quote its target.
+    hook_temporary_directory = Path(temporary) / "hook tmp's"
     hook_temporary_directory.mkdir()
     repository = Path(temporary) / "repository"
     repository.mkdir()

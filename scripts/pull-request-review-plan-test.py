@@ -15,6 +15,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -106,7 +107,8 @@ class ReviewPlanTemporaryRepositoryFixture:
         self.control_directory.mkdir()
         self.binary_directory = temporary_directory / "bin"
         self.binary_directory.mkdir()
-        self.message_target_temporary_directory = temporary_directory / "message-target-temporary-directory"
+        # A space and a quote in the name: each printed command must shell-quote its target.
+        self.message_target_temporary_directory = temporary_directory / "message target temporary directory's"
         self.message_target_temporary_directory.mkdir()
         stand_in_path = self.binary_directory / "gh"
         stand_in_path.write_text(STAND_IN_GITHUB_SOURCE, encoding="utf-8")
@@ -559,7 +561,8 @@ def run_fast_read_command_cases(fixture):
     whole_entry = next(entry for entry in plan["agent_facing_text_whole_pull_request"] if entry["label"] == "raise in show_message()")
     delta_entry = next(entry for entry in plan["agent_facing_text_delta"] if entry["label"] == "raise in show_message()")
     command_prefix = "python3 nc-systems/cold-read/cold-read-fast-read.py --target "
-    target = Path(whole_entry["fast_read_command"].removeprefix(command_prefix))
+    command_words = shlex.split(whole_entry["fast_read_command"])
+    target = Path(command_words[-1]) if len(command_words) == 4 else Path()
     check("each listed message gets a fast-read command whose target holds its new text",
           whole_entry["fast_read_command"].startswith(command_prefix) and whole_entry["fast_read_target_error"] is None
           and target.is_relative_to(fixture.message_target_temporary_directory)
@@ -590,13 +593,28 @@ def run_fast_read_command_cases(fixture):
         fixture.environment = saved_environment
     blocked_plan = json.loads(json_result.stdout) if json_result.stdout else {}
     blocked_entries = blocked_plan.get("agent_facing_text_whole_pull_request", [])
-    check("a target that cannot be written leaves the plan printed, the entry marked and exit 1",
-          json_result.returncode == 1 and bool(blocked_entries)
+    check("a target that cannot be written leaves the plan printed, the entry marked and exit 3, not a refusal's 1",
+          json_result.returncode == 3 and bool(blocked_entries)
           and all(entry["fast_read_command"] is None and entry["fast_read_target_error"] for entry in blocked_entries)
-          and "have no cold-read-fast-read command" in json_result.stderr
-          and "--target <that file>" in json_result.stderr, json_result)
+          and "1 listed agent-facing message has no cold-read-fast-read command, because its text" in json_result.stderr
+          and "--target <that file's full path>" in json_result.stderr, json_result)
+    blocked_entry = blocked_entries[0] if blocked_entries else {"path": "", "line": 0, "new_text": ""}
+    file_name = review_plan_module.fast_read_target_path(blocked_entry["path"], blocked_entry["new_text"]).name
+    listing_lines = [line for line in json_result.stderr.splitlines() if line.startswith("  ")]
+    check("the message lists each message without a command once, by path, line and label, with the file name to write",
+          listing_lines == [f"  {blocked_entry['path']}:{blocked_entry['line']}  label: {blocked_entry.get('label')}  file name: {file_name}"]
+          and "a directory outside your checkout, such as one made with mktemp -d" in json_result.stderr, json_result.stderr)
+    two_entries = [{"path": "a.py", "line": 3, "label": "raise in f()", "new_text": "one", "fast_read_target_file_name": "one.md"},
+                   {"path": "a.py", "line": 3, "label": "print in f()", "new_text": "two", "fast_read_target_file_name": "two.md"}]
+    check("the count reads right for more than one message",
+          "2 listed agent-facing messages have no cold-read-fast-read command, because their text"
+          in review_plan_module.missing_fast_read_commands_message(two_entries))
+    check("each entry carries the file name the message lists, so the message's file name finds its entry",
+          all(entry["fast_read_target_file_name"] == review_plan_module.fast_read_target_path(entry["path"], entry["new_text"]).name
+              for entry in blocked_entries)
+          and "whose fast_read_target_file_name is that file name" in json_result.stderr, json_result)
     check("the text plan says why a message has no command",
-          text_result.returncode == 1
+          text_result.returncode == 3
           and "cold-read-fast-read: none, because this message's text could not be written to a file: " in text_result.stdout,
           text_result)
 
