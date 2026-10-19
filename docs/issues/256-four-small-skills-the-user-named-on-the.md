@@ -30,7 +30,7 @@ Search receipt: `gh issue list --repo nedschorus/nedschorus --state all --limit 
 
 ## Open questions for the user, to settle before the build
 
-1. **/save-MD-as-draft's destination.** The project has three review queues: `docs/wiki/queue/`, `docs/issues/queue/`, and the `draft` issue label; `docs/drafts/` holds in-progress documents that are not queued for review. Which directory does the skill move a file into, or does it choose by the file's kind?
+1. **/save-MD-as-draft's destination.** The project has three review queues: `docs/wiki/queue/`, `docs/issues/queue/`, and the `queue-drain-candidate` issue label; `docs/drafts/` holds in-progress documents that are not queued for review. Which directory does the skill move a file into, or does it choose by the file's kind?
 2. **/save-MD's rules.** "The right place" for an MD is what GHI [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11) was to define. Does /save-MD wait for GHI [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11), or carry a short table of its own (wiki page, GHI-MD, design, walk file, draft)?
 3. **/save's scope.** Commit everything in the working tree, or only the files named? Push to the seat's own branch on origin, never to main.
 
