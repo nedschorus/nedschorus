@@ -40,7 +40,8 @@ Operating rules:
   gpt-6.1-sol (the codex CLI), at xhigh reasoning effort. Each audit
   therefore runs as two review agents, one per runtime, named
   `<audit>-adversarial-prompt-<runtime>`, such as `cut-adversarial-prompt-claude`, in
-  this runner's output and in the names of its report files. The claude CLI runs with
+  this runner's output; each agent's report file is that name with `.md` added,
+  such as `cut-adversarial-prompt-claude.md`. The claude CLI runs with
   `--setting-sources user`, so this repository's hooks, CLAUDE.md and skills
   are never loaded into a claude agent (nedschorus#397).
 - Run it only by deliberate decision — never wire it into automation. A
