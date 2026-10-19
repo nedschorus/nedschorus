@@ -61,26 +61,29 @@ WORKTREE_DISPATCH_INSTRUCTION = (
     "worktree of its own and its commit cannot pick up edits you make in your checkout while it "
     "works. Give it this whole brief, and tell it that the two paragraphs starting \"For the "
     "author\", indented lines included, are yours, not its.")
-LOCAL_BRANCH_NAME_FORMAT = "fix-round-pull-request-{number}-from-{frozen_head}"
+# The review's id keeps two rounds on the same frozen-head apart: git will not switch a second
+# worktree to a branch an earlier round's worktree still has checked out, and the agent harness
+# may keep that worktree locked.
+LOCAL_BRANCH_NAME_FORMAT = "fix-round-pull-request-{number}-review-{review_id}"
 # The subagent works on a local branch, not a detached HEAD: .claude/hooks/session-location-write-guard.py
 # refuses every Edit or Write to a tracked file while HEAD is detached.
 WORKTREE_REMOVAL_INSTRUCTION = (
-    "For the author, when the subagent has finished: remove its worktree, then the local branch "
-    "{local_branch}, which step 0 below creates, with these two commands, where <path> is the "
-    "worktree's path that the Agent tool reports:\n"
-    "   git worktree remove <path>\n"
-    "   git branch -D {local_branch}\n"
-    "   If git worktree remove refuses because the worktree is locked, and the lock reason it "
-    "prints starts with \"claude agent\", run neither command for now: the agent harness locked the "
-    "worktree, and only the harness unlocks it. Run both once git worktree list no longer shows "
-    "the worktree as locked.\n"
-    "   If git worktree remove refuses because the worktree is locked for any other reason, the reason names who "
-    "locked it. Once you know nothing still uses the worktree, and you have read any changed or "
-    "untracked files in it, run instead: git worktree remove --force --force <path>\n"
-    "   If git worktree remove refuses because the worktree holds changed or untracked files, read those files. "
-    "Once you have seen that none of them is work to keep, run instead: "
+    "For the author, when the subagent has finished: remove its worktree, and then the local branch "
+    "{local_branch}, which the subagent makes in step 0 of the rules below. <path> is the worktree's "
+    "path, which the Agent tool reports when the subagent finishes.\n"
+    "   1. Run: git worktree remove <path>\n"
+    "      If git refuses because the worktree is locked and the lock reason starts with \"claude agent\", "
+    "the agent harness holds the lock: stop, and start again at 1 once git worktree list no longer "
+    "shows the worktree as locked.\n"
+    "      If git refuses because the worktree holds changed or untracked files, read them. If one is "
+    "work to keep, such as a fix the subagent did not push, copy it out of the worktree, tell "
+    "merge-lane-2 with SendMessage, and start again at 1 once that work is settled. If none is, run: "
     "git worktree remove --force <path>\n"
-    "   Then run git branch -D {local_branch}.")
+    "      If git refuses because the worktree is locked for any other reason, wait until nothing "
+    "uses the worktree, then read its changed or untracked files and keep any work as the line above "
+    "says. If none is work to keep, run: git worktree remove --force --force <path> (the second "
+    "--force removes a locked worktree).\n"
+    "   2. Once the worktree is removed, run: git branch -D {local_branch}")
 PULL_REQUEST_FIELDS = ("url", "headRefOid", "headRefName")
 
 
@@ -137,15 +140,23 @@ def is_ancestor(ancestor, descendant):
 
 
 def pull_request(number):
+    arguments = ["pr", "view", str(number), "--json", ",".join(PULL_REQUEST_FIELDS)]
+    command = "gh " + " ".join(arguments)
+    rerun = (f" Run {command} yourself: if it now prints an object with all three fields filled in, "
+             "run this program again.")
+    output = gh(arguments)
     try:
-        facts = json.loads(gh(["pr", "view", str(number), "--json", ",".join(PULL_REQUEST_FIELDS)]))
+        facts = json.loads(output)
     except json.JSONDecodeError as error:
-        raise StepFailed(f"gh pr view {number} printed output that is not JSON: {error}") from None
+        raise StepFailed(f"{command} printed output that is not JSON; Python's JSON parser said: "
+                         f"{error}. The output began: {output[:200]!r}." + rerun) from None
     if not isinstance(facts, dict):
-        raise StepFailed(f"gh pr view {number} printed JSON that is not an object: {facts!r}")
+        raise StepFailed(f"{command} printed JSON that is not an object with named fields: {facts!r}."
+                         + rerun)
     missing = [field for field in PULL_REQUEST_FIELDS if not facts.get(field)]
     if missing:
-        raise StepFailed(f"the JSON that gh pr view {number} printed has no value for: {', '.join(missing)}")
+        raise StepFailed(f"{command} printed JSON in which these fields are missing or empty: "
+                         f"{', '.join(missing)}." + rerun)
     return tuple(facts[field] for field in PULL_REQUEST_FIELDS)
 
 
@@ -244,11 +255,12 @@ def round_facts(number, reviewer_login):
     frozen_head = review.get("commit_id")
     if not frozen_head:
         raise StepFailed(f"merge-lane-2's review {review.get('html_url')} carries no commit_id")
-    return url, head, branch, review_links(reviews), frozen_head, blocking_findings(number, reviews)
+    return (url, head, branch, review_links(reviews), review.get("id"), frozen_head,
+            blocking_findings(number, reviews))
 
 
 def print_brief(number, reviewer_login):
-    url, head, branch, review_link, frozen_head, findings = round_facts(number, reviewer_login)
+    url, head, branch, review_link, review_id, frozen_head, findings = round_facts(number, reviewer_login)
     if head != frozen_head:
         raise Refused(f"Pull request {url} has head {head}, but merge-lane-2 reviewed {frozen_head}; "
                       "a commit was pushed after the review, so this fix-round has already pushed.\n"
@@ -265,7 +277,7 @@ def print_brief(number, reviewer_login):
         lines += ["", f"{index}. {finding_place(finding)} ({finding.get('html_url')})",
                   (finding.get("body") or "").strip()]
     answers_path = default_answers_path(number)
-    local_branch = LOCAL_BRANCH_NAME_FORMAT.format(number=number, frozen_head=frozen_head[:12])
+    local_branch = LOCAL_BRANCH_NAME_FORMAT.format(number=number, review_id=review_id)
     # --answers names the file in this checkout's git directory, which the subagent's own
     # worktree does not hold by default.
     check_command = f"python3 {PROGRAM} {number} --check --answers {shlex.quote(answers_path)}"
@@ -405,7 +417,7 @@ def unnamed_files(base, fix_commit, findings):
 
 
 def check_round(number, reviewer_login, answers_path, commit_name, after_conflict_merge):
-    url, head, _branch, review_link, frozen_head, findings = round_facts(number, reviewer_login)
+    url, head, _branch, review_link, _review_id, frozen_head, findings = round_facts(number, reviewer_login)
     answers = read_answers(answers_path or default_answers_path(number), len(findings))
     commit = git(["rev-parse", "--verify", f"{commit_name}^{{commit}}"]).strip()
     git(["cat-file", "-e", f"{frozen_head}^{{commit}}"])
@@ -470,10 +482,11 @@ def main(argv=None):
         return 1
     except StepFailed as failure:
         print(f"FAILED: {failure}\n"
-              "If it names a commit or ref this checkout does not have, run git fetch origin and "
-              "run this again.\n"
+              "This program stopped there: it printed no brief and checked no round.\n"
+              "If the failure above names a commit or ref this checkout does not have, run git "
+              "fetch origin and run this again.\n"
               "If gh is not logged in, tell the user: only the user can log gh in.\n"
-              "Otherwise, tell the user this message.", file=sys.stderr)
+              "Otherwise, tell the user this whole message.", file=sys.stderr)
         return 2
     return 0
 
