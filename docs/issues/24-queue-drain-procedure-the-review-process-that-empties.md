@@ -6,7 +6,7 @@ issue: "[Queue drain procedure — the review process that empties the wiki queu
 
 ## Why this exists (boss-directed, 2026-07-24)
 
-The artifact-lifecycle design gives every non-final artifact a named queue (`docs/nedschorus-wiki/queue/` for doctrine candidates, `docs/issues/queue/` for pair candidates, the `draft`-labeled issue queue). The boss's ruling at capture, near-verbatim: the missing piece is the maintenance/draining procedure — that is what turns these nice docs into something that is part of the system, not just notes. A queue without a drain is a pile with extra steps; this GHI tracks the drain until it is built into the system.
+The artifact-lifecycle design gives every non-final artifact a named queue (`docs/nedschorus-wiki/queue/` for doctrine candidates, `docs/issues/queue/` for pair candidates, the `queue-drain-candidate`-labeled issue queue). The boss's ruling at capture, near-verbatim: the missing piece is the maintenance/draining procedure — that is what turns these nice docs into something that is part of the system, not just notes. A queue without a drain is a pile with extra steps; this GHI tracks the drain until it is built into the system.
 
 ## The drain (boss-approved 2026-07-24 with the parent ruling)
 
@@ -53,7 +53,7 @@ Measured against main at `5f0fd4c` on 2026-09-22 — **58 items**:
 | `docs/nedschorus-wiki/queue/` | 8 |
 | `docs/drafts/` | 9 |
 | `nc-queue/`, live | 4 |
-| issues labelled `draft` | 3 |
+| issues labelled `queue-drain-candidate` | 3 |
 | `docs/agents/queue/` | 12 |
 
 `nc-queue/archived/` holds 6 more, already disposed of and not counted.
