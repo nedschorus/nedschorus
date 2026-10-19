@@ -1570,6 +1570,21 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
               and f"The cold-read-fast-read of {ned_box_draft} ran on ned-box" in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
 
+        # A walk draft's frozen copy in a cold-read-record is no walk draft: its
+        # read takes the records route, so its report is never a suggestions file.
+        frozen_copy_relative = (seat_relative / "cold-read-records" / "item-2026-10-19"
+                                / "target" / "docs" / "walk" / "item-draft.md")
+        place = warning_module.cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(
+            str(ned_box_home / frozen_copy_relative))
+        check("the report place named for a walk draft's frozen copy read over ssh is "
+              "its cold-read-record in the log-store",
+              place == "a directory whose name starts item-draft- in "
+                       "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/",
+              repr(place))
+        place = warning_module.cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(str(ned_box_draft))
+        check("the report place named for a walk draft read over ssh is its suggestions "
+              "file on ned-box", place == str(ned_box_suggestions), repr(place))
+
         exit_code, stdout, stderr = read_from_mac(
             mac_draft, ssh_program=over_ssh_scratch / "no-such-ssh")
         check("when ssh cannot be started, the read says so, names who can run "

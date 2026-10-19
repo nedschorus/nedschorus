@@ -158,6 +158,11 @@ _record_names_spec = importlib.util.spec_from_file_location(
     pathlib.Path(__file__).with_name("cold-read-record-names.py"))
 record_names = importlib.util.module_from_spec(_record_names_spec)
 _record_names_spec.loader.exec_module(record_names)
+# Loaded only for LOG_STORE_RECORDS_DESTINATION, where a read's record lands.
+_record_shipper_spec = importlib.util.spec_from_file_location(
+    "cold_read_record_ship", RECORD_SHIPPER)
+record_shipper = importlib.util.module_from_spec(_record_shipper_spec)
+_record_shipper_spec.loader.exec_module(record_shipper)
 _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
     "git_redirecting_environment_variables_removal_common",
     REPO_ROOT / "nc-systems" / "general-tools"
@@ -310,6 +315,24 @@ def text_with_ned_box_paths_rewritten_as_mac_mount_paths(text: str) -> str:
                   lambda _: MAC_MOUNT_OF_NED_BOX_HOME + "/", text)
 
 
+def cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(ned_box_target: str) -> str:
+    """Where the read on ned-box writes its report, by the rule of
+    fast_read_report_path_for_target, for a message on the Mac. git here
+    cannot read the worktree, so its top is the nearest directory above the
+    target, seen through the mount, that holds a .git entry."""
+    mac_target = pathlib.Path(MAC_MOUNT_OF_NED_BOX_HOME
+                              + ned_box_target[len(NED_BOX_HOME):])
+    checkout_root = next((directory for directory in mac_target.parents
+                          if (directory / ".git").exists()), None)
+    suggestions = (walk_draft_suggestions_file_path_for_target_in_worktree_or_none(mac_target, checkout_root)
+                   if checkout_root is not None else None)
+    if suggestions is not None:
+        return ned_box_path_of_mac_mount_path(suggestions)
+    return (f"a directory whose name starts "
+            f"{record_names.record_name_for_target(mac_target)}- in "
+            f"{record_shipper.LOG_STORE_RECORDS_DESTINATION}/")
+
+
 def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
     """Run the fast read on ned-box on `ned_box_target`, with the script of
     the ned-box checkout holding it, relay its output in Mac mount paths, and
@@ -337,17 +360,7 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
             timeout=COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         minutes = f"{COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS / 60:g}"
-        target = pathlib.PurePosixPath(ned_box_target)
-        if (target.parent.parts[-2:] == WALK_DIRECTORY_RELATIVE.parts
-                and target.name.endswith(WALK_DRAFT_SUFFIX)
-                and len(target.name) > len(WALK_DRAFT_SUFFIX)):
-            report_place = (target.parent / (target.name[:-len(WALK_DRAFT_SUFFIX)]
-                                             + WALK_SUGGESTIONS_SUFFIX))
-        else:
-            report_place = (f"a directory whose name starts "
-                            f"{record_names.record_name_for_target(target)}- in "
-                            f"nedlern@ned-box:{NED_BOX_HOME}/nedschorus-logs/"
-                            f"{record_names.RECORDS_DIRECTORY_NAME}/")
+        report_place = cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(ned_box_target)
         print(f"{PROGRAM}: no cold-read-fast-read result: the cold-read-fast-read on "
               f"ned-box did not finish within {minutes} minutes, so this program "
               f"stopped ssh on this Mac, and the read's own lines were not relayed. "
@@ -356,7 +369,8 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
               f"Tell the user, in these words: \"The cold-read-fast-read of "
               f"{ned_box_target} ran on ned-box for more than {minutes} minutes, so "
               f"the Mac stopped waiting for it; the document has no "
-              f"cold-read-fast-read result.\"\n"
+              f"cold-read-fast-read result yet; if a report appears at "
+              f"{report_place}, that is its result.\"\n"
               f"If you are a subagent, pass that sentence to the agent that "
               f"dispatched you instead.", file=sys.stderr)
         print(f"FAILED (no fast read result: the fast read on ned-box did not finish "
@@ -377,7 +391,7 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
         return 1
     if completed.returncode == SSH_EXIT_CONNECTION_FAILED:
         print(f"{PROGRAM}: no cold-read-fast-read ran: ssh exited "
-              f"{SSH_EXIT_CONNECTION_FAILED}, which means one of two causes: ned-box "
+              f"{SSH_EXIT_CONNECTION_FAILED}, most often for one of two causes:ned-box "
               f"could not be reached, or ned-box refused this machine's key. ssh said: "
               f"{completed.stderr.strip() or 'nothing'}\n"
               f"Check that ned-box is on and on the LAN, and that this machine's "
@@ -499,20 +513,31 @@ def fast_read_report_path_for_target(
     walk file not named `-draft.md`, takes the records route like everything
     else.
     """
-    checkout_root = checkout_root_holding(target)
+    suggestions = walk_draft_suggestions_file_path_for_target_in_worktree_or_none(
+        target, checkout_root_holding(target))
+    if suggestions is not None:
+        return suggestions
+    return (fresh_record_dir(RECORDS_DIR / record_directory_name_for_target(target, now))
+            / "fast-read.md")
+
+
+def walk_draft_suggestions_file_path_for_target_in_worktree_or_none(
+    target: pathlib.Path, checkout_root: pathlib.Path,
+):
+    """The suggestions file of `target` when it is a walk draft of the
+    worktree whose top is `checkout_root`, else None: the walk half of
+    fast_read_report_path_for_target's rule."""
     try:
         relative = target.relative_to(checkout_root)
     except ValueError:
-        relative = None
-    if (relative is not None
-            and relative.parent == WALK_DIRECTORY_RELATIVE
+        return None
+    if (relative.parent == WALK_DIRECTORY_RELATIVE
             and relative.name.endswith(WALK_DRAFT_SUFFIX)
             and len(relative.name) > len(WALK_DRAFT_SUFFIX)):
         name = relative.name[:-len(WALK_DRAFT_SUFFIX)]
         return (checkout_root / WALK_DIRECTORY_RELATIVE
                 / f"{name}{WALK_SUGGESTIONS_SUFFIX}")
-    return (fresh_record_dir(RECORDS_DIR / record_directory_name_for_target(target, now))
-            / "fast-read.md")
+    return None
 
 
 # THE RECORD-NAME RULE: `<file stem>-<YYYY-MM-DD>`, and
