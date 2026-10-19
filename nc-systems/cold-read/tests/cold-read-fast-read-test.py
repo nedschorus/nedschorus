@@ -1553,9 +1553,10 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
               "most often for one of two causes: ned-box could not be reached" in stderr
               and "Tell the user, in these words: \"The cold-read-fast-read could not run "
                   "on ned-box from this Mac: ssh exited 255 and said: 'ssh: connect to host "
-                  "ned-box port 22: No route to host'. Check that ned-box is on and on the "
-                  "LAN, and that `ssh nedlern@ned-box true` works from a Terminal on your "
-                  "Mac.\"" in stderr,
+                  "ned-box port 22: No route to host'. Run `ssh nedlern@ned-box true` from "
+                  "a Terminal on your Mac. If it fails with 'Permission denied', ned-box "
+                  "refused this Mac's key; if it fails another way, check that ned-box is on and on the "
+                  "LAN.\"" in stderr,
               repr(stderr))
 
         exit_code, stdout, stderr = read_from_mac(mac_draft, ssh_mode="killed")
@@ -1576,7 +1577,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
                                     "did not finish within")
               and "so this program stopped waiting and ended ssh, and" in stderr
               and f"report, which this Mac sees at {mac_suggestions}." in stderr
-              and f"look for a report at {mac_suggestions}. If one is there" in stderr
+              and f"look for a report at {mac_suggestions}. The report is not written" in stderr
               and f"The cold-read-fast-read of {ned_box_draft} ran on ned-box" in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
 
@@ -1588,7 +1589,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
             str(ned_box_home / frozen_copy_relative))
         check("the report place named for a walk draft's frozen copy read over ssh is "
               "its cold-read-record in the log-store",
-              place == "a directory whose name starts item-draft- in "
+              place == "fast-read.md in the newest directory whose name starts item-draft- in "
                        "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/",
               repr(place))
         place = warning_module.cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(str(ned_box_draft))
@@ -1602,7 +1603,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
         mac_frozen_copy.write_text("## Item 1 of 1\n", encoding="utf-8")
         exit_code, stdout, stderr = read_from_mac(mac_frozen_copy, ssh_mode="hangs",
                                                   timeout_seconds=0.5)
-        records_place = ("a directory whose name starts item-draft- in "
+        records_place = ("fast-read.md in the newest directory whose name starts item-draft- in "
                          "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/")
         check("when the read of a walk draft's frozen copy outlasts the time limit, the "
               "message names its cold-read-record in the log-store, not a suggestions file",

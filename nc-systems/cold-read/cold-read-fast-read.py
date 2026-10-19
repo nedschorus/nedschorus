@@ -328,7 +328,7 @@ def cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(ned_
                    if checkout_root is not None else None)
     if suggestions is not None:
         return ned_box_path_of_mac_mount_path(suggestions)
-    return (f"a directory whose name starts "
+    return (f"fast-read.md in the newest directory whose name starts "
             f"{record_names.record_name_for_target(mac_target)}- in "
             f"{record_shipper.LOG_STORE_RECORDS_DESTINATION}/")
 
@@ -375,13 +375,15 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
               f"cold-read-fast-read result yet; if a report appears at "
               f"{report_place}, that is its result.\" If you are a subagent, pass "
               f"that quoted text to the agent that dispatched you instead.\n"
-              f"Then, if you need the result: wait 5 minutes, then look for a "
-              f"report at {report_place}. If one is there, it is the result. If "
-              f"none is there, run the same cold-read-fast-read command once more; "
-              f"if that run fails too, go on without the result, and say so in "
-              f"your reply.\n"
-              f"If you can go on without the result: go on, and say in your reply "
-              f"that the document has no cold-read-fast-read result.", file=sys.stderr)
+              f"Then, if you can go on without the result: go on, and say in your "
+              f"reply that the document has no cold-read-fast-read result.\n"
+              f"If you need the result: wait 5 minutes, then look for a report at "
+              f"{report_place}. The report is not written in one step, so it is "
+              f"complete only once it holds the line \"{SENTENCE_COVERAGE_HEADING}\", "
+              f"which only the read's last write of the report adds; a complete "
+              f"report is the result. If there is no complete report, run the same "
+              f"cold-read-fast-read command once more; if that run fails too, go "
+              f"on without the result, and say so in your reply.", file=sys.stderr)
         print(f"FAILED (no fast read result: the fast read on ned-box did not finish "
               f"within {minutes} minutes)")
         return 1
@@ -406,9 +408,10 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
               f"{ssh_words}\n"
               f"Tell the user, in these words: \"The cold-read-fast-read could not "
               f"run on ned-box from this Mac: ssh exited {SSH_EXIT_CONNECTION_FAILED} "
-              f"and said: '{ssh_words}'. Check that ned-box is on and on the LAN, and "
-              f"that `ssh {NED_BOX_SSH_TARGET} true` works from a Terminal on your "
-              f"Mac.\"\n"
+              f"and said: '{ssh_words}'. Run `ssh {NED_BOX_SSH_TARGET} true` from a "
+              f"Terminal on your Mac. If it fails with 'Permission denied', "
+              f"ned-box refused this Mac's key; if it fails another way, check that ned-box is on "
+              f"and on the LAN.\"\n"
               f"If you are a subagent, pass that quoted text to the agent that "
               f"dispatched you instead.", file=sys.stderr)
         print("FAILED (no fast read ran: ned-box could not be reached)")
