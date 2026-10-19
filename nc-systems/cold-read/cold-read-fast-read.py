@@ -360,19 +360,28 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
             timeout=COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         minutes = f"{COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS / 60:g}"
-        report_place = cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(ned_box_target)
+        # In the form this Mac opens; a log-store citation stays as it is.
+        report_place = text_with_ned_box_paths_rewritten_as_mac_mount_paths(
+            cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(
+                ned_box_target))
         print(f"{PROGRAM}: no cold-read-fast-read result: the cold-read-fast-read on "
               f"ned-box did not finish within {minutes} minutes, so this program "
-              f"stopped ssh on this Mac, and the read's own lines were not relayed. "
-              f"The read on ned-box may still be running and may still write its "
-              f"report, on ned-box, at {report_place}.\n"
-              f"Tell the user, in these words: \"The cold-read-fast-read of "
+              f"stopped waiting and ended ssh, and the read's own lines were not "
+              f"relayed. The read on ned-box may still be running and may still "
+              f"write its report, which this Mac sees at {report_place}.\n"
+              f"Now tell the user, in these words: \"The cold-read-fast-read of "
               f"{ned_box_target} ran on ned-box for more than {minutes} minutes, so "
-              f"the Mac stopped waiting for it; the document has no "
+              f"this program stopped waiting and ended ssh; the document has no "
               f"cold-read-fast-read result yet; if a report appears at "
-              f"{report_place}, that is its result.\"\n"
-              f"If you are a subagent, pass that sentence to the agent that "
-              f"dispatched you instead.", file=sys.stderr)
+              f"{report_place}, that is its result.\" If you are a subagent, pass "
+              f"that quoted text to the agent that dispatched you instead.\n"
+              f"Then, if you need the result: wait 5 minutes, then look for a "
+              f"report at {report_place}. If one is there, it is the result. If "
+              f"none is there, run the same cold-read-fast-read command once more; "
+              f"if that run fails too, go on without the result, and say so in "
+              f"your reply.\n"
+              f"If you can go on without the result: go on, and say in your reply "
+              f"that the document has no cold-read-fast-read result.", file=sys.stderr)
         print(f"FAILED (no fast read result: the fast read on ned-box did not finish "
               f"within {minutes} minutes)")
         return 1
@@ -390,12 +399,18 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
         print("FAILED (no fast read ran: ssh could not be started to reach ned-box)")
         return 1
     if completed.returncode == SSH_EXIT_CONNECTION_FAILED:
+        ssh_words = completed.stderr.strip() or "nothing"
         print(f"{PROGRAM}: no cold-read-fast-read ran: ssh exited "
-              f"{SSH_EXIT_CONNECTION_FAILED}, most often for one of two causes:ned-box "
+              f"{SSH_EXIT_CONNECTION_FAILED}, most often for one of two causes: ned-box "
               f"could not be reached, or ned-box refused this machine's key. ssh said: "
-              f"{completed.stderr.strip() or 'nothing'}\n"
-              f"Check that ned-box is on and on the LAN, and that this machine's "
-              f"key reaches it: ssh {NED_BOX_SSH_TARGET} true", file=sys.stderr)
+              f"{ssh_words}\n"
+              f"Tell the user, in these words: \"The cold-read-fast-read could not "
+              f"run on ned-box from this Mac: ssh exited {SSH_EXIT_CONNECTION_FAILED} "
+              f"and said: '{ssh_words}'. Check that ned-box is on and on the LAN, and "
+              f"that `ssh {NED_BOX_SSH_TARGET} true` works from a Terminal on your "
+              f"Mac.\"\n"
+              f"If you are a subagent, pass that quoted text to the agent that "
+              f"dispatched you instead.", file=sys.stderr)
         print("FAILED (no fast read ran: ned-box could not be reached)")
         return 1
     sys.stderr.write(text_with_ned_box_paths_rewritten_as_mac_mount_paths(completed.stderr))

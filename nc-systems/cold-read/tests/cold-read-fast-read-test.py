@@ -1548,6 +1548,15 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
               and "ned-box could not be reached" in stderr
               and "No route to host" in stderr and "ssh nedlern@ned-box true" in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
+        check("when ned-box cannot be reached, the read gives the agent a sentence for the "
+              "user holding ssh's words and the remedy",
+              "most often for one of two causes: ned-box could not be reached" in stderr
+              and "Tell the user, in these words: \"The cold-read-fast-read could not run "
+                  "on ned-box from this Mac: ssh exited 255 and said: 'ssh: connect to host "
+                  "ned-box port 22: No route to host'. Check that ned-box is on and on the "
+                  "LAN, and that `ssh nedlern@ned-box true` works from a Terminal on your "
+                  "Mac.\"" in stderr,
+              repr(stderr))
 
         exit_code, stdout, stderr = read_from_mac(mac_draft, ssh_mode="killed")
         check("when a signal kills ssh, the read says which signal, prints a FAILED line "
@@ -1565,8 +1574,9 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
               exit_code == 1
               and stdout.startswith("FAILED (no fast read result: the fast read on ned-box "
                                     "did not finish within")
-              and "so this program stopped ssh" in stderr
-              and f"report, on ned-box, at {ned_box_suggestions}." in stderr
+              and "so this program stopped waiting and ended ssh, and" in stderr
+              and f"report, which this Mac sees at {mac_suggestions}." in stderr
+              and f"look for a report at {mac_suggestions}. If one is there" in stderr
               and f"The cold-read-fast-read of {ned_box_draft} ran on ned-box" in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
 
@@ -1584,6 +1594,35 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
         place = warning_module.cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(str(ned_box_draft))
         check("the report place named for a walk draft read over ssh is its suggestions "
               "file on ned-box", place == str(ned_box_suggestions), repr(place))
+
+        # The same frozen copy read from the Mac through main(), with ssh hanging:
+        # the timeout message names the cold-read-record, not a suggestions file.
+        mac_frozen_copy = mac_mount / frozen_copy_relative
+        mac_frozen_copy.parent.mkdir(parents=True)
+        mac_frozen_copy.write_text("## Item 1 of 1\n", encoding="utf-8")
+        exit_code, stdout, stderr = read_from_mac(mac_frozen_copy, ssh_mode="hangs",
+                                                  timeout_seconds=0.5)
+        records_place = ("a directory whose name starts item-draft- in "
+                         "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/")
+        check("when the read of a walk draft's frozen copy outlasts the time limit, the "
+              "message names its cold-read-record in the log-store, not a suggestions file",
+              exit_code == 1 and f"report, which this Mac sees at {records_place}." in stderr
+              and f"if a report appears at {records_place}, that is its result" in stderr
+              and "suggestions" not in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        # A worktree inside another: the nearer .git is the worktree that holds the target.
+        inner_relative = seat_relative / "inner seat"
+        (mac_mount / inner_relative / "docs" / "walk").mkdir(parents=True)
+        (mac_mount / inner_relative / ".git").write_text(
+            f"gitdir: {ned_box_home / 'Projects' / 'gone-too' / '.git'}\n", encoding="utf-8")
+        place = warning_module.cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(
+            str(ned_box_home / inner_relative / "docs" / "walk" / "inner-draft.md"))
+        check("the report place of a walk draft in a worktree inside another worktree is "
+              "taken from the nearer worktree",
+              place == str(ned_box_home / inner_relative / "docs" / "walk"
+                           / "inner-suggestions.md"),
+              repr(place))
 
         exit_code, stdout, stderr = read_from_mac(
             mac_draft, ssh_program=over_ssh_scratch / "no-such-ssh")
