@@ -652,6 +652,28 @@ def main():
     check("a file:///Volumes/nedhome-other link is not mapped under ned-box's home",
           found == [], f"found {found!r}")
 
+    # On the Mac, a walk-document in a ned-box worktree is fast-read on ned-box
+    # over ssh, which records the document's ned-box path.
+    fake_mount = SUITE_ROOT / "fake-mac-mount"
+    hook.MAC_MOUNT_OF_NED_BOX_HOME = str(fake_mount) + "/"
+    mac_draft = fake_mount / "agents" / "seat" / "docs" / "walk" / "naming-rules-draft.md"
+    mac_suggestions = mac_draft.with_name("naming-rules-suggestions.md")
+    mac_draft.parent.mkdir(parents=True)
+    mac_draft.write_text("x\n")
+    mac_suggestions.write_text("report\n")
+    os.utime(mac_suggestions, (4_000_000, 4_000_000))
+    os.utime(mac_draft, (5_000_000, 5_000_000))
+    (mac_suggestions.parent / (mac_suggestions.name + ".agent-session.json")).write_text(
+        json.dumps({"agent_session_id": "s1",
+                    "target": str(fake_home / "agents" / "seat" / "docs" / "walk"
+                                  / "naming-rules-draft.md")}))
+    record_names = hook.load_cold_read_record_names()
+    check("on the Mac, a walk-document this agent-session fast-read on ned-box over ssh, "
+          "then changed, is not due again",
+          hook.document_is_due(mac_draft, [], None, record_names, "s1") is False)
+    check("on the Mac, another agent-session's read on ned-box over ssh does not count as this one's",
+          hook.document_is_due(mac_draft, [], None, record_names, "s2") is True)
+
     # A shared module that will not load is a fault like any other, not a traceback.
     scratch_root = SUITE_ROOT / "hook-without-its-home-module"
     (scratch_root / "scripts").mkdir(parents=True)

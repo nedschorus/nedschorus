@@ -274,6 +274,10 @@ NED_BOX_SSH_TARGET = "nedlern@ned-box"
 # BatchMode: a password prompt would hang a read no one is typing into.
 SSH_OPTIONS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=10")
 SSH_EXIT_CONNECTION_FAILED = 255
+# Each attempt of the read on ned-box is bounded by the --print-timeout of
+# 30m that nc-systems/cold-read/cold-read-agy-cell.py gives agy; the five
+# minutes more cover git, the shipper and the connect.
+COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS = FAST_READ_ATTEMPTS * 30 * 60 + 5 * 60
 
 
 class CheckoutRootUnreadable(RuntimeError):
@@ -329,20 +333,38 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
     try:
         completed = subprocess.run(
             [SSH_PROGRAM, *SSH_OPTIONS, NED_BOX_SSH_TARGET, remote_command],
-            capture_output=True, stdin=subprocess.DEVNULL, text=True, check=False)
+            capture_output=True, stdin=subprocess.DEVNULL, text=True, check=False,
+            timeout=COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        minutes = f"{COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS / 60:g}"
+        print(f"{PROGRAM}: no fast read result: the fast read on ned-box did not "
+              f"finish within {minutes} minutes, so this program stopped ssh on this "
+              f"Mac, and the read's own lines were not relayed. The read on ned-box "
+              f"may still be running and may still write its report.\n"
+              f"Tell the user, in these words: \"The cold-read-fast-read of "
+              f"{ned_box_target} ran on ned-box for more than {minutes} minutes, so "
+              f"the Mac stopped waiting for it; the document has no fast read "
+              f"result yet.\"\n"
+              f"If you are a subagent, pass that sentence to the agent that "
+              f"dispatched you instead.", file=sys.stderr)
+        print(f"FAILED (no fast read result: the fast read on ned-box did not finish "
+              f"within {minutes} minutes)")
+        return 1
     except OSError as error:
         print(f"{PROGRAM}: no fast read ran: ssh could not be started ({error}).\n"
-              f"Ask an agent-seat on ned-box to run the fast read there, with this "
+              f"Ask any agent-seat on ned-box, by a message sent with Claude Code's "
+              f"SendMessage tool, to run the fast read there, with this "
               f"command:\n{command_for_a_person}\n"
               f"Or, when no agent-seat on ned-box can, ask the user to run it from a "
-              f"Terminal on his Mac:\n"
+              f"Terminal on his Mac, whose shell has its own PATH and may find ssh "
+              f"where this program could not:\n"
               f"ssh {NED_BOX_SSH_TARGET} {shlex.quote(command_for_a_person)}",
               file=sys.stderr)
         print("FAILED (no fast read ran: ssh could not be started to reach ned-box)")
         return 1
     if completed.returncode == SSH_EXIT_CONNECTION_FAILED:
-        print(f"{PROGRAM}: no fast read ran: ned-box could not be reached "
-              f"(ssh exited {SSH_EXIT_CONNECTION_FAILED}): "
+        print(f"{PROGRAM}: no fast read ran: ned-box could not be reached, or "
+              f"refused this machine's key (ssh exited {SSH_EXIT_CONNECTION_FAILED}): "
               f"{completed.stderr.strip() or 'ssh said nothing'}\n"
               f"Check that ned-box is on and on the LAN, and that this machine's "
               f"key reaches it: ssh {NED_BOX_SSH_TARGET} true", file=sys.stderr)
@@ -353,12 +375,26 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
     if completed.returncode == 0:
         sys.stdout.write(stdout)
         return 0
-    print(f"{PROGRAM}: the fast read on ned-box failed (exit {completed.returncode}); "
-          f"its own lines, above, say why.", file=sys.stderr)
-    sys.stdout.write(stdout if stdout.strip() else
-                     f"FAILED (the fast read on ned-box exited {completed.returncode} "
-                     f"and printed no result line)\n")
     # Negative when a signal killed ssh, which is no exit status.
+    if completed.returncode < 0:
+        failure = (f"ssh was killed by signal {-completed.returncode} before the "
+                   f"fast read on ned-box finished")
+        print(f"{PROGRAM}: {failure}; the read's own lines up to then, if any, "
+              f"are above.\n"
+              f"When the result line on stdout is a report path, the read finished "
+              f"and needs no second run.\n"
+              f"When it starts FAILED, run the same fast read command once more. "
+              f"If ssh is killed again, "
+              f"tell the user that ssh from this Mac to ned-box was killed by signal "
+              f"{-completed.returncode} during a fast read, so the document has no "
+              f"fast read result. If you are a subagent, tell the agent that "
+              f"dispatched you instead.", file=sys.stderr)
+    else:
+        failure = (f"the fast read on ned-box exited {completed.returncode} "
+                   f"and printed no result line")
+        print(f"{PROGRAM}: the fast read on ned-box failed (exit {completed.returncode}); "
+              f"its own lines, above, say why.", file=sys.stderr)
+    sys.stdout.write(stdout if stdout.strip() else f"FAILED ({failure})\n")
     return max(completed.returncode, 1)
 
 
