@@ -20,7 +20,7 @@ Steps:
   3. At each ref, run the guards' analysis functions on every pair, with the guards' probes
      of git and gh stubbed so a verdict depends only on the command text and the working directory
      (in-process mode). Run the search-file guard's main() with each pair's own working
-     directory. Then run the analysis again on every pair with the shell reader in new-process
+     directory, at the head only when the head adds the search-file guard. Then run the analysis again on every pair with the shell reader in new-process
      mode, unless --new-process-pairs is none: each pool worker keeps one shell reader child
      process running and sends it one command at a time, through the same JSON conversion a
      hook's new process uses.
@@ -68,13 +68,32 @@ PAIRS_PER_TASK = 200
 STEP_DEADLINE_MARGIN_SECONDS = 600
 GIT_TIMEOUT_SECONDS = 600
 PRINTED_TEXT_LENGTH = 300
+VERDICT_CHANGED_MESSAGE = (
+    "VERDICT CHANGED: a recorded command gets a different verdict at the head, so this check exits 1.\n"
+    "The pull request's reviewer answers each difference under a \"rows whose verdict differs\" line above, in "
+    "the body of the review the reviewer posts. A difference is one guard, one working directory and one "
+    "command; when several modes list it, it is still one difference, with one answer. When a \"rows whose "
+    "verdict differs\" line counts more differences than it lists, all of them are under the \"verdict\" key of "
+    "the differences-<mode>.json file, one per mode, in the scratch directory whose path this check printed "
+    "first.\n"
+    "Where the head's verdict is the one the pull request means to give, the answer is a line of its own:\n"
+    "  verdict change intended: <guard> | <working directory> | <command>\n"
+    "copying from the difference's entry the guard, as the entry's first line names it before \"in\" (a guard "
+    "file's path, or search-file main()), the working directory, which follows \"in\", and the command, the "
+    "command last, quotes included, followed on the next line by why the head's verdict is right. Where the "
+    "head's verdict is not the one meant, the answer is a finding instead, and the author fixes the guard.\n"
+    "merge-lane-2 holds the merge until every difference that this check, run on the head commit being merged, "
+    "finds has its \"verdict change intended\" line; when no NEW GUARD REFUSES block follows, merge-lane-2 then "
+    "merges despite the exit 1. A difference answered with a finding holds the merge until the author's fix "
+    "makes this check no longer find it.")
 NEW_GUARD_REFUSES_MESSAGE = (
     "NEW GUARD REFUSES RECORDED COMMANDS: a guard the head adds refuses each numbered command listed above "
     "under a \"new guard ... would refuse\" line, so this check exits 1. Agents ran each of those commands, "
     "and a guard that refuses a command agents need stops their work.\n"
-    "The pull request's reviewer answers each refused command in the review. A refused command is one guard, "
-    "one working directory and one command; when the in-process and the new-process modes both list it, it is "
-    "still one refused command, with one answer.\n"
+    "The pull request's reviewer answers each refused command in the body of the review the reviewer posts. "
+    "A refused command is one guard, "
+    "one working directory and one command; when several modes list it, it is still one refused command, with "
+    "one answer.\n"
     "Where the refusal is right, the answer is a line of its own:\n"
     "  refusal right: <guard file> | <working directory> | <command>\n"
     "copying the guard file's path from its \"new guard\" line and the working directory and the command from "
@@ -83,13 +102,14 @@ NEW_GUARD_REFUSES_MESSAGE = (
     "Where the refusal is wrong, the answer is a finding instead, and the author then narrows the guard so that "
     "it lets that command through. The other refused commands still each get their \"refusal right\" line.\n")
 NEW_GUARD_REFUSES_ONLY_ENDING = (
-    "merge-lane-2 holds the merge until every refused command this check lists, run at the head commit being "
-    "merged, has its \"refusal right\" line, and then merges despite the exit 1. A refusal answered with a "
+    "merge-lane-2 holds the merge until every refused command that this check, run on the head commit being "
+    "merged, lists has its \"refusal right\" line, and then merges despite the exit 1. A refusal answered with a "
     "finding holds the merge until the author's narrowed guard no longer refuses that command, so the check "
     "no longer lists it.")
 NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING = (
-    "The VERDICT CHANGED line above blocks the merge on its own: \"refusal right\" lines do not clear it, "
-    "so the merge also waits until each verdict difference is explained and intended.")
+    "The VERDICT CHANGED block above holds the merge on its own: \"refusal right\" lines do not clear it. "
+    "merge-lane-2 merges despite the exit 1 only once every refused command has its \"refusal right\" line "
+    "and every difference has its \"verdict change intended\" line.")
 
 # Copied from the parent, never inherited: a git variable would point the checkouts' git at
 # another repository, and the attendance variables change the guards' messages.
@@ -517,8 +537,9 @@ def smoke_check(checkout, new_process, search_file_directory, timeout, guards_le
     WORKER["timeout"] = timeout
     readings = guard_readings(guards, "true", "/", search_file_directory)
     try:
-        signal.alarm(timeout)
-        readings["search-file main()"] = search_file_main_outcome(guards[SEARCH_FILE_GUARD], "true", "/")
+        if SEARCH_FILE_GUARD in guards:  # Not at a base ref older than the search-file guard.
+            signal.alarm(timeout)
+            readings["search-file main()"] = search_file_main_outcome(guards[SEARCH_FILE_GUARD], "true", "/")
     except PairTimedOut:
         readings["search-file main()"] = ("TIMEOUT", None)
     except (Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
@@ -598,9 +619,16 @@ def refuses(verdict):
 
 
 def added_guard_refusals(pairs, head_rows, added_guards):
-    """Return each (pair, guard, head reading) where a guard the head adds refuses the pair."""
-    return [(pair, guard, row[guard]) for pair, row in zip(pairs, head_rows) if isinstance(row, dict)
-            for guard in added_guards if refuses(row[guard][0])]
+    """Return each (pair, guard, head reading) where a guard the head adds refuses the pair.
+
+    A row that is not a dict is search-file main()'s reading, which belongs to the search-file guard."""
+    refusals = []
+    for pair, row in zip(pairs, head_rows):
+        if isinstance(row, dict):
+            refusals.extend((pair, guard, row[guard]) for guard in added_guards if refuses(row[guard][0]))
+        elif SEARCH_FILE_GUARD in added_guards and refuses(row[0]):
+            refusals.append((pair, SEARCH_FILE_GUARD, row))
+    return refusals
 
 
 def failed_readings(pairs, rows, label):
@@ -789,7 +817,12 @@ def replay_with_sigterm_handled(arguments):
         for mode, pairs_name, new_process, search_file_main in modes:
             rows, mode_failed = {}, []
             mode_pairs = json.loads((scratch / pairs_name).read_text())
+            # search-file main() is the search-file guard alone, so when the head adds that guard the
+            # base has no main() to run, and every refusal at the head is the added guard's.
+            main_at_head_only = search_file_main and SEARCH_FILE_GUARD in added_guards
             for label, checkout in checkouts.items():
+                if main_at_head_only and label == "base":
+                    continue
                 out = scratch / f"verdicts-{mode.split()[0]}-{label}.json"
                 started = time.monotonic()
                 run_step_in_child(["--step", "verdicts", str(checkout), str(scratch / pairs_name), str(out),
@@ -811,7 +844,8 @@ def replay_with_sigterm_handled(arguments):
                       + (f", of which one command per process: {one_command_per_process}"
                          if one_command_per_process else "")
                       + f"; failed readings: {len(failed)}")
-            differences, message_differences = verdict_differences(mode_pairs, rows["base"], rows["head"])
+            differences, message_differences = ([], []) if main_at_head_only else \
+                verdict_differences(mode_pairs, rows["base"], rows["head"])
             print_rows(f"{mode}: rows whose verdict differs", differences, arguments.show)
             print_rows(f"{mode}: rows whose message differs and verdict does not", message_differences, arguments.show)
             refusals = added_guard_refusals(mode_pairs, rows["head"], added_guards)
@@ -838,8 +872,7 @@ def replay_with_sigterm_handled(arguments):
             status = 2
         elif verdict_changed or added_guard_refused:
             if verdict_changed:
-                print("VERDICT CHANGED: a recorded command gets a different verdict at the head; the merge is blocked "
-                      "until each difference above is explained and intended.")
+                print(VERDICT_CHANGED_MESSAGE)
             if added_guard_refused:
                 print(NEW_GUARD_REFUSES_MESSAGE + (NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING if verdict_changed
                                                    else NEW_GUARD_REFUSES_ONLY_ENDING))
