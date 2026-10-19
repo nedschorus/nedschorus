@@ -75,6 +75,22 @@ nc-systems/cold-read/cold-read-record-ship.py, whose one line is printed on stde
 The cold-read-cell launcher pre-clears the report path, so a suggestions file
 left by an earlier read is replaced, never appended to.
 
+FROM THE MAC. A document in a ned-box worktree, opened on the Mac through
+its mount of ned-box's home, /Volumes/nedhome, cannot be placed there: the
+worktree's .git file names its git directory by its ned-box path, which the
+Mac does not have. When git reports such a worktree for a target under
+/Volumes/nedhome, the read runs on ned-box instead, over
+`ssh nedlern@ned-box`, on the target's ned-box path under /home/nedlern,
+with the script of the ned-box checkout that holds the target, so the
+report lands where a read by a ned-box agent-seat would put it. Its stdout
+and stderr are relayed with each /home/nedlern/ path in its /Volumes/nedhome/
+form, except a `nedlern@ned-box:` citation, which works from either machine.
+When ned-box cannot be reached, a line says so and the exit is 1; when
+the read there fails, a line says so and the exit is the read's own, or 1
+when a signal killed ssh. A
+worktree whose git directory is unusable anywhere else still stops the read,
+exit 1.
+
 On either route, a read that finishes while CLAUDE_CODE_SESSION_ID is set
 writes `<report name>.agent-session.json` beside its report, holding that
 agent-session ID and the resolved cold-read-target path. The Stop hook
@@ -110,6 +126,7 @@ import os
 import importlib.util
 import pathlib
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -230,10 +247,100 @@ git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 # git's words when the -C directory does not exist; LC_ALL=C keeps them in English.
 GIT_DIRECTORY_MISSING_MESSAGE = "cannot change to"
+_ned_box_home_spec = importlib.util.spec_from_file_location(
+    "ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+ned_box_home = importlib.util.module_from_spec(_ned_box_home_spec)
+_ned_box_home_spec.loader.exec_module(ned_box_home)
+# Module attributes, so the test can point them at scratch directories: no
+# machine but the Mac has the mount.
+NED_BOX_HOME = ned_box_home.NED_BOX_HOME
+MAC_MOUNT_OF_NED_BOX_HOME = ned_box_home.MAC_MOUNT_OF_NED_BOX_HOME
+SSH_PROGRAM = "ssh"
+NED_BOX_SSH_TARGET = "nedlern@ned-box"
+# BatchMode: a password prompt would hang a read no one is typing into.
+SSH_OPTIONS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=10")
+SSH_EXIT_CONNECTION_FAILED = 255
 
 
 class CheckoutRootUnreadable(RuntimeError):
     """git failed for a reason other than finding no worktree."""
+
+
+class NedBoxWorktreeUnreadableThroughMacMount(CheckoutRootUnreadable):
+    """The target is in a ned-box worktree seen through the Mac's mount,
+    whose git directory git cannot read here; the read must run on ned-box."""
+
+    def __init__(self, message: str, ned_box_target: str):
+        super().__init__(message)
+        self.ned_box_target = ned_box_target
+
+
+def ned_box_path_of_mac_mount_path(path: pathlib.Path):
+    """The ned-box path of a path under the Mac's mount of ned-box's home, or None."""
+    mount = MAC_MOUNT_OF_NED_BOX_HOME + "/"
+    text = str(path)
+    if not text.startswith(mount):
+        return None
+    return NED_BOX_HOME + "/" + text[len(mount):]
+
+
+def text_with_ned_box_paths_rewritten_as_mac_mount_paths(text: str) -> str:
+    """`text` with each ned-box home path in its Mac mount form, except in
+    a log-store citation, nedlern@ned-box:/home/nedlern/..., which works from
+    either machine."""
+    return re.sub(r"(?<!ned-box:)" + re.escape(NED_BOX_HOME + "/"),
+                  lambda _: MAC_MOUNT_OF_NED_BOX_HOME + "/", text)
+
+
+def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
+    """Run the fast read on ned-box on `ned_box_target`, with the script of
+    the ned-box checkout holding it, relay its output in Mac mount paths, and
+    return its exit code, or 1 when it could not be run."""
+    directory = str(pathlib.PurePosixPath(ned_box_target).parent)
+    session_id = os.environ.get(record_names.AGENT_SESSION_ID_ENVIRONMENT_VARIABLE)
+    session_assignment = (
+        f"{record_names.AGENT_SESSION_ID_ENVIRONMENT_VARIABLE}={shlex.quote(session_id)} "
+        if session_id else "")
+    remote_command = (
+        f"top=$(git -C {shlex.quote(directory)} rev-parse --show-toplevel) && "
+        f"cd -- \"$top\" && {session_assignment}exec python3 "
+        f"{shlex.quote(str(pathlib.Path(__file__).resolve().relative_to(REPO_ROOT)))} "
+        f"--target {shlex.quote(ned_box_target)}")
+    print(f"{PROGRAM}: git on this machine cannot read the ned-box worktree "
+          f"holding the target, so the fast read runs on ned-box on "
+          f"{ned_box_target}.", file=sys.stderr)
+    try:
+        completed = subprocess.run(
+            [SSH_PROGRAM, *SSH_OPTIONS, NED_BOX_SSH_TARGET, remote_command],
+            capture_output=True, stdin=subprocess.DEVNULL, text=True, check=False)
+    except OSError as error:
+        print(f"{PROGRAM}: no fast read ran: ssh could not be started ({error}).\n"
+              f"If ssh is missing, run the fast read on ned-box itself, on {ned_box_target}.",
+              file=sys.stderr)
+        print("FAILED (no fast read ran: ssh could not be started to reach ned-box)")
+        return 1
+    if completed.returncode == SSH_EXIT_CONNECTION_FAILED:
+        print(f"{PROGRAM}: no fast read ran: ned-box could not be reached "
+              f"(ssh exited {SSH_EXIT_CONNECTION_FAILED}): "
+              f"{completed.stderr.strip() or 'ssh said nothing'}\n"
+              f"Check that ned-box is on and on the LAN, and that this machine's "
+              f"key reaches it: ssh {NED_BOX_SSH_TARGET} true", file=sys.stderr)
+        print("FAILED (no fast read ran: ned-box could not be reached)")
+        return 1
+    sys.stderr.write(text_with_ned_box_paths_rewritten_as_mac_mount_paths(completed.stderr))
+    stdout = text_with_ned_box_paths_rewritten_as_mac_mount_paths(completed.stdout)
+    if completed.returncode == 0:
+        sys.stdout.write(stdout)
+        return 0
+    print(f"{PROGRAM}: the fast read on ned-box failed (exit {completed.returncode}); "
+          f"its own lines, above, say why.", file=sys.stderr)
+    sys.stdout.write(stdout if stdout.strip() else
+                     f"FAILED (the fast read on ned-box exited {completed.returncode} "
+                     f"and printed no result line)\n")
+    # Negative when a signal killed ssh, which is no exit status.
+    return max(completed.returncode, 1)
 
 
 def checkout_root_holding(target: pathlib.Path) -> pathlib.Path:
@@ -244,7 +351,9 @@ def checkout_root_holding(target: pathlib.Path) -> pathlib.Path:
     whose .git file names a missing directory or one that is not a git
     directory, and a target in a bare
     repository or under a .git directory, where git finds a repository but
-    no worktree.
+    no worktree. When that worktree is seen through the Mac's mount of
+    ned-box's home, the error raised is NedBoxWorktreeUnreadableThroughMacMount,
+    carrying the target's ned-box path.
     The variables that redirect git are dropped for this one call: set in
     the environment they override -C and would name the wrong worktree."""
     environment = git_redirecting_removal.environment_without_git_redirecting_variables()
@@ -256,13 +365,15 @@ def checkout_root_holding(target: pathlib.Path) -> pathlib.Path:
     top = completed.stdout.strip()
     if completed.returncode == 0 and top:
         return pathlib.Path(top).resolve()
-    # Such as a ned-box worktree read from the Mac through /Volumes/nedhome.
     if git_output.git_stderr_says_worktree_git_directory_unusable(completed.stderr):
+        message = (f"{target} is inside a git worktree whose .git file names a git "
+                   f"directory that is missing or is not a git directory: "
+                   f"{completed.stderr.strip()}")
+        ned_box_target = ned_box_path_of_mac_mount_path(target)
+        if ned_box_target is not None:
+            raise NedBoxWorktreeUnreadableThroughMacMount(message, ned_box_target)
         raise CheckoutRootUnreadable(
-            f"{target} is inside a git worktree whose .git file names a git "
-            f"directory that is missing or is not a git directory: "
-            f"{completed.stderr.strip()}. Run the fast read on the machine that "
-            f"made the worktree, or repair the worktree there with git worktree repair")
+            f"{message}. Run the fast read on the machine that made the worktree")
     if (git_output.git_stderr_says_outside_a_repository(completed.stderr)
             or GIT_DIRECTORY_MISSING_MESSAGE in completed.stderr):
         return REPO_ROOT
@@ -760,6 +871,8 @@ def main() -> int:
     try:
         full_run_class_name = full_run_class_of_target(target)
         report = fast_read_report_path_for_target(target, record_clock_reading())
+    except NedBoxWorktreeUnreadableThroughMacMount as error:
+        return cold_read_fast_read_run_on_ned_box_over_ssh(error.ned_box_target)
     except CheckoutRootUnreadable as error:
         print(f"{PROGRAM}: no fast read ran and no report was written: could "
               f"not tell which checkout holds the target, so could not tell "

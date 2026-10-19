@@ -1244,10 +1244,10 @@ with tempfile.TemporaryDirectory() as git_failure_scratch:
           and "dubious ownership" in git_failure_run.stderr,
           f"exit {git_failure_run.returncode}; {git_failure_run.stdout!r}; {git_failure_run.stderr!r}")
 
-# A worktree whose .git file names a missing git directory, as a ned-box
-# worktree read from the Mac through /Volumes/nedhome does, is a git failure
-# to report: git's words begin like "no worktree", and taking them so would
-# send its walk draft to the records route unsaid.
+# A worktree whose .git file names a missing git directory, outside the
+# Mac's mount of ned-box's home, is a git failure to report: git's words
+# begin like "no worktree", and taking them so would send its walk draft to
+# the records route unsaid.
 with tempfile.TemporaryDirectory() as missing_git_directory_scratch:
     missing_git_directory_scratch = Path(missing_git_directory_scratch).resolve()
     worktree_with_missing_git_directory = missing_git_directory_scratch / "a-worktree"
@@ -1267,7 +1267,8 @@ with tempfile.TemporaryDirectory() as missing_git_directory_scratch:
           "naming the target and a next step",
           "names a git directory that is missing or is not a git directory" in missing_git_directory_raised
           and str(draft_in_worktree_with_missing_git_directory) in missing_git_directory_raised
-          and "git worktree repair" in missing_git_directory_raised,
+          and "Run the fast read on the machine that made the worktree" in missing_git_directory_raised
+          and "git worktree repair" not in missing_git_directory_raised,
           repr(missing_git_directory_raised))
 
     # git prints the same words when the .git file names a directory that
@@ -1306,8 +1307,8 @@ with tempfile.TemporaryDirectory() as missing_git_directory_scratch:
                 wording_raised = ""
             except warning_module.CheckoutRootUnreadable as error:
                 wording_raised = str(error)
-            check(f"git {git_version}'s words for a broken worktree are raised with the repair step",
-                  "git worktree repair" in wording_raised, repr(wording_raised))
+            check(f"git {git_version}'s words for a broken worktree are raised with the next step",
+                  "machine that made the worktree" in wording_raised, repr(wording_raised))
     finally:
         os.environ["PATH"] = path_before_stand_in
 
@@ -1341,6 +1342,203 @@ with tempfile.TemporaryDirectory() as missing_git_directory_scratch:
             os.environ["GIT_CEILING_DIRECTORIES"] = environment_before
     check("a directory in no repository answers this checkout",
           no_repository_root == warning_module.REPO_ROOT, repr(no_repository_root))
+
+# A ned-box worktree seen on the Mac through /Volumes/nedhome: git there
+# cannot read the worktree's git directory, so the read runs on ned-box over
+# ssh. No machine here has the mount, so the mount and ned-box's home are
+# scratch directories, and a stand-in ssh runs the remote command on this
+# machine, where a stand-in fast read in the "ned-box" checkout records what
+# it was given.
+STAND_IN_SSH = """#!/bin/sh
+printf '%s\n' "$@" > "$STAND_IN_SSH_ARGUMENTS_FILE"
+if [ "$STAND_IN_SSH_MODE" = unreachable ]; then
+    echo "ssh: connect to host ned-box port 22: No route to host" >&2
+    exit 255
+fi
+if [ "$STAND_IN_SSH_MODE" = killed ]; then
+    kill -TERM $$
+fi
+for last; do :; done
+exec sh -c "$last"
+"""
+STAND_IN_REMOTE_FAST_READ = """import json, os, pathlib, sys
+plan = json.loads(os.environ["STAND_IN_REMOTE_FAST_READ_PLAN"])
+pathlib.Path(plan["record"]).write_text(json.dumps({
+    "argv": sys.argv[1:], "cwd": os.getcwd(),
+    "session": os.environ.get("CLAUDE_CODE_SESSION_ID")}), encoding="utf-8")
+sys.stderr.write(plan["stderr"])
+sys.stdout.write(plan["stdout"])
+sys.exit(plan["exit"])
+"""
+with tempfile.TemporaryDirectory() as over_ssh_scratch:
+    import contextlib
+    import io
+    import shlex
+    over_ssh_scratch = Path(over_ssh_scratch).resolve()
+    mac_mount = over_ssh_scratch / "mac mount"
+    ned_box_home = over_ssh_scratch / "ned-box home"
+    seat_relative = Path("agents") / "seat it's"
+    mac_worktree = mac_mount / seat_relative
+    (mac_worktree / "docs" / "walk").mkdir(parents=True)
+    (mac_worktree / ".git").write_text(
+        f"gitdir: {ned_box_home / 'Projects' / 'gone' / '.git' / 'worktrees' / 'seat'}\n",
+        encoding="utf-8")
+    mac_draft = mac_worktree / "docs" / "walk" / "a-walk-item-draft.md"
+    mac_draft.write_text("## Item 1 of 1\n", encoding="utf-8")
+    ned_box_worktree = ned_box_home / seat_relative
+    subprocess.run(["git", "init", "-q", str(ned_box_worktree)], check=True)
+    (ned_box_worktree / "nc-systems" / "cold-read").mkdir(parents=True)
+    (ned_box_worktree / "nc-systems" / "cold-read" / "cold-read-fast-read.py").write_text(
+        STAND_IN_REMOTE_FAST_READ, encoding="utf-8")
+    ned_box_draft = ned_box_worktree / "docs" / "walk" / "a-walk-item-draft.md"
+    ned_box_suggestions = ned_box_worktree / "docs" / "walk" / "a-walk-item-suggestions.md"
+    ned_box_draft.parent.mkdir(parents=True)
+    ned_box_draft.write_text("## Item 1 of 1\n", encoding="utf-8")
+    mac_suggestions = mac_worktree / "docs" / "walk" / "a-walk-item-suggestions.md"
+    stand_in_ssh = over_ssh_scratch / "ssh"
+    stand_in_ssh.write_text(STAND_IN_SSH, encoding="utf-8")
+    stand_in_ssh.chmod(0o755)
+    ssh_arguments_file = over_ssh_scratch / "ssh-arguments"
+    remote_record = over_ssh_scratch / "remote-record.json"
+    log_store_citation = f"nedlern@ned-box:{ned_box_home}/nedschorus-logs/x/"
+
+    attributes_before = {name: getattr(warning_module, name) for name in
+                         ("MAC_MOUNT_OF_NED_BOX_HOME", "NED_BOX_HOME", "SSH_PROGRAM")}
+    environment_names = ("STAND_IN_SSH_ARGUMENTS_FILE", "STAND_IN_SSH_MODE",
+                         "STAND_IN_REMOTE_FAST_READ_PLAN", AGENT_SESSION_ID_VARIABLE)
+    environment_before = {name: os.environ.get(name) for name in environment_names}
+    argv_before = sys.argv
+
+    def read_from_mac(target, ssh_mode="", remote_exit=0, remote_stdout=None,
+                      ssh_program=stand_in_ssh, session_id=None):
+        """main() on `target` as the Mac runs it: (exit, stdout, stderr)."""
+        for stale in (ssh_arguments_file, remote_record):
+            if stale.exists():
+                stale.unlink()
+        warning_module.MAC_MOUNT_OF_NED_BOX_HOME = str(mac_mount)
+        warning_module.NED_BOX_HOME = str(ned_box_home)
+        warning_module.SSH_PROGRAM = str(ssh_program)
+        os.environ["STAND_IN_SSH_ARGUMENTS_FILE"] = str(ssh_arguments_file)
+        os.environ["STAND_IN_SSH_MODE"] = ssh_mode
+        os.environ["STAND_IN_REMOTE_FAST_READ_PLAN"] = json.dumps({
+            "record": str(remote_record), "exit": remote_exit,
+            "stdout": f"{ned_box_suggestions}\n" if remote_stdout is None else remote_stdout,
+            "stderr": f"cold-read-fast-read: record: shipped: {log_store_citation}\n"
+                      f"cold-read-fast-read: read {ned_box_draft}\n"})
+        if session_id is None:
+            os.environ.pop(AGENT_SESSION_ID_VARIABLE, None)
+        else:
+            os.environ[AGENT_SESSION_ID_VARIABLE] = session_id
+        sys.argv = ["cold-read-fast-read.py", "--target", str(target)]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = warning_module.main()
+        return exit_code, stdout.getvalue(), stderr.getvalue()
+
+    try:
+        warning_module.MAC_MOUNT_OF_NED_BOX_HOME = str(mac_mount)
+        warning_module.NED_BOX_HOME = str(ned_box_home)
+        check("a path under the Mac's mount translates to the same path under ned-box's home",
+              warning_module.ned_box_path_of_mac_mount_path(mac_draft) == str(ned_box_draft),
+              repr(warning_module.ned_box_path_of_mac_mount_path(mac_draft)))
+        beside_the_mount = Path(str(mac_mount) + "-other") / "a.md"
+        check("a path beside the mount, sharing its name as a prefix, is not under it",
+              warning_module.ned_box_path_of_mac_mount_path(beside_the_mount) is None,
+              repr(warning_module.ned_box_path_of_mac_mount_path(beside_the_mount)))
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft, session_id="session 'one'")
+        ssh_arguments = (ssh_arguments_file.read_text(encoding="utf-8").splitlines()
+                         if ssh_arguments_file.exists() else [])
+        remote = (json.loads(remote_record.read_text(encoding="utf-8"))
+                  if remote_record.exists() else {})
+        check("from the Mac, a ned-box worktree's document is read on ned-box and its "
+              "report path is printed in its Mac mount form, exit 0",
+              exit_code == 0 and stdout == f"{mac_suggestions}\n"
+              and "failed" not in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+        check("ssh runs without prompting, to nedlern@ned-box, with a connect timeout",
+              ssh_arguments[:5] == ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                                    "nedlern@ned-box"], repr(ssh_arguments))
+        check("the read on ned-box runs from the ned-box checkout holding the target, "
+              "on the target's ned-box path, through a quoted remote command",
+              remote.get("argv") == ["--target", str(ned_box_draft)]
+              and remote.get("cwd") == str(ned_box_worktree), repr(remote))
+        check("the agent-session ID reaches the read on ned-box",
+              remote.get("session") == "session 'one'", repr(remote))
+        check("ned-box paths on stderr are relayed in Mac mount form, a log-store citation as it is",
+              f"read {mac_draft}" in stderr and log_store_citation in stderr
+              and f"read {ned_box_draft}" not in stderr, repr(stderr))
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft)
+        remote = (json.loads(remote_record.read_text(encoding="utf-8"))
+                  if remote_record.exists() else {})
+        check("with no agent-session ID set, none is passed to the read on ned-box",
+              exit_code == 0 and remote.get("session") is None, repr(remote))
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft, ssh_mode="unreachable")
+        check("when ned-box cannot be reached, the read says so with ssh's words and exits 1",
+              exit_code == 1 and stdout.startswith("FAILED")
+              and "ned-box could not be reached" in stderr
+              and "No route to host" in stderr and "ssh nedlern@ned-box true" in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft, ssh_mode="killed")
+        check("when a signal kills ssh, the read reports a failure and exits 1",
+              exit_code == 1 and stdout.startswith("FAILED")
+              and "the fast read on ned-box failed" in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        exit_code, stdout, stderr = read_from_mac(
+            mac_draft, ssh_program=over_ssh_scratch / "no-such-ssh")
+        check("when ssh cannot be started, the read says so and exits 1",
+              exit_code == 1 and stdout.startswith("FAILED")
+              and "ssh could not be started" in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        exit_code, stdout, stderr = read_from_mac(
+            mac_draft, remote_exit=64,
+            remote_stdout=f"FAILED (target not found: {ned_box_draft})\n")
+        check("when the read on ned-box fails, its FAILED line is relayed in Mac mount form, "
+              "a line says it failed, and its exit code is kept",
+              exit_code == 64 and stdout == f"FAILED (target not found: {mac_draft})\n"
+              and "the fast read on ned-box failed (exit 64)" in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft, remote_exit=1, remote_stdout="")
+        check("when the read on ned-box fails printing no result line, the read prints a "
+              "FAILED line of its own",
+              exit_code == 1 and stdout.startswith("FAILED (the fast read on ned-box exited 1"),
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        shutil.rmtree(ned_box_worktree / ".git")
+        exit_code, stdout, stderr = read_from_mac(mac_draft)
+        check("when ned-box has no checkout holding the target, git's words are relayed, "
+              "a FAILED line is printed and the exit is nonzero",
+              exit_code != 0 and stdout.startswith("FAILED")
+              and "not a git repository" in stderr and remote_record.exists() is False,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        elsewhere_worktree = over_ssh_scratch / "elsewhere" / "seat"
+        (elsewhere_worktree / "docs" / "walk").mkdir(parents=True)
+        (elsewhere_worktree / ".git").write_text(
+            f"gitdir: {over_ssh_scratch / 'gone' / '.git'}\n", encoding="utf-8")
+        elsewhere_draft = elsewhere_worktree / "docs" / "walk" / "a-walk-item-draft.md"
+        elsewhere_draft.write_text("## Item 1 of 1\n", encoding="utf-8")
+        exit_code, stdout, stderr = read_from_mac(elsewhere_draft)
+        check("a broken worktree outside the mount still stops the read, exit 1, with no ssh",
+              exit_code == 1 and stdout.startswith("FAILED (no fast read ran")
+              and "machine that made the worktree" in stderr
+              and not ssh_arguments_file.exists(),
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+    finally:
+        for name, value in attributes_before.items():
+            setattr(warning_module, name, value)
+        for name, value in environment_before.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        sys.argv = argv_before
 
 print()
 if failures:
