@@ -1554,7 +1554,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
               "and exits 1",
               exit_code == 1
               and stdout.startswith("FAILED (ssh was killed by signal 15")
-              and "ssh was killed by signal 15 before the fast read on ned-box finished"
+              and "ssh was killed by signal 15 before the cold-read-fast-read on ned-box finished"
               in stderr and "the fast read on ned-box failed" not in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
 
@@ -1566,6 +1566,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
               and stdout.startswith("FAILED (no fast read result: the fast read on ned-box "
                                     "did not finish within")
               and "so this program stopped ssh" in stderr
+              and f"report, on ned-box, at {ned_box_suggestions}." in stderr
               and f"The cold-read-fast-read of {ned_box_draft} ran on ned-box" in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
 
@@ -1582,7 +1583,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
         stderr_lines = stderr.splitlines()
         printed = {}
         for name, opening in (("an agent-seat on ned-box", "Ask any agent-seat on ned-box"),
-                              ("the user", "Or, when no agent-seat on ned-box can")):
+                              ("the user", "When ListAgents lists no agent-seat on ned-box")):
             index = next((index for index, line in enumerate(stderr_lines)
                           if line.startswith(opening)), None)
             printed[name] = (stderr_lines[index + 1]

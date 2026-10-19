@@ -337,35 +337,49 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
             timeout=COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         minutes = f"{COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS / 60:g}"
-        print(f"{PROGRAM}: no fast read result: the fast read on ned-box did not "
-              f"finish within {minutes} minutes, so this program stopped ssh on this "
-              f"Mac, and the read's own lines were not relayed. The read on ned-box "
-              f"may still be running and may still write its report.\n"
+        target = pathlib.PurePosixPath(ned_box_target)
+        if (target.parent.parts[-2:] == WALK_DIRECTORY_RELATIVE.parts
+                and target.name.endswith(WALK_DRAFT_SUFFIX)
+                and len(target.name) > len(WALK_DRAFT_SUFFIX)):
+            report_place = (target.parent / (target.name[:-len(WALK_DRAFT_SUFFIX)]
+                                             + WALK_SUGGESTIONS_SUFFIX))
+        else:
+            report_place = (f"a directory whose name starts "
+                            f"{record_names.record_name_for_target(target)}- in "
+                            f"nedlern@ned-box:{NED_BOX_HOME}/nedschorus-logs/"
+                            f"{record_names.RECORDS_DIRECTORY_NAME}/")
+        print(f"{PROGRAM}: no cold-read-fast-read result: the cold-read-fast-read on "
+              f"ned-box did not finish within {minutes} minutes, so this program "
+              f"stopped ssh on this Mac, and the read's own lines were not relayed. "
+              f"The read on ned-box may still be running and may still write its "
+              f"report, on ned-box, at {report_place}.\n"
               f"Tell the user, in these words: \"The cold-read-fast-read of "
               f"{ned_box_target} ran on ned-box for more than {minutes} minutes, so "
-              f"the Mac stopped waiting for it; the document has no fast read "
-              f"result yet.\"\n"
+              f"the Mac stopped waiting for it; the document has no "
+              f"cold-read-fast-read result.\"\n"
               f"If you are a subagent, pass that sentence to the agent that "
               f"dispatched you instead.", file=sys.stderr)
         print(f"FAILED (no fast read result: the fast read on ned-box did not finish "
               f"within {minutes} minutes)")
         return 1
     except OSError as error:
-        print(f"{PROGRAM}: no fast read ran: ssh could not be started ({error}).\n"
+        print(f"{PROGRAM}: no cold-read-fast-read ran: ssh could not be started ({error}).\n"
               f"Ask any agent-seat on ned-box, by a message sent with Claude Code's "
-              f"SendMessage tool, to run the fast read there, with this "
+              f"SendMessage tool, to run the cold-read-fast-read there, with this "
               f"command:\n{command_for_a_person}\n"
-              f"Or, when no agent-seat on ned-box can, ask the user to run it from a "
-              f"Terminal on his Mac, whose shell has its own PATH and may find ssh "
-              f"where this program could not:\n"
+              f"When ListAgents lists no agent-seat on ned-box, or none answers "
+              f"within 30 minutes, ask the user instead to run it from a Terminal "
+              f"on his Mac, whose shell has its own PATH and may find ssh where "
+              f"this program could not:\n"
               f"ssh {NED_BOX_SSH_TARGET} {shlex.quote(command_for_a_person)}",
               file=sys.stderr)
         print("FAILED (no fast read ran: ssh could not be started to reach ned-box)")
         return 1
     if completed.returncode == SSH_EXIT_CONNECTION_FAILED:
-        print(f"{PROGRAM}: no fast read ran: ned-box could not be reached, or "
-              f"refused this machine's key (ssh exited {SSH_EXIT_CONNECTION_FAILED}): "
-              f"{completed.stderr.strip() or 'ssh said nothing'}\n"
+        print(f"{PROGRAM}: no cold-read-fast-read ran: ssh exited "
+              f"{SSH_EXIT_CONNECTION_FAILED}, which means one of two causes: ned-box "
+              f"could not be reached, or ned-box refused this machine's key. ssh said: "
+              f"{completed.stderr.strip() or 'nothing'}\n"
               f"Check that ned-box is on and on the LAN, and that this machine's "
               f"key reaches it: ssh {NED_BOX_SSH_TARGET} true", file=sys.stderr)
         print("FAILED (no fast read ran: ned-box could not be reached)")
@@ -378,17 +392,17 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
     # Negative when a signal killed ssh, which is no exit status.
     if completed.returncode < 0:
         failure = (f"ssh was killed by signal {-completed.returncode} before the "
-                   f"fast read on ned-box finished")
+                   f"cold-read-fast-read on ned-box finished")
         print(f"{PROGRAM}: {failure}; the read's own lines up to then, if any, "
               f"are above.\n"
               f"When the result line on stdout is a report path, the read finished "
               f"and needs no second run.\n"
-              f"When it starts FAILED, run the same fast read command once more. "
-              f"If ssh is killed again, "
-              f"tell the user that ssh from this Mac to ned-box was killed by signal "
-              f"{-completed.returncode} during a fast read, so the document has no "
-              f"fast read result. If you are a subagent, tell the agent that "
-              f"dispatched you instead.", file=sys.stderr)
+              f"When that line starts FAILED, run the same cold-read-fast-read "
+              f"command once more. If ssh is killed again, tell the user that ssh "
+              f"from this Mac to ned-box was killed, during a cold-read-fast-read of "
+              f"{ned_box_target}, by the signal whose number the second run prints, "
+              f"so the document has no cold-read-fast-read result. If you are a "
+              f"subagent, tell the agent that dispatched you instead.", file=sys.stderr)
     else:
         failure = (f"the fast read on ned-box exited {completed.returncode} "
                    f"and printed no result line")
