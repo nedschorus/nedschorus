@@ -4346,6 +4346,143 @@ def run_settled_file_removal_real_git_cases(scratch: Path):
           "taken for one the author deleted", removed == [], removed)
 
 
+def run_settled_file_removal_collision_and_retry_real_git_cases(
+        scratch: Path):
+    """Two runs of an edit that deletes a settled
+    proposed-improvements-or-changes-file. A new ghi-info question written
+    in the same run never takes the deleted file's name. A run that took
+    the pointer line out and then failed says so, and the rerun puts the
+    line back when main has meanwhile gained a question file. Real git with
+    a bare remote; `gh` and ghi-info are stubbed."""
+    relative = EDIT_RELATIVE
+    prefix = EDIT_NAME[:-len(".md")]
+    head = f"docs/issues/{prefix}-proposed-improvements-or-changes-ghi-info-"
+    settled = head + "2026-10-19.md"
+    later = head + "2026-10-19-3.md"
+    pointer = tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE_TEMPLATE.format(
+        prefix=prefix)
+
+    def git(*arguments, cwd=None):
+        return subprocess.run(
+            ["git", *arguments], cwd=cwd, check=True, capture_output=True,
+            text=True).stdout.strip()
+
+    def repositories(folder: Path):
+        remote, author, other = (folder / "remote.git", folder / "author",
+                                 folder / "other")
+        git("init", "-q", "--bare", "-b", "main", str(remote))
+        for clone in (author, other):
+            git("clone", "-q", str(remote), str(clone))
+            git("config", "user.email", "test@example.com", cwd=clone)
+            git("config", "user.name", "test", cwd=clone)
+        ghi_md = staged_form(title=EDIT_TITLE, text=tool.with_pointer_line(
+            f"# {EDIT_TITLE}\n\nBody.\n", prefix))
+        (author / relative).parent.mkdir(parents=True)
+        (author / relative).write_text(ghi_md, encoding="utf-8")
+        (author / settled).write_text(
+            "## E1 — possible problem: x\nState: settled, not worth doing\n",
+            encoding="utf-8")
+        ask = author / "scripts" / "ghi-info-ask.py"
+        ask.parent.mkdir(parents=True)
+        ask.write_text("# stands in for the real one; never executed\n")
+        git("add", "-A", cwd=author)
+        git("commit", "-q", "-m", "base", cwd=author)
+        git("push", "-q", "origin", "HEAD:main", cwd=author)
+        return remote, author, other
+
+    def runner_for(ask_reply, failing_pushes):
+        def runner(arguments, timeout=None, cwd=None, check=True):
+            joined = " ".join(str(argument) for argument in arguments)
+            if ASK in joined:
+                return ask_reply
+            if arguments[0] == "gh":
+                if "issue view" in joined:
+                    return issue_json(EDIT_TITLE,
+                                      tool.links_body(REPO, [relative]))
+                if "pr list" in joined:
+                    return Completed("[]")
+                return Completed(
+                    "https://github.com/nedschorus/nedschorus/pull/1\n")
+            if arguments[:2] == ["git", "push"] and failing_pushes:
+                failing_pushes.pop()
+                raise tool.Refused("git push --quiet failed: injected", 1)
+            return tool.run(arguments,
+                            timeout=timeout or tool.GH_TIMEOUT_SECONDS,
+                            cwd=cwd, check=check)
+        return runner
+
+    def pushed_branch(remote: Path) -> str:
+        pushed = git("ls-remote", "--heads", str(remote), "ghi-570-edit-*")
+        return pushed.split("refs/heads/")[-1] if pushed else ""
+
+    original_date = tool.proposed_improvements_or_changes_file_date
+    tool.proposed_improvements_or_changes_file_date = lambda: "2026-10-19"
+    try:
+        folder = scratch / "collision"
+        folder.mkdir()
+        remote, author, _ = repositories(folder)
+        (author / settled).unlink()
+        (author / relative).write_text(
+            (author / relative).read_text(encoding="utf-8").replace(
+                "Body.", "Body, changed."), encoding="utf-8")
+        asking = Completed("", returncode=3, stderr=ruling_stderr(
+            "#46 the ruling may not hold"))
+        name = ("a ghi-info question written in the run that deletes a "
+                "settled file of the same date lands under another name")
+        try:
+            tool.edit(author / relative, REPO, author,
+                      runner_for(asking, []), quiet)
+            branch = pushed_branch(remote)
+            tree = (git("ls-tree", "-r", "--name-only", branch, cwd=remote)
+                    .splitlines() if branch else [])
+            questions = [item for item in tree if item.startswith(head)]
+            landed = (git("show", f"{branch}:{relative}", cwd=remote)
+                      if branch else "")
+            check(name, settled not in tree and len(questions) == 1
+                  and pointer in landed, (tree, landed))
+        except tool.Refused as refusal:
+            check(name, False, str(refusal))
+
+        folder = scratch / "retry"
+        folder.mkdir()
+        remote, author, other = repositories(folder)
+        (author / settled).unlink()
+        unasked = Completed("verdict: unrelated\n")
+        name = ("a run that took the pointer line out and then failed says "
+                "so in its refusal")
+        try:
+            tool.edit(author / relative, REPO, author,
+                      runner_for(unasked, [True]), quiet)
+            check(name, False, "no refusal")
+        except tool.Refused as refusal:
+            check(name, "git push --quiet failed: injected" in str(refusal)
+                  and "removed the line pointing to the "
+                  "proposed-improvements-or-changes-files" in str(refusal)
+                  and refusal.code == 1, str(refusal))
+        git("pull", "-q", "origin", "main", cwd=other)
+        (other / later).write_text("## E1 — possible problem: y\nState: open\n",
+                                   encoding="utf-8")
+        git("add", "-A", cwd=other)
+        git("commit", "-q", "-m", "a later question", cwd=other)
+        git("push", "-q", "origin", "HEAD:main", cwd=other)
+        name = ("its rerun, after main gained a question file, lands the "
+                "GHI-MD with the pointer line beside that file")
+        try:
+            tool.edit(author / relative, REPO, author,
+                      runner_for(unasked, []), quiet)
+            branch = pushed_branch(remote)
+            tree = (git("ls-tree", "-r", "--name-only", branch, cwd=remote)
+                    .splitlines() if branch else [])
+            landed = (git("show", f"{branch}:{relative}", cwd=remote)
+                      if branch else "")
+            check(name, settled not in tree and later in tree
+                  and pointer in landed, (tree, landed))
+        except tool.Refused as refusal:
+            check(name, False, str(refusal))
+    finally:
+        tool.proposed_improvements_or_changes_file_date = original_date
+
+
 def run_push_time_limit_cases(scratch: Path):
     conflict = tool.pre_push_conflict_check
     selective = tool.pre_push_selective_test_run
@@ -4672,7 +4809,7 @@ def run_whole_file_set_cases(scratch: Path):
     kept_path = kept_dir / "570-a-statusline.md"
     kept_path.write_text(pointed, encoding="utf-8")
     still = (question[:-len(".md")] + "-2.md")
-    kept = tool.with_pointer_line_removed_when_last_file_goes(
+    kept = tool.with_pointer_line_set_by_files_left_after_removal(
         kept_path, pointed, "570-a-statusline", kept_dir, [question, still],
         [question], quiet, scratch)
     check("the pointer line stays while main still holds another question "
@@ -4680,10 +4817,32 @@ def run_whole_file_set_cases(scratch: Path):
           kept == pointed
           and kept_path.read_text(encoding="utf-8") == pointed, kept)
     (kept_dir / Path(still).name).write_text("State: open\n")
-    kept = tool.with_pointer_line_removed_when_last_file_goes(
+    kept = tool.with_pointer_line_set_by_files_left_after_removal(
         kept_path, pointed, "570-a-statusline", kept_dir, [question],
         [question], quiet, scratch)
     check("and while one is still on disk beside it", kept == pointed, kept)
+
+    disk_lines = []
+    lines_dir = scratch / "disk-change-lines"
+    lines_dir.mkdir()
+    bare = "# A statusline\n\nBody.\n"
+    lines_path = lines_dir / "570-a-statusline.md"
+    lines_path.write_text(bare, encoding="utf-8")
+    tool.with_pointer_line_set_by_files_left_after_removal(
+        lines_path, bare, "570-a-statusline", lines_dir, [question, still],
+        [question], disk_lines.append, scratch)
+    lines_path.write_text(bare, encoding="utf-8")
+    tool.write_proposed_improvements_or_changes_file(
+        lines_dir, "570-a-statusline", REPO,
+        tool.RulingConflict(None, "the ruling may not hold"), None,
+        disk_lines.append, "edited", scratch)
+    tool.with_pointer_line_written(lines_path, bare, "570-a-statusline",
+                                   lines_dir, disk_lines.append, scratch)
+    check("every line saying this run wrote a file on disk opens with one "
+          "of the openings an edit's refusal looks for",
+          len(disk_lines) == 3 and all(
+              line.startswith(tool.DISK_CHANGE_REPORT_OPENINGS)
+              for line in disk_lines), disk_lines)
 
     body = "---\nissue: x\n---\n\n# A statusline\n\nBody.\n"
     check("taking the pointer line out gives back the file it was written "
@@ -4732,6 +4891,9 @@ def main():
         run_edit_landing_real_git_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-removal-test-") as name:
         run_settled_file_removal_real_git_cases(Path(name))
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-retry-test-") as name:
+        run_settled_file_removal_collision_and_retry_real_git_cases(
+            Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-landed-test-") as name:
         run_landed_design_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-push-test-") as name:

@@ -508,6 +508,13 @@ def ruling_conflict_from_stderr(stderr: str):
     return None
 
 
+# The openings of the report lines that say this run wrote a file on disk.
+DISK_CHANGE_REPORT_OPENINGS = (
+    "added the line pointing to the proposed-improvements-or-changes-files",
+    "removed the line pointing to the proposed-improvements-or-changes-files",
+    "wrote ghi-info's ruling question to ")
+
+
 class Refused(Exception):
     """A refusal the caller can act on. Carries its own exit code."""
 
@@ -1207,13 +1214,15 @@ def free_name(directory: Path, base: str, taken) -> str:
 
 def write_proposed_improvements_or_changes_file(
         directory: Path, prefix: str, repo: str, conflict, runner, report,
-        operation_done: str, repository_root: Path) -> Path:
+        operation_done: str, repository_root: Path, taken=()) -> Path:
     """Writes ghi-info's ruling question to a new
     proposed-improvements-or-changes-file in the directory, before any step
     that reaches GitHub, and returns its path. The ruling's title is looked
     up first; when that or the write fails, nothing has been written
     anywhere, and the refusal says so. `operation_done` is "filed" or
-    "edited"."""
+    "edited". `taken` holds names the new file must not have, such as those
+    of files this edit deletes, which are gone from disk but still on
+    main."""
     ruling_title = None
     try:
         if conflict.ruling_issue is not None:
@@ -1224,7 +1233,8 @@ def write_proposed_improvements_or_changes_file(
         path = directory / free_name(
             directory,
             f"{prefix}{PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX}"
-            f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_INFO}-{date}", ())
+            f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_INFO}-{date}",
+            taken)
         path.write_text(proposed_improvements_or_changes_file_text(
             repo, conflict, ruling_title, date, operation_done),
             encoding="utf-8")
@@ -2899,21 +2909,28 @@ def removed_proposed_improvements_or_changes_files(
             if blob_at(base, item, repository_root, runner) is not None]
 
 
-def with_pointer_line_removed_when_last_file_goes(
+def with_pointer_line_set_by_files_left_after_removal(
         path: Path, text: str, prefix: str, directory: Path, on_main_beside,
         removed, report, repository_root: Path) -> str:
-    """When this edit removes the last proposed-improvements-or-changes-file
-    beside the GHI-MD, none being left on disk or on main, takes the
-    pointer line out of the author's file and returns the new text;
-    otherwise returns the text unchanged."""
-    if (not removed or set(on_main_beside) - set(removed)
-            or proposed_improvements_or_changes_files_in(directory, prefix)):
+    """When this edit removes proposed-improvements-or-changes-files beside
+    the GHI-MD, makes the author's file carry the pointer line exactly when
+    one is left, on disk or on main, and returns the new text; otherwise
+    returns the text unchanged. Main's files count because an earlier run
+    of this edit may have taken the line out before main gained one."""
+    if not removed:
         return text
-    updated = without_pointer_line(text, prefix)
+    left = (set(on_main_beside) - set(removed)
+            or proposed_improvements_or_changes_files_in(directory, prefix))
+    updated = (with_pointer_line(text, prefix) if left
+               else without_pointer_line(text, prefix))
     if updated != text:
         path.write_text(updated, encoding="utf-8")
         shown = path_shown_relative_to_repository_root(path, repository_root)
-        report("removed the line pointing to the "
+        report(f"added the line pointing to the "
+               "proposed-improvements-or-changes-files under the first "
+               f"heading of {shown}: main still holds one this edit keeps"
+               if left else
+               "removed the line pointing to the "
                "proposed-improvements-or-changes-files from under the first "
                f"heading of {shown}: this edit removes the last of them")
     return updated
@@ -2961,7 +2978,32 @@ def proposed_files_moving_with_ghi_md(moved_from, relative: str, prefix: str,
 
 
 def edit(path: Path, repo: str, repository_root: Path, runner, report):
-    """The whole edit sequence, and the one function the tests drive."""
+    """The whole edit sequence, and the one function the tests drive. A
+    refusal after this run changed a file on disk says which, since the
+    author's checkout no longer holds what the author left there."""
+    changed_on_disk = []
+
+    def report_and_note(line):
+        if line and line.startswith(DISK_CHANGE_REPORT_OPENINGS):
+            changed_on_disk.append(line)
+        report(line)
+
+    try:
+        return edit_steps(path, repo, repository_root, runner,
+                          report_and_note)
+    except Refused as refusal:
+        if not changed_on_disk:
+            raise
+        raise Refused(
+            f"{refusal}\nBefore it stopped, this run changed files on disk "
+            "and left them so:\n"
+            + "".join(f"- {line}\n" for line in changed_on_disk)
+            + "Rerun this command once the failure above is fixed; it works "
+            "from the files as they are now.", refusal.code) from refusal
+
+
+def edit_steps(path: Path, repo: str, repository_root: Path, runner, report):
+    """The edit sequence that `edit` runs."""
     text, title, number, relative = validate_edit(path, repository_root)
     # Read here, before a fetch, a model call, a push or a pull request: the
     # number is the file's NAME, or a landed design's `issue:` line, so one
@@ -3034,7 +3076,7 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         if on_main is not None else [])
     removed = removed_proposed_improvements_or_changes_files(
         directory, on_main_beside, main_commit, repository_root, runner)
-    text = with_pointer_line_removed_when_last_file_goes(
+    text = with_pointer_line_set_by_files_left_after_removal(
         path, text, prefix, directory, on_main_beside, removed, report,
         repository_root)
     # What lands: the author's file carrying the `issue:` line this tool
@@ -3080,7 +3122,7 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         if conflict is not None:
             write_proposed_improvements_or_changes_file(
                 directory, prefix, repo, conflict, runner, report, "edited",
-                repository_root)
+                repository_root, [Path(item).name for item in removed])
             proposed = unlanded_proposed_improvements_or_changes_files(
                 directory, prefix, relative, repository_root, runner,
                 main_commit)
