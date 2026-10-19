@@ -8,11 +8,13 @@ Wired as a Stop and a SubagentStop hook in .claude/settings.json.
 THE TRIGGER is the agent's last reply of the turn, read from the transcript:
 the text blocks of the last assistant message that has text, since the last
 message the user (or, for a subagent, its parent) sent. absence_claim_matches()
-decides whether that reply claims a stored artifact is absent. It is four
-phrase patterns, numbered 2, 4, 6 and 12 after the larger detector they were
-chosen from, with the guards measured alongside them; on 278 hand-labelled
-replies, about four fires in five were correct. Matches inside code, quoted
-text and block quotes do not count.
+decides whether that reply claims a stored artifact is absent. It is five
+phrase patterns, 2, 4, 6 and 12, numbered after the larger detector they were
+chosen from, and 13, for "does not exist" and "no longer exists", with the
+guards measured alongside them. Patterns 2 and 13 count only when a word
+naming a stored artifact stands in the match's own clause. On 278
+hand-labelled replies, about six fires in seven were correct. Matches inside
+code, quoted text and block quotes do not count.
 
 THE HOOK STAYS SILENT when any of these holds:
   - this Stop ends the agent's answer to a Stop hook's output (the shared
@@ -133,14 +135,22 @@ SUBAGENT_REMINDER_TEMPLATE = REMINDER_HEAD + (
 # the guards below read the same as in the measurement.
 PATTERNS = {
     2: r"\b(?:is|are|was|were|it's|they're)\s+(?:(?:now|all|still)\s+)?(?:gone|missing|lost|absent|unrecoverable)\b",
-    4: r"\b(?:can not|cannot|can't|could not|couldn't|did not|didn't|do not|don't|unable to|failed to)\s+(?:\w+\s+){0,3}(?:find|locate|recover)\b",
-    6: r"\b(?:not|isn't|aren't|wasn't|weren't)\s+(?:present\s+)?(?:on disk|in (?:the |this |any |our |my )?(?:mirror|log[- ]store|repo(?:sitory)?|checkout|git|branch|transcript|backup))\b|\bon no branch\b",
+    # Only adverbs may stand between the negation and the verb: "can't reliably find", not "didn't say where to find".
+    4: r"\b(?:can not|cannot|can't|could not|couldn't|did not|didn't|do not|don't|unable to|failed to)\s+(?:(?:yet|still|ever|even|actually|really|reliably|directly|quickly|immediately|always)\s+){0,3}(?:find|locate|recover)\b",
+    6: r"\b(?:not|isn't|aren't|wasn't|weren't)\s+(?:present\s+)?(?:on disk|in (?:the |this |any |our |my )?(?:mirror|log[- ]store|repo(?:sitory)?|checkout|git history|branch|transcript|backup))\b|\bon no branch\b",
+    13: r"\b(?:does not|doesn't|did not|didn't|no longer)\s+exists?\b|\bnever existed\b",
     12: r"\bno\s+(?:user turn|reply|response)(?:\s+from you)?\s+(?:in between|between)\b|\b(?:you never (?:gave|said yes)|ruling you never gave)\b",
 }
 COMPILED = {number: re.compile(pattern, re.I) for number, pattern in PATTERNS.items()}
-# Pattern 2's words also describe processes, settings and findings, so it
-# fires only when a stored artifact is named just before the match.
-ARTIFACT = re.compile(r"\b(?:FILE|files?|documents?|drafts?|transcripts?|records?|copies|copy|backups?|paths?|directories|directory|folders?|artifacts?|overviews?|reports?|logs?|history|traces?|phrases?|mirrors?|checkouts?|repos?|issues?|comments?|edits?|citations?|rulings?|approvals?|prompts?|notes?|data|results?)\b", re.I)
+
+# Pattern 2 fires only when a stored artifact is named in its own clause, just before the match. A hyphen
+# next to the word ("per-path", "file-by-file") makes it a modifier, not the artifact.
+ARTIFACT = re.compile(r"(?<![\w-])(?:FILE|files?|documents?|drafts?|transcripts?|records?|copies|copy|backups?|paths?|directories|directory|folders?|artifacts?|overviews?|reports?|logs?|history|traces?|mirrors?|checkouts?|repos?|issues?|citations?|rulings?|approvals?|prompts?|minutes|data|results?)(?![\w-])", re.I)
+CLAUSE_BREAK = re.compile(r"[;:(—–]|\s-\s")
+# Code and text elements an edit removes; "the fallback is gone" reports a change, not a missing artifact.
+EDITED_ELEMENT = re.compile(r"\b(?:parsing|parser|lookup|comparison|rules?|guards?|comments?|fallback|scan|tail|property|words?|phrases?|names?|command|gap|rows?|arithmetic|waker|advice|alignment|minimum|mod|change|premise|reason|case|binary|style|options?|flags?|code|helper|function|stand-ins)\s*$", re.I)
+EDITED_HEAD = re.compile(r"\b(?:rules?|comparison|owner|guards?|scan|lock|lookup|minimum|change|parsing|arithmetic|waker|code|comments?|refusal|cases?|checks?|format|steps?|fork|clog|command|words|mark|link|alignment|distinction|mod)\b", re.I)
+FIRST_PERSON = re.compile(r"\b(?:I|[Ww]e|[Mm]y|[Oo]ur|me|us)\b")
 SCORING_REPLY = re.compile(r"\b(?:match file|match to|report covers|answer-key entries)\b", re.I)
 
 
@@ -184,41 +194,117 @@ def strip_noise(text):
     return text
 
 
+def clause_before(before):
+    """The text after the last clause break before the match: the match's own subject, roughly."""
+    return CLAUSE_BREAK.split(before)[-1][-80:]
+
+
 def match_is_excluded(number, sentence, before, after):
     """True when the sentence around a match shows it is not an absence claim."""
-    if number == 2 and not ARTIFACT.search(before[-100:]):
-        return True
-    if number == 2 and re.match(r"\s+from (?:the |a )?(?:glossary|list|table|set|definition)\b", after, re.I):
-        return True
+    clause = clause_before(before)
+    is_pattern_13 = number == 13
+    if is_pattern_13:
+        # Pattern 13 needs a stored artifact in its clause or a place after it ("does not exist on main"),
+        # and is read like pattern 2 by every other guard.
+        if not re.search(ARTIFACT.pattern + r"|\bbranch(?:es)?\b", clause, re.I) and not re.match(r"\s+(?:yet\s+)?(?:on|in|anywhere)\b", after, re.I):
+            return True
+        # "a file that doesn't exist", "something that doesn't exist": an indefinite noun with a relative clause names a kind.
+        if re.search(r"\b(?:an?|any|every|something)\s+(?:[\w'-]+\s+){0,4}(?:that|which)\s+$", before, re.I):
+            return True
+        # "on a machine where the directory doesn't exist yet": a general case.
+        if re.search(r"\bwhere\b", before, re.I):
+            return True
+        number = 2
+    if number == 2 and not is_pattern_13:
+        # A pronoun subject ("it is gone", "they're lost") points back past the clause break.
+        pronoun = re.search(r"\b(?:it|they|this|these|those)\s+$", before, re.I) or re.match(r"(?:it's|they're)\b", sentence[len(before):], re.I)
+        if not ARTIFACT.search(before[-100:] if pronoun else clause):
+            return True
     if number == 4 and re.search(r"\b(?:commands?|services?|hosts?|programs?|readers?)\b", sentence, re.I) and not ARTIFACT.search(sentence):
         return True
-    if re.search(r"\b(?:not|rather than|without)\s+(?:\w+\s+){0,3}(?:claiming|concluded|concluding|saying|say)\b", before, re.I):
-        return True
-    if re.search(r"\b(?:before (?:saying|telling)|tells every agent|claimed|counts? how often|counts? how many)\b", before, re.I):
-        return True
     if re.search(r"\b(?:if|unless|when|whenever|would|should|will)\b", before, re.I):
-        return True
-    if re.search(r"\bglossary\b", sentence, re.I):
         return True
     if number == 2 and re.search(r"\b(?:none|nothing|no (?:work|edits?|files?))\b", before, re.I):
         return True
     if number == 2 and re.search(r"\b(?:setting|option|field|flag|heading|section|sentence|clause|line|entry|entries|pid|process|supervisor|thread|cause|exception)\b[^,;:]{0,35}$", before, re.I):
         return True
-    if number == 2 and re.search(r"\bprocesses\b[^,;:]{0,35}$", before, re.I):
-        return True
-    if number == 4 and re.match(r"\s+(?:out\s+)?(?:which run|who wrote|how|why)\b", after, re.I):
+    # A fact, not an artifact: "I did not find out which run wrote it", "What I can't recover: who set the template".
+    if number == 4 and re.match(r"\s*[:\u2014-]?\s*(?:out\s+)?(?:which run|who|how|why)\b", after, re.I):
         return True
     if number == 4 and re.match(r"\s+this shape\b", after, re.I):
         return True
     if re.search(r"\beither\b", before, re.I) and re.search(r"\bor\b", after, re.I):
-        return True
-    if number == 2 and re.search(r"\bno\s+(?:report|file|record)\s*$", before, re.I):
         return True
     if re.search(r"\b(?:does not|doesn't|never)\s+say\b", before[-100:], re.I):
         return True
     if re.search(r"\buntil\b|(?<!at )\bonce\b", before, re.I):
         return True
     if re.search(r"\bcould\b", before, re.I):
+        return True
+    # A relative clause with "whose" names a kind of thing: "a worktree whose git directory is missing".
+    if number == 2 and re.search(r"\bwhose\b[^,;:.]{0,40}$", before, re.I):
+        return True
+    # Talk about claims in the match's own clause, or what someone says just before the match, is not a claim.
+    if re.search(r"\bclaim(?:s|ing|ed)?\b|\b(?:not|isn't) true\b", clause, re.I):
+        return True
+    if re.search(r"\b(?:say|says|said|saying)\s+(?:[\w'-]+\s+){0,5}$", before, re.I):
+        return True
+    # "no test case on main is lost", "nobody's lines are lost".
+    if number == 2 and re.search(r"\b(?:no|nobody's|neither)\s+(?:[\w'-]+\s+){0,4}$", before, re.I):
+        return True
+    # What a test or check verifies: "the tests check that the temporary folder is gone".
+    if re.search(r"\b(?:tests?|checks?)\s+(?:\w+\s+){0,2}(?:that|whether)\b", before, re.I):
+        return True
+    # Pattern 2 on an edited code or text element: "the untested guards are gone".
+    if number == 2 and EDITED_ELEMENT.search(before.rstrip()):
+        return True
+    # Alternatives in a case analysis: "its file is gone", "is missing or stale".
+    if number == 2 and (re.match(r"\s+or\b", after, re.I) or re.search(r"\bor\s+(?:[\w'-]+\s+){0,3}$", before, re.I)):
+        return True
+    # Pattern 4 whose subject is a program, a search or agents in general: "the locator ... so it can't find an approval",
+    # "Keyword search cannot find reviewers", "agents can't find your answer" describe what something can do.
+    if number == 4 and not FIRST_PERSON.search(clause) and re.search(r"\b(?:it|they|agents?|search|test|hook|locator|guard|program|script|reader|checker)\s+$", before, re.I):
+        return True
+    # "couldn't find a stronger case for N", "a term for": an argument or a word, not an artifact.
+    if number == 4 and re.match(r"\s+(?:a|any)\s+(?:[\w-]+\s+){0,2}(?:case|argument|reason|term|word|replacement)s?\b", after, re.I):
+        return True
+    # Pattern 6 on a file said to live elsewhere: it exists, and the sentence says where.
+    if number == 6 and re.search(r"\b(?:lives?|sits?)\s+in\b|\bexists? only\b|\b(?:machine|seat)-local\b|\bgit-?ignored\b", sentence, re.I):
+        return True
+    # A relative clause describes a kind: "rulings an agent asked for that you never gave".
+    if number == 12 and re.search(r"\b(?:that|which)\s+(?:(?:is|are|was|were)\s+)?$", before, re.I):
+        return True
+    # A definition: "step 4 uses the word for another file: the old version kept beside a revised text that is not in the repository".
+    if number == 6 and re.search(r"\b(?:uses?|means|refers? to|stands? for)\b", before, re.I):
+        return True
+    # "missing" as a verb: "the record is missing a field".
+    if number == 2 and re.match(r"\s+(?:a|an|something)\b", after, re.I) and "missing" in sentence[len(before):].lower():
+        return True
+    # A future moment, a test case or every run: "the moment the move lands, that path is gone".
+    if number == 2 and re.search(r"\b(?:checks? on|case where|the moment|on any run)\b", before, re.I):
+        return True
+    # A kind named by a relative clause: "a folder that is missing", "any reports whose file is gone".
+    if number == 2 and re.search(r"\b(?:a|an|any)\s+(?:\w+\s+){0,3}(?:worktree|checkout|folder|file|report)\s+(?:that|whose)\b", before, re.I):
+        return True
+    if number == 2 and re.search(r"\b(?:those|any)\b.*\b(?:whose|that)\b", before, re.I):
+        return True
+    if number == 2 and re.search(r"\b(?:advice|conditional)\b", before, re.I):
+        return True
+    # A removed code element is the head of the match's clause, after any artifact word: "TR1's checks on FILE are gone".
+    if number == 2:
+        clause_after_comma = re.split(r"[,;:]", before)[-1]
+        heads = list(EDITED_HEAD.finditer(clause_after_comma))
+        artifacts = list(ARTIFACT.finditer(clause_after_comma))
+        if heads and (not artifacts or heads[-1].start() >= artifacts[-1].start()):
+            return True
+    # What a search tool can do: "grep and glob don't find branch names".
+    if number == 4 and re.search(r"\b(?:the locator|keyword search|grep and glob|the pre-push hook|the search)\b", sentence, re.I) and re.search(r"\b(?:cannot|can't|don't)\b", sentence, re.I):
+        return True
+    # "Records like these belong in the log-store, not in the repository": where things should go.
+    if number == 6 and re.search(r"\bbelongs?\b", re.split(r"[;:]", before)[-1], re.I):
+        return True
+    # "a commit on no branch": a kind of commit.
+    if number == 6 and re.search(r"\b(?:a|an|any)\s+commit\s*$", before, re.I):
         return True
     return False
 
