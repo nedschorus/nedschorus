@@ -510,9 +510,9 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and len(saved_lines) == 6,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("an edited original is not reported as a changed target",
-          "TARGET CHANGED DURING RUN" not in result.stdout, repr(result.stdout))
+          "#frozen_copy_changed_during_run" not in result.stdout, repr(result.stdout))
     original_lines = [line for line in result.stdout.splitlines()
-                      if line.startswith("ORIGINAL CHANGED DURING RUN:")]
+                      if line.startswith("#cold_read_target_changed_during_run")]
     record_directory = record_directory_of(repository)
     frozen = frozen_target_path_in_scratch_repository(repository, record_directory)
     check("the grid says the original changed, in one line",
@@ -530,7 +530,7 @@ with tempfile.TemporaryDirectory() as scratch:
     reports = sorted(record_directory.glob("*.md"))
     check("no report is marked when only the original changed",
           reports != [] and not any(
-              "<!-- TARGET CHANGED DURING RUN:" in report.read_text(encoding="utf-8")
+              "<!-- #frozen_copy_changed_during_run" in report.read_text(encoding="utf-8")
               for report in reports),
           [report.name for report in reports])
     stamped = record_directory / "claude-hunt-deep.md"
@@ -569,7 +569,7 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and len(saved_lines) == 6,
           f"exit {result.returncode}, {len(saved_lines)} saved; stdout={result.stdout!r}")
     check("a target nobody edited is not reported as changed",
-          "TARGET CHANGED DURING RUN" not in result.stdout, repr(result.stdout))
+          "#frozen_copy_changed_during_run" not in result.stdout, repr(result.stdout))
     check("a settled target still gets the closing instructions to triage",
           "All six reports landed" in result.stdout
           and "Stop editing the document" not in result.stdout, repr(result.stdout))
@@ -615,7 +615,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a run stopped for a moved frozen copy exits 3",
           result.returncode == 3, f"exit {result.returncode}; stdout={result.stdout!r}")
     check("the stopped run says the target changed, on its own output, in one line",
-          result.stdout.count("TARGET CHANGED DURING RUN:") == 1, repr(result.stdout))
+          result.stdout.count("#frozen_copy_changed_during_run") == 1, repr(result.stdout))
     check("the line says the run stopped the cells still reading",
           "stopped the ones still reading" in result.stdout
           and "the moment the last one finished" not in result.stdout, repr(result.stdout))
@@ -638,9 +638,17 @@ with tempfile.TemporaryDirectory() as scratch:
     reports = sorted(record_directory.glob("*.md")) if record_directory else []
     check("every report the stopped set holds carries the marker",
           reports != [] and all(
-              "<!-- TARGET CHANGED DURING RUN:" in report.read_text(encoding="utf-8")
+              "<!-- #frozen_copy_changed_during_run" in report.read_text(encoding="utf-8")
               for report in reports),
           [report.name for report in reports])
+    check("the stopped run leaves the stop marker file, which keeps it out of every later count",
+          record_directory is not None
+          and (record_directory / "frozen-copy-changed-during-run-stop-marker.txt").is_file(),
+          f"record {record_directory}")
+    check("the first stop is told it does not count and is stop 1 of 3, and to start a new run",
+          "Start a new cold-read run. This run does not count toward the 3 cold-read-full-runs: "
+          "it is stop 1 of 3 in a row because the frozen copy changed." in result.stdout,
+          repr(result.stdout))
     check("no stopped reviewer or its launcher is left running",
           processes_mentioning(str(slow_stubs), str(repository)) == [],
           processes_mentioning(str(slow_stubs), str(repository)))
@@ -678,9 +686,9 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}; stdout={result.stdout!r}")
     check("an original edited mid-run stops no cell",
           "Stopped before finishing" not in result.stdout
-          and "TARGET CHANGED DURING RUN" not in result.stdout, repr(result.stdout))
+          and "#frozen_copy_changed_during_run" not in result.stdout, repr(result.stdout))
     check("an original edited mid-run is named in one line",
-          result.stdout.count("ORIGINAL CHANGED DURING RUN:") == 1, repr(result.stdout))
+          result.stdout.count("#cold_read_target_changed_during_run") == 1, repr(result.stdout))
 
     # --- A target nobody touches, across several polls ------------------------
     # The other side of the same check: readers slow enough to be polled more
@@ -696,7 +704,7 @@ with tempfile.TemporaryDirectory() as scratch:
                    if line.startswith("saved:")]) == 6,
           f"exit {result.returncode}; stdout={result.stdout!r}")
     check("a settled target over several polls is not reported as changed",
-          "TARGET CHANGED DURING RUN" not in result.stdout
+          "#frozen_copy_changed_during_run" not in result.stdout
           and "Stopped before finishing" not in result.stdout, repr(result.stdout))
 
     # --- Every failure case below, in the design's terms ---------------------
@@ -989,7 +997,7 @@ with tempfile.TemporaryDirectory() as scratch:
     marked = (record_directory / "claude-hunt-deep.md").read_text(encoding="utf-8").split("\n")
     check("both markers are written, the target-changed marker first, after the stamp",
           marked[0].startswith("<!-- provenance:")
-          and marked[1].startswith("<!-- TARGET CHANGED DURING RUN:")
+          and marked[1].startswith("<!-- #frozen_copy_changed_during_run")
           and marked[2].startswith("<!-- INCOMPLETE SET: 1 of 6 reports absent"),
           repr(marked[:3]))
 
@@ -1654,7 +1662,7 @@ with tempfile.TemporaryDirectory() as scratch:
     frozen = frozen_target_path_in_scratch_repository(repository, record_directory)
     check("an edit to the frozen copy is reported and the run exits 3",
           result.returncode == 3
-          and result.stdout.count("TARGET CHANGED DURING RUN:") == 1,
+          and result.stdout.count("#frozen_copy_changed_during_run") == 1,
           f"exit {result.returncode}; stdout={result.stdout!r}")
     # Resolved before comparing, as the two checks in the case above are: the
     # grid resolves the cold-read-target before freezing it, so on a machine
@@ -1667,7 +1675,7 @@ with tempfile.TemporaryDirectory() as scratch:
           str(frozen.resolve()) in result.stdout
           and b"edit to the document it was given" in frozen.read_bytes(),
           repr([line for line in result.stdout.splitlines()
-                if line.startswith("TARGET CHANGED")]))
+                if line.startswith("#frozen_copy_changed_during_run")]))
     check("the original is untouched while the copy is what moved",
           b"edit to the document it was given"
           not in (repository / TARGET_RELATIVE_PATH).read_bytes())
@@ -1678,6 +1686,33 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a moved copy does leave which text was reviewed unknown",
           "Which text any one report in this directory describes is unknown"
           in result.stdout, repr(result.stdout))
+
+    # --- The original and the frozen copy both change ------------------------
+    # The original-changed line must not vouch for a copy that moved too.
+    both_directory = scratch / "original-and-copy-changed"
+    both_directory.mkdir()
+    original = both_directory / "document.md"
+    original.write_text("launch-time text\n", encoding="utf-8")
+    launch_sha256 = hashlib.sha256(original.read_bytes()).hexdigest()
+    original.write_text("edited text\n", encoding="utf-8")
+    copy = both_directory / "frozen-document.md"
+    line = grid_module.original_changed_line(original, copy, launch_sha256, True)
+    check("an original changed beside a moved copy does not say the copy stood",
+          line.startswith("#cold_read_target_changed_during_run")
+          and "did not change" not in line and "the set stands" not in line
+          and str(copy) in line and "#frozen_copy_changed_during_run" in line, repr(line))
+    line = grid_module.original_changed_line(original, copy, launch_sha256, False)
+    check("an original changed beside a still copy says the set stands",
+          "which did not change, so the set stands" in line, repr(line))
+
+    # --- The third stop in a row ends the attempt ----------------------------
+    line = grid_module.frozen_copy_stop_count_line(3)
+    check("the third stop in a row says not to start a new run and to tell the user",
+          "do not start a new cold-read run" in line and "Tell the user" in line
+          and "Start a new cold-read run" not in line, repr(line))
+    line = grid_module.frozen_copy_stop_count_line(2)
+    check("the second stop in a row still asks for a new run",
+          line.startswith("Start a new cold-read run.") and "stop 2 of 3" in line, repr(line))
 
     # --- Every file in the set is named for the run ------------------------
     # A report carried out of its directory, or read beside another run's,
@@ -1698,16 +1733,18 @@ with tempfile.TemporaryDirectory() as scratch:
     check("no file the run wrote carries the record directory's name",
           not any(record_directory.name in name for name in written_names),
           [name for name in written_names if record_directory.name in name])
-    check("beside them, the record holds only the frozen target directory",
+    # This run's copy moved, so its record also holds the stop marker file.
+    check("beside them, the record holds only the frozen target directory and the stop marker",
           sorted(path.name for path in record_directory.iterdir()
-                 if not path.name.endswith(".md")) == ["target"])
+                 if not path.name.endswith(".md"))
+          == ["frozen-copy-changed-during-run-stop-marker.txt", "target"])
     expected_names = sorted(
-        ["reference-check.md"]
+        ["reference-check.md", "frozen-copy-changed-during-run-stop-marker.txt"]
         + [f"{runtime}-{pass_token}-{tier}.md"
            for runtime in ("claude", "codex")
            for pass_token, tier in (("hunt", "deep"), ("hunt", "second"),
                                     ("terminology", "deep"))])
-    check("the set holds the six cells plus the reference-integrity pre-pass",
+    check("the set holds the six cells, the reference-integrity pre-pass and the stop marker",
           written_names == expected_names, written_names)
 
     # --- A path under a dot directory keeps its dot --------------------------
@@ -1950,6 +1987,54 @@ with tempfile.TemporaryDirectory() as scratch:
                                "cold-read-full-run-count-skipped-inside-design-to-main-marker.txt"])
     result = run_grid(repository, stubs / "full-run-count-skip-marker-not-counted")
     check("records holding the skip marker do not count: one counted run makes this 2 of 3",
+          result.returncode == 0 and "cold-read-full-run 2 of 3 for" in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    # A run stopped because its frozen copy moved does not count toward the
+    # three, so the new run the stop asks for is never refused as a fourth;
+    # three such stops in a row end the attempt instead.
+    stop_marker = "frozen-copy-changed-during-run-stop-marker.txt"
+    repository = build_scratch_repository(scratch, "full-run-count-stops-not-counted")
+    for index, day in enumerate(("2026-09-01", "2026-09-02")):
+        seed_log_store_record(repository, f"cold-read-grid-test-target-{day}",
+                              ["claude-hunt-deep.md"], written_at=1_800_000_000 + index)
+    seed_log_store_record(repository, "cold-read-grid-test-target-2026-09-03",
+                          ["claude-hunt-deep.md", stop_marker], written_at=1_800_000_010)
+    result = run_grid(repository, stubs / "full-run-count-stops-not-counted")
+    check("a record holding the stop marker does not count: two counted runs make this 3 of 3",
+          result.returncode == 0 and "cold-read-full-run 3 of 3 for" in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch, "full-run-count-three-stops-in-a-row")
+    seed_log_store_record(repository, "cold-read-grid-test-target-2026-09-01",
+                          ["claude-hunt-deep.md"], written_at=1_800_000_000)
+    for index, day in enumerate(("2026-09-02", "2026-09-03", "2026-09-04")):
+        seed_log_store_record(repository, f"cold-read-grid-test-target-{day}",
+                              ["claude-hunt-deep.md", stop_marker],
+                              written_at=1_800_000_010 + index)
+    result = run_grid(repository, stubs / "full-run-count-three-stops-in-a-row")
+    check("after three stops in a row the next run is refused with exit 2 and told to tell the user",
+          result.returncode == 2
+          and "its last 3 cold-read-full-runs in a row stopped because the frozen copy changed"
+          in result.stderr and "Tell the user" in result.stderr
+          and "--user-ruled-cold-read-full-run-count-restart" in result.stderr
+          and not (repository / "cold-read-records").exists(),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    flagged = run_grid(repository, stubs / "full-run-count-three-stops-in-a-row",
+                       extra_arguments=["--user-ruled-cold-read-full-run-count-restart"])
+    check("the user's ruling lets a run go ahead after three stops in a row",
+          flagged.returncode == 0 and "cold-read-full-run 1 of 3 for" in flagged.stdout,
+          f"exit {flagged.returncode}; stdout={flagged.stdout!r}; stderr={flagged.stderr!r}")
+
+    repository = build_scratch_repository(scratch, "full-run-count-stops-broken-by-a-counted-run")
+    for index, (day, extra) in enumerate((("2026-09-01", [stop_marker]),
+                                          ("2026-09-02", [stop_marker]),
+                                          ("2026-09-03", []),
+                                          ("2026-09-04", [stop_marker]))):
+        seed_log_store_record(repository, f"cold-read-grid-test-target-{day}",
+                              ["claude-hunt-deep.md", *extra], written_at=1_800_000_000 + index)
+    result = run_grid(repository, stubs / "full-run-count-stops-broken-by-a-counted-run")
+    check("a counted run between stops breaks the row: three stops in all are not three in a row",
           result.returncode == 0 and "cold-read-full-run 2 of 3 for" in result.stdout,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 

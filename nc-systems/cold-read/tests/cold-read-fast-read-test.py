@@ -69,6 +69,7 @@ launches and succeed after.
 Run: python3 nc-systems/cold-read/tests/cold-read-fast-read-test.py
 """
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -162,6 +163,11 @@ launches = (int(counter_path.read_text()) if counter_path.is_file() else 0) + 1
 counter_path.write_text(str(launches))
 if "dump_prompt" in step:
     pathlib.Path(step["dump_prompt"]).write_text(prompt, encoding="utf-8")
+if "edit_document" in step:
+    with open(step["edit_document"], "a", encoding="utf-8") as handle:
+        handle.write("An edit made while the reviewer read.\\n")
+if "delete_document" in step:
+    pathlib.Path(step["delete_document"]).unlink()
 if launches <= step.get("fail_first_attempts", 0):
     sys.stderr.write("stub agy: simulated failure on launch %d\\n" % launches)
     sys.exit(1)
@@ -430,6 +436,56 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and result.stdout.strip() == str(outside_report)
           and outside_report.is_file()
           and not (repository / "docs" / "walk" / "some-item-suggestions.md").exists(),
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    # --- An edit to the target while the reviewer reads is named ----------
+    repository = build_scratch_repository(scratch)
+    edited_report = records_report
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
+        edited_report, other_relative, counter,
+    )
+    check("a target left alone during the read gets no changed-during-read line",
+          result.returncode == 0 and "#cold_read_target_changed_during_run" not in result.stderr
+          and "#cold_read_target_changed_during_run" not in edited_report.read_text(encoding="utf-8"),
+          f"exit {result.returncode}; stderr={result.stderr!r}")
+    repository = build_scratch_repository(scratch)
+    edited_document = repository / other_relative
+    launch_sha256 = hashlib.sha256(edited_document.read_bytes()).hexdigest()
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"report": "STUB FAST READ: of the design\n", "edit_document": str(edited_document)}},
+        edited_report, other_relative, counter,
+    )
+    edited_lines = (edited_report.read_text(encoding="utf-8").splitlines()
+                    if edited_report.is_file() else [])
+    changed_lines = [line for line in result.stderr.splitlines()
+                     if line.startswith("#cold_read_target_changed_during_run")]
+    check("a target edited during the read still succeeds, with the report path as stdout's one line",
+          result.returncode == 0 and result.stdout.strip() == str(edited_report)
+          and len(result.stdout.splitlines()) == 1,
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+    after_sha256 = hashlib.sha256(edited_document.read_bytes()).hexdigest()
+    check("stderr carries one changed-during-read line naming both hashes and the triage to do",
+          len(changed_lines) == 1 and launch_sha256[:12] in changed_lines[0]
+          and after_sha256[:12] in changed_lines[0]
+          and "carry each fix to the document as it now stands" in changed_lines[0],
+          repr(result.stderr))
+    check("the report keeps its provenance stamp first and the same line, as a comment, second",
+          len(edited_lines) > 1 and edited_lines[0].startswith("<!-- provenance:")
+          and changed_lines != [] and edited_lines[1] == f"<!-- {changed_lines[0]} -->",
+          repr(edited_lines[:2]))
+    repository = build_scratch_repository(scratch)
+    deleted_document = repository / other_relative
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"report": "STUB FAST READ: of the design\n", "delete_document": str(deleted_document)}},
+        edited_report, other_relative, counter,
+    )
+    check("a target deleted during the read is named as changed, its new hash unreadable",
+          result.returncode == 0 and result.stdout.strip() == str(edited_report)
+          and any(line.startswith("#cold_read_target_changed_during_run") and "then unreadable" in line
+                  for line in result.stderr.splitlines()),
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
     # --- One retry --------------------------------------------------------

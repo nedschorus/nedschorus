@@ -87,7 +87,7 @@ holds the run (user-ruled 2026-09-17: add one if a hang is ever seen).
 AN EDIT TO THE ORIGINAL STOPS NOTHING.
 Every cold-read-cell reads the frozen copy, so an edit to the original leaves
 each report a review of bytes that are still in the record: the run finishes,
-exits as it would have, and prints one ORIGINAL CHANGED DURING RUN: line
+exits as it would have, and prints one #cold_read_target_changed_during_run line
 naming the copy the set reviewed, so the triage reads findings against the
 copy and carries each fix to the document as it now stands.
 
@@ -106,6 +106,14 @@ cold-read-cell is stopped with its children because it is a launcher whose
 model CLI runs as a child process: stopping the launcher alone would leave the
 CLI reading, spending tokens, and free to write its report into the record
 after the marker went on.
+
+A RUN STOPPED BECAUSE ITS FROZEN COPY MOVED DOES NOT COUNT toward the three:
+the marker file it leaves in its record keeps the record out of every later
+count, so the new run the closing text asks for is never refused as a fourth.
+A document that keeps changing would then loop, so the third such stop in a row
+since the count last started ends the attempt: its closing text says to tell
+the user instead of starting a new run, and a run launched after it is refused
+until the user rules.
 
 Exit codes: 0 all cold-read-cells ran, 1 one or more reports are absent, 2 no
 cold-read-cell was launched (a bad invocation, a cold-read-target this
@@ -177,9 +185,11 @@ GRID_CELL_ROSTER = (
 # Logs, reports and captures record observations; cold reads must not revise that evidence.
 UNREVIEWABLE_TARGET_GENRE_SUFFIXES = ("-log", "-report", "-capture")
 
-TARGET_CHANGED_MARKER_PREFIX = "<!-- TARGET CHANGED DURING RUN:"
+FROZEN_COPY_CHANGED_HASHTAG = "#frozen_copy_changed_during_run"
+COLD_READ_TARGET_CHANGED_HASHTAG = "#cold_read_target_changed_during_run"
+FROZEN_COPY_CHANGED_MARKER_PREFIX = f"<!-- {FROZEN_COPY_CHANGED_HASHTAG}"
 INCOMPLETE_SET_MARKER_PREFIX = "<!-- INCOMPLETE SET:"
-GRID_MARKER_PREFIXES = (TARGET_CHANGED_MARKER_PREFIX, INCOMPLETE_SET_MARKER_PREFIX)
+GRID_MARKER_PREFIXES = (FROZEN_COPY_CHANGED_MARKER_PREFIX, INCOMPLETE_SET_MARKER_PREFIX)
 
 # These prefixes are consumed by the cold-read skill's Monitor; FAILED keeps its no-colon form.
 RETRYING_PREFIX = "RETRYING:"
@@ -254,6 +264,8 @@ USER_RULED_COUNT_RESTART_MARKER_NAME = "user-ruled-cold-read-full-run-count-rest
 COUNT_SKIPPED_INSIDE_DESIGN_TO_MAIN_FLAG = "--cold-read-full-run-count-skipped-inside-design-to-main"
 COUNT_SKIPPED_INSIDE_DESIGN_TO_MAIN_MARKER_NAME = (
     "cold-read-full-run-count-skipped-inside-design-to-main-marker.txt")
+FROZEN_COPY_CHANGED_STOP_MARKER_NAME = "frozen-copy-changed-during-run-stop-marker.txt"
+FROZEN_COPY_CHANGED_STOPS_IN_A_ROW_LIMIT = 3
 # A grid report's name. Older records prefix each report with "<record name>--".
 # A fast read's record holds fast-read.md and, beside it, a copy of the target
 # marked with sentence ids, whose name matches this pattern too when the
@@ -335,6 +347,12 @@ def earlier_full_runs_since_count_start(frozen_paths: set, landed_at, listing: l
     """The record directories of this document's cold-read-full-runs since
     main last took a change to it, oldest first, from the last one started on
     the user's ruling onward."""
+    return full_run_history_since_count_start(frozen_paths, landed_at, listing)[0]
+
+
+def full_run_history_since_count_start(frozen_paths: set, landed_at, listing: list) -> tuple:
+    """The counted runs' record directories, oldest first, and how many runs
+    in a row, ending with the latest, stopped because their frozen copy moved."""
     records = {}
     for line in listing:
         path, _, mtime = line.rpartition("\t")
@@ -343,7 +361,7 @@ def earlier_full_runs_since_count_start(frozen_paths: set, landed_at, listing: l
         if directory.startswith(record_shipper.STAGING_DIRECTORY_PREFIX):
             continue
         record = records.setdefault(directory, {"frozen": False, "reported": None, "marked": None,
-                                                "inside_design_to_main": False})
+                                                "inside_design_to_main": False, "stopped": None})
         frozen = inside.removeprefix(record_names.FROZEN_TARGET_DIRECTORY_NAME + "/")
         if frozen != inside and any(frozen == p or frozen.endswith("/" + p) for p in frozen_paths):
             record["frozen"] = True
@@ -354,24 +372,35 @@ def earlier_full_runs_since_count_start(frozen_paths: set, landed_at, listing: l
             record["marked"] = float(mtime)
         elif inside == COUNT_SKIPPED_INSIDE_DESIGN_TO_MAIN_MARKER_NAME:
             record["inside_design_to_main"] = True
+        elif inside == FROZEN_COPY_CHANGED_STOP_MARKER_NAME:
+            record["stopped"] = float(mtime)
     # The marker is written when its run starts, before any report, so a run
     # whose every cell failed still restarts the count.
     count_start = max([landed_at or 0.0] + [record["marked"] for record in records.values()
                                              if record["frozen"] and record["marked"] is not None])
-    runs = sorted((record["reported"], directory) for directory, record in records.items()
-                  if record["frozen"] and not record["inside_design_to_main"]
+    mine = {directory: record for directory, record in records.items()
+            if record["frozen"] and not record["inside_design_to_main"]}
+    runs = sorted((record["reported"], directory) for directory, record in mine.items()
+                  if record["stopped"] is None
                   and record["reported"] and record["reported"] > count_start)
-    return [directory for _, directory in runs]
+    stops = [(record["stopped"], directory) for directory, record in mine.items()
+             if record["stopped"] is not None and record["stopped"] > count_start]
+    stops_in_a_row = 0
+    for _, directory in sorted(runs + stops, reverse=True):
+        if mine[directory]["stopped"] is None:
+            break
+        stops_in_a_row += 1
+    return [directory for _, directory in runs], stops_in_a_row
 
 
-def earlier_full_runs_of(target: pathlib.Path) -> list:
+def earlier_full_runs_of(target: pathlib.Path) -> tuple:
     """Counted from the log-store and from this checkout's own records, which
-    hold a run whose shipping failed."""
+    hold a run whose shipping failed; returned as full_run_history_since_count_start returns."""
     frozen_paths, landed_at = frozen_paths_and_landing_time(target)
     listing = record_file_listing(*record_shipper.destination_for_this_machine())
     if RECORDS_DIR.is_dir():
         listing += record_file_listing(None, RECORDS_DIR)
-    return earlier_full_runs_since_count_start(frozen_paths, landed_at, listing)
+    return full_run_history_since_count_start(frozen_paths, landed_at, listing)
 
 
 def make_record_dir(target: pathlib.Path, now: datetime.datetime) -> pathlib.Path:
@@ -501,18 +530,18 @@ def moved_frozen_copy(frozen_target: pathlib.Path,
     return None
 
 
-ORIGINAL_CHANGED_PREFIX = "ORIGINAL CHANGED DURING RUN:"
-
-
 def original_changed_line(target: pathlib.Path, frozen_target: pathlib.Path,
-                          before: str) -> str:
+                          before: str, frozen_changed: bool) -> str:
     """Return the line naming the copy reviewed when the original changed, or ""."""
     after = target_content_fingerprint(target)
     if after == before:
         return ""
-    return (f"{ORIGINAL_CHANGED_PREFIX} {target}'s bytes changed after the cells "
-            f"launched — sha256 {before[:12]} then {after[:12] or 'unreadable'}. "
-            f"Every report reviews the frozen copy {frozen_target} (sha256 "
+    changed = (f"{COLD_READ_TARGET_CHANGED_HASHTAG} {target}'s bytes changed after the cells "
+               f"launched — sha256 {before[:12]} then {after[:12] or 'unreadable'}. ")
+    if frozen_changed:
+        return (changed + f"The frozen copy {frozen_target} changed too, so the "
+                f"{FROZEN_COPY_CHANGED_HASHTAG} line above says what to do with the set.")
+    return (changed + f"Every report reviews the frozen copy {frozen_target} (sha256 "
             f"{before[:12]}), which did not change, so the set stands: triage it "
             f"against that copy, then carry each fix to the document as it now stands.")
 
@@ -528,11 +557,24 @@ The reports are in {record_dir}, and every one of them is marked: the frozen
 copy's bytes {window}, so no report can say which text it reviewed.
 
 Do not triage this set as a review of the document. Find what edited the
-frozen copy, and start a new cold-read run.
+frozen copy.
 
 Keep the set. Each report still records truthfully what one reviewer read, which
 is evidence of what the reviewers saw — not of how the file now stands.
 """
+
+
+def frozen_copy_stop_count_line(stop_number: int) -> str:
+    """Say where this stop leaves the attempt, for the closing text."""
+    if stop_number < FROZEN_COPY_CHANGED_STOPS_IN_A_ROW_LIMIT:
+        return (f"Start a new cold-read run. This run does not count toward the "
+                f"{FULL_RUN_LIMIT} cold-read-full-runs: it is stop {stop_number} of "
+                f"{FROZEN_COPY_CHANGED_STOPS_IN_A_ROW_LIMIT} in a row because the frozen "
+                f"copy changed.")
+    return (f"This is stop {stop_number} in a row because the frozen copy changed, which "
+            f"ends the attempt: do not start a new cold-read run. Tell the user, and ask "
+            f"whether to stop, run again with {USER_RULED_COUNT_RESTART_FLAG}, or change "
+            f"the document's design first and then run again with that flag.")
 
 
 def mark_reports_target_changed(
@@ -553,7 +595,7 @@ def mark_reports_target_changed(
         f"as evidence of what reviewers saw, not as a review of the document; "
         f"start a new cold-read run."
     )
-    mark_every_report(record_dir, f"{TARGET_CHANGED_MARKER_PREFIX} {detail} -->")
+    mark_every_report(record_dir, f"{FROZEN_COPY_CHANGED_MARKER_PREFIX} {detail} -->")
     return detail
 
 
@@ -887,11 +929,28 @@ def main() -> int:
     # Like shipping, counting needs ned-box, and a review must not wait on ned-box.
     count_unavailable = None
     earlier_runs = []
+    stops_in_a_row = 0
     if not count_skipped_inside_design_to_main:
         try:
-            earlier_runs = earlier_full_runs_of(target)
+            earlier_runs, stops_in_a_row = earlier_full_runs_of(target)
         except FullRunCountUnavailable as error:
             count_unavailable = str(error)
+    if user_ruled_count_restart:
+        stops_in_a_row = 0
+    if stops_in_a_row >= FROZEN_COPY_CHANGED_STOPS_IN_A_ROW_LIMIT:
+        print(f"cold-read-grid: refusing a cold-read-full-run of {target.name}: its last "
+              f"{stops_in_a_row} cold-read-full-runs in a row stopped because the frozen "
+              f"copy changed during the run, which ends the attempt. No reviewer was "
+              f"launched and no record directory was created.\n"
+              f"Tell the user, and ask whether to stop, run again, or change the "
+              f"document's design.\n"
+              f"If the user rules to run again, run again with "
+              f"{USER_RULED_COUNT_RESTART_FLAG}.\n"
+              f"If the user rules to change the design, make the change first, then "
+              f"run again with {USER_RULED_COUNT_RESTART_FLAG}.\n"
+              f"If the user rules to stop, give the user the document to read as it "
+              f"stands.", file=sys.stderr)
+        return 2
     run_number = 1 if user_ruled_count_restart else len(earlier_runs) + 1
     if run_number > FULL_RUN_LIMIT:
         print(f"cold-read-grid: refusing cold-read-full-run {run_number} of "
@@ -962,8 +1021,13 @@ def main() -> int:
         detail = mark_reports_target_changed(
             record_dir, changed_path, target_before, changed_after,
             seen_mid_run=outcome.moved_mid_run is not None)
-        print(f"TARGET CHANGED DURING RUN: {detail}", flush=True)
-    original_line = original_changed_line(target, frozen_target, target_before)
+        print(f"{FROZEN_COPY_CHANGED_HASHTAG} {detail}", flush=True)
+        # Written before shipping, so the stop is in the record every later count reads.
+        (record_dir / FROZEN_COPY_CHANGED_STOP_MARKER_NAME).write_text(
+            "This cold-read-full-run stopped because its frozen copy changed; it is not counted.\n",
+            encoding="utf-8")
+    original_line = original_changed_line(target, frozen_target, target_before,
+                                          target_changed)
     if original_line:
         print(original_line, flush=True)
 
@@ -981,6 +1045,7 @@ def main() -> int:
         print(TARGET_CHANGED_INSTRUCTIONS.format(
             record_dir=record_dir,
             window=WINDOW_SEEN_MID_RUN if outcome.moved_mid_run else WINDOW_SEEN_AT_END))
+        print(frozen_copy_stop_count_line(stops_in_a_row + 1))
         if outcome.stopped:
             print("Stopped before finishing: " + ", ".join(outcome.stopped) + ".")
         if absences:
