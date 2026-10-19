@@ -1264,7 +1264,7 @@ def run_by_hand_resume_cases(workspace: Path):
           and "ignoring the first prompt" not in printed,
           (session_id, resume))
 
-    # recover-crashed-seats.py --ignite-fallback chose not to resume: its ignition
+    # recover-crashed-seats.py --fresh-session-from-dialog-extract chose not to resume: its ignition
     # prompt must win over the crashed transcript. Run through main() with the
     # supervisor arguments the recovery composes, so a flag the recovery stops
     # passing, or the supervisor stops honouring, turns this case red.
@@ -1297,7 +1297,7 @@ def run_by_hand_resume_cases(workspace: Path):
                 os.environ["CLAUDE_CODE_TASK_LIST_ID"] = saved_task_list_id
         return exit_code, (launched[0] if launched else (None, None, None)), console.getvalue()
 
-    ignition_directory = directory / "ignite-fallback"
+    ignition_directory = directory / "fresh-session-from-dialog-extract"
     ignition_directory.mkdir(parents=True, exist_ok=True)
     ignition_prompt_path = ignition_directory / "byhandignite-recovery-ignition-prompt.md"
     ignition_prompt_path.write_text("Read the dialog extract and continue.", encoding="utf-8")
@@ -1308,7 +1308,7 @@ def run_by_hand_resume_cases(workspace: Path):
             ignition_directory, recovery.IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS))
         + ["--first-prompt-file", str(ignition_prompt_path)])
     exit_code, (session_id, prompt, resume), printed = run_main_once(ignition_argv)
-    check("IGNITION: --ignite-fallback's arguments start fresh on its ignition prompt "
+    check("IGNITION: --fresh-session-from-dialog-extract's arguments start fresh on its ignition prompt "
           "despite a crashed transcript",
           exit_code == 0 and resume is not True and session_id != crashed.stem
           and prompt == "Read the dialog extract and continue.",
@@ -1316,7 +1316,7 @@ def run_by_hand_resume_cases(workspace: Path):
 
     # Control: the same launch without the recovery's flag resumes the transcript,
     # so the case above is the flag's doing.
-    control_directory = directory / "ignite-fallback-control"
+    control_directory = directory / "fresh-session-from-dialog-extract-control"
     control_directory.mkdir(parents=True, exist_ok=True)
     exit_code, (session_id, prompt, resume), printed = run_main_once(
         ["--agent", "byhandignitecontrol", "--cd", str(workspace),
@@ -1328,7 +1328,7 @@ def run_by_hand_resume_cases(workspace: Path):
 
     # The flag means nothing without a prompt file to win with; refused before any launch,
     # or the seat would resume its transcript as though the flag were not there.
-    refusal_directory = directory / "ignite-flag-without-file"
+    refusal_directory = directory / "fresh-session-flag-without-file"
     refusal_directory.mkdir(parents=True, exist_ok=True)
     refusal_stderr = io.StringIO()
     refusal_exit_code = None
@@ -1351,7 +1351,7 @@ def run_by_hand_resume_cases(workspace: Path):
     # login-time restart pass. No case ran it through the loop until the
     # 2026-09-21 ruling renamed the flag it sets, so this one holds the path
     # that rename touched: the named session is resumed, not a fresh id, and a
-    # handoff waiting on disk is marked consumed rather than igniting over it.
+    # handoff waiting on disk is marked consumed rather than a fresh agent-session being started from it over the resume.
     settings = settings_for("resume-session-id")
     settings.resume_session_id = "session-named-by-recovery"
     supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
@@ -1363,7 +1363,7 @@ def run_by_hand_resume_cases(workspace: Path):
           (session_id, resume))
     check("RESUME-SESSION-ID: and tells it the previous session ended without a handoff",
           prompt == supervisor.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF, prompt)
-    check("RESUME-SESSION-ID: a waiting handoff is marked consumed, not ignited over the resume",
+    check("RESUME-SESSION-ID: a waiting handoff is marked consumed, no fresh agent-session started from it over the resume",
           supervisor.read_supervisor_state(settings.state_path).get("consumed_counter") == 4,
           str(supervisor.read_supervisor_state(settings.state_path)))
 

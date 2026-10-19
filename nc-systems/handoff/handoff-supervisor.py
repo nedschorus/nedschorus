@@ -1705,9 +1705,9 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 # When the retiring transcript is unavailable, the next step still provides work to carry forward.
                 successor_session_id = str(uuid.uuid4())
                 ignition_plan = BootRecoveryIgnitionPlan(next_step_from(boot_fields))
-                print("handoff-supervisor: igniting from an unconsumed handoff without a dialog extract")
+                print("handoff-supervisor: starting a fresh agent-session from an unconsumed handoff without a dialog extract")
             else:
-                print("handoff-supervisor: igniting from an unconsumed handoff left by a previous cycle")
+                print("handoff-supervisor: starting a fresh agent-session from an unconsumed handoff left by a previous cycle")
             state["consumed_counter"] = boot_counter
             session_id = successor_session_id
 
@@ -1915,14 +1915,14 @@ def main(argv=None) -> int:
         help="crash recovery (nedschorus#120): the first launch resumes this "
              "session's transcript (claude --resume) instead of starting fresh; "
              "later reincarnations mint fresh ids as always. A handoff already on disk "
-             "is marked consumed rather than igniting or reincarnating — passing this "
+             "is marked consumed rather than starting a fresh agent-session from it or reincarnating — passing this "
              "flag chooses the transcript over any waiting handoff",
     )
     parser.add_argument(
         "--first-prompt-file-wins-over-crashed-transcript", action="store_true",
         help="start fresh on --first-prompt-file even when this seat has a crashed "
              "transcript worth resuming; for a recovery that chose not to resume, such as "
-             "recover-crashed-seats.py --ignite-fallback. Without it, a crashed transcript "
+             "recover-crashed-seats.py --fresh-session-from-dialog-extract. Without it, a crashed transcript "
              "wins over --first-prompt-file",
     )
     parser.add_argument(
