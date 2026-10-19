@@ -72,17 +72,21 @@ NEW_GUARD_REFUSES_MESSAGE = (
     "NEW GUARD REFUSES RECORDED COMMANDS: a guard the head adds refuses each numbered command listed above "
     "under a \"new guard ... would refuse\" line, so this check exits 1. Agents ran each of those commands, "
     "and a guard that refuses a command agents need stops their work.\n"
-    "The pull request's reviewer answers each listed command in the review, on a line of its own:\n"
+    "The pull request's reviewer answers each refused command in the review. A refused command is one guard, "
+    "one working directory and one command; when the in-process and the new-process modes both list it, it is "
+    "still one refused command, with one answer.\n"
+    "Where the refusal is right, the answer is a line of its own:\n"
     "  refusal right: <guard file> | <working directory> | <command>\n"
     "copying the guard file's path from its \"new guard\" line and the working directory and the command from "
     "the numbered entry, the command last, quotes included, so a | inside it is part of the command; for "
-    "example, with a made-up guard path: refusal right: scripts/example-guard-hook.py | /tmp | 'tmux kill-server'. "
-    "Answer a command whose refusal is wrong with a finding instead, and the author then narrows the guard so "
-    "that it lets that command through. Each guard, working directory and command together need one line, "
-    "once, even when more than one mode (in-process, search-file main(), new-process) lists them.\n")
+    "example, with a made-up guard path: refusal right: scripts/example-guard-hook.py | /tmp | 'tmux kill-server'.\n"
+    "Where the refusal is wrong, the answer is a finding instead, and the author then narrows the guard so that "
+    "it lets that command through. The other refused commands still each get their \"refusal right\" line.\n")
 NEW_GUARD_REFUSES_ONLY_ENDING = (
-    "merge-lane-2 holds the merge until the review has a \"refusal right\" line for every listed command, "
-    "and then merges despite the exit 1.")
+    "merge-lane-2 holds the merge until every refused command this check lists, run at the head commit being "
+    "merged, has its \"refusal right\" line, and then merges despite the exit 1. A refusal answered with a "
+    "finding holds the merge until the author's narrowed guard no longer refuses that command, so the check "
+    "no longer lists it.")
 NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING = (
     "The VERDICT CHANGED line above blocks the merge on its own: \"refusal right\" lines do not clear it, "
     "so the merge also waits until each verdict difference is explained and intended.")
