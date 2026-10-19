@@ -227,6 +227,35 @@ def cases(scratch):
           result.returncode == 1 and "ask him" in result.stderr, result.stderr)
     check("the refused version stays unsettled", "Reminder" in world.run(), "")
 
+    world = fresh(scratch, "obvious-fix-after-quotes-the-marker")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v1, a quoted accident\n")
+    key = world.key(claude)
+    world.run()
+    world.marker("Obvious fix under CLAUDE.md's standing approval: a typo\n  in CLAUDE.md\n",
+                 before=time.time_ns() + 10_000_000_000)
+    result = world.command("--approve", claude, key)
+    check("a late obvious-fix marker's refusal gives the line that opens the question to the "
+          "user, quoting the marker's words with their lines joined by spaces",
+          result.returncode == 1 and (
+              f'"An obvious fix to the guarded file {claude}; the marker was written after the '
+              'change, so it needs your yes: a typo in CLAUDE.md"') in result.stderr,
+          result.stderr)
+
+    world = fresh(scratch, "obvious-fix-after-marker-says-nothing")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v1, an unexplained accident\n")
+    key = world.key(claude)
+    world.run()
+    world.marker("Obvious fix under CLAUDE.md's standing approval:",
+                 before=time.time_ns() + 10_000_000_000)
+    result = world.command("--approve", claude, key)
+    check("a late obvious-fix marker with no words after its opening gives "
+          "\"(the marker does not say what)\" in the line",
+          result.returncode == 1
+          and "so it needs your yes: (the marker does not say what)\"" in result.stderr,
+          result.stderr)
+
     world = fresh(scratch, "obvious-fix-same-time")
     claude = world.repo / "CLAUDE.md"
     claude.write_text("project v1, same time\n")
