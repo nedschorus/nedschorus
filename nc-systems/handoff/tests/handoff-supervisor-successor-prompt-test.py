@@ -2683,6 +2683,9 @@ def run_boot_ignition_case(workspace: Path):
           result.returncode == 0, result.stderr[-300:])
     check("the boot says it is starting a fresh agent-session from the unconsumed handoff",
           "starting a fresh agent-session from an unconsumed handoff" in result.stdout, result.stdout[-400:])
+    check("and says the next step is the prompt because the recorded session's dialog could not be extracted",
+          "with its next step as the prompt; there is no dialog extract because session "
+          "no-such-session's dialog could not be extracted" in result.stdout, result.stdout[-400:])
     launched = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
     check("the initial agent instructions carry the handoff's next step",
           "resume the audit" in launched, launched[:200])
