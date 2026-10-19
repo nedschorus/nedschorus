@@ -155,6 +155,8 @@ BACKTICKED_TOKENS_THAT_ARE_NOT_MACHINE_NAMES = {
                           "design-acceptance-by-agent rejects (sections 6.2 and 11)",
     "Decided elsewhere": "a section heading of a design, whose lines each name the owner "
                          "of their decision (sections 6.2, 6.6 and 11)",
+    "Defects fixed": "a section heading of a design, whose lines the machine copies into "
+                     "the gate's pull request (sections 3.4, 6.2 and 6.6)",
     "#rejected": "the hashtag that begins a deferred-decisions line the user turned down "
                  "(sections 6.2 and 6.6)",
 }
