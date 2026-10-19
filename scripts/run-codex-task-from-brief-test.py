@@ -481,18 +481,18 @@ try:
 
     for refused_arguments, reason in (
             ("pr merge 12", "is not `pr list`"),
-            ("api -XPOST repos/o/r/issues", "`-XPOST` is not one of the reading options"),
-            ("api repos/o/r/issues --method=PATCH", "`--method=PATCH` is not one of"),
-            ("api repos/o/r/issues -f title=x", "`-f` is not one of"),
-            ("api repos/o/r/issues --input body.json", "`--input` is not one of"),
-            ("api -iXDELETE repos/o/r/git/refs/heads/b", "`-iXDELETE` is not one of"),
-            ("api -iFtitle=x repos/o/r/issues", "`-iFtitle=x` is not one of"),
-            ("api --jq -- -XPOST repos/o/r/issues", "`-XPOST` is not one of"),
-            ("api -q -- -XDELETE repos/o/r/git/refs/heads/b", "`-XDELETE` is not one of"),
-            ("api --template '--' -XDELETE repos/o/r/git/refs/heads/b", "`-XDELETE` is not one of"),
-            ("api -- -XPOST repos/o/r/issues", "`--` is not one of"),
-            ("api --verbose repos/o/r", "`--verbose` is not one of"),
-            ("api -R o/r repos/o/r", "`-R` is not one of"),
+            ("api -XPOST repos/o/r/issues", "`-XPOST` is not accepted"),
+            ("api repos/o/r/issues --method=PATCH", "`--method=PATCH` is not accepted"),
+            ("api repos/o/r/issues -f title=x", "`-f` is not accepted"),
+            ("api repos/o/r/issues --input body.json", "`--input` is not accepted"),
+            ("api -iXDELETE repos/o/r/git/refs/heads/b", "`-iXDELETE` is not accepted"),
+            ("api -iFtitle=x repos/o/r/issues", "`-iFtitle=x` is not accepted"),
+            ("api --jq -- -XPOST repos/o/r/issues", "`-XPOST` is not accepted"),
+            ("api -q -- -XDELETE repos/o/r/git/refs/heads/b", "`-XDELETE` is not accepted"),
+            ("api --template '--' -XDELETE repos/o/r/git/refs/heads/b", "`-XDELETE` is not accepted"),
+            ("api -- -XPOST repos/o/r/issues", "`--` is not accepted"),
+            ("api --verbose repos/o/r", "`--verbose` is not accepted"),
+            ("api -R o/r repos/o/r", "`-R` is not accepted"),
             ("api repos/o/r/pulls repos/o/r/issues", "exactly one endpoint"),
             ("api repos/o/r --jq", "`--jq` has no value after it"),
             ("api repos/o/r -q", "`-q` has no value after it")):
@@ -583,10 +583,19 @@ try:
     fresh_prefetch_case()
     no_gh_dir = scratch / "no-gh-bin"
     no_gh_dir.mkdir()
+    # Without the fake codex and the find its command line needs, a runner that went on
+    # to start Codex would fail first and leave no arguments file to show it. The fake
+    # names its interpreter, since this PATH holds no python3.
+    codex_without_gh = no_gh_dir / "codex"
+    codex_without_gh.write_text(FAKE_CODEX.replace("#!/usr/bin/env python3",
+                                                   f"#!{sys.executable}", 1))
+    codex_without_gh.chmod(0o755)
+    (no_gh_dir / "find").symlink_to(shutil.which("find"))
     completed = subprocess.run(
         [sys.executable, str(PROGRAM), "-C", str(checkout), "--brief", str(brief),
          "-o", str(scratch / "no-gh-report.md"), "--prefetch-github", "pr view 1"],
-        env=dict(os.environ, PATH=str(no_gh_dir), HOME=str(scratch_home)),
+        env=dict(os.environ, PATH=str(no_gh_dir), HOME=str(scratch_home),
+                 FAKE_CODEX_MODE="report", FAKE_CODEX_ARGUMENTS_FILE=str(arguments_file)),
         capture_output=True, text=True, check=False)
     check("a missing gh exits 1, says gh could not run, and Codex is not started",
           completed.returncode == 1 and "could not run `gh pr view 1`" in completed.stderr
@@ -609,24 +618,29 @@ try:
         clock[0] = deadline
         return [], None
     runner.prefetch_github_data = prefetch_using_whole_deadline
+    # A started fake codex would be stopped at once by a zero timeout, before it could
+    # leave any trace, so the case records the runner building Codex's command instead.
+    codex_commands_built = []
+
+    def codex_command_recorded(*arguments, **options):
+        codex_commands_built.append(arguments)
+        return [sys.executable, "-c", ""]
+    runner.codex_command = codex_command_recorded
     real_stderr, captured = sys.stderr, __import__("io").StringIO()
     sys.stderr = captured
-    real_path = os.environ["PATH"]
-    # The fake codex, should the runner start Codex after all.
-    os.environ["PATH"] = f"{bin_dir}{os.pathsep}{real_path}"
     try:
         exit_code = runner.main(["-C", str(checkout), "--brief", str(brief),
                                  "-o", str(scratch / "no-time-report.md"),
                                  "--prefetch-github", "pr view 1", "--deadline-minutes", "1"])
     finally:
         sys.stderr = real_stderr
-        os.environ["PATH"] = real_path
         runner.time.monotonic = real_monotonic
     check("when the --prefetch-github commands use the whole deadline, Codex is not started "
           "and the run exits 1 saying so",
           exit_code == 1 and "used the whole 1-minute deadline" in captured.getvalue()
-          and "Codex was not started" in captured.getvalue() and not arguments_file.exists(),
-          f"exit {exit_code}, stderr {captured.getvalue()!r}")
+          and "Codex was not started" in captured.getvalue() and not codex_commands_built,
+          f"exit {exit_code}, Codex commands built {len(codex_commands_built)}, "
+          f"stderr {captured.getvalue()!r}")
 
     empty_brief = scratch / "empty.md"
     empty_brief.write_text("  \n")
