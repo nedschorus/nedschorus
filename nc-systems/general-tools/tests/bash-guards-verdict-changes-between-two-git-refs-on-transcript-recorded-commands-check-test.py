@@ -306,6 +306,37 @@ try:
           status == 2 and "replayed but not a Bash hook: ['scripts/hand-typed-codex-exec-redirect-hook.py']" in err,
           f"status {status}\n{out}\n{err}")
 
+    def commit_without_guard(guard_path):
+        """Return a commit made from HEAD that has neither the guard's file nor its hook, as a base before the guard."""
+        def remove(worktree):
+            path = worktree / ".claude" / "settings.json"
+            settings = json.loads(path.read_text())
+            for entry in settings["hooks"]["PreToolUse"]:
+                entry["hooks"] = [hook for hook in entry.get("hooks", []) if guard_path not in hook.get("command", "")]
+            path.write_text(json.dumps(settings, indent=2))
+            (worktree / guard_path).unlink()
+        return commit_with_change(remove, scratch)
+
+    before_tmux_kill_guard = commit_without_guard(TMUX_KILL_GUARD)
+    status, out, err = run_replay("HEAD", scratch, base_ref=before_tmux_kill_guard)
+    check("a head that adds a guard refusing a recorded command: exit 1, the merge is blocked",
+          status == 1 and "NEW GUARD REFUSES RECORDED COMMANDS" in out and "VERDICT CHANGED" not in out,
+          f"status {status}\n{out}\n{err}")
+    check("a head that adds a guard refusing a recorded command: the section names the guard, the count and the command",
+          f"in-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command\n  in /tmp\n"
+          "    command: 'tmux kill-server'" in out
+          and f"new-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command" in out, out)
+    check("a head that adds a guard: the guard is read at the head only, and the other guards are compared",
+          f"guards the head adds, read at the head only: ['{TMUX_KILL_GUARD}']" in out
+          and "in-process: rows whose verdict differs: 0" in out, out)
+
+    before_issue_write_guard = commit_without_guard(ISSUE_WRITE_GUARD)
+    status, out, err = run_replay("HEAD", scratch, base_ref=before_issue_write_guard)
+    check("a head that adds a guard refusing no recorded command: exit 0, and no new-guard section",
+          status == 0 and "NO VERDICT CHANGED" in out and "would refuse" not in out
+          and f"guards the head adds, read at the head only: ['{ISSUE_WRITE_GUARD}']" in out,
+          f"status {status}\n{out}\n{err}")
+
     uncallable = commit_with_guard_changed(ISSUE_WRITE_GUARD, "del analyze_command_text", scratch)
     status, out, err = run_replay(uncallable, scratch)
     check("a head whose guard lacks the function the replay calls: exit 2, the replay failed",
