@@ -39,7 +39,8 @@ Operating rules:
   back to claude-opus-5 when Fable produces no review) and
   gpt-6.1-sol (the codex CLI), at xhigh reasoning effort. Each audit
   therefore runs as two review agents, one per runtime, named
-  `<audit>-<runtime>` in this runner's output. The claude CLI runs with
+  `<audit>-adversarial-prompt-<runtime>`, such as `cut-adversarial-prompt-claude`, in
+  this runner's output and in the names of its report files. The claude CLI runs with
   `--setting-sources user`, so this repository's hooks, CLAUDE.md and skills
   are never loaded into a claude agent (nedschorus#397).
 - Run it only by deliberate decision — never wire it into automation. A
@@ -84,7 +85,7 @@ Operating rules:
   finish the triage before shipping it rather than editing it afterwards.
 - Each review agent is given a scratch directory of its own, made by the
   runner in the review copy at the record's own path,
-  `sanity-check-records/<date>-<target-stem>/scratch/<audit>-<runtime>/`, and
+  `sanity-check-records/<date>-<target-stem>/scratch/<audit>-adversarial-prompt-<runtime>/`, and
   named to that agent in its prompt: working notes, drafts, anything it needs.
   When the agents are done the runner moves the scratch directories into the
   record, before the copy is removed. It replaces the bare "write no files" the prompts used to
@@ -122,8 +123,8 @@ Running a sanity-check, and reading its output:
 
 - Run it as a background task and arm a Monitor (the harness's watch tool)
   on its output; it prints a status line per review agent as each finishes —
-  `saved: <path>`, `FAILED: <audit>-<runtime> — <cause class> — <detail>`, or
-  `SKIPPED:` — plus `RETRYING: <audit>-<runtime> — <cause class> — <detail>`
+  `saved: <path>`, `FAILED: <audit>-adversarial-prompt-<runtime> — <cause class> — <detail>`, or
+  `SKIPPED:` — plus `RETRYING: <audit>-adversarial-prompt-<runtime> — <cause class> — <detail>`
   when it launches an agent a second time, and the warning lines described
   below. Exit 0 when every launched agent saved; 1 when any launched agent
   failed (a skipped agent is not launched); 2 when the invocation itself is
@@ -160,7 +161,7 @@ Running a sanity-check, and reading its output:
   never silently — that audit works from the problem statement alone.
 - Cut and mechanization reports get a quote scan: every quoted span of four
   or more words is searched for across the tracked files, and a span found in
-  none prints `WARNING: <audit>-<runtime> quote found in no tracked file: ...` — triage
+  none prints `WARNING: <audit>-adversarial-prompt-<runtime> quote found in no tracked file: ...` — triage
   information, never a gate; a quote may legitimately come from git history
   or the web.
 - Every review agent may reach the internet to check facts, and every one may
@@ -174,7 +175,7 @@ Running a sanity-check, and reading its output:
   that completes, on both runtimes: a write to the review copy outside the
   agents' scratch directories is reported as
   `WARNING: the review copy was modified outside the cells' scratch
-  directories, seen when <audit>-<runtime> finished: <paths>`. The agents
+  directories, seen when <audit>-adversarial-prompt-<runtime> finished: <paths>`. The agents
   share one copy and one baseline, so the check cannot tell which agent
   wrote: the line names the agent whose completion ran the check that saw the
   write, and every agent that completes after it sees the same write and
@@ -194,7 +195,7 @@ Running a sanity-check, and reading its output:
   The requester's own checkout is not watched: the agents run in the copy, and
   the requester may work in the checkout meanwhile. A report path the runner
   finds already occupied when it writes the report is reported as
-  `WARNING: <audit>-<runtime> found a stray write at its own report path and
+  `WARNING: <audit>-adversarial-prompt-<runtime> found a stray write at its own report path and
   overwrote it: <path>`. The largest gap is an agent that does not complete:
   one that times out, cannot be launched, or exits non-zero returns before
   the comparison runs, so an agent that wrote a file and then failed is never
@@ -383,7 +384,7 @@ CAUSE_CLASS_NOT_A_REPORT = "not-a-report"
 CODEX_FAILED_LAUNCH_PRINTED_TAIL_LINES = 20
 
 # The sanctioned working space, one directory per cell, inside the run's own
-# record directory: <record dir>/scratch/<audit>-<runtime>/. See
+# record directory: <record dir>/scratch/<audit>-adversarial-prompt-<runtime>/. See
 # cell_scratch_dir for why it lives there and why it is per cell.
 CELL_SCRATCH_DIRECTORY_NAME = "scratch"
 
@@ -1411,7 +1412,7 @@ def fresh_record_dir(target_stem: str) -> pathlib.Path:
 
 def cell_scratch_dir(out_dir: pathlib.Path, cell: str) -> pathlib.Path:
     """One cell's sanctioned working space, created here:
-    `<record dir>/scratch/<audit>-<runtime>/`.
+    `<record dir>/scratch/<audit>-adversarial-prompt-<runtime>/`.
 
     A review agent's deliverable is its reply, but an agent working a document
     still needs somewhere to put notes and drafts. A prohibition — "write no
@@ -1547,13 +1548,19 @@ def rerun_command_for_cell(adversarial_prompt: str, runtime: str, target: str, c
     return shlex.join(command)
 
 
+def cell_name(adversarial_prompt: str, runtime: str) -> str:
+    """A sanity-check-cell's name, such as `cut-adversarial-prompt-claude`: its
+    report file, its scratch directory and its printed lines all use it."""
+    return f"{adversarial_prompt}-adversarial-prompt-{runtime}"
+
+
 def failed_cell_lines(adversarial_prompt: str, runtime: str, failure: FailedLaunch,
                       relaunched: bool, rerun_command: str) -> list:
     """The lines a cell that saved no report ends on: its FAILED: line, and
     under it what the requesting agent does next. The lines after the first
     are instructions and nothing else; why each is what it is stands in the
     module docstring, under WHY THE RUNNER DECIDES THE RELAUNCH."""
-    cell = f"{adversarial_prompt}-{runtime}"
+    cell = cell_name(adversarial_prompt, runtime)
     separator = common.CAUSE_SEPARATOR
     failed = f"FAILED: {cell}{separator}{failure.cause_class}{separator}{failure.detail}"
     if relaunched:
@@ -1567,7 +1574,7 @@ def failed_cell_lines(adversarial_prompt: str, runtime: str, failure: FailedLaun
             "After the user has cleared the cause, run the command on the next line.",
             rerun_command,
         ]
-    other_cell = "-".join((adversarial_prompt, *(name for name in RUNTIMES if name != runtime)))
+    other_cell = cell_name(adversarial_prompt, *(name for name in RUNTIMES if name != runtime))
     return [
         failed,
         f"When a run of this sanity-check saved {other_cell}'s report, triage "
@@ -1593,7 +1600,7 @@ def run_cell(adversarial_prompt: str, runtime: str, target: str, context: list,
     prompt, in the same copy and the same scratch directory, unless
     failed_launch_is_relaunched says the cause is not one a second launch can
     clear. A cell that ends with no report prints failed_cell_lines."""
-    cell = f"{adversarial_prompt}-{runtime}"
+    cell = cell_name(adversarial_prompt, runtime)
     checkout = checkout or REPO_ROOT
     prompt = assemble_prompt(adversarial_prompt, target, context, problem_statement,
                              str(cell_scratch_dir(scratch_record_dir or out_dir, cell)))
@@ -1831,7 +1838,7 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
     for adversarial_prompt in adversarial_prompts:
         if adversarial_prompt == "fresh-eyes" and args.problem_statement is None:
             for runtime in runtimes:
-                print(f"SKIPPED: {adversarial_prompt}-{runtime} (no --problem-statement)", flush=True)
+                print(f"SKIPPED: {cell_name(adversarial_prompt, runtime)} (no --problem-statement)", flush=True)
             continue
         for runtime in runtimes:
             cells.append((adversarial_prompt, runtime))
@@ -1926,7 +1933,7 @@ def run_cells_in_review_copy(args, target_path: pathlib.Path, run_log: RunOutput
             if (run_log.reports_saved_once_cells_ended is None
                     and len(futures) == len(cells)
                     and CELLS_FINISHED_AT_THE_STOP is not None
-                    and {f"{adversarial_prompt}-{runtime}" for adversarial_prompt, runtime in cells}
+                    and {cell_name(adversarial_prompt, runtime) for adversarial_prompt, runtime in cells}
                         <= CELLS_FINISHED_AT_THE_STOP
                     and all(future.done() and future.exception() is None
                             for future in futures)):
