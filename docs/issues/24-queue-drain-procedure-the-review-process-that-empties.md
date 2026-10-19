@@ -1,8 +1,8 @@
 ---
-issue: "[Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, docs/drafts and the draft-label issue queue](https://github.com/nedschorus/nedschorus/issues/24)"
+issue: "[Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, the drafts directory and the queue-drain-candidate-label issue queue](https://github.com/nedschorus/nedschorus/issues/24)"
 ---
 
-# Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, docs/drafts and the draft-label issue queue
+# Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, the drafts directory and the queue-drain-candidate-label issue queue
 
 ## Why this exists (boss-directed, 2026-07-24)
 
@@ -16,7 +16,7 @@ The artifact-lifecycle design gives every non-final artifact a named queue (`doc
   - **edit** — revise in place; stays queued.
   - **demote** — down to evidence/transient, attached to its pair or session.
   - **drop** — deleted, with the reason in the commit message; explicit, never silent rot.
-- **Starvation visibility is the system half:** the handoff scrub step reports every queue's depth and oldest-item age (it already does this for the `draft` issue queue), so an unwalked queue surfaces at every handoff without anyone remembering to look.
+- **Starvation visibility is the system half:** the handoff scrub step reports every queue's depth and oldest-item age (it already does this for the `queue-drain-candidate` issue queue), so an unwalked queue surfaces at every handoff without anyone remembering to look.
 
 ## Build surfaces (when NC builds them)
 
