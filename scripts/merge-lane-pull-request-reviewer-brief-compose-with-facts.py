@@ -5,6 +5,7 @@ Usage:
   scripts/merge-lane-pull-request-reviewer-brief-compose-with-facts.py <brief specifications file>
       [--merge-lane-worktrees-and-outputs-directory DIR] [--review-tools-worktree-at-main DIR] [--brief-file PATH]
       [--ned-box-reviewer-brief-environment-addendum-file PATH] [--instructions-file PATH]
+      [--merge-lane-pull-request-reviewer-scratch-directories-parent-directory DIR]
 
 The file holds a JSON list. Each entry has tag, number, title, author, head,
 main, tests and hazards, and may have overlaps. A fix-round entry also has
@@ -16,7 +17,9 @@ instructions inserted; the ned-box environment addendum; and a section of
 facts, which git reads in --review-tools-worktree-at-main and in the worktrees
 and outputs directory's wt/pr<n>-merged. The brief is written to
 briefs/brief-<tag>-mac-claude.md under the worktrees and outputs directory, and
-rv<tag>/ is made there as the reviewer's scratch directory.
+rv<tag>/ is made under --merge-lane-pull-request-reviewer-scratch-directories-parent-directory as the reviewer's
+scratch directory. That parent is outside the log-store, because the standing
+text forbids the reviewer to write to the log-store.
 
 Exit codes: 0 every brief written; 1 a step failed, named on stderr, and no
 later brief is composed.
@@ -34,6 +37,8 @@ DEFAULT_BRIEF_FILE = Path(
 DEFAULT_NED_BOX_REVIEWER_BRIEF_ENVIRONMENT_ADDENDUM_FILE = Path(
     "/home/nedlern/agents/merge-lane-2/walk-ledgers/"
     "ned-box-reviewer-brief-environment-addendum.md")
+DEFAULT_MERGE_LANE_PULL_REQUEST_REVIEWER_SCRATCH_DIRECTORIES_PARENT_DIRECTORY = Path(
+    "/home/nedlern/.cache/merge-lane-pull-request-reviewer-scratch-directories")
 
 _common_spec = importlib.util.spec_from_file_location(
     "merge_lane_pull_request_helpers_common", Path(__file__).resolve().with_name(
@@ -59,7 +64,7 @@ def parse_arguments(argv):
                     "specifications file: standing text, ned-box addendum, then facts.")
     parser.add_argument("brief_specifications_file", type=Path,
                         help="a JSON list of brief specifications")
-    common.add_directory_options(parser, "wt/; the briefs and scratch directories are written there")
+    common.add_directory_options(parser, "wt/; the briefs are written there")
     parser.add_argument("--brief-file", type=Path, default=DEFAULT_BRIEF_FILE,
                         help=f"the brief's standing text (default: {DEFAULT_BRIEF_FILE})")
     parser.add_argument("--ned-box-reviewer-brief-environment-addendum-file", type=Path,
@@ -69,6 +74,12 @@ def parse_arguments(argv):
     parser.add_argument("--instructions-file", type=Path,
                         help="the reviewing instructions inserted into the standing text "
                              "(default: <review-tools-worktree-at-main>/docs/agents/pr-reviewer-instructions.md)")
+    parser.add_argument("--merge-lane-pull-request-reviewer-scratch-directories-parent-directory", type=Path,
+                        default=DEFAULT_MERGE_LANE_PULL_REQUEST_REVIEWER_SCRATCH_DIRECTORIES_PARENT_DIRECTORY,
+                        help=f"the directory in which each reviewer's scratch directory rv<tag>/ is made, "
+                             f"<tag> being the tag field of that pull request's entry in the brief "
+                             f"specifications file, such as 1630 or 1630r1 "
+                             f"(default: {DEFAULT_MERGE_LANE_PULL_REQUEST_REVIEWER_SCRATCH_DIRECTORIES_PARENT_DIRECTORY})")
     return common.resolve_path_options(parser.parse_args(argv))
 
 
@@ -112,7 +123,7 @@ def compose(spec, arguments, review_tools_worktree, instructions_file):
                     "--pull-request", str(number),
                     "--brief-file", str(arguments.brief_file),
                     "--instructions-file", str(instructions_file)])
-    scratch = helpers / f"rv{tag}"
+    scratch = arguments.merge_lane_pull_request_reviewer_scratch_directories_parent_directory / f"rv{tag}"
     scratch.mkdir(parents=True, exist_ok=True)
     facts = ["## This pull request (facts from merge-lane-2)", "",
              f"- Pull request: #{number}, \"{spec['title']}\", author `{spec['author']}`.",
