@@ -1590,6 +1590,29 @@ def main():
               len(records) == 1 and records[0].endswith("-widget-SKILL"),
               f"records {records}")
 
+    # Case 61: fresh-eyes without --problem-statement launches no cell and
+    # prints one SKIPPED line per runtime, naming the cell in full, while the
+    # other adversarial prompt still runs.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch)
+        repo = scratch_repository_with_design(base)
+        driven = runner_over(repo, base)
+        launched = []
+        driven.run_claude = lambda prompt, checkout=None: (
+            launched.append("claude") or (0, any_adversarial_prompt_report, "a-test-model", ""))
+        driven.run_codex = lambda prompt, checkout=None: (
+            launched.append("codex") or (0, any_adversarial_prompt_report, "a-test-model", ""))
+        code, out, err = drive_main(driven, [
+            "--target", "docs/design.md", "--adversarial-prompt", "fresh-eyes",
+            "--adversarial-prompt", "cut"])
+        skipped = [line for line in out.splitlines() if line.startswith("SKIPPED:")]
+        check("fresh-eyes without --problem-statement prints one SKIPPED line per "
+              "runtime, naming each cell in full, and launches only the cut cells",
+              skipped == ["SKIPPED: fresh-eyes-adversarial-prompt-claude (no --problem-statement)",
+                          "SKIPPED: fresh-eyes-adversarial-prompt-codex (no --problem-statement)"]
+              and sorted(launched) == ["claude", "codex"],
+              f"exit {code}, skipped {skipped}, launched {launched}, stderr {err!r}")
+
     # Case 35: the cells are given each document by its repository-relative
     # path, whatever form it was passed in. An absolute path inside the
     # checkout used to pass every check and reach the prompt as given, so the
@@ -2315,6 +2338,10 @@ time.sleep(300)
         DRIVER_HELD_CELL_SENDS_SIGTERM_TO_ITS_OWN_THREAD also set, that cell's thread waits
         for the other cell to finish and then sends SIGTERM to itself, as Linux
         may hand a signal sent to the process to any of its threads.
+        DRIVER_HOLD_MAIN_THREAD_ONCE_EVERY_CELL_ENDED holds the main thread
+        in its wait for the cells once no cell is left to wait for, before the
+        run counts the saved reports, until that file exists (`<file>.held`
+        again).
         DRIVER_PROBE_VERSIONS, set to any
         value, leaves the CLI version cache empty, so a cell probes the
         stand-in's `--version` as a real run does."""
@@ -2376,6 +2403,15 @@ if report_check_hold:
             held_until(report_check_hold)
         return check_report(*arguments, **keywords)
     module.missing_report_phrases = last_report_check_held
+cells_ended_hold = os.environ.get("DRIVER_HOLD_MAIN_THREAD_ONCE_EVERY_CELL_ENDED")
+if cells_ended_hold:
+    wait_for_cells = module.concurrent.futures.wait
+    def main_thread_held_once_every_cell_ended(*arguments, **keywords):
+        finished, waiting = wait_for_cells(*arguments, **keywords)
+        if not waiting:
+            held_until(cells_ended_hold)
+        return finished, waiting
+    module.concurrent.futures.wait = main_thread_held_once_every_cell_ended
 ship_hold = os.environ.get("DRIVER_HOLD_FIRST_SHIP")
 if ship_hold:
     ship = module.ship_record
@@ -2951,6 +2987,51 @@ sys.exit(module.main())
                   and sum(line.startswith("record: shipped: ") for line in out.splitlines()) == 1,
                   f"held {held}, record {record}, stdout {out!r}, stderr {err!r}")
             check("and the run still ends by the signal, its copy removed",
+                  process.returncode == -signal.SIGTERM and left_in_copies_root(base) == [],
+                  f"exit {process.returncode}, copies root {left_in_copies_root(base)}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 62: a stop signal that lands after every cell has finished, while
+    # the main thread is still in its wait for the cells. No cell was running
+    # when it came, so the run prints what a finished run prints and no
+    # STOPPED line, and still ends by the signal.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-once-every-cell-ended.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        cells_ended_hold = base / "cells-ended-hold"
+        environment = runner_process_environment(
+            programs, recorded, codex="report", claude="report")
+        environment["DRIVER_HOLD_MAIN_THREAD_ONCE_EVERY_CELL_ENDED"] = str(cells_ended_hold)
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--adversarial-prompt", "cut"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            held = wait_until(lambda: pathlib.Path(str(cells_ended_hold) + ".held").exists())
+            process.send_signal(signal.SIGTERM)
+            try:
+                out, err = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            records = sorted((repo / "sanity-check-records").glob("*"))
+            record = records[0] if len(records) == 1 else None
+            check("a stop that lands once every cell has finished, while the main thread "
+                  "still waits for the cells, prints what a finished run prints, and no "
+                  "STOPPED line",
+                  held and record is not None
+                  and (record / "cut-adversarial-prompt-codex.md").is_file()
+                  and (record / "cut-adversarial-prompt-claude.md").is_file()
+                  and "STOPPED:" not in out
+                  and f"sanity-check complete: reports in {record}." in out,
+                  f"held {held}, record {record}, stdout {out!r}, stderr {err!r}")
+            check("and that run still ends by the signal, its copy removed",
                   process.returncode == -signal.SIGTERM and left_in_copies_root(base) == [],
                   f"exit {process.returncode}, copies root {left_in_copies_root(base)}")
         finally:
