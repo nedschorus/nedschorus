@@ -803,11 +803,12 @@ def main(argv=None):
         if missing:
             print(f"pull-request-review-plan: {len(missing)} listed agent-facing message(s) have no cold-read-fast-read "
                   "command, because their text could not be written to a file. The rest of the plan is complete; use it as printed.\n"
-                  "To find each such message: in the text plan, its line reads \"cold-read-fast-read: none, because\" "
-                  "and gives the error; in --json output, its fast_read_command is null.\n"
-                  "For each such message: write the text the program prints, taken from its file at the pull "
-                  "request's head, to a file of its own in your scratchpad, then run "
-                  + FAST_READ_COMMAND.format(target="<that file>") + " from your checkout.",
+                  "To find each such message: in the text plan, its entry's line containing \"cold-read-fast-read: none, because\" "
+                  "gives the error; in --json output, its fast_read_command is null.\n"
+                  "For each such message: take the decoded value of its new_text field from this program's --json output, "
+                  "which is the message's text (if you ran without --json, run again with it; it exits 1 again, with the same plan). "
+                  "Write that text into a file of its own outside your checkout, named for the message's file and line, then run "
+                  + FAST_READ_COMMAND.format(target="<that file>") + " from the top of your checkout.",
                   file=sys.stderr)
             return 1
         return 0
