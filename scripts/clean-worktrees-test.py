@@ -50,6 +50,7 @@ ned-box is a stub ssh and rsync that exit 255.
 Run: python3 scripts/clean-worktrees-test.py
 """
 
+import atexit
 import importlib.util
 import os
 import select
@@ -77,6 +78,7 @@ SHIP_DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 # A worktree holding a record makes --remove run the real shipper; without this, a run would ship
 # into the real log-store.
 _ship_store_for_every_run = tempfile.mkdtemp(prefix="clean-worktrees-test-ship-store-")
+atexit.register(shutil.rmtree, _ship_store_for_every_run, ignore_errors=True)
 os.environ[SHIP_DESTINATION_VARIABLE] = str(Path(_ship_store_for_every_run) / "cold-read-records")
 
 ORPHANED_BRANCH_REF_LINE_MARKER = (
@@ -955,7 +957,9 @@ with tempfile.TemporaryDirectory() as scratch:
             capture_output=True, text=True, check=False, env=environment)
 
     def remove_worktree_for_next_case(path):
-        git(checkout, "worktree", "remove", "--force", str(path))
+        # A case that wrongly removed the worktree has already failed; the next cases still run.
+        if path.exists():
+            git(checkout, "worktree", "remove", "--force", str(path))
 
     # The report modes name the records and ship nothing.
     store = scratch / "store"
@@ -1018,6 +1022,10 @@ with tempfile.TemporaryDirectory() as scratch:
           and "FAILED:" in unreachable.stdout and unreachable.returncode == 1
           and "unreachable-wt: removed" not in unreachable.stdout,
           unreachable.stdout + unreachable.stderr)
+    check("--remove prints each failed shipment's line once, inside the kept line",
+          unreachable.stdout.count("FAILED:") == 2  # one per record, both on the kept line
+          and "unreachable-wt: FAILED" not in unreachable.stdout,
+          unreachable.stdout)
     remove_worktree_for_next_case(unreachable_wt)
 
     # A record the store holds with other bytes is a second read: refused, so the worktree stays.
@@ -1042,12 +1050,15 @@ with tempfile.TemporaryDirectory() as scratch:
           silent_wt.exists() and "the shipper printed nothing (exit 1)" in silent.stdout
           and "silent-wt: kept — " in silent.stdout and silent.returncode == 1,
           silent.stdout + silent.stderr)
+    check("--remove carries a silent shipper's last error line into the kept line",
+          "the shipper printed nothing (exit 1): " in silent.stdout
+          and silent.stderr.strip().splitlines()[-1] in silent.stdout,
+          silent.stdout + silent.stderr)
     remove_worktree_for_next_case(silent_wt)
 
 check("no run of the suite shipped into the store every run defaults to",
       not any(Path(_ship_store_for_every_run).iterdir()),
       str(list(Path(_ship_store_for_every_run).rglob("*"))))
-shutil.rmtree(_ship_store_for_every_run, ignore_errors=True)
 
 print()
 if failures:

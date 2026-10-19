@@ -334,10 +334,16 @@ def ship_log_store_records(worktree):
                                   capture_output=True, text=True, check=False)
         sys.stderr.write(shipment.stderr)
         # One record directory, so the shipper prints at most one line.
-        line = shipment.stdout.strip() or f"the shipper printed nothing (exit {shipment.returncode})"
-        print(f"{worktree.name}: {line}")
+        line = shipment.stdout.strip()
+        if not line:
+            last_error = shipment.stderr.strip().splitlines()[-1:]
+            line = (f"the shipper printed nothing (exit {shipment.returncode})"
+                    + (f": {last_error[0]}" if last_error else ""))
+        # A failed shipment's line is printed once, inside the kept line, so a reader counts it once.
         if shipment.returncode:
             unshipped.append(f"{record.relative_to(worktree)} ({line})")
+        else:
+            print(f"{worktree.name}: {line}")
     if unshipped:
         return ("removing it would delete record(s) the log-store does not hold: "
                 + "; ".join(unshipped))
