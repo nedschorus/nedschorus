@@ -26,19 +26,26 @@ Options that widen what Codex may do, each off by default:
   --outside-git-checkout  let -C name a folder that is not a git checkout;
   --web-search            give Codex its live web search tool.
 
-  --prefetch-github '<gh arguments>'  run `gh <gh arguments>` before Codex
-                          starts and give Codex its output as a file;
-                          repeatable. Codex cannot run `gh` itself, because
-                          its permission profile denies the folder holding
-                          gh's login. Only reading commands are accepted:
-                          `pr list`, `pr view`, `issue list`, `issue view`,
-                          and `api` without a method or field option.
-                          The files go in `<report>.github-data/`, and the
-                          brief Codex gets ends with a list of them.
+  --prefetch-github '<gh arguments>'  run `gh <gh arguments>` in the -C
+                          checkout before Codex starts, and give Codex its
+                          output as a file; repeatable. Without -R, gh reads
+                          the repository of the -C checkout; with
+                          --outside-git-checkout, give -R. Codex cannot run
+                          `gh` itself, because its permission profile denies
+                          the folder holding gh's login. Only reading commands
+                          are accepted: `pr list`, `pr view`, `issue list`,
+                          `issue view`, and `api` without -X, --method, -f,
+                          -F, --field, --raw-field or --input, so `api graphql`,
+                          which needs -f, is refused. The files go in
+                          `<report>.github-data/`, and the brief Codex gets
+                          ends with a list of them.
+
+--deadline-minutes bounds the whole run: the --prefetch-github commands and
+Codex together.
 
 On success it prints `report: <path>` and exits 0. It exits 1, saying what
-failed, when a --prefetch-github command fails or passes the deadline, or when
-Codex cannot be started, exits nonzero, writes no report, or passes the
+failed, when a --prefetch-github command fails, or when Codex cannot be
+started, exits nonzero, writes no report, or when the run passes its
 deadline. It exits 2 on bad arguments. It needs no terminal, so
 it can run as a background task.
 """
@@ -53,6 +60,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 
 _common_spec = importlib.util.spec_from_file_location(
     "cold_read_cell_common",
@@ -73,6 +81,12 @@ PREFETCH_READING_SUBCOMMANDS = {("pr", "list"), ("pr", "view"), ("issue", "list"
 # `gh api` sends a request other than GET with these, or with -X/--method.
 PREFETCH_API_WRITING_OPTIONS = ("-X", "--method", "-f", "--raw-field", "-F", "--field",
                                 "--input")
+# gh reads `-iXDELETE` letter by letter: -i takes no value; -H, -p, -q and -t take the
+# rest of the word as their value. Any other letter is refused, since it may write.
+PREFETCH_API_SHORT_FLAGS_WITHOUT_VALUE = "i"
+PREFETCH_API_SHORT_OPTIONS_TAKING_VALUE = "Hpqt"
+# Keeps a saved file's name well under the 255-byte limit of most file systems.
+PREFETCH_FILE_NAME_WORDS_MAX_CHARACTERS = 80
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -99,7 +113,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
                         help="give Codex its live web search tool")
     parser.add_argument("--deadline-minutes", type=float,
                         default=DEFAULT_DEADLINE_MINUTES,
-                        help=f"stop Codex after this long (default {DEFAULT_DEADLINE_MINUTES})")
+                        help="stop the run, the --prefetch-github commands and Codex "
+                             f"together, after this many minutes (default {DEFAULT_DEADLINE_MINUTES})")
     parser.add_argument("--run-log", help="file for Codex's output (default <report>.run.log)")
     parser.add_argument("--prefetch-github", action="append", default=[],
                         metavar="GH_ARGUMENTS",
@@ -108,41 +123,77 @@ def build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def prefetch_refusal(gh_arguments: str):
-    """Return why --prefetch-github must not run these gh arguments, or None when it may."""
+def prefetch_quoting_error(gh_arguments: str):
+    """Return why these gh arguments cannot be split into words, or None when they can."""
     try:
-        words = shlex.split(gh_arguments)
+        shlex.split(gh_arguments)
     except ValueError as error:
-        return f"its quoting cannot be read ({error})"
+        return str(error)
+    return None
+
+
+def api_short_option_refusal(word: str):
+    """Return why a short-option word like -iXDELETE may write, or None when it only reads."""
+    for letter in word[1:]:
+        if letter in PREFETCH_API_SHORT_OPTIONS_TAKING_VALUE:
+            return None
+        if f"-{letter}" in PREFETCH_API_WRITING_OPTIONS:
+            return f"`gh api` with -{letter} (in `{word}`) can send a request that changes GitHub"
+        if letter not in PREFETCH_API_SHORT_FLAGS_WITHOUT_VALUE:
+            return (f"`gh api` with -{letter} (in `{word}`) is not a short option this "
+                    f"check knows to only read")
+    return None
+
+
+def prefetch_refusal(gh_arguments: str):
+    """Return why --prefetch-github must not run these gh arguments, or None when it may.
+
+    The arguments' quoting must already be readable; see prefetch_quoting_error."""
+    words = shlex.split(gh_arguments)
     if tuple(words[:2]) in PREFETCH_READING_SUBCOMMANDS:
         return None
     if words[:1] == ["api"]:
         for word in words[1:]:
-            option = word.split("=", 1)[0]
-            # A short option can carry its value attached, as in -XPOST or -fbody=x.
-            if option not in PREFETCH_API_WRITING_OPTIONS and re.match(r"-[XfF].", word):
-                option = word[:2]
-            if option in PREFETCH_API_WRITING_OPTIONS:
-                return f"`gh api` with {option} can send a request that changes GitHub"
+            if word == "--":
+                break
+            if word.startswith("--"):
+                option = word.split("=", 1)[0]
+                if option in PREFETCH_API_WRITING_OPTIONS:
+                    return f"`gh api` with {option} can send a request that changes GitHub"
+            elif word.startswith("-") and len(word) > 1:
+                refusal = api_short_option_refusal(word)
+                if refusal:
+                    return refusal
         return None
     return "it is not `pr list`, `pr view`, `issue list`, `issue view` or `api`"
 
 
-def prefetch_github_data(commands, data_folder: pathlib.Path, deadline_seconds: float):
-    """Run each gh command and save its output; return (files, None) or (None, error)."""
+def prefetch_file_name(number: int, words) -> str:
+    stem = "-".join(re.sub(r"[^A-Za-z0-9]+", "-", word).strip("-") for word in words[:4])
+    return f"{number:02d}-{stem[:PREFETCH_FILE_NAME_WORDS_MAX_CHARACTERS]}.txt"
+
+
+def prefetch_github_data(commands, data_folder: pathlib.Path, checkout: pathlib.Path,
+                         deadline: float, deadline_minutes: float):
+    """Run each gh command in the checkout and save its output, all before the monotonic
+    time `deadline`; return (files, None) or (None, error)."""
     shutil.rmtree(data_folder, ignore_errors=True)
     data_folder.mkdir(parents=True)
     files = []
     for number, gh_arguments in enumerate(commands, start=1):
         words = shlex.split(gh_arguments)
-        target = data_folder / f"{number:02d}-{'-'.join(re.sub(r'[^A-Za-z0-9]+', '-', w).strip('-') for w in words[:4])}.txt"
+        target = data_folder / prefetch_file_name(number, words)
         try:
-            result = subprocess.run(["gh", *words], stdin=subprocess.DEVNULL,
-                                    capture_output=True, text=True, timeout=deadline_seconds)
+            # In the checkout, so that gh without -R reads that checkout's repository.
+            result = subprocess.run(["gh", *words], cwd=checkout, stdin=subprocess.DEVNULL,
+                                    capture_output=True, text=True,
+                                    timeout=max(deadline - time.monotonic(), 0.001))
         except subprocess.TimeoutExpired:
-            return None, (f"`gh {gh_arguments}` passed the deadline and was stopped; "
+            return None, (f"`gh {gh_arguments}` was still running when the run's "
+                          f"{deadline_minutes:g}-minute deadline passed, and was stopped; "
                           f"Codex was not started.\n"
-                          f"If the command needs longer, run again with a larger "
+                          f"The deadline covers every --prefetch-github command and Codex "
+                          f"together. If the run needs longer, run it again with a larger "
                           f"--deadline-minutes.")
         except OSError as error:
             return None, f"could not run `gh {gh_arguments}`: {error}; Codex was not started."
@@ -157,8 +208,10 @@ def prefetch_github_data(commands, data_folder: pathlib.Path, deadline_seconds: 
 def brief_with_prefetched_files(prompt: str, files) -> str:
     listing = "\n".join(f"- {path}: the output of `gh {arguments}`" for path, arguments in files)
     return (f"{prompt.rstrip()}\n\n"
-            f"GitHub data fetched for you before you started, one file per command. "
-            f"`gh` cannot run where you are, so read these files instead:\n{listing}\n")
+            f"You cannot run `gh` yourself: your permission profile keeps you from the "
+            f"folder holding gh's login. So the GitHub data below was fetched for you "
+            f"before you started, one file per command. Read these files instead:\n"
+            f"{listing}\n")
 
 
 def codex_command(checkout: pathlib.Path, report: pathlib.Path, sandbox: str,
@@ -214,6 +267,13 @@ def main(argv=None) -> int:
     parser = build_argument_parser()
     args = parser.parse_args(argv)
     for gh_arguments in args.prefetch_github:
+        quoting_error = prefetch_quoting_error(gh_arguments)
+        if quoting_error:
+            parser.error(
+                f"could not read the quoting of --prefetch-github '{gh_arguments}': "
+                f"{quoting_error}.\n"
+                f"Quote it as a shell would, with every quotation mark closed, such as "
+                f"--prefetch-github 'pr view 12 --json \"title,body\"'.")
         refusal = prefetch_refusal(gh_arguments)
         if refusal:
             parser.error(
@@ -236,14 +296,18 @@ def main(argv=None) -> int:
         return fail(f"the brief {brief} is empty.")
     # A report left by an earlier run must not pass for this run's.
     report.unlink(missing_ok=True)
-    deadline_seconds = args.deadline_minutes * 60
+    # The credential-file scan that builds Codex's command line counts against no deadline.
+    seconds_left = args.deadline_minutes * 60
     if args.prefetch_github:
+        prefetch_started = time.monotonic()
+        deadline = prefetch_started + seconds_left
         files, error = prefetch_github_data(
             args.prefetch_github, report.with_name(report.name + ".github-data"),
-            deadline_seconds)
+            checkout, deadline, args.deadline_minutes)
         if error:
             return fail(error)
         prompt = brief_with_prefetched_files(prompt, files)
+        seconds_left -= time.monotonic() - prefetch_started
     command = codex_command(
         checkout, report, args.sandbox, args.model, args.effort, prompt,
         network=args.network,
@@ -257,13 +321,14 @@ def main(argv=None) -> int:
                 command, stdin=subprocess.DEVNULL, stdout=log,
                 stderr=subprocess.STDOUT, start_new_session=True)
             try:
-                exit_code = process.wait(timeout=deadline_seconds)
+                exit_code = process.wait(timeout=max(seconds_left, 0.001))
             except subprocess.TimeoutExpired:
                 stop_process_group(process)
                 return fail(
-                    f"Codex passed the {args.deadline_minutes:g}-minute deadline and "
-                    f"was stopped; its output so far is in {run_log}.\n"
-                    f"If the task needs longer, run it again with a larger "
+                    f"Codex was still running when the run's {args.deadline_minutes:g}-minute "
+                    f"deadline passed, and was stopped; its output so far is in {run_log}.\n"
+                    f"The deadline covers every --prefetch-github command and Codex "
+                    f"together. If the run needs longer, run it again with a larger "
                     f"--deadline-minutes.")
     except OSError as error:
         return fail(f"could not start Codex: {error}")

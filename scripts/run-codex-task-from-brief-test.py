@@ -2,7 +2,8 @@
 """Tests for scripts/run-codex-task-from-brief.py, with a fake `codex` on PATH.
 
 A fake `gh` on PATH stands in for the commands --prefetch-github runs: it
-logs its arguments and, by FAKE_GH_MODE, prints data, fails, or sleeps.
+logs its arguments and the folder it ran in and, by FAKE_GH_MODE, prints data,
+fails, or sleeps.
 
 The fake records its arguments and, by the FAKE_CODEX_MODE environment
 variable, writes a report, fails with or without a report, writes nothing,
@@ -69,6 +70,8 @@ FAKE_GH = r'''#!/usr/bin/env python3
 import json, os, sys, time
 with open(os.environ["FAKE_GH_LOG"], "a") as log:
     log.write(json.dumps(sys.argv[1:]) + "\n")
+with open(os.environ["FAKE_GH_LOG"] + ".cwd", "a") as log:
+    log.write(os.getcwd() + "\n")
 mode = os.environ.get("FAKE_GH_MODE", "data")
 if mode == "data":
     print("gh data for " + " ".join(sys.argv[1:]))
@@ -77,6 +80,13 @@ elif mode == "fail":
     sys.exit(1)
 elif mode == "sleep":
     time.sleep(60)
+elif mode == "sleep-second":
+    calls = len(open(os.environ["FAKE_GH_LOG"]).read().splitlines())
+    if calls >= 2:
+        open(os.environ["FAKE_GH_LOG"] + ".second-started", "w").write(str(time.time()))
+        time.sleep(60)
+    time.sleep(2)
+    print("gh data")
 '''
 
 failures = []
@@ -101,6 +111,9 @@ try:
     fake_gh.write_text(FAKE_GH)
     fake_gh.chmod(0o755)
     gh_log = scratch / "gh-calls.jsonl"
+    # The runner is started from a folder other than the checkout, as an agent may start it.
+    elsewhere = scratch / "elsewhere"
+    elsewhere.mkdir()
     checkout = scratch / "checkout"
     checkout.mkdir()
     brief = scratch / "brief.md"
@@ -142,7 +155,7 @@ try:
         codex_pid_file.unlink(missing_ok=True)
         command = [sys.executable, str(PROGRAM), "-C", str(checkout), "--brief", str(brief),
                    "-o", str(report), *extra]
-        process = subprocess.Popen(command, env=environment, stdin=stdin,
+        process = subprocess.Popen(command, env=environment, stdin=stdin, cwd=elsewhere,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                    start_new_session=True)
         stdout_parts, stderr_lines = [], []
@@ -414,8 +427,13 @@ try:
         return [json.loads(line) for line in gh_log.read_text().splitlines()] \
             if gh_log.exists() else []
 
+    def gh_folders():
+        cwd_log = Path(str(gh_log) + ".cwd")
+        return cwd_log.read_text().splitlines() if cwd_log.exists() else []
+
     def fresh_prefetch_case():
         gh_log.unlink(missing_ok=True)
+        Path(str(gh_log) + ".cwd").unlink(missing_ok=True)
         arguments_file.unlink(missing_ok=True)
 
     fresh_prefetch_case()
@@ -431,6 +449,9 @@ try:
               ["pr", "list", "--state", "merged", "--limit", "5"],
               ["api", "repos/o/r/pulls?state=closed"]],
           f"exit {completed.returncode}, gh calls {gh_calls()!r}, stderr {completed.stderr!r}")
+    check("each gh command runs in the -C checkout, not the folder the runner was started in, "
+          "so gh without -R reads the checkout's repository",
+          gh_folders() == [str(checkout.resolve())] * 2, repr(gh_folders()))
     check("each gh output is saved in <report>.github-data, and an earlier run's files are gone",
           [path.read_text() for path in saved] == [
               "gh data for pr list --state merged --limit 5\n",
@@ -439,14 +460,28 @@ try:
     check("the brief Codex gets is the brief file followed by the list of saved files",
           bool(arguments) and arguments[-1].startswith(brief.read_text().rstrip())
           and all(str(path) in arguments[-1] for path in saved)
-          and "`gh pr list --state merged --limit 5`" in arguments[-1],
+          and "`gh pr list --state merged --limit 5`" in arguments[-1]
+          and "permission profile keeps you from the folder holding gh's login"
+          in arguments[-1],
           repr(arguments[-1:]))
+
+    fresh_prefetch_case()
+    long_endpoint = "repos/o/r/" + "x" * 400
+    completed, report, _ = run("report", "--prefetch-github", f"api {long_endpoint}")
+    saved = sorted(data_folder.glob("*.txt"))
+    check("a gh command with a long argument is saved under a name short enough to write",
+          completed.returncode == 0 and len(saved) == 1 and len(saved[0].name) < 120,
+          f"exit {completed.returncode}, files {[p.name for p in saved]!r}, "
+          f"stderr {completed.stderr!r}")
 
     for refused_arguments, reason in (("pr merge 12", "is not `pr list`"),
                                       ("api -XPOST repos/o/r/issues", "with -X"),
                                       ("api repos/o/r/issues --method=PATCH", "with --method"),
                                       ("api repos/o/r/issues -f title=x", "with -f"),
-                                      ("issue view 'unclosed", "quoting cannot be read")):
+                                      ("api repos/o/r/issues --input body.json", "with --input"),
+                                      ("api -iXDELETE repos/o/r/git/refs/heads/b", "-X (in `-iXDELETE`) can send a request"),
+                                      ("api -iFtitle=x repos/o/r/issues", "-F (in `-iFtitle=x`) can send a request"),
+                                      ("api -ib repos/o/r", "-b (in `-ib`) is not a short option")):
         fresh_prefetch_case()
         completed, report, _ = run("report", "--prefetch-github", "pr view 1",
                                    "--prefetch-github", refused_arguments)
@@ -455,6 +490,25 @@ try:
               and "may only read from GitHub" in completed.stderr
               and not gh_calls() and not arguments_file.exists(),
               f"exit {completed.returncode}, gh calls {gh_calls()!r}, stderr {completed.stderr!r}")
+
+    fresh_prefetch_case()
+    completed, report, _ = run("report", "--prefetch-github", "api -i -q .title -H 'Accept: x' repos/o/r/pulls/1",
+                               "--prefetch-github", "api -iqX repos/o/r")
+    check("short options that only read, alone or clustered, pass, and a value after -q is "
+          "not read as options",
+          completed.returncode == 0 and len(gh_calls()) == 2,
+          f"exit {completed.returncode}, gh calls {gh_calls()!r}, stderr {completed.stderr!r}")
+
+    fresh_prefetch_case()
+    completed, report, _ = run("report", "--prefetch-github", "pr view 1",
+                               "--prefetch-github", "issue view 'unclosed")
+    check("arguments whose quoting cannot be read get a quoting message, not the read-only "
+          "refusal, with exit 2 before gh or Codex runs",
+          completed.returncode == 2 and "could not read the quoting" in completed.stderr
+          and "every quotation mark closed" in completed.stderr
+          and "may only read from GitHub" not in completed.stderr
+          and not gh_calls() and not arguments_file.exists(),
+          f"exit {completed.returncode}, gh calls {gh_calls()!r}, stderr {completed.stderr!r}")
 
     fresh_prefetch_case()
     completed, report, _ = run("report", "--prefetch-github", "pr view 1", gh_mode="fail")
@@ -468,9 +522,29 @@ try:
     completed, report, elapsed = run("report", "--prefetch-github", "pr view 1",
                                      "--deadline-minutes", "0.02", gh_mode="sleep")
     check("a gh command that passes the deadline is stopped, exits 1, and Codex is not started",
-          completed.returncode == 1 and "passed the deadline" in completed.stderr
+          completed.returncode == 1 and "deadline passed" in completed.stderr
+          and "covers every --prefetch-github command and Codex together" in completed.stderr
           and elapsed < 30 and not arguments_file.exists(),
           f"exit {completed.returncode}, {elapsed:.1f}s, stderr {completed.stderr!r}")
+
+    fresh_prefetch_case()
+    # 3 s for the whole run: the first gh call takes 2 s and the second sleeps. The second
+    # must be stopped when the run's deadline passes, about 1 s after it starts, not after
+    # a fresh 3 s of its own.
+    second_started_file = Path(str(gh_log) + ".second-started")
+    second_started_file.unlink(missing_ok=True)
+    completed, report, _ = run("report", "--prefetch-github", "pr view 1",
+                               "--prefetch-github", "pr view 2",
+                               "--deadline-minutes", "0.05", gh_mode="sleep-second")
+    finished = time.time()
+    second_ran = (finished - float(second_started_file.read_text())
+                  if second_started_file.exists() else None)
+    check("the deadline bounds all gh commands together: a later command gets only the time "
+          "left, and Codex is not started",
+          completed.returncode == 1 and "`gh pr view 2`" in completed.stderr
+          and second_ran is not None and second_ran < 2.5 and not arguments_file.exists(),
+          f"exit {completed.returncode}, second call ran {second_ran}, "
+          f"stderr {completed.stderr!r}")
 
     fresh_prefetch_case()
     no_gh_dir = scratch / "no-gh-bin"
