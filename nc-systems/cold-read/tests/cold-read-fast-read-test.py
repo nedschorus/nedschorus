@@ -1551,7 +1551,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
         check("when ned-box cannot be reached, the read gives the agent a sentence for the "
               "user holding ssh's words and the remedy",
               "most often for one of two causes: ned-box could not be reached" in stderr
-              and "Tell the user, in these words: \"The cold-read-fast-read could not run "
+              and "dispatched you; otherwise tell the user, in these words: \"The cold-read-fast-read could not run "
                   "on ned-box from this Mac: ssh exited 255 and said: 'ssh: connect to host "
                   "ned-box port 22: No route to host'. Run `ssh nedlern@ned-box true` from "
                   "a Terminal on your Mac. If it fails with 'Permission denied', ned-box "
@@ -1608,7 +1608,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
         check("when the read of a walk draft's frozen copy outlasts the time limit, the "
               "message names its cold-read-record in the log-store, not a suggestions file",
               exit_code == 1 and f"report, which this Mac sees at {records_place}." in stderr
-              and f"if a report appears at {records_place}, that is its result" in stderr
+              and f"if a complete report appears at {records_place}, that is its result" in stderr
               and "suggestions" not in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
 

@@ -369,12 +369,12 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
               f"stopped waiting and ended ssh, and the read's own lines were not "
               f"relayed. The read on ned-box may still be running and may still "
               f"write its report, which this Mac sees at {report_place}.\n"
-              f"Now tell the user, in these words: \"The cold-read-fast-read of "
-              f"{ned_box_target} ran on ned-box for more than {minutes} minutes, so "
-              f"this program stopped waiting and ended ssh; the document has no "
-              f"cold-read-fast-read result yet; if a report appears at "
-              f"{report_place}, that is its result.\" If you are a subagent, pass "
-              f"that quoted text to the agent that dispatched you instead.\n"
+              f"Now, if you are a subagent, pass the quoted text below to the agent "
+              f"that dispatched you; otherwise tell the user, in these words: \"The "
+              f"cold-read-fast-read of {ned_box_target} ran on ned-box for more than "
+              f"{minutes} minutes, so this program stopped waiting and ended ssh; the "
+              f"document has no cold-read-fast-read result yet; if a complete report "
+              f"appears at {report_place}, that is its result.\"\n"
               f"Then, if you can go on without the result: go on, and say in your "
               f"reply that the document has no cold-read-fast-read result.\n"
               f"If you need the result: wait 5 minutes, then look for a report at "
@@ -406,14 +406,14 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
               f"{SSH_EXIT_CONNECTION_FAILED}, most often for one of two causes: ned-box "
               f"could not be reached, or ned-box refused this machine's key. ssh said: "
               f"{ssh_words}\n"
-              f"Tell the user, in these words: \"The cold-read-fast-read could not "
-              f"run on ned-box from this Mac: ssh exited {SSH_EXIT_CONNECTION_FAILED} "
-              f"and said: '{ssh_words}'. Run `ssh {NED_BOX_SSH_TARGET} true` from a "
-              f"Terminal on your Mac. If it fails with 'Permission denied', "
-              f"ned-box refused this Mac's key; if it fails another way, check that ned-box is on "
-              f"and on the LAN.\"\n"
-              f"If you are a subagent, pass that quoted text to the agent that "
-              f"dispatched you instead.", file=sys.stderr)
+              f"If you are a subagent, pass the quoted text below to the agent that "
+              f"dispatched you; otherwise tell the user, in these words: \"The "
+              f"cold-read-fast-read could not run on ned-box from this Mac: ssh "
+              f"exited {SSH_EXIT_CONNECTION_FAILED} and said: '{ssh_words}'. Run "
+              f"`ssh {NED_BOX_SSH_TARGET} true` from a Terminal on your Mac. If it "
+              f"fails with 'Permission denied', ned-box refused this Mac's key; if "
+              f"it fails another way, check that ned-box is on and on the LAN.\"",
+              file=sys.stderr)
         print("FAILED (no fast read ran: ned-box could not be reached)")
         return 1
     sys.stderr.write(text_with_ned_box_paths_rewritten_as_mac_mount_paths(completed.stderr))
