@@ -2126,7 +2126,10 @@ def refuse_on_conflict(relative: str, on_main, moved_from, moved_from_on_main,
                 f"Refused: {item_relative} changed on main after the commit "
                 "your checkout started from, and landing your copy would "
                 "discard that change.",
-                "Fold your edit into main's copy of the file.",
+                "If you changed that file yourself, carry your change into "
+                "main's copy of it.\n"
+                "If you did not change it, bringing your checkout up to date "
+                "is all it needs.",
                 item_relative, revision, main_commit, repository_root,
                 runner)
     if moved_from is None:
@@ -2513,12 +2516,24 @@ def refuse_moving_over_proposed(relative: str, proposed, moving_proposed,
                              cwd=str(repository_root)).stdout
         if moving_text != beside[item_moved_to]:
             raise Refused(
-                f"Refused: moving {relative} moves {item_on_main} to "
-                f"{item_moved_to}, but a different file is already at "
-                f"{item_moved_to}, so landing would replace that file.\n"
-                f"Rename the file already at {item_moved_to}: add -2 after "
-                "its date, or the lowest number from 2 that no file in that "
-                "folder or on main has.\n"
+                f"Refused: this edit lands {relative} in a new folder, so "
+                f"{item_on_main}, on main, moves with it to {item_moved_to}; "
+                f"your checkout has a file at {item_moved_to} whose text "
+                "differs from it, and landing would replace that file.\n"
+                f"Do not move or rename {item_on_main} yourself: this "
+                "command moves it, from main.\n"
+                f"If the file at {item_moved_to} in your checkout is another "
+                "proposed-improvements-or-changes-file, rename it: bring "
+                "your checkout up to date with "
+                "main, then add -2 after its date, or the lowest number from "
+                "2 that no file in that folder, in your checkout or on main, "
+                "has.\n"
+                f"If it is your own moved copy of {item_on_main}, first copy "
+                "any change you made to it outside the checkout, then put "
+                "main's text back with "
+                f"`git show origin/main:{item_on_main} > {item_moved_to}`, "
+                "so your copy matches main's and is not refused, and make "
+                "your change in a later edit, after this one merges.\n"
                 "Then run this command again.", 66)
 
 
