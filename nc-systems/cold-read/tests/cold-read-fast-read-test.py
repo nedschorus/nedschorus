@@ -73,6 +73,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import pathlib
 import shutil
 import subprocess
@@ -1490,9 +1491,13 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
 
         exit_code, stdout, stderr = read_from_mac(
             mac_draft, ssh_program=over_ssh_scratch / "no-such-ssh")
-        check("when ssh cannot be started, the read says so and exits 1",
+        check("when ssh cannot be started, the read says so, names who can run "
+              "it on ned-box and with what command, and exits 1",
               exit_code == 1 and stdout.startswith("FAILED")
-              and "ssh could not be started" in stderr,
+              and "ssh could not be started" in stderr
+              and "Ask an agent-seat on ned-box" in stderr
+              and f"--target {shlex.quote(str(ned_box_draft))}" in stderr
+              and "\nssh nedlern@ned-box '" in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
 
         exit_code, stdout, stderr = read_from_mac(

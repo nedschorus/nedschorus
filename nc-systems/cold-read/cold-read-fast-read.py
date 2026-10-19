@@ -303,11 +303,14 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
     session_assignment = (
         f"{record_names.AGENT_SESSION_ID_ENVIRONMENT_VARIABLE}={shlex.quote(session_id)} "
         if session_id else "")
-    remote_command = (
+    checkout_entry = (
         f"top=$(git -C {shlex.quote(directory)} rev-parse --show-toplevel) && "
-        f"cd -- \"$top\" && {session_assignment}exec python3 "
-        f"{shlex.quote(str(pathlib.Path(__file__).resolve().relative_to(REPO_ROOT)))} "
+        f"cd -- \"$top\" && ")
+    fast_read_invocation = (
+        f"python3 {shlex.quote(str(pathlib.Path(__file__).resolve().relative_to(REPO_ROOT)))} "
         f"--target {shlex.quote(ned_box_target)}")
+    remote_command = f"{checkout_entry}{session_assignment}exec {fast_read_invocation}"
+    command_for_a_person = f"{checkout_entry}{fast_read_invocation}"
     print(f"{PROGRAM}: git on this machine cannot read the ned-box worktree "
           f"holding the target, so the fast read runs on ned-box on "
           f"{ned_box_target}.", file=sys.stderr)
@@ -317,7 +320,11 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
             capture_output=True, stdin=subprocess.DEVNULL, text=True, check=False)
     except OSError as error:
         print(f"{PROGRAM}: no fast read ran: ssh could not be started ({error}).\n"
-              f"If ssh is missing, run the fast read on ned-box itself, on {ned_box_target}.",
+              f"Ask an agent-seat on ned-box to run the fast read there, with this "
+              f"command:\n{command_for_a_person}\n"
+              f"Or, when no agent-seat on ned-box can, ask the user to run it from a "
+              f"Terminal on his Mac:\n"
+              f"ssh {NED_BOX_SSH_TARGET} {shlex.quote(command_for_a_person)}",
               file=sys.stderr)
         print("FAILED (no fast read ran: ssh could not be started to reach ned-box)")
         return 1
@@ -373,7 +380,7 @@ def checkout_root_holding(target: pathlib.Path) -> pathlib.Path:
         if ned_box_target is not None:
             raise NedBoxWorktreeUnreadableThroughMacMount(message, ned_box_target)
         raise CheckoutRootUnreadable(
-            f"{message}. Run the fast read on the machine that made the worktree")
+            f"{message}. Run the fast read on the machine that made the worktree.")
     if (git_output.git_stderr_says_outside_a_repository(completed.stderr)
             or GIT_DIRECTORY_MISSING_MESSAGE in completed.stderr):
         return REPO_ROOT
