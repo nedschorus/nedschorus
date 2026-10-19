@@ -5,7 +5,7 @@ Usage:
   scripts/merge-lane-pull-request-reviewer-brief-compose-with-facts.py <brief specifications file>
       [--merge-lane-worktrees-and-outputs-directory DIR] [--review-tools-worktree-at-main DIR] [--brief-file PATH]
       [--ned-box-reviewer-brief-environment-addendum-file PATH] [--instructions-file PATH]
-      [--reviewer-scratch-parent-directory DIR]
+      [--merge-lane-pull-request-reviewer-scratch-directories-parent-directory DIR]
 
 The file holds a JSON list. Each entry has tag, number, title, author, head,
 main, tests and hazards, and may have overlaps. A fix-round entry also has
@@ -17,7 +17,7 @@ instructions inserted; the ned-box environment addendum; and a section of
 facts, which git reads in --review-tools-worktree-at-main and in the worktrees
 and outputs directory's wt/pr<n>-merged. The brief is written to
 briefs/brief-<tag>-mac-claude.md under the worktrees and outputs directory, and
-rv<tag>/ is made under --reviewer-scratch-parent-directory as the reviewer's
+rv<tag>/ is made under --merge-lane-pull-request-reviewer-scratch-directories-parent-directory as the reviewer's
 scratch directory. That parent is outside the log-store, because the standing
 text forbids the reviewer to write to the log-store.
 
@@ -37,7 +37,7 @@ DEFAULT_BRIEF_FILE = Path(
 DEFAULT_NED_BOX_REVIEWER_BRIEF_ENVIRONMENT_ADDENDUM_FILE = Path(
     "/home/nedlern/agents/merge-lane-2/walk-ledgers/"
     "ned-box-reviewer-brief-environment-addendum.md")
-DEFAULT_REVIEWER_SCRATCH_PARENT_DIRECTORY = Path(
+DEFAULT_MERGE_LANE_PULL_REQUEST_REVIEWER_SCRATCH_DIRECTORIES_PARENT_DIRECTORY = Path(
     "/home/nedlern/.cache/merge-lane-pull-request-reviewer-scratch-directories")
 
 _common_spec = importlib.util.spec_from_file_location(
@@ -74,10 +74,11 @@ def parse_arguments(argv):
     parser.add_argument("--instructions-file", type=Path,
                         help="the reviewing instructions inserted into the standing text "
                              "(default: <review-tools-worktree-at-main>/docs/agents/pr-reviewer-instructions.md)")
-    parser.add_argument("--reviewer-scratch-parent-directory", type=Path,
-                        default=DEFAULT_REVIEWER_SCRATCH_PARENT_DIRECTORY,
-                        help=f"where each reviewer's scratch directory rv<tag>/ is made "
-                             f"(default: {DEFAULT_REVIEWER_SCRATCH_PARENT_DIRECTORY})")
+    parser.add_argument("--merge-lane-pull-request-reviewer-scratch-directories-parent-directory", type=Path,
+                        default=DEFAULT_MERGE_LANE_PULL_REQUEST_REVIEWER_SCRATCH_DIRECTORIES_PARENT_DIRECTORY,
+                        help=f"where each reviewer's scratch directory rv<tag>/ is made, <tag> being "
+                             f"the brief specification's tag, such as 1630 or 1630r1 "
+                             f"(default: {DEFAULT_MERGE_LANE_PULL_REQUEST_REVIEWER_SCRATCH_DIRECTORIES_PARENT_DIRECTORY})")
     return common.resolve_path_options(parser.parse_args(argv))
 
 
@@ -121,7 +122,7 @@ def compose(spec, arguments, review_tools_worktree, instructions_file):
                     "--pull-request", str(number),
                     "--brief-file", str(arguments.brief_file),
                     "--instructions-file", str(instructions_file)])
-    scratch = arguments.reviewer_scratch_parent_directory / f"rv{tag}"
+    scratch = arguments.merge_lane_pull_request_reviewer_scratch_directories_parent_directory / f"rv{tag}"
     scratch.mkdir(parents=True, exist_ok=True)
     facts = ["## This pull request (facts from merge-lane-2)", "",
              f"- Pull request: #{number}, \"{spec['title']}\", author `{spec['author']}`.",

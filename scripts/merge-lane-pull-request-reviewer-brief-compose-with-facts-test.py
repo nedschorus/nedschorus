@@ -74,7 +74,7 @@ def run_program(scratch, helpers, specs, *extra):
          "--review-tools-worktree-at-main", str(scratch / "main-checkout"),
          "--brief-file", str(scratch / "standing.md"),
          "--ned-box-reviewer-brief-environment-addendum-file", str(scratch / "addendum.md"),
-         "--reviewer-scratch-parent-directory", str(scratch / "reviewer-scratch"), *extra],
+         "--merge-lane-pull-request-reviewer-scratch-directories-parent-directory", str(scratch / "reviewer-scratch"), *extra],
         capture_output=True, text=True,
         env={**GIT_ENVIRONMENT, "GIT_DIR": str(scratch / "no-such-git-directory")})
 
@@ -139,7 +139,7 @@ def main():
         program = importlib.util.module_from_spec(program_spec)
         program_spec.loader.exec_module(program)
         log_store = Path("/home/nedlern/nedschorus-logs")
-        default_parent = program.DEFAULT_REVIEWER_SCRATCH_PARENT_DIRECTORY
+        default_parent = program.DEFAULT_MERGE_LANE_PULL_REQUEST_REVIEWER_SCRATCH_DIRECTORIES_PARENT_DIRECTORY
         check("the default reviewer scratch parent is outside the log-store, which the "
               "standing text forbids the reviewer to write to",
               default_parent != log_store and log_store not in default_parent.parents,
