@@ -196,7 +196,7 @@ RETRYING_PREFIX = "RETRYING:"
 AGENT_BINARY_DOWN_PREFIX = "AGENT-BINARY DOWN:"
 STOPPED_CELL_WRITE_CHECK_LINE = (
     "this cell was stopped before its stray-write check ran, which is a failure "
-    "to look, not a clean result. Before the new run, read `git status` against "
+    "to look, not a clean result. Before you do anything else, read `git status` against "
     "the edits you know are your own, revert only what a reviewer evidently wrote, "
     "and ask the user about any other change you did not make.")
 
@@ -341,13 +341,6 @@ def record_file_listing(host, store) -> list:
         raise FullRunCountUnavailable(
             f"listing {host}:{store} exited {listing.returncode}: {listing.stderr.strip()}")
     return listing.stdout.splitlines()
-
-
-def earlier_full_runs_since_count_start(frozen_paths: set, landed_at, listing: list) -> list:
-    """The record directories of this document's cold-read-full-runs since
-    main last took a change to it, oldest first, from the last one started on
-    the user's ruling onward."""
-    return full_run_history_since_count_start(frozen_paths, landed_at, listing)[0]
 
 
 def full_run_history_since_count_start(frozen_paths: set, landed_at, listing: list) -> tuple:
@@ -552,22 +545,27 @@ WINDOW_SEEN_MID_RUN = ("changed while some cells were still reading it, and the 
                        "run stopped those cells; reports already written stay in the set")
 
 
-TARGET_CHANGED_INSTRUCTIONS = """\
-The reports are in {record_dir}, and every one of them is marked: the frozen
-copy's bytes {window}, so no report can say which text it reviewed.
-
-Do not triage this set as a review of the document. Find what edited the
-frozen copy.
-
-Keep the set. Each report still records truthfully what one reviewer read, which
-is evidence of what the reviewers saw — not of how the file now stands.
-"""
+# One line per paragraph: the paths are long, and a wrapped line would split one from its words.
+TARGET_CHANGED_INSTRUCTIONS = (
+    "The reports are in {record_dir}, and every one of them is marked: the frozen copy "
+    "{frozen_target} {window}, so no report can say which text it reviewed.\n"
+    "\n"
+    "Do not triage any finding in this set, because none can be matched to the text it "
+    "was made on. Keep the set: each report still records truthfully what one reviewer read.\n"
+    "\n"
+    "Before any new run, find what edited the frozen copy, because only "
+    "cold-read-grid.py should write it. Compare the frozen copy with {target}, the document it was copied from, as in "
+    "`diff {target} {frozen_target}`: that shows the edit, and the edit often shows its "
+    "source, such as your own edit made to the wrong file. When you can tell the source, "
+    "stop it from writing there again; when you cannot, tell the user and wait for his "
+    "answer.\n")
 
 
 def frozen_copy_stop_count_line(stop_number: int) -> str:
     """Say where this stop leaves the attempt, for the closing text."""
     if stop_number < FROZEN_COPY_CHANGED_STOPS_IN_A_ROW_LIMIT:
-        return (f"Start a new cold-read run. This run does not count toward the "
+        return (f"Start a new cold-read run once you have stopped that source, or once the user says to. "
+                f"This run does not count toward the "
                 f"{FULL_RUN_LIMIT} cold-read-full-runs: it is stop {stop_number} of "
                 f"{FROZEN_COPY_CHANGED_STOPS_IN_A_ROW_LIMIT} in a row because the frozen "
                 f"copy changed.")
@@ -1040,7 +1038,7 @@ def main() -> int:
     absences = absence_lines(outcome)
     if target_changed:
         print(TARGET_CHANGED_INSTRUCTIONS.format(
-            record_dir=record_dir,
+            record_dir=record_dir, frozen_target=frozen_target, target=target,
             window=WINDOW_SEEN_MID_RUN if outcome.moved_mid_run else WINDOW_SEEN_AT_END))
         print(frozen_copy_stop_count_line(stops_in_a_row + 1))
         if outcome.stopped:

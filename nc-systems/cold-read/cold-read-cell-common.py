@@ -219,10 +219,14 @@ def validate_cell(cell: str, prompt_file_argument) -> None:
             "hyphens, like terminology-v9")
 
 
+def path_from_repo_root(path_argument: str) -> pathlib.Path:
+    """The argument as an absolute path, a relative one taken from the repository root."""
+    path = pathlib.Path(path_argument)
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
 def resolve_target(target_argument: str) -> pathlib.Path:
-    target = pathlib.Path(target_argument)
-    if not target.is_absolute():
-        target = REPO_ROOT / target
+    target = path_from_repo_root(target_argument)
     if not target.is_file():
         raise CellRefusal(f"target not found: {target}")
     return target
@@ -231,9 +235,7 @@ def resolve_target(target_argument: str) -> pathlib.Path:
 def resolve_report_path(report_argument: str) -> pathlib.Path:
     """Return an absolute report path with any previous report removed."""
     # A stale report would make a run that wrote nothing appear successful.
-    report = pathlib.Path(report_argument)
-    if not report.is_absolute():
-        report = REPO_ROOT / report
+    report = path_from_repo_root(report_argument)
     if report.exists() and not report.is_file():
         raise CellRefusal(f"report path is not a file: {report}")
     report.parent.mkdir(parents=True, exist_ok=True)
@@ -242,9 +244,7 @@ def resolve_report_path(report_argument: str) -> pathlib.Path:
 
 
 def resolve_prompt_file(prompt_file_argument: str) -> pathlib.Path:
-    prompt_file = pathlib.Path(prompt_file_argument)
-    if not prompt_file.is_absolute():
-        prompt_file = REPO_ROOT / prompt_file
+    prompt_file = path_from_repo_root(prompt_file_argument)
     if not prompt_file.is_file():
         raise CellRefusal(f"prompt file not found: {prompt_file}")
     return prompt_file
@@ -255,8 +255,7 @@ def resolve_target_origin(target_origin_argument) -> typing.Optional[pathlib.Pat
     # The origin only resolves references; moving the original must not prevent a retry.
     if not target_origin_argument:
         return None
-    origin = pathlib.Path(target_origin_argument)
-    return origin if origin.is_absolute() else REPO_ROOT / origin
+    return path_from_repo_root(target_origin_argument)
 
 
 def target_origin_paragraph(target: pathlib.Path, target_origin: pathlib.Path) -> str:
@@ -577,7 +576,7 @@ def stamp_provenance(
         f"prompt_file={prompt_file_argument} " if prompt_file_argument else "")
     # The hash names the exact bytes reviewed, which outlives an edit to the original.
     try:
-        target_sha256 = hashlib.sha256(pathlib.Path(target_argument).read_bytes()).hexdigest()
+        target_sha256 = hashlib.sha256(path_from_repo_root(target_argument).read_bytes()).hexdigest()
     except OSError:
         target_sha256 = "unreadable"
     stamp = (
