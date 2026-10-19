@@ -180,7 +180,9 @@ def main():
               and lines[0].startswith("PR 7 head test run, process ")
               and "writing its stderr to stderr failed (BrokenPipeError" in lines[0]
               and "The run's verdict still stands" in lines[1]
-              and "this program exits 2" in lines[1]
+              and "This program exits 2 for the failed copy unless an earlier pull request's "
+                  "run already set a nonzero exit code; that 2 says nothing about the tests"
+              in lines[1]
               and "run the head test run for PR 7 again with a stderr that can be written"
               in lines[2]
               and lines[3] == "PR 7 head test run: exit 0; SUMMARY: fake summary for pr7-merged"

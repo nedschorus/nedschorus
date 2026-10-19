@@ -295,7 +295,6 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
             completed, seconds_waiting_for_lock, lock_never_released = (
                 daily.run_test_suite_runner_waiting_for_the_machine_lock(
                     command, checkout, monotonic, stream_to=stream_for_the_runners_output()))
-            copy_failure = None
         except daily.RunnerOutputCopyFailed as failure:
             completed, lock_never_released, copy_failure = failure.completed, False, failure.reason
         if copy_failure is not None:

@@ -106,8 +106,10 @@ def main(argv=None):
             print(f"PR {number} head test run, process {run.pid}: writing its stderr to "
                   f"{name} failed ({failure}); the run went on to its end, "
                   "and its stderr from that line on is not in that copy.\n"
-                  f"The run's verdict still stands: the SUMMARY line below comes from the run's "
-                  f"stdout, not from this copy; this program exits 2 to show the copy failed.\n"
+                  f"The run's verdict still stands: the line below gives the run's exit code and "
+                  f"SUMMARY line, from the run's stdout, not from this copy. This program exits 2 "
+                  f"for the failed copy unless an earlier pull request's run already set a "
+                  f"nonzero exit code; that 2 says nothing about the tests.\n"
                   f"When you need the stderr after that line, run the head test run for PR "
                   f"{number} again with a stderr that can be written.", flush=True)
             if first_failure == 0:
