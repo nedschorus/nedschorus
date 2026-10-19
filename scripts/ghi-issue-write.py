@@ -1220,9 +1220,9 @@ def write_proposed_improvements_or_changes_file(
     that reaches GitHub, and returns its path. The ruling's title is looked
     up first; when that or the write fails, nothing has been written
     anywhere, and the refusal says so. `operation_done` is "filed" or
-    "edited". `taken` holds names the new file must not have, such as those
-    of files this edit deletes, which are gone from disk but still on
-    main."""
+    "edited". `taken` holds names the new file must not have beyond those
+    on disk: every name beside the GHI-MD on main, since the checkout may
+    lack main's newer files and has lost those this edit deletes."""
     ruling_title = None
     try:
         if conflict.ruling_issue is not None:
@@ -2995,11 +2995,16 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         if not changed_on_disk:
             raise
         raise Refused(
-            f"{refusal}\nBefore it stopped, this run changed files on disk "
-            "and left them so:\n"
+            f"{refusal}\nThe GHI on GitHub is unchanged, but before it "
+            "stopped this run changed files in your checkout and left these "
+            "changes in place:\n"
             + "".join(f"- {line}\n" for line in changed_on_disk)
-            + "Rerun this command once the failure above is fixed; it works "
-            "from the files as they are now.", refusal.code) from refusal
+            + "If you rerun this command once the failure above is fixed, "
+            "leave these changes as they are: the rerun builds on them.\n"
+            "If you abandon this edit instead, undo each change listed: put "
+            "back a pointer line it removed, take out one it added, and "
+            "delete each proposed-improvements-or-changes-file it names.",
+            refusal.code) from refusal
 
 
 def edit_steps(path: Path, repo: str, repository_root: Path, runner, report):
@@ -3122,7 +3127,7 @@ def edit_steps(path: Path, repo: str, repository_root: Path, runner, report):
         if conflict is not None:
             write_proposed_improvements_or_changes_file(
                 directory, prefix, repo, conflict, runner, report, "edited",
-                repository_root, [Path(item).name for item in removed])
+                repository_root, [Path(item).name for item in on_main_beside])
             proposed = unlanded_proposed_improvements_or_changes_files(
                 directory, prefix, relative, repository_root, runner,
                 main_commit)

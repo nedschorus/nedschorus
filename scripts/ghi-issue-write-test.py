@@ -4479,6 +4479,42 @@ def run_settled_file_removal_collision_and_retry_real_git_cases(
                   and pointer in landed, (tree, landed))
         except tool.Refused as refusal:
             check(name, False, str(refusal))
+
+        mains_second = head + "2026-10-19-2.md"
+        mains_text = "## E1 — possible problem: main's\nState: open\n"
+        for deleting in (True, False):
+            folder = scratch / f"main-gained-{'deleting' if deleting else 'keeping'}"
+            folder.mkdir()
+            remote, author, other = repositories(folder)
+            git("pull", "-q", "origin", "main", cwd=other)
+            (other / mains_second).write_text(mains_text, encoding="utf-8")
+            git("add", "-A", cwd=other)
+            git("commit", "-q", "-m", "main's second question", cwd=other)
+            git("push", "-q", "origin", "HEAD:main", cwd=other)
+            if deleting:
+                (author / settled).unlink()
+            (author / relative).write_text(
+                (author / relative).read_text(encoding="utf-8").replace(
+                    "Body.", "Body, changed."), encoding="utf-8")
+            name = ("a ghi-info question written while main holds a newer "
+                    "question file the checkout lacks leaves main's file as "
+                    "it is" + (", in a run that deletes a settled file"
+                               if deleting else ""))
+            try:
+                tool.edit(author / relative, REPO, author,
+                          runner_for(asking, []), quiet)
+                branch = pushed_branch(remote)
+                tree = (git("ls-tree", "-r", "--name-only", branch,
+                            cwd=remote).splitlines() if branch else [])
+                kept = (git("show", f"{branch}:{mains_second}", cwd=remote)
+                        if mains_second in tree else "")
+                questions = [item for item in tree if item.startswith(head)]
+                check(name, kept == mains_text.strip()
+                      and len(questions) == (2 if deleting else 3)
+                      and (settled not in tree) == deleting,
+                      (tree, kept))
+            except tool.Refused as refusal:
+                check(name, False, str(refusal))
     finally:
         tool.proposed_improvements_or_changes_file_date = original_date
 
