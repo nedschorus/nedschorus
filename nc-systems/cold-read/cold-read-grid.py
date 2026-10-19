@@ -548,8 +548,8 @@ def original_changed_line(target: pathlib.Path, frozen_target: pathlib.Path,
 
 WINDOW_SEEN_AT_END = ("differed between the moment the cells launched and the "
                       "moment the last one finished")
-WINDOW_SEEN_MID_RUN = ("changed while the cells were still running, and the run "
-                       "stopped the ones still reading")
+WINDOW_SEEN_MID_RUN = ("changed while some cells were still reading it, and the "
+                       "run stopped those cells; reports already written stay in the set")
 
 
 TARGET_CHANGED_INSTRUCTIONS = """\
@@ -583,16 +583,14 @@ def mark_reports_target_changed(
 ) -> str:
     """Mark reports as reviewing a frozen copy that changed and return the marker."""
     # Fingerprints establish differing bytes, not when the edit occurred.
-    what_the_reports_describe = (
-        "Which text any one report in this directory describes is unknown: "
-        "the edit may have landed before a given reviewer opened the file "
-        "or after."
-    )
     window = WINDOW_SEEN_MID_RUN if seen_mid_run else WINDOW_SEEN_AT_END
     detail = (
-        f"{target}'s bytes {window} — sha256 {before[:12] or 'unreadable'} then "
-        f"{after[:12] or 'unreadable'}. {what_the_reports_describe} Treat this set "
-        f"as evidence of what reviewers saw, not as a review of the document."
+        f"{target} is the frozen copy this run's reviewers read, and its bytes "
+        f"{window} — sha256 {before[:12] or 'unreadable'} then "
+        f"{after[:12] or 'unreadable'}. Because that copy itself changed during the "
+        f"run, which version any one report reviews is unknown. Do not triage this "
+        f"set's findings, because no finding can be matched to the text it was made "
+        f"on; keep the reports only as evidence of what the reviewers saw."
     )
     mark_every_report(record_dir, f"{FROZEN_COPY_CHANGED_MARKER_PREFIX} {detail} -->")
     return detail

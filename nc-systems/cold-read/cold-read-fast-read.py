@@ -719,8 +719,8 @@ def target_changed_during_read_line(target: pathlib.Path, launch_sha256: str) ->
         return ""
     return (f"{COLD_READ_TARGET_CHANGED_HASHTAG} {target}'s bytes changed while the "
             f"reviewer read it — sha256 {launch_sha256[:12]} then {after[:12] or 'unreadable'}. "
-            f"The report reviews the copy the reviewer was given, whose sentences it "
-            f"quotes: triage it against those quoted sentences, then carry each fix to "
+            f"The report reviews the copy the reviewer was given and quotes that copy's "
+            f"sentences: triage it against those quoted sentences, then carry each fix to "
             f"the document as it now stands.")
 
 

@@ -617,7 +617,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the stopped run says the target changed, on its own output, in one line",
           result.stdout.count("#frozen_copy_changed_during_run") == 1, repr(result.stdout))
     check("the line says the run stopped the cells still reading",
-          "stopped the ones still reading" in result.stdout
+          "run stopped those cells" in result.stdout
           and "the moment the last one finished" not in result.stdout, repr(result.stdout))
     # The editing cell itself lands or is stopped depending on whether a poll
     # fell between its edit and its exit; the five still reading are stopped
@@ -1684,7 +1684,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # given cell opened it or after. This is the one case that keeps that
     # sentence, and the case above is the one that must not have it.
     check("a moved copy does leave which text was reviewed unknown",
-          "Which text any one report in this directory describes is unknown"
+          "which version any one report reviews is unknown"
           in result.stdout, repr(result.stdout))
 
     # --- The original and the frozen copy both change ------------------------
