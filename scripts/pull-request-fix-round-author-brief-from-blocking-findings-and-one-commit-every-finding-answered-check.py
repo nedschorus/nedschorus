@@ -61,14 +61,27 @@ WORKTREE_DISPATCH_INSTRUCTION = (
     "worktree of its own and its commit cannot pick up edits you make in your checkout while it "
     "works. Give it this whole brief, and tell it that the two paragraphs starting \"For the "
     "author\", indented lines included, are yours, not its.")
+LOCAL_BRANCH_NAME_FORMAT = "fix-round-pull-request-{number}-from-{frozen_head}"
+# The subagent works on a local branch, not a detached HEAD: .claude/hooks/session-location-write-guard.py
+# refuses every Edit or Write to a tracked file while HEAD is detached.
 WORKTREE_REMOVAL_INSTRUCTION = (
-    "For the author, when the subagent has finished: remove its worktree with git worktree remove "
-    "<path>, where <path> is the worktree's path that the Agent tool reports.\n"
-    "   If git refuses because the worktree is locked, and the lock reason it prints starts with "
-    "\"claude agent\", leave the worktree as it is: the agent harness locked it, and only the harness "
-    "unlocks it.\n"
-    "   If git refuses for another reason, such as files in the worktree that no commit holds, read "
-    "those files first, and pass --force only once you have seen that none of them is work to keep.")
+    "For the author, when the subagent has finished: remove its worktree, then the local branch "
+    "{local_branch}, which step 0 below creates, with these two commands, where <path> is the "
+    "worktree's path that the Agent tool reports:\n"
+    "   git worktree remove <path>\n"
+    "   git branch -D {local_branch}\n"
+    "   If git worktree remove refuses because the worktree is locked, and the lock reason it "
+    "prints starts with \"claude agent\", run neither command for now: the agent harness locked the "
+    "worktree, and only the harness unlocks it. Run both once git worktree list no longer shows "
+    "the worktree as locked.\n"
+    "   If git worktree remove refuses because the worktree is locked for any other reason, the reason names who "
+    "locked it. Once you know nothing still uses the worktree, and you have read any changed or "
+    "untracked files in it, run instead: git worktree remove --force --force <path>\n"
+    "   If git worktree remove refuses because the worktree holds changed or untracked files, read those files. "
+    "Once you have seen that none of them is work to keep, run instead: "
+    "git worktree remove --force <path>\n"
+    "   Then run git branch -D {local_branch}.")
+PULL_REQUEST_FIELDS = ("url", "headRefOid", "headRefName")
 
 
 class Refused(Exception):
@@ -125,10 +138,15 @@ def is_ancestor(ancestor, descendant):
 
 def pull_request(number):
     try:
-        facts = json.loads(gh(["pr", "view", str(number), "--json", "url,headRefOid,headRefName"]))
-        return facts["url"], facts["headRefOid"], facts["headRefName"]
-    except (json.JSONDecodeError, KeyError, TypeError) as error:
-        raise StepFailed(f"gh pr view {number} gave no url, headRefOid and headRefName: {error!r}") from None
+        facts = json.loads(gh(["pr", "view", str(number), "--json", ",".join(PULL_REQUEST_FIELDS)]))
+    except json.JSONDecodeError as error:
+        raise StepFailed(f"gh pr view {number} printed output that is not JSON: {error}") from None
+    if not isinstance(facts, dict):
+        raise StepFailed(f"gh pr view {number} printed JSON that is not an object: {facts!r}")
+    missing = [field for field in PULL_REQUEST_FIELDS if not facts.get(field)]
+    if missing:
+        raise StepFailed(f"the JSON that gh pr view {number} printed has no value for: {', '.join(missing)}")
+    return tuple(facts[field] for field in PULL_REQUEST_FIELDS)
 
 
 def round_reviews(number, reviewer_login):
@@ -247,16 +265,17 @@ def print_brief(number, reviewer_login):
         lines += ["", f"{index}. {finding_place(finding)} ({finding.get('html_url')})",
                   (finding.get("body") or "").strip()]
     answers_path = default_answers_path(number)
+    local_branch = LOCAL_BRANCH_NAME_FORMAT.format(number=number, frozen_head=frozen_head[:12])
     # --answers names the file in this checkout's git directory, which the subagent's own
     # worktree does not hold by default.
     check_command = f"python3 {PROGRAM} {number} --check --answers {shlex.quote(answers_path)}"
     lines += [
         "",
         WORKTREE_DISPATCH_INSTRUCTION,
-        WORKTREE_REMOVAL_INSTRUCTION,
+        WORKTREE_REMOVAL_INSTRUCTION.format(local_branch=local_branch),
         "",
         "For the subagent, the rules of the round, in order, run in your own worktree:",
-        f"0. Check out the frozen-head, detached: git fetch origin && git checkout --detach {frozen_head}",
+        f"0. Make a local branch at the frozen-head and switch to it: git fetch origin && git switch -C {local_branch} {frozen_head}",
         f"1. Before changing anything, run: python3 scripts/branch-conflict-check.py --pull-request {number}",
         "   If it reports VERDICT: CONFLICT, do what its report says.",
         "2. Check each finding against the code. Fix each one that holds, root cause included, "
