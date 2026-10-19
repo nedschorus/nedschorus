@@ -28,7 +28,7 @@ a test's copy of an expected message is not handed to an agent. F-string
 placeholders survive in the listing. Beside each listed string is its
 cold-read-fast-read command, whose target file holds the string's new text and
 is written as the message reminder hook writes it; a target that cannot be
-written is marked in the plan and makes the program exit 1 after printing it.
+written is marked in the plan and makes the program exit 3 after printing it.
 
 Merged pull requests use the merge commit's first parent as the diff base:
 the current base branch already contains the head and would hide the change.
@@ -95,7 +95,7 @@ _message_reminder_hook = importlib.util.module_from_spec(_message_reminder_hook_
 _message_reminder_hook_spec.loader.exec_module(_message_reminder_hook)
 fast_read_target_written = _message_reminder_hook.fast_read_target_written
 fast_read_target_path = _message_reminder_hook.fast_read_target_path
-fast_read_command = _message_reminder_hook.fast_read_command
+cold_read_fast_read_review_command_line_for_target_file = _message_reminder_hook.cold_read_fast_read_review_command_line_for_target_file
 FAST_READ_COMMAND = _message_reminder_hook.FAST_READ_COMMAND
 PLAN_PRINTED_WITH_MESSAGES_MISSING_FAST_READ_COMMAND_EXIT_STATUS = 3
 
@@ -453,17 +453,18 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
 
 
 def entries_with_fast_read_commands(entries):
-    """Give each entry the cold-read-fast-read command for its new text, written
-    to a target file the way the message reminder hook writes it, or the reason
-    the file could not be written."""
+    """Give each entry its target file's name and the cold-read-fast-read command
+    for its new text, written to that file the way the message reminder hook
+    writes it, or the reason the file could not be written."""
     for entry in entries:
+        entry["fast_read_target_file_name"] = fast_read_target_path(entry["path"], entry["new_text"]).name
         try:
             target = fast_read_target_written(entry["path"], entry["new_text"])
         except OSError as failure:
             entry["fast_read_command"] = None
             entry["fast_read_target_error"] = f"{type(failure).__name__}: {failure}"
         else:
-            entry["fast_read_command"] = fast_read_command(target)
+            entry["fast_read_command"] = cold_read_fast_read_review_command_line_for_target_file(target)
             entry["fast_read_target_error"] = None
     return entries
 
@@ -489,17 +490,22 @@ def plan_entries_missing_fast_read_command(plan):
 
 def missing_fast_read_commands_message(missing):
     listing = "\n".join(f"  {entry['path']}:{entry['line']}  label: {entry['label']}  file name: "
-                        f"{fast_read_target_path(entry['path'], entry['new_text']).name}"
+                        f"{entry['fast_read_target_file_name']}"
                         for entry in missing)
-    return (f"pull-request-review-plan: {len(missing)} listed agent-facing message(s) have no cold-read-fast-read "
-            "command, because their text could not be written to a file. The rest of the plan is complete; use it as printed. "
-            "Exit status 3 says only that the messages listed below need their file written by hand.\n"
-            "If you ran without --json, run again with it. For each message listed below, find the entry with that path, "
-            "line and label in the --json output, under agent_facing_text_whole_pull_request or agent_facing_text_delta. "
-            "Write its new_text value, as a JSON parser decodes it, to a file with the file name given, in your "
-            "scratchpad directory or another directory outside your checkout.\n"
-            "Then run " + FAST_READ_COMMAND.format(target="<that file's full path>") + " from the top of your checkout, "
-            "and handle its report as you handle the reports of the plan's other cold-read-fast-read commands.\n"
+    if len(missing) == 1:
+        count = "1 listed agent-facing message has no cold-read-fast-read command, because its text"
+    else:
+        count = f"{len(missing)} listed agent-facing messages have no cold-read-fast-read command, because their text"
+    return (f"pull-request-review-plan: {count} could not be written to a file. The rest of the plan is complete; "
+            "use it as printed. Exit status 3 says only that each message listed below needs its file written by hand.\n"
+            "If you do not have this run's --json output, run again with --json and without --brief-skeleton; it exits 3 again. For each "
+            "file name listed below, find the entry, in the agent_facing_text_whole_pull_request or "
+            "agent_facing_text_delta list of the --json output on stdout, whose fast_read_target_file_name is that file name, and write the entry's "
+            "new_text value, as a JSON parser decodes it, to a file of that name in a directory outside your checkout, "
+            "such as one made with mktemp -d.\n"
+            "Then, for each file you wrote, run " + FAST_READ_COMMAND.format(target="<that file's full path>")
+            + " from the top of your checkout, and handle its report as you handle the reports of the plan's other "
+            "cold-read-fast-read commands.\n"
             + listing)
 
 

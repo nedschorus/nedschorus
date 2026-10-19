@@ -238,7 +238,7 @@ def fast_read_target_path(relative_path: str, text: str) -> Path:
             / f"{slug}-{digest}-agent-facing-message.md")
 
 
-def fast_read_command(target: Path) -> str:
+def cold_read_fast_read_review_command_line_for_target_file(target: Path) -> str:
     """The cold-read-fast-read command for a target file, with the path shell-quoted
     so a temporary directory with a space or a quote in its name still runs."""
     return FAST_READ_COMMAND.format(target=shlex.quote(str(target)))
@@ -283,7 +283,7 @@ def reminder_text_listing(tool_name, relative_path, entries, listed_count, targe
             more=len(entries) - listed_count, path=relative_path))
     if targets_error is None:
         fast_read = FAST_READ_MESSAGE_TEMPLATE.format(commands="\n".join(
-            "  " + fast_read_command(targets[entry["text"]])
+            "  " + cold_read_fast_read_review_command_line_for_target_file(targets[entry["text"]])
             for entry in listed))
     else:
         fast_read = FAST_READ_FILES_NOT_WRITTEN_TEMPLATE.format(reason=targets_error)
