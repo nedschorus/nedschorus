@@ -39,8 +39,9 @@ Operating rules:
   back to claude-opus-5 when Fable produces no review) and
   gpt-6.1-sol (the codex CLI), at xhigh reasoning effort. Each audit
   therefore runs as two review agents, one per runtime, named
-  `<audit>-adversarial-prompt-<runtime>`, such as `cut-adversarial-prompt-claude`, in
-  this runner's output; each agent's report file is that name with `.md` added,
+  `<audit>-adversarial-prompt-<runtime>`, such as `cut-adversarial-prompt-claude`
+  (the `--adversarial-prompt` flag still takes the short `<audit>`, such as
+  `cut`), in this runner's output; each agent's report file is that name with `.md` added,
   such as `cut-adversarial-prompt-claude.md`. The claude CLI runs with
   `--setting-sources user`, so this repository's hooks, CLAUDE.md and skills
   are never loaded into a claude agent (nedschorus#397).
