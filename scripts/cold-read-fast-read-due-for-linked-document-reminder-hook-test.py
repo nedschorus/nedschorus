@@ -95,7 +95,7 @@ def expect_unchecked(case_name, completed, document, reason_part, due_paths=None
               f"context {context!r}")
         instruction = [line for line in context.splitlines() if "not marked as read" in line]
         check(f"{case_name}: the list's own line tells the agent to run the fast read on a document it changed, with the command",
-              len(instruction) == 1 and instruction[0].startswith("If you changed one of these documents")
+              len(instruction) == 1 and instruction[0].startswith("If you changed a document in this list that is not marked as read")
               and "--target <document path>" in instruction[0],
               f"context {context!r}")
     expected = [str(path.resolve()) for path in due_paths or []]

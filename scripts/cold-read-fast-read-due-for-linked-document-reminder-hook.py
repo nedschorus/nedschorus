@@ -196,8 +196,9 @@ UNCHECKED_OPENING = (
     "find the git checkout that holds each, or could not compare it with "
     "origin/main there, so this hook cannot tell whether that checkout changed it:")
 UNCHECKED_INSTRUCTION = (
-    "If you changed one of these documents not marked as read since its last "
-    "cold-read-fast-read, or cannot tell whether you did, run on it, from your checkout: "
+    "If you changed a document in this list that is not marked as read since that "
+    "document's last cold-read-fast-read, or cannot tell whether you changed it, run on "
+    "it, from your checkout: "
     "python3 " + FAST_READ_PROGRAM + " --target <document path>")
 UNCHECKED_ALREADY_READ_NOTICE = (
     " (marked as read: it has had a cold-read-fast-read since its last change, "
