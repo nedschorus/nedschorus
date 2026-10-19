@@ -198,8 +198,10 @@ STOPPED_CELL_WRITE_CHECK_LINE = (
     "The {cell} cell was stopped before it could check for files it wrote outside its "
     "report, so no such check ran; that is a failure to look, not a clean result. Before "
     "you do anything else, read `git status` against the edits you know are your own. "
-    "Revert a change git status lists only when its content shows a reviewer wrote it, such as notes about "
-    "the document under review; ask the user about any other change you did not make.")
+    "Undo a change git status lists, by deleting the file or directory if it is untracked or running "
+    "`git restore <path>` if it is tracked, only when its content shows a reviewer wrote "
+    "it, such as notes about the document under review. Ask the user about any other "
+    "change you did not make, and whenever you are unsure.")
 
 ALL_LANDED_OPENING = "All six reports landed in {record_dir}, one file per reviewer."
 SOME_LANDED_OPENING = (
@@ -558,8 +560,10 @@ TARGET_CHANGED_INSTRUCTIONS = (
     "cold-read-grid.py should write it. Compare the frozen copy with {target}, the "
     "document it was copied from, as in `diff {target_operand} {frozen_target_operand}`: that shows the "
     "edit. When a #cold_read_target_changed_during_run line above says {target} changed "
-    "too, the diff also shows that change, reversed, so set aside the lines you know you "
-    "changed in {target}. The edit often shows its source. If the source is you, such as an edit you meant for {target}, "
+    "too, the diff also shows that change as its opposite: a line you added to {target} "
+    "appears as removed, and a line you removed appears as added. While you read the "
+    "diff, ignore the lines you know you changed in {target}. The edit often shows its "
+    "source. If the source is you, such as an edit you meant for {target}, "
     "make that edit in {target} and edit nothing under {record_dir} again. If it is another "
     "agent or program, or you cannot tell, tell the user what the diff shows and wait for "
     "his answer.\n")
