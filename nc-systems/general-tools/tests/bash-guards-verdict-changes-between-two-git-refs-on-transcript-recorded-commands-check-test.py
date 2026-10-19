@@ -322,10 +322,26 @@ try:
     check("a head that adds a guard refusing a recorded command: exit 1, the merge is blocked",
           status == 1 and "NEW GUARD REFUSES RECORDED COMMANDS" in out and "VERDICT CHANGED" not in out,
           f"status {status}\n{out}\n{err}")
-    check("a head that adds a guard refusing a recorded command: the section names the guard, the count and the command",
-          f"in-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command\n  in /tmp\n"
-          "    command: 'tmux kill-server'" in out
+    check("a head that adds a guard refusing a recorded command: the section names the guard, the count, the command "
+          "and its working directory",
+          f"in-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command, listed with its "
+          "working directory\n  1. command: 'tmux kill-server'\n     working directory: /tmp\n" in out
           and f"new-process: new guard {TMUX_KILL_GUARD} would refuse 1 recorded command" in out, out)
+    check("a head that adds a guard refusing a recorded command, and changes no verdict: merge-lane-2 may merge "
+          "once each refusal is accepted",
+          replay.NEW_GUARD_REFUSES_ONLY_ENDING in out
+          and replay.NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING not in out, out)
+
+    status, out, err = run_replay(main_refusing_all, scratch, "--new-process-pairs", "none",
+                                  base_ref=before_tmux_kill_guard)
+    check("a head that adds a refusing guard and changes another guard's verdicts: exit 1, both blocks printed",
+          status == 1 and "NEW GUARD REFUSES RECORDED COMMANDS" in out
+          and "\nVERDICT CHANGED: a recorded command gets a different verdict" in out,
+          f"status {status}\n{out}\n{err}")
+    check("a head that adds a refusing guard and changes another guard's verdicts: accepting the refusals does not "
+          "clear the verdict change, and no merge-despite sentence is printed",
+          replay.NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING in out
+          and replay.NEW_GUARD_REFUSES_ONLY_ENDING not in out and "merges despite" not in out, out)
     check("a head that adds a guard: the guard is read at the head only, and the other guards are compared",
           f"guards the head adds, read at the head only: ['{TMUX_KILL_GUARD}']" in out
           and "in-process: rows whose verdict differs: 0" in out, out)

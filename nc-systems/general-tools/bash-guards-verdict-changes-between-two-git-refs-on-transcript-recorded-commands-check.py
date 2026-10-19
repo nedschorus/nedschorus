@@ -69,14 +69,23 @@ STEP_DEADLINE_MARGIN_SECONDS = 600
 GIT_TIMEOUT_SECONDS = 600
 PRINTED_TEXT_LENGTH = 300
 NEW_GUARD_REFUSES_MESSAGE = (
-    "NEW GUARD REFUSES RECORDED COMMANDS: a guard the head adds refuses the recorded commands listed above "
-    "after each \"new guard ... would refuse\" line, so this check exits 1. Agents ran each of those commands, and a guard that refuses a "
-    "command agents need stops their work.\n"
-    "merge-lane-2 holds the merge until the pull request's reviewer says in the review, for each of those "
-    "commands with its working directory, that the refusal is right; merge-lane-2 then merges despite the "
-    "exit 1. A command that more than one mode lists needs saying once.\n"
-    "If the reviewer finds a refusal wrong, that is a finding: the author narrows the guard so that it lets "
-    "that command through.")
+    "NEW GUARD REFUSES RECORDED COMMANDS: a guard the head adds refuses each numbered command listed above "
+    "under a \"new guard ... would refuse\" line, so this check exits 1. Agents ran each of those commands, "
+    "and a guard that refuses a command agents need stops their work.\n"
+    "The pull request's reviewer answers each listed command in the review, on a line of its own:\n"
+    "  refusal right: <guard file> | <working directory> | <command>\n"
+    "copying the guard file's path from its \"new guard\" line and the working directory and the command from "
+    "the numbered entry, the command last, quotes included, so a | inside it is part of the command; for "
+    "example, with a made-up guard path: refusal right: scripts/example-guard-hook.py | /tmp | 'tmux kill-server'. "
+    "Answer a command whose refusal is wrong with a finding instead, and the author then narrows the guard so "
+    "that it lets that command through. Each guard, working directory and command together need one line, "
+    "once, even when more than one mode (in-process, search-file main(), new-process) lists them.\n")
+NEW_GUARD_REFUSES_ONLY_ENDING = (
+    "merge-lane-2 holds the merge until the review has a \"refusal right\" line for every listed command, "
+    "and then merges despite the exit 1.")
+NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING = (
+    "The VERDICT CHANGED line above blocks the merge on its own: \"refusal right\" lines do not clear it, "
+    "so the merge also waits until each verdict difference is explained and intended.")
 
 # Copied from the parent, never inherited: a git variable would point the checkouts' git at
 # another repository, and the attendance variables change the guards' messages.
@@ -806,11 +815,14 @@ def replay_with_sigterm_handled(arguments):
                 guard_refusals = [item for item in refusals if item[1] == guard]
                 if guard_refusals:
                     # Every one, not the first --show: the reviewer accepts each refusal in the review.
+                    # The command in full: the reviewer's "refusal right" line names it, and two long
+                    # commands may differ only at the end.
                     print(f"{mode}: new guard {guard} would refuse {len(guard_refusals)} recorded "
-                          + ("command" if len(guard_refusals) == 1 else "commands"))
-                    for (command, working_directory), _, reading in guard_refusals:
-                        print(f"  in {working_directory}\n    command: {shortened(repr(command))}\n"
-                              f"    head: {shortened(reading)}")
+                          + ("command, listed with its working directory" if len(guard_refusals) == 1
+                             else "commands, each listed with its working directory"))
+                    for number, ((command, working_directory), _, reading) in enumerate(guard_refusals, 1):
+                        print(f"  {number}. command: {command!r}\n     working directory: {working_directory}\n"
+                              f"     head: {shortened(reading)}")
             (scratch / f"differences-{mode.split()[0]}.json").write_text(
                 json.dumps({"verdict": differences, "message": message_differences, "failed": mode_failed,
                             "added_guard_refusals": refusals}))
@@ -825,7 +837,8 @@ def replay_with_sigterm_handled(arguments):
                 print("VERDICT CHANGED: a recorded command gets a different verdict at the head; the merge is blocked "
                       "until each difference above is explained and intended.")
             if added_guard_refused:
-                print(NEW_GUARD_REFUSES_MESSAGE)
+                print(NEW_GUARD_REFUSES_MESSAGE + (NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING if verdict_changed
+                                                   else NEW_GUARD_REFUSES_ONLY_ENDING))
             status = 1
         else:
             print("NO VERDICT CHANGED")
