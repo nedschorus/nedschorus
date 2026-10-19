@@ -575,11 +575,16 @@ def stamp_provenance(
     tokens_note = f"tokens={tokens} " if tokens else ""
     prompt_file_note = (
         f"prompt_file={prompt_file_argument} " if prompt_file_argument else "")
+    # The hash names the exact bytes reviewed, which outlives an edit to the original.
+    try:
+        target_sha256 = hashlib.sha256(pathlib.Path(target_argument).read_bytes()).hexdigest()
+    except OSError:
+        target_sha256 = "unreadable"
     stamp = (
         f"<!-- provenance: runtime={runtime} model={model} {fallback_note}"
         f"effort={effort} cell={cell} tier={tier} duration_s={duration_s} "
         f"{checkout_note}{tokens_note}{prompt_file_note}"
-        f"target={target_argument} -->\n\n"
+        f"target_sha256={target_sha256} target={target_argument} -->\n\n"
     )
     report.write_text(stamp + report.read_text(encoding="utf-8"), encoding="utf-8")
 

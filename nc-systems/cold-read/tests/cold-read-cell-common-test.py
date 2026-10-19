@@ -638,6 +638,19 @@ with tempfile.TemporaryDirectory() as scratch:
     check("git that does not start makes the write detector unavailable, saying why",
           unavailable_detail is not None and "could not start git" in unavailable_detail,
           repr(unavailable_detail))
+
+    # A stamp whose reviewed file cannot be read says so instead of failing the report.
+    with tempfile.TemporaryDirectory() as stamp_scratch:
+        stamped_report = Path(stamp_scratch) / "report.md"
+        stamped_report.write_text("review\n", encoding="utf-8")
+        missing_target = str(Path(stamp_scratch) / "gone.md")
+        common_module.stamp_provenance(
+            stamped_report, runtime="claude", model="m", effort="e", cell="c",
+            tier="t", target_argument=missing_target, duration_s=0)
+        unreadable_stamp = stamped_report.read_text(encoding="utf-8").split("\n", 1)[0]
+    check("a stamp whose reviewed file cannot be read names its hash as unreadable",
+          f"target_sha256=unreadable target={missing_target} -->" in unreadable_stamp,
+          repr(unreadable_stamp))
     claude_spec = importlib.util.spec_from_file_location(
         "cold_read_claude_cell_under_test", SYSTEM_DIRECTORY / "cold-read-claude-cell.py")
     claude_module = importlib.util.module_from_spec(claude_spec)

@@ -93,6 +93,17 @@ instructions is a one-hunk change to that one constant; nothing else in this
 file knows what the text says. The prompt file under the skill is not read by
 this program, so the two are kept in step by hand.
 
+AN EDIT DURING THE READ IS NAMED, NOT HIDDEN. The cold-read-target's sha256
+is taken just before the reviewer is given its copy and again when the report
+lands. When they differ, the report is kept, a
+`<!-- #cold_read_target_changed_during_run ... -->` line with both hashes goes
+at its top, after the provenance stamp, and the same line is printed on
+stderr; the read still exits 0 and stdout is still the one path. The report
+reviews the copy the reviewer was given, and quotes each of its sentences, so
+the agent triages against those quoted sentences, since a walk draft's copy
+is removed on exit, and carries each fix to the document as it
+now stands, as the cold-read-grid asks for the same event.
+
 ONE RETRY, AND WHY NOT MORE. The cold-read-fast-read is a walk's instrument,
 and the walk is waiting on it: a cold-read-cell that fails once -- a transient
 CLI error, a model that neither wrote the file nor answered in chat -- is
@@ -106,6 +117,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import os
 import importlib.util
 import pathlib
@@ -689,6 +701,38 @@ def bare_references_section(references: list) -> str:
     return "\n".join(lines) + "\n"
 
 
+COLD_READ_TARGET_CHANGED_HASHTAG = "#cold_read_target_changed_during_run"
+
+
+def sha256_of_file_or_empty(path: pathlib.Path) -> str:
+    """The file's sha256, or "" when it can no longer be read."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def target_changed_during_read_line(target: pathlib.Path, launch_sha256: str) -> str:
+    """The line naming an edit made to the target while the reviewer read it, or ""."""
+    after = sha256_of_file_or_empty(target)
+    if after == launch_sha256:
+        return ""
+    return (f"{COLD_READ_TARGET_CHANGED_HASHTAG} {target}'s bytes changed while the "
+            f"reviewer read it — sha256 {launch_sha256[:12]} then {after[:12] or 'unreadable'}. "
+            f"The report reviews the copy the reviewer was given and quotes that copy's "
+            f"sentences: triage it against those quoted sentences, then carry each fix to "
+            f"the document as it now stands.")
+
+
+def with_line_after_provenance(report_text: str, line: str) -> str:
+    """The report with `<!-- line -->` at its top, after the provenance stamp when there is one."""
+    marker = f"<!-- {line} -->\n"
+    first, newline, rest = report_text.partition("\n")
+    if first.startswith("<!-- provenance:"):
+        return first + newline + marker + rest
+    return marker + report_text
+
+
 def freeze_target(target: pathlib.Path, record_dir: pathlib.Path) -> None:
     """Copy the cold-read-target's bytes into the cold-read-record before the
     cold-read-cell reads it, so the cold-read-record says exactly what was
@@ -794,6 +838,7 @@ def main() -> int:
         # walk route it is scratch and goes with the temporary directory.
         # Either way the cold-read-target itself is untouched, and target/
         # holds its original bytes.
+        launch_sha256 = sha256_of_file_or_empty(target)
         marked_text, sentences = sentence_id_markup(
             target.read_text(encoding="utf-8"))
         marked_copy = (report.parent if on_records_route else pathlib.Path(scratch)) / (
@@ -811,7 +856,12 @@ def main() -> int:
                     full_run_class_name)
                 if bare_references is not None:
                     attached += bare_references_section(bare_references)
+                changed_line = target_changed_during_read_line(target, launch_sha256)
+                if changed_line:
+                    attached = with_line_after_provenance(attached, changed_line)
                 report.write_text(attached, encoding="utf-8")
+                if changed_line:
+                    print(changed_line, file=sys.stderr)
                 record_names.cold_read_fast_read_report_agent_session_id_file_write_or_remove(
                     report, target,
                     os.environ.get(record_names.AGENT_SESSION_ID_ENVIRONMENT_VARIABLE))
