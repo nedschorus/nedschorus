@@ -39,10 +39,13 @@ seat-alone because prose outside code is outside the review scope.
 Reads the pull request, reviews, inline comments and live base tip through
 four read-only gh calls, and commits, refs and diffs from the local repository.
 Never fetches, pushes or writes refs. git merge-tree --write-tree may write
-tree objects. Writes no file except the optional --brief-skeleton, opened
-exclusively because a rerun must not erase the seat's hand-written checks.
+tree objects. Writes no file except the cold-read-fast-read target files and
+the optional --brief-skeleton, opened exclusively because a rerun must not
+erase the seat's hand-written checks.
 Exit 0: success. Exit 1: refusal, including malformed arguments or unavailable
-inputs. Exit 2: program defect, with exception and traceback on stderr.
+inputs; or a printed plan in which a listed message has no cold-read-fast-read
+command, so that a caller notices the missing reads. Exit 2: program defect,
+with exception and traceback on stderr.
 
 Usage:
   scripts/pull-request-review-plan.py --pull-request N [--repository DIR]
@@ -799,9 +802,13 @@ def main(argv=None):
         missing = plan_entries_missing_fast_read_command(plan)
         if missing:
             print(f"pull-request-review-plan: {len(missing)} listed agent-facing message(s) have no cold-read-fast-read "
-                  "command, because their text could not be written to a file; the plan marks each one.\n"
-                  "For each marked message: write its text to a file of its own, then run "
-                  + FAST_READ_COMMAND.format(target="<that file>") + " from your checkout.", file=sys.stderr)
+                  "command, because their text could not be written to a file. The rest of the plan is complete; use it as printed.\n"
+                  "To find each such message: in the text plan, its line reads \"cold-read-fast-read: none, because\" "
+                  "and gives the error; in --json output, its fast_read_command is null.\n"
+                  "For each such message: write the text the program prints, taken from its file at the pull "
+                  "request's head, to a file of its own in your scratchpad, then run "
+                  + FAST_READ_COMMAND.format(target="<that file>") + " from your checkout.",
+                  file=sys.stderr)
             return 1
         return 0
     except ReviewPlanRefusal as refusal:
