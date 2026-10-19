@@ -28,7 +28,8 @@ PROGRAM = Path(__file__).with_name(
     "pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py")
 NUMBER = 7
 REVIEWS = f"api --paginate repos/{{owner}}/{{repo}}/pulls/{NUMBER}/reviews --jq .[]"
-PR_VIEW = f"pr view {NUMBER} --json url,headRefOid"
+PR_VIEW = f"pr view {NUMBER} --json url,headRefOid,headRefName"
+BRANCH = "topic-branch-of-the-pull-request"
 URL = f"https://github.com/o/r/pull/{NUMBER}"
 
 FAKE_GH = r'''#!/usr/bin/env python3
@@ -107,7 +108,7 @@ def lines(objects):
 
 def routes_for(head, reviews, comments=BLOCKING_COMMENTS, review_id=11):
     return {
-        PR_VIEW: {"stdout": json.dumps({"url": URL, "headRefOid": head})},
+        PR_VIEW: {"stdout": json.dumps({"url": URL, "headRefOid": head, "headRefName": BRANCH})},
         REVIEWS: {"stdout": lines(reviews)},
         f"api --paginate repos/{{owner}}/{{repo}}/pulls/{NUMBER}/reviews/{review_id}/comments --jq .[]":
             {"stdout": lines(comments)},
@@ -174,6 +175,48 @@ def brief_cases(root, repository, base, frozen_head):
           "SendMessage before pushing" in out
           and "If the push itself fails, do not retry it by force or rewrite the branch: tell "
           "merge-lane-2 with SendMessage what git printed." in out, out)
+
+    check("brief: tells the author to dispatch the subagent in a worktree of its own",
+          "subagent_type: \"fork\") with isolation: \"worktree\"" in out and "a git worktree of its own" in out, out)
+    check("brief: the subagent checks out the frozen-head detached and pushes HEAD to the branch",
+          f"git fetch origin && git checkout --detach {frozen_head}" in out
+          and f"git push origin HEAD:{BRANCH}" in out, out)
+    check("brief: says who removes the worktree, and to leave a harness-locked one",
+          "git worktree remove" in out and "only the harness unlocks it" in out, out)
+    check("brief: the author's worktree lines come before the subagent's rules of the round",
+          out.index("For the author: dispatch") < out.index("For the author, when the subagent has finished")
+          < out.index("For the subagent, the rules of the round") < out.index("0. Check out the frozen-head"), out)
+    check("brief: says to leave a worktree the harness locked, and to read any other refusal",
+          "lock reason it prints starts with \"claude agent\"" in out
+          and "pass --force only once you have seen that none of them is work to keep" in out, out)
+    answers_in_checkout = f"{git_directory}/fix-round-answers-pull-request-{NUMBER}.md"
+    check("brief: the check command names the author's answers file, so it reads the same file in any worktree",
+          f"{NUMBER} --check --answers {answers_in_checkout}" in out, out)
+
+    worktree = root / "subagent-worktree"
+    git(repository, "worktree", "add", "-q", "--detach", str(worktree), frozen_head)
+    Path(answers_in_checkout).write_text(GOOD_ANSWERS)
+    check_line = next((line for line in out.splitlines() if f"{NUMBER} --check --answers" in line), "")
+    printed_answers = check_line.split("--answers ", 1)[-1].strip()
+    code, check_out, err = run(root, worktree, routes_for(frozen_head, [review(commit_id=frozen_head)]),
+                               "--check", "--answers", printed_answers)
+    check("brief: the printed check command, run in the subagent's worktree, reads the author's answers file",
+          code == 0 and "Nothing pushed" in check_out, check_out + err)
+    Path(answers_in_checkout).unlink()
+    git(repository, "worktree", "remove", "--force", str(worktree))
+
+    spaced = root / "checkout with space"
+    shutil.copytree(repository, spaced)
+    code, spaced_out, err = run(root, spaced, routes_for(frozen_head, [review(commit_id=frozen_head)]))
+    check("brief: an answers path with a space is shell-quoted in the check command",
+          code == 0 and f"--answers '{spaced}/.git/fix-round-answers-pull-request-{NUMBER}.md'" in spaced_out,
+          err + spaced_out)
+
+    routes = routes_for(frozen_head, [review(commit_id=frozen_head)])
+    routes[PR_VIEW] = {"stdout": json.dumps({"url": URL, "headRefOid": frozen_head, "headRefName": "topic$name"})}
+    code, dollar_out, err = run(root, repository, routes)
+    check("brief: a branch name the shell would expand is shell-quoted in the push command",
+          code == 0 and "git push origin HEAD:'topic$name'" in dollar_out, err + dollar_out)
 
     outside = root / "not-a-checkout"
     outside.mkdir()
@@ -320,7 +363,13 @@ def brief_cases(root, repository, base, frozen_head):
     routes[PR_VIEW] = {"stdout": json.dumps({"url": URL})}
     code, out, err = run(root, repository, routes)
     check("brief: gh pr view without headRefOid fails with exit 2",
-          code == 2 and "gave no url and headRefOid" in err, err)
+          code == 2 and "gave no url, headRefOid and headRefName" in err, err)
+
+    routes = routes_for(frozen_head, [review(commit_id=frozen_head)])
+    routes[PR_VIEW] = {"stdout": json.dumps({"url": URL, "headRefOid": frozen_head})}
+    code, out, err = run(root, repository, routes)
+    check("brief: gh pr view without headRefName fails with exit 2",
+          code == 2 and "gave no url, headRefOid and headRefName" in err, err)
 
     code, out, err = run(root, repository, routes_for(frozen_head, []), path_has_gh=False)
     check("brief: gh that cannot start fails with exit 2",
