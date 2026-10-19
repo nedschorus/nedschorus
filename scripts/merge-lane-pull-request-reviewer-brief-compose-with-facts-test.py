@@ -5,7 +5,8 @@ Runs the program against real git in a scratch repository that serves as
 --review-tools-worktree-at-main: main, a first head commit and a fix-round head commit, with a
 copy of this directory's compose-pull-request-reviewer-brief.py and an
 instructions file committed on main. wt/pr7-merged is a worktree of that
-repository. The program runs with GIT_DIR pointing at a directory that does
+repository. The reviewer's scratch directories are made in their own directory
+of the scratch, in place of the default parent outside the log-store. The program runs with GIT_DIR pointing at a directory that does
 not exist, so a case passes only if the program drops it.
 
 Run: python3 scripts/merge-lane-pull-request-reviewer-brief-compose-with-facts-test.py
@@ -72,7 +73,8 @@ def run_program(scratch, helpers, specs, *extra):
          "--merge-lane-worktrees-and-outputs-directory", str(helpers),
          "--review-tools-worktree-at-main", str(scratch / "main-checkout"),
          "--brief-file", str(scratch / "standing.md"),
-         "--ned-box-reviewer-brief-environment-addendum-file", str(scratch / "addendum.md"), *extra],
+         "--ned-box-reviewer-brief-environment-addendum-file", str(scratch / "addendum.md"),
+         "--reviewer-scratch-parent-directory", str(scratch / "reviewer-scratch"), *extra],
         capture_output=True, text=True,
         env={**GIT_ENVIRONMENT, "GIT_DIR": str(scratch / "no-such-git-directory")})
 
@@ -113,7 +115,8 @@ def main():
             f"- Merge base: `{main_commit}`.\n"
             f"- Main's tip when commissioned: `{main_commit}`.\n"
             f"- Merged tree (head merged onto main by merge-lane-2): `{merged_tree}`.\n"
-            f"- Your scratch directory: `{helpers / 'rv7'}`. Use it as `<your scratchpad>`.\n"
+            f"- Your scratch directory: `{scratch / 'reviewer-scratch' / 'rv7'}`. "
+            "Use it as `<your scratchpad>`.\n"
             "- Files the change touches: `scripts/thing.py` (+2/-0).\n"
             "- Test files the change touches: `scripts/thing-test.py`.\n"
             "- First round: no head commit was reviewed before.\n"
@@ -124,10 +127,23 @@ def main():
         check("a first-round brief is the standing text, the addendum and the facts",
               completed.returncode == 0 and brief == expected,
               detail + "\n--- brief ---\n" + brief)
-        check("the reviewer's scratch directory is made", (helpers / "rv7").is_dir(), detail)
+        check("the reviewer's scratch directory is made in the reviewer scratch parent, "
+              "not in the worktrees and outputs directory",
+              (scratch / "reviewer-scratch" / "rv7").is_dir()
+              and not (helpers / "rv7").exists(), detail)
         check("the output names the brief and its word count",
               completed.stdout == f"composed {brief_file} {len(expected.split())} words\n",
               detail)
+
+        program_spec = importlib.util.spec_from_file_location("brief_compose", PROGRAM)
+        program = importlib.util.module_from_spec(program_spec)
+        program_spec.loader.exec_module(program)
+        log_store = Path("/home/nedlern/nedschorus-logs")
+        default_parent = program.DEFAULT_REVIEWER_SCRATCH_PARENT_DIRECTORY
+        check("the default reviewer scratch parent is outside the log-store, which the "
+              "standing text forbids the reviewer to write to",
+              default_parent != log_store and log_store not in default_parent.parents,
+              str(default_parent))
 
         fix_round = {**first_round, "tag": "7r2", "head": fix_head,
                      "reviewed_before": first_head, "previous_reviews": "review 1",
