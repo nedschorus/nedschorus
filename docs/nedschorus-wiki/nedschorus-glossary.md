@@ -47,6 +47,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **ghi-info** — the GHI knowledge agent, which an agent asks, with `scripts/ghi-info-ask.py`, which issues to read before filing or editing an issue.
 - **GHI-MD** — the MD file used to explain a GitHub issue.
 - **ghi-write-tool** — `scripts/ghi-issue-write.py`, the program whose operations are create-GHI and edit-GHI.
+- **guarded-file** — a file that the instruction-file guard, `.claude/hooks/instruction-file-guard.py`, protects: `CLAUDE.md` and `CLAUDE.local.md`, everything under a `.claude/` directory apart from `worktrees/`, `jobs/` and `handoffs/`, a `-prompt.md` or `-instructions.md` file, and a reviewed document (a `.md` file under `docs/agents/`, `docs/nedschorus-wiki/` or `nc-systems/skills/`, or a `-design.md` file), with the exceptions that guard makes; plus `~/.claude/CLAUDE.md` and `~/.claude/settings.json`.
 - **hand-merge** — a merge of main into a conflicting pull-request branch, with each conflict resolved by hand and nothing else changed, pushed on top of the frozen-head.
 - **handoff-supervisor** — the program `nc-systems/handoff/handoff-supervisor.py`, one per agent-seat, that launches an agent-session, replaces it when it writes a session-handoff, and exits when it ends without one.
 - **handoff-system** — the subsystem that replaces an agent-session with a fresh one, which continues from the session-handoff the old agent-session wrote. Overview: `docs/nedschorus-wiki/nedschorus-handoff-architecture-overview.md`.
