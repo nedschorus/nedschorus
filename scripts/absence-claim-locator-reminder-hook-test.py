@@ -29,7 +29,7 @@ HOOK_SCRIPT = Path(__file__).with_name("absence-claim-locator-reminder-hook.py")
 LABELLED_REPLIES = Path(
     "/home/nedlern/nedschorus-logs/seats/ned-box-helper/"
     "absence-claim-trigger-phrases-2026-10-05/out/precision/labels.csv")
-EXPECTED_PRECISION_LINE = "fires 107: correct 88, incorrect 19, unclear 0; precision 0.8224"
+EXPECTED_PRECISION_LINE = "fires 102: correct 87, incorrect 15, unclear 0; precision 0.8529"
 B01_CLAIM = "The transcripts it points to are gone."
 REMINDER_FOR_B01 = (
     "absence-claim reminder: your reply says a file or record is gone, missing "
@@ -240,7 +240,7 @@ for case_name, text in [
 ]:
     check(f"trigger: {case_name}", bool(hook.absence_claim_matches(text)), text)
 
-# Pattern 2 fires only after a word naming a stored artifact, so a sentence
+# Pattern 2 fires only after a word naming a stored artifact in its clause, so a sentence
 # whose only such word comes from a backquoted path tests the FILE substitution.
 for case_name, text in [
     ("a backquoted home path", "`~/.local/state/claude/fires.jsonl` is gone."),
@@ -271,6 +271,68 @@ for case_name, text in [
     ("a glossary entry", "The glossary file is missing an entry for that term."),
     ("nothing is lost", "Nothing in the record is lost by the rename."),
     ("a backquoted lone tilde", "- **Lost `~` mark:** the mark on `~` words is lost when the reader runs in a separate process."),
+]:
+    check(f"trigger: silent on {case_name}", not hook.absence_claim_matches(text),
+          hook.absence_claim_matches(text))
+
+# Each case below names the guard it tests; most sentences are from labelled replies.
+for case_name, text in [
+    ("pattern 13: no longer exists, with a place", "The file no longer exists on main, so the edit has nowhere to land."),
+    ("pattern 13: does not exist, an artifact in its clause",
+     "The search program the skill depends on, `scripts/find.py`, does not exist in the checkout."),
+    ("pattern 2: a pronoun subject reaches back past the clause break",
+     "I looked for the approval file; it is gone."),
+    ("pattern 6: not in git history", "The commit is not in git history."),
+    ("pattern 4: an adverb between the negation and the verb", "I still can't reliably find the transcript."),
+    # A guard written for one pattern must not silence another.
+    ("pattern 2: an edited-element word before the artifact", "The guard's log file is gone."),
+    ("pattern 2: who, after a colon", "The transcript is gone: who deleted it?"),
+    ("pattern 4: or before the match", "I checked the log-store or the mirror and couldn't find the transcript."),
+    ("pattern 4: no before the match", "With no backup I cannot find the transcript."),
+    ("pattern 6: an edited-element word heads the clause", "That change is not in the branch."),
+    ("pattern 6: any ... that before the match",
+     "I looked for any copy that might exist, but the file is not in the mirror."),
+]:
+    check(f"trigger: {case_name}", bool(hook.absence_claim_matches(text)), text)
+
+for case_name, text in [
+    ("the 2026-10-18 trigger case, a definition",
+     'The second says "original", but step 4 of the skill uses "original" for another file: '
+     "the old version kept beside a revised text that is not in the repository."),
+    ("pattern 13 with no artifact in its clause and no place after it", "That old behaviour no longer exists."),
+    ("pattern 13 after an indefinite noun and a relative clause", "- a path to a file that no longer exists;"),
+    ("pattern 13 after where",
+     "The check can't start on a machine where the folder `~/.gemini/x` doesn't exist yet."),
+    ("pattern 2 with its artifact before a clause break",
+     "Hitting a missing issue tells you the permission: 403 means the permission is missing."),
+    ("pattern 2 after an artifact word joined by a hyphen", "The per-file cache is gone."),
+    ("pattern 2 in a whose clause", "Before the new agent-session starts, `x.py` looks for work-snapshots whose program is gone."),
+    ("talk about a claim", "It doesn't claim any file is missing."),
+    ("what someone says", "It adds the reminder for agents who wrongly say a file is missing."),
+    ("pattern 4 after say", "Correction: NFC exists, and I was wrong to say I couldn't find it."),
+    ("a negated subject", "I started from main's copy so nobody's lines are lost."),
+    ("what a test checks", "New tests check that the program's temporary directory is gone after a normal run."),
+    ("pattern 2 on an edited element", "- Test gap: the `a.py` versus `b.py` gap is gone with the code it was about."),
+    ("pattern 2 in a case analysis",
+     "The agent has to copy each outcome into its own records, or it's lost."),
+    ("pattern 4 on what a program can find", "Its one complaint was that it couldn't find TaskGet."),
+    ("pattern 4 on an argument, not an artifact", "I can't find a strong case for N."),
+    ("pattern 4 with words that are not adverbs before the verb", "I didn't say where to find the file."),
+    ("pattern 4 before a colon and who", "**What I can't recover:** who set the first template."),
+    ("pattern 6 on a file said to live elsewhere",
+     "The reviewer briefs are not in the repository; they live in gitignored seat-local files under `x/`."),
+    ("pattern 6 on not in git", "It is not in git, so there is no commit."),
+    ("pattern 12 in a relative clause", "- rulings an agent asked for that you never gave;"),
+    ("missing as a verb", "Two in one day, in unrelated tools, suggest the record is missing a field."),
+    ("a future moment", "The moment the move lands on main, that path is gone."),
+    ("a kind named by a relative clause", "- One message covers two cases: a folder that is missing and a folder that is empty."),
+    ("any that are missing", "It checks `x.md` for a fast read of each exact text, and runs the fast read for any that are missing."),
+    ("advice that is gone",
+     "- The advice to give the backup search a path for the Mac's local snapshots is gone."),
+    ("a removed code element heads the clause", "- TR1's checks on `scripts/x.py` are gone;"),
+    ("what a search tool can find", "Naming: grep and glob don't find branch names."),
+    ("where records belong", "Records like these belong in the log-store on ned-box, not in the repository."),
+    ("a kind of commit", "Its one weakness, a commit on no branch, is guarded three ways."),
 ]:
     check(f"trigger: silent on {case_name}", not hook.absence_claim_matches(text),
           hook.absence_claim_matches(text))
