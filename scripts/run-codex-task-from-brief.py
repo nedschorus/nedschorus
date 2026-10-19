@@ -34,10 +34,12 @@ Options that widen what Codex may do, each off by default:
                           options, and read the -C checkout's repository
                           unless given -R OWNER/REPO (give -R with
                           --outside-git-checkout). `api` takes exactly one
-                          endpoint, whose path names the repository, such as
-                          repos/OWNER/REPO/pulls/12, and only these options:
+                          endpoint, which may read any repository, such as
+                          repos/OWNER/REPO/pulls/12 with that repository's
+                          OWNER/REPO, and only these options:
                           --jq/-q, --template/-t, --header/-H, --preview/-p
-                          and --cache, each with its value, and --include/-i,
+                          and --cache, each with its value as the next word
+                          or after =, and --include/-i,
                           --paginate and --slurp; `api` has no -R. Any other
                           `api` option is refused, so `api graphql` cannot
                           run, since it needs -f to send its query. Codex
@@ -156,15 +158,11 @@ def api_refusal(words):
         option, has_attached_value = word.split("=", 1)[0], "=" in word
         if not word.startswith("-") or word == "-":
             endpoints.append(word)
-        elif word.startswith("--") and option in PREFETCH_API_OPTIONS_TAKING_VALUE:
+        elif option in PREFETCH_API_OPTIONS_TAKING_VALUE:
             if not has_attached_value:
                 if index + 1 >= len(words):
                     return f"`gh api` option `{option}` has no value after it"
                 index += 1
-        elif word in PREFETCH_API_OPTIONS_TAKING_VALUE:
-            if index + 1 >= len(words):
-                return f"`gh api` option `{word}` has no value after it"
-            index += 1
         elif word in PREFETCH_API_FLAGS_WITHOUT_VALUE:
             pass
         else:
@@ -302,7 +300,8 @@ def main(argv=None) -> int:
                 f"GitHub are accepted.\n"
                 f"Use `pr list`, `pr view`, `issue list` or `issue view`, with any of their "
                 f"options and -R OWNER/REPO when -C is not a checkout of that repository; "
-                f"or `api` with one endpoint, whose path names the repository, and only "
+                f"or `api` with one endpoint, which may read any repository, such as "
+                f"repos/OWNER/REPO/pulls/12 with that repository's OWNER/REPO, no -R, and only "
                 f"these options: {PREFETCH_API_ACCEPTED_OPTIONS_TEXT}.")
     checkout = pathlib.Path(args.checkout).resolve()
     brief = pathlib.Path(args.brief).resolve()

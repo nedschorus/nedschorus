@@ -504,6 +504,7 @@ try:
               completed.returncode == 2 and reason in completed.stderr
               and "only commands known to read from GitHub are accepted" in completed.stderr
               and "--include/-i, --paginate and --slurp" in completed.stderr
+              and "which may read any repository" in completed.stderr
               and not gh_calls() and not arguments_file.exists(),
               f"exit {completed.returncode}, gh calls {gh_calls()!r}, stderr {completed.stderr!r}")
 
@@ -513,10 +514,12 @@ try:
         "--prefetch-github", "api -i -q .title -H 'Accept: x' repos/o/r/pulls/1",
         "--prefetch-github", "api user --template '- {{.login}}'",
         "--prefetch-github", "api --jq=.[].number --paginate --slurp --cache 1h -p x repos/o/r/pulls",
-        "--prefetch-github", "api --jq -XPOST repos/o/r/pulls")
-    check("`api` with one endpoint and only accepted options passes, and a value-taking "
-          "option's value is taken as its value even when it starts with \"-\"",
-          completed.returncode == 0 and len(gh_calls()) == 4,
+        "--prefetch-github", "api --jq -XPOST repos/o/r/pulls",
+        "--prefetch-github", "api user -q=.login -t='{{.login}}' -H=Accept:x")
+    check("`api` with one endpoint and only accepted options passes, a value-taking "
+          "option's value is taken as its value even when it starts with \"-\", and a "
+          "short option takes its value after = as gh does",
+          completed.returncode == 0 and len(gh_calls()) == 5,
           f"exit {completed.returncode}, gh calls {gh_calls()!r}, stderr {completed.stderr!r}")
 
     fresh_prefetch_case()
