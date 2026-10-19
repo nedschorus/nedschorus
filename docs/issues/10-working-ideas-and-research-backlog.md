@@ -86,7 +86,7 @@ rule); this is the summary, updated 2026-07-26 to the ruled state:
   doctrine, `docs/issues/queue/` for pair-bound documents, `nc-queue/` for
   user-requested notes awaiting their first walk, `legacy-feature-queue/` for
   consider-features outliving their slice
-  (issue [Queue drain procedure — the review process that empties wiki/queue, the pair queue, and the draft-label issue queue](https://github.com/nedschorus/nedschorus/issues/24) tracks
+  (issue [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, the drafts directory and the queue-drain-candidate-label issue queue](https://github.com/nedschorus/nedschorus/issues/24) tracks
   the drain procedure).
 - Draft GitHub issues carry the **`queue-drain-candidate` label** — the issue-world's queue
   membership (renamed from `boss-review`, 2026-07-24, and from `draft`, 2026-10-19).
