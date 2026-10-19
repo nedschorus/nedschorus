@@ -76,8 +76,9 @@ def parse_arguments(argv):
                              "(default: <review-tools-worktree-at-main>/docs/agents/pr-reviewer-instructions.md)")
     parser.add_argument("--merge-lane-pull-request-reviewer-scratch-directories-parent-directory", type=Path,
                         default=DEFAULT_MERGE_LANE_PULL_REQUEST_REVIEWER_SCRATCH_DIRECTORIES_PARENT_DIRECTORY,
-                        help=f"where each reviewer's scratch directory rv<tag>/ is made, <tag> being "
-                             f"the brief specification's tag, such as 1630 or 1630r1 "
+                        help=f"the directory in which each reviewer's scratch directory rv<tag>/ is made, "
+                             f"<tag> being the tag field of that pull request's entry in the brief "
+                             f"specifications file, such as 1630 or 1630r1 "
                              f"(default: {DEFAULT_MERGE_LANE_PULL_REQUEST_REVIEWER_SCRATCH_DIRECTORIES_PARENT_DIRECTORY})")
     return common.resolve_path_options(parser.parse_args(argv))
 
