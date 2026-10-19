@@ -27,14 +27,19 @@ what it can still change. The checkout that holds the document decides, not
 the payload's cwd: an agent-seat's cwd is its seat checkout, while the
 documents it changes sit in its topic branch's worktree. The ref is used as it
 stands, without a fetch. When that checkout has no origin/main, or git fails,
-is killed or outlasts its time limit while comparing, the hook cannot tell
-whether the document changed: it treats the document as changed, so the
+is killed or outlasts its time limit while comparing, or cannot run or
+outlasts its time limit while finding the document's checkout, or fails there
+for any reason but the directory being in no repository, the hook cannot
+tell whether the document changed: it treats the document as changed, so the
 record test below decides whether it is due, and lists it under its own
 heading with git's reason whether or not it is due, marked as read when it is
 not, so the agent sees git's failure on every Stop; it says so on stderr too,
 and goes on with the other documents. A failed merge-base, a timeout
 included, is found once per checkout per run. A document in no git
-checkout skips this test.
+checkout skips this test. When git fails in the same ways while finding the
+top of the payload cwd's checkout, the hook says so on
+stderr and at the top of its additionalContext on every Stop that reaches
+the check, and goes on without that top.
 A document that passes it is not due when a fast read of its
 current text is on record. A walk-document named docs/walk/<name>-draft.md
 in any git worktree, fast-read from that checkout or another, writes
@@ -91,7 +96,8 @@ that directory; the log-store is its parent directory.
 OUTPUT: {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": ...}},
 which continues the conversation with the text as the agent's next input.
 ON A FAULT, such as input that is not JSON, a module that will not load, or a
-record directory it cannot read, the hook prints one line naming it on stderr and exits 1: Claude Code records
+record directory it cannot read, the hook prints one line on stderr naming the
+fault and, where there is one, the path that failed, and exits 1: Claude Code records
 a Stop hook's exit 1 as a non-blocking error and still ends the turn.
 """
 import importlib.util
@@ -105,20 +111,36 @@ from urllib.parse import unquote
 
 
 
+def one_line_reason(error):
+    # str, not repr: an OSError's repr drops the file name its str carries.
+    return " ".join(f"{type(error).__name__}: {error}".split())
+
+
 def fault_exit(error):
     print(f"cold-read-fast-read-due-for-linked-document-reminder-hook: the hook failed, "
           f"so it made no check of the documents the reply linked; the agent need not act: "
-          f"{error!r}", file=sys.stderr)
+          f"{one_line_reason(error)}", file=sys.stderr)
     return 1
 
 
-def _load_general_tools_module(file_name):
-    specification = importlib.util.spec_from_file_location(
-        file_name.removesuffix(".py").replace("-", "_"),
-        Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools" / file_name)
-    module = importlib.util.module_from_spec(specification)
-    specification.loader.exec_module(module)
+class ModuleLoadFailure(Exception):
+    """A module this hook loads by path would not load; the message names the path."""
+
+
+def load_module(name, path):
+    try:
+        specification = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+    except Exception as error:
+        # An exception raised inside the module names neither the module nor its path.
+        raise ModuleLoadFailure(f"could not load {path}: {one_line_reason(error)}") from error
     return module
+
+
+def _load_general_tools_module(file_name):
+    return load_module(file_name.removesuffix(".py").replace("-", "_"),
+                       Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools" / file_name)
 
 
 # Constants below are built from these modules, so a load that fails ends the
@@ -129,6 +151,8 @@ try:
         "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
     ned_box_home_path_constants = _load_general_tools_module(
         "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
+    git_runner = _load_general_tools_module(
+        "git-machine-readable-output-runner-and-parser-common.py")
 except Exception as error:
     sys.exit(fault_exit(error))
 
@@ -169,8 +193,8 @@ REMINDER_OPENING = (
     "checkout's branch left origin/main:")
 UNCHECKED_OPENING = (
     "cold-read-fast-read due check failed for these documents: git could not "
-    "compare each with origin/main in the git checkout that holds it, so this "
-    "hook cannot tell whether that checkout changed it:")
+    "find the git checkout that holds each, or could not compare it with "
+    "origin/main there, so this hook cannot tell whether that checkout changed it:")
 UNCHECKED_INSTRUCTION = (
     "Give the fast read below to each of these not marked as read that you "
     "changed since its last cold-read-fast-read, and to each you cannot tell about.")
@@ -180,7 +204,19 @@ UNCHECKED_ALREADY_READ_NOTICE = (
 UNCHECKED_STDERR_LINE = (
     "cold-read-fast-read-due-for-linked-document-reminder-hook: could not tell "
     "whether the git checkout that holds {document} changed it, because git could not "
-    "compare it with origin/main: {reason}")
+    "find that checkout or compare the document with origin/main: {reason}")
+SESSION_CHECKOUT_UNKNOWN_STDERR_LINE = (
+    "cold-read-fast-read-due-for-linked-document-reminder-hook: could not find the top "
+    "of the git checkout holding {cwd}: {reason}")
+SESSION_CHECKOUT_UNKNOWN_LINES = (
+    "cold-read-fast-read due check incomplete: git could not find the top of the git "
+    "checkout holding your working directory {cwd} ({reason}), so this hook did not look "
+    "for document paths relative to that top, nor for records in its cold-read-records "
+    "directory.",
+    "If your last reply linked a document you changed since its last cold-read-fast-read "
+    "and it is not listed below, run on it, from your checkout: python3 " + FAST_READ_PROGRAM
+    + " --target <document path>",
+)
 REMINDER_INSTRUCTIONS = (
     "Run on each document, from your checkout: python3 " + FAST_READ_PROGRAM
     + " --target <document path>",
@@ -190,21 +226,10 @@ REMINDER_INSTRUCTIONS = (
 )
 
 
-def load_module(name, path):
-    specification = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(specification)
-    specification.loader.exec_module(module)
-    return module
-
-
 def load_cold_read_record_names():
     """Loaded by run() rather than at import, so a fault loading it is reported by main."""
-    specification = importlib.util.spec_from_file_location(
-        "cold_read_record_names",
-        REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-record-names.py")
-    record_names = importlib.util.module_from_spec(specification)
-    specification.loader.exec_module(record_names)
-    return record_names
+    return load_module("cold_read_record_names",
+                       REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-record-names.py")
 
 
 def environment_without_git_redirection():
@@ -220,21 +245,24 @@ def last_reply_text(transcript_path):
     return reply
 
 
-def checkout_top(directory, git_environment):
-    try:
-        completed = subprocess.run(
-            ["git", "-C", str(directory), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=GIT_TIMEOUT_SECONDS,
-            env=git_environment)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if completed.returncode != 0 or not completed.stdout.strip():
-        return None
-    return Path(completed.stdout.strip()).resolve()
-
-
 class GitComparisonFailure(Exception):
-    """git could not compare a document with origin/main."""
+    """git could not find a document's checkout, or compare the document with origin/main."""
+
+
+def checkout_top(directory, git_environment):
+    """The top of the git checkout holding the directory, or None when git says it is in none.
+
+    Raises GitComparisonFailure for any other git failure, since then the hook
+    cannot tell whether the directory is in a checkout.
+    """
+    try:
+        output = git_runner.run_git_unless_outside_a_repository(
+            directory, ["rev-parse", "--show-toplevel"], environment=git_environment,
+            timeout_seconds=GIT_TIMEOUT_SECONDS)
+    except git_runner.GitCommandFailed as failure:
+        raise GitComparisonFailure(str(failure)) from failure
+    top = os.fsdecode(output or b"").strip()
+    return Path(top).resolve() if top else None
 
 
 def git_in_checkout(top, arguments, git_environment):
@@ -291,15 +319,17 @@ def document_differs_from_main(document, document_top, git_environment, bases):
 
 
 def find_markdown_file_paths_linked_or_named_in_agent_reply(
-        reply, cwd, git_environment=None, skipped=lambda path: False):
-    """Return the existing Markdown files the reply links, resolved, in order."""
+        reply, cwd, session_top=None, skipped=lambda path: False):
+    """Return the existing Markdown files the reply links, resolved, in order.
+
+    A relative path is tried against cwd, then session_top, the top of cwd's checkout.
+    """
     candidates = []
     for match in FILE_URL_PATTERN.finditer(reply):
         candidates.append(unquote(match[1]))
     for match in ABSOLUTE_PATH_PATTERN.finditer(reply):
         candidates.append(match[1])
-    relative_bases = [base for base in
-                      (cwd, checkout_top(cwd, git_environment) if cwd else None) if base]
+    relative_bases = [base for base in (cwd, session_top) if base]
     found = []
     for raw in candidates:
         path = Path(raw)
@@ -437,27 +467,35 @@ def run(stdin_text, environment):
     if not reply:
         return None
     git_environment = environment_without_git_redirection()
-    session_top = checkout_top(cwd, git_environment) if cwd else None
+    session_top = None
+    session_top_reason = None
+    if cwd:
+        try:
+            session_top = checkout_top(cwd, git_environment)
+        except GitComparisonFailure as failure:
+            session_top_reason = " ".join(str(failure).split())
+            print(SESSION_CHECKOUT_UNKNOWN_STDERR_LINE.format(cwd=cwd, reason=session_top_reason),
+                  file=sys.stderr)
     due = []
     unchecked = []
     main_bases = {}
     documents = find_markdown_file_paths_linked_or_named_in_agent_reply(
-        reply, cwd, git_environment,
+        reply, cwd, session_top,
         lambda path: is_skipped(path, log_store_directory, record_names))
     for document in documents:
-        document_top = checkout_top(document.parent, git_environment)
+        document_top = None
         reason = None
-        if document_top is not None:
-            try:
-                changed = document_differs_from_main(
-                    document, document_top, git_environment, main_bases)
-            except GitComparisonFailure as failure:
-                reason = " ".join(str(failure).split())
-                print(UNCHECKED_STDERR_LINE.format(document=document, reason=reason),
-                      file=sys.stderr)
-                changed = True
-            if not changed:
-                continue
+        try:
+            document_top = checkout_top(document.parent, git_environment)
+            changed = document_top is None or document_differs_from_main(
+                document, document_top, git_environment, main_bases)
+        except GitComparisonFailure as failure:
+            reason = " ".join(str(failure).split())
+            print(UNCHECKED_STDERR_LINE.format(document=document, reason=reason),
+                  file=sys.stderr)
+            changed = True
+        if not changed:
+            continue
         stores = [store]
         for top in (document_top, session_top):
             if top is not None and top / record_names.RECORDS_DIRECTORY_NAME not in stores:
@@ -469,10 +507,13 @@ def run(stdin_text, environment):
             unchecked.append((document, reason, is_due))
         elif is_due:
             due.append(document)
-    if not due and not unchecked:
+    if not due and not unchecked and session_top_reason is None:
         return None
     unchecked_due = [document for document, _, is_due in unchecked if is_due]
     lines = []
+    if session_top_reason is not None:
+        lines += [line.format(cwd=cwd, reason=session_top_reason)
+                  for line in SESSION_CHECKOUT_UNKNOWN_LINES]
     if due:
         lines += [REMINDER_OPENING] + [f"  {document}" for document in due]
     if unchecked:
