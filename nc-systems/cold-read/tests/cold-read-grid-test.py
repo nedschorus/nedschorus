@@ -135,6 +135,7 @@ import importlib.util
 import inspect
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -649,7 +650,8 @@ with tempfile.TemporaryDirectory() as scratch:
           and (record_directory / "frozen-copy-changed-during-run-stop-marker.txt").is_file(),
           f"record {record_directory}")
     check("the first stop is told it does not count and is stop 1 of 3, and to start a new run",
-          "Start a new cold-read run once you have stopped that source, or once the user says to. "
+          "Start a new cold-read run once nothing but cold-read-grid.py will write "
+          "under the record directory, or once the user says to. "
           "This run does not count toward the 3 cold-read-full-runs: "
           "it is stop 1 of 3 in a row because the frozen copy changed." in result.stdout,
           repr(result.stdout))
@@ -671,6 +673,12 @@ with tempfile.TemporaryDirectory() as scratch:
               for name in ("claude-hunt-deep", "claude-hunt-second",
                            "claude-terminology-deep", "codex-hunt-deep",
                            "codex-terminology-deep")),
+          repr(unchecked_lines))
+    check("each not-checked line names its stopped cell and opens a sentence with a capital",
+          unchecked_lines != [] and all(
+              line.split(" — ", 1)[1].startswith(
+                  f"The {line.split(': ', 1)[1].split('.md', 1)[0]} cell was stopped")
+              for line in unchecked_lines),
           repr(unchecked_lines))
     check("the not-checked line says it is a failure to look, not a clean result",
           unchecked_lines != []
@@ -1723,6 +1731,14 @@ with tempfile.TemporaryDirectory() as scratch:
         detail_directory, detail_directory / "frozen-document.md", "a" * 64, "b" * 64)
     check("the frozen-copy detail leaves starting a new run to the stop-count line",
           "new cold-read run" not in detail.lower(), repr(detail))
+    spaced = Path("/tmp/read me/record")
+    instructions = grid_module.target_changed_instructions(
+        spaced, spaced / "target" / "read me.md", Path("/tmp/read me.md"),
+        grid_module.WINDOW_SEEN_AT_END)
+    diff_command = instructions.split("as in `", 1)[1].split("`", 1)[0]
+    check("the closing text's diff command keeps a path with a space as one operand",
+          shlex.split(diff_command) == ["diff", "/tmp/read me.md", "/tmp/read me/record/target/read me.md"],
+          repr(diff_command))
     line = grid_module.frozen_copy_stop_count_line(3)
     check("the third stop in a row says not to start a new run and to tell the user",
           "do not start a new cold-read run" in line and "Tell the user" in line
