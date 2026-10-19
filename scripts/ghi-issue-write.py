@@ -20,13 +20,27 @@ forget to read them. Better to update the ghi-Md"). The PreToolUse hook
 `gh issue comment`, `gh issue create` or body edit on this repository and
 sends the author here.
 
-The one comment the tool itself posts records a ruling conflict for the
-user, not for agents: when ghi-info answers a draft with a question about a
-ruling of the user's, the write goes ahead, and the tool comments the
-question on the issue and labels the issue `conflicts-with-a-ruling`. The
-ruling stands until the user changes it. A stop that waited for the user's
-answer, with a rerun option, was built and held as too complicated; the
-user asked for it simpler and automatic.
+A ruling question goes into a file for the same reason. When ghi-info
+answers a draft with a question about a ruling of the user's, the write goes
+ahead, and the tool writes the question as entry E1 of a
+proposed-improvements-or-changes-file beside the GHI-MD,
+`<GHI-MD name>-proposed-improvements-or-changes-ghi-info-<YYYY-MM-DD>.md`,
+and puts PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE_TEMPLATE under the
+GHI-MD's first heading, so every agent that reads the GHI-MD is sent to it.
+Both reach main in the write's own pull request. The subagent that settles
+the entry, by the rules of PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD,
+starts only after that pull request merges: a commit it pushed to the open
+pull request would move the head merge-lane-2 is reviewing. So the run that
+lands the file tells the agent to rerun once the pull request merges, and
+the rerun, finding the entry open on main, tells it to dispatch the
+subagent. The file is written to disk before any step that reaches
+GitHub, so a rerun after any failure finds it there, lands it, and does not
+ask ghi-info again: nothing about the question is held only in memory. A
+file of that name already present gets a numeric suffix rather than an
+edit, because every source writes only its own files. Once a filing's pull
+request is open, the files beside the draft are deleted, so a later filing
+whose heading gives the same name in that folder does not take them for its
+own.
 
 THE SEQUENCE, and what makes each step safe to run twice:
 
@@ -34,19 +48,18 @@ THE SEQUENCE, and what makes each step safe to run twice:
                 filed under an issue whose filing finished; a new filing's
                 heading carries no date or file path.
   2. Adjudicate ask ghi-info whether an open issue already covers this.
-                Fail-open: unreachable means the write proceeds.
+                Fail-open: unreachable means the write proceeds. A ruling
+                question is written to a proposed-improvements-or-changes-
+                file on disk before step 3; such a file an earlier run
+                wrote, not yet on main, means step 2 is not asked again.
   3. File       gh issue create, title from the file's first heading, body a
                 placeholder carrying this file's pairing key.
   4. Name+land  copy the file to docs/issues/<number>-<slug>.md in a
                 throwaway worktree cut from a just-fetched origin/main,
-                commit, push, open a pull request.
+                with its proposed-improvements-or-changes-files and the
+                pointer line when it has any, commit, push, open a pull
+                request.
   5. Link       rewrite the body as one link per file of docs/issues/<n>-*.
-  6. Record     only when step 2 got a ruling question: comment it on the
-                issue and add the label `conflicts-with-a-ruling`. It runs
-                as soon as the issue exists, right after step 3 for a
-                create and right after step 2 for an edit, because a
-                rerun after a later failure resumes without asking
-                ghi-info again and would never record the question.
 
 RESUMING, and why there is no state file. Steps 3 to 5 are three separate
 remote operations and any of them can fail, leaving an issue with a
@@ -270,6 +283,11 @@ path exited 0, opened a pull request, and left the other seat's line
 nowhere in the branch it pushed. Both paths are compared now, and either
 one's conflict refuses the run before anything is pushed.
 
+The proposed-improvements-or-changes-files main holds beside the moved-from
+path for that GHI-MD move with it in the same pull request, renamed to the
+GHI-MD's name at its new path, and the GHI-MD's pointer line names that
+name.
+
 A MOVE THAT ALSO RENAMED IS REPORTED, NOT GUESSED AT. The moved-from path
 is found by the file's name, which a move keeps and a rename does not.
 There is no second rule to fall back on: a file the author renamed and a
@@ -345,6 +363,7 @@ and the way past it is to let that merge and fold it in.
 """
 
 import argparse
+import datetime
 import hashlib
 import importlib.util
 import json
@@ -419,13 +438,29 @@ GHI_INFO_ASK_RULING_QUESTION_EXIT_CODE = 3
 # Where the ruling question's sentence ends: the opening of the line that
 # follows {sentence} in ghi-info-ask.py's RULING_QUESTION_MESSAGE_TEMPLATE.
 # A sentence can run over several lines. Copied and checked like the above.
-GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END = (
-    "Ask the user whether that ruling still applies")
-RULING_CONFLICT_LABEL = "conflicts-with-a-ruling"
-RULING_CONFLICT_LABEL_DESCRIPTION = (
-    "ghi-info thinks this issue conflicts with a ruling of the user's; "
-    "the user decides")
-RULING_CONFLICT_LABEL_COLOR = "d93f0b"
+GHI_INFO_ASK_RULING_QUESTION_SENTENCE_END = "If you file or edit the GHI"
+# How the sentence ends when ghi-info named the issue holding the ruling:
+# ghi-info-ask.py's RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE, as a pattern whose group
+# is the number. Copied and checked like the above.
+GHI_INFO_ASK_RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_PATTERN = re.compile(
+    r"\s*\(held in GHI (\d+)\)$")
+# A proposed-improvements-or-changes-file sits beside its GHI-MD and is named
+# `<GHI-MD name>-proposed-improvements-or-changes-<source>-<YYYY-MM-DD>[-<n>].md`
+# (the glossary's entry); this tool is the source `ghi-info`. The pointer line
+# is what the GHI-MD carries under its first heading while any such file sits
+# beside it, worded as PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD's rule 1 gives it.
+PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX = "-proposed-improvements-or-changes-"
+PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE_PATTERN = re.compile(
+    re.escape(PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX)
+    + r"[a-z0-9]+(?:-[a-z0-9]+)*-\d{4}-\d{2}-\d{2}(?:-\d+)?\.md$")
+PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_INFO = "ghi-info"
+PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE_TEMPLATE = (
+    "This GHI has proposed improvements or changes: read every file in this "
+    "folder whose name starts with "
+    "`{prefix}" + PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX + "`.")
+# The design of record for how the entries are settled: the subagent the run
+# tells the agent to dispatch follows its § The design, rules 3 to 7.
+PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD = "docs/issues/1132-concerns-about-a-ghi-are-handled-by-agents.md"
 
 RECONSIDER_LINE = (
     "If you believe this refusal is wrong, reconsider once against its stated "
@@ -460,10 +495,10 @@ def ruling_conflict_from_stderr(stderr: str):
                 break
             parts.append(following.strip())
         sentence = " ".join(part for part in parts if part)
-        numbered = re.match(r"#(\d+)\s*(.*)", sentence, re.DOTALL)
-        if numbered:
-            return RulingConflict(int(numbered.group(1)),
-                                  numbered.group(2).strip())
+        held_in = GHI_INFO_ASK_RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_PATTERN.search(sentence)
+        if held_in:
+            return RulingConflict(int(held_in.group(1)),
+                                  sentence[:held_in.start()].strip())
         return RulingConflict(None, sentence)
     return None
 
@@ -1001,8 +1036,9 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
     once and passes by leaving its reasoning in the marker file.
 
     Returns the RulingConflict when ghi-info answered with a ruling
-    question, for step 6 to record as soon as the issue exists; otherwise
-    None. A ruling question does not stop the write."""
+    question, for the caller to write to a proposed-improvements-or-changes-
+    file before anything reaches GitHub; otherwise None. A ruling question
+    does not stop the write."""
     marker = repository_root / RECONSIDERED_MARKER_NAME
     if marker.is_file():
         marker.unlink()
@@ -1036,8 +1072,8 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
         conflict = ruling_conflict_from_stderr(completed.stderr)
         if conflict is not None:
             report("ghi-info raised a question about a ruling of the "
-                   "user's; the write goes ahead and records it on the "
-                   "issue")
+                   "user's; the write goes ahead and records it in a "
+                   "proposed-improvements-or-changes-file beside the GHI-MD")
             return conflict
     if completed.returncode in GHI_INFO_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES:
         # ghi-info answered, but with no verdict: the question was not about
@@ -1083,93 +1119,243 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
     return None
 
 
-def ruling_conflict_comment_body(repo: str, conflict, ruling_title):
-    """The comment step 6 posts, for the user to read."""
+def path_shown_relative_to_repository_root(path: Path,
+                                           repository_root: Path) -> str:
+    """The path as a progress line prints it: from the repository root when
+    it is inside the repository, and as given otherwise."""
+    try:
+        return str(path.resolve().relative_to(repository_root.resolve()))
+    except ValueError:
+        return str(path)
+
+
+def proposed_improvements_or_changes_file_date() -> str:
+    """Today, as such a file's name and text carry it. A function so a test
+    can fix the date."""
+    return datetime.date.today().isoformat()
+
+
+def is_proposed_improvements_or_changes_file(path: str) -> bool:
+    """Whether a file named under an issue is a
+    proposed-improvements-or-changes-file rather than a GHI-MD. Such files
+    are linked from the issue like its other files, but are never counted
+    as the GHI-MD that names it."""
+    return bool(PROPOSED_IMPROVEMENTS_OR_CHANGES_FILE_PATTERN.search(
+        Path(path).name))
+
+
+# The opening of entry E1's heading in a file from ghi-info, and of the line
+# holding ghi-info's question; `ruling_question_lines` reads both back.
+GHI_INFO_ENTRY_HEADING_OPENING = "## E1 — possible problem: "
+GHI_INFO_QUESTION_LINE_OPENING = "ghi-info's question: "
+
+
+def proposed_improvements_or_changes_file_text(repo: str, conflict,
+                                               ruling_title, date: str,
+                                               operation_done: str) -> str:
+    """What a file from ghi-info says: one entry, E1, in the entry form of
+    PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD's rule 1. It names no issue number of its own, because
+    on a new filing it is written before the issue exists; it sits beside
+    the GHI-MD it is about. `operation_done` is "filed" or "edited"."""
     if conflict.ruling_issue is None:
-        where = "ghi-info named no issue holding the ruling"
+        ruling = "a user-ruling for which ghi-info named no GHI"
     else:
-        where = ("the ruling is in GHI [" + ruling_title + "](https://github.com/"
-                 f"{repo}/issues/{conflict.ruling_issue})")
+        ruling = (f"a user-ruling held in GHI [{ruling_title}](https://"
+                  f"github.com/{repo}/issues/{conflict.ruling_issue})")
     return (
-        "ghi-info thinks this issue conflicts with a ruling of the user's; "
-        f"{where}.\n\n"
-        f"ghi-info's question: {conflict.sentence}\n\n"
-        "The ruling stands until the user changes it. The label "
-        f"`{RULING_CONFLICT_LABEL}` stays on this issue until the user has "
-        "decided.")
+        f"# Proposed improvements or changes from ghi-info, {date}\n\n"
+        "ghi-info reviewed the GHI-MD beside this file when "
+        f"scripts/ghi-issue-write.py {operation_done} it. Once this file is "
+        "on main, the agent that ran the tool dispatches a forked subagent to "
+        "settle each entry by rules 3 to 7 of § The design in "
+        f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD}.\n\n"
+        f"{GHI_INFO_ENTRY_HEADING_OPENING}the GHI-MD's proposal may go "
+        f"against {ruling}\n"
+        f"{GHI_INFO_QUESTION_LINE_OPENING}{conflict.sentence}\n"
+        "Goes wrong when: the proposal is carried out while that user-ruling "
+        "still applies.\n"
+        "State: open\n")
 
 
-def record_ruling_conflict(repo: str, number: int, conflict, runner,
-                           report, edit_not_yet_landed: bool):
-    """Record ghi-info's ruling question on an issue that already exists.
+def ruling_question_lines(text: str):
+    """(the possible problem, ghi-info's question) read back from a file
+    from ghi-info, for the run's last lines; either is None when the file
+    lacks its line."""
+    problem = question = None
+    for line in text.splitlines():
+        if problem is None and line.startswith(GHI_INFO_ENTRY_HEADING_OPENING):
+            problem = line[len(GHI_INFO_ENTRY_HEADING_OPENING):].strip()
+        elif (question is None
+              and line.startswith(GHI_INFO_QUESTION_LINE_OPENING)):
+            question = line[len(GHI_INFO_QUESTION_LINE_OPENING):].strip()
+    return problem, question
 
-    Called as soon as the issue exists, before anything is landed: the
-    question lives only in this run's memory, and a later step that fails
-    leaves a rerun that resumes without asking ghi-info again. A failure
-    here, a timed-out `gh` call included, leaves the issue as it is and
-    says which question went unrecorded. A rerun that asks again and gets
-    the same question finds its comment already there and posts no second
-    one.
 
-    On the edit path this runs before the edit lands, so nothing it prints
-    may say the issue was edited, and its failure leaves a rerun that asks
-    ghi-info again, unlike a create's."""
+def free_name(directory: Path, base: str, taken) -> str:
+    """`<base>.md`, or `<base>-<n>.md` with the lowest n from 2 that is
+    neither a file in the directory nor in `taken`."""
+    candidate, suffix = f"{base}.md", 2
+    while (directory / candidate).exists() or candidate in taken:
+        candidate, suffix = f"{base}-{suffix}.md", suffix + 1
+    return candidate
+
+
+def write_proposed_improvements_or_changes_file(
+        directory: Path, prefix: str, repo: str, conflict, runner, report,
+        operation_done: str, repository_root: Path) -> Path:
+    """Writes ghi-info's ruling question to a new
+    proposed-improvements-or-changes-file in the directory, before any step
+    that reaches GitHub, and returns its path. The ruling's title is looked
+    up first; when that or the write fails, nothing has been written
+    anywhere, and the refusal says so. `operation_done` is "filed" or
+    "edited"."""
     ruling_title = None
     try:
         if conflict.ruling_issue is not None:
             ruling_title = runner(
                 ["gh", "issue", "view", str(conflict.ruling_issue), "--repo",
                  repo, "--json", "title", "--jq", ".title"]).stdout.strip()
-        runner(["gh", "label", "create", RULING_CONFLICT_LABEL, "--repo",
-                repo, "--color", RULING_CONFLICT_LABEL_COLOR, "--description",
-                RULING_CONFLICT_LABEL_DESCRIPTION, "--force"])
-        runner(["gh", "issue", "edit", str(number), "--repo", repo,
-                "--add-label", RULING_CONFLICT_LABEL])
-        body = ruling_conflict_comment_body(repo, conflict, ruling_title)
-        existing_comments = runner(
-            ["gh", "issue", "view", str(number), "--repo", repo, "--json",
-             "comments", "--jq", ".comments[].body"]).stdout or ""
-        if body not in existing_comments:
-            runner(["gh", "issue", "comment", str(number), "--repo", repo,
-                    "--body", body])
-    except (Refused, subprocess.TimeoutExpired) as failure:
-        if edit_not_yet_landed:
-            raise Refused(
-                f"Recording ghi-info's ruling question on issue {number} "
-                f"failed, so this edit was not landed: {failure}\n"
-                f"Tell the user that this edit of issue {number} may "
-                f"conflict with a ruling of his: {conflict.sentence}\n"
-                "Rerun this command once the failure is fixed; the rerun "
-                "asks ghi-info again and records its question.", 1)
+        date = proposed_improvements_or_changes_file_date()
+        path = directory / free_name(
+            directory,
+            f"{prefix}{PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX}"
+            f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_INFO}-{date}", ())
+        path.write_text(proposed_improvements_or_changes_file_text(
+            repo, conflict, ruling_title, date, operation_done),
+            encoding="utf-8")
+    except (Refused, subprocess.TimeoutExpired, OSError) as failure:
         raise Refused(
-            f"Issue {number} was filed, but recording ghi-info's "
-            f"ruling question on it failed: {failure}\n"
-            "The run stopped there: the GHI-MD is not landed on main and the "
-            "issue's body is not yet the links to it.\n"
-            f"Tell the user that issue {number} may conflict with a ruling "
-            f"of his: {conflict.sentence}\n"
-            "Rerun this command to land the GHI-MD and link the body; the "
-            f"rerun finds issue {number} and files no second issue.\n"
-            "The rerun does not ask ghi-info again, so it will not record "
-            "the question: telling the user is the only record of it.", 1)
-    if conflict.ruling_issue is None:
-        ruling = "a ruling of the user's (ghi-info named no issue)"
-    else:
-        ruling = (f"the ruling in GHI [{ruling_title}](https://github.com/"
-                  f"{repo}/issues/{conflict.ruling_issue})")
-    if edit_not_yet_landed:
-        done = (f"Issue {number}: ghi-info thinks this edit conflicts with "
-                f"{ruling}")
-    else:
-        done = (f"Filed issue {number}; ghi-info thinks it conflicts with "
-                f"{ruling}")
-    if conflict.ruling_issue is None:
-        follow = f"ghi-info's question: {conflict.sentence}"
-    else:
-        follow = "Follow that ruling until the user changes it."
-    report(f"{done}; recorded on issue {number} for the user; "
-           "the ruling stands until he changes it.\n"
-           f"{follow}")
+            f"Nothing was {operation_done}: ghi-info raised a question about "
+            "a ruling of the user's, and recording it in a "
+            f"proposed-improvements-or-changes-file failed: {failure}\n"
+            f"ghi-info's question: {conflict.sentence}\n"
+            "Rerun this command now; do not wait for the user's answer.\n"
+            "If this message appears again, do not rerun: tell the user what "
+            "failed, that this draft may conflict with a ruling of his, and "
+            "give him ghi-info's question.", 1)
+    report("wrote ghi-info's ruling question to "
+           f"{path_shown_relative_to_repository_root(path, repository_root)}"
+           "; it goes into the same pull request as the GHI-MD")
+    return path
+
+
+def proposed_improvements_or_changes_files_in(directory: Path, prefix: str,
+                                              source=None) -> list:
+    """The proposed-improvements-or-changes-files on disk in the directory
+    for the GHI-MD whose name is `prefix`; only one source's when `source`
+    is given."""
+    if not directory.is_dir():
+        return []
+    head = (f"{prefix}{PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX}"
+            + (f"{source}-" if source else ""))
+    return sorted(path for path in directory.iterdir()
+                  if path.is_file() and path.name.startswith(head)
+                  and is_proposed_improvements_or_changes_file(path.name))
+
+
+def with_pointer_line(text: str, prefix: str) -> str:
+    """The file with the pointer line directly under its first heading,
+    after any frontmatter. A file already carrying the line is returned as
+    it is."""
+    line = PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE_TEMPLATE.format(
+        prefix=prefix)
+    if line in text.splitlines():
+        return text
+    # A line naming another prefix is one the GHI-MD carried from its name
+    # before a move or rename; it is replaced rather than joined by a second.
+    opening, closing = (
+        PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE_TEMPLATE.split(
+            "{prefix}"))
+    for existing in text.splitlines():
+        if existing.startswith(opening) and existing.endswith(closing):
+            return text.replace(existing, line, 1)
+    lines = text.splitlines(keepends=True)
+    index = 0
+    if lines and lines[0].strip() == "---":
+        for position in range(1, len(lines)):
+            if lines[position].strip() == "---":
+                index = position + 1
+                break
+    for position in range(index, len(lines)):
+        if lines[position].strip().startswith("#"):
+            heading = lines[position]
+            if not heading.endswith("\n"):
+                heading += "\n"
+            return ("".join(lines[:position]) + heading + "\n" + line + "\n"
+                    + "".join(lines[position + 1:]))
+    return line + "\n\n" + text
+
+
+def report_ruling_question(number: int, operation_done: str, landed: str,
+                           text: str, report, rerun: str):
+    """The run's last lines when it put a file from ghi-info into a pull
+    request: what ghi-info thinks, its question, where the entry is, and
+    that the rerun after the merge says when to dispatch the subagent that
+    settles it. `operation_done` is "filed" or "edited"; `landed` is the
+    file's path beside the GHI-MD and `text` its content; `rerun` is the
+    command that works after the merge, on the GHI-MD's landed path: a
+    create's own draft path is gone by then when it was tracked."""
+    problem, question = ruling_question_lines(text)
+    lines = [f"{operation_done.capitalize()} GHI {number}. ghi-info thinks "
+             f"{problem or 'the GHI-MD may go against a user-ruling'}."]
+    if question:
+        lines.append(f"{GHI_INFO_QUESTION_LINE_OPENING}{question}")
+    lines += [
+        f"The question is entry E1 of {landed}, in this write's pull request.",
+        "Do not settle the entry before that pull request merges: a commit "
+        "pushed to it would move the head merge-lane-2 is reviewing.",
+        "Once it merges, run `git pull --ff-only`, then rerun "
+        f"{rerun}; that run tells you to dispatch the forked subagent that "
+        "settles the entry."]
+    report("\n".join(lines))
+
+
+def open_ghi_info_entries_on_main(relative: str, revision: str,
+                                  repository_root: Path, runner) -> list:
+    """(path, ghi-info's question) for each file from ghi-info beside the
+    GHI-MD at `relative` that main holds at `revision` with an entry still
+    open. A listing that fails is raised, not read as no file."""
+    parent = str(Path(relative).parent)
+    head = (Path(relative).name[:-len(".md")]
+            + PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX
+            + PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_INFO + "-")
+    listed = runner(["git", "ls-tree", "--name-only", "-z", revision,
+                     parent + "/"], cwd=str(repository_root))
+    found = []
+    for item in (listed.stdout or "").split("\0"):
+        if not (Path(item).name.startswith(head)
+                and is_proposed_improvements_or_changes_file(item)):
+            continue
+        # Checked: the path came from a successful listing of this same
+        # commit, so a failed read is a git failure, not a file with no
+        # open entry.
+        item_text = runner(["git", "show", f"{revision}:{item}"],
+                           cwd=str(repository_root)).stdout or ""
+        if "State: open" in item_text.splitlines():
+            found.append((item, ruling_question_lines(item_text)[1]))
+    return found
+
+
+def report_open_ghi_info_entries(number: int, relative: str, revision: str,
+                                 repository_root: Path, runner, report):
+    """The run's last lines when the GHI-MD is on main beside a file from
+    ghi-info with an entry still open: the moment to dispatch the subagent
+    that settles it, since the pull request that carried the file has
+    merged."""
+    for item, question in open_ghi_info_entries_on_main(
+            relative, revision, repository_root, runner):
+        lines = [f"GHI {number}'s GHI-MD is on main with a ruling question "
+                 f"from ghi-info still open, in {item}."]
+        if question:
+            lines.append(f"{GHI_INFO_QUESTION_LINE_OPENING}{question}")
+        lines += [
+            "Dispatch a forked subagent now to settle each open entry by "
+            "rules 3 to 7 of § The design in "
+            f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD}; do "
+            "not wait for the user's answer.",
+            "If the subagent marks an entry as needing the user, bring the "
+            "entry to him in your agent-seat's next approval-walk."]
+        report("\n".join(lines))
 
 
 def file_issue(repo: str, title: str, key: str, runner, report) -> int:
@@ -1282,19 +1468,32 @@ def refuse_if_already_landed_on_main(repo: str, text: str, title: str,
     revision = origin_main_commit_hash(repository_root, runner)
     for landed in ghi_md_paths_on_main(revision, repository_root, runner):
         number = issue_number_in_file_name(Path(landed))
-        staged = with_issue_frontmatter(text, repo, number, title)
         read = runner(["git", "show", f"{revision}:{landed}"],
                       cwd=str(repository_root))
-        if read.stdout == staged:
+        if read.stdout in landed_forms(text, repo, number, title,
+                                       Path(landed).name[:-len(".md")]):
             raise already_landed_refusal(repo, landed, title, number)
     for landed in landed_designs_on_main(revision, repository_root, runner):
         read = runner(["git", "show", f"{revision}:{landed}"],
                       cwd=str(repository_root))
         number = issue_number_in_frontmatter(read.stdout)
         if (number is not None
-                and read.stdout == with_issue_frontmatter(text, repo, number,
-                                                          title)):
+                and read.stdout in landed_forms(
+                    text, repo, number, title,
+                    Path(landed).name[:-len(".md")])):
             raise already_landed_refusal(repo, landed, title, number)
+
+
+def landed_forms(text: str, repo: str, number: int, title: str,
+                 prefix: str) -> tuple:
+    """What this source becomes when filed under `number`: without the
+    pointer line, and with it as `prefix`'s GHI-MD. The pointer line is added
+    only while files beside the draft exist, and the run that lands them
+    deletes them, so a rerun cannot tell from disk which form it landed;
+    every check that this source is already on main accepts either."""
+    return (with_issue_frontmatter(text, repo, number, title),
+            with_issue_frontmatter(with_pointer_line(text, prefix), repo,
+                                   number, title))
 
 
 def already_landed_refusal(repo: str, landed: str, title: str, number: int):
@@ -1362,23 +1561,38 @@ def create_pull_request_for_branch(repo: str, branch: str, number: int,
 
 
 def land_file(repo: str, number: int, title: str, source: Path,
-              repository_root: Path, runner, report) -> str:
+              repository_root: Path, runner, report, proposed=()):
     """Step 4, in a throwaway worktree cut from a just-fetched origin/main,
     so the commit is never made against stale or dirty disk.
 
     Safe to run twice through main's copy of the destination, compared with
     what this run would land before any branch is looked at: see the module
-    docstring, WHAT A RERUN TESTS."""
+    docstring, WHAT A RERUN TESTS.
+
+    `proposed` is the proposed-improvements-or-changes-files beside the
+    draft. Returns (the destination, the (path, text) of each of them this
+    run put into a pull request it pushed or opened); the second is empty
+    when an earlier run did that."""
     branch = f"ghi-{number}-{slug(title)}"
     destination = f"{GHI_MD_DIRECTORY}/{number}-{slug(title)}.md"
-    staged = with_issue_frontmatter(source.read_text(encoding="utf-8"), repo,
-                                    number, title)
+    source_text = source.read_text(encoding="utf-8")
+    text = source_text
+    if proposed:
+        text = with_pointer_line(text, f"{number}-{slug(title)}")
+    staged = with_issue_frontmatter(text, repo, number, title)
+    # Each file written beside the draft lands beside the GHI-MD, its name
+    # gaining the issue's number.
+    landed_proposed = [
+        (f"{GHI_MD_DIRECTORY}/{number}-{item.name}",
+         item.read_text(encoding="utf-8")) for item in proposed]
 
     runner(["git", "fetch", "origin", "main"], cwd=str(repository_root))
-    if blob_at("origin/main", destination, repository_root, runner) == staged:
+    if (blob_at("origin/main", destination, repository_root, runner)
+            in landed_forms(source_text, repo, number, title,
+                            f"{number}-{slug(title)}")):
         report(f"step 4 already done: main's copy of {destination} is this "
                "file")
-        return destination
+        return destination, []
 
     on_remote = runner(
         ["git", "ls-remote", "--heads", "origin", branch],
@@ -1389,13 +1603,14 @@ def land_file(repo: str, number: int, title: str, source: Path,
             report(f"step 4 already done: pull request "
                    f"[{waiting.get('title')}]({waiting.get('url')}) is "
                    "waiting for merge-lane")
-        else:
-            report(f"branch {branch} is on the remote with no pull request "
-                   "open on it, so an earlier run stopped between its push "
-                   "and its pull request")
-            create_pull_request_for_branch(repo, branch, number, title,
-                                           repository_root, runner, report)
-        return destination
+            return destination, []
+        report(f"branch {branch} is on the remote with no pull request "
+               "open on it, so an earlier run stopped between its push "
+               "and its pull request")
+        create_pull_request_for_branch(repo, branch, number, title,
+                                       repository_root, runner, report)
+        remove_landed_proposed_beside_draft(proposed)
+        return destination, landed_proposed
 
     worktree_parent = Path(tempfile.mkdtemp(prefix="ghi-issue-write-"))
     worktree = worktree_parent / "worktree"
@@ -1410,6 +1625,18 @@ def land_file(repo: str, number: int, title: str, source: Path,
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(staged, encoding="utf-8")
         runner(["git", "add", destination], cwd=str(worktree))
+        for item_relative, item_text in list(landed_proposed):
+            item_target = worktree / item_relative
+            if item_target.exists():
+                renamed = (f"{GHI_MD_DIRECTORY}/" + free_name(
+                    item_target.parent, item_target.name[:-len(".md")], ()))
+                landed_proposed[landed_proposed.index(
+                    (item_relative, item_text))] = (renamed, item_text)
+                item_relative, item_target = renamed, worktree / renamed
+            item_target.write_text(item_text, encoding="utf-8")
+            runner(["git", "add", item_relative], cwd=str(worktree))
+            report(f"adding {item_relative} beside {destination} to the "
+                   "pull request")
         # A move, not a copy. When the source is already tracked on main —
         # a queue file, typically — leaving it behind would put the same
         # document at two paths the moment this merges, which is the
@@ -1428,11 +1655,21 @@ def land_file(repo: str, number: int, title: str, source: Path,
         push_branch(worktree, branch, runner)
         create_pull_request_for_branch(repo, branch, number, title, worktree,
                                        runner, report)
+        remove_landed_proposed_beside_draft(proposed)
     finally:
         runner(["git", "worktree", "remove", "--force", str(worktree)],
                cwd=str(repository_root), check=False)
         shutil.rmtree(worktree_parent, ignore_errors=True)
-    return destination
+    return destination, landed_proposed
+
+
+def remove_landed_proposed_beside_draft(proposed):
+    """Deletes the proposed-improvements-or-changes-files beside the draft
+    once its pull request is open: they are landed under the issue's number
+    now, and left beside the draft they would be taken by a later filing
+    from this folder whose heading gives the same name."""
+    for item in proposed:
+        item.unlink()
 
 
 def source_path_on_main(source: Path, repository_root: Path, runner):
@@ -1580,8 +1817,13 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
         report(f"resuming issue {filed_number} on its landed file: the "
                "issue's body still carries a pairing key, so an earlier run "
                "stopped before step 5")
-        return filed_number, link_body(repo, filed_number, repository_root,
-                                       runner, report, str(path))
+        finished = link_body(repo, filed_number, repository_root, runner,
+                             report, str(path))
+        if finished:
+            report_open_ghi_info_entries(
+                filed_number, relative_to_root(path, repository_root),
+                "origin/main", repository_root, runner, report)
+        return filed_number, finished
 
     text, title = validate(path)
     key = pairing_key(text)
@@ -1604,18 +1846,48 @@ def create(path: Path, repo: str, repository_root: Path, runner, report):
         refuse_if_already_landed_on_main(repo, text, title, repository_root,
                                          runner)
         refuse_heading_with_date_or_file_path(title, repository_root, runner)
-        conflict = adjudicate(repo, title, text, repository_root, runner,
-                              report)
+        if proposed_improvements_or_changes_files_in(
+                path.parent, slug(title),
+                PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_INFO):
+            report("a proposed-improvements-or-changes-file from an earlier "
+                   f"run of this filing is beside {path.name}; it goes into "
+                   "this filing's pull request, and ghi-info is not asked "
+                   "again")
+        else:
+            conflict = adjudicate(repo, title, text, repository_root, runner,
+                                  report)
+            if conflict is not None:
+                write_proposed_improvements_or_changes_file(
+                    path.parent, slug(title), repo, conflict, runner, report,
+                    "filed", repository_root)
         number = file_issue(repo, title, key, runner, report)
-        if conflict is not None:
-            record_ruling_conflict(repo, number, conflict, runner, report,
-                                   edit_not_yet_landed=False)
 
-    destination = land_file(repo, number, title, path, repository_root,
-                            runner, report)
+    proposed = proposed_improvements_or_changes_files_in(path.parent,
+                                                         slug(title))
+    destination, landed_proposed = land_file(
+        repo, number, title, path, repository_root, runner, report, proposed)
     finished = link_body(repo, number, repository_root, runner, report,
                          destination)
+    report_ruling_questions_landed(
+        number, "filed", landed_proposed, report,
+        f"scripts/ghi-issue-write.py create {destination}")
+    if finished:
+        report_open_ghi_info_entries(number, destination, "origin/main",
+                                     repository_root, runner, report)
     return number, finished
+
+
+def report_ruling_questions_landed(number: int, operation_done: str,
+                                   landed_proposed, report, rerun: str):
+    """The run's last lines, one block per file from ghi-info this run put
+    into a pull request; a file an earlier run landed was reported by that
+    run."""
+    for item_relative, item_text in landed_proposed:
+        if (PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX
+                + PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_INFO + "-"
+                in Path(item_relative).name):
+            report_ruling_question(number, operation_done, item_relative,
+                                   item_text, report, rerun)
 
 
 # --- The edit operation -------------------------------------------------
@@ -1803,7 +2075,7 @@ def conflict_refusal(opening: str, fold: str, relative: str, revision: str,
 
 def refuse_on_conflict(relative: str, on_main, moved_from, moved_from_on_main,
                        main_commit: str, repository_root: Path, runner,
-                       report):
+                       report, proposed=()):
     """The 2026-09-08 conflict ruling applied to the file rather than the
     body (module docstring, THE CONFLICT THIS REFUSES ON). The base record
     is taken from git instead of asked for as a flag: the version the
@@ -1823,7 +2095,12 @@ def refuse_on_conflict(relative: str, on_main, moved_from, moved_from_on_main,
     PR [Build the GHI write tool's edit verb](https://github.com/nedschorus/nedschorus/pull/596):
     the branch that run pushed did not hold the other seat's line at all. So
     the check covers the path the `git rm` names, or it does not cover the
-    move."""
+    move.
+
+    AND EVERY PROPOSED-IMPROVEMENTS-OR-CHANGES-FILE THE EDIT LANDS, in
+    `proposed`. Each is staged over main's copy, so a checkout holding an
+    older copy would erase what main gained since, such as a try line or
+    a `needs the user` state."""
     located = runner(["git", "merge-base", "HEAD", main_commit],
                      cwd=str(repository_root), check=False)
     revision = (located.stdout or "").strip()
@@ -1841,6 +2118,20 @@ def refuse_on_conflict(relative: str, on_main, moved_from, moved_from_on_main,
             "change.",
             "Fold your edit into main's copy of the file.",
             relative, revision, main_commit, repository_root, runner)
+    for item_relative, _ in proposed:
+        if (blob_at(revision, item_relative, repository_root, runner)
+                != blob_at(main_commit, item_relative, repository_root,
+                           runner)):
+            raise conflict_refusal(
+                f"Refused: {item_relative} changed on main after the commit "
+                "your checkout started from, and landing your copy would "
+                "discard that change.",
+                "If you changed that file yourself, carry your change into "
+                "main's copy of it.\n"
+                "If you did not change it, bringing your checkout up to date "
+                "is all it needs.",
+                item_relative, revision, main_commit, repository_root,
+                runner)
     if moved_from is None:
         return
     if blob_at(revision, moved_from, repository_root,
@@ -2029,16 +2320,20 @@ EDIT_LANDING_ALREADY_PUSHED = "already-pushed"
 EDIT_LANDING_NEW_CONTENT = "new-content"
 
 
-def edit_landing_branch_name(number: int, staged: str) -> str:
+def edit_landing_branch_name(number: int, staged: str,
+                             proposed=()) -> str:
     """The branch this edit lands on. Named for the content and not for the
     issue alone, so a rerun of the same edit names the same branch — which
     is what lets `edit_landing_state` recognise this tool's own earlier
-    push — and an edit that changed since names another."""
-    return f"ghi-{number}-edit-{pairing_key(staged)}"
+    push — and an edit that changed since names another. The content is
+    the whole file set the edit lands: the GHI-MD, and each
+    proposed-improvements-or-changes-file with it, by path and text."""
+    content = staged + "".join(f"\0{path}\0{text}" for path, text in proposed)
+    return f"ghi-{number}-edit-{pairing_key(content)}"
 
 
 def edit_landing_state(number: int, staged: str, on_main,
-                       repository_root: Path, runner):
+                       repository_root: Path, runner, proposed=()):
     """Whether step 3 has new content to land, and the branch it would land
     on. Asked BEFORE step 2, because the answer is what says whether step 2
     is asked at all.
@@ -2062,10 +2357,15 @@ def edit_landing_state(number: int, staged: str, on_main,
 
     The conflict check in `refuse_to_land_edit` sits behind this same
     answer, for the same reason: see the module docstring, THE ORDER
-    MATTERS FOR RESUMING."""
-    if on_main == staged:
+    MATTERS FOR RESUMING.
+
+    `proposed` is the (path, text) of each proposed-improvements-or-changes-
+    file this edit carries that main does not hold as it is. Main's copy of
+    the GHI-MD alone does not make the edit landed while one of those is
+    still to land, such as an entry a settling subagent changed."""
+    if on_main == staged and not proposed:
         return EDIT_LANDING_ALREADY_ON_MAIN, None
-    branch = edit_landing_branch_name(number, staged)
+    branch = edit_landing_branch_name(number, staged, proposed)
     on_remote = runner(["git", "ls-remote", "--heads", "origin", branch],
                        cwd=str(repository_root))
     if (on_remote.stdout or "").strip():
@@ -2076,23 +2376,26 @@ def edit_landing_state(number: int, staged: str, on_main,
 def refuse_to_land_edit(repo: str, number: int, relative: str, on_main,
                         moved_from, moved_from_on_main, branch,
                         main_commit: str, repository_root: Path, runner,
-                        report):
+                        report, proposed=()):
     """The two refusals of an edit with new content to land, run before a
-    ruling question is recorded on the issue, so a draft they reject leaves
-    the issue untouched. The earlier-edit refusal comes first of the two:
+    ruling question is written to a proposed-improvements-or-changes-file,
+    so a draft they reject leaves no file behind for a rerun to take as an
+    earlier run's. The earlier-edit refusal comes first of the two:
     where both would fire, the pull request it names is the thing to wait
     for, and main's copy is what the author will find once it merges."""
     refuse_on_an_earlier_edit_still_open(repo, number, relative, moved_from,
                                          branch, repository_root, runner)
     refuse_on_conflict(relative, on_main, moved_from, moved_from_on_main,
-                       main_commit, repository_root, runner, report)
+                       main_commit, repository_root, runner, report,
+                       proposed)
 
 
 def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
               on_main, moved_from, moved_from_on_main, state, branch,
-              main_commit: str, repository_root: Path, runner,
-              report) -> bool:
-    """Step 3. Returns True when a pull request is waiting on this edit.
+              main_commit: str, repository_root: Path, runner, report,
+              proposed=(), moving_proposed=()):
+    """Step 3. Returns (True when a pull request is waiting on this edit,
+    True when this run pushed the edit or opened its pull request).
 
     `state` and `branch` are `edit_landing_state`'s answer, resolved by the
     caller before step 2 rather than taken here: which state this run is in
@@ -2110,10 +2413,16 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
 
     `main_commit` is that reading, and the worktree is cut from it rather
     than from the ref, so the commit pushed holds the author's change and
-    nothing else (module docstring, THE CONFLICT THIS REFUSES ON)."""
+    nothing else (module docstring, THE CONFLICT THIS REFUSES ON).
+
+    `proposed` is the (path, text) of each proposed-improvements-or-changes-
+    file beside the GHI-MD that main does not hold yet, and
+    `moving_proposed` is `proposed_files_moving_with_ghi_md`'s answer: the
+    files that move with it, each removed where main holds it and added at
+    its new path."""
     if state == EDIT_LANDING_ALREADY_ON_MAIN:
         report(f"step 3 already done: main's copy of {relative} is this file")
-        return False
+        return False, False
 
     if state == EDIT_LANDING_ALREADY_PUSHED:
         # The branch says the push happened, not that the pull request did:
@@ -2124,15 +2433,16 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
             report(f"step 3 already done: pull request "
                    f"[{waiting.get('title')}]({waiting.get('url')}) is "
                    "waiting for merge-lane")
-        else:
-            report(f"branch {branch} is on the remote with no pull request "
-                   "open on it, so an earlier run stopped between its push "
-                   "and its pull request")
-            create_pull_request_for_edit_branch(repo, branch, number, title,
-                                                repository_root, runner,
-                                                report)
-        return True
+            return True, False
+        report(f"branch {branch} is on the remote with no pull request "
+               "open on it, so an earlier run stopped between its push "
+               "and its pull request")
+        create_pull_request_for_edit_branch(repo, branch, number, title,
+                                            repository_root, runner, report)
+        return True, True
 
+    refuse_moving_over_proposed(relative, proposed, moving_proposed,
+                                main_commit, repository_root, runner)
     worktree_parent = Path(tempfile.mkdtemp(prefix="ghi-issue-write-"))
     worktree = worktree_parent / "worktree"
     try:
@@ -2147,6 +2457,12 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(staged, encoding="utf-8")
         runner(["git", "add", relative], cwd=str(worktree))
+        for item_relative, item_text in proposed:
+            (worktree / item_relative).write_text(item_text,
+                                                  encoding="utf-8")
+            runner(["git", "add", item_relative], cwd=str(worktree))
+            report(f"adding {item_relative} beside {relative} to the pull "
+                   "request")
         # A move, not a copy, as create's step 4 is. The author moved this
         # file into its system's directory and main still holds it where it
         # was: leaving that behind would put the same document at two paths
@@ -2157,6 +2473,16 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
         if moved_from:
             runner(["git", "rm", "--quiet", moved_from], cwd=str(worktree))
             report(f"removing {moved_from}: its content moves to {relative}")
+        for item_on_main, item_moved_to in moving_proposed:
+            item_text = runner(
+                ["git", "show", f"{main_commit}:{item_on_main}"],
+                cwd=str(repository_root)).stdout
+            (worktree / item_moved_to).write_text(item_text,
+                                                  encoding="utf-8")
+            runner(["git", "add", item_moved_to], cwd=str(worktree))
+            runner(["git", "rm", "--quiet", item_on_main], cwd=str(worktree))
+            report(f"moving {item_on_main} to {item_moved_to} with the "
+                   "GHI-MD")
         message = (f"GHI-MD edit for issue {number}: {title}\n\n"
                    f"Edited by scripts/ghi-issue-write.py from {relative}. "
                    "The issue's title and body are derived from main's copy "
@@ -2171,7 +2497,44 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
         runner(["git", "worktree", "remove", "--force", str(worktree)],
                cwd=str(repository_root), check=False)
         shutil.rmtree(worktree_parent, ignore_errors=True)
-    return True
+    return True, True
+
+
+def refuse_moving_over_proposed(relative: str, proposed, moving_proposed,
+                                main_commit: str, repository_root: Path,
+                                runner):
+    """Refuses when a proposed-improvements-or-changes-file moving with the
+    GHI-MD would land at the path of a different one beside the author's
+    file, such as a question this run just wrote under the same date: the
+    move is written second and would replace it. The same text at both is
+    the author having moved the file too, and is no loss."""
+    beside = dict(proposed)
+    for item_on_main, item_moved_to in moving_proposed:
+        if item_moved_to not in beside:
+            continue
+        moving_text = runner(["git", "show", f"{main_commit}:{item_on_main}"],
+                             cwd=str(repository_root)).stdout
+        if moving_text != beside[item_moved_to]:
+            raise Refused(
+                f"Refused: this edit lands {relative} in a new folder, so "
+                f"{item_on_main}, on main, moves with it to {item_moved_to}; "
+                f"your checkout has a file at {item_moved_to} whose text "
+                "differs from it, and landing would replace that file.\n"
+                f"Do not move or rename {item_on_main} yourself: this "
+                "command moves it, from main.\n"
+                f"If the file at {item_moved_to} in your checkout is another "
+                "proposed-improvements-or-changes-file, rename it: bring "
+                "your checkout up to date with "
+                "main, then add -2 after its date, or the lowest number from "
+                "2 that no file in that folder, in your checkout or on main, "
+                "has.\n"
+                f"If it is your own moved copy of {item_on_main}, first copy "
+                "any change you made to it outside the checkout, then put "
+                "main's text back with "
+                f"`git show origin/main:{item_on_main} > {item_moved_to}`, "
+                "so your copy matches main's and is not refused, and make "
+                "your change in a later edit, after this one merges.\n"
+                "Then run this command again.", 66)
 
 
 def read_issue(repo: str, number: int, relative: str, runner,
@@ -2272,8 +2635,15 @@ def title_follows_heading_in_this_edit(document_before_this_edit,
     [GHI heading check runs after the duplicate
     refusals](https://github.com/nedschorus/nedschorus/pull/838)."""
     return (heading_changed_in_this_edit(document_before_this_edit, heading)
-            and len(paths) <= 1
+            and len(ghi_mds_among(paths)) <= 1
             and issue.get("title") != heading)
+
+
+def ghi_mds_among(paths) -> list:
+    """The issue's files that are GHI-MDs: every one but its
+    proposed-improvements-or-changes-files."""
+    return [item for item in paths
+            if not is_proposed_improvements_or_changes_file(item)]
 
 
 def issue_title_after_this_edit(document_before_this_edit, heading: str,
@@ -2343,10 +2713,10 @@ def sync_title_on_heading_change(repo: str, number: int,
     if not title_follows_heading_in_this_edit(document_before_this_edit,
                                               title, paths, issue):
         if (heading_changed_in_this_edit(document_before_this_edit, title)
-                and len(paths) > 1):
+                and len(ghi_mds_among(paths)) > 1):
             report(f"the heading changed, but issue {number} has "
-                   f"{len(paths)} filed GHI-MDs and nothing says which one "
-                   "names it, so the title is left alone")
+                   f"{len(ghi_mds_among(paths))} filed GHI-MDs and nothing "
+                   "says which one names it, so the title is left alone")
         return
     runner(["gh", "issue", "edit", str(number), "--repo", repo,
             "--title", title])
@@ -2416,6 +2786,67 @@ def issue_file_set_for_this_edit(number: int, relative: str, on_main, paths,
     return paths + [relative]
 
 
+def unlanded_proposed_improvements_or_changes_files(
+        directory: Path, prefix: str, relative: str, repository_root: Path,
+        runner, main_revision: str = "origin/main") -> list:
+    """(relative path, text) of every proposed-improvements-or-changes-file
+    beside the GHI-MD on disk that main does not hold as it is: written by
+    an earlier run, or by this one, and still to land with this edit.
+    `main_revision` is the main commit the run compares against: edit passes
+    the one its conflict check read, the same commit its landing is cut
+    from."""
+    parent = Path(relative).parent
+    found = []
+    for item in proposed_improvements_or_changes_files_in(directory, prefix):
+        item_relative = str(parent / item.name)
+        item_text = item.read_text(encoding="utf-8")
+        if blob_at(main_revision, item_relative, repository_root,
+                   runner) != item_text:
+            found.append((item_relative, item_text))
+    return found
+
+
+def with_pointer_line_written(path: Path, text: str, prefix: str,
+                              directory: Path, report, repository_root: Path,
+                              files_move_with_the_ghi_md=False) -> str:
+    """When proposed-improvements-or-changes-files sit beside the GHI-MD, or
+    move with it in this edit, and it lacks the pointer line, writes the
+    line into the author's file and returns the new text; otherwise returns
+    the text unchanged."""
+    if (not files_move_with_the_ghi_md
+            and not proposed_improvements_or_changes_files_in(directory,
+                                                              prefix)):
+        return text
+    updated = with_pointer_line(text, prefix)
+    if updated != text:
+        path.write_text(updated, encoding="utf-8")
+        shown = path_shown_relative_to_repository_root(path, repository_root)
+        report("added the line pointing to the "
+               "proposed-improvements-or-changes-files under the first "
+               f"heading of {shown}")
+    return updated
+
+
+def proposed_files_moving_with_ghi_md(moved_from, relative: str, prefix: str,
+                                      paths_on_main) -> list:
+    """(path on main, path it moves to) of every
+    proposed-improvements-or-changes-file main holds beside the moved-from
+    path for that GHI-MD, renamed from its old name to `prefix`, the
+    GHI-MD's name at `relative`. Empty when nothing moved."""
+    if not moved_from:
+        return []
+    old_parent = Path(moved_from).parent
+    old_prefix = Path(moved_from).name[:-len(".md")]
+    new_parent = Path(relative).parent
+    return [(item, str(new_parent / (prefix + Path(item).name[
+                len(old_prefix):])))
+            for item in paths_on_main
+            if Path(item).parent == old_parent
+            and Path(item).name.startswith(
+                old_prefix + PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX)
+            and is_proposed_improvements_or_changes_file(item)]
+
+
 def edit(path: Path, repo: str, repository_root: Path, runner, report):
     """The whole edit sequence, and the one function the tests drive."""
     text, title, number, relative = validate_edit(path, repository_root)
@@ -2469,6 +2900,20 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
     if title_follows_heading_in_this_edit(document_before_this_edit, title,
                                           paths, issue):
         refuse_heading_with_date_or_file_path(title, repository_root, runner)
+    # The proposed-improvements-or-changes-files this edit carries: those
+    # beside the author's file that main does not hold yet, and those main
+    # holds beside the path the file moved from. Either kind puts the
+    # pointer line into the author's file before anything is staged, so the
+    # branch name, which is derived from the content, is the same on every
+    # run of this edit.
+    directory = path.parent
+    prefix = Path(relative).name[:-len(".md")]
+    proposed = unlanded_proposed_improvements_or_changes_files(
+        directory, prefix, relative, repository_root, runner, main_commit)
+    moving_proposed = proposed_files_moving_with_ghi_md(moved_from, relative,
+                                                        prefix, paths)
+    text = with_pointer_line_written(path, text, prefix, directory, report,
+                                     repository_root, bool(moving_proposed))
     # What lands: the author's file carrying the `issue:` line this tool
     # derives. Built here and not at the top of the run, because that line
     # cites the issue by TITLE, and the title is GitHub's — the one this
@@ -2479,33 +2924,66 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         issue_title_after_this_edit(document_before_this_edit, title, paths,
                                     issue))
     state, branch = edit_landing_state(number, staged, on_main,
-                                       repository_root, runner)
+                                       repository_root, runner, proposed)
     if state == EDIT_LANDING_NEW_CONTENT:
         # Nothing new to land is nothing new to adjudicate, so a rerun that
         # only finishes steps 4 and 5 costs no model call — the same reason
         # create skips the question when it resumes onto its own issue. Two
         # states mean that, and testing main's copy alone saw one of them:
-        # see `edit_landing_state`.
-        conflict = adjudicate(repo, title, text, repository_root, runner,
-                              report, exclude_issue=number)
+        # see `edit_landing_state`. A file from ghi-info that an earlier run
+        # of this edit wrote, not yet on main, is the third: that run asked.
+        conflict = None
+        if any(PROPOSED_IMPROVEMENTS_OR_CHANGES_INFIX
+               + PROPOSED_IMPROVEMENTS_OR_CHANGES_SOURCE_GHI_INFO + "-"
+               in Path(item).name for item, _ in proposed):
+            report("a proposed-improvements-or-changes-file from an earlier "
+                   "run of this edit is not on main yet; it goes into this "
+                   "edit's pull request, and ghi-info is not asked again")
+        else:
+            conflict = adjudicate(repo, title, text, repository_root, runner,
+                                  report, exclude_issue=number)
         refuse_to_land_edit(repo, number, relative, on_main, moved_from,
                             moved_from_on_main, branch, main_commit,
-                            repository_root, runner, report)
+                            repository_root, runner, report, proposed)
         if conflict is not None:
-            record_ruling_conflict(repo, number, conflict, runner, report,
-                                   edit_not_yet_landed=True)
-    pending = land_edit(repo, number, title, relative, staged, on_main,
-                        moved_from, moved_from_on_main, state, branch,
-                        main_commit, repository_root, runner, report)
+            write_proposed_improvements_or_changes_file(
+                directory, prefix, repo, conflict, runner, report, "edited",
+                repository_root)
+            proposed = unlanded_proposed_improvements_or_changes_files(
+                directory, prefix, relative, repository_root, runner,
+                main_commit)
+            text = with_pointer_line_written(path, text, prefix, directory,
+                                             report, repository_root,
+                                             bool(moving_proposed))
+            staged = with_issue_frontmatter(
+                text, repo, number,
+                issue_title_after_this_edit(document_before_this_edit, title,
+                                            paths, issue))
+            state, branch = edit_landing_state(number, staged, on_main,
+                                               repository_root, runner,
+                                               proposed)
+    waiting, landed_now = land_edit(
+        repo, number, title, relative, staged, on_main, moved_from,
+        moved_from_on_main, state, branch, main_commit, repository_root, runner,
+        report,
+        proposed, moving_proposed)
 
     sync_title_on_heading_change(repo, number, document_before_this_edit,
                                  title, paths, issue, runner, report)
     finished = relink_body_from_main(repo, number, relative, on_main, paths,
                                      issue, runner, report)
-    if pending:
+    if waiting:
         report("the body follows main's copy of the files, so it changes "
                "when that pull request merges; rerun this command then")
+    if landed_now:
+        report_ruling_questions_landed(
+            number, "edited", proposed, report,
+            f"scripts/ghi-issue-write.py edit {relative}")
+    if waiting:
         return number, False
+    if finished:
+        report_open_ghi_info_entries(number, relative, main_commit,
+                                     repository_root, runner, report)
     return number, finished
 
 
