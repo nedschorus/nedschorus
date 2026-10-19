@@ -604,7 +604,7 @@ def run_reach_clause_cases(root: Path):
                 "# Handoff\nrestart-counter: 9\nnext-step: go\n", encoding="utf-8")
             capture_launches(workspace)
             report = workspace.recover()
-            check(f"REACH ({machine}): a plain relaunch's line ends with the reach clause",
+            check(f"REACH ({machine}): a relaunch without resuming: its line ends with the reach clause",
                   "relaunched without resuming" in report and report.endswith(expected_clause), report)
 
             workspace = Workspace(root / f"reach-dry-run-{slug}")
@@ -1112,7 +1112,7 @@ def run_came_up_cases(root: Path):
     # these are about what the report SAYS, so the waiter is stubbed here. The
     # real one would find no lock and spend SEAT_COMES_UP_DEADLINE_SECONDS twice
     # — 240 real seconds to check two strings, which is what it cost before this
-    # was noticed. A resume or a plain relaunch that did not come up names the
+    # was noticed. A resume or a relaunch without resuming that did not come up names the
     # degraded restart; the fresh-agent-session-from-the-dialog-extract paths do not, because that is what just ran.
     did_not_survive = "a supervisor started and stopped again within 6s"
     seat_comes_up(False, did_not_survive)
@@ -1945,7 +1945,7 @@ with tempfile.TemporaryDirectory() as temporary:
           recovery.substantive_turn_count(synthetic_only) == 0,
           recovery.substantive_turn_count(synthetic_only))
 
-    # The 2026-08-21 shape keeps its skip: a plain relaunch's no-handoff
+    # The 2026-08-21 shape keeps its skip: a relaunch without resuming: its no-handoff
     # session beside a crashed parent that did real work. Two notices must not
     # read as two turns of work (merge-lane and reboot-test each carried
     # several notices on 2026-09-10).
@@ -3051,7 +3051,7 @@ with tempfile.TemporaryDirectory() as temporary:
     check("and it offers the degraded restart",
           "--fresh-session-from-dialog-extract" in report, report)
 
-    # The plain relaunch the deferred-handoff verdict chooses. That verdict is
+    # The relaunch without resuming that the deferred-handoff verdict chooses. That verdict is
     # reached on the verdict alone — assess_seat never sees --fresh-session-from-dialog-extract —
     # so a run that PASSED the flag lands here too, and was offered the flag it
     # had just used (PR #329 review, finding 2).
@@ -3064,7 +3064,7 @@ with tempfile.TemporaryDirectory() as temporary:
         (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
             "# Handoff\nrestart-counter: 5\nnext-step: continue\n", encoding="utf-8")
         report = workspace.recover(fresh_session_from_dialog_extract=used_the_flag)
-        check("a plain relaunch that did not come up offers the degraded restart "
+        check("a relaunch without resuming that did not come up offers the degraded restart "
               f"only to an operator who has not just used it (--fresh-session-from-dialog-extract: {used_the_flag})",
               "LAUNCHED BUT DID NOT COME UP" in report
               and ("--fresh-session-from-dialog-extract" in report) == offered, report)
@@ -4489,7 +4489,7 @@ with tempfile.TemporaryDirectory() as temporary:
     capture_retires(retired)
     report_dry, seen = recover_with_an_operator_typing(workspace, "y", dry_run=True)
     check("LEFTOVER SHELL (ruled 2026-09-18): --dry-run carries the consulted question and the "
-          "plain relaunch",
+          "relaunch without resuming",
           retired == [] and workspace.launches == [] and seen == ""
           and report_dry == (
               "seat-a: would ask an operator at a terminal — "

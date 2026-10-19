@@ -4,7 +4,7 @@
 The gap this fills (nedschorus#120, from the 2026-08-21 incident): the Mac's
 single tmux server died and took every Mac seat down mid-flight. No handoff
 existed, so `resupervise-seat.py` refused (its precondition is a genuinely
-waiting handoff), and a plain relaunch fell through to the supervisor's
+waiting handoff), and a relaunch without resuming fell through to the supervisor's
 first-prompt path — three near-empty successor sessions born while the full
 pre-crash transcripts sat intact on disk. The operator recovered by hand:
 dig the session id out of ~/.claude/projects/<seat-dir>/ by mtime, then
@@ -43,7 +43,7 @@ What it does, per seat:
      no question, attended or not. A dry run asks nobody; for a seat it would
      ask about, its line quotes the REFUSED line a no or nobody to ask gives,
      so a practice run counts that seat as not recovered (ruled 2026-09-18).
-  2. Defer when an unconsumed handoff IS waiting: relaunching plain is
+  2. Defer when an unconsumed handoff IS waiting: relaunching without resuming is
      correct there — the supervisor's boot-ignition consumes it (that path
      landed with PR #106) — so this script hands over to the launcher
      rather than duplicating that logic. Unless that handoff asks to be

@@ -1705,7 +1705,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 # When the retiring transcript is unavailable, the next step still provides work to carry forward.
                 successor_session_id = str(uuid.uuid4())
                 ignition_plan = BootRecoveryIgnitionPlan(next_step_from(boot_fields))
-                print("handoff-supervisor: starting a fresh agent-session from an unconsumed handoff without a dialog extract")
+                print("handoff-supervisor: starting a fresh agent-session from an unconsumed handoff; no dialog extract exists")
             else:
                 print("handoff-supervisor: starting a fresh agent-session from an unconsumed handoff left by a previous cycle")
             state["consumed_counter"] = boot_counter
