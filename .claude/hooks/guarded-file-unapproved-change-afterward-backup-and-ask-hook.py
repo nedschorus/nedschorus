@@ -1076,6 +1076,8 @@ def approve(pairs, cwd: Path):
         raise Refused(f"there is no approval in {marker}. Show the user each change and ask him; "
                       f"if he approves, write his words into {marker} and run this command again")
     obvious_fix = words.startswith(OBVIOUS_FIX_MARKER_PREFIX)
+    fix = " ".join(line.strip() for line in words[len(OBVIOUS_FIX_MARKER_PREFIX):].splitlines()
+                   if line.strip()) or "(the marker does not say what)"
     marker_time = os.stat(marker).st_mtime_ns
     for path, key in pairs:
         now = current_version(path)[0]
@@ -1095,8 +1097,10 @@ def approve(pairs, cwd: Path):
                     raise Refused(
                         f"the obvious-fix marker in {marker} was written after this hook first "
                         f"saw {path} at version {key}, so it cannot approve that version. Show "
-                        "the user the change and ask him; if he approves, write his words into "
-                        f"{marker} and run this command again")
+                        "the user the change and ask him, starting with this line: \"An obvious "
+                        f"fix to the guarded file {path}; the marker was written after the "
+                        f"change, so it needs your yes: {fix}\". If he approves, write his words "
+                        f"into {marker} and run this command again")
         if time.monotonic() > end:
             raise StoreUnreachable("the deadline passed before the approval was recorded")
         for path, key in pairs:
