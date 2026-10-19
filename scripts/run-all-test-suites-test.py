@@ -318,8 +318,8 @@ with tempfile.TemporaryDirectory() as scratch:
           out[0].startswith(f"run-all-test-suites: {repo.resolve()} at ")
           and "(tracked files match that commit); 6 suites listed by git;" in out[0],
           out[:1])
-    check("the whole report is also written to report.txt in the log directory",
-          (root / "logs" / "report.txt").read_text() == result.stdout)
+    check("the whole report is also written to test-run-report.txt in the log directory",
+          (root / "logs" / "test-run-report.txt").read_text() == result.stdout)
     nested_log = root / "logs" / "nested__deeper__b-test.py.log"
     check("each suite's log is named by its whole path, so no two can collide",
           nested_log.exists() and nested_log.read_text() == "ok\n",
@@ -2435,13 +2435,13 @@ with tempfile.TemporaryDirectory() as scratch:
     other = temp / "another-program-old"
     for directory in (old, recent, named, other):
         directory.mkdir(parents=True)
-        (directory / "report.txt").write_text("report\n")
+        (directory / "test-run-report.txt").write_text("report\n")
     (runs / "9-9.json").write_text(json.dumps({"log_dir": str(named)}))
     now = time.time() + module.FINISHED_RUN_LOG_RETENTION_SECONDS + 60
     for directory in (old, named, other):
-        for path in (directory, directory / "report.txt"):
+        for path in (directory, directory / "test-run-report.txt"):
             os.utime(path, (time.time(), time.time()))
-    for path in (recent, recent / "report.txt"):
+    for path in (recent, recent / "test-run-report.txt"):
         os.utime(path, (now, now))
     explicit = temp / "run-all-test-suites-explicit"
     deep = temp / "run-all-test-suites-deep"

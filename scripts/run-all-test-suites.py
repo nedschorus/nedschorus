@@ -336,8 +336,8 @@ finishes: `PASS <path> (<seconds>s)` or `FAIL <path> exit <code>
 failed suites again, each with its log, and every SKIP line, each with its
 suite, so the end of the output holds everything needed. The last line
 opens `SUMMARY:` and carries the counts. The whole report is also written to
-report.txt in the log directory, so a run in the background needs no pipe to
-keep it.
+test-run-report.txt in the log directory, so a run in the background needs no
+pipe to keep it.
 
 RECORDED INPUTS (user-ruled 2026-09-30, walk
 open-questions-concerns-and-recommendations-2026-09-30, item 5, "y both").
@@ -781,7 +781,7 @@ RUN_RECORDS_DIRECTORY_SUFFIX = ".runs"
 # Long enough for whoever reads a run's report and failed-suite logs to read them.
 FINISHED_RUN_LOG_RETENTION_SECONDS = 2 * 24 * 3600
 LOG_DIRECTORY_LOCK_FILE_NAME = ".run-all-test-suites-log-directory.lock"
-REPORT_FILE_NAME = "report.txt"
+REPORT_FILE_NAME = "test-run-report.txt"
 SUITES_RUN_AT_ONCE_WHEN_CORE_COUNT_UNKNOWN = 4
 
 DEFAULT_RECORDED_INPUTS_DIRECTORY = (
@@ -3257,7 +3257,7 @@ def suite_line(result):
 
 
 class Report:
-    """Every line goes to stdout at once and to report.txt in the log directory."""
+    """Every line goes to stdout at once and to test-run-report.txt in the log directory."""
 
     def __init__(self, report_file):
         self.lock = threading.Lock()

@@ -314,7 +314,7 @@ if linux_only_cases_run_here("the report's sandbox lines"):
         repository = scratch_checkout(scratch, ["a-test.py"])
         completed, report = run_runner(scratch, repository, str(path_without_bwrap))
         without = "suites run WITHOUT the signal sandbox"
-        check("without bwrap, the run's output and report.txt say the suites ran without "
+        check("without bwrap, the run's output and test-run-report.txt say the suites ran without "
               "the sandbox, and why",
               completed.returncode == 0
               and all(without in text and "bwrap is not on PATH" in text
@@ -348,11 +348,11 @@ if linux_only_cases_run_here("the report's sandbox lines"):
         repository = scratch_checkout(scratch, ["a-test.py", OUTSIDE_SUITE])
         completed, report = run_runner(
             scratch, repository, f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
-        check("with the sandbox on, report.txt says each suite runs in its own test sandbox, named by the bwrap program",
+        check("with the sandbox on, test-run-report.txt says each suite runs in its own test sandbox, named by the bwrap program",
               completed.returncode == 0
               and f"each suite runs in its own test sandbox: {fake_bin / 'bwrap'}" in report,
               (completed.returncode, report[-600:]))
-        check("with the sandbox on, report.txt names a suite that runs outside it, and why",
+        check("with the sandbox on, test-run-report.txt names a suite that runs outside it, and why",
               f"{OUTSIDE_SUITE} runs WITHOUT the signal sandbox: "
               f"{runner.SUITES_RUN_WITHOUT_ANY_SANDBOX[OUTSIDE_SUITE]}" in report,
               report[-600:])
