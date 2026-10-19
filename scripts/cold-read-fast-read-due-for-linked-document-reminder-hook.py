@@ -196,8 +196,9 @@ UNCHECKED_OPENING = (
     "find the git checkout that holds each, or could not compare it with "
     "origin/main there, so this hook cannot tell whether that checkout changed it:")
 UNCHECKED_INSTRUCTION = (
-    "Give the fast read below to each of these not marked as read that you "
-    "changed since its last cold-read-fast-read, and to each you cannot tell about.")
+    "If you changed one of these documents not marked as read since its last "
+    "cold-read-fast-read, or cannot tell whether you did, run on it, from your checkout: "
+    "python3 " + FAST_READ_PROGRAM + " --target <document path>")
 UNCHECKED_ALREADY_READ_NOTICE = (
     " (marked as read: it has had a cold-read-fast-read since its last change, "
     "or this agent-session has given it one, so it needs none now)")
@@ -211,8 +212,8 @@ SESSION_CHECKOUT_UNKNOWN_STDERR_LINE = (
 SESSION_CHECKOUT_UNKNOWN_LINES = (
     "cold-read-fast-read due check incomplete: git could not find the top of the git "
     "checkout holding your working directory {cwd} ({reason}), so this hook did not look "
-    "for document paths relative to that top, nor for records in its cold-read-records "
-    "directory.",
+    "for document paths relative to that top, nor for records in the cold-read-records "
+    "directory at that top.",
     "If your last reply linked a document you changed since its last cold-read-fast-read "
     "and it is not listed below, run on it, from your checkout: python3 " + FAST_READ_PROGRAM
     + " --target <document path>",
