@@ -28,7 +28,8 @@ PROGRAM = Path(__file__).with_name(
     "pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py")
 NUMBER = 7
 REVIEWS = f"api --paginate repos/{{owner}}/{{repo}}/pulls/{NUMBER}/reviews --jq .[]"
-PR_VIEW = f"pr view {NUMBER} --json url,headRefOid"
+PR_VIEW = f"pr view {NUMBER} --json url,headRefOid,headRefName"
+BRANCH = "topic-branch-of-the-pull-request"
 URL = f"https://github.com/o/r/pull/{NUMBER}"
 
 FAKE_GH = r'''#!/usr/bin/env python3
@@ -107,7 +108,7 @@ def lines(objects):
 
 def routes_for(head, reviews, comments=BLOCKING_COMMENTS, review_id=11):
     return {
-        PR_VIEW: {"stdout": json.dumps({"url": URL, "headRefOid": head})},
+        PR_VIEW: {"stdout": json.dumps({"url": URL, "headRefOid": head, "headRefName": BRANCH})},
         REVIEWS: {"stdout": lines(reviews)},
         f"api --paginate repos/{{owner}}/{{repo}}/pulls/{NUMBER}/reviews/{review_id}/comments --jq .[]":
             {"stdout": lines(comments)},
@@ -131,6 +132,17 @@ def run(root, repository, routes, *arguments, path_has_gh=True):
                                cwd=repository, capture_output=True, text=True, env=environment,
                                timeout=120)
     return completed.returncode, completed.stdout, completed.stderr
+
+
+WRITE_GUARD = Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "session-location-write-guard.py"
+
+
+def run_write_guard(worktree, file_path):
+    """Return the exit code of the project's write guard on an Edit payload from a session in the worktree."""
+    payload = {"cwd": str(worktree), "tool_name": "Edit",
+               "tool_input": {"file_path": file_path, "old_string": "one", "new_string": "two"}}
+    return subprocess.run([sys.executable, str(WRITE_GUARD)], input=json.dumps(payload),
+                          capture_output=True, text=True, timeout=60).returncode
 
 
 def answers_file(root, text):
@@ -174,6 +186,92 @@ def brief_cases(root, repository, base, frozen_head):
           "SendMessage before pushing" in out
           and "If the push itself fails, do not retry it by force or rewrite the branch: tell "
           "merge-lane-2 with SendMessage what git printed." in out, out)
+
+    check("brief: tells the author to dispatch the subagent in a worktree of its own",
+          "subagent_type: \"fork\") with isolation: \"worktree\"" in out and "a git worktree of its own" in out, out)
+    local_branch = f"fix-round-pull-request-{NUMBER}-review-11"
+    check("brief: the subagent makes a local branch at the frozen-head, named for the review, and pushes HEAD to the branch",
+          f"git fetch origin && git switch -C {local_branch} {frozen_head}" in out
+          and f"git push origin HEAD:{BRANCH}" in out, out)
+    check("brief: says who removes the worktree and its local branch, and to leave a harness-locked one",
+          "   1. Run: git worktree remove <path>\n" in out
+          and "the agent harness holds the lock: run step 1 again once git worktree list no longer shows" in out
+          and "If git worktree list still shows it locked when you end your turn, tell the user the worktree's path and "
+          "the lock reason, and go no further." in out, out)
+    check("brief: the branch is deleted once, as the last step, after whichever removal command ran",
+          out.count(f"git branch -D {local_branch}") == 1
+          and out.index("git worktree remove --force <path>")
+          < out.index(f"   2. Once the worktree is removed, run: git branch -D {local_branch}\n"), out)
+    check("brief: the author's worktree lines come before the subagent's rules of the round",
+          out.index("For the author: dispatch") < out.index("For the author, when the subagent has finished")
+          < out.index("For the subagent, the rules of the round") < out.index("0. Make a local branch at the frozen-head"), out)
+    check("brief: says to leave a worktree the harness locked, and writes out each forced removal whole",
+          "the lock reason starts with \"claude agent\"" in out
+          and "tell merge-lane-2 about it with SendMessage. Then run: git worktree remove --force --force <path>" in out
+          and "tell merge-lane-2 about it with SendMessage. Then run: git worktree remove --force <path>\n" in out, out)
+    check("brief: work to keep is copied out, and then the removal goes on, so no branch loops back to 1",
+          "Copy out of the worktree any file that is work to keep, such as a fix the subagent did not push, "
+          "and tell merge-lane-2 about it with SendMessage." in out
+          and "read them, copy out any that is work to keep and tell merge-lane-2" in out
+          and out.count("run step 1 again") == 1 and "start again at 1" not in out
+          and out.count("and go no further.") == 2, out)
+    answers_in_checkout = f"{git_directory}/fix-round-answers-pull-request-{NUMBER}.md"
+    check("brief: the check command names the author's answers file, so it reads the same file in any worktree",
+          f"{NUMBER} --check --answers {answers_in_checkout}" in out, out)
+
+    worktree = root / "subagent-worktree"
+    git(repository, "worktree", "add", "-q", "--detach", str(worktree), frozen_head)
+    tracked = str(worktree / "hook.py")
+    check("brief: before step 0, the write guard refuses the subagent's edit on a detached HEAD",
+          run_write_guard(worktree, tracked) == 2)
+    step_zero = next((line for line in out.splitlines() if line.startswith("0. ")), "")
+    switch_command = step_zero.split(" && ", 1)[-1].split()
+    subprocess.run(switch_command, cwd=worktree, check=True, capture_output=True, text=True)
+    check("brief: after step 0's command, the write guard lets the subagent edit a tracked file",
+          run_write_guard(worktree, tracked) == 0, " ".join(switch_command))
+    Path(answers_in_checkout).write_text(GOOD_ANSWERS)
+    check_line = next((line for line in out.splitlines() if f"{NUMBER} --check --answers" in line), "")
+    printed_answers = check_line.split("--answers ", 1)[-1].strip()
+    code, check_out, err = run(root, worktree, routes_for(frozen_head, [review(commit_id=frozen_head)]),
+                               "--check", "--answers", printed_answers)
+    check("brief: the printed check command, run in the subagent's worktree, reads the author's answers file",
+          code == 0 and "Nothing pushed" in check_out, check_out + err)
+    Path(answers_in_checkout).unlink()
+
+    # A second changes-requested review of the same frozen-head, while the first round's worktree
+    # still has its branch checked out: the second round's step 0 must work in a worktree of its own.
+    code, second_out, err = run(root, repository, routes_for(
+        frozen_head, [review(commit_id=frozen_head), review(commit_id=frozen_head, review_id=12)], review_id=12))
+    second_step_zero = next((line for line in second_out.splitlines() if line.startswith("0. ")), "")
+    second_switch = second_step_zero.split(" && ", 1)[-1].split()
+    check("brief: a second changes-requested review of the same frozen-head names a different local branch",
+          code == 0 and f"fix-round-pull-request-{NUMBER}-review-12" in second_step_zero, err + second_out)
+    second_worktree = root / "second-subagent-worktree"
+    git(repository, "worktree", "add", "-q", "--detach", str(second_worktree), frozen_head)
+    first_name_again = subprocess.run(switch_command, cwd=second_worktree, capture_output=True, text=True)
+    check("brief: the first round's branch name, still checked out in its worktree, cannot be reused",
+          first_name_again.returncode != 0 and "already used by worktree" in first_name_again.stderr,
+          first_name_again.stderr)
+    second_switched = subprocess.run(second_switch, cwd=second_worktree, capture_output=True, text=True)
+    check("brief: the second round's step 0 succeeds while the first round's worktree holds its branch",
+          second_switched.returncode == 0, second_switched.stderr + " ".join(second_switch))
+    git(repository, "worktree", "remove", "--force", str(second_worktree))
+    git(repository, "branch", "-D", f"fix-round-pull-request-{NUMBER}-review-12")
+    git(repository, "worktree", "remove", "--force", str(worktree))
+    git(repository, "branch", "-D", local_branch)
+
+    spaced = root / "checkout with space"
+    shutil.copytree(repository, spaced)
+    code, spaced_out, err = run(root, spaced, routes_for(frozen_head, [review(commit_id=frozen_head)]))
+    check("brief: an answers path with a space is shell-quoted in the check command",
+          code == 0 and f"--answers '{spaced}/.git/fix-round-answers-pull-request-{NUMBER}.md'" in spaced_out,
+          err + spaced_out)
+
+    routes = routes_for(frozen_head, [review(commit_id=frozen_head)])
+    routes[PR_VIEW] = {"stdout": json.dumps({"url": URL, "headRefOid": frozen_head, "headRefName": "topic$name"})}
+    code, dollar_out, err = run(root, repository, routes)
+    check("brief: a branch name the shell would expand is shell-quoted in the push command",
+          code == 0 and "git push origin HEAD:'topic$name'" in dollar_out, err + dollar_out)
 
     outside = root / "not-a-checkout"
     outside.mkdir()
@@ -308,7 +406,7 @@ def brief_cases(root, repository, base, frozen_head):
     code, out, err = run(root, repository, routes)
     check("brief: a gh failure fails with exit 2 and gh's message",
           code == 2 and "HTTP 502" in err and "only the user can log gh in" in err
-          and "Otherwise, tell the user this message" in err, err)
+          and "Otherwise, tell the user this whole message" in err, err)
 
     routes = routes_for(frozen_head, [review(commit_id=frozen_head)])
     routes[REVIEWS] = {"stdout": "not json\n"}
@@ -319,8 +417,28 @@ def brief_cases(root, repository, base, frozen_head):
     routes = routes_for(frozen_head, [review(commit_id=frozen_head)])
     routes[PR_VIEW] = {"stdout": json.dumps({"url": URL})}
     code, out, err = run(root, repository, routes)
-    check("brief: gh pr view without headRefOid fails with exit 2",
-          code == 2 and "gave no url and headRefOid" in err, err)
+    check("brief: gh pr view without headRefOid or headRefName names the whole command and both fields, exit 2",
+          code == 2 and f"gh {PR_VIEW} printed JSON in which these fields are missing or empty: "
+          "headRefOid, headRefName. Run " in err
+          and f"Run gh {PR_VIEW} yourself: if it now prints an object with all three fields filled in, "
+          f"run python3 {PROGRAM} {NUMBER} again.\n" in err
+          and "This program stopped there: it printed no brief and checked no round." in err, err)
+
+    routes = routes_for(frozen_head, [review(commit_id=frozen_head)])
+    routes[PR_VIEW] = {"stdout": json.dumps({"url": URL, "headRefOid": frozen_head})}
+    code, out, err = run(root, repository, routes)
+    check("brief: gh pr view without headRefName names only that field, exit 2",
+          code == 2 and "missing or empty: headRefName. Run " in err, err)
+
+    for printed, expected in (("not json", f"gh {PR_VIEW} printed output that is not JSON; Python's JSON "
+                                           "parser said: Expecting value"),
+                              ("not json", "The output began: 'not json'"),
+                              ("[1, 2]", "printed JSON that is not an object with named fields: [1, 2]")):
+        routes = routes_for(frozen_head, [review(commit_id=frozen_head)])
+        routes[PR_VIEW] = {"stdout": printed}
+        code, out, err = run(root, repository, routes)
+        check(f"brief: gh pr view printing {printed!r} fails with exit 2, saying so",
+              code == 2 and expected in err, err)
 
     code, out, err = run(root, repository, routes_for(frozen_head, []), path_has_gh=False)
     check("brief: gh that cannot start fails with exit 2",
