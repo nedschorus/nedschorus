@@ -94,7 +94,7 @@ _message_reminder_hook_spec = importlib.util.spec_from_file_location(
 _message_reminder_hook = importlib.util.module_from_spec(_message_reminder_hook_spec)
 _message_reminder_hook_spec.loader.exec_module(_message_reminder_hook)
 fast_read_target_written = _message_reminder_hook.fast_read_target_written
-fast_read_target_path = _message_reminder_hook.fast_read_target_path
+fast_read_target_file_name = _message_reminder_hook.fast_read_target_file_name
 cold_read_fast_read_review_command_line_for_target_file = _message_reminder_hook.cold_read_fast_read_review_command_line_for_target_file
 FAST_READ_COMMAND = _message_reminder_hook.FAST_READ_COMMAND
 PLAN_PRINTED_WITH_MESSAGES_MISSING_FAST_READ_COMMAND_EXIT_STATUS = 3
@@ -457,7 +457,7 @@ def entries_with_fast_read_commands(entries):
     for its new text, written to that file the way the message reminder hook
     writes it, or the reason the file could not be written."""
     for entry in entries:
-        entry["fast_read_target_file_name"] = fast_read_target_path(entry["path"], entry["new_text"]).name
+        entry["fast_read_target_file_name"] = fast_read_target_file_name(entry["path"], entry["new_text"])
         try:
             target = fast_read_target_written(entry["path"], entry["new_text"])
         except OSError as failure:
@@ -488,7 +488,16 @@ def plan_entries_missing_fast_read_command(plan):
     return missing
 
 
-def missing_fast_read_commands_message(missing):
+def json_rerun_command_line(arguments):
+    """This run's command line with --json and without --brief-skeleton: a
+    skeleton file this run wrote already exists, and a run naming it is refused."""
+    return shlex.join(["python3", "scripts/pull-request-review-plan.py",
+                       "--pull-request", str(arguments.pull_request), "--repository", str(arguments.repository),
+                       "--github-repository", arguments.github_repository, "--json"])
+
+
+def missing_fast_read_commands_message(missing, json_rerun_command=None):
+    """json_rerun_command is None when this run already printed its plan as JSON."""
     listing = "\n".join(f"  {entry['path']}:{entry['line']}  label: {entry['label']}  file name: "
                         f"{entry['fast_read_target_file_name']}"
                         for entry in missing)
@@ -496,16 +505,28 @@ def missing_fast_read_commands_message(missing):
         count = "1 listed agent-facing message has no cold-read-fast-read command, because its text"
     else:
         count = f"{len(missing)} listed agent-facing messages have no cold-read-fast-read command, because their text"
+    if json_rerun_command is None:
+        get_json = "1. Use the plan this run printed as JSON on stdout.\n"
+    else:
+        get_json = ("1. Get the plan as JSON by running this command from the top of your checkout:\n"
+                    "     " + json_rerun_command + "\n"
+                    "   That command prints the same plan as JSON and exits 3 again. That command has no "
+                    "--brief-skeleton, even if this run had one, because a run naming a skeleton file that already "
+                    "exists is refused.\n")
     return (f"pull-request-review-plan: {count} could not be written to a file. The rest of the plan is complete; "
-            "use it as printed. Exit status 3 says only that each message listed below needs its file written by hand.\n"
-            "If you do not have this run's --json output, run again with --json and without --brief-skeleton; it exits 3 again. For each "
-            "file name listed below, find the entry, in the agent_facing_text_whole_pull_request or "
-            "agent_facing_text_delta list of the --json output on stdout, whose fast_read_target_file_name is that file name, and write the entry's "
-            "new_text value, as a JSON parser decodes it, to a file of that name in a directory outside your checkout, "
-            "such as one made with mktemp -d.\n"
-            "Then, for each file you wrote, run " + FAST_READ_COMMAND.format(target="<that file's full path>")
+            "use it as printed. Exit status 3 says only that each message listed below needs its file written by "
+            "hand, in these steps.\n"
+            + get_json
+            + "2. For each file name listed below, find an entry whose fast_read_target_file_name is that file name, "
+            "in either the agent_facing_text_whole_pull_request list or the agent_facing_text_delta list. Entries "
+            "with the same file name hold the same new_text, so the first one you find will do.\n"
+            "3. Write that entry's new_text to a file of that name, in a directory outside your checkout, such as one "
+            "made with mktemp -d. Write the decoded text, not the JSON string: read the plan with a JSON parser, such as "
+            "Python's json.load, so that each escape, such as \\n or \\\", becomes the character it stands for.\n"
+            "4. For each file you wrote, run " + FAST_READ_COMMAND.format(target="<that file's full path>")
             + " from the top of your checkout, and handle its report as you handle the reports of the plan's other "
             "cold-read-fast-read commands.\n"
+            "The messages with no cold-read-fast-read command, each with the file name to write:\n"
             + listing)
 
 
@@ -833,7 +854,8 @@ def main(argv=None):
         sys.stdout.write(json.dumps(plan, indent=2) + "\n" if arguments.json else render_pull_request_review_plan_text(plan))
         missing = plan_entries_missing_fast_read_command(plan)
         if missing:
-            print(missing_fast_read_commands_message(missing), file=sys.stderr)
+            print(missing_fast_read_commands_message(
+                missing, None if arguments.json else json_rerun_command_line(arguments)), file=sys.stderr)
             return PLAN_PRINTED_WITH_MESSAGES_MISSING_FAST_READ_COMMAND_EXIT_STATUS
         return 0
     except ReviewPlanRefusal as refusal:

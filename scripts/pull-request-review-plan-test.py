@@ -107,8 +107,9 @@ class ReviewPlanTemporaryRepositoryFixture:
         self.control_directory.mkdir()
         self.binary_directory = temporary_directory / "bin"
         self.binary_directory.mkdir()
-        # A space and a quote in the name: each printed command must shell-quote its target.
-        self.message_target_temporary_directory = temporary_directory / "message target temporary directory's"
+        # A space, an apostrophe, a dollar sign, a backtick and a double quote in the name: each printed
+        # command must shell-quote its target, and double quotes would leave $, ` and " live.
+        self.message_target_temporary_directory = temporary_directory / "message target temporary directory's $HOME `id` \"q\""
         self.message_target_temporary_directory.mkdir()
         stand_in_path = self.binary_directory / "gh"
         stand_in_path.write_text(STAND_IN_GITHUB_SOURCE, encoding="utf-8")
@@ -561,7 +562,10 @@ def run_fast_read_command_cases(fixture):
     whole_entry = next(entry for entry in plan["agent_facing_text_whole_pull_request"] if entry["label"] == "raise in show_message()")
     delta_entry = next(entry for entry in plan["agent_facing_text_delta"] if entry["label"] == "raise in show_message()")
     command_prefix = "python3 nc-systems/cold-read/cold-read-fast-read.py --target "
-    command_words = shlex.split(whole_entry["fast_read_command"])
+    try:
+        command_words = shlex.split(whole_entry["fast_read_command"])
+    except ValueError:
+        command_words = []  # An unquoted target can leave a quote unclosed; the case below then fails by name.
     target = Path(command_words[-1]) if len(command_words) == 4 else Path()
     check("each listed message gets a fast-read command whose target holds its new text",
           whole_entry["fast_read_command"].startswith(command_prefix) and whole_entry["fast_read_target_error"] is None
@@ -599,7 +603,7 @@ def run_fast_read_command_cases(fixture):
           and "1 listed agent-facing message has no cold-read-fast-read command, because its text" in json_result.stderr
           and "--target <that file's full path>" in json_result.stderr, json_result)
     blocked_entry = blocked_entries[0] if blocked_entries else {"path": "", "line": 0, "new_text": ""}
-    file_name = review_plan_module.fast_read_target_path(blocked_entry["path"], blocked_entry["new_text"]).name
+    file_name = review_plan_module._message_reminder_hook.fast_read_target_path(blocked_entry["path"], blocked_entry["new_text"]).name
     listing_lines = [line for line in json_result.stderr.splitlines() if line.startswith("  ")]
     check("the message lists each message without a command once, by path, line and label, with the file name to write",
           listing_lines == [f"  {blocked_entry['path']}:{blocked_entry['line']}  label: {blocked_entry.get('label')}  file name: {file_name}"]
@@ -610,13 +614,45 @@ def run_fast_read_command_cases(fixture):
           "2 listed agent-facing messages have no cold-read-fast-read command, because their text"
           in review_plan_module.missing_fast_read_commands_message(two_entries))
     check("each entry carries the file name the message lists, so the message's file name finds its entry",
-          all(entry["fast_read_target_file_name"] == review_plan_module.fast_read_target_path(entry["path"], entry["new_text"]).name
+          all(entry["fast_read_target_file_name"] == review_plan_module._message_reminder_hook.fast_read_target_path(entry["path"], entry["new_text"]).name
               for entry in blocked_entries)
           and "whose fast_read_target_file_name is that file name" in json_result.stderr, json_result)
     check("the text plan says why a message has no command",
           text_result.returncode == 3
           and "cold-read-fast-read: none, because this message's text could not be written to a file: " in text_result.stdout,
           text_result)
+    check("after a JSON run, the message says to use the JSON this run printed",
+          "1. Use the plan this run printed as JSON on stdout." in json_result.stderr, json_result.stderr)
+    text_stderr_lines = text_result.stderr.splitlines()
+    rerun_index = next((index for index, line in enumerate(text_stderr_lines) if line.startswith("1. Get the plan as JSON")), None)
+    try:
+        rerun_words = shlex.split(text_stderr_lines[rerun_index + 1]) if rerun_index is not None else []
+    except (ValueError, IndexError):
+        rerun_words = []
+    check("after a text run, the message gives this run's own command with --json and without --brief-skeleton",
+          rerun_words == ["python3", "scripts/pull-request-review-plan.py",
+                          "--pull-request", str(FIXTURE_PULL_REQUEST_NUMBER), "--repository", str(fixture.repository),
+                          "--github-repository", FIXTURE_GITHUB_REPOSITORY, "--json"], text_result.stderr)
+
+    hook_tempfile = review_plan_module._message_reminder_hook.tempfile
+    saved_gettempdir = hook_tempfile.gettempdir
+
+    def gettempdir_finding_no_usable_directory():
+        raise FileNotFoundError(2, "No usable temporary directory found")
+    hook_tempfile.gettempdir = gettempdir_finding_no_usable_directory
+    try:
+        try:
+            unplaced = review_plan_module.entries_with_fast_read_commands(
+                [{"path": "scripts/a.py", "line": 1, "label": "raise in f()", "new_text": "text"}])
+        except OSError as escaped:
+            unplaced = [{"escaped": f"{type(escaped).__name__}: {escaped}"}]
+    finally:
+        hook_tempfile.gettempdir = saved_gettempdir
+    check("no usable temporary directory marks the entry, with its file name, instead of ending the run",
+          len(unplaced) == 1 and unplaced[0].get("fast_read_command", "absent") is None
+          and "FileNotFoundError" in (unplaced[0].get("fast_read_target_error") or "")
+          and unplaced[0].get("fast_read_target_file_name")
+          == review_plan_module._message_reminder_hook.fast_read_target_file_name("scripts/a.py", "text"), unplaced)
 
 
 def run_repository_and_output_cases(fixture):
