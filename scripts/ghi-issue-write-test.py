@@ -4230,6 +4230,122 @@ def run_edit_landing_real_git_cases(scratch: Path):
           other_line in merged and author_line in merged, merged)
 
 
+def run_settled_file_removal_real_git_cases(scratch: Path):
+    """An edit lands the deletion of a settled
+    proposed-improvements-or-changes-file the author deleted from disk, and
+    takes the GHI-MD's pointer line out with the last such file, as rule 48
+    of PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD says. A file
+    main gained that the author's checkout never held stays, and so does
+    the line. Real git with a bare remote; `gh` and ghi-info are stubbed."""
+    remote = scratch / "remote.git"
+    author = scratch / "author"
+    other = scratch / "other"
+    relative = EDIT_RELATIVE
+    prefix = EDIT_NAME[:-len(".md")]
+    settled = (f"docs/issues/{prefix}-proposed-improvements-or-changes-"
+               "ghi-info-2026-10-19.md")
+    later = (f"docs/issues/{prefix}-proposed-improvements-or-changes-"
+             "ghi-info-2026-10-19-2.md")
+    pointer = tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE_TEMPLATE.format(
+        prefix=prefix)
+
+    def git(*arguments, cwd=None):
+        return subprocess.run(
+            ["git", *arguments], cwd=cwd, check=True, capture_output=True,
+            text=True).stdout.strip()
+
+    git("init", "-q", "--bare", "-b", "main", str(remote))
+    for clone in (author, other):
+        git("clone", "-q", str(remote), str(clone))
+        git("config", "user.email", "test@example.com", cwd=clone)
+        git("config", "user.name", "test", cwd=clone)
+    ghi_md = staged_form(title=EDIT_TITLE, text=tool.with_pointer_line(
+        f"# {EDIT_TITLE}\n\nBody.\n", prefix))
+    (author / relative).parent.mkdir(parents=True)
+    (author / relative).write_text(ghi_md, encoding="utf-8")
+    (author / settled).write_text(
+        "## E1 — possible problem: x\nState: settled, not worth doing\n",
+        encoding="utf-8")
+    ask = author / "scripts" / "ghi-info-ask.py"
+    ask.parent.mkdir(parents=True)
+    ask.write_text("# stands in for the real one; never executed\n")
+    git("add", "-A", cwd=author)
+    git("commit", "-q", "-m", "base", cwd=author)
+    git("push", "-q", "origin", "HEAD:main", cwd=author)
+
+    asked = []
+
+    def runner(arguments, timeout=None, cwd=None, check=True):
+        joined = " ".join(str(argument) for argument in arguments)
+        if ASK in joined:
+            asked.append(joined)
+            return Completed("verdict: unrelated\n")
+        if arguments[0] == "gh":
+            if "issue view" in joined:
+                return issue_json(EDIT_TITLE,
+                                  tool.links_body(REPO, [relative]))
+            if "pr list" in joined:
+                return Completed("[]")
+            return Completed("https://github.com/nedschorus/nedschorus/pull/1\n")
+        return tool.run(arguments, timeout=timeout or tool.GH_TIMEOUT_SECONDS,
+                        cwd=cwd, check=check)
+
+    (author / settled).unlink()
+    tool.edit(author / relative, REPO, author, runner, quiet)
+    pushed = git("ls-remote", "--heads", str(remote), "ghi-570-edit-*")
+    branch = pushed.split("refs/heads/")[-1] if pushed else ""
+    check("an edit whose author deleted a settled "
+          "proposed-improvements-or-changes-file pushes a branch",
+          bool(branch), pushed)
+    if not branch:
+        return
+    tree = git("ls-tree", "-r", "--name-only", branch, cwd=remote)
+    check("and that branch no longer holds the settled file",
+          settled not in tree.splitlines() and relative in tree.splitlines(),
+          tree)
+    landed = git("show", f"{branch}:{relative}", cwd=remote)
+    check("and the GHI-MD on it no longer carries the pointer line, the "
+          "last such file being gone",
+          pointer not in landed and f"# {EDIT_TITLE}" in landed, landed)
+    check("and ghi-info is not asked about a GHI-MD unchanged apart from "
+          "its pointer line", not asked, asked)
+
+    git("update-ref", "refs/heads/main", f"refs/heads/{branch}", cwd=remote)
+    disk_before_pull = (author / relative).read_text(encoding="utf-8")
+    git("fetch", "-q", "origin", cwd=author)
+    git("reset", "-q", "--hard", "origin/main", cwd=author)
+    check("the author's file on disk was already what merged, so the pull "
+          "after the merge changes nothing in it",
+          (author / relative).read_text(encoding="utf-8") == disk_before_pull)
+    rerun = []
+    try:
+        tool.edit(author / relative, REPO, author, runner, rerun.append)
+        check("a rerun after that merge finds the edit already on main",
+              any(line.startswith("step 3 already done") for line in rerun),
+              rerun)
+    except tool.Refused as refusal:
+        check("a rerun after that merge finds the edit already on main",
+              False, str(refusal))
+
+    # Main gains a file the author's checkout never held.
+    git("pull", "-q", "origin", "main", cwd=other)
+    (other / later).write_text("## E1 — possible problem: y\nState: open\n",
+                               encoding="utf-8")
+    (other / relative).write_text(ghi_md, encoding="utf-8")
+    git("add", "-A", cwd=other)
+    git("commit", "-q", "-m", "a later question", cwd=other)
+    git("push", "-q", "origin", "HEAD:main", cwd=other)
+    git("fetch", "-q", "origin", cwd=author)
+    on_main = git("rev-parse", "origin/main", cwd=author)
+    removed = tool.removed_proposed_improvements_or_changes_files(
+        author / "docs/issues",
+        tool.proposed_improvements_or_changes_files_on_main(
+            relative, prefix, on_main, author, tool.run),
+        on_main, author, tool.run)
+    check("a file main holds that the author's checkout never held is not "
+          "taken for one the author deleted", removed == [], removed)
+
+
 def run_push_time_limit_cases(scratch: Path):
     conflict = tool.pre_push_conflict_check
     selective = tool.pre_push_selective_test_run
@@ -4487,6 +4603,94 @@ def run_whole_file_set_cases(scratch: Path):
         check("an edit of a question file main has not changed since the "
               "checkout started is not refused", False, str(refusal))
 
+    removed_name = ("an edit removing a question file main changed since "
+                    "the checkout started is refused with 66, naming that "
+                    "file")
+    changed = Recorder({
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{relative}": Completed(staged),
+        f"git show {BASE_REVISION}:{question}": Completed("State: settled\n"),
+        f"git show {MAIN_COMMIT}:{question}": Completed(
+            "State: settled\nTry 2: reopened\n"),
+    })
+    try:
+        tool.refuse_on_conflict(relative, staged, None, None, MAIN_COMMIT,
+                                scratch, changed, quiet, (), [question])
+        check(removed_name, False, "no refusal")
+    except tool.Refused as refusal:
+        check(removed_name, refusal.code == 66 and question in str(refusal),
+              str(refusal))
+    unchanged = Recorder({
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{relative}": Completed(staged),
+        f"git show {BASE_REVISION}:{question}": Completed("State: settled\n"),
+        f"git show {MAIN_COMMIT}:{question}": Completed("State: settled\n"),
+    })
+    try:
+        tool.refuse_on_conflict(relative, staged, None, None, MAIN_COMMIT,
+                                scratch, unchanged, quiet, (), [question])
+        check("an edit removing a question file main has not changed since "
+              "the checkout started is not refused", True)
+    except tool.Refused as refusal:
+        check("an edit removing a question file main has not changed since "
+              "the checkout started is not refused", False, str(refusal))
+
+    removal_branch = tool.edit_landing_branch_name(570, staged, (), [question])
+    state, branch = tool.edit_landing_state(570, staged, staged, scratch,
+                                            at_rest, (), [question])
+    check("an edit whose GHI-MD main already holds still lands a removed "
+          "question file, on a branch named for the removal",
+          state == tool.EDIT_LANDING_NEW_CONTENT and branch == removal_branch
+          and branch != tool.edit_landing_branch_name(570, staged),
+          (state, branch))
+
+    earlier_name = ("an edit removing a question file an earlier edit still "
+                    "waiting for merge-lane changes is refused with 66")
+    waiting = Recorder({
+        "git ls-remote": Completed("abc\trefs/heads/ghi-570-edit-earlier\n"),
+        "gh pr list": earlier_edit_pull_request(question),
+    })
+    try:
+        tool.refuse_on_an_earlier_edit_still_open(
+            REPO, 570, relative, None, "ghi-570-edit-this", scratch, waiting,
+            [question])
+        check(earlier_name, False, "no refusal")
+    except tool.Refused as refusal:
+        check(earlier_name, refusal.code == 66 and question in str(refusal),
+              str(refusal))
+
+    no_base = Recorder({"git merge-base": Completed("", returncode=1)})
+    gone = tool.removed_proposed_improvements_or_changes_files(
+        scratch / "no-such-folder", [question], MAIN_COMMIT, scratch, no_base)
+    check("with no merge base, a question file missing from disk is not "
+          "taken for one the author deleted", gone == [], gone)
+
+    kept_dir = scratch / "pointer-kept"
+    kept_dir.mkdir()
+    pointed = tool.with_pointer_line("# A statusline\n\nBody.\n",
+                                     "570-a-statusline")
+    kept_path = kept_dir / "570-a-statusline.md"
+    kept_path.write_text(pointed, encoding="utf-8")
+    still = (question[:-len(".md")] + "-2.md")
+    kept = tool.with_pointer_line_removed_when_last_file_goes(
+        kept_path, pointed, "570-a-statusline", kept_dir, [question, still],
+        [question], quiet, scratch)
+    check("the pointer line stays while main still holds another question "
+          "file beside the GHI-MD",
+          kept == pointed
+          and kept_path.read_text(encoding="utf-8") == pointed, kept)
+    (kept_dir / Path(still).name).write_text("State: open\n")
+    kept = tool.with_pointer_line_removed_when_last_file_goes(
+        kept_path, pointed, "570-a-statusline", kept_dir, [question],
+        [question], quiet, scratch)
+    check("and while one is still on disk beside it", kept == pointed, kept)
+
+    body = "---\nissue: x\n---\n\n# A statusline\n\nBody.\n"
+    check("taking the pointer line out gives back the file it was written "
+          "into", tool.without_pointer_line(
+              tool.with_pointer_line(body, "570-a-statusline"),
+              "570-a-statusline") == body)
+
     moved_to = ("nc-systems/x/docs/570-a-statusline-proposed-improvements-"
                 "or-changes-ghi-info-2026-10-03.md")
     moving = [(question, moved_to)]
@@ -4526,6 +4730,8 @@ def main():
         run_real_git_listing_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-landing-test-") as name:
         run_edit_landing_real_git_cases(Path(name))
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-removal-test-") as name:
+        run_settled_file_removal_real_git_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-landed-test-") as name:
         run_landed_design_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-push-test-") as name:
