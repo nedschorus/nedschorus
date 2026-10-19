@@ -631,7 +631,7 @@ def run_fast_read_command_cases(fixture):
         rerun_words = []
     check("after a text run, the message gives this run's own command with --json and without --brief-skeleton",
           rerun_words == ["python3", "scripts/pull-request-review-plan.py",
-                          "--pull-request", str(FIXTURE_PULL_REQUEST_NUMBER), "--repository", str(fixture.repository),
+                          "--pull-request", str(FIXTURE_PULL_REQUEST_NUMBER), "--repository", str(fixture.repository.resolve()),
                           "--github-repository", FIXTURE_GITHUB_REPOSITORY, "--json"], text_result.stderr)
     fixture.environment = {**saved_environment, "TMPDIR": str(blocked_temporary_directory)}
     try:
