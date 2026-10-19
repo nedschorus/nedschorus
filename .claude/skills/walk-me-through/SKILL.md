@@ -47,7 +47,7 @@ Only the user advances the approval-walk. A reply that approves or declines the 
 
 ## Capturing the approval-walk 
 
-After each item record its number and its outcome <outcome> in the minutes. Also classify each response, <next> (appropriate if no specific response is desired), <accepted>, <rejected>, <revised>, or <open> (open meaning raised but not decided), and record the disposition, decision or commitment in the minutes. If the approval-walk is a review of another document, update that document as changes are agreed to. 
+After each item record its number and its outcome <outcome> in the minutes. Also classify each response, <next> (appropriate if no specific response is desired), <accepted>, <rejected>, <approved as revised> (the user approved the revised text), <revised, awaiting ruling> (the text changed and the user has not yet decided), or <open> (open meaning raised but not decided), and record the disposition, decision or commitment in the minutes. If the approval-walk is a review of another document, update that document as changes are agreed to. 
 
 While the approval-walk is open, keep a line anywhere in the minutes that reads exactly `#next_to_present item N of M`, with no title after it, naming the item, or the part such as `item 4.1 of 9`, that the user has not yet answered; for items shown together, name them all, as in `items 5 and 6 of 9`. Update the line each time the approval-walk advances or is re-planned, and change it to `#next_to_present none, closed` before writing the closing message. If you update the line by adding a new one, add it below every earlier one, because the last such line is the one that counts.
 
