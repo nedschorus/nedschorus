@@ -80,6 +80,9 @@ elif mode == "fail":
     sys.exit(1)
 elif mode == "sleep":
     time.sleep(60)
+elif mode == "slow":
+    time.sleep(2)
+    print("gh data")
 elif mode == "sleep-second":
     calls = len(open(os.environ["FAKE_GH_LOG"]).read().splitlines())
     if calls >= 2:
@@ -311,8 +314,10 @@ try:
                 child_alive = True
             except ProcessLookupError:
                 pass
-        check("the deadline stops Codex, exits 1 and says so" + case_suffix,
-              completed.returncode == 1 and "deadline" in completed.stderr and elapsed < 30,
+        check("the deadline stops Codex, exits 1 and says so, without speaking of "
+              "--prefetch-github commands the run did not have" + case_suffix,
+              completed.returncode == 1 and "deadline" in completed.stderr and elapsed < 30
+              and "--prefetch-github" not in completed.stderr,
               f"exit {completed.returncode}, {elapsed:.1f}s, stderr {completed.stderr!r}")
         check("the deadline also stops the processes Codex started" + case_suffix,
               child_pid is not None and not child_alive, f"child {child_pid} alive={child_alive}")
@@ -474,29 +479,44 @@ try:
           f"exit {completed.returncode}, files {[p.name for p in saved]!r}, "
           f"stderr {completed.stderr!r}")
 
-    for refused_arguments, reason in (("pr merge 12", "is not `pr list`"),
-                                      ("api -XPOST repos/o/r/issues", "with -X"),
-                                      ("api repos/o/r/issues --method=PATCH", "with --method"),
-                                      ("api repos/o/r/issues -f title=x", "with -f"),
-                                      ("api repos/o/r/issues --input body.json", "with --input"),
-                                      ("api -iXDELETE repos/o/r/git/refs/heads/b", "-X (in `-iXDELETE`) can send a request"),
-                                      ("api -iFtitle=x repos/o/r/issues", "-F (in `-iFtitle=x`) can send a request"),
-                                      ("api -ib repos/o/r", "-b (in `-ib`) is not a short option")):
+    for refused_arguments, reason in (
+            ("pr merge 12", "is not `pr list`"),
+            ("api -XPOST repos/o/r/issues", "`-XPOST` is not one of the reading options"),
+            ("api repos/o/r/issues --method=PATCH", "`--method=PATCH` is not one of"),
+            ("api repos/o/r/issues -f title=x", "`-f` is not one of"),
+            ("api repos/o/r/issues --input body.json", "`--input` is not one of"),
+            ("api -iXDELETE repos/o/r/git/refs/heads/b", "`-iXDELETE` is not one of"),
+            ("api -iFtitle=x repos/o/r/issues", "`-iFtitle=x` is not one of"),
+            ("api --jq -- -XPOST repos/o/r/issues", "`-XPOST` is not one of"),
+            ("api -q -- -XDELETE repos/o/r/git/refs/heads/b", "`-XDELETE` is not one of"),
+            ("api --template '--' -XDELETE repos/o/r/git/refs/heads/b", "`-XDELETE` is not one of"),
+            ("api -- -XPOST repos/o/r/issues", "`--` is not one of"),
+            ("api --verbose repos/o/r", "`--verbose` is not one of"),
+            ("api -R o/r repos/o/r", "`-R` is not one of"),
+            ("api repos/o/r/pulls repos/o/r/issues", "exactly one endpoint"),
+            ("api repos/o/r --jq", "`--jq` has no value after it"),
+            ("api repos/o/r -q", "`-q` has no value after it")):
         fresh_prefetch_case()
         completed, report, _ = run("report", "--prefetch-github", "pr view 1",
                                    "--prefetch-github", refused_arguments)
-        check(f"--prefetch-github '{refused_arguments}' is refused with exit 2 before gh or Codex runs",
+        check(f"--prefetch-github '{refused_arguments}' is refused with exit 2 before gh or "
+              f"Codex runs, naming the options that are accepted",
               completed.returncode == 2 and reason in completed.stderr
-              and "may only read from GitHub" in completed.stderr
+              and "only commands known to read from GitHub are accepted" in completed.stderr
+              and "--include/-i, --paginate and --slurp" in completed.stderr
               and not gh_calls() and not arguments_file.exists(),
               f"exit {completed.returncode}, gh calls {gh_calls()!r}, stderr {completed.stderr!r}")
 
     fresh_prefetch_case()
-    completed, report, _ = run("report", "--prefetch-github", "api -i -q .title -H 'Accept: x' repos/o/r/pulls/1",
-                               "--prefetch-github", "api -iqX repos/o/r")
-    check("short options that only read, alone or clustered, pass, and a value after -q is "
-          "not read as options",
-          completed.returncode == 0 and len(gh_calls()) == 2,
+    completed, report, _ = run(
+        "report",
+        "--prefetch-github", "api -i -q .title -H 'Accept: x' repos/o/r/pulls/1",
+        "--prefetch-github", "api user --template '- {{.login}}'",
+        "--prefetch-github", "api --jq=.[].number --paginate --slurp --cache 1h -p x repos/o/r/pulls",
+        "--prefetch-github", "api --jq -XPOST repos/o/r/pulls")
+    check("`api` with one endpoint and only accepted options passes, and a value-taking "
+          "option's value is taken as its value even when it starts with \"-\"",
+          completed.returncode == 0 and len(gh_calls()) == 4,
           f"exit {completed.returncode}, gh calls {gh_calls()!r}, stderr {completed.stderr!r}")
 
     fresh_prefetch_case()
@@ -506,7 +526,7 @@ try:
           "refusal, with exit 2 before gh or Codex runs",
           completed.returncode == 2 and "could not read the quoting" in completed.stderr
           and "every quotation mark closed" in completed.stderr
-          and "may only read from GitHub" not in completed.stderr
+          and "known to read from GitHub" not in completed.stderr
           and not gh_calls() and not arguments_file.exists(),
           f"exit {completed.returncode}, gh calls {gh_calls()!r}, stderr {completed.stderr!r}")
 
@@ -547,6 +567,17 @@ try:
           f"stderr {completed.stderr!r}")
 
     fresh_prefetch_case()
+    # 3 s for the whole run: gh takes 2 s, so Codex, which sleeps, must be stopped about
+    # 1 s after it starts, not after a fresh 3 s.
+    completed, report, elapsed = run("sleep", "--prefetch-github", "pr view 1",
+                                     "--deadline-minutes", "0.05", gh_mode="slow")
+    check("Codex gets only the time the --prefetch-github commands left, and the deadline "
+          "message says the commands and Codex share it",
+          completed.returncode == 1 and elapsed < 2.5
+          and "covers every --prefetch-github command and Codex together" in completed.stderr,
+          f"exit {completed.returncode}, Codex ran {elapsed:.1f}s, stderr {completed.stderr!r}")
+
+    fresh_prefetch_case()
     no_gh_dir = scratch / "no-gh-bin"
     no_gh_dir.mkdir()
     completed = subprocess.run(
@@ -558,6 +589,41 @@ try:
           completed.returncode == 1 and "could not run `gh pr view 1`" in completed.stderr
           and not arguments_file.exists(),
           f"exit {completed.returncode}, stderr {completed.stderr!r}")
+
+    # gh is stopped at the deadline, so a run reaches Codex with no time left only when
+    # the last gh call ends just at it; a stand-in prefetch that uses up the time shows it.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("runner_under_test", PROGRAM)
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    fresh_prefetch_case()
+    clock = [1000.0]
+    real_monotonic = time.monotonic
+    runner.time.monotonic = lambda: clock[0]
+
+    def prefetch_using_whole_deadline(commands, data_folder, checkout_folder, deadline,
+                                      deadline_minutes):
+        clock[0] = deadline
+        return [], None
+    runner.prefetch_github_data = prefetch_using_whole_deadline
+    real_stderr, captured = sys.stderr, __import__("io").StringIO()
+    sys.stderr = captured
+    real_path = os.environ["PATH"]
+    # The fake codex, should the runner start Codex after all.
+    os.environ["PATH"] = f"{bin_dir}{os.pathsep}{real_path}"
+    try:
+        exit_code = runner.main(["-C", str(checkout), "--brief", str(brief),
+                                 "-o", str(scratch / "no-time-report.md"),
+                                 "--prefetch-github", "pr view 1", "--deadline-minutes", "1"])
+    finally:
+        sys.stderr = real_stderr
+        os.environ["PATH"] = real_path
+        runner.time.monotonic = real_monotonic
+    check("when the --prefetch-github commands use the whole deadline, Codex is not started "
+          "and the run exits 1 saying so",
+          exit_code == 1 and "used the whole 1-minute deadline" in captured.getvalue()
+          and "Codex was not started" in captured.getvalue() and not arguments_file.exists(),
+          f"exit {exit_code}, stderr {captured.getvalue()!r}")
 
     empty_brief = scratch / "empty.md"
     empty_brief.write_text("  \n")

@@ -28,15 +28,22 @@ Options that widen what Codex may do, each off by default:
 
   --prefetch-github '<gh arguments>'  run `gh <gh arguments>` in the -C
                           checkout before Codex starts, and give Codex its
-                          output as a file; repeatable. Without -R, gh reads
-                          the repository of the -C checkout; with
-                          --outside-git-checkout, give -R. Codex cannot run
-                          `gh` itself, because its permission profile denies
-                          the folder holding gh's login. Only reading commands
-                          are accepted: `pr list`, `pr view`, `issue list`,
-                          `issue view`, and `api` without -X, --method, -f,
-                          -F, --field, --raw-field or --input, so `api graphql`,
-                          which needs -f, is refused. The files go in
+                          output as a file; repeatable. Only reading
+                          commands are accepted. `pr list`, `pr view`,
+                          `issue list` and `issue view` take any of their
+                          options, and read the -C checkout's repository
+                          unless given -R OWNER/REPO (give -R with
+                          --outside-git-checkout). `api` takes exactly one
+                          endpoint, whose path names the repository, such as
+                          repos/OWNER/REPO/pulls/12, and only these options:
+                          --jq/-q, --template/-t, --header/-H, --preview/-p
+                          and --cache, each with its value, and --include/-i,
+                          --paginate and --slurp; `api` has no -R. Any other
+                          `api` option is refused, so `api graphql` cannot
+                          run, since it needs -f to send its query. Codex
+                          cannot run `gh` itself, because its permission
+                          profile denies the folder holding
+                          gh's login. The files go in
                           `<report>.github-data/`, and the brief Codex gets
                           ends with a list of them.
 
@@ -78,13 +85,17 @@ STOP_GRACE_SECONDS = 10
 # The gh commands --prefetch-github runs: each only reads from GitHub.
 PREFETCH_READING_SUBCOMMANDS = {("pr", "list"), ("pr", "view"), ("issue", "list"),
                                 ("issue", "view")}
-# `gh api` sends a request other than GET with these, or with -X/--method.
-PREFETCH_API_WRITING_OPTIONS = ("-X", "--method", "-f", "--raw-field", "-F", "--field",
-                                "--input")
-# gh reads `-iXDELETE` letter by letter: -i takes no value; -H, -p, -q and -t take the
-# rest of the word as their value. Any other letter is refused, since it may write.
-PREFETCH_API_SHORT_FLAGS_WITHOUT_VALUE = "i"
-PREFETCH_API_SHORT_OPTIONS_TAKING_VALUE = "Hpqt"
+# The only `gh api` options --prefetch-github accepts: each only shapes how a GET
+# request is sent or printed. Every other option is refused, since a deny-list of
+# writing options missed forms gh still parses, such as `-iXDELETE` and `--jq -- -XPOST`.
+# --verbose and --hostname are left out: one prints the request's headers, the other
+# sends the login to another host.
+PREFETCH_API_OPTIONS_TAKING_VALUE = {"--cache", "-H", "--header", "-p", "--preview",
+                                     "-q", "--jq", "-t", "--template"}
+PREFETCH_API_FLAGS_WITHOUT_VALUE = {"-i", "--include", "--paginate", "--slurp"}
+PREFETCH_API_ACCEPTED_OPTIONS_TEXT = (
+    "--jq/-q, --template/-t, --header/-H, --preview/-p and --cache, each followed by "
+    "its value as the next word or after =, and --include/-i, --paginate and --slurp")
 # Keeps a saved file's name well under the 255-byte limit of most file systems.
 PREFETCH_FILE_NAME_WORDS_MAX_CHARACTERS = 80
 
@@ -132,16 +143,36 @@ def prefetch_quoting_error(gh_arguments: str):
     return None
 
 
-def api_short_option_refusal(word: str):
-    """Return why a short-option word like -iXDELETE may write, or None when it only reads."""
-    for letter in word[1:]:
-        if letter in PREFETCH_API_SHORT_OPTIONS_TAKING_VALUE:
-            return None
-        if f"-{letter}" in PREFETCH_API_WRITING_OPTIONS:
-            return f"`gh api` with -{letter} (in `{word}`) can send a request that changes GitHub"
-        if letter not in PREFETCH_API_SHORT_FLAGS_WITHOUT_VALUE:
-            return (f"`gh api` with -{letter} (in `{word}`) is not a short option this "
-                    f"check knows to only read")
+def api_refusal(words):
+    """Return why these `gh api` words may do more than read, or None when they only read.
+
+    Accepts exactly one endpoint and the options in PREFETCH_API_OPTIONS_TAKING_VALUE
+    and PREFETCH_API_FLAGS_WITHOUT_VALUE. A value-taking option's value is consumed as
+    gh consumes it, even when it starts with "-"."""
+    endpoints = []
+    index = 0
+    while index < len(words):
+        word = words[index]
+        option, has_attached_value = word.split("=", 1)[0], "=" in word
+        if not word.startswith("-") or word == "-":
+            endpoints.append(word)
+        elif word.startswith("--") and option in PREFETCH_API_OPTIONS_TAKING_VALUE:
+            if not has_attached_value:
+                if index + 1 >= len(words):
+                    return f"`gh api` option `{option}` has no value after it"
+                index += 1
+        elif word in PREFETCH_API_OPTIONS_TAKING_VALUE:
+            if index + 1 >= len(words):
+                return f"`gh api` option `{word}` has no value after it"
+            index += 1
+        elif word in PREFETCH_API_FLAGS_WITHOUT_VALUE:
+            pass
+        else:
+            return f"`gh api` option `{word}` is not one of the reading options accepted"
+        index += 1
+    if len(endpoints) != 1:
+        return (f"`gh api` needs exactly one endpoint, such as repos/OWNER/REPO/pulls/12, "
+                f"and got {len(endpoints)}")
     return None
 
 
@@ -153,18 +184,7 @@ def prefetch_refusal(gh_arguments: str):
     if tuple(words[:2]) in PREFETCH_READING_SUBCOMMANDS:
         return None
     if words[:1] == ["api"]:
-        for word in words[1:]:
-            if word == "--":
-                break
-            if word.startswith("--"):
-                option = word.split("=", 1)[0]
-                if option in PREFETCH_API_WRITING_OPTIONS:
-                    return f"`gh api` with {option} can send a request that changes GitHub"
-            elif word.startswith("-") and len(word) > 1:
-                refusal = api_short_option_refusal(word)
-                if refusal:
-                    return refusal
-        return None
+        return api_refusal(words[1:])
     return "it is not `pr list`, `pr view`, `issue list`, `issue view` or `api`"
 
 
@@ -278,9 +298,12 @@ def main(argv=None) -> int:
         if refusal:
             parser.error(
                 f"refused --prefetch-github '{gh_arguments}': {refusal}. The gh command runs "
-                f"with the login Codex is kept from, so it may only read from GitHub.\n"
-                f"Use `pr list`, `pr view`, `issue list`, `issue view`, or `api` without "
-                f"-X, --method, -f, -F, --field, --raw-field or --input.")
+                f"with the login Codex is kept from, so only commands known to read from "
+                f"GitHub are accepted.\n"
+                f"Use `pr list`, `pr view`, `issue list` or `issue view`, with any of their "
+                f"options and -R OWNER/REPO when -C is not a checkout of that repository; "
+                f"or `api` with one endpoint, whose path names the repository, and only "
+                f"these options: {PREFETCH_API_ACCEPTED_OPTIONS_TEXT}.")
     checkout = pathlib.Path(args.checkout).resolve()
     brief = pathlib.Path(args.brief).resolve()
     report = pathlib.Path(args.report).resolve()
@@ -308,6 +331,12 @@ def main(argv=None) -> int:
             return fail(error)
         prompt = brief_with_prefetched_files(prompt, files)
         seconds_left -= time.monotonic() - prefetch_started
+        if seconds_left <= 0:
+            return fail(f"the --prefetch-github commands used the whole "
+                        f"{args.deadline_minutes:g}-minute deadline, so Codex was not started.\n"
+                        f"The deadline covers every --prefetch-github command and Codex "
+                        f"together. If the run needs longer, run it again with a larger "
+                        f"--deadline-minutes.")
     command = codex_command(
         checkout, report, args.sandbox, args.model, args.effort, prompt,
         network=args.network,
@@ -321,14 +350,15 @@ def main(argv=None) -> int:
                 command, stdin=subprocess.DEVNULL, stdout=log,
                 stderr=subprocess.STDOUT, start_new_session=True)
             try:
-                exit_code = process.wait(timeout=max(seconds_left, 0.001))
+                exit_code = process.wait(timeout=seconds_left)
             except subprocess.TimeoutExpired:
                 stop_process_group(process)
+                shared = ("The deadline covers every --prefetch-github command and Codex "
+                          "together. " if args.prefetch_github else "")
                 return fail(
                     f"Codex was still running when the run's {args.deadline_minutes:g}-minute "
                     f"deadline passed, and was stopped; its output so far is in {run_log}.\n"
-                    f"The deadline covers every --prefetch-github command and Codex "
-                    f"together. If the run needs longer, run it again with a larger "
+                    f"{shared}If the run needs longer, run it again with a larger "
                     f"--deadline-minutes.")
     except OSError as error:
         return fail(f"could not start Codex: {error}")
