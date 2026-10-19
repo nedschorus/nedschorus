@@ -592,8 +592,7 @@ def mark_reports_target_changed(
     detail = (
         f"{target}'s bytes {window} — sha256 {before[:12] or 'unreadable'} then "
         f"{after[:12] or 'unreadable'}. {what_the_reports_describe} Treat this set "
-        f"as evidence of what reviewers saw, not as a review of the document; "
-        f"start a new cold-read run."
+        f"as evidence of what reviewers saw, not as a review of the document."
     )
     mark_every_report(record_dir, f"{FROZEN_COPY_CHANGED_MARKER_PREFIX} {detail} -->")
     return detail

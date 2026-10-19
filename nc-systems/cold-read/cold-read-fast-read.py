@@ -100,7 +100,8 @@ lands. When they differ, the report is kept, a
 at its top, after the provenance stamp, and the same line is printed on
 stderr; the read still exits 0 and stdout is still the one path. The report
 reviews the copy the reviewer was given, and quotes each of its sentences, so
-the agent triages against that copy and carries each fix to the document as it
+the agent triages against those quoted sentences, since a walk draft's copy
+is removed on exit, and carries each fix to the document as it
 now stands, as the cold-read-grid asks for the same event.
 
 ONE RETRY, AND WHY NOT MORE. The cold-read-fast-read is a walk's instrument,
@@ -719,8 +720,8 @@ def target_changed_during_read_line(target: pathlib.Path, launch_sha256: str) ->
     return (f"{COLD_READ_TARGET_CHANGED_HASHTAG} {target}'s bytes changed while the "
             f"reviewer read it — sha256 {launch_sha256[:12]} then {after[:12] or 'unreadable'}. "
             f"The report reviews the copy the reviewer was given, whose sentences it "
-            f"quotes: triage it against that copy, then carry each fix to the document "
-            f"as it now stands.")
+            f"quotes: triage it against those quoted sentences, then carry each fix to "
+            f"the document as it now stands.")
 
 
 def with_line_after_provenance(report_text: str, line: str) -> str:

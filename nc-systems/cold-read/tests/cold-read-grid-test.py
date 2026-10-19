@@ -633,7 +633,7 @@ with tempfile.TemporaryDirectory() as scratch:
           all("codex-hunt-second" in line for line in saved_lines), repr(saved_lines))
     check("a stopped run is told not to triage and to start a new cold-read run",
           "Do not triage this set" in result.stdout
-          and "start a new cold-read run" in result.stdout, repr(result.stdout))
+          and "Start a new cold-read run" in result.stdout, repr(result.stdout))
     record_directory = record_directory_of(repository)
     reports = sorted(record_directory.glob("*.md")) if record_directory else []
     check("every report the stopped set holds carries the marker",
@@ -1706,6 +1706,15 @@ with tempfile.TemporaryDirectory() as scratch:
           "which did not change, so the set stands" in line, repr(line))
 
     # --- The third stop in a row ends the attempt ----------------------------
+    # The marker detail is printed and written into every report on every stop,
+    # so it must leave whether to start a new run to the stop-count line.
+    detail_directory = scratch / "frozen-copy-detail"
+    detail_directory.mkdir()
+    (detail_directory / "report.md").write_text("report\n", encoding="utf-8")
+    detail = grid_module.mark_reports_target_changed(
+        detail_directory, detail_directory / "frozen-document.md", "a" * 64, "b" * 64)
+    check("the frozen-copy detail leaves starting a new run to the stop-count line",
+          "new cold-read run" not in detail.lower(), repr(detail))
     line = grid_module.frozen_copy_stop_count_line(3)
     check("the third stop in a row says not to start a new run and to tell the user",
           "do not start a new cold-read run" in line and "Tell the user" in line

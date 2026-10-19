@@ -469,7 +469,10 @@ with tempfile.TemporaryDirectory() as scratch:
     check("stderr carries one changed-during-read line naming both hashes and the triage to do",
           len(changed_lines) == 1 and launch_sha256[:12] in changed_lines[0]
           and after_sha256[:12] in changed_lines[0]
-          and "carry each fix to the document as it now stands" in changed_lines[0],
+          and "carry each fix to the document as it now stands" in changed_lines[0]
+          # A walk draft's marked copy is removed on exit, so the line must not send the agent to it.
+          and "triage it against those quoted sentences" in changed_lines[0]
+          and "that copy" not in changed_lines[0],
           repr(result.stderr))
     check("the report keeps its provenance stamp first and the same line, as a comment, second",
           len(edited_lines) > 1 and edited_lines[0].startswith("<!-- provenance:")
