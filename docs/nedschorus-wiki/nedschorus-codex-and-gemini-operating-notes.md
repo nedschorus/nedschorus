@@ -16,6 +16,8 @@ This page tells an agent-seat how to run Codex and Gemini, and what to expect fr
 
 **Effort.** Effort is set per run, with `--effort`, not in the model id.
 
+**At capacity.** When a run on `gpt-6-astra` prints "Selected model is at capacity. Please try a different model.", which means OpenAI has no room on that model at that moment rather than that the user's plan is used up, run the task again with `-m gpt-6.1-sol --effort xhigh`.
+
 **Project rules.** Codex reads the repository's `AGENTS.md`, which tells it to read `CLAUDE.md` and follow it. Measured with a canary on 2026-08-22 and 2026-09-04: Codex reads `CLAUDE.md` when it may read files.
 
 ## Gemini via Antigravity (`agy`, Google)
