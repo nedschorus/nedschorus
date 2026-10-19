@@ -25,7 +25,10 @@ printed, written or raised strings, strings assigned to names with a message
 suffix, string values of a hook's agent-facing JSON output keys in a dict
 literal, and a module docstring printed through __doc__. Tests are excluded:
 a test's copy of an expected message is not handed to an agent. F-string
-placeholders survive in the listing.
+placeholders survive in the listing. Beside each listed string is its
+cold-read-fast-read command, whose target file holds the string's new text and
+is written as the message reminder hook writes it; a target that cannot be
+written is marked in the plan and makes the program exit 1 after printing it.
 
 Merged pull requests use the merge commit's first parent as the diff base:
 the current base branch already contains the head and would hide the change.
@@ -81,6 +84,14 @@ _agent_facing_string_collector = importlib.util.module_from_spec(_agent_facing_s
 _agent_facing_string_collector_spec.loader.exec_module(_agent_facing_string_collector)
 path_is_test_file = _agent_facing_string_collector.path_is_test_file
 agent_facing_string_nodes_in_source = _agent_facing_string_collector.agent_facing_string_nodes_in_source
+_message_reminder_hook_spec = importlib.util.spec_from_file_location(
+    "python_edit_changed_agent_facing_message_check_reminder_hook",
+    Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
+    / "python-edit-changed-agent-facing-message-check-reminder-hook.py")
+_message_reminder_hook = importlib.util.module_from_spec(_message_reminder_hook_spec)
+_message_reminder_hook_spec.loader.exec_module(_message_reminder_hook)
+fast_read_target_written = _message_reminder_hook.fast_read_target_written
+FAST_READ_COMMAND = _message_reminder_hook.FAST_READ_COMMAND
 
 REVIEW_TIER_ORDER = {"seat-alone": 0, "seat-and-codex": 1, "full-reviewer": 2}
 GITHUB_PULL_REQUEST_FIELDS = "number,title,url,state,author,headRefOid,baseRefName,mergeCommit"
@@ -435,6 +446,34 @@ def changed_agent_facing_text_entries(repository, old_revision, new_revision, ch
     return sorted(entries, key=lambda entry: (entry["path"], entry["line"], entry["label"]))
 
 
+def entries_with_fast_read_commands(entries):
+    """Give each entry the cold-read-fast-read command for its new text, written
+    to a target file the way the message reminder hook writes it, or the reason
+    the file could not be written."""
+    for entry in entries:
+        try:
+            target = fast_read_target_written(entry["path"], entry["new_text"])
+        except OSError as failure:
+            entry["fast_read_command"] = None
+            entry["fast_read_target_error"] = f"{type(failure).__name__}: {failure}"
+        else:
+            entry["fast_read_command"] = FAST_READ_COMMAND.format(target=target)
+            entry["fast_read_target_error"] = None
+    return entries
+
+
+def fast_read_line_for_agent_text_entry(entry):
+    if entry["fast_read_command"] is not None:
+        return "cold-read-fast-read: " + entry["fast_read_command"]
+    return ("cold-read-fast-read: none, because this message's text could not be written to a file: "
+            + entry["fast_read_target_error"])
+
+
+def plan_entries_missing_fast_read_command(plan):
+    return [entry for entry in plan["agent_facing_text_whole_pull_request"] + plan["agent_facing_text_delta"]
+            if entry["fast_read_command"] is None]
+
+
 def suites_split_from_a_program_test_at_revision(repository, revision, sibling_test_path, program_stem):
     """The files at revision in sibling_test_path's directory named
     <program_stem>-<anything>-test.py, sibling_test_path among them when it
@@ -568,7 +607,8 @@ def compute_pull_request_review_plan(arguments):
              "inline_comments": inline_counts.get(review["id"], 0)} for review in posted_reviews],
         "changed_files": changed_files, "delta_files": [],
         "test_files_to_run": test_files_to_run_for_changed_files(repository, head, changed_files),
-        "agent_facing_text_whole_pull_request": changed_agent_facing_text_entries(repository, merge_base, head, changed_files),
+        "agent_facing_text_whole_pull_request": entries_with_fast_read_commands(
+            changed_agent_facing_text_entries(repository, merge_base, head, changed_files)),
         "agent_facing_text_delta": [],
     }
     if earlier:
@@ -587,7 +627,8 @@ def compute_pull_request_review_plan(arguments):
                 delta_files = [entry for entry in delta_files if entry["path"] in own_paths]
                 plan["delta_files_restricted_to_pull_request_files"] = True
             plan["delta_files"] = delta_files
-            plan["agent_facing_text_delta"] = changed_agent_facing_text_entries(repository, earlier, head, delta_files)
+            plan["agent_facing_text_delta"] = entries_with_fast_read_commands(
+                changed_agent_facing_text_entries(repository, earlier, head, delta_files))
             plan["delta_tier"], plan["delta_tier_decided_by"] = review_tier_and_deciding_reason(delta_files)
             reasons = plan["delta_only_review_reasons"]
             if merge_commits:
@@ -647,6 +688,7 @@ def render_text_agent_entries(entries):
     lines = []
     for entry in entries:
         lines.append(f"  {entry['path']}:{entry['line']} {entry['label']}")
+        lines.append("    " + fast_read_line_for_agent_text_entry(entry))
         changed_lines = changed_lines_for_agent_text_entry(entry)
         if changed_lines is not None:
             lines.append("    changed lines:")
@@ -701,7 +743,8 @@ def render_pull_request_brief_skeleton(plan):
         if not entries:
             lines.extend(["none", ""])
         for entry in entries:
-            lines.extend([f"{entry['path']}:{entry['line']} {entry['label']}", ""])
+            lines.extend([f"{entry['path']}:{entry['line']} {entry['label']}", "",
+                          *markdown_fenced_text_lines(fast_read_line_for_agent_text_entry(entry)), ""])
             changed_lines = changed_lines_for_agent_text_entry(entry)
             if changed_lines is not None:
                 lines.extend(["changed lines:", *markdown_fenced_text_lines("\n".join(changed_lines), "diff"), ""])
@@ -753,6 +796,13 @@ def main(argv=None):
         if arguments.brief_skeleton is not None:
             write_brief_skeleton_exclusively(arguments.brief_skeleton, render_pull_request_brief_skeleton(plan))
         sys.stdout.write(json.dumps(plan, indent=2) + "\n" if arguments.json else render_pull_request_review_plan_text(plan))
+        missing = plan_entries_missing_fast_read_command(plan)
+        if missing:
+            print(f"pull-request-review-plan: {len(missing)} listed agent-facing message(s) have no cold-read-fast-read "
+                  "command, because their text could not be written to a file; the plan marks each one.\n"
+                  "For each marked message: write its text to a file of its own, then run "
+                  + FAST_READ_COMMAND.format(target="<that file>") + " from your checkout.", file=sys.stderr)
+            return 1
         return 0
     except ReviewPlanRefusal as refusal:
         print(f"pull-request-review-plan: {refusal}", file=sys.stderr)

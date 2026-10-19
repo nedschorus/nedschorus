@@ -106,12 +106,15 @@ class ReviewPlanTemporaryRepositoryFixture:
         self.control_directory.mkdir()
         self.binary_directory = temporary_directory / "bin"
         self.binary_directory.mkdir()
+        self.message_target_temporary_directory = temporary_directory / "message-target-temporary-directory"
+        self.message_target_temporary_directory.mkdir()
         stand_in_path = self.binary_directory / "gh"
         stand_in_path.write_text(STAND_IN_GITHUB_SOURCE, encoding="utf-8")
         stand_in_path.chmod(0o755)
         self.environment = {**os.environ,
                             "PATH": str(self.binary_directory) + os.pathsep + os.environ["PATH"],
                             CONTROL_DIRECTORY_VARIABLE: str(self.control_directory),
+                            "TMPDIR": str(self.message_target_temporary_directory),
                             "PYTHONDONTWRITEBYTECODE": "1"}
         self.git_command("init", "-q", "-b", "main")
         for path, content in BASELINE_FILE_CONTENTS.items():
@@ -545,6 +548,59 @@ def run_agent_text_cases(fixture):
     check("reflowed identical messages are omitted", plan["agent_facing_text_delta"] == [], plan)
 
 
+def run_fast_read_command_cases(fixture):
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("scripts/agent-messages.py", BASELINE_FILE_CONTENTS["scripts/agent-messages.py"].replace("Old failure", "Middle failure"))
+    earlier = fixture.commit_fixture_changes("earlier message")
+    fixture.write_fixture_file("scripts/agent-messages.py", BASELINE_FILE_CONTENTS["scripts/agent-messages.py"].replace("Old failure", "New failure"))
+    head = fixture.commit_fixture_changes("reworded message")
+    fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]])
+    plan = fixture.read_review_plan()
+    whole_entry = next(entry for entry in plan["agent_facing_text_whole_pull_request"] if entry["label"] == "raise in show_message()")
+    delta_entry = next(entry for entry in plan["agent_facing_text_delta"] if entry["label"] == "raise in show_message()")
+    command_prefix = "python3 nc-systems/cold-read/cold-read-fast-read.py --target "
+    target = Path(whole_entry["fast_read_command"].removeprefix(command_prefix))
+    check("each listed message gets a fast-read command whose target holds its new text",
+          whole_entry["fast_read_command"].startswith(command_prefix) and whole_entry["fast_read_target_error"] is None
+          and target.is_relative_to(fixture.message_target_temporary_directory)
+          and target.read_text(encoding="utf-8") == "New failure\n", whole_entry)
+    check("the delta's entry for the same new text gets the same command",
+          delta_entry["fast_read_command"] == whole_entry["fast_read_command"], delta_entry)
+    text_result = fixture.run_review_plan(json_output=False)
+    check("the text plan prints each command beside its message",
+          text_result.returncode == 0
+          and text_result.stdout.count("    cold-read-fast-read: " + whole_entry["fast_read_command"]) == 2, text_result)
+    skeleton_path = fixture.control_directory / "fast-read-brief.md"
+    skeleton_result = fixture.run_review_plan("--brief-skeleton", str(skeleton_path))
+    check("the brief skeleton carries each command",
+          skeleton_result.returncode == 0
+          and skeleton_path.read_text().count("cold-read-fast-read: " + whole_entry["fast_read_command"]) == 2,
+          skeleton_result)
+
+    blocked_temporary_directory = fixture.control_directory / "temporary-directory-with-target-directory-blocked"
+    blocked_temporary_directory.mkdir()
+    (blocked_temporary_directory / review_plan_module._message_reminder_hook.FAST_READ_TARGET_DIRECTORY_NAME).write_text(
+        "a file where the target directory belongs\n", encoding="utf-8")
+    saved_environment = fixture.environment
+    fixture.environment = {**saved_environment, "TMPDIR": str(blocked_temporary_directory)}
+    try:
+        json_result = fixture.run_review_plan()
+        text_result = fixture.run_review_plan(json_output=False)
+    finally:
+        fixture.environment = saved_environment
+    blocked_plan = json.loads(json_result.stdout) if json_result.stdout else {}
+    blocked_entries = blocked_plan.get("agent_facing_text_whole_pull_request", [])
+    check("a target that cannot be written leaves the plan printed, the entry marked and exit 1",
+          json_result.returncode == 1 and bool(blocked_entries)
+          and all(entry["fast_read_command"] is None and entry["fast_read_target_error"] for entry in blocked_entries)
+          and "have no cold-read-fast-read command" in json_result.stderr
+          and "--target <that file>" in json_result.stderr, json_result)
+    check("the text plan says why a message has no command",
+          text_result.returncode == 1
+          and "cold-read-fast-read: none, because this message's text could not be written to a file: " in text_result.stdout,
+          text_result)
+
+
 def run_repository_and_output_cases(fixture):
     fixture.reset_fixture_to_base()
     fixture.write_fixture_file("scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace('"old"', '"open branch"'))
@@ -737,6 +793,7 @@ def main():
         run_fix_round_cases(fixture)
         run_hook_registration_and_delta_boundary_cases(fixture)
         run_agent_text_cases(fixture)
+        run_fast_read_command_cases(fixture)
         run_repository_and_output_cases(fixture)
         run_refusal_and_call_shape_cases(fixture)
     print(f"{len(CHECK_FAILURE_NAMES)} failed; elapsed {time.monotonic() - start_time:.2f}s")
