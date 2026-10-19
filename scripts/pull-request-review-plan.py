@@ -490,9 +490,11 @@ def plan_entries_missing_fast_read_command(plan):
 
 def json_rerun_command_line(arguments):
     """This run's command line with --json and without --brief-skeleton: a
-    skeleton file this run wrote already exists, and a run naming it is refused."""
+    skeleton file this run wrote already exists, and a run naming it is refused.
+    The repository is absolute because the message says to run the command from
+    the top of the checkout, which a relative --repository may not be relative to."""
     return shlex.join(["python3", "scripts/pull-request-review-plan.py",
-                       "--pull-request", str(arguments.pull_request), "--repository", str(arguments.repository),
+                       "--pull-request", str(arguments.pull_request), "--repository", str(arguments.repository.resolve()),
                        "--github-repository", arguments.github_repository, "--json"])
 
 

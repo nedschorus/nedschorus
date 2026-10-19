@@ -633,6 +633,24 @@ def run_fast_read_command_cases(fixture):
           rerun_words == ["python3", "scripts/pull-request-review-plan.py",
                           "--pull-request", str(FIXTURE_PULL_REQUEST_NUMBER), "--repository", str(fixture.repository),
                           "--github-repository", FIXTURE_GITHUB_REPOSITORY, "--json"], text_result.stderr)
+    fixture.environment = {**saved_environment, "TMPDIR": str(blocked_temporary_directory)}
+    try:
+        relative_result = subprocess.run(
+            [sys.executable, str(REVIEW_PLAN_SCRIPT), "--pull-request", str(FIXTURE_PULL_REQUEST_NUMBER),
+             "--repository", "..", "--github-repository", FIXTURE_GITHUB_REPOSITORY],
+            cwd=fixture.repository / "scripts", env=fixture.environment, capture_output=True, text=True, timeout=10)
+    finally:
+        fixture.environment = saved_environment
+    relative_lines = relative_result.stderr.splitlines()
+    relative_index = next((index for index, line in enumerate(relative_lines) if line.startswith("1. Get the plan as JSON")), None)
+    try:
+        relative_words = shlex.split(relative_lines[relative_index + 1]) if relative_index is not None else []
+    except (ValueError, IndexError):
+        relative_words = []
+    check("run from a subdirectory with a relative --repository, the rerun command names the repository by its absolute path",
+          relative_result.returncode == 3 and "--repository" in relative_words
+          and relative_words[relative_words.index("--repository") + 1] == str(fixture.repository.resolve()),
+          relative_result.stderr)
 
     hook_tempfile = review_plan_module._message_reminder_hook.tempfile
     saved_gettempdir = hook_tempfile.gettempdir
