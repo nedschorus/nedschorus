@@ -175,7 +175,7 @@ with tempfile.TemporaryDirectory(prefix="run-all-test-suites-overlapping-runs-")
               f"{expected_niceness} where this test runs at {os.nice(0)}",
               any(row[5] == f"runs at niceness {expected_niceness}"
                   for row in case_rows(log_dir)), case_rows(log_dir))
-        report = (log_dir / "report.txt").read_text()
+        report = (log_dir / "test-run-report.txt").read_text()
         check(f"the {name} run reports how long its suites waited for admission",
               "seconds suites waited for admission: " in report, report[-800:])
 
