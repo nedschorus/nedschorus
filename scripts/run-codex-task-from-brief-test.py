@@ -642,6 +642,58 @@ try:
           f"exit {exit_code}, Codex commands built {len(codex_commands_built)}, "
           f"stderr {captured.getvalue()!r}")
 
+    # macOS answers killpg with EPERM while every process left in the group is exiting,
+    # which cannot be timed from a test, so a stand-in killpg gives that answer.
+    killpg_answers = []
+    killpg_calls = []
+    sleeps = []
+
+    def killpg_answering(group_id, signal_number):
+        killpg_calls.append(signal_number)
+        answer = killpg_answers.pop(0) if killpg_answers else ProcessLookupError()
+        if answer is not None:
+            raise answer
+
+    class StoppedProcess:
+        pid = 4242
+
+        def wait(self, timeout=None):
+            return -15
+    real_killpg, real_sleep = runner.os.killpg, runner.time.sleep
+    runner.os.killpg, runner.time.sleep = killpg_answering, sleeps.append
+    try:
+        killpg_answers[:] = [None, PermissionError(1, "Operation not permitted"),
+                             PermissionError(1, "Operation not permitted"),
+                             ProcessLookupError()]
+        stop_error = None
+        try:
+            runner.stop_process_group(StoppedProcess())
+        except OSError as error:
+            stop_error = error
+        check("stopping Codex at the deadline waits out macOS's EPERM from a group whose "
+              "last processes are exiting, and ends when the group is gone",
+              stop_error is None
+              and killpg_calls == [signal.SIGTERM] + [signal.SIGKILL] * 3
+              and len(sleeps) == 2,
+              f"error {stop_error!r}, killpg signals {killpg_calls!r}, sleeps {sleeps!r}")
+
+        killpg_calls.clear()
+        sleeps.clear()
+        killpg_answers[:] = [PermissionError(1, "Operation not permitted")
+                             for _ in range(runner.EXITING_GROUP_SIGNAL_ATTEMPTS + 5)]
+        stop_error = None
+        try:
+            runner.stop_process_group(StoppedProcess())
+        except PermissionError as error:
+            stop_error = error
+        check("a process group that keeps refusing the stop signal raises PermissionError "
+              "after a bounded number of attempts",
+              stop_error is not None
+              and len(killpg_calls) == runner.EXITING_GROUP_SIGNAL_ATTEMPTS,
+              f"error {stop_error!r}, killpg calls {len(killpg_calls)}")
+    finally:
+        runner.os.killpg, runner.time.sleep = real_killpg, real_sleep
+
     empty_brief = scratch / "empty.md"
     empty_brief.write_text("  \n")
     completed = subprocess.run(
