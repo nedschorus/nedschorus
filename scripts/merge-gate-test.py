@@ -93,7 +93,9 @@ after all mutations as the control.
 F7, UNSTABLE on the merge-state allow-list, has no case by the user's ruling.
 
 THE DESCRIPTION CASES. The gate refuses a pull request whose description has no
-line beginning "Root cause:", "Root cause not fixed:" or "No defect fixed.". The
+line beginning "#root_cause", "#root_cause_not_fixed" or "#no_defect_fixed", or
+one of the colon-and-period labels "Root cause:", "Root cause not fixed:" or
+"No defect fixed.", which descriptions written before the hashtags carry. The
 stand-in serves the description read, `gh pr view --json body`, from the route
 "body"; a case that arranges none is served the 1364 capture, a description
 with a plain "Root cause:" line, so every other case reaches its own point. Each
@@ -101,8 +103,8 @@ description is captured from a nedschorus pull request, merged unless said: 1364
 plain, 1360 "Root cause not fixed:", 1278 an indented bullet, 1320 (open when
 captured) bold type, 1298 two labelled lines, 1363 no label at all, and 1279
 "Root cause:" only in the middle of lines. No capture carries "No defect
-fixed.", and none carries a label without its colon or period, so those cases
-append a line to the 1363 capture.
+fixed." or a hashtag, and none carries a label without its colon or period, so
+those cases append a line to the 1363 capture.
 
 Run: python3 scripts/merge-gate-test.py
 """
@@ -981,13 +983,13 @@ def case_fa_chain_line_stops_when_the_gate_could_not_run(gate):
 
 DESCRIPTION_REFUSAL_LINES = (
     f"GATE REFUSED (#{BASE_PR}): the pull request's description has no line beginning "
-    "\"Root cause:\", \"Root cause not fixed:\" or \"No defect fixed.\", so it does not say whether "
+    "\"#root_cause\", \"#root_cause_not_fixed\" or \"#no_defect_fixed\", so it does not say whether "
     "the pull request fixes a defect and, if it does, whether the change removes the defect's "
     "root cause.\n",
     "\nHave the pull request's author add one of these lines to the description, starting the "
-    "line with the label, which may follow a bullet and may be in bold type: \"Root cause:\" and "
-    "the root cause the change removes; \"Root cause not fixed:\" and the root cause that stays, "
-    "or that none was found, with the reason; or \"No defect fixed.\" when the pull request fixes "
+    "line with the hashtag, which may follow a bullet and may be in bold type: \"#root_cause\" and "
+    "the root cause the change removes; \"#root_cause_not_fixed\" and the root cause that stays, "
+    "or that none was found, with the reason; or \"#no_defect_fixed\" when the pull request fixes "
     "no defect.\n",
     "\nEditing the description needs no new commit. Once the description has the line, run the "
     "gate again.\n")
@@ -1044,6 +1046,35 @@ def case_description_root_cause_without_its_colon(gate):
 
 def case_description_no_defect_fixed_without_its_period(gate):
     return description_refused(gate, unlabelled_description_with_line("No defect fixed"))
+
+
+def case_description_root_cause_hashtag_line(gate):
+    return description_passes(
+        gate, unlabelled_description_with_line("#root_cause the hook read a file it never checked exists."))
+
+
+def case_description_root_cause_not_fixed_hashtag_line(gate):
+    return description_passes(
+        gate, unlabelled_description_with_line("#root_cause_not_fixed the harness drops the variable."))
+
+
+def case_description_no_defect_fixed_hashtag_line(gate):
+    return description_passes(gate, unlabelled_description_with_line("#no_defect_fixed"))
+
+
+def case_description_hashtag_in_bold_after_a_bullet(gate):
+    return description_passes(
+        gate, unlabelled_description_with_line("- **#root_cause** the hook read a file it never checked."))
+
+
+def case_description_hashtag_run_on_into_a_longer_word(gate):
+    return description_refused(
+        gate, unlabelled_description_with_line("#root_causes the hook read a file it never checked."))
+
+
+def case_description_hashtag_only_mid_line(gate):
+    return description_refused(
+        gate, unlabelled_description_with_line("This pull request has no #root_cause line."))
 
 
 def case_description_without_a_label(gate):
@@ -1146,7 +1177,18 @@ CASES = [
     ("G1 a description whose label is in bold type passes", case_description_label_in_bold_type),
     ("G1 a description with two labelled lines passes", case_description_with_two_labelled_lines),
     ("G1 a description with a \"No defect fixed.\" line passes", case_description_no_defect_fixed_line),
+    ("G1 a description with a \"#root_cause\" line passes", case_description_root_cause_hashtag_line),
+    ("G1 a description with a \"#root_cause_not_fixed\" line passes",
+     case_description_root_cause_not_fixed_hashtag_line),
+    ("G1 a description with a \"#no_defect_fixed\" line passes",
+     case_description_no_defect_fixed_hashtag_line),
+    ("G1 a description whose hashtag is in bold type after a bullet passes",
+     case_description_hashtag_in_bold_after_a_bullet),
     ("G2 a description with no labelled line refuses", case_description_without_a_label),
+    ("G2 a description whose hashtag runs on into a longer word refuses",
+     case_description_hashtag_run_on_into_a_longer_word),
+    ("G2 a description with \"#root_cause\" only in the middle of lines refuses",
+     case_description_hashtag_only_mid_line),
     ("G2 a description with \"Root cause:\" only in the middle of lines refuses",
      case_description_with_the_label_only_mid_line),
     ("G2 a description with \"Root cause\" but no colon refuses",
@@ -1291,7 +1333,16 @@ MUTATIONS = [
     ("without the description check", [('[ "$has_defect_line" = "true" ] ||', "true ||")],
      [case_description_without_a_label]),
     ("the label allowed anywhere in a line", [('any(test("^', 'any(test("')],
-     [case_description_with_the_label_only_mid_line]),
+     [case_description_with_the_label_only_mid_line, case_description_hashtag_only_mid_line]),
+    ("hashtags not accepted", [("(?:#(?:root_cause", "(?:#never(?:root_cause")],
+     [case_description_root_cause_hashtag_line, case_description_root_cause_not_fixed_hashtag_line,
+      case_description_no_defect_fixed_hashtag_line, case_description_hashtag_in_bold_after_a_bullet]),
+    ("\"#root_cause_not_fixed\" not accepted", [("(?:_not_fixed)?", "")],
+     [case_description_root_cause_not_fixed_hashtag_line]),
+    ("\"#no_defect_fixed\" not accepted", [("|no_defect_fixed)", "|no_defect_fixed_never)")],
+     [case_description_no_defect_fixed_hashtag_line]),
+    ("a hashtag allowed to run on into a longer word", [("(?!\\\\w)", "")],
+     [case_description_hashtag_run_on_into_a_longer_word]),
     ("no bullet allowed before the label", [("(?:[-*+]\\\\s+)?", "")],
      [case_description_label_after_an_indented_bullet]),
     ("no bold type allowed around the label", [("(?:\\\\*\\\\*|__)?", "")],

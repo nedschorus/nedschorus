@@ -4622,8 +4622,8 @@ def run_pull_request_description_cases(directory):
     import re
     # The gate's jq test, line for line, applied to each line of the body.
     gate_line = re.compile(
-        r"^\s*(?:[-*+]\s+)?(?:\*\*|__)?(?:Root cause(?: not fixed)?(?:\*\*|__)?:"
-        r"|No defect fixed(?:\*\*|__)?\.)")
+        r"^\s*(?:[-*+]\s+)?(?:\*\*|__)?(?:#(?:root_cause(?:_not_fixed)?|no_defect_fixed)(?!\w)"
+        r"|Root cause(?: not fixed)?(?:\*\*|__)?:|No defect fixed(?:\*\*|__)?\.)")
     for name, function in (
             ("create", tool.create_pull_request_for_branch),
             ("edit", tool.create_pull_request_for_edit_branch)):
@@ -4637,6 +4637,8 @@ def run_pull_request_description_cases(directory):
         body = calls[0][calls[0].index("--body") + 1] if calls else ""
         check(f"the {name} pull request's description carries a line the merge gate accepts",
               any(gate_line.match(line) for line in body.splitlines()), repr(body))
+        check(f"the {name} pull request's description says it fixes no defect in the hashtag form",
+              "#no_defect_fixed" in body.splitlines(), repr(body))
 
 
 def run_whole_file_set_cases(scratch: Path):

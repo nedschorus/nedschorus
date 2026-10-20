@@ -1585,7 +1585,7 @@ def create_pull_request_for_branch(repo: str, branch: str, number: int,
             "issue's body is the links to its files, so this file has to "
             "be on main before the body can point at it. Prose under "
             "`docs/`, silent to reviewers by CLAUDE.md's review-scope "
-            "rule.\n\nNo defect fixed.\n")
+            "rule.\n\n#no_defect_fixed\n")
     created = runner(
         ["gh", "pr", "create", "--repo", repo, "--base", "main",
          "--head", branch, "--title", f"GHI-MD for issue {number}: {title}",
@@ -2304,7 +2304,7 @@ def create_pull_request_for_edit_branch(repo: str, branch: str, number: int,
             "issue's title and body are derived from main's copy of its "
             "files, so this has to land before either follows. Prose "
             "under `docs/`, silent to reviewers by CLAUDE.md's "
-            "review-scope rule.\n\nNo defect fixed.\n")
+            "review-scope rule.\n\n#no_defect_fixed\n")
     created = runner(
         ["gh", "pr", "create", "--repo", repo, "--base", "main",
          "--head", branch, "--title",
