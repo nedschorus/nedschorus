@@ -55,8 +55,10 @@ and does not count. The record-name, frozen-path and finished-report rules
 are all taken from that module. A record holding a frozen copy under target/
 belongs to the document only when the copy sits at the document's path,
 relative to its checkout or absolute without the leading slash, the form a
-fast read run from another checkout writes; a record without target/ is
-matched by name alone. The document is not due when a record's frozen copy
+fast read run from another checkout writes, a path under /Volumes/nedhome/
+matching the same path under /home/nedlern/ too, because a read the Mac runs
+on ned-box over ssh freezes the copy under the ned-box path; a record
+without target/ is matched by name alone. The document is not due when a record's frozen copy
 has the document's bytes, whatever the file times say: a checkout or a pull
 stamps a file with the time of the checkout, so file times alone would call
 every document in a new worktree due. Otherwise the document is due when its
@@ -431,9 +433,11 @@ def document_is_due(document, record_directories, document_top, record_names,
                    if record_names.COMPLETED_REPORT_NAME_PATTERN.match(report.name)):
                 return False
             if (record / record_names.FROZEN_TARGET_DIRECTORY_NAME).is_dir():
-                frozen = next((candidate for candidate in
-                               record_names.frozen_target_candidate_paths(
-                                   document, record, document_top)
+                # A read the Mac hands to ned-box over ssh freezes the
+                # document under its ned-box path.
+                frozen = next((candidate for form in (document, Path(ned_box_form_of_path(document)))
+                               for candidate in record_names.frozen_target_candidate_paths(
+                                   form, record, document_top)
                                if candidate.is_file()), None)
                 if frozen is None:
                     continue

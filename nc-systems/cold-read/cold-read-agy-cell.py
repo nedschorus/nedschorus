@@ -122,7 +122,9 @@ TIER_TO_REASONING_EFFORT = {
     "fast": "medium",
 }
 
-AGY_PRINT_TIMEOUT = "30m"
+# The fast read on the Mac sizes its ssh time limit from this number.
+COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60
+AGY_PRINT_TIMEOUT = f"{COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS // 60}m"
 
 # Exclude brief acknowledgements from stdout report recovery.
 STDOUT_REVIEW_MINIMUM_WORDS = 120

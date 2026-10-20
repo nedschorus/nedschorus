@@ -680,6 +680,29 @@ def main():
     check("on the Mac, another agent-session's read on ned-box over ssh does not count as this one's",
           hook.document_is_due(mac_draft, [], None, record_names, "s2") is True)
 
+    # On the Mac, a read run on ned-box over ssh from another checkout freezes
+    # the document under its ned-box path.
+    mac_plan = fake_mount / "agents" / "seat" / "docs" / "plan-of-record.md"
+    mac_plan.parent.mkdir(parents=True, exist_ok=True)
+    mac_plan.write_text("same\n")
+    os.utime(mac_plan, (5_000_000, 5_000_000))
+    mac_records = SUITE_ROOT / "mac-cold-read-records"
+    ned_box_record = mac_records / "plan-of-record-2026-10-20"
+    frozen = (ned_box_record / record_names.FROZEN_TARGET_DIRECTORY_NAME
+              / Path(*(fake_home / "agents" / "seat" / "docs" / "plan-of-record.md").parts[1:]))
+    frozen.parent.mkdir(parents=True)
+    frozen.write_text("same\n")
+    (ned_box_record / "fast-read.md").write_text("report\n")
+    for path in (frozen, ned_box_record / "fast-read.md"):
+        os.utime(path, (4_000_000, 4_000_000))
+    check("on the Mac, a document whose frozen copy from a read on ned-box over ssh has its "
+          "bytes is not due, though the document is newer",
+          hook.document_is_due(mac_plan, [mac_records], None, record_names) is False)
+    mac_plan.write_text("changed\n")
+    os.utime(mac_plan, (5_000_000, 5_000_000))
+    check("on the Mac, a document changed since that frozen copy is due",
+          hook.document_is_due(mac_plan, [mac_records], None, record_names) is True)
+
     # A shared module that will not load is a fault like any other, not a traceback.
     scratch_root = SUITE_ROOT / "hook-without-its-home-module"
     (scratch_root / "scripts").mkdir(parents=True)

@@ -941,6 +941,34 @@ check("on the walk route it says the copy was temporary and is gone",
 # because nothing said so. The read now says it, and these cases pin which
 # targets it says it about.
 warning_module = script_under_test_module()
+
+
+def ssh_time_limit_seconds_with_agy_cell(agy_cell_text):
+    """The fast read's ssh time limit when the agy cell it loads is `agy_cell_text`."""
+    real_spec_from_file_location = importlib.util.spec_from_file_location
+
+    def spec_with_stand_in_agy_cell(name, location, *arguments, **keywords):
+        if pathlib.Path(location) == warning_module.AGY_CELL_LAUNCHER:
+            location = stand_in_agy_cell
+        return real_spec_from_file_location(name, location, *arguments, **keywords)
+
+    with tempfile.TemporaryDirectory() as scratch:
+        stand_in_agy_cell = pathlib.Path(scratch) / "cold-read-agy-cell.py"
+        stand_in_agy_cell.write_text(agy_cell_text, encoding="utf-8")
+        importlib.util.spec_from_file_location = spec_with_stand_in_agy_cell
+        try:
+            module = script_under_test_module()
+        finally:
+            importlib.util.spec_from_file_location = real_spec_from_file_location
+    return module.COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS
+
+
+check("the ssh time limit of a read on ned-box follows the agy cell's per-model limit "
+      "and the length of the fast cold-read-tier's model chain",
+      ssh_time_limit_seconds_with_agy_cell(
+          "COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 45 * 60\n"
+          "TIER_TO_AGY_MODEL_CHAIN = {'fast': ('model-a', 'model-b')}\n")
+      == warning_module.FAST_READ_ATTEMPTS * 2 * 45 * 60 + 5 * 60)
 class_of = warning_module.full_run_class_of_target
 root = warning_module.REPO_ROOT
 check("a skill is in the class",
@@ -1554,7 +1582,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
               and "dispatched you; otherwise tell the user, in these words: \"The cold-read-fast-read could not run "
                   "on ned-box from this Mac: ssh exited 255 and said: 'ssh: connect to host "
                   "ned-box port 22: No route to host'. Run `ssh nedlern@ned-box true` from "
-                  "a Terminal on your Mac. If it fails with 'Permission denied', ned-box "
+                  "a Terminal on your Mac. If that command fails with 'Permission denied', ned-box "
                   "refused this Mac's key; if it fails another way, check that ned-box is on and on the "
                   "LAN.\"" in stderr,
               repr(stderr))
