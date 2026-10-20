@@ -471,9 +471,9 @@ with tempfile.TemporaryDirectory() as scratch:
           len(changed_lines) == 1 and launch_sha256[:12] in changed_lines[0]
           and after_sha256[:12] in changed_lines[0]
           and "carry each fix to the document as it now stands" in changed_lines[0]
-          # A walk draft's marked copy is removed on exit, so the line must not send the agent to it.
-          and "triage it against those quoted sentences" in changed_lines[0]
-          and "against that copy" not in changed_lines[0],
+          and "triage the report against those quoted sentences" in changed_lines[0]
+          # On the records route the copy the reviewer read is kept, and the line says where.
+          and "-with-sentence-ids.md)" in changed_lines[0] and "kept at " in changed_lines[0],
           repr(result.stderr))
     check("the report keeps its provenance stamp first and the same line, as a comment, second",
           len(edited_lines) > 1 and edited_lines[0].startswith("<!-- provenance:")
@@ -1603,6 +1603,16 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
             else:
                 os.environ[name] = value
         sys.argv = argv_before
+
+# A walk draft's marked copy is scratch, so the changed-during-read line must not send the agent to it.
+with tempfile.TemporaryDirectory() as changed_scratch:
+    changed_target = Path(changed_scratch) / "draft.md"
+    changed_target.write_text("Edited after launch.\n", encoding="utf-8")
+    walk_route_line = script_under_test_module().target_changed_during_read_line(
+        changed_target, "0" * 64, None)
+check("on the walk route the changed-during-read line says the reviewer's copy is gone",
+      "(since removed)" in walk_route_line and "kept at" not in walk_route_line,
+      repr(walk_route_line))
 
 print()
 if failures:

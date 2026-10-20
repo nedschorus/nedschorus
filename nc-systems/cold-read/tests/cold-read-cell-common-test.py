@@ -141,6 +141,7 @@ WHAT IS PINNED HERE.
 Run: python3 nc-systems/cold-read/tests/cold-read-cell-common-test.py
 """
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -648,6 +649,24 @@ with tempfile.TemporaryDirectory() as scratch:
             stamped_report, runtime="claude", model="m", effort="e", cell="c",
             tier="t", target_argument=missing_target, duration_s=0)
         unreadable_stamp = stamped_report.read_text(encoding="utf-8").split("\n", 1)[0]
+    # The launcher finds a relative --target under the repository root, so the stamp must hash that file.
+    relative_target = "nc-systems/cold-read/cold-read-grid.py"
+    expected_sha256 = hashlib.sha256((common_module.REPO_ROOT / relative_target).read_bytes()).hexdigest()
+    cwd_before = os.getcwd()
+    with tempfile.TemporaryDirectory() as elsewhere:
+        relative_report = Path(elsewhere) / "report.md"
+        relative_report.write_text("review\n", encoding="utf-8")
+        os.chdir(elsewhere)
+        try:
+            common_module.stamp_provenance(
+                relative_report, runtime="claude", model="m", effort="e", cell="c",
+                tier="t", target_argument=relative_target, duration_s=0)
+        finally:
+            os.chdir(cwd_before)
+        relative_stamp = relative_report.read_text(encoding="utf-8").split("\n", 1)[0]
+    check("a relative target run from another directory is hashed as the launcher resolved it",
+          f"target_sha256={expected_sha256} target={relative_target} -->" in relative_stamp,
+          repr(relative_stamp))
     check("a stamp whose reviewed file cannot be read names its hash as unreadable",
           f"target_sha256=unreadable target={missing_target} -->" in unreadable_stamp,
           repr(unreadable_stamp))

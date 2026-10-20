@@ -797,6 +797,22 @@ def cases(scratch):
           ignored and str(settings_local) in message and "has not approved" in message,
           (ignored, message))
 
+    # -- a cold read's frozen copy of CLAUDE.local.md, in its git-ignored record, is not guarded
+    world = fresh(scratch, "cold-read-record-copy")
+    (world.repo / ".git" / "info" / "exclude").write_text("cold-read-records/\n")
+    record_copy = world.repo / "cold-read-records" / "CLAUDE.local-2026-10-18" / "target" / "CLAUDE.local.md"
+    record_copy.parent.mkdir(parents=True)
+    record_copy.write_text("seat v1\n")
+    world.run()
+    record_copy.write_text("seat v2\n")
+    message = world.run()
+    check("a changed CLAUDE.local.md copy in a cold-read record is not asked about",
+          message == "", message)
+    check("a CLAUDE.local.md copy in a cold-read record is not copied into the store",
+          world.versions(record_copy) == [], world.versions(record_copy))
+    check("a CLAUDE.local.md copy in a cold-read record draws no reminder, in any session",
+          world.run() == "" and world.run(session="session-b", owner="owner-b") == "", "")
+
     # -- Claude Code's scheduler lock is never guarded, even where no exclude line ignores it
     world = fresh(scratch, "unignored-runtime-lock")
     lock = world.repo / ".claude" / "scheduled_tasks.lock"

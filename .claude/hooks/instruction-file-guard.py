@@ -181,12 +181,20 @@ def is_in_draft_or_working_place(directory_parts) -> bool:
                for prefix in PROMPT_EXEMPT_DIRECTORY_PREFIXES)
 
 
+def is_in_review_record_directory(path: Path) -> bool:
+    """A review record holds frozen copies of the documents it read, named as the originals
+    are, such as cold-read-records/<record>/target/CLAUDE.local.md; no agent takes
+    instructions from a copy."""
+    directory_parts = checkout_directory_parts(path)
+    return bool(directory_parts) and directory_parts[0] in REVIEW_RECORD_DIRECTORY_NAMES
+
+
 def is_reusable_prompt(file_path: str) -> bool:
     path = Path(file_path)
     if not path.name.endswith(REUSABLE_PROMPT_SUFFIXES):
         return False
     directory_parts = checkout_directory_parts(path)
-    if directory_parts is None:
+    if directory_parts is None or is_in_review_record_directory(path):
         return False
     return not is_in_draft_or_working_place(directory_parts)
 
@@ -196,9 +204,8 @@ def is_reviewed_document(file_path: str) -> bool:
     if not path.name.endswith(REVIEWED_DOCUMENT_SUFFIX):
         return False
     directory_parts = checkout_directory_parts(path)
-    if directory_parts is None or is_in_draft_or_working_place(directory_parts):
-        return False
-    if directory_parts[:1] and directory_parts[0] in REVIEW_RECORD_DIRECTORY_NAMES:
+    if (directory_parts is None or is_in_draft_or_working_place(directory_parts)
+            or is_in_review_record_directory(path)):
         return False
     # Test designs and contracts follow design-to-main acceptance, even in reviewed homes.
     if path.name.endswith(UNREVIEWED_DOCUMENT_SUFFIXES):
@@ -211,6 +218,8 @@ def is_reviewed_document(file_path: str) -> bool:
 
 def is_protected(file_path: str) -> bool:
     path = Path(file_path)
+    if is_in_review_record_directory(path):
+        return False
     if path.name in PROTECTED_BASENAMES:
         return True
     parts = path.resolve().parts
