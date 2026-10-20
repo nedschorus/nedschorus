@@ -142,6 +142,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import typing
 
 # This file sits in nc-systems/cold-read/, two directories below the root.
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
@@ -830,16 +831,20 @@ def sha256_of_file_or_empty(path: pathlib.Path) -> str:
         return ""
 
 
-def target_changed_during_read_line(target: pathlib.Path, launch_sha256: str) -> str:
+def target_changed_during_read_line(target: pathlib.Path, launch_sha256: str,
+                                    marked_copy_kept: typing.Optional[pathlib.Path]) -> str:
     """The line naming an edit made to the target while the reviewer read it, or ""."""
     after = sha256_of_file_or_empty(target)
     if after == launch_sha256:
         return ""
+    where = (f"kept at {marked_copy_kept}" if marked_copy_kept is not None
+             else "since removed")
     return (f"{COLD_READ_TARGET_CHANGED_HASHTAG} {target}'s bytes changed while the "
             f"reviewer read it — sha256 {launch_sha256[:12]} then {after[:12] or 'unreadable'}. "
-            f"The report reviews the copy the reviewer was given and quotes that copy's "
-            f"sentences: triage it against those quoted sentences, then carry each fix to "
-            f"the document as it now stands.")
+            f"The reviewer read a copy made before the change ({where}), and this report "
+            f"quotes each of that copy's sentences under its restatement: triage the report "
+            f"against those quoted sentences, then carry each fix to the document as it "
+            f"now stands.")
 
 
 def with_line_after_provenance(report_text: str, line: str) -> str:
@@ -976,7 +981,8 @@ def main() -> int:
                     full_run_class_name)
                 if bare_references is not None:
                     attached += bare_references_section(bare_references)
-                changed_line = target_changed_during_read_line(target, launch_sha256)
+                changed_line = target_changed_during_read_line(
+                    target, launch_sha256, marked_copy if on_records_route else None)
                 if changed_line:
                     attached = with_line_after_provenance(attached, changed_line)
                 report.write_text(attached, encoding="utf-8")
