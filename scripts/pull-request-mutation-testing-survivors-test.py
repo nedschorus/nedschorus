@@ -838,8 +838,11 @@ def run_cases():
         check("when the runner cannot name the recordings directory, the run exits 2 with "
               "the runner's reason under this program's name",
               status == survivors_module.EXIT_COULD_NOT_RUN
-              and "pull-request-mutation-testing-survivors: not run — injected root-commit "
-              "failure" in printed.getvalue(), (status, printed.getvalue()))
+              and printed.getvalue() == (
+                  "pull-request-mutation-testing-survivors: not run — injected root-commit "
+                  "failure\n" + survivors_module.load_test_suite_runner()
+                  .git_failure_next_step_lines("pull-request-mutation-testing-survivors.py")
+                  + "\n"), (status, printed.getvalue()))
 
     # ------------------------------------------------------------------
     # The signal sandbox, driven through a fake bwrap on PATH. The variable

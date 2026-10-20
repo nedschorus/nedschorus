@@ -1178,6 +1178,19 @@ def interpreter_and_version(given):
     return found, version[0]
 
 
+def git_failure_next_step_lines(program_file):
+    """The lines that end a refusal after a git failure, for a run of program_file."""
+    rerun = f"the same {program_file} command"
+    return "\n".join([
+        f"If git's error names a lock file, such as .git/index.lock, wait one minute, then run "
+        f"{rerun}; do not delete the lock file yourself.",
+        f"If git's error names a branch, commit or path that does not exist, and you gave that "
+        f"name to {program_file}, correct it in your command, then run the corrected command.",
+        f"In any other case, run {rerun} once more.",
+        f"If {rerun} fails again, stop and tell the user what {program_file} printed, git's "
+        f"error included; a subagent tells the agent that dispatched it instead."])
+
+
 def first_line_of_error(completed):
     return ((completed.stderr or "").strip().splitlines() or [""])[0]
 
@@ -2981,10 +2994,11 @@ def recordings_directory_for(given, top):
     roots = git(top, "rev-list", "--max-parents=0", "HEAD") if head.returncode == 0 else head
     if roots.returncode != 0 or not roots.stdout.split():
         raise CouldNotRun(
-            f"{PROGRAM}: not run — git could not list the root commits of HEAD in {top}, "
-            f"which name the directory of recorded suite inputs: "
-            f"{first_line_of_error(roots) or 'git printed none'}\n"
-            f"Fix what git reports, then run this again.")
+            f"{PROGRAM}: not run — git could not list the root commits of HEAD in {top}, so "
+            f"this run cannot find its directory of recorded suite inputs, which is named "
+            f"after a root commit of HEAD: "
+            f"{first_line_of_error(roots) or 'git printed no error'}\n"
+            + git_failure_next_step_lines(Path(__file__).name))
     return Path(given).expanduser() / min(roots.stdout.split())[:16]
 
 
@@ -3113,7 +3127,7 @@ def files_that_differ_since(top, commit):
         raise CouldNotRun(
             f"{PROGRAM}: not run — git ls-files --others failed in {top}: "
             f"{untracked.stderr.strip()}\n"
-            f"Fix what git reports, then run this again.")
+            + git_failure_next_step_lines(Path(__file__).name))
     for path in untracked.stdout.split("\0"):
         if path:
             differ.setdefault(path, "A")

@@ -1701,8 +1701,8 @@ def run_open_pull_request_branch_cases(scratch):
             ("merge-base --is-ancestor exits 128", present,
              exits(128, "fatal: injected merge-base failure"), gh_must_not_be_asked,
              loaded.EXIT_CHECK_COULD_NOT_RUN,
-             "pre-push: whether this push's updates to origin are fast-forwards could not be "
-             "checked: git merge-base --is-ancestor exited with status 128: fatal: injected "
+             "pre-push: whether this push's update to branch clean is a fast-forward could not "
+             "be checked: git merge-base --is-ancestor exited with status 128: fatal: injected "
              "merge-base failure."),
             ("cat-file --batch-check exits 128", exits(128, "fatal: injected cat-file failure"),
              exits(1), gh_must_not_be_asked, loaded.EXIT_CHECK_COULD_NOT_RUN,
@@ -1723,6 +1723,32 @@ def run_open_pull_request_branch_cases(scratch):
               f"and says why",
               status == expected_status and expected_text in printed.getvalue(),
               (status, printed.getvalue()))
+
+    # One update git cannot check does not stop the check of the others: a later deletion of
+    # an open pull request's head branch in the same push is still refused.
+    def gh_with_open_pull_request_on(branch):
+        def answer(command):
+            listed = [pull_request] if command[command.index("--head") + 1] == branch else []
+            return subprocess.CompletedProcess(command, 0, json.dumps(listed), "")
+        return answer
+
+    several_refs = (f"refs/heads/clean {'1' * 40} refs/heads/clean {'2' * 40}\n"
+                    f"(delete) {'0' * 40} refs/heads/conflicting {'3' * 40}\n")
+    printed = io.StringIO()
+    try:
+        status = loaded.main(["origin", "url"], several_refs, printed, {},
+                             runner_whose_git(present, exits(128, "fatal: injected"),
+                                              gh_with_open_pull_request_on("conflicting")))
+    except Exception as error:  # A crash is this case's failure, not the suite's.
+        status = repr(error)
+    check("open pull request check: when git cannot check one update, a deletion of an open "
+          "pull request's head branch later in the same push is still refused, exit 10, and "
+          "the unchecked update is named",
+          status == loaded.EXIT_REFUSE_PUSH
+          and "it deletes branch conflicting, the head of open pull request #4242"
+          in printed.getvalue()
+          and "whether this push's update to branch clean is a fast-forward could not be "
+          "checked" in printed.getvalue(), (status, printed.getvalue()))
 
     # The test helper origin_ref tells a missing ref from a git failure.
     broken = Scenario(scratch, "origin-ref-broken-origin", real)

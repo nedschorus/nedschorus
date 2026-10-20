@@ -153,12 +153,19 @@ def pull_request_name(pull_request):
 
 
 def refusal_lines(pushed_refs_text, runner):
-    """Return the lines that refuse this push, or [] to let it through."""
+    """Return the lines that refuse this push, or [] to let it through, and one detail for
+    (branch, detail) for each update git could not say is a fast-forward."""
     lookup_failures = []
+    fast_forward_check_failures = []
     for branch, local_object_id, remote_object_id in updates_to_check(pushed_refs_text):
         deletes = set(local_object_id) == {"0"}
-        if not deletes and is_fast_forward(remote_object_id, local_object_id, runner):
-            continue
+        if not deletes:
+            try:
+                if is_fast_forward(remote_object_id, local_object_id, runner):
+                    continue
+            except FastForwardCheckFailed as error:
+                fast_forward_check_failures.append((branch, str(error)))
+                continue
         try:
             pull_request = open_pull_request(branch, runner)
         except OpenPullRequestLookupFailed as error:
@@ -171,14 +178,14 @@ def refusal_lines(pushed_refs_text, runner):
         return [refusal.format(branch=branch, pull_request=pull_request_name(pull_request)),
                 *(line.format(branch=branch, number=pull_request.get("number"))
                   for line in instructions),
-                ESCAPE_HATCH_INSTRUCTION]
+                ESCAPE_HATCH_INSTRUCTION], fast_forward_check_failures
     if lookup_failures:
         branch, deletes, detail = lookup_failures[0]
         return [LOOKUP_FAILED_REFUSAL.format(action="deletes" if deletes else "forces an update to",
                                              branch=branch, detail=detail),
                 LOOKUP_FAILED_INSTRUCTION.format(branch=branch),
-                ESCAPE_HATCH_INSTRUCTION]
-    return []
+                ESCAPE_HATCH_INSTRUCTION], fast_forward_check_failures
+    return [], fast_forward_check_failures
 
 
 def main(argv, pushed_refs_text, stderr, environment, runner=subprocess.run):
@@ -186,17 +193,17 @@ def main(argv, pushed_refs_text, stderr, environment, runner=subprocess.run):
     remote_name = argv[0] if argv else ""
     if remote_name != CHECKED_REMOTE_NAME or environment.get(ESCAPE_HATCH_VARIABLE) == "1":
         return EXIT_ALLOW_PUSH
-    try:
-        lines = refusal_lines(pushed_refs_text, runner)
-    except FastForwardCheckFailed as error:
-        stderr.write(f"{MESSAGE_PREFIX}whether this push's updates to origin are fast-forwards "
-                     f"could not be checked: {error}.\n")
-        return EXIT_CHECK_COULD_NOT_RUN
+    lines, fast_forward_check_failures = refusal_lines(pushed_refs_text, runner)
     for line in lines[:1]:
         stderr.write(MESSAGE_PREFIX + line + "\n")
     for line in lines[1:]:
         stderr.write(line + "\n")
-    return EXIT_REFUSE_PUSH if lines else EXIT_ALLOW_PUSH
+    for branch, detail in fast_forward_check_failures:
+        stderr.write(f"{MESSAGE_PREFIX}whether this push's update to branch {branch} is a "
+                     f"fast-forward could not be checked: {detail}.\n")
+    if lines:
+        return EXIT_REFUSE_PUSH
+    return EXIT_CHECK_COULD_NOT_RUN if fast_forward_check_failures else EXIT_ALLOW_PUSH
 
 
 if __name__ == "__main__":

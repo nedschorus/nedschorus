@@ -1021,6 +1021,8 @@ with tempfile.TemporaryDirectory() as scratch:
           "rather than filing recordings under no-commit",
           result.returncode == 2 and ran(root) == []
           and "git could not list the root commits of HEAD" in result.stderr
+          and result.stderr.endswith(
+              "\n" + module.git_failure_next_step_lines("run-all-test-suites.py") + "\n")
           and "fatal: injected git failure" in result.stderr
           and not (root / "recordings" / "no-commit").exists(),
           (result.returncode, ran(root), result.stderr))
@@ -1036,6 +1038,8 @@ with tempfile.TemporaryDirectory() as scratch:
           "runs, rather than selecting without them",
           result.returncode == 2 and ran(root) == []
           and "git ls-files --others failed" in result.stderr
+          and result.stderr.endswith(
+              "\n" + module.git_failure_next_step_lines("run-all-test-suites.py") + "\n")
           and "fatal: injected git failure" in result.stderr,
           (result.returncode, ran(root), result.stderr))
 
