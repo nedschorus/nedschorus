@@ -50,9 +50,15 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
-def git(arguments, cwd: Path):
-    return subprocess.run(["git", *arguments], cwd=str(cwd),
-                          capture_output=True, text=True, check=False)
+def git(arguments, cwd: Path, check=True):
+    """Run a git step of a fixture; a step that fails stops the suite there,
+    naming the step, unless check=False because the case reads the exit code."""
+    result = subprocess.run(["git", *arguments], cwd=str(cwd),
+                            capture_output=True, text=True, check=False)
+    if check and result.returncode != 0:
+        raise RuntimeError(f"fixture step `git {' '.join(arguments)}` in {cwd} exited "
+                           f"{result.returncode}: {result.stderr.strip()}")
+    return result
 
 
 def run_catch_up_once(extra_arguments, path_prefix=None, stdin_text=None):
@@ -730,7 +736,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     (sequencing / "shared.txt").write_text("a different line\n", encoding="utf-8")
     git(["commit", "-qam", "a conflicting base"], sequencing)
     sequencing_head = head_of(sequencing)
-    git(["cherry-pick", "--no-commit", *picked], sequencing)
+    git(["cherry-pick", "--no-commit", *picked], sequencing, check=False)
     git(["checkout", "--ours", "shared.txt"], sequencing)
     git(["add", "shared.txt"], sequencing)
     sequencing_git_dir = Path(git(["rev-parse", "--absolute-git-dir"], sequencing).stdout.strip())
@@ -1323,7 +1329,7 @@ with tempfile.TemporaryDirectory() as naming_scratch:
           (rename_seat / "scripts/main-will-rename-this.py").is_file())
     check("(fixture) and origin/main no longer has that path at all",
           git(["cat-file", "-e", "origin/main:scripts/main-will-rename-this.py"],
-              rename_seat).returncode != 0)
+              rename_seat, check=False).returncode != 0)
     renamed_listing = catch_up_module.format_obsolete_files(
         catch_up_module.obsolete_files_by_category(rename_seat))
     check("a file main renamed away is listed at the OLD path, the one this branch holds",
@@ -1510,12 +1516,12 @@ with tempfile.TemporaryDirectory() as exception_scratch:
         do it; returns git's exit status so a conflict can be resolved."""
         git(["fetch", "-q", "origin"], seat_path)
         return git(["-c", "core.editor=true", "merge", "--no-ff", "--no-edit", "origin/main"],
-                   seat_path).returncode
+                   seat_path, check=False).returncode
 
     def merge_tree_status(seat_path: Path, extra_arguments):
         """What git says about re-merging the seat's merge commit's two parents."""
         return git(["merge-tree", "--write-tree", *extra_arguments, "HEAD^1", "HEAD^2"],
-                   seat_path).returncode
+                   seat_path, check=False).returncode
 
     # --- a clean catch-up merge is STILL reported ---------------------------
     clean_origin, clean_seat = seat_on_main("clean-catch-up")
@@ -1717,7 +1723,7 @@ with tempfile.TemporaryDirectory() as exception_scratch:
               git(["rev-list", "--merges", "--count", "origin/main..HEAD"],
                   shape_seat).stdout.strip() == "1"
               and git(["merge-base", "--is-ancestor", "HEAD^2", "origin/main"],
-                      shape_seat).returncode == 0
+                      shape_seat, check=False).returncode == 0
               and git(["ls-files", "docs"], shape_seat).stdout.split()
               == ["docs/queue/first-draft.md", "docs/queue/second-draft.md",
                   "docs/queue/third-draft.md"],
@@ -2402,6 +2408,210 @@ with tempfile.TemporaryDirectory() as notes_scratch:
           [note["text"] for note in json.loads(reread_stamp.read_text())["pending_agent_notes"]]
           == ["new"], reread_stamp.read_text())
 
+
+# ---------------------------------------------------------------------------
+# A git command that fails is told as a failure, never read as git's "no"
+# ---------------------------------------------------------------------------
+# git exits 1 for a real "no" from `rev-parse --verify --quiet` and
+# `merge-base --is-ancestor`, and 128 for a failure. A failure must not read
+# as "no remote branch" (which authorises a rebase), "diverged" (which accuses
+# the agent of rewriting a pushed head), "detached HEAD" (which authorises a
+# fast-forward), or "not a merge from main".
+with tempfile.TemporaryDirectory() as failing_git_scratch:
+    failing_tmp = Path(failing_git_scratch).resolve()
+    failing_real_git = shutil.which("git")
+    failing_fixture_count = [0]
+    INJECTED_STDERR = "fatal: injected git failure"
+
+    def seat_behind_main(pushed=False, own_commit=False):
+        """(origin, seat): a seat branch one commit behind origin/main."""
+        failing_fixture_count[0] += 1
+        root = failing_tmp / f"fixture-{failing_fixture_count[0]}"
+        origin_repo = root / "origin"
+        origin_repo.mkdir(parents=True)
+        git(["init", "-q", "-b", "main"], origin_repo)
+        configure_identity(origin_repo)
+        commit_file(origin_repo, "shared.txt", "first\n", "add shared.txt")
+        clone = root / "clone"
+        git(["clone", "-q", str(origin_repo), str(clone)], root)
+        configure_identity(clone)
+        seat_path = root / "seat"
+        git(["worktree", "add", "-q", "-b", "seat", str(seat_path), "main"], clone)
+        configure_identity(seat_path)
+        if own_commit:
+            commit_file(seat_path, "own.txt", "mine\n", "the seat's own work")
+        if pushed:
+            git(["push", "-q", "-u", "origin", "seat"], seat_path)
+        commit_file(origin_repo, "main-only.txt", "new\n", "advance main")
+        git(["fetch", "-q", "origin"], seat_path)
+        return origin_repo, seat_path
+
+    def failing_git_shim(name, shell_pattern):
+        """A git that exits 128 for argument lists matching shell_pattern and
+        passes every other call to the real git."""
+        directory = failing_tmp / name
+        directory.mkdir()
+        (directory / "git").write_text(
+            "#!/bin/sh\n"
+            f'case " $* " in {shell_pattern}) echo "{INJECTED_STDERR}" >&2; exit 128;; esac\n'
+            f'exec "{failing_real_git}" "$@"\n', encoding="utf-8")
+        (directory / "git").chmod(0o755)
+        return str(directory)
+
+    real_module_run_git = catch_up_module.run_git
+
+    @contextlib.contextmanager
+    def module_git_fails_when(matches):
+        """catch_up_module's run_git answers 128 for argument lists matching."""
+        def run_git_with_injected_failure(arguments, working_directory, timeout=60):
+            if matches(list(arguments)):
+                return subprocess.CompletedProcess(arguments, 128, "", INJECTED_STDERR + "\n")
+            return real_module_run_git(arguments, working_directory, timeout=timeout)
+        catch_up_module.run_git = run_git_with_injected_failure
+        try:
+            yield
+        finally:
+            catch_up_module.run_git = real_module_run_git
+
+    def tip(checkout, reference="HEAD"):
+        return git(["rev-parse", reference], checkout).stdout.strip()
+
+    # head_state, one decision point at a time.
+    _, never_pushed = seat_behind_main(own_commit=True)
+    with module_git_fails_when(lambda arguments: arguments[:3] == ["rev-parse", "--verify", "--quiet"]
+                               and arguments[3] == "origin/seat"):
+        state = catch_up_module.head_state(never_pushed, "seat")
+    check("a failed lookup of origin/<branch> is 'unknown', never 'unpushed'",
+          state[0] == "unknown" and INJECTED_STDERR in state[1], str(state))
+
+    _, pushed_seat = seat_behind_main(pushed=True, own_commit=True)
+    commit_file(pushed_seat, "local.txt", "local\n", "a local commit on top of the push")
+    check("(fixture) a pushed seat with a local commit is pushed-with-local-commits",
+          catch_up_module.head_state(pushed_seat, "seat")[0] == "pushed-with-local-commits",
+          str(catch_up_module.head_state(pushed_seat, "seat")))
+    for case_name, matches in (
+            ("a failed read of HEAD", lambda arguments: arguments == ["rev-parse", "HEAD"]),
+            ("a failed count of local commits",
+             lambda arguments: arguments == ["rev-list", "--count", "origin/seat..HEAD"]),
+            ("a failed ancestry check",
+             lambda arguments: arguments[:2] == ["merge-base", "--is-ancestor"])):
+        with module_git_fails_when(matches):
+            state = catch_up_module.head_state(pushed_seat, "seat")
+        check(f"{case_name} in head_state is 'unknown', not an answer",
+              state[0] == "unknown" and INJECTED_STDERR in state[1], str(state))
+
+    git(["reset", "-q", "--hard", "HEAD~1"], pushed_seat)
+    git(["reset", "-q", "--hard", "HEAD~1"], pushed_seat)
+    check("(fixture) a seat behind its own remote branch is behind-remote",
+          catch_up_module.head_state(pushed_seat, "seat")[0] == "behind-remote",
+          str(catch_up_module.head_state(pushed_seat, "seat")))
+    with module_git_fails_when(
+            lambda arguments: arguments == ["rev-list", "--count", "HEAD..origin/seat"]):
+        state = catch_up_module.head_state(pushed_seat, "seat")
+    check("a failed count of the remote's commits in head_state is 'unknown', not 'some'",
+          state[0] == "unknown" and INJECTED_STDERR in state[1], str(state))
+
+    # End to end: the never-pushed seat is not rebased when origin/<branch>
+    # cannot be looked up.
+    before = tip(never_pushed)
+    verify_fails = failing_git_shim("verify-origin-seat-fails", '*" --verify --quiet origin/seat "*')
+    run = run_catch_up_once(["--cwd", str(never_pushed)], verify_fails)
+    check("a never-pushed seat whose origin/<branch> lookup fails is not rebased",
+          run.returncode == 0 and tip(never_pushed) == before
+          and stamp_of(never_pushed).get("head_state") == "unknown",
+          f"{run.stdout} {run.stderr} {stamp_of(never_pushed)}")
+
+    # The branch read: a failure is not "detached HEAD".
+    _, level_seat = seat_behind_main()
+    before = tip(level_seat)
+    with module_git_fails_when(lambda arguments: arguments == ["rev-parse", "--abbrev-ref", "HEAD"]):
+        try:
+            catch_up_module.catch_up_session_checkout(level_seat, 0)
+            raised = None
+        except catch_up_module.git_output.GitCommandFailed as error:
+            raised = error
+    check("a failed branch read stops the session catch-up instead of reading as detached HEAD",
+          raised is not None and INJECTED_STDERR in str(raised) and tip(level_seat) == before
+          and git(["rev-parse", "--abbrev-ref", "HEAD"], level_seat).stdout.strip() == "seat",
+          f"{raised} {tip(level_seat)} {before}")
+    with module_git_fails_when(lambda arguments: arguments == ["rev-parse", "--abbrev-ref", "HEAD"]):
+        try:
+            catch_up_module.merge_blockers(level_seat, Path(git(
+                ["rev-parse", "--absolute-git-dir"], level_seat).stdout.strip()))
+            raised = None
+        except catch_up_module.git_output.GitCommandFailed as error:
+            raised = error
+    check("a failed branch read in merge_blockers raises instead of reporting detached HEAD",
+          raised is not None and INJECTED_STDERR in str(raised), str(raised))
+
+    # merges_from_main: a merge commit from main on the seat.
+    _, merged_seat = seat_behind_main(own_commit=True)
+    git(["merge", "-q", "--no-edit", "origin/main"], merged_seat)
+    check("(fixture) the seat's merge from main is found",
+          len(catch_up_module.merges_from_main(merged_seat) or []) == 1,
+          str(catch_up_module.merges_from_main(merged_seat)))
+    for case_name, matches in (
+            ("a failed read of a merge's second parent",
+             lambda arguments: arguments[:3] == ["rev-parse", "--verify", "--quiet"]
+             and arguments[3].endswith("^2")),
+            ("a failed check of whether the second parent is on main",
+             lambda arguments: arguments[:2] == ["merge-base", "--is-ancestor"])):
+        with module_git_fails_when(matches):
+            try:
+                found = catch_up_module.merges_from_main(merged_seat)
+                raised = None
+            except catch_up_module.git_output.GitCommandFailed as error:
+                found, raised = None, error
+        check(f"{case_name} in merges_from_main raises instead of skipping the merge",
+              raised is not None and INJECTED_STDERR in str(raised), f"{found} {raised}")
+
+    # Each mode tells a git failure inside a known checkout; only a directory
+    # outside every repository stays silent.
+    for shell_pattern, shim_name in (('*" --show-toplevel "*', "toplevel-fails"),
+                                     ('*" --absolute-git-dir "*', "git-dir-fails"),
+                                     ('*" --abbrev-ref HEAD "*', "branch-read-fails"),
+                                     ('*" worktree list "*', "worktree-list-fails")):
+        shim = failing_git_shim(shim_name, shell_pattern)
+        run = run_catch_up_once(["--cwd", str(level_seat)], shim)
+        check(f"the Stop hook tells the user when {shim_name.replace('-', ' ')}",
+              run.returncode == 0 and never_blocks(run)
+              and "a git command failed" in display_text(run)
+              and INJECTED_STDERR in display_text(run),
+              f"rc={run.returncode} {run.stdout} {run.stderr}")
+    # The first branch read alone fails: main() must not take the failure for
+    # a branch that is not main and carry on.
+    first_read_only = failing_tmp / "first-branch-read-fails"
+    first_read_only.mkdir()
+    (first_read_only / "git").write_text(
+        "#!/bin/sh\n"
+        f'case " $* " in *" --abbrev-ref HEAD "*) if [ ! -e "{first_read_only}/failed" ]; then '
+        f': > "{first_read_only}/failed"; echo "{INJECTED_STDERR}" >&2; exit 128; fi;; esac\n'
+        f'exec "{failing_real_git}" "$@"\n', encoding="utf-8")
+    (first_read_only / "git").chmod(0o755)
+    before = tip(level_seat)
+    run = run_catch_up_once(["--cwd", str(level_seat)], str(first_read_only))
+    check("a failed first branch read stops the Stop hook, telling the user, with nothing moved",
+          run.returncode == 0 and INJECTED_STDERR in display_text(run) and tip(level_seat) == before,
+          f"{run.stdout} {run.stderr}")
+    try:
+        git(["rev-parse", "--verify", "refs/heads/no-such-branch"], level_seat)
+        helper_raised = False
+    except RuntimeError:
+        helper_raised = True
+    check("a fixture git step that fails stops the suite at that step", helper_raised)
+    git_dir_fails = failing_git_shim("git-dir-fails-in-modes", '*" --absolute-git-dir "*')
+    run = run_catch_up_once(["--deliver-pending-agent-notes", "--cwd", str(level_seat)],
+                            git_dir_fails)
+    check("note delivery tells the agent when git cannot find the git directory",
+          run.returncode == 0 and INJECTED_STDERR in agent_text(run), run.stdout + run.stderr)
+    run = run_catch_up_once(["--report", "--repo", str(level_seat)], git_dir_fails)
+    check("--report prints the git failure instead of 'not a git checkout'",
+          run.returncode == 0 and INJECTED_STDERR in run.stdout
+          and "not a git checkout" not in run.stdout, run.stdout + run.stderr)
+    worktree_list_fails = failing_git_shim("worktree-list-fails-in-modes", '*" worktree list "*')
+    run = run_catch_up_once(["--reference-pull", "--repo", str(level_seat)], worktree_list_fails)
+    check("--reference-pull prints the git failure instead of saying nothing",
+          run.returncode == 0 and INJECTED_STDERR in run.stdout, run.stdout + run.stderr)
 
 print()
 if failures:
