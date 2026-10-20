@@ -32,7 +32,13 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 HOOK_SCRIPT = Path(__file__).with_name("cold-read-fast-read-due-for-linked-document-reminder-hook.py")
 STORE_VARIABLE = "NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY"
-SUITE_ROOT = Path(tempfile.mkdtemp(prefix="cold-read-fast-read-due-for-linked-document-test-"))
+SUITE_TOP = Path(tempfile.mkdtemp(prefix="cold-read-fast-read-due-for-linked-document-test-"))
+(SUITE_TOP / "real").mkdir()
+# Every case runs through a symlink, as on the Mac, whose temporary directory is
+# under /var, a symlink to /private/var; a path the hook resolves and the suite
+# does not then fails on every machine, not only there.
+(SUITE_TOP / "through-symlink").symlink_to("real")
+SUITE_ROOT = SUITE_TOP / "through-symlink"
 failures = []
 
 
@@ -463,7 +469,7 @@ def main():
     completed = case.run("The walk-document is docs/walk/naming-rules-draft.md.")
     check("a malformed agent-session file beside suggestions newer than the walk-document is a fault naming the file",
           completed.returncode == 1 and completed.stdout == ""
-          and str(malformed) in completed.stderr,
+          and str(malformed.resolve()) in completed.stderr,
           f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
 
     case = Case()
@@ -772,7 +778,7 @@ def main():
           context.startswith("cold-read-fast-read due check incomplete") and "did not finish within" in context,
           f"exit {completed.returncode}, context {context!r}, stderr {completed.stderr!r}")
 
-    shutil.rmtree(SUITE_ROOT, ignore_errors=True)
+    shutil.rmtree(SUITE_TOP, ignore_errors=True)
     if failures:
         print(f"{len(failures)} case(s) failed")
         return 1
