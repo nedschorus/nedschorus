@@ -2842,6 +2842,10 @@ check("an absolute path git cannot make repo-relative is searched as that absolu
       code == 3 and "Searching every history this fleet keeps for: /repo/a/b.md" in text
       and "unable to read index" in main_errors.getvalue(),
       "exit=%s\n%s\n%s" % (code, text, main_errors.getvalue()))
+check("... and the next steps name the command to run again, with every argument it was given",
+      "In any other case, run python3 scripts/find-deleted-path-across-backups.py /repo/a/b.md --repo /repo "
+      "--transcripts-dir /nonexistent --box-ssh-host '' --skip timemachine --skip localsnapshots once more."
+      in main_errors.getvalue(), main_errors.getvalue())
 check("... and the docstring's exit-code block promises exactly that",
       "3 when" in finder.__doc__ and "could NOT be searched" in finder.__doc__)
 
@@ -3279,6 +3283,15 @@ check("condition 3 — a deletion lookup git fails speaks nothing, and says so w
       announced is None and not any(c.startswith("say") for c in deletion_lookup_fails.calls)
       and "bad object refs/heads/gone" in spoken_errors.getvalue(),
       "%r %s %r" % (announced, deletion_lookup_fails.calls, spoken_errors.getvalue()))
+given_errors = io.StringIO()
+with contextlib.redirect_stderr(given_errors):
+    finder.announce_root_password_wall_by_speech(
+        "docs/a/b.md", missed + [tm_wall_report()], "/repo", (), deletion_lookup_fails, "python3 RUN-AS-GIVEN")
+check("condition 3 — ... and, given the run's command, the next steps name that command",
+      "In any other case, run python3 RUN-AS-GIVEN once more." in given_errors.getvalue(), given_errors.getvalue())
+check("condition 3 — ... and, called without the run's command, the next steps name a search for the same path",
+      "In any other case, run python3 scripts/find-deleted-path-across-backups.py docs/a/b.md once more."
+      in spoken_errors.getvalue(), spoken_errors.getvalue())
 no_repository = FakeRunner([("rev-parse --show-toplevel", (128, "", "fatal: not a git repository\n")),
                             DELETED_2026_08_13_NOON])
 spoken_errors = io.StringIO()

@@ -428,6 +428,7 @@ TIMESHIFT_SNAPSHOT_NAME_FORMAT = "%Y-%m-%d_%H-%M-%S"
 
 # A process whose command line holds this is a run of this script.
 THIS_SCRIPT_NAME = "find-deleted-path-across-backups"
+PROGRAM_PATH = "scripts/find-deleted-path-across-backups.py"
 
 # Bound waits so an ssh to a sleeping box cannot hang recovery.
 SHORT_TIMEOUT_SECONDS = 20
@@ -2283,7 +2284,24 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
 
 
 
-def announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner):
+def git_failure_next_steps(rerun):
+    """The lines that tell an agent what to do after a git failure in a run started as rerun."""
+    return ("If git's error names a lock file, such as .git/index.lock, wait one minute, then run %s; "
+            "do not delete the lock file yourself.\n"
+            "If git's error names a branch, commit or path that does not exist, and you gave that name to %s, "
+            "correct it in your command, then run the corrected command.\n"
+            "In any other case, run %s once more.\n"
+            "If %s fails again, stop and tell the user what %s printed, git's error included; a subagent tells "
+            "the agent that dispatched it instead."
+            % (rerun, PROGRAM_PATH, rerun, rerun, PROGRAM_PATH))
+
+
+def rerun_command(program, arguments):
+    """The command line that runs program again with arguments, as a shell would take it."""
+    return shlex.join(["python3", program] + list(arguments))
+
+
+def announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner, rerun=None):
     """Speak and return the password request, or return None."""
     # Wait for speech to finish so script exit does not orphan the announcement.
     try:
@@ -2294,8 +2312,9 @@ def announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner):
               "the mount command to run by hand. %s makes that announcement only when it can show that a Time "
               "Machine snapshot predates the file's deletion, and git could not give the date %s was deleted, "
               "so %s could not check.\n"
-              "If you want that check made, fix the git failure below and re-run.\n"
-              "git's failure: %s" % (THIS_SCRIPT_NAME, THIS_SCRIPT_NAME, wanted, THIS_SCRIPT_NAME, failure),
+              "git's failure: %s\n%s"
+              % (THIS_SCRIPT_NAME, THIS_SCRIPT_NAME, wanted, THIS_SCRIPT_NAME, failure,
+                 git_failure_next_steps(rerun or rerun_command(PROGRAM_PATH, [wanted]))),
               file=sys.stderr, flush=True)
         return None
     if sentence is None:
@@ -2358,7 +2377,7 @@ def _combine(statuses):
 
 def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, search_roots, skip=(),
                  runner=run_command, prompt_for_root=False, log_store_root=DEFAULT_LOG_STORE_ROOT,
-                 on_surface_done=None, on_ned_box=None):
+                 on_surface_done=None, on_ned_box=None, rerun=None):
     if on_ned_box is None:
         on_ned_box = running_on_ned_box()
     reports = []
@@ -2395,7 +2414,7 @@ def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, sea
         finished(search_time_machine(wanted, newest_date_held, runner=runner,
                                      prompt_for_root=prompt_for_root))
     # Assemble the speech decision here so callers that bypass main receive it too.
-    announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner)
+    announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner, rerun)
     return reports
 
 
@@ -2495,6 +2514,7 @@ def main(argv=None, runner=run_command):
                              "password in this terminal, instead of printing the command. Only ever "
                              "pass this by hand: a hook has no terminal to answer a prompt in")
     args = parser.parse_args(argv)
+    rerun = rerun_command(sys.argv[0], sys.argv[1:]) if argv is None else rerun_command(PROGRAM_PATH, argv)
 
     use_found_copies_folder(FoundCopiesFolder(args.found_copies_root))
     if is_git_blob_id(args.path):
@@ -2517,11 +2537,10 @@ def main(argv=None, runner=run_command):
         print("%s: git could not find the top level of the repository at %s. The search runs to the end, matching "
               "the absolute path %s as that absolute path, not as a path inside the repository; its git and git "
               "reflog lines will say UNAVAILABLE for this same failure, and its other lines are complete.\n"
+              "git's failure: %s\n"
               "If --repo names the wrong directory, or was left out and the current directory is not in the "
-              "path's checkout, re-run with --repo naming that checkout.\n"
-              "If --repo is right and git and its reflog must be searched too, fix the git failure below and "
-              "re-run.\n"
-              "git's failure: %s" % (THIS_SCRIPT_NAME, args.repo, named, failure),
+              "path's checkout, re-run with --repo naming that checkout.\n%s"
+              % (THIS_SCRIPT_NAME, args.repo, named, failure, git_failure_next_steps(rerun)),
               file=sys.stderr, flush=True)
         wanted = named
     shown = wanted if wanted == args.path else "%s (given as %s)" % (wanted, args.path)
@@ -2539,6 +2558,7 @@ def main(argv=None, runner=run_command):
         prompt_for_root=args.prompt_for_root,
         log_store_root=args.log_store_root,
         on_surface_done=print_surface_as_it_finishes,
+        rerun=rerun,
     )
     print(render_summary(reports), flush=True)
     return exit_status(reports)
