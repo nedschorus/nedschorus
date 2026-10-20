@@ -103,8 +103,9 @@ WHAT IS PINNED HERE.
     nothing. A cell that ran where there is no checkout at all omits the
     field and still writes its report; one whose git fails on the checkout
     is stamped `checkout=unknown-git-exited-<code>`, not stamped as if there
-    were no checkout. `target=` stays the last field in every one of those
-    cases.
+    were no checkout; and one that `git init` made, with no commit yet, is
+    stamped `checkout=no-commits-yet`. `target=` stays the last field in
+    every one of those cases.
 
   - The runtime's stderr survives a successful run. It used to be passed
     straight through to the log nc-systems/cold-read/cold-read-grid.py deletes on success,
@@ -168,6 +169,16 @@ _scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
 scratch_repository_fixture = importlib.util.module_from_spec(
     _scratch_repository_fixture_spec)
 _scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
+
+# Before this suite's own `git init`: a run started with GIT_DIR set must not
+# re-initialise the repository GIT_DIR names. Removed from this process before
+# git runs, so the cells this suite starts inherit the removal too.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    REPO_ROOT / "scripts" / "git-redirecting-environment-removal-test-fixture.py")
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 # The document each case reviews, and the one a reviewer would edit by
 # accident: it is committed first, then modified without being committed, so
@@ -1244,11 +1255,30 @@ with tempfile.TemporaryDirectory() as scratch:
     check("target= is still the last field when checkout= is absent",
           stamp.endswith(f"target={TARGET_RELATIVE_PATH} -->"), repr(stamp))
 
+    # A checkout that `git init` made and nothing has been committed to yet
+    # is neither a git failure nor "no checkout": the field says so.
+    shutil.rmtree(repository)
+    repository = build_scratch_repository(scratch)
+    shutil.rmtree(repository / ".git")
+    scratch_repository_fixture.git(repository, "init", "-q", "-b", "main")
+    report = report_path_for(repository, "checkout-no-commits-yet", "claude")
+    result = run_claude_cell(
+        repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+    )
+    stamp = provenance_stamp_of(report)
+    check("a cell that ran in a checkout with no commits yet still writes its report",
+          result.returncode == 0 and stamp.startswith("<!-- provenance:"),
+          f"exit {result.returncode}; stamp={stamp!r}; stderr={result.stderr!r}")
+    check("a checkout with no commits yet is stamped checkout=no-commits-yet, "
+          "not as a git failure",
+          " checkout=no-commits-yet " in stamp, repr(stamp))
+
     # A checkout git fails on is not "no checkout": the field names the
     # failure instead of being dropped. A stand-in git, first on PATH, fails
     # one of the two stamp queries and passes every other call to the real git.
     real_git = shutil.which("git")
-    for failing_query, case_slug in ((["rev-parse", "--short", "HEAD"], "checkout-git-fails-commit"),
+    for failing_query, case_slug in ((["rev-parse", "-q", "--verify", "--short", "HEAD"],
+                                      "checkout-git-fails-commit"),
                                      (["status", "--porcelain", "--untracked-files=no"],
                                       "checkout-git-fails-status")):
         shutil.rmtree(repository)

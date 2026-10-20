@@ -537,18 +537,24 @@ CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS = 10
 
 def checkout_commit_for_provenance_stamp(checkout: pathlib.Path) -> str:
     """Return the checkout commit, with -dirty for tracked changes; an empty
-    string when the checkout is in no git repository; and
-    `unknown-git-exited-<code>`, or `unknown-git-did-not-answer` when git
-    timed out or did not start, when git failed."""
+    string when the checkout is in no git repository; `no-commits-yet` when
+    HEAD names a branch with no commits; and `unknown-git-exited-<code>`, or
+    `unknown-git-did-not-answer` when git timed out or did not start, when
+    git failed."""
     # Untracked drafts are routine and do not make the provenance stamp dirty.
     # Do not print failures: the grid parses stderr as cell status. The stamp
     # is split on whitespace, so the failure value carries no space.
     try:
+        # With -q --verify, git exits 1 with no output when HEAD has no commit
+        # yet, and 128 for a real failure.
         commit = git_machine_readable_output.run_git_unless_outside_a_repository(
-            checkout, ["rev-parse", "--short", "HEAD"],
+            checkout, ["rev-parse", "-q", "--verify", "--short", "HEAD"],
+            accepted_exit_codes=(0, 1),
             timeout_seconds=CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS)
         if commit is None:
             return ""
+        if not commit.strip():
+            return "no-commits-yet"
         tracked_changes = git_machine_readable_output.run_git(
             checkout, ["status", "--porcelain", "--untracked-files=no"],
             timeout_seconds=CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS)
