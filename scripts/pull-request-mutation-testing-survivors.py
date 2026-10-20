@@ -423,9 +423,13 @@ def main(argv=None):
                 f"If it adds no commits of its own, there is nothing to test.")
         files = changed_python_files_to_mutate(checkout, merge_base, head,
                                                environment)
-        recordings_directory = runner.recordings_directory_for(
-            arguments.recorded_inputs_directory
-            or runner.DEFAULT_RECORDED_INPUTS_DIRECTORY, checkout)
+        try:
+            recordings_directory = runner.recordings_directory_for(
+                arguments.recorded_inputs_directory
+                or runner.DEFAULT_RECORDED_INPUTS_DIRECTORY, checkout)
+        except runner.CouldNotRun as refusal:
+            raise CouldNotRun(str(refusal).replace(f"{runner.PROGRAM}:", f"{PROGRAM}:", 1)) \
+                from refusal
         suites_listed_at_head = suites_at_head(checkout, head, environment)
 
         try:

@@ -1178,9 +1178,20 @@ def interpreter_and_version(given):
     return found, version[0]
 
 
+def first_line_of_error(completed):
+    return ((completed.stderr or "").strip().splitlines() or [""])[0]
+
+
 def commit_and_state(top):
-    head = git(top, "rev-parse", "HEAD")
-    commit = head.stdout.strip() if head.returncode == 0 else "no commit"
+    # --verify --quiet exits 1 for a branch with no commit yet.
+    head = git(top, "rev-parse", "--verify", "--quiet", "HEAD")
+    if head.returncode == 0:
+        commit = head.stdout.strip()
+    elif head.returncode == 1:
+        commit = "no commit"
+    else:
+        commit = (f"commit unknown (git rev-parse HEAD exited {head.returncode}: "
+                  f"{first_line_of_error(head)})")
     changed = git(top, "status", "--porcelain", "--untracked-files=no")
     if changed.returncode != 0:
         state = "tracked-file state unknown"
@@ -1995,8 +2006,15 @@ def lock_held_while_cleaning_up_after_earlier_runs(lock_file):
 
 
 def branch_of_checkout(top):
-    named = git(top, "rev-parse", "--abbrev-ref", "HEAD")
-    return named.stdout.strip() if named.returncode == 0 else None
+    # symbolic-ref -q exits 1 for a detached HEAD, recorded as "HEAD" as rev-parse
+    # --abbrev-ref names it.
+    named = git(top, "symbolic-ref", "-q", "--short", "HEAD")
+    if named.returncode == 0:
+        return named.stdout.strip()
+    if named.returncode == 1:
+        return "HEAD"
+    return (f"branch unknown (git symbolic-ref HEAD exited {named.returncode}: "
+            f"{first_line_of_error(named)})")
 
 
 def lock_explicit_log_directory(log_dir):
@@ -2957,8 +2975,17 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
 
 def recordings_directory_for(given, top):
     # Key by root commit so clones and worktrees share recordings.
-    roots = git(top, "rev-list", "--max-parents=0", "HEAD").stdout.split()
-    return Path(given).expanduser() / (min(roots)[:16] if roots else "no-commit")
+    head = git(top, "rev-parse", "--verify", "--quiet", "HEAD")
+    if head.returncode == 1:
+        return Path(given).expanduser() / "no-commit"
+    roots = git(top, "rev-list", "--max-parents=0", "HEAD") if head.returncode == 0 else head
+    if roots.returncode != 0 or not roots.stdout.split():
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — git could not list the root commits of HEAD in {top}, "
+            f"which name the directory of recorded suite inputs: "
+            f"{first_line_of_error(roots) or 'git printed none'}\n"
+            f"Fix what git reports, then run this again.")
+    return Path(given).expanduser() / min(roots.stdout.split())[:16]
 
 
 def recording_file_for(recordings_dir, suite):
@@ -3082,6 +3109,11 @@ def files_that_differ_since(top, commit):
     for status, path in zip(fields[0::2], fields[1::2]):
         differ[path] = "A" if status.startswith("A") else "D" if status.startswith("D") else "M"
     untracked = git(top, "ls-files", "--others", "--exclude-standard", "-z")
+    if untracked.returncode != 0:
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — git ls-files --others failed in {top}: "
+            f"{untracked.stderr.strip()}\n"
+            f"Fix what git reports, then run this again.")
     for path in untracked.stdout.split("\0"):
         if path:
             differ.setdefault(path, "A")
@@ -3428,7 +3460,11 @@ def main(argv=None, platform=None):
                 clean_up_lines = clean_up_after_earlier_runs(Path(arguments.lock_file),
                                                              previous_holder, platform)
         commit, state = commit_and_state(top)
-        recordings_dir = recordings_directory_for(arguments.recorded_inputs_directory, top)
+        try:
+            recordings_dir = recordings_directory_for(arguments.recorded_inputs_directory, top)
+        except CouldNotRun as refusal:
+            print(refusal, file=sys.stderr)
+            return EXIT_COULD_NOT_RUN
         # Each recording is read once, so selection and starting order see the same one
         # even while runs in other checkouts save it.
         recordings, identities_read = {}, {}

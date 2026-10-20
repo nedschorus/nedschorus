@@ -2,8 +2,9 @@
 """Refuse a push that rewrites or deletes the head branch of an open pull request on origin.
 
 Run by scripts/git-client-side-hooks/pre-push with git's pre-push arguments and the pushed refs
-on standard input. Exit 10 refuses the push; exit 0 lets it through. Any other exit makes the
-hook say the push went unchecked and to tell the user.
+on standard input. Exit 10 refuses the push; exit 0 lets it through. Exit 2, when git cannot say
+whether an update is a fast-forward, or any other exit, makes the hook say the push went
+unchecked and to tell the user.
 
 Reviews are of a pull request's pushed head, so an update that does not build on that head
 replaces the commits under review, and deleting the head branch closes the pull request.
@@ -28,6 +29,7 @@ import sys
 
 EXIT_ALLOW_PUSH = 0
 EXIT_REFUSE_PUSH = 10
+EXIT_CHECK_COULD_NOT_RUN = 2
 
 CHECKED_REMOTE_NAME = "origin"
 BRANCH_REF_PREFIX = "refs/heads/"
@@ -73,6 +75,10 @@ class OpenPullRequestLookupFailed(Exception):
     """gh could not say whether a branch has an open pull request."""
 
 
+class FastForwardCheckFailed(Exception):
+    """git could not say whether an update is a fast-forward."""
+
+
 def updates_to_check(pushed_refs_text):
     """Return (branch, local object ID, remote object ID) for each update to an existing branch."""
     updates = []
@@ -87,12 +93,36 @@ def updates_to_check(pushed_refs_text):
     return updates
 
 
+def git_for_fast_forward_check(argv, runner, accepted_exit_codes, input_text=None):
+    """Run git; raise FastForwardCheckFailed unless it exits with an accepted code."""
+    try:
+        completed = runner(argv, input=input_text, stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, text=True, timeout=GIT_TIMEOUT_SECONDS,
+                           check=False)
+    except subprocess.TimeoutExpired:
+        raise FastForwardCheckFailed(f"{' '.join(argv[:3])} did not answer within "
+                                     f"{GIT_TIMEOUT_SECONDS:.0f} seconds") from None
+    except OSError as error:
+        raise FastForwardCheckFailed(f"git could not be run ({error})") from None
+    if completed.returncode not in accepted_exit_codes:
+        first_line = ((completed.stderr or "").strip().splitlines() or [""])[0]
+        raise FastForwardCheckFailed(
+            f"{' '.join(argv[:3])} exited with status {completed.returncode}"
+            + (f": {first_line}" if first_line else ""))
+    return completed
+
+
 def is_fast_forward(remote_object_id, local_object_id, runner):
     """True only when git shows the remote commit is an ancestor of the pushed one."""
-    completed = runner(["git", "merge-base", "--is-ancestor", remote_object_id, local_object_id],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       timeout=GIT_TIMEOUT_SECONDS, check=False)
-    return completed.returncode == 0
+    # merge-base --is-ancestor exits 128 both for a commit missing here and for a broken
+    # repository; cat-file --batch-check prints "missing" for the first and exits 0.
+    present = git_for_fast_forward_check(["git", "cat-file", "--batch-check"], runner, (0,),
+                                         input_text=remote_object_id + "\n")
+    if present.stdout.rstrip().endswith(" missing"):
+        return False
+    ancestor = git_for_fast_forward_check(
+        ["git", "merge-base", "--is-ancestor", remote_object_id, local_object_id], runner, (0, 1))
+    return ancestor.returncode == 0
 
 
 def open_pull_request(branch, runner):
@@ -152,11 +182,16 @@ def refusal_lines(pushed_refs_text, runner):
 
 
 def main(argv, pushed_refs_text, stderr, environment, runner=subprocess.run):
-    """Return EXIT_ALLOW_PUSH or EXIT_REFUSE_PUSH for one push."""
+    """Return EXIT_ALLOW_PUSH, EXIT_REFUSE_PUSH or EXIT_CHECK_COULD_NOT_RUN for one push."""
     remote_name = argv[0] if argv else ""
     if remote_name != CHECKED_REMOTE_NAME or environment.get(ESCAPE_HATCH_VARIABLE) == "1":
         return EXIT_ALLOW_PUSH
-    lines = refusal_lines(pushed_refs_text, runner)
+    try:
+        lines = refusal_lines(pushed_refs_text, runner)
+    except FastForwardCheckFailed as error:
+        stderr.write(f"{MESSAGE_PREFIX}whether this push's updates to origin are fast-forwards "
+                     f"could not be checked: {error}.\n")
+        return EXIT_CHECK_COULD_NOT_RUN
     for line in lines[:1]:
         stderr.write(MESSAGE_PREFIX + line + "\n")
     for line in lines[1:]:
