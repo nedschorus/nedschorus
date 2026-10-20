@@ -1617,6 +1617,16 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
               and "ssh was killed by signal 15 before the cold-read-fast-read on ned-box finished"
               in stderr and "the fast read on ned-box failed" not in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
+        check("when a signal kills ssh, the message gives the command to run once more "
+              "on the Mac, with the target in its Mac form",
+              "over ssh again:\n" + shlex.join(
+                  ["python3", str(Path(warning_module.__file__).resolve()),
+                   "--target", str(mac_draft)]) + "\n" in stderr, repr(stderr))
+        killed_again = stderr.find("If ssh is killed again, do not run the command a third time")
+        check("when a signal kills ssh, the message says what to do if ssh is killed again "
+              "before what to do on any other failure of the second run",
+              -1 < killed_again < stderr.find("When the second run fails in any other way"),
+              repr(stderr))
 
         exit_code, stdout, stderr = read_from_mac(mac_draft, ssh_mode="hangs",
                                                   timeout_seconds=0.5)
@@ -1646,20 +1656,51 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
                                             f"{mac_suggestions}, that is its result."),
               repr(stderr))
 
+        # The home's text again further down the path must survive the trip
+        # to ned-box's form and back: only the leading home is the mount.
+        mac_target_holding_home_twice = (mac_worktree / "docs"
+                                         / str(ned_box_home).lstrip("/") / "a b.md")
+        mac_target_holding_home_twice.parent.mkdir(parents=True)
+        mac_target_holding_home_twice.write_text("## Item 1 of 1\n", encoding="utf-8")
+        ned_box_target_holding_home_twice = warning_module.ned_box_path_of_mac_mount_path(
+            mac_target_holding_home_twice)
+        check("a ned-box path holding the home's path twice goes back to its Mac mount "
+              "path, with only the leading home replaced",
+              warning_module.mac_mount_path_of_ned_box_path(ned_box_target_holding_home_twice)
+              == str(mac_target_holding_home_twice),
+              repr(warning_module.mac_mount_path_of_ned_box_path(
+                  ned_box_target_holding_home_twice)))
+        rerun_command_holding_home_twice = shlex.join(
+            ["python3", str(Path(warning_module.__file__).resolve()),
+             "--target", str(mac_target_holding_home_twice)])
+        for ssh_mode, timeout_seconds, condition in (
+                ("killed", attributes_before[
+                    "COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS"],
+                 "a signal kills ssh"),
+                ("hangs", 0.5, "the read on ned-box outlasts the time limit")):
+            exit_code, stdout, stderr = read_from_mac(
+                mac_target_holding_home_twice, ssh_mode=ssh_mode,
+                timeout_seconds=timeout_seconds)
+            check(f"when {condition} on a target whose path holds ned-box's home twice, "
+                  f"the command to run once more names the target's own Mac path",
+                  exit_code == 1
+                  and f"over ssh again:\n{rerun_command_holding_home_twice}\n" in stderr,
+                  repr(stderr))
+
         # A walk draft's frozen copy in a cold-read-record is no walk draft: its
         # read takes the records route, so its report is never a suggestions file.
         frozen_copy_relative = (seat_relative / "cold-read-records" / "item-2026-10-19"
                                 / "target" / "docs" / "walk" / "item-draft.md")
-        place = warning_module.cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(
+        place = warning_module.cold_read_fast_read_report_location_seen_from_mac_for_target_sent_over_ssh(
             str(ned_box_home / frozen_copy_relative))
         check("the report place named for a walk draft's frozen copy read over ssh is "
               "its cold-read-record in the log-store",
               place == "fast-read.md in the newest directory whose name starts item-draft- in "
                        "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/",
               repr(place))
-        place = warning_module.cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(str(ned_box_draft))
+        place = warning_module.cold_read_fast_read_report_location_seen_from_mac_for_target_sent_over_ssh(str(ned_box_draft))
         check("the report place named for a walk draft read over ssh is its suggestions "
-              "file on ned-box", place == str(ned_box_suggestions), repr(place))
+              "file seen through this Mac's mount", place == str(mac_suggestions), repr(place))
 
         # The same frozen copy read from the Mac through main(), with ssh hanging:
         # the timeout message names the cold-read-record, not a suggestions file.
@@ -1682,13 +1723,36 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
         (mac_mount / inner_relative / "docs" / "walk").mkdir(parents=True)
         (mac_mount / inner_relative / ".git").write_text(
             f"gitdir: {ned_box_home / 'Projects' / 'gone-too' / '.git'}\n", encoding="utf-8")
-        place = warning_module.cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(
+        place = warning_module.cold_read_fast_read_report_location_seen_from_mac_for_target_sent_over_ssh(
             str(ned_box_home / inner_relative / "docs" / "walk" / "inner-draft.md"))
         check("the report place of a walk draft in a worktree inside another worktree is "
               "taken from the nearer worktree",
-              place == str(ned_box_home / inner_relative / "docs" / "walk"
+              place == str(mac_mount / inner_relative / "docs" / "walk"
                            / "inner-suggestions.md"),
               repr(place))
+
+        # A walk draft in a worktree whose path holds ned-box's home again
+        # further down: only the leading home is the mount.
+        twice_relative = Path("agents") / str(ned_box_home).lstrip("/") / "seat twice"
+        (mac_mount / twice_relative / "docs" / "walk").mkdir(parents=True)
+        (mac_mount / twice_relative / ".git").write_text(
+            f"gitdir: {ned_box_home / 'Projects' / 'gone-twice' / '.git'}\n", encoding="utf-8")
+        mac_twice_draft = mac_mount / twice_relative / "docs" / "walk" / "twice-draft.md"
+        mac_twice_draft.write_text("## Item 1 of 1\n", encoding="utf-8")
+        mac_twice_suggestions = mac_twice_draft.with_name("twice-suggestions.md")
+        place = warning_module.cold_read_fast_read_report_location_seen_from_mac_for_target_sent_over_ssh(
+            str(ned_box_home / twice_relative / "docs" / "walk" / "twice-draft.md"))
+        check("the report place of a walk draft whose path holds ned-box's home twice "
+              "is its suggestions file seen through this Mac's mount, with only the "
+              "leading home replaced", place == str(mac_twice_suggestions), repr(place))
+        exit_code, stdout, stderr = read_from_mac(mac_twice_draft, ssh_mode="hangs",
+                                                  timeout_seconds=0.5)
+        check("when the read of a walk draft whose path holds ned-box's home twice "
+              "outlasts the time limit, the message names its suggestions file's own "
+              "Mac path",
+              exit_code == 1
+              and f"report, which this Mac sees at {mac_twice_suggestions}." in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
 
         exit_code, stdout, stderr = read_from_mac(
             mac_draft, ssh_program=over_ssh_scratch / "no-such-ssh")
