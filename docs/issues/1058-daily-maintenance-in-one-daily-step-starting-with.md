@@ -150,6 +150,34 @@ On a day with none of these, the job shows the user nothing.
 
 Open for this job: which differences from the recorded verdict are expected rather than reported, since the guard that judged the command may have been older or not yet written, and the replay stubs the git and gh probes that the force-push guard and the Markdown push reminder make; and that a transcript records that some hook refused a command, not which one.
 
+## A twelfth job: a regular search for duplicated code
+
+A maintenance agent-session runs an open-source duplicate-code finder, such as pylint's, over all the repository's Python. The finder reports each set of copies, two places or more, so a triplicate is one finding. The agent-session works through as many sets as each run's cap allows:
+
+- a real set becomes a pull request that moves the copies into a shared module;
+- a false positive, copies that only look alike, goes in that run's record and on a list that later runs skip;
+- a set with an open pull request is skipped until it merges.
+
+After 10 days the user gets the number of false positives per run, and decides whether more is needed. The sets this job finds are also what GHI [Agents reuse what the project has already solved: shared helpers, one page of reusable components, and a reuse check before, during and after the build](https://github.com/nedschorus/nedschorus/issues/1123) counts its reuse checks' misses against.
+
+The user ruled this on 2026-10-20 (user-ruled 2026-10-20, approval-walk agent-instructions-editor-every-open-decision-2026-10-15, item 27), approving with "Approved." the recommendation "run a duplicate-code finder regularly and turn each real set of copies into a pull request". The walk-minutes are `docs/walk/agent-instructions-editor-every-open-decision-2026-10-15-minutes.md` in the agent-instructions-editor agent-seat's checkout on ned-box, shipped to `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/` when the walk closes.
+
+## A thirteenth job: a regular sweep for program files no test covers
+
+The user asked on 2026-10-13: "sweep all code in use and in prod for zero tests, then add appropriate tests, and add a daily maintence item to resweep daily." fleet-restart-at-login did the first sweep of the 124 program files on main: 123 are opened by a test suite, and 1 only by checks that read every file's text. Separately, 8 of the 124 are named nowhere in the repository's code, settings or instructions, so they are candidates for removal. The table is `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/fleet-restart-at-login/untested-code-sweep-2026-10-13.md`. The sweep takes about 10 seconds.
+
+A maintenance agent-session runs the sweep regularly. For each program file new to the untested list, up to each run's cap, the agent-session writes a test in a pull request, or, when nothing uses the file, brings its removal to the user. Each new test file takes its program's name with `-test` before the extension, as `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md` says, so it is found by the program's name. A file a suite only reads as text counts as tested, so the sweep misses some gaps; it still catches a new program shipped with no test at all.
+
+The user ruled this on 2026-10-20 (user-ruled 2026-10-20, approval-walk agent-instructions-editor-every-open-decision-2026-10-15, item 29), approving with "a" the recommendation "sweep regularly, and write a test for each program file new to the untested list", and asking "are the tests clearly named or marked, and therefore easy to find?", which the naming rule above answers. The walk-minutes are `docs/walk/agent-instructions-editor-every-open-decision-2026-10-15-minutes.md` in the agent-instructions-editor agent-seat's checkout on ned-box, shipped to `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/` when the walk closes.
+
+## A fourteenth job: a weekly search for rules agents keep breaking
+
+The glossary's detect-inform-correct, DIC, is a program that detects, after an agent acts, an action that should not have happened, tells the agent what it detected and how to undo it, and the agent corrects it. The bare-number citation warning, `scripts/bare-number-citation-in-markdown-and-agent-reply-warning-hook.py`, is one.
+
+Every 7 days, a maintenance agent-session looks for rules agents keep breaking, in the transcripts, the reviews and the walk-minutes. For each rule broken often enough to matter, it proposes a detect-inform-correct hook, as a GHI-MD, or to the user when the rule is his to change. An example: the 300-word limit on walk items.
+
+The user asked for this in prime-intellect's approval-walk prime-intellect-open-decisions-for-the-user-2026-10-15, whose minutes are `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/prime-intellect-open-decisions-for-the-user-2026-10-15-minutes.md`: "Is there a maintenance task to take for additional uses of dic to make rules stick?" He ruled it on 2026-10-20 (user-ruled 2026-10-20, approval-walk agent-instructions-editor-every-open-decision-2026-10-15, item 30), approving with "Approve." the recommendation "have a maintenance agent-session find the rules agents keep breaking and propose a detect-inform-correct hook for each". The walk-minutes are `docs/walk/agent-instructions-editor-every-open-decision-2026-10-15-minutes.md` in the agent-instructions-editor agent-seat's checkout on ned-box, shipped to `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/` when the walk closes.
+
 ## Checks at the moment of change
 
 The user approved this section on 2026-10-15, in the approval-walk cold-read-research-open-questions-and-skill-reviews-2026-10-14 of agent-seat cold-read-research, whose minutes are at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/cold-read-research-open-questions-and-skill-reviews-2026-10-14-minutes.md`. He set its goal: "My goal is to have many ASAP checks, and then some maint backups, or maybe maint backups for all, just in case something slips by."
@@ -221,7 +249,7 @@ The pop-up page of GHI [Agents put each question for the user on a page that pop
 
 ## Next action
 
-Settle the questions above that are still open with the user, then build the second job of the daily step, the report of agent-seats far behind main, the check for a pending ned-box reboot or firmware update, the program that lists documents due for a cold-read-fast-read, the check for a missing library or tool, the weekly count of hook firings and of programs nothing names, the daily check of every agent-seat's open tasks that the check at filing missed, the daily check for names a reader cannot understand away from where they are defined, the daily and session-handoff check for branches whose commits are in no pull request, their tests, and the scheduled job that starts each due job's agent-session.
+Settle the questions above that are still open with the user, then build the second job of the daily step, the report of agent-seats far behind main, the check for a pending ned-box reboot or firmware update, the program that lists documents due for a cold-read-fast-read, the check for a missing library or tool, the weekly count of hook firings and of programs nothing names, the daily check of every agent-seat's open tasks that the check at filing missed, the daily check for names a reader cannot understand away from where they are defined, the daily and session-handoff check for branches whose commits are in no pull request, the regular search for duplicated code, the regular sweep for program files no test covers, the weekly search for rules agents keep breaking, their tests, and the scheduled job that starts each due job's agent-session.
 
 ## Provisional additions (not yet vetted by the user)
 
