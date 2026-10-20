@@ -28,7 +28,14 @@ mechanical checks all pass:
                 trace of it that lives outside a process.
 
 Uncommitted, untracked and ignored files do NOT keep a done worktree: they
-are removed with it. The files are listed after the other checks, each file
+are removed with it. The one exception is the records whose home is the
+log-store: before --remove removes a done worktree, it ships each non-empty
+record directory under the worktree's cold-read-records/ and
+sanity-check-records/ to the log-store, with the shipper of that kind
+(LOG_STORE_RECORD_SHIPPERS), and keeps the worktree when any record is
+refused or fails to ship, printing the shipper's line. The shippers are
+add-only, so a record already in the store ships as "nothing new". The report
+modes name the records and ship nothing. The files are listed after the other checks, each file
 inside an untracked or ignored directory named on its own; the report names
 them, and --remove names them twice: before each removal, as files it will
 discard, and after a removal succeeds, as files discarded with it. A removal
@@ -83,7 +90,10 @@ Modes:
                each removal also deletes the worktree's fully-merged branch
                (git branch -d, which refuses anything unmerged). Removal is
                `git worktree remove --force`, which removes untracked and
-               modified files and still refuses a locked worktree. Orphaned branch refs are deleted the same way, and
+               modified files and still refuses a locked worktree. Before
+               the removal it ships the worktree's cold-read-records and
+               sanity-check records to the log-store, and keeps the
+               worktree when one does not ship. Orphaned branch refs are deleted the same way, and
                a refusal there is a failure rather than a silence.
 
 SCHEDULED. --remove runs once a day on both machines, from the reference
@@ -103,8 +113,8 @@ the next day.
 Usage:
   scripts/clean-worktrees.py [--only-done | --remove] [--repo PATH]
 
-Exit codes: 0 ok, 1 a removal, a ref deletion, or a work-snapshot listing or
-deletion failed, 2 bad invocation.
+Exit codes: 0 ok, 1 a removal, a record's shipment, a ref deletion, or a
+work-snapshot listing or deletion failed, 2 bad invocation.
 """
 
 import importlib.util
@@ -135,6 +145,13 @@ DISPOSABLE_JUNK_BASENAMES = (".DS_Store", "__pycache__")
 
 DISCARDED_FILES_NAMED_AT_MOST = 10
 
+# Gitignored directories whose records belong in the log-store, each with the program that ships one
+# record of that kind. The reference clone's shippers, not the worktree's possibly older copies.
+LOG_STORE_RECORD_SHIPPERS = (
+    ("cold-read-records", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py"),
+    ("sanity-check-records", REPO_ROOT / "scripts" / "sanity-check-record-ship.py"),
+)
+
 # lsof scans all processes and can be slow under load; a timeout must keep worktrees.
 VACANCY_CHECK_TIMEOUT_SECONDS = 120
 
@@ -149,6 +166,9 @@ def run_git(repo, *arguments):
         ["git", "-C", str(repo), *arguments],
         capture_output=True, text=True, check=False,
     )
+
+
+FINISHED_WITH_FAILURES_LINE = "clean-worktrees: finished; each failure is named above"
 
 
 def main_checkout_of(repo):
@@ -296,6 +316,40 @@ def discarded_files_text(paths):
     return named + (f" and {more} more" if more > 0 else "")
 
 
+def log_store_records_in(worktree):
+    """Return (shipper, record directory) for each non-empty record directory the worktree holds."""
+    records = []
+    for directory_name, shipper in LOG_STORE_RECORD_SHIPPERS:
+        records_directory = worktree / directory_name
+        if not records_directory.is_dir():
+            continue
+        for record in sorted(records_directory.iterdir()):
+            if record.is_dir() and any(record.iterdir()):
+                records.append((shipper, record))
+    return records
+
+
+def ship_log_store_records(worktree):
+    """Ship every record the worktree holds; return (record path, shipper line) for each that did not ship."""
+    unshipped = []
+    for shipper, record in log_store_records_in(worktree):
+        shipment = subprocess.run([sys.executable, str(shipper), str(record)],
+                                  capture_output=True, text=True, check=False)
+        sys.stderr.write(shipment.stderr)
+        # One record directory, so the shipper prints at most one line.
+        line = shipment.stdout.strip()
+        if not line:
+            last_error = shipment.stderr.strip().splitlines()[-1:]
+            line = (f"the shipper printed nothing (exit {shipment.returncode})"
+                    + (f": {last_error[0]}" if last_error else ""))
+        # A failed shipment's line is printed once, inside the FAILED line, so a reader counts it once.
+        if shipment.returncode:
+            unshipped.append((record.relative_to(worktree), line))
+        else:
+            print(f"{worktree.name}: {line}")
+    return unshipped
+
+
 def classify(worktree, branch, main_checkout):
     """Return (done, reason, discarded paths) for a worktree."""
     managed_area = (main_checkout / ".claude" / "worktrees").resolve()
@@ -321,15 +375,36 @@ def classify(worktree, branch, main_checkout):
     discarded, listing_error = files_a_removal_discards(worktree)
     if discarded is None:
         return False, f"git cannot list its files ({listing_error})", []
+    records = log_store_records_in(worktree)
+    shipped_first = (f"; --remove first ships its {len(records)} record(s) to the log-store "
+                     f"and keeps it if one does not ship: "
+                     + ", ".join(str(record.relative_to(worktree)) for _, record in records)
+                     if records else "")
     if discarded:
         return True, (f"landed and vacant; removing it discards {len(discarded)} "
                       f"uncommitted, untracked or ignored file(s): "
-                      f"{discarded_files_text(discarded)}"), discarded
-    return True, "landed and vacant", []
+                      f"{discarded_files_text(discarded)}{shipped_first}"), discarded
+    return True, "landed and vacant" + shipped_first, []
 
 
 def remove_worktree(worktree, branch, repo, discarded):
-    """Remove a done worktree and its merged branch; return success."""
+    """Ship its log-store records, then remove a done worktree and its merged branch; return success."""
+    unshipped = ship_log_store_records(worktree)
+    if unshipped:
+        print(f"{worktree.name}: record shipment FAILED, worktree kept — removing it would delete "
+              f"record(s) the log-store does not hold: "
+              + "; ".join(f"{record} ({line})" for record, line in unshipped))
+        # No next-step line may contain FAILED: the handoff-supervisor counts each such line as a failure.
+        if any(line.startswith("REFUSED:") for _, line in unshipped):
+            print(f"{worktree.name}: for each record whose line starts REFUSED:, rename its directory "
+                  f"as that line says; the next scripts/clean-worktrees.py --remove then ships it "
+                  f"and removes the worktree")
+        if not all(line.startswith("REFUSED:") for _, line in unshipped):
+            print(f"{worktree.name}: for each record whose line does not start REFUSED:, do nothing "
+                  f"now: the next scripts/clean-worktrees.py --remove, daily or at a handoff, "
+                  f"ships the record again; "
+                  f"if the record fails the same way there, fix the cause its line names")
+        return False
     # Named before the removal too: a removal that fails or is killed partway may already have deleted some.
     if discarded:
         print(f"{worktree.name}: removing it will discard {len(discarded)} uncommitted, "
@@ -419,6 +494,9 @@ def main(argv=None):
         repo, remove=remove, only_due=only_done,
         handoff_directory=Path.home() / ".claude" / "handoffs")
 
+    # Printed only by a run that got this far, so a reader can tell a finished run from one that aborted.
+    if failures:
+        print(FINISHED_WITH_FAILURES_LINE)
     return 1 if failures else 0
 
 

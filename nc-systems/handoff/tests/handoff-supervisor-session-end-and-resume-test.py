@@ -571,6 +571,53 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           "1 work-snapshot failure(s): work-snapshots: could not be listed" in listing_failure,
           listing_failure)
 
+    # A record the log-store refuses keeps its worktree, and the handoff report must
+    # name the worktree, the record and the shipper's line, once.
+    refused_store = root / "refused-store"
+    (refused_store / "cold-read-records" / "foo-2026-10-19").mkdir(parents=True)
+    (refused_store / "cold-read-records" / "foo-2026-10-19" / "fast-read.md").write_text(
+        "another read's report\n", encoding="utf-8")
+    holding_record = home / ".claude" / "worktrees" / "record-holding-worktree"
+    git_in(["worktree", "add", "--quiet", "-b", "record-holding-branch", str(holding_record)], home)
+    (holding_record / "cold-read-records" / "foo-2026-10-19").mkdir(parents=True)
+    (holding_record / "cold-read-records" / "foo-2026-10-19" / "fast-read.md").write_text(
+        "this read's report\n", encoding="utf-8")
+    os.utime(holding_record / ".git", (long_ago, long_ago))
+    os.environ["COLD_READ_RECORD_SHIP_DESTINATION"] = str(refused_store / "cold-read-records")
+    try:
+        refused_report = supervisor.remove_finished_worktrees_at_handoff(home)
+    finally:
+        del os.environ["COLD_READ_RECORD_SHIP_DESTINATION"]
+    check("WORKTREE CLEANUP: a worktree kept because the log-store refused its record is "
+          "named once in the report, with the record and the shipper's REFUSED line",
+          holding_record.exists()
+          and "1 worktree(s) kept because a record did not reach the log-store: "
+          "record-holding-worktree: record shipment FAILED, worktree kept — removing it would "
+          "delete record(s) the log-store does not hold: cold-read-records/foo-2026-10-19 "
+          "(REFUSED:" in refused_report
+          and refused_report.count("record-holding-worktree") == 1
+          and "exited 1" not in refused_report and "failed:" not in refused_report,
+          refused_report)
+    git_in(["worktree", "remove", "--force", str(holding_record)], home)
+
+    kept_marker = supervisor.KEPT_FOR_RECORDS_MARKER + "cold-read-records/r-2026-10-19 "
+    kept_summary = supervisor.summarize_worktree_cleanup_output([
+        "failed-ship-wt" + kept_marker + "(FAILED: r-2026-10-19 — ned-box unreachable)",
+        "silent-ship-wt" + kept_marker
+        + "(the shipper printed nothing (exit 1): NotADirectoryError: store)",
+        "locked-wt: removal FAILED — locked",
+    ])
+    check("WORKTREE CLEANUP: a kept worktree whose shipment FAILED is counted once, among the "
+          "kept, and a removal failure is still counted among the failures",
+          "; 1 failed: locked-wt: removal FAILED — locked;" in kept_summary
+          and "2 worktree(s) kept because a record did not reach the log-store: failed-ship-wt"
+          in kept_summary and kept_summary.count("failed-ship-wt") == 1, kept_summary)
+    check("WORKTREE CLEANUP: a kept worktree whose shipper printed nothing carries the "
+          "shipper's last error line into the summary",
+          "silent-ship-wt" + kept_marker
+          + "(the shipper printed nothing (exit 1): NotADirectoryError: store)" in kept_summary,
+          kept_summary)
+
     # With GIT_DIR naming another repository, the cleanup still acts on the
     # seat's own, and leaves the other alone.
     other = root / "other-repository"
@@ -649,6 +696,35 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
     check("WORKTREE CLEANUP: a cleaner that crashes is reported with its error, "
           "not as nothing removed",
           "exited 1" in report and "the cleaner broke" in report, report)
+
+    # A printed failure explains a nonzero exit only when the cleaner went on to finish.
+    kept_for_record_line = ("rec-wt" + supervisor.KEPT_FOR_RECORDS_MARKER
+                            + "cold-read-records/r (FAILED: ned-box unreachable)")
+    for kind, printed in (
+            ("worktree kept for an unshipped record", f"print({kept_for_record_line!r})\n"),
+            ("failed removal", "print('locked-wt: removal FAILED — locked')\n")):
+        aborting = root / "aborting-after-printed-failure-cleaner.py"
+        aborting.write_text(printed + "raise OSError('listing the next worktree broke')\n",
+                            encoding="utf-8")
+        with supervisor_names_replaced(CLEAN_WORKTREES_PATH=aborting):
+            report = supervisor.remove_finished_worktrees_at_handoff(home)
+        check(f"WORKTREE CLEANUP: a cleaner that aborts after a {kind} is reported "
+              f"with its error, not hidden behind the printed failure",
+              "exited 1" in report and "listing the next worktree broke" in report, report)
+
+    finishing = root / "finishing-with-failure-cleaner.py"
+    finishing.write_text(
+        "import sys\n"
+        "print('locked-wt: removal FAILED — locked')\n"
+        "print('clean-worktrees: finished; each failure is named above')\n"
+        "print('stderr noise', file=sys.stderr)\n"
+        "sys.exit(1)\n", encoding="utf-8")
+    with supervisor_names_replaced(CLEAN_WORKTREES_PATH=finishing):
+        report = supervisor.remove_finished_worktrees_at_handoff(home)
+    check("WORKTREE CLEANUP: a cleaner that finished and named its failure adds no "
+          "exit line, since the failure line explains the exit",
+          "1 failed: locked-wt: removal FAILED" in report
+          and "exited 1" not in report and "stderr noise" not in report, report)
 
     unusable = root / "unusable-vacancy-cleaner.py"
     unusable.write_text(

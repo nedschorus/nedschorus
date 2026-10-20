@@ -1175,8 +1175,9 @@ def remove_finished_worktrees_at_handoff(
         return (f"worktree cleanup: clean-worktrees.py could not be run: "
                 f"{type(error).__name__}: {error}")
     report = summarize_worktree_cleanup_output(stdout.splitlines())
-    if (cleaner.returncode != 0 and "FAILED" not in stdout
-            and "work-snapshot failure(s)" not in report):
+    # Only a run that finished prints this line; any other nonzero exit aborted or was refused.
+    finished = CLEANER_FINISHED_WITH_FAILURES_LINE in stdout.splitlines()
+    if cleaner.returncode != 0 and not finished:
         detail = stderr.strip().splitlines()[-1:] or ["no detail"]
         report += f"; clean-worktrees.py exited {cleaner.returncode}: {detail[0]}"
     return report
@@ -1200,13 +1201,21 @@ def stop_worktree_cleaner_process_group(cleaner) -> str:
     return partial
 
 
+CLEANER_FINISHED_WITH_FAILURES_LINE = "clean-worktrees: finished; each failure is named above"
+# clean-worktrees.py prints this when a record did not ship; the line ends with the shipper's own line.
+KEPT_FOR_RECORDS_MARKER = (": record shipment FAILED, worktree kept — removing it would delete "
+                           "record(s) the log-store does not hold: ")
+
+
 def summarize_worktree_cleanup_output(lines) -> str:
     """Return one report line from the cleaner's output."""
     removed = sum(1 for line in lines if ": removed" in line)
     deleted = sum(1 for line in lines
                   if (line.startswith("branch ") and ": deleted" in line)
                   or (": removed" in line and line.endswith(" deleted")))
-    failed = [line for line in lines if "FAILED" in line]
+    kept_for_records = [line for line in lines if KEPT_FOR_RECORDS_MARKER in line]
+    # A kept-for-records line holds FAILED, so it is counted here and not again among the failures.
+    failed = [line for line in lines if "FAILED" in line and KEPT_FOR_RECORDS_MARKER not in line]
     refused = [line for line in lines if "left in place" in line]
     unchecked = [line for line in lines
                  if ": kept — " in line
@@ -1244,6 +1253,9 @@ def summarize_worktree_cleanup_output(lines) -> str:
                    f"files may be partly gone: " + "; ".join(unconfirmed))
     if failed:
         report += f"; {len(failed)} failed: " + "; ".join(failed)
+    if kept_for_records:
+        report += (f"; {len(kept_for_records)} worktree(s) kept because a record did not "
+                   f"reach the log-store: " + "; ".join(kept_for_records))
     if refused:
         report += f"; {len(refused)} branch(es) left in place: " + "; ".join(refused)
     if unchecked:
