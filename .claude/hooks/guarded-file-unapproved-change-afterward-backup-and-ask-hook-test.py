@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 import resource
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -126,6 +127,29 @@ class World:
     def store_file(self, path, name):
         target = self.store / str(Path(path)).lstrip("/") / name
         return target.read_text() if target.exists() else ""
+
+    def git_holds(self, key):
+        return self.git("cat-file", "-e", key, check_ok=False).returncode == 0
+
+    def seen_in_log(self, path, key):
+        return any(line.startswith("seen\t") and f"\t{key}\t" in line
+                   for line in self.store_file(path, "log").splitlines())
+
+    def failing_git(self, arguments):
+        """Make every git whose command line holds arguments fail as a broken repository does,
+        for the hook's runs and commands until failing_git(None)."""
+        if arguments is None:
+            self.extra_environment.pop("PATH", None)
+            return
+        directory = self.scratch / "failing-git"
+        directory.mkdir(exist_ok=True)
+        wrapper = directory / "git"
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            f"case \" $* \" in *\"{arguments}\"*) echo 'fatal: injected failure' >&2; exit 128;; esac\n"
+            f"exec {shutil.which('git')} \"$@\"\n")
+        wrapper.chmod(0o755)
+        self.extra_environment["PATH"] = f"{directory}:{os.environ['PATH']}"
 
     def marker(self, text, before=None):
         marker = self.repo / ".walk-approved"
@@ -316,6 +340,88 @@ def cases(scratch):
     check("--restore keeps the current version before it restores",
           result.returncode == 0 and key in world.versions(claude), world.versions(claude))
 
+    # -- a version git holds is logged, not copied, and read back from git
+    world = fresh(scratch, "git-holds")
+    claude = world.repo / "CLAUDE.md"
+    committed = world.key(claude)
+    check("a version a commit holds is not copied",
+          committed not in world.versions(claude), world.versions(claude))
+    check("and the log has its line with the version's git id",
+          world.seen_in_log(claude, committed), world.store_file(claude, "log"))
+    home_claude = world.home / ".claude" / "CLAUDE.md"
+    check("a guarded file outside every checkout is copied",
+          world.key(home_claude) in world.versions(home_claude), world.versions(home_claude))
+    claude.write_text("project v2, committed\n")
+    world.git("commit", "-qam", "v2")
+    second = world.key(claude)
+    message = world.run()
+    check("a version committed before a run sees it is asked about, with the diff read from git",
+          str(claude) in message and "-project v1" in message and "+project v2" in message,
+          message)
+    check("and it is not copied", second not in world.versions(claude), world.versions(claude))
+    result = world.command("--restore", claude, second)
+    check("--restore puts back an approved version that only git holds",
+          result.returncode == 0 and claude.read_text() == "project v1\n",
+          (result.stderr, claude.read_text()))
+    check("and does not copy the declined version git holds",
+          second not in world.versions(claude), world.versions(claude))
+    world.git("commit", "-qam", "Put back the approved CLAUDE.md")
+    world.run()
+    claude.write_text("project v3, shell\n")
+    world.run()
+    check("a version git does not hold is copied", world.key(claude) in world.versions(claude),
+          world.versions(claude))
+
+    world = fresh(scratch, "approved-version-held-nowhere")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2, approved edit\n")
+    world.run(tool="Edit", file_path=claude)
+    approved_key = world.key(claude)
+    (world.store / str(claude).lstrip("/") / approved_key).unlink()
+    claude.write_text("project v3, shell\n")
+    declined = world.key(claude)
+    world.run()
+    result = world.command("--restore", claude, declined)
+    check("--restore refuses when the approved version is in neither its copy nor git",
+          result.returncode == 1 and "neither its copy nor git" in result.stderr
+          and claude.read_text() == "project v3, shell\n", (result.stderr, claude.read_text()))
+
+    world = fresh(scratch, "git-holds-check-fails")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2\n")
+    world.failing_git("cat-file --batch-check")
+    message = world.run()
+    check("a run whose git cannot say which versions it holds reports the failure",
+          "did not run" in message and "injected failure" in message, message)
+    check("and copies nothing", world.key(claude) not in world.versions(claude),
+          world.versions(claude))
+    result = world.command("--restore", claude, world.key(claude))
+    check("--restore whose git cannot say which versions it holds fails and changes nothing",
+          result.returncode == 1 and "injected failure" in result.stderr
+          and "Traceback" not in result.stderr
+          and claude.read_text() == "project v2\n", (result.stderr, claude.read_text()))
+    world.failing_git(None)
+    message = world.run()
+    check("the next run checks the file", str(claude) in message, message)
+
+    world = fresh(scratch, "git-read-back-fails")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2\n")
+    world.failing_git("cat-file -e")
+    message = world.run()
+    check("a run whose git fails to say whether it holds the approved version reports it",
+          "did not run" in message and "injected failure" in message, message)
+    world.failing_git(None)
+    world.run()
+    key = world.key(claude)
+    world.failing_git("cat-file blob")
+    result = world.command("--restore", claude, key)
+    check("--restore whose git fails to read the approved version fails and changes nothing",
+          result.returncode == 1 and "injected failure" in result.stderr
+          and "Traceback" not in result.stderr
+          and claude.read_text() == "project v2\n", (result.stderr, claude.read_text()))
+    world.failing_git(None)
+
     # -- edit, commit and rebase in one command
     world = fresh(scratch, "commit-rebase")
     claude = world.repo / "CLAUDE.md"
@@ -372,8 +478,10 @@ def cases(scratch):
     during = world.run()
     check("nothing is asked while a merge is stopped on a conflict", during == "", during)
     conflicted = world.key(claude)
-    check("the conflicted version is copied during the conflict",
-          conflicted in world.versions(claude), world.versions(claude))
+    check("the conflicted version is logged during the conflict, and kept by git's merge or "
+          "by a copy", world.seen_in_log(claude, conflicted)
+          and (world.git_holds(conflicted) or conflicted in world.versions(claude)),
+          (world.versions(claude), world.store_file(claude, "log")))
     claude.write_text("project merged\n")
     world.git("commit", "-qam", "merged")
     message = world.run()
