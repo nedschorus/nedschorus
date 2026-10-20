@@ -1,6 +1,6 @@
 # How a test reports its result
 
-This page says how a test suite in this repository tells the program that runs it whether it passed. Read it before you write a test suite, or a program that reads a suite's result. `scripts/run-all-test-suites.py` holds the full rules in its built-in help, printed by `python3 scripts/run-all-test-suites.py --help`; this page is the short version.
+This page says how a test suite in this repository tells the program that runs it whether it passed. Read it before you write a test suite, or a program that reads a suite's result. `scripts/run-all-test-suites.py` holds the full rules in the comment at the top of the file, its docstring; this page is the short version.
 
 ## What counts as a test suite
 
@@ -8,7 +8,7 @@ A test suite is a file that git tracks whose name ends `-test.py` or `-test.sh`,
 
 ## Pass or fail: the exit code alone
 
-A suite passes when its process exits with code 0. It fails when it exits with any other code, when a signal kills it, or when it runs past its time limit, which the runner's help describes. The runner prints `PASS <path> (<seconds>s)` or `FAIL <path> exit <code> (<seconds>s)` for each suite, and a last line that opens `SUMMARY:` with the counts.
+A suite passes when its process exits with code 0. It fails when it exits with any other code, when a signal kills it, or when it runs past its time limit, which the runner's docstring describes. The runner prints `PASS <path> (<seconds>s)` or `FAIL <path> exit <code> (<seconds>s)` for each suite, and a last line that opens `SUMMARY:` with the counts.
 
 What a suite prints never decides whether it passed. Suites print success in several different wordings, such as "all cases passed" or "OK", so the runner reads no text to decide. A suite that finds a failure must exit nonzero; printing "FAIL" and exiting 0 reports a pass.
 
