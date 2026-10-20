@@ -958,31 +958,51 @@ def cases(scratch):
     reminder = world.run()
     obvious_fix_subagent = ("If you are a subagent, and you wrote an obvious-fix marker and then "
                             "made the change with a command other than Edit or Write, run once")
+    pre_approved_subagent = ("If you are a subagent, and you wrote a `#pre_approved_change` marker "
+                             "and then made the change with a command other than Edit or Write, "
+                             "run once")
     other_subagent = "If you are any other subagent, stop: make no further edit"
-    ask_subagent_line = message[message.find(obvious_fix_subagent):message.find(other_subagent)]
+    ask_subagent_line = message[message.find(obvious_fix_subagent):
+                                message.find(pre_approved_subagent)]
+    ask_pre_approved_line = message[message.find(pre_approved_subagent):
+                                    message.find(other_subagent)]
     check("the ask tells a subagent that wrote an obvious-fix marker and then changed the file by "
           "a command other than Edit or Write to run --approve and tell its dispatcher, on its "
           "own line before any step that asks the user",
-          0 <= message.find(obvious_fix_subagent) < message.find(other_subagent)
-          < message.find("Show the user each change")
+          0 <= message.find(obvious_fix_subagent) < message.find(pre_approved_subagent)
+          < message.find(other_subagent) < message.find("Show the user each change")
           and f"--approve {claude} {key}" in ask_subagent_line
           and "tell the agent that dispatched you what you fixed" in ask_subagent_line, message)
+    check("the ask tells a subagent that wrote a #pre_approved_change marker and then changed the "
+          "file by a command other than Edit or Write to run --approve and report nothing, on its "
+          "own line before the line that stops any other subagent",
+          f"--approve {claude} {key}" in ask_pre_approved_line
+          and "report nothing" in ask_pre_approved_line, message)
     check("the ask tells any other subagent to stop editing before any step that asks the user",
           0 <= message.find(other_subagent) < message.find("Show the user each change"), message)
     check("the ask tells an agent that is not a subagent to approve with its obvious-fix or "
           "#pre_approved_change marker only a change it made by a command other than Edit or "
-          "Write",
+          "Write, and not to report the obvious fix to the user",
           "If you wrote an obvious-fix marker and then made the change with a command other than "
-          "Edit or Write, run that --approve command without asking him" in message
+          "Edit or Write, run that --approve command without asking him; the fix is not reported "
+          "to him" in message
+          and "tell him what you fixed" not in message
           and "If you wrote a `#pre_approved_change` marker and then made the change with a "
           "command other than Edit or Write, run that --approve command without asking him"
           in message, message)
     reminder_subagent_line = reminder[reminder.find(obvious_fix_subagent):
-                                      reminder.find(other_subagent)]
+                                      reminder.find(pre_approved_subagent)]
+    reminder_pre_approved_line = reminder[reminder.find(pre_approved_subagent):
+                                          reminder.find(other_subagent)]
     check("the reminder gives a subagent that wrote an obvious-fix marker and then changed the "
           "file by a command other than Edit or Write the --approve command, on its own line",
-          0 <= reminder.find(obvious_fix_subagent) < reminder.find(other_subagent)
+          0 <= reminder.find(obvious_fix_subagent) < reminder.find(pre_approved_subagent)
+          < reminder.find(other_subagent)
           and f"--approve {claude} {key}" in reminder_subagent_line, reminder)
+    check("the reminder gives a subagent that wrote a #pre_approved_change marker and then changed "
+          "the file by a command other than Edit or Write the --approve command, on its own line",
+          f"--approve {claude} {key}" in reminder_pre_approved_line
+          and "report nothing" in reminder_pre_approved_line, reminder)
     check("the reminder tells any other subagent to stop editing and report, and names the "
           "approval marker", other_subagent in reminder and ".walk-approved" in reminder, reminder)
 
