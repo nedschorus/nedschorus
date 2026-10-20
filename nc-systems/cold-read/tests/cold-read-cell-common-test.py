@@ -101,8 +101,10 @@ WHAT IS PINNED HERE.
     NO `-dirty` when only untracked files are present -- this project's seats
     routinely carry untracked drafts, so a mark on every stamp would say
     nothing. A cell that ran where there is no checkout at all omits the
-    field and still writes its report. `target=` stays the last field in
-    every one of those cases.
+    field and still writes its report; one whose git fails on the checkout
+    is stamped `checkout=unknown-git-exited-<code>`, not stamped as if there
+    were no checkout. `target=` stays the last field in every one of those
+    cases.
 
   - The runtime's stderr survives a successful run. It used to be passed
     straight through to the log nc-systems/cold-read/cold-read-grid.py deletes on success,
@@ -1241,6 +1243,58 @@ with tempfile.TemporaryDirectory() as scratch:
           "Traceback" not in result.stderr, repr(result.stderr))
     check("target= is still the last field when checkout= is absent",
           stamp.endswith(f"target={TARGET_RELATIVE_PATH} -->"), repr(stamp))
+
+    # A checkout git fails on is not "no checkout": the field names the
+    # failure instead of being dropped. A stand-in git, first on PATH, fails
+    # one of the two stamp queries and passes every other call to the real git.
+    real_git = shutil.which("git")
+    for failing_query, case_slug in ((["rev-parse", "--short", "HEAD"], "checkout-git-fails-commit"),
+                                     (["status", "--porcelain", "--untracked-files=no"],
+                                      "checkout-git-fails-status")):
+        shutil.rmtree(repository)
+        repository = build_scratch_repository(scratch)
+        failing_git_directory = scratch / f"{case_slug}-git"
+        failing_git_directory.mkdir(exist_ok=True)
+        failing_git = failing_git_directory / "git"
+        failing_git.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            f"if sys.argv[-{len(failing_query)}:] == {failing_query!r}:\n"
+            "    sys.stderr.write('fatal: index file corrupt\\n')\n"
+            "    sys.exit(128)\n"
+            f"os.execv({real_git!r}, [{real_git!r}, *sys.argv[1:]])\n",
+            encoding="utf-8")
+        failing_git.chmod(0o755)
+        report = report_path_for(repository, case_slug, "claude")
+        result = run_claude_cell(
+            repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+            environment_overrides={
+                "PATH": f"{failing_git_directory}{os.pathsep}{stubs}{os.pathsep}"
+                        f"{os.environ.get('PATH', '')}"},
+        )
+        stamp = provenance_stamp_of(report)
+        check(f"a cell whose `git {' '.join(failing_query)}` fails still writes its report",
+              result.returncode == 0 and stamp.startswith("<!-- provenance:"),
+              f"exit {result.returncode}; stamp={stamp!r}; stderr={result.stderr!r}")
+        check(f"a failed `git {' '.join(failing_query)}` is stamped as git's failure, "
+              "not dropped as if there were no checkout",
+              " checkout=unknown-git-exited-128 " in stamp, repr(stamp))
+
+    # A git that times out or does not start has no exit code to stamp.
+    stamp_common_spec = importlib.util.spec_from_file_location(
+        "cold_read_cell_common_for_the_stamp", SYSTEM_DIRECTORY / "cold-read-cell-common.py")
+    stamp_common = importlib.util.module_from_spec(stamp_common_spec)
+    stamp_common_spec.loader.exec_module(stamp_common)
+    stamp_git = stamp_common.git_machine_readable_output
+
+    def git_that_does_not_finish(directory, arguments, **_options):
+        raise stamp_git.GitCommandFailed(arguments, directory, None, "did not finish within 10 s")
+
+    stamp_git.run_git = git_that_does_not_finish
+    check("a git that does not finish is stamped as no answer, not as no checkout",
+          stamp_common.checkout_commit_for_provenance_stamp(repository)
+          == "unknown-git-did-not-answer",
+          repr(stamp_common.checkout_commit_for_provenance_stamp(repository)))
 
     # --- The Claude cell denies Bash; the Codex `deep` tier runs at xhigh ----
     # Both settled 2026-09-15 on the union analysis in the log-store at
