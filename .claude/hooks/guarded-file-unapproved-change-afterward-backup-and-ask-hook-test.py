@@ -292,6 +292,87 @@ def cases(scratch):
     check("an obvious-fix marker with the same time as the first sight counts as after it",
           result.returncode == 1, result.stderr)
 
+    # -- a #pre_approved_change marker is recorded as pre-approved, never as the user's words
+    def approved_log_fields(world, path, key):
+        return [line.split("\t")[:-1] for line in world.store_file(path, "log").splitlines()
+                if line.startswith("approved\t") and f"\t{key}\t" in line]
+
+    world = fresh(scratch, "pre-approved-before")
+    claude = world.repo / "CLAUDE.md"
+    # A trailing space on the first line still makes the pre-approved-change form, as in the guard.
+    marker = world.marker("#pre_approved_change \ncosmetic\tchange\n",
+                          before=time.time_ns() - 10_000_000_000)
+    claude.write_text("project v1, reformatted\n")
+    key = world.key(claude)
+    world.run()
+    result = world.command("--approve", claude, key)
+    check("a #pre_approved_change marker written before a shell edit approves the edit's version",
+          result.returncode == 0 and key in world.store_file(claude, "approved"), result.stderr)
+    check("the approval is logged as pre-approved with its exception, its whitespace joined by "
+          "single spaces, and not as the user's",
+          [fields[5:] for fields in approved_log_fields(world, claude, key)]
+          == [["pre-approved", "cosmetic change"]],
+          world.store_file(claude, "log"))
+    check("--approve with a #pre_approved_change marker spends the marker", not marker.exists())
+
+    world = fresh(scratch, "pre-approved-no-reason")
+    claude = world.repo / "CLAUDE.md"
+    marker = world.marker("#pre_approved_change\n\n", before=time.time_ns() - 10_000_000_000)
+    claude.write_text("project v1, unexplained\n")
+    key = world.key(claude)
+    world.run()
+    result = world.command("--approve", claude, key)
+    check("--approve refuses a #pre_approved_change marker with no second line, and says what "
+          "to put there",
+          result.returncode == 1 and "no second line naming the exception" in result.stderr,
+          result.stderr)
+    check("the refused #pre_approved_change marker is left in place", marker.exists())
+    check("the version stays unapproved", key not in world.store_file(claude, "approved"),
+          world.store_file(claude, "approved"))
+
+    world = fresh(scratch, "pre-approved-reason-on-first-line")
+    claude = world.repo / "CLAUDE.md"
+    marker = world.marker("#pre_approved_change cosmetic-change\n",
+                          before=time.time_ns() - 10_000_000_000)
+    claude.write_text("project v1, reason on the marker's first line\n")
+    key = world.key(claude)
+    world.run()
+    result = world.command("--approve", claude, key)
+    check("--approve refuses a one-line #pre_approved_change marker instead of logging it as "
+          "the user's words",
+          result.returncode == 1 and "no second line naming the exception" in result.stderr,
+          result.stderr)
+    check("the one-line #pre_approved_change marker leaves the version unapproved",
+          key not in world.store_file(claude, "approved"), world.store_file(claude, "approved"))
+
+    world = fresh(scratch, "pre-approved-after")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v1, changed first\n")
+    key = world.key(claude)
+    world.run()
+    world.marker("#pre_approved_change\non neither list\n", before=time.time_ns() + 10_000_000_000)
+    result = world.command("--approve", claude, key)
+    check("a #pre_approved_change marker written after the run that first saw the version is "
+          "refused, and the agent is told to ask the user with the exception named",
+          result.returncode == 1 and "ask him" in result.stderr
+          and (f'"A change to the guarded file {claude} that needs no approval as '
+               '`on neither list`; the marker was written after the change, so it needs your '
+               'yes"') in result.stderr, result.stderr)
+    check("the late #pre_approved_change marker leaves the version unapproved",
+          key not in world.store_file(claude, "approved"), world.store_file(claude, "approved"))
+
+    world = fresh(scratch, "user-words-logged-as-user")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v1, the user's change\n")
+    key = world.key(claude)
+    world.run()
+    world.marker('The user said "y" to the CLAUDE.md change')
+    result = world.command("--approve", claude, key)
+    check("an approval by the user's words is logged as the user's, with no exception field",
+          result.returncode == 0
+          and [fields[5:] for fields in approved_log_fields(world, claude, key)] == [["user"]],
+          world.store_file(claude, "log"))
+
     world = fresh(scratch, "marker-spent-by-edit")
     claude = world.repo / "CLAUDE.md"
     other = world.repo / ".claude" / "skills" / "x" / "SKILL.md"

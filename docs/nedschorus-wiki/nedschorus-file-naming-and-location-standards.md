@@ -56,7 +56,7 @@ A file in a queue directory is named as it will be at its canonical location, ap
 
 ## Files the user reviews
 
-The user reviews every change to these files, from a file's first version in its approved location to each later edit:
+The user reviews each change to these files that `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` lists and does not except, from a file's first version in its approved location to each later edit; any other change passes the instruction-file guard with a `#pre_approved_change` marker file:
 
 - every MD file in `docs/agents/` and `docs/nedschorus-wiki/`;
 - every MD file under `nc-systems/skills/`;

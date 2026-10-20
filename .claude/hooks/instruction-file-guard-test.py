@@ -83,7 +83,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
     result = run_hook(decoy, workspace, str(workspace / "CLAUDE.md"))
     check("editing CLAUDE.md is blocked", result.returncode == 2, str(result.returncode))
-    check("the block teaches the walk path", "get the user's approval" in result.stderr, result.stderr)
+    check("the block opens by telling the agent to check whether the change needs the user's approval",
+          result.stderr.splitlines()[0] == (
+              f"Before you change {workspace / 'CLAUDE.md'}, check whether the change needs the "
+              "user's approval: it does only when the approval page lists it and it is none of "
+              "the page's exceptions."), result.stderr)
     check("the block names the override marker", ".walk-approved" in result.stderr, result.stderr)
     check("the block says to create the marker with the Write tool",
           "Create .walk-approved with the Write tool, not a shell command." in result.stderr,
@@ -123,7 +127,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("the auto-memory is still protected", result.returncode == 2)
     check("a memory write gets the memory refusal, not the generic one",
           "it is in a Claude Code memory directory" in result.stderr
-          and "get the user's approval" not in result.stderr, result.stderr)
+          and "check whether the change needs the user's approval" not in result.stderr,
+          result.stderr)
     check("the memory refusal says to propose the exact edit, ask the user where to save, "
           "or drop a note that matters only to this conversation",
           "where nothing recalls a note at the moment it applies." in result.stderr
@@ -259,8 +264,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         result = run_hook(decoy, workspace, str(target))
         check(f"{label} is blocked", result.returncode == 2, str(result.returncode))
     result = run_hook(decoy, workspace, str(workspace / "docs" / "nedschorus-wiki" / "x.md"))
-    check("the block says the user reviews every change here",
-          "reviews every change" in result.stderr, result.stderr)
+    check("the block says the guard refuses every write to a document the user reviews",
+          "This guard refuses every write to a document the user reviews, until .walk-approved "
+          "says the change may go ahead." in result.stderr, result.stderr)
     check("the block names the marker", ".walk-approved" in result.stderr, result.stderr)
     check("the reviewed-document block says, on its own line, to create the marker with the Write tool",
           "Create .walk-approved with the Write tool, not a shell command."
@@ -271,11 +277,12 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "docs/drafts/" in result.stderr and "docs/nedschorus-wiki/queue/" in result.stderr,
           result.stderr)
     check("the block tells a subagent to report the change to the agent that dispatched it",
-          "If he has not, show him the change and wait for his answer; if you are a subagent, "
+          "If the change needs his approval, or you cannot tell whether it does, and he has not "
+          "approved it, show him the change and wait for his answer; if you are a subagent, "
           "report the change to the agent that dispatched you instead."
           in result.stderr.splitlines(), result.stderr)
     check("the block is one instruction per line, the obvious-fix and route-around lines included",
-          len(result.stderr.strip().splitlines()) == 12, result.stderr)
+          len(result.stderr.strip().splitlines()) == 14, result.stderr)
     draft_places = [
         ("a draft in docs/agents/queue/", workspace / "docs" / "agents" / "queue" / "x.md"),
         ("a draft in docs/nedschorus-wiki/queue/", workspace / "docs" / "nedschorus-wiki" / "queue" / "x.md"),
@@ -357,6 +364,66 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     marker.write_text("   \n", encoding="utf-8")
     result = run_hook(decoy, workspace, str(workspace / "CLAUDE.md"))
     check("an empty marker does not approve", result.returncode == 2)
+    marker.unlink()
+
+    # The pre-approved-change form: `#pre_approved_change`, then the exception or "on neither list".
+    for label, target in (
+            ("an instruction file", workspace / "CLAUDE.md"),
+            ("a reusable prompt", workspace / "docs" / "agents" / "some-seat-instructions.md"),
+            ("a reviewed document", workspace / "docs" / "nedschorus-wiki" / "a-page.md")):
+        result = run_hook(decoy, workspace, str(target))
+        check(f"the refusal for {label} names the approval page by its path",
+              "The approval page is docs/nedschorus-wiki/"
+              "nedschorus-which-changes-need-the-users-approval.md." in result.stderr,
+              result.stderr)
+        check(f"the refusal for {label} gives the pre-approved-change marker step on its own line",
+              "If the change needs no approval, write `#pre_approved_change` as the first line of "
+              ".walk-approved at the root of your session's own checkout and, as its second line, "
+              "words naming the exception on the approval page that the change falls under, such "
+              "as `cosmetic-change`, or `on neither list` when the change is neither on the "
+              "page's list nor one of its exceptions; then resubmit."
+              in result.stderr.splitlines(), result.stderr)
+    for label, marker_text in (
+            ("naming an exception", "#pre_approved_change\ncosmetic-change\n"),
+            ("saying on neither list", "#pre_approved_change\non neither list\n")):
+        marker.write_text(marker_text, encoding="utf-8")
+        result = run_hook(decoy, workspace, str(workspace / "CLAUDE.md"))
+        check(f"a #pre_approved_change marker {label} passes", result.returncode == 0,
+              result.stderr)
+        check(f"a #pre_approved_change marker {label} is used up by the one call",
+              not marker.exists())
+        result = run_hook(decoy, workspace, str(workspace / "CLAUDE.md"))
+        check(f"the write after a spent #pre_approved_change marker {label} is refused",
+              result.returncode == 2, str(result.returncode))
+    # '"' sorts before '#': quoted words must not be taken for the pre-approved-change form.
+    marker.write_text("\"approved.\" the user, 2026-10-20\n", encoding="utf-8")
+    result = run_hook(decoy, workspace, str(workspace / "CLAUDE.md"))
+    check("the user's quoted words opening with a double quote pass as his words",
+          result.returncode == 0, result.stderr)
+    for label, marker_text in (
+            ("with no second line", "#pre_approved_change\n"),
+            ("with the exception on its first line", "#pre_approved_change cosmetic-change\n"),
+            ("with the exception on its first line and on its second",
+             "#pre_approved_change cosmetic-change\ncosmetic-change\n"),
+            ("with an empty second line and words on its third", "#pre_approved_change\n\ncosmetic-change\n"),
+            ("with only whitespace on its second line", "#pre_approved_change\n \t\n"),
+            ("with trailing whitespace, Windows line ends and words on its third line",
+             "#pre_approved_change \r\n \r\ncosmetic-change\r\n")):
+        marker.write_text(marker_text, encoding="utf-8")
+        result = run_hook(decoy, workspace, str(workspace / "CLAUDE.md"))
+        check(f"a #pre_approved_change marker {label} is refused", result.returncode == 2,
+              str(result.returncode))
+        check(f"a #pre_approved_change marker {label} is left in place for the agent to rewrite",
+              marker.exists())
+        check(f"the refusal of a #pre_approved_change marker {label} says the second line is missing",
+              f"{marker} has `#pre_approved_change` as its first line but no second line saying "
+              "why the change needs no approval" in result.stderr, result.stderr)
+    marker.write_text("#pre_approved_change\non neither list\n", encoding="utf-8")
+    result = run_hook(decoy, workspace, str(memory_file))
+    check("a #pre_approved_change marker does not let a memory write through",
+          result.returncode == 2, str(result.returncode))
+    check("a memory write refused with a #pre_approved_change marker leaves the marker unspent",
+          marker.exists())
     marker.unlink()
 
     # A linked worktree marks its root with a .git FILE, not a directory.
@@ -503,14 +570,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         "names for it, a fast read for a change of one sentence; revise the text from the "
         "findings once, then put the change to him. Skip this when the change only fixes an "
         "obvious error `CLAUDE.md` lets you fix without asking.")
-    for label, target, asking_words in (
-            ("an instruction file", workspace / "CLAUDE.md", "State the proposed change"),
-            ("a reusable prompt", workspace / "docs" / "agents" / "some-seat-instructions.md",
-             "State the proposed change"),
-            # Here the cold read comes first, so no line falls between "If he has approved"
-            # and the lines that follow it up to "If he has not".
-            ("a reviewed document", workspace / "docs" / "nedschorus-wiki" / "a-page.md",
-             "If he has approved this exact change")):
+    asking_words = "If the change needs his approval, or you cannot tell whether it does"
+    for label, target in (
+            ("an instruction file", workspace / "CLAUDE.md"),
+            ("a reusable prompt", workspace / "docs" / "agents" / "some-seat-instructions.md"),
+            ("a reviewed document", workspace / "docs" / "nedschorus-wiki" / "a-page.md")):
         result = run_hook(decoy, workspace, str(target))
         check(f"the refusal for {label} asks for a cold read just before its steps for asking the user",
               result.returncode == 2
