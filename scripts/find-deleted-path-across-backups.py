@@ -246,8 +246,26 @@ line changes the surface's status.
 --box-ssh-host and --skip box keep their meaning: the first names the box only
 for the Mac's ssh, and the second still leaves Timeshift out.
 
+A GIT BLOB ID. The guarded-file hook,
+.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py,
+names each version of a guarded file by its git blob id, logs a line for each
+version it sees, with that id and the time, and keeps a copy only of a version
+git does not hold. So a query of exactly 40 lowercase hexadecimal characters is
+read as a blob id, and the code takes every step: it asks git (git cat-file -e,
+then git log's find-object search over every ref and reflog) and copies the
+blob when git holds it; when no commit holds it, it reads the hook's log lines under the
+log-store's guarded-file-versions-and-approvals/ for the path and the time the
+hook first saw the version, copies the store's copy when there is one, and
+opens the first Timeshift snapshot (ned-box) or Time Machine snapshot (the
+Mac) taken after that time at that path. A Timeshift file is hashed and kept
+only when its id matches; a Time Machine file is reached by a printed command,
+and the agent checks its id with `git hash-object`. Snapshot names are read as
+this machine's local time. The other surfaces search by path and are not run
+for a blob id. Any other query is a path, searched as below.
+
 Usage:
   python3 scripts/find-deleted-path-across-backups.py <path>
+  python3 scripts/find-deleted-path-across-backups.py <40-hex git blob id>
   python3 scripts/find-deleted-path-across-backups.py <path> --skip box
   python3 scripts/find-deleted-path-across-backups.py <path> --skip localsnapshots
   python3 scripts/find-deleted-path-across-backups.py <path> --log-store-root /home/nedlern/nedschorus-logs
@@ -326,6 +344,7 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import hashlib
 import importlib.util
 import os
 import re
@@ -399,6 +418,13 @@ LOCAL_SNAPSHOT_NAME_SUFFIX = ".local"
 # Use /private/tmp because mount reports the resolved path, not the /tmp symlink. The process ID keeps two
 # runs at once off one mount point, so whatever already sits on this one was left by a run that has ended.
 LOCAL_SNAPSHOT_MOUNT_POINT = "/private/tmp/find-deleted-path-across-backups-local-snapshot-ro-%d" % os.getpid()
+
+# A git blob id: SHA-1, as this project's repositories use.
+GIT_BLOB_ID = re.compile(r"[0-9a-f]{40}")
+# Keep this aligned with the guarded-file hook's LOG_STORE_KIND and LOG_FILE_NAME.
+GUARDED_FILE_VERSIONS_UNDER_LOG_STORE = "guarded-file-versions-and-approvals"
+GUARDED_FILE_VERSIONS_LOG_NAME = "log"
+TIMESHIFT_SNAPSHOT_NAME_FORMAT = "%Y-%m-%d_%H-%M-%S"
 
 # A process whose command line holds this is a run of this script.
 THIS_SCRIPT_NAME = "find-deleted-path-across-backups"
@@ -680,6 +706,258 @@ def _plain_path_from_cited_query(query, cwd=None):
                 "from it." % query)
     return os.path.normpath(os.path.join(cwd, path))
 
+
+
+def is_git_blob_id(query):
+    return GIT_BLOB_ID.fullmatch(query) is not None
+
+
+def git_blob_id_of(content):
+    """The id git gives these bytes as a blob."""
+    return hashlib.sha1(b"blob %d\0" % len(content) + content).hexdigest()
+
+
+def search_git_for_blob(blob_id, repo, runner=run_command):
+    """Copy the blob when the repository holds it, and name the commits that hold it. The report's
+    commit_holds is True only when a commit or a reflog entry was found holding it."""
+    code, _, stderr = runner(["git", "-C", repo, "cat-file", "-e", blob_id])
+    if code == 1 and not stderr.strip():
+        report = SurfaceReport("git", NOT_FOUND, ["%s holds no object %s" % (repo, blob_id)])
+        report.commit_holds = False
+        return report
+    if code != 0:
+        report = SurfaceReport("git", UNAVAILABLE, ["git cat-file -e %s in %s exited %s — %s"
+                                                    % (blob_id, repo, code, stderr.strip() or "no error text")])
+        report.commit_holds = False
+        return report
+    code, out, stderr = runner(["git", "-C", repo, "log", "--all", "--reflog", "--find-object=" + blob_id,
+                                "--format=COMMIT %H|%ad|%s", "--date=short", "--name-only", "-n", "5"],
+                               timeout=LONG_TIMEOUT_SECONDS)
+    lines = ["%s holds the blob" % repo]
+    holders, name = [], None
+    if code != 0:
+        lines.append("git log --find-object failed, so which commits hold it is not known — %s"
+                     % (stderr.strip() or "exit %s" % code))
+    else:
+        for line in out.splitlines():
+            if line.startswith("COMMIT "):
+                holders.append(line[len("COMMIT "):].split("|", 2) + [""])
+            elif line.strip() and holders and not holders[-1][3]:
+                holders[-1][3] = line.strip()
+                name = name or os.path.basename(line.strip())
+        for sha, date, subject, path in holders:
+            lines.append("    %s, added or removed by %s (%s) %s"
+                         % (path or "(path not listed)", sha[:9], date, subject[:70]))
+        if not holders:
+            lines.append("no commit and no reflog entry holds it: git keeps it outside every commit, as a "
+                         "staged blob or one a merge wrote, and prunes such a blob after about two weeks")
+    version = FoundVersion("git-blob-%s%s" % (blob_id[:12], "-" + name if name else ""), "git", blob_id,
+                           repo=repo)
+    report = SurfaceReport("git", FOUND, lines, versions=[version])
+    report.commit_holds = bool(holders)
+    return report
+
+
+def _guarded_file_log_script(blob_id, directory):
+    """A shell script printing LOG <file>, LINE <line> and COPY <file> records for the blob, or NOROOT."""
+    quoted_id, quoted_directory = shlex.quote(blob_id), shlex.quote(directory)
+    return "\n".join([
+        "set -u",
+        "dir=%s" % quoted_directory,
+        'if [ ! -d "$dir" ]; then echo NOROOT; exit 0; fi',
+        "files=$(grep -rlF --include=%s -e %s \"$dir\"); rc=$?"
+        % (GUARDED_FILE_VERSIONS_LOG_NAME, quoted_id),
+        'if [ "$rc" -gt 1 ]; then exit "$rc"; fi',
+        'printf "%s\\n" "$files" | while IFS= read -r f; do',
+        '  [ -n "$f" ] || continue',
+        "  printf 'LOG %s\\n' \"$f\"",
+        "  grep -F -e %s \"$f\" | sed 's/^/LINE /'" % quoted_id,
+        '  copy="$(dirname "$f")"/%s' % quoted_id,
+        "  if [ -f \"$copy\" ]; then printf 'COPY %s\\n' \"$copy\"; fi",
+        "done",
+    ])
+
+
+def search_guarded_file_versions_log(blob_id, log_store_root, box_ssh_host, runner=run_command, store_is_here=None):
+    """Read the guarded-file hook's log lines for the blob. The report's sightings is
+    [(machine, guarded path, first time seen in ns)], earliest first."""
+    directory = os.path.join(log_store_root, GUARDED_FILE_VERSIONS_UNDER_LOG_STORE)
+    if store_is_here is None:
+        store_is_here = os.path.isdir(log_store_root)
+    script = _guarded_file_log_script(blob_id, directory)
+    if store_is_here:
+        where, argv = "this machine", ["bash", "-c", script]
+    elif not box_ssh_host:
+        report = SurfaceReport("guarded-file log", UNAVAILABLE,
+                               ["not searched — %s is not on this machine and no ssh host was given" % directory])
+        report.sightings = []
+        return report
+    else:
+        where = box_ssh_host
+        argv = ["ssh", "-o", "ConnectTimeout=%d" % BOX_LOG_STORE_CONNECT_TIMEOUT_SECONDS, "-o", "BatchMode=yes",
+                box_ssh_host, script]
+    code, out, stderr = runner(argv, timeout=LONG_TIMEOUT_SECONDS)
+    if code != 0 or "NOROOT" in out.splitlines():
+        why = ("%s does not exist on %s" % (directory, where) if code == 0 else
+               "the search on %s exited %s — %s" % (where, code, stderr.strip() or "no error text"))
+        report = SurfaceReport("guarded-file log", UNAVAILABLE, [why])
+        report.sightings = []
+        return report
+    first_seen, copies, current = {}, [], None
+    for line in out.splitlines():
+        if line.startswith("LOG "):
+            relative = line[len("LOG "):][len(directory) + 1:]
+            machine, _, rest = relative.partition("/")
+            current = (machine, "/" + rest[:-len("/" + GUARDED_FILE_VERSIONS_LOG_NAME)])
+        elif line.startswith("LINE ") and current is not None:
+            fields = line[len("LINE "):].split("\t")
+            if len(fields) >= 7 and fields[0] == "seen" and blob_id in fields[4:6] and fields[1].isdigit():
+                seen = int(fields[1])
+                first_seen[current] = min(seen, first_seen.get(current, seen))
+        elif line.startswith("COPY "):
+            copies.append(line[len("COPY "):])
+    sightings = sorted(((machine, path, seen) for (machine, path), seen in first_seen.items()),
+                       key=lambda sighting: sighting[2])
+    lines = ["the hook saw it at %s on %s, first at %s" % (path, machine, _local_time_of(seen))
+             for machine, path, seen in sightings[:5]]
+    if len(sightings) > 5:
+        lines.append("... and at %d other paths" % (len(sightings) - 5))
+    if not sightings:
+        lines.append("no seen line of the guarded-file hook names %s, so there is no time to open a snapshot at"
+                     % blob_id)
+    if copies:
+        versions = [FoundVersion("guarded-file-store-%s-%s" % (blob_id[:12], os.path.basename(os.path.dirname(copy))),
+                                 "file" if store_is_here else "box-file", copy, host=box_ssh_host)
+                    for copy in copies[:1]]
+        report = SurfaceReport("guarded-file log", FOUND, lines + ["the store keeps a copy: %s" % copies[0]],
+                               versions=versions)
+    else:
+        report = SurfaceReport("guarded-file log", NOT_FOUND, lines + ["the store keeps no copy of it"])
+    report.sightings = sightings
+    return report
+
+
+def _local_time_of(nanoseconds):
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(nanoseconds / 1e9))
+
+
+def search_timeshift_after(blob_id, path, seen, box_ssh_host, snapshot_root, runner=run_command, on_ned_box=False):
+    """Open the first Timeshift snapshot taken after the hook saw the version, and keep path there when its
+    blob id is the one wanted."""
+    listing = "set -u; ROOT=%s; if [ ! -d \"$ROOT\" ]; then echo NOROOT; exit 0; fi; ls -1 \"$ROOT\"" % shlex.quote(
+        snapshot_root)
+    if on_ned_box:
+        where, argv = locator.NED_BOX_HOSTNAME, ["bash", "-c", listing]
+    elif not box_ssh_host:
+        return SurfaceReport("timeshift", UNAVAILABLE, ["not searched — no ssh host given (--skip box, or an empty "
+                                                        "--box-ssh-host)"])
+    else:
+        where, argv = box_ssh_host, ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", box_ssh_host, listing]
+    code, out, stderr = runner(argv, timeout=LONG_TIMEOUT_SECONDS)
+    if code != 0:
+        return SurfaceReport("timeshift", UNAVAILABLE, ["the snapshots on %s could not be listed (exit %s) — %s"
+                                                        % (where, code, stderr.strip() or "no error text")])
+    if "NOROOT" in out.splitlines():
+        return SurfaceReport("timeshift", UNAVAILABLE, ["%s does not exist on %s — is the backup drive mounted?"
+                                                        % (snapshot_root, where)])
+    seen_at = time.localtime(seen / 1e9)
+    after = []
+    for name in out.split():
+        try:
+            taken = time.strptime(name, TIMESHIFT_SNAPSHOT_NAME_FORMAT)
+        except ValueError:
+            continue
+        if time.mktime(taken) >= time.mktime(seen_at):
+            after.append(name)
+    if not after:
+        return SurfaceReport("timeshift", NOT_FOUND, ["no snapshot on %s was taken after %s, when the hook saw %s"
+                                                      % (where, _local_time_of(seen), path)])
+    snapshot = min(after)
+    source = "%s/%s/localhost%s" % (snapshot_root.rstrip("/"), snapshot, path)
+    version = FoundVersion("timeshift-%s-%s" % (snapshot, os.path.basename(path)),
+                           "file" if on_ned_box else "box-file", source, host=box_ssh_host)
+    content, why = _version_bytes(version, fetch_bytes)
+    first = "the first snapshot after %s, when the hook saw the version, is %s" % (_local_time_of(seen), snapshot)
+    if content is None:
+        if (not os.path.lexists(source)) if version.kind == "file" else "No such file" in why:
+            return SurfaceReport("timeshift", NOT_FOUND, [first, "it does not hold %s" % path])
+        return SurfaceReport("timeshift", UNAVAILABLE, [first, "%s could not be read — %s" % (source, why)])
+    held = git_blob_id_of(content)
+    if held != blob_id:
+        return SurfaceReport("timeshift", NOT_FOUND, [
+            first, "it holds %s at another version, %s: the version was replaced before that snapshot" % (path, held)])
+    return SurfaceReport("timeshift", FOUND, [first, "it holds %s at this version" % path], versions=[version])
+
+
+def search_time_machine_after(blob_id, path, seen, runner=run_command, prompt_for_root=False):
+    """Open the first Time Machine snapshot taken after the hook saw the version, and print the command that
+    copies path from it."""
+    destination = _time_machine_destination(runner)
+    if destination is None:
+        return SurfaceReport("time machine", UNAVAILABLE, ["no Time Machine destination is configured on this "
+                                                           "machine; the version was seen on the Mac, so run this "
+                                                           "program there"])
+    device, mount_point, attached = _time_machine_volume_state(destination["name"], runner)
+    if not attached or not mount_point:
+        return SurfaceReport("time machine", UNAVAILABLE, ["the backup disk %r is not mounted"
+                                                           % destination["name"]],
+                             ["diskutil mount %s" % shlex.quote(destination["name"])])
+    seen_stamp = time.strftime("%Y%m%d%H%M%S", time.localtime(seen / 1e9))
+    after = [snapshot for snapshot in _time_machine_snapshots(device, runner)
+             if (_snapshot_timestamp(snapshot) or "") >= seen_stamp]
+    if not after:
+        return SurfaceReport("time machine", NOT_FOUND, ["no snapshot was taken after %s, when the hook saw %s"
+                                                         % (_local_time_of(seen), path)])
+    snapshot = min(after, key=_snapshot_timestamp)
+    first = "the first snapshot after %s, when the hook saw the version, is %s" % (_local_time_of(seen), snapshot)
+    outcome, detail, release_failure = _time_machine_probe(snapshot, device, path, runner, prompt_for_root)
+    lines = [first] + (["%s stayed mounted on %s — %s" % (snapshot, TIME_MACHINE_READONLY_MOUNT_POINT,
+                                                          release_failure)] if release_failure else [])
+    check = ("then check that `git hash-object` of the copy prints %s; another id means the version was replaced "
+             "before that snapshot" % blob_id)
+    if outcome == "hit":
+        return SurfaceReport("time machine", FOUND, lines + ["it holds %s; %s" % (path, check)],
+                             _time_machine_manual_recovery(snapshot, device, path, clear_first=bool(release_failure)),
+                             prints_copy_command=True, copy_command_may_ask_password=True)
+    if outcome == "miss":
+        return SurfaceReport("time machine", NOT_FOUND, lines + ["it does not hold %s" % path])
+    return SurfaceReport("time machine", UNAVAILABLE, lines + ["could not search it — %s" % detail, check],
+                         _time_machine_manual_recovery(snapshot, device, path, clear_first=bool(release_failure)),
+                         prints_copy_command=True, copy_command_may_ask_password=True)
+
+
+def build_blob_report(blob_id, repo, box_ssh_host, snapshot_root, skip=(), runner=run_command, prompt_for_root=False,
+                      log_store_root=DEFAULT_LOG_STORE_ROOT, on_surface_done=None, on_ned_box=None):
+    """Search for a git blob id: git, then, when no commit holds it, the guarded-file hook's log and the first
+    snapshot taken after the hook saw it."""
+    if on_ned_box is None:
+        on_ned_box = running_on_ned_box()
+    reports = []
+
+    def finished(report):
+        copy_found_versions(report)
+        reports.append(report)
+        if on_surface_done is not None:
+            on_surface_done(report)
+        return report
+
+    if "git" not in skip and finished(search_git_for_blob(blob_id, repo, runner)).commit_holds:
+        return reports
+    if "box" in skip:
+        box_ssh_host = ""
+    if "logstore" in skip:
+        return reports
+    log = finished(search_guarded_file_versions_log(blob_id, log_store_root, box_ssh_host, runner))
+    earliest = {}
+    for machine, path, seen in log.sightings:
+        earliest.setdefault(machine, (path, seen))
+    if "ned-box" in earliest and "box" not in skip and "timeshift" not in skip:
+        path, seen = earliest["ned-box"]
+        finished(search_timeshift_after(blob_id, path, seen, box_ssh_host, snapshot_root, runner, on_ned_box))
+    if "mac" in earliest and "timemachine" not in skip:
+        path, seen = earliest["mac"]
+        finished(search_time_machine_after(blob_id, path, seen, runner, prompt_for_root))
+    return reports
 
 
 def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_SNAPSHOT_MOUNT_POINT):
@@ -2117,7 +2395,8 @@ def main(argv=None, runner=run_command):
         description="Find a deleted path across this Mac's local snapshots, git and its reflog, the log-store, "
                     "agent transcripts, Timeshift on the box, and Time Machine.",
     )
-    parser.add_argument("path", help="repo-relative, absolute, or the path's last whole component or components, "
+    parser.add_argument("path", help="a git blob id of 40 lowercase hexadecimal characters; or a path: "
+                                     "repo-relative, absolute, or the path's last whole component or components, "
                                      "such as dispositions.md for docs/dispositions.md but not docs/old-dispositions.md, "
                                      "matched with case; "
                                      "the scp form nedlern@ned-box:<path>, ../<path> and ~/<path> are read too; "
@@ -2146,6 +2425,16 @@ def main(argv=None, runner=run_command):
                              "pass this by hand: a hook has no terminal to answer a prompt in")
     args = parser.parse_args(argv)
 
+    use_found_copies_folder(FoundCopiesFolder(args.found_copies_root))
+    if is_git_blob_id(args.path):
+        print(render_header("the version whose git blob id is %s" % args.path) + "\n", flush=True)
+        reports = build_blob_report(args.path, args.repo, args.box_ssh_host, args.timeshift_snapshot_root,
+                                    skip=set(args.skip), runner=runner, prompt_for_root=args.prompt_for_root,
+                                    log_store_root=args.log_store_root,
+                                    on_surface_done=print_surface_as_it_finishes)
+        print(render_summary(reports), flush=True)
+        return exit_status(reports)
+
     try:
         named = _plain_path_from_cited_query(args.path)
     except CitedQueryCannotBePlaced as refusal:
@@ -2153,7 +2442,6 @@ def main(argv=None, runner=run_command):
     wanted, _ = _repo_relative_form(named, args.repo, runner)
     shown = wanted if wanted == args.path else "%s (given as %s)" % (wanted, args.path)
 
-    use_found_copies_folder(FoundCopiesFolder(args.found_copies_root))
     print(render_header(shown) + "\n", flush=True)
     reports = build_report(
         wanted,
