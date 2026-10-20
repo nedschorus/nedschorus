@@ -27,7 +27,9 @@ one: recovery on the box opens a window on the Mac after each seat it brings
 up, and when the box restarts its seats while the Mac is logged in, that
 window can come first. When the box does not answer — it may be rebooting
 too — the run retries for a bounded time and then reports the box's windows
-as missing, with the by-hand command, rather than opening nothing quietly. On
+as missing, with the by-hand command, rather than opening nothing quietly. A
+box whose tmux fails to list a seat server for any reason but that server or
+session being gone is reported the same way, quoting tmux's error. On
 the box this job asks the Mac for no windows itself: recovery opens a window
 on the Mac after each seat it brings up, and a window that does not open
 makes this run exit nonzero, with the seat counted as come up.
@@ -121,6 +123,13 @@ _records_reader_spec = importlib.util.spec_from_file_location(
 )
 records_reader = importlib.util.module_from_spec(_records_reader_spec)
 _records_reader_spec.loader.exec_module(records_reader)
+_tmux_error_pattern_spec = importlib.util.spec_from_file_location(
+    "tmux_target_or_server_does_not_exist_error_pattern_common",
+    Path(__file__).resolve().parent.parent / "nc-systems" / "general-tools"
+    / "tmux-target-or-server-does-not-exist-error-pattern-common.py"
+)
+tmux_error_pattern = importlib.util.module_from_spec(_tmux_error_pattern_spec)
+_tmux_error_pattern_spec.loader.exec_module(tmux_error_pattern)
 LIVE_SET_WINDOW_SECONDS = records_reader.LIVE_SET_WINDOW_SECONDS
 RUN_LOG_FILE_NAME = records_reader.RUN_LOG_FILE_NAME
 BOOT_MATCH_TOLERANCE_SECONDS = records_reader.BOOT_MATCH_TOLERANCE_SECONDS
@@ -199,17 +208,28 @@ BOX_QUERY_RETRY_SECONDS = 5.0
 # this login; a client from before it is a window the reboot closed, whose ssh the box may
 # not have noticed yet, so it does not count.
 AGENT_SEAT_CLIENT_ATTACHED_SINCE_MAC_BOOT_LISTING_TEXT = "attached"
+# The listing prints each failed tmux command on stderr after this text, for the Mac to
+# tell tmux's "that server or session is gone" answers from its failures.
+NED_BOX_LISTING_TMUX_FAILURE_PREFIX = "tmux failed on the box:"
 
 
 def ned_box_running_agent_seats_list_command_marking_clients_attached_since_mac_boot(
         mac_booted_at_epoch_seconds: int) -> str:
     return (
+        'report_tmux_failure() { printf "%s %s\\n" '
+        f'"{NED_BOX_LISTING_TMUX_FAILURE_PREFIX}" "$(printf "%s" "$*" | tr "\\n" " ")" >&2; }}; '
         'for seat_socket_path in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/*; do '
         '[ -S "$seat_socket_path" ] || continue; '
-        'tmux -S "$seat_socket_path" list-sessions -F "#{session_name}" 2>/dev/null '
-        '| while read -r seat_name; do '
-        'newest=$(tmux -S "$seat_socket_path" list-clients -t "=$seat_name" '
-        '-F "#{client_created}" 2>/dev/null | sort -n | tail -n 1); '
+        'if ! seat_names=$(tmux -S "$seat_socket_path" list-sessions -F "#{session_name}" 2>&1); '
+        'then report_tmux_failure "tmux -S $seat_socket_path list-sessions: $seat_names"; '
+        'continue; fi; '
+        'printf "%s\\n" "$seat_names" | while read -r seat_name; do '
+        '[ -n "$seat_name" ] || continue; '
+        'if ! client_times=$(tmux -S "$seat_socket_path" list-clients -t "=$seat_name" '
+        '-F "#{client_created}" 2>&1); '
+        'then report_tmux_failure "tmux -S $seat_socket_path list-clients -t =$seat_name: '
+        '$client_times"; continue; fi; '
+        'newest=$(printf "%s\\n" "$client_times" | sort -n | tail -n 1); '
         f'if [ "${{newest:-0}}" -ge {int(mac_booted_at_epoch_seconds)} ]; '
         f'then echo "$seat_name {AGENT_SEAT_CLIENT_ATTACHED_SINCE_MAC_BOOT_LISTING_TEXT}"; '
         'else echo "$seat_name"; fi; '
@@ -261,6 +281,15 @@ def ask_the_box_which_seats_are_alive(mac_booted_at: datetime, run=subprocess.ru
         except OSError as error:
             return None, f"could not run ssh: {error}", []
         if finished.returncode == 0:
+            tmux_failures = [
+                line[len(NED_BOX_LISTING_TMUX_FAILURE_PREFIX):].strip()
+                for line in finished.stderr.splitlines()
+                if line.startswith(NED_BOX_LISTING_TMUX_FAILURE_PREFIX)
+                and not tmux_error_pattern.tmux_error_text_says_target_or_server_does_not_exist(
+                    line)]
+            if tmux_failures:
+                return None, ("its tmux could not list every seat: "
+                              + "; ".join(tmux_failures)), []
             seats, already_attached = (
                 ned_box_agent_seat_listing_parse_into_needing_window_and_attached_since_mac_boot(
                     finished.stdout))

@@ -109,10 +109,28 @@ def systemctl(run, *arguments):
     return run(["systemctl", "--user", *arguments])
 
 
+# is-enabled exits nonzero both for these states, which it prints on stdout, and when it
+# cannot ask the manager at all, as when the user bus is unreachable.
+SYSTEMCTL_IS_ENABLED_NOT_ENABLED_STATES = (
+    "disabled", "linked", "linked-runtime", "masked", "masked-runtime", "not-found", "bad")
+
+
+class SystemctlCouldNotAnswer(Exception):
+    """systemctl exited nonzero without printing an answer; the message names the command and its error."""
+
+
 def unit_is_enabled(unit_name: str, run=subprocess.run) -> bool:
-    """Return whether systemctl reports the unit enabled."""
-    return run(["systemctl", "--user", "is-enabled", f"{unit_name}.service"],
-               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    """Return whether systemctl reports the unit enabled; raise SystemctlCouldNotAnswer when it cannot tell."""
+    command = ["systemctl", "--user", "is-enabled", f"{unit_name}.service"]
+    asked = run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if asked.returncode == 0:
+        return True
+    if (asked.stdout or "").strip() in SYSTEMCTL_IS_ENABLED_NOT_ENABLED_STATES:
+        return False
+    error_text = " ".join((asked.stderr or "").split())
+    raise SystemctlCouldNotAnswer(
+        f"`{' '.join(command)}` exited {asked.returncode}"
+        + (f": {error_text}" if error_text else ", printing nothing on stderr"))
 
 
 def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: Path,
@@ -124,7 +142,19 @@ def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: P
               f"under {checkout}/scripts — pass --checkout with the durable checkout",
               file=sys.stderr)
         return 1
-    if start_now and unit_is_enabled(unit_name, run):
+    try:
+        enabled = start_now and unit_is_enabled(unit_name, run)
+    except SystemctlCouldNotAnswer as failure:
+        print(f"install-restart-live-seats-at-login-systemd-unit: {failure}; so whether "
+              f"{unit_name} is enabled is unknown, and nothing was written or started.",
+              file=sys.stderr)
+        print("When systemctl's error says it could not connect to the user bus, run this "
+              "again from a login session of the user whose manager runs the unit, such as an "
+              "ssh login.", file=sys.stderr)
+        print("Otherwise run this again after the cause systemctl names is removed.",
+              file=sys.stderr)
+        return 1
+    if enabled:
         # Starting preserves enable symlinks; rewriting an enabled unit would alter future boots.
         print(f"install-restart-live-seats-at-login-systemd-unit: {unit_name} is enabled, "
               "so a test start would leave it running at every boot with this run's "

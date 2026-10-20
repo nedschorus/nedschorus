@@ -39,13 +39,17 @@ class LaunchctlStub:
     """Records every launchctl command; answers bootstrap with the exit code
     it was given and everything else with success."""
 
-    def __init__(self, bootstrap_exit_code=0):
+    def __init__(self, bootstrap_exit_code=0, bootout_exit_code=0, print_exit_code=0):
         self.commands, self.bootstrap_exit_code = [], bootstrap_exit_code
+        self.bootout_exit_code, self.print_exit_code = bootout_exit_code, print_exit_code
 
     def __call__(self, command, stdout=None, stderr=None):
         self.commands.append(list(command))
-        code = self.bootstrap_exit_code if command[1] == "bootstrap" else 0
-        return subprocess.CompletedProcess(command, code)
+        code = {"bootstrap": self.bootstrap_exit_code, "bootout": self.bootout_exit_code,
+                "print": self.print_exit_code}.get(command[1], 0)
+        error = b"Boot-out failed: 5: Input/output error\n" \
+            if command[1] == "bootout" and code == 5 else b""
+        return subprocess.CompletedProcess(command, code, stderr=error)
 
 
 def run_main(arguments, launch_agents_directory, platform="darwin", launchctl=None):
@@ -193,6 +197,35 @@ with tempfile.TemporaryDirectory() as temporary:
         ["--label", "com.nedschorus.test", "--remove"], agents_directory)
     check("removing a label with no plist still boots it out and says there was none",
           exit_code == 0 and "no " in printed and "to remove" in printed, printed)
+    target = f"{domain}/com.nedschorus.test"
+    plist_path = agents_directory / "com.nedschorus.test.plist"
+    plist_path.write_bytes(b"a plist")
+    launchctl = LaunchctlStub(bootout_exit_code=3, print_exit_code=113)
+    exit_code, printed, errors = run_main(
+        ["--label", "com.nedschorus.test", "--remove"], agents_directory, launchctl=launchctl)
+    check("a bootout that fails because launchd has no such job still deletes the plist, exit 0",
+          exit_code == 0 and not plist_path.exists() and "removed" in printed
+          and launchctl.commands == [["launchctl", "bootout", target],
+                                     ["launchctl", "print", target]],
+          (exit_code, printed, errors, launchctl.commands))
+    plist_path.write_bytes(b"a plist")
+    launchctl = LaunchctlStub(bootout_exit_code=5, print_exit_code=0)
+    exit_code, printed, errors = run_main(
+        ["--label", "com.nedschorus.test", "--remove"], agents_directory, launchctl=launchctl)
+    check("a bootout that fails with the job still loaded keeps the plist, says nothing was "
+          "unloaded, and exits 1 with bootout's exit and error",
+          exit_code == 1 and plist_path.is_file() and "unloaded" not in printed
+          and (f"`launchctl bootout {target}` exited 5: Boot-out failed: 5: Input/output error; "
+               f"so com.nedschorus.test may still be loaded, and {plist_path} was kept.")
+              in errors, (exit_code, printed, errors))
+    launchctl = LaunchctlStub(bootout_exit_code=5, print_exit_code=1)
+    exit_code, printed, errors = run_main(
+        ["--label", "com.nedschorus.test", "--remove"], agents_directory, launchctl=launchctl)
+    check("a bootout that fails while launchctl print fails with other than service-not-found "
+          "keeps the plist and exits 1",
+          exit_code == 1 and plist_path.is_file() and "may still be loaded" in errors,
+          (exit_code, printed, errors))
+    plist_path.unlink()
 
     # A checkout without the program is refused: the plist would point at
     # nothing and fail silently at every login.

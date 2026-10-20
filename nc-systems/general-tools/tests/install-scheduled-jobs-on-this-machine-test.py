@@ -178,6 +178,8 @@ class MachineStub:
             code = self.exit_codes.get("lint", 0)
         elif command[:2] == ["launchctl", "print"]:
             code = self.exit_codes.get("print", 0 if command[2] in self.loaded else 113)
+            if code not in (0, 113):
+                err = b"Could not print: injected launchctl failure\n"
         elif command[:2] == ["launchctl", "bootout"]:
             if "bootout" in self.exit_codes and command[2] in self.loaded:
                 code, err = self.exit_codes["bootout"], b"Boot-out failed: 5: Input/output error\n"
@@ -360,7 +362,8 @@ check("--help ends with the docstring's exit-codes paragraph and prints nothing 
           "table; 2 not run — a bad "
           "invocation, a table this program cannot use, a machine the table does not name, a "
           "job's program missing, a crontab that could not be read, or a shell parser that "
-          "could not be installed.")
+          "could not be installed; or for --check, a job not checked because `launchctl print` "
+          "could not report it.")
       and "WHY THIS EXISTS" not in help_text and "THE TABLE is " not in help_text
       and "user-ruled" not in help_text, help_text)
 check("--check's help names both reasons for exit 1",
@@ -993,6 +996,36 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a bootstrap that exits 0 with the job not found afterwards is FAILED, exit 1",
           exit_code == 1 and f"`launchctl print {TARGET}` does not find the job" in errors
           and "installed:" not in printed, (exit_code, printed, errors))
+    plist_path.unlink(missing_ok=True)
+    stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode())
+    stub.exit_codes["print"] = 5
+    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    check("a bootstrap that exits 0 followed by a launchctl print that fails with other than "
+          "service-not-found is FAILED with print's exit and error, exit 1, not installed",
+          exit_code == 1
+          and (f"FAILED: daily-full-test-run-of-main — bootstrap exited 0, and then `launchctl "
+               f"print {TARGET}` exited 5: Could not print: injected launchctl failure; so "
+               f"whether {LABEL} is loaded is unknown.") in errors
+          and "installed:" not in printed, (exit_code, printed, errors))
+    exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
+    check("--check whose launchctl print fails with other than service-not-found reports the "
+          "job NOT CHECKED with print's exit and error, not as unloaded, and exits 2",
+          exit_code == 2
+          and (f"NOT CHECKED: daily-full-test-run-of-main — `launchctl print {TARGET}` exited 5: "
+               f"Could not print: injected launchctl failure; so whether launchd has {LABEL} "
+               f"loaded is unknown.") in errors
+          and "loaded in" not in printed, (exit_code, printed, errors))
+    before = len(stub.commands)
+    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    check("--install over a plist that says what the table says, whose launchctl print fails "
+          "with other than service-not-found, is FAILED, exit 1, and boots nothing out",
+          exit_code == 1
+          and (f"FAILED: daily-full-test-run-of-main — `launchctl print {TARGET}` exited 5: "
+               f"Could not print: injected launchctl failure; so whether {LABEL} is loaded is "
+               f"unknown, and the job was not installed.") in errors
+          and stub.commands[before:] == [["launchctl", "print", TARGET]],
+          (exit_code, printed, errors, stub.commands[before:]))
+    plist_path.unlink()
     stub = MachineStub(crontab=None)
     stub.exit_codes["crontab-write"] = 1
     exit_code, printed, errors = run_main(["--install"], MAC, stub)
