@@ -536,28 +536,27 @@ CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS = 10
 
 
 def checkout_commit_for_provenance_stamp(checkout: pathlib.Path) -> str:
-    """Return the checkout commit, with -dirty for tracked changes, or an empty string on failure."""
+    """Return the checkout commit, with -dirty for tracked changes; an empty
+    string when the checkout is in no git repository; and
+    `unknown-git-exited-<code>`, or `unknown-git-did-not-answer` when git
+    timed out or did not start, when git failed."""
     # Untracked drafts are routine and do not make the provenance stamp dirty.
-    # Do not print failures: the grid parses stderr as cell status.
-    def git_output(*arguments):
-        """Return git stdout, or None if git cannot answer."""
-        try:
-            completed = subprocess.run(
-                ["git", "-C", str(checkout), *arguments],
-                capture_output=True, text=True, check=False,
-                timeout=CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        return completed.stdout if completed.returncode == 0 else None
-
-    commit = (git_output("rev-parse", "--short", "HEAD") or "").strip()
-    if not commit:
-        return ""
-    tracked_changes = git_output("status", "--porcelain", "--untracked-files=no")
-    if tracked_changes is None:
-        return ""
-    return commit + ("-dirty" if tracked_changes.strip() else "")
+    # Do not print failures: the grid parses stderr as cell status. The stamp
+    # is split on whitespace, so the failure value carries no space.
+    try:
+        commit = git_machine_readable_output.run_git_unless_outside_a_repository(
+            checkout, ["rev-parse", "--short", "HEAD"],
+            timeout_seconds=CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS)
+        if commit is None:
+            return ""
+        tracked_changes = git_machine_readable_output.run_git(
+            checkout, ["status", "--porcelain", "--untracked-files=no"],
+            timeout_seconds=CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS)
+    except git_machine_readable_output.GitCommandFailed as failure:
+        if failure.returncode is None:
+            return "unknown-git-did-not-answer"
+        return f"unknown-git-exited-{failure.returncode}"
+    return os.fsdecode(commit).strip() + ("-dirty" if tracked_changes.strip() else "")
 
 
 def stamp_provenance(

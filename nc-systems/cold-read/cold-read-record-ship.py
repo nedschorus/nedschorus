@@ -345,19 +345,39 @@ def provenance_comment_of(first_line: str) -> str:
     return line if line.startswith(PROVENANCE_COMMENT_PREFIX) else "(no provenance comment)"
 
 
+def one_line(error_text: str) -> str:
+    """ssh's error text on one line, since it goes into the one stdout line."""
+    return " ".join(error_text.split()) or "no error text"
+
+
+class FirstLineUnreadable(Exception):
+    """A file's first line could not be read; the message says why."""
+
+
 def local_first_line(path: pathlib.Path) -> str:
     try:
         with path.open(encoding="utf-8", errors="replace") as handle:
             return handle.readline()
-    except OSError:
-        return ""
+    except OSError as error:
+        raise FirstLineUnreadable(str(error)) from None
 
 
 def remote_first_line(host: str, path: pathlib.PurePosixPath) -> str:
     completed = subprocess.run(
         SSH_COMMAND + [host, f"head -n 1 -- '{path}'"],
         capture_output=True, text=True, check=False)
-    return completed.stdout if completed.returncode == 0 else ""
+    if completed.returncode != 0:
+        raise FirstLineUnreadable(
+            f"ssh exit {completed.returncode}: {one_line(completed.stderr)}")
+    return completed.stdout
+
+
+def described_provenance_comment(read_first_line, *arguments) -> str:
+    """The provenance comment the file's first line holds, or why that line could not be read."""
+    try:
+        return provenance_comment_of(read_first_line(*arguments))
+    except FirstLineUnreadable as failure:
+        return f"(could not be read: {failure})"
 
 
 def rsync_command(host, source: pathlib.Path, target: pathlib.PurePosixPath, *extra) -> list:
@@ -938,15 +958,25 @@ def replace_with_staged_files_script(staging_dir: pathlib.PurePosixPath,
         f"done\n")
 
 
-def remove_staging_directory(host, staging_dir: pathlib.PurePosixPath) -> None:
-    """Remove a staging directory a failed copy may have left. Best effort: the
-    copy that failed may have failed because ned-box is unreachable, and then
-    this fails too and the directory stays, which nothing reads."""
+def remove_staging_directory(host, staging_dir: pathlib.PurePosixPath) -> typing.Optional[str]:
+    """Remove a staging directory a failed copy may have left. Returns None
+    when it is gone, else why it could not be removed. Nothing else removes a
+    directory left behind, and replace_with_staged_files refuses every later
+    shipment of the same name until it is deleted."""
     if host is None:
-        shutil.rmtree(pathlib.Path(staging_dir), ignore_errors=True)
-        return
-    subprocess.run(SSH_COMMAND + [host, f"rm -rf -- {shlex.quote(str(staging_dir))}"],
-                   capture_output=True, text=True, check=False)
+        try:
+            shutil.rmtree(pathlib.Path(staging_dir))
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            return str(error)
+        return None
+    completed = subprocess.run(
+        SSH_COMMAND + [host, f"rm -rf -- {shlex.quote(str(staging_dir))}"],
+        capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        return f"ssh exit {completed.returncode}: {one_line(completed.stderr)}"
+    return None
 
 
 def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path) -> int:
@@ -994,12 +1024,13 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         # exactly one stdout line.
         described = []
         for relative in differing_files:
-            local_line = provenance_comment_of(local_first_line(record_dir / relative))
+            local_line = described_provenance_comment(local_first_line, record_dir / relative)
             if host:
-                store_line = provenance_comment_of(remote_first_line(host, store_dir / relative))
+                store_line = described_provenance_comment(
+                    remote_first_line, host, store_dir / relative)
             else:
-                store_line = provenance_comment_of(
-                    local_first_line(pathlib.Path(store_dir) / relative))
+                store_line = described_provenance_comment(
+                    local_first_line, pathlib.Path(store_dir) / relative)
             described.append(f"{relative} (store: {store_line}; local: {local_line})")
         print(f"REFUSED: {name} — already in the store with different content: "
               f"{'; '.join(described)}. Rename the local directory with a -2 suffix "
@@ -1024,11 +1055,18 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         rsync_command(host, record_dir, staging_dir),
         capture_output=True, text=True, check=False)
     if transferred.returncode != 0:
-        remove_staging_directory(host, staging_dir)
+        left_behind = remove_staging_directory(host, staging_dir)
         reason = ("ned-box unreachable" if transferred.returncode == RSYNC_EXIT_CONNECTION_FAILED
                   else f"rsync exit {transferred.returncode}")
-        print(f"FAILED: {name} — {reason} during the copy; a later run finishes it.")
+        staging_note = (f"; the staging directory {host + ':' if host else ''}{staging_dir}, "
+                        f"if the copy made it, could not be removed ({left_behind})"
+                        if left_behind else "")
+        print(f"FAILED: {name} — {reason} during the copy{staging_note}; "
+              f"a later run finishes it.")
         sys.stderr.write(transferred.stderr)
+        if left_behind:
+            sys.stderr.write(
+                f"{PROGRAM}: if {staging_dir} is there, delete it: nothing else removes it.\n")
         return EXIT_FAILED
     placed, outcome = place_staged_files(host, staging_dir, store_dir, local)
     if outcome is None:
