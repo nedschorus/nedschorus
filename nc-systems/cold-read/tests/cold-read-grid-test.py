@@ -1964,12 +1964,16 @@ with tempfile.TemporaryDirectory() as scratch:
                                   ["claude-hunt-deep.md"])
         git_stub_directory = stubs / case_slug
         git_stub_directory.mkdir(parents=True, exist_ok=True)
-        failing_arguments = ["-C", str(repository / Path(TARGET_RELATIVE_PATH).parent),
-                             *failing_query]
+        # The program may pass the directory resolved: on the Mac the scratch
+        # directory is under /var, a link to /private/var.
+        failing_directory = os.path.realpath(repository / Path(TARGET_RELATIVE_PATH).parent)
         (git_stub_directory / "git").write_text(
             "#!/usr/bin/env python3\n"
             "import os, sys\n"
-            f"if sys.argv[1:] == {failing_arguments!r}:\n"
+            "arguments = sys.argv[1:]\n"
+            "if (arguments[:1] == ['-C'] and len(arguments) > 1\n"
+            f"        and os.path.realpath(arguments[1]) == {failing_directory!r}\n"
+            f"        and arguments[2:] == {failing_query!r}):\n"
             "    sys.stderr.write('fatal: index file corrupt\\n')\n"
             "    sys.exit(128)\n"
             f"os.execv({real_git!r}, [{real_git!r}, *sys.argv[1:]])\n",
