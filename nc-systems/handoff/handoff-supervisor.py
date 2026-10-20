@@ -27,7 +27,7 @@ The cycle, per reincarnation:
      work-snapshots whose worktree is gone or no longer holds their changes,
      with the steps to restore them
      (uncommitted_work_snapshot_text).
-  7. Keep the current and previous handoff and extract; delete older ones.
+  7. Keep the current and previous handoff and conversation-tail; delete older ones.
 
 The handoff file the agent writes (simple `key: value` lines):
   written-at:           UTC timestamp, ISO 8601
@@ -825,7 +825,7 @@ class BootRecoveryIgnitionPlan:
                 memory_review_due: tuple = ()) -> str:
         prompt = (
             f"{self.next_step}\n\n(Recovered at supervisor boot: the previous "
-            "session's dialog extract is unavailable; this next-step and the "
+            "session's conversation-tail is unavailable; this next-step and the "
             "repository are your whole context.)"
         )
         if branch_sync_report:
@@ -1727,12 +1727,12 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 # When the retiring transcript is unavailable, the next step still provides work to carry forward.
                 successor_session_id = str(uuid.uuid4())
                 ignition_plan = BootRecoveryIgnitionPlan(next_step_from(boot_fields))
-                why_no_dialog_extract = (
+                why_no_conversation_tail = (
                     f"session {retiring_session_id}'s dialog could not be extracted"
                     if retiring_session_id else "no earlier session was recorded")
                 print("handoff-supervisor: starting a fresh agent-session from an unconsumed "
-                      "handoff, with its next step as the prompt; there is no dialog extract "
-                      f"because {why_no_dialog_extract}")
+                      "handoff, with its next step as the prompt; there is no conversation-tail "
+                      f"because {why_no_conversation_tail}")
             else:
                 print("handoff-supervisor: starting a fresh agent-session from an unconsumed handoff left by a previous cycle")
             state["consumed_counter"] = boot_counter
@@ -1952,7 +1952,7 @@ def main(argv=None) -> int:
         "--first-prompt-file-wins-over-crashed-transcript", action="store_true",
         help="start fresh on --first-prompt-file even when this seat has a crashed "
              "transcript worth resuming; for a recovery that chose not to resume, such as "
-             "recover-crashed-seats.py --fresh-session-from-dialog-extract. Without it, a crashed transcript "
+             "recover-crashed-seats.py --fresh-session-from-conversation-tail. Without it, a crashed transcript "
              "wins over --first-prompt-file",
     )
     parser.add_argument(

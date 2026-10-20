@@ -383,7 +383,7 @@ def run_agent_exit_record_cases(workspace: Path):
           and supervisor.agent_exit_record_is_a_stop_at_a_dont_restart_handoff(state),
           str(state))
 
-    # The dialog extraction fails, so no successor is launched: the stopped
+    # Extracting the dialog fails, so no successor is launched: the stopped
     # session's end is recorded, and the handoff stays unconsumed.
     settings = settings_for("extractionfailed")
     supervisor.write_supervisor_state(settings.state_path, {"consumed_counter": 1})
@@ -1438,7 +1438,7 @@ def run_by_hand_resume_cases(workspace: Path):
           and "ignoring the first prompt" not in printed,
           (session_id, resume))
 
-    # recover-crashed-seats.py --fresh-session-from-dialog-extract chose not to resume: its ignition
+    # recover-crashed-seats.py --fresh-session-from-conversation-tail chose not to resume: its ignition
     # prompt must win over the crashed transcript. Run through main() with the
     # supervisor arguments the recovery composes, so a flag the recovery stops
     # passing, or the supervisor stops honouring, turns this case red.
@@ -1471,26 +1471,26 @@ def run_by_hand_resume_cases(workspace: Path):
                 os.environ["CLAUDE_CODE_TASK_LIST_ID"] = saved_task_list_id
         return exit_code, (launched[0] if launched else (None, None, None)), console.getvalue()
 
-    ignition_directory = directory / "fresh-session-from-dialog-extract"
+    ignition_directory = directory / "fresh-session-from-conversation-tail"
     ignition_directory.mkdir(parents=True, exist_ok=True)
     ignition_prompt_path = ignition_directory / "byhandignite-recovery-ignition-prompt.md"
-    ignition_prompt_path.write_text("Read the dialog extract and continue.", encoding="utf-8")
+    ignition_prompt_path.write_text("Read the conversation-tail and continue.", encoding="utf-8")
     ignition_argv = (
         ["--agent", "byhandignite", "--cd", str(workspace),
          "--agent-command", sys.executable]
         + shlex.split(recovery.compose_supervisor_arguments_for_seat_launch(
-            ignition_directory, recovery.IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS))
+            ignition_directory, recovery.IGNITION_FROM_CONVERSATION_TAIL_SUPERVISOR_ARGUMENTS))
         + ["--first-prompt-file", str(ignition_prompt_path)])
     exit_code, (session_id, prompt, resume), printed = run_main_once(ignition_argv)
-    check("IGNITION: --fresh-session-from-dialog-extract's arguments start fresh on its ignition prompt "
+    check("IGNITION: --fresh-session-from-conversation-tail's arguments start fresh on its ignition prompt "
           "despite a crashed transcript",
           exit_code == 0 and resume is not True and session_id != crashed.stem
-          and prompt == "Read the dialog extract and continue.",
+          and prompt == "Read the conversation-tail and continue.",
           (exit_code, session_id, prompt, resume, printed[-400:]))
 
     # Control: the same launch without the recovery's flag resumes the transcript,
     # so the case above is the flag's doing.
-    control_directory = directory / "fresh-session-from-dialog-extract-control"
+    control_directory = directory / "fresh-session-from-conversation-tail-control"
     control_directory.mkdir(parents=True, exist_ok=True)
     exit_code, (session_id, prompt, resume), printed = run_main_once(
         ["--agent", "byhandignitecontrol", "--cd", str(workspace),
@@ -1511,7 +1511,7 @@ def run_by_hand_resume_cases(workspace: Path):
             exit_code, (session_id, prompt, resume), printed = run_main_once(
                 ["--agent", "byhandigniteflagonly", "--cd", str(workspace),
                  "--agent-command", sys.executable, "--handoff-dir", str(refusal_directory),
-                 recovery.IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS])
+                 recovery.IGNITION_FROM_CONVERSATION_TAIL_SUPERVISOR_ARGUMENTS])
         refusal_exit_code = exit_code
     except SystemExit as refused:
         refusal_exit_code = refused.code
