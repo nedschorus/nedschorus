@@ -28,6 +28,7 @@ scripts/pull-request-head-test-run.py is missing, before any run.
 import argparse
 import importlib.util
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -102,16 +103,27 @@ def main(argv=None):
                             # would replace this program's exit code with 120.
                             sys.stderr = open(os.devnull, "w")
             completed = subprocess.CompletedProcess(run.args, run.wait())
+        rerun = shlex.join([
+            sys.executable, str(Path(__file__).resolve()), str(number),
+            "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+            "--review-tools-worktree-at-main", str(review_tools_worktree)])
         for name, failure in copy_failures.items():
             print(f"PR {number} head test run, process {run.pid}: writing its stderr to "
-                  f"{name} failed ({failure}); the run went on to its end, "
-                  "and its stderr from that line on is not in that copy.\n"
+                  f"{name} failed ({failure}); the run went on to its end, and that copy "
+                  f"lacks the run's stderr from the first line that could not be written to "
+                  f"it onward.\n"
                   f"The run's verdict still stands: the line below gives the run's exit code and "
-                  f"SUMMARY line, from the run's stdout, not from this copy. This program exits 2 "
-                  f"for the failed copy unless an earlier pull request's run already set a "
-                  f"nonzero exit code; that 2 says nothing about the tests.\n"
-                  f"When you need the stderr after that line, run the head test run for PR "
-                  f"{number} again with a stderr that can be written.", flush=True)
+                  f"SUMMARY line, from the run's stdout, not from this copy. "
+                  f"{Path(__file__).name} exits 2 for the failed copy unless an earlier pull "
+                  f"request's run already set a nonzero exit code; that 2 says nothing about "
+                  f"the tests.\n"
+                  f"When you need the lost stderr, run the head test run for PR {number} again "
+                  f"with this command, from any directory: {rerun}\n"
+                  f"Before you run it, give it a stderr that takes every write: do not close "
+                  f"its stderr, pipe it to a program that exits before the run ends, or "
+                  f"redirect it to a read-only file or a file on a full disk; and when "
+                  f"{outputs}/stderr is the copy that failed, free space on its disk first.",
+                  flush=True)
             if first_failure == 0:
                 first_failure = 2
         summaries = [line for line in (outputs / "stdout").read_text().splitlines()

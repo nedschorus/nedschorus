@@ -13,6 +13,7 @@ Run: python3 scripts/merge-lane-pull-request-head-test-run-on-merged-worktree-te
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -176,16 +177,25 @@ def main():
         check("when writing the run's stderr to the program's stderr fails, the run still "
               "goes to its end, its stderr file is whole, and the program says so with the "
               "run's process id, keeps the summary line unchanged, and exits 2",
-              unread.returncode == 2 and len(lines) == 4
+              unread.returncode == 2 and len(lines) == 5
               and lines[0].startswith("PR 7 head test run, process ")
               and "writing its stderr to stderr failed (BrokenPipeError" in lines[0]
+              and "that copy lacks the run's stderr from the first line that could not be "
+                  "written to it onward" in lines[0]
               and "The run's verdict still stands" in lines[1]
-              and "This program exits 2 for the failed copy unless an earlier pull request's "
-                  "run already set a nonzero exit code; that 2 says nothing about the tests"
-              in lines[1]
-              and "run the head test run for PR 7 again with a stderr that can be written"
-              in lines[2]
-              and lines[3] == "PR 7 head test run: exit 0; SUMMARY: fake summary for pr7-merged"
+              and f"{PROGRAM.name} exits 2 for the failed copy unless an earlier pull "
+                  "request's run already set a nonzero exit code; that 2 says nothing about "
+                  "the tests" in lines[1]
+              and lines[2] == (
+                  "When you need the lost stderr, run the head test run for PR 7 again with "
+                  "this command, from any directory: " + shlex.join([
+                      sys.executable, str(PROGRAM.resolve()), "7",
+                      "--merge-lane-worktrees-and-outputs-directory", str(helpers.resolve()),
+                      "--review-tools-worktree-at-main",
+                      str((scratch / "main-checkout").resolve())]))
+              and lines[3].startswith("Before you run it, give it a stderr that takes every "
+                                      "write: do not close its stderr")
+              and lines[4] == "PR 7 head test run: exit 0; SUMMARY: fake summary for pr7-merged"
               and len((helpers / "hr" / "pr7" / "stderr").read_text().splitlines()) == 2002,
               f"exit {unread.returncode}\n{stdout}")
 
