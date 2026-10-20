@@ -617,7 +617,7 @@ def run_probe(scratch):
         ruff_outside = subprocess.run([sys.executable, "-m", "ruff", "--version"],
                                       capture_output=True, text=True, timeout=60)
         if not ruff_binary.is_file() or ruff_outside.returncode != 0:
-            print(f"SKIP  inside, python3 -m ruff --version runs: outside, {ruff_binary} "
+            print(f"SKIP  [this machine cannot run it] inside, python3 -m ruff --version runs: outside, {ruff_binary} "
                   f"{'exists' if ruff_binary.is_file() else 'is absent'} and python3 -m ruff "
                   f"--version exits {ruff_outside.returncode}, so there is no Ruff to show")
         else:
@@ -646,7 +646,7 @@ def run_probe(scratch):
             check(f"inside, a credential file is not there: {path}", ok, record)
         for directory in DIRECTORIES_HIDDEN_WHOLE_THAT_HOLD_SOMETHING_OUTSIDE:
             if not (os.path.isdir(directory) and os.listdir(directory)):
-                print(f"SKIP  {directory} holds nothing outside, so its hiding cannot be seen")
+                print(f"SKIP  [this machine cannot run it] {directory} holds nothing outside, so its hiding cannot be seen")
                 continue
             ok, record = blocked(f"see anything in {directory}")
             check(f"inside, {directory} is empty, though it holds something outside", ok, record)
@@ -655,7 +655,7 @@ def run_probe(scratch):
             check("inside, a file under /mnt, such as a backup snapshot of the home directory, "
                   "is not there", ok, record)
         else:
-            print("SKIP  /mnt/backup holds nothing here, so no backup file can be looked for")
+            print("SKIP  [this machine cannot run it] /mnt/backup holds nothing here, so no backup file can be looked for")
         for directory in writable_directories:
             check(f"outside afterwards, nothing the suite wrote in {directory}, a directory "
                   f"this account can create files in, is there",

@@ -9,6 +9,7 @@ scratch directory, so the request log is written there.
 Run: python3 scripts/mac-request-from-ned-box-forced-command-test.py
 """
 
+import contextlib
 import importlib.util
 import io
 import json
@@ -113,7 +114,7 @@ if shutil.which("ssh"):
     check("without '--', this ssh reads a word right after the destination as an option (the reason for both guards)",
           "proxycommand /usr/bin/true" in unguarded.stdout.lower(), unguarded.stdout[-400:])
 else:
-    print("SKIP  ssh option-parsing cases: ssh is not on PATH")
+    print("SKIP  [this machine cannot run it] ssh option-parsing cases: ssh is not on PATH")
 
 
 def run_program(request, opener_body=None, use_real_opener=False, log_unwritable=False):
@@ -253,7 +254,7 @@ def mac_bash_range_rules(bash="bash", installed_locales=None):
 def check_seat_names_under_mac_range_rules(bash="bash", label=""):
     rules = mac_bash_range_rules(bash)
     if isinstance(rules, str):
-        print(f"SKIP  seat names under the Mac's bash range rules{label}: {rules}")
+        print(f"SKIP  [this machine cannot run it] seat names under the Mac's bash range rules{label}: {rules}")
         return
     options, locale_environment = rules
     for name in ["merge-lane-2", "a.b", "é", "ß", "Ä"]:
@@ -283,15 +284,20 @@ with tempfile.TemporaryDirectory() as no_option_directory:
     def check_probe_drops_missing_option(installed_locales=None):
         rules = mac_bash_range_rules(str(no_option_bash), installed_locales)
         if isinstance(rules, str):
-            print(f"SKIP  the range-rules probe with a bash that has no globasciiranges: {rules}")
+            print(f"SKIP  [this machine cannot run it] the range-rules probe with a bash that has no globasciiranges: {rules}")
             return "skipped"
         check("the range-rules probe drops globasciiranges for a bash that has no such option",
               rules[0] == (), rules)
         return "checked"
 
     check_probe_drops_missing_option()
+    # Its SKIP line is caught, since no case is really skipped and the runner would count one.
+    with contextlib.redirect_stdout(io.StringIO()) as simulated_skip_output:
+        simulated_skip = check_probe_drops_missing_option(installed_locales=[])
     check("with no en_US UTF-8 locale installed, the probe's case skips instead of failing",
-          check_probe_drops_missing_option(installed_locales=[]) == "skipped")
+          simulated_skip == "skipped"
+          and simulated_skip_output.getvalue().startswith("SKIP  [this machine cannot run it] "),
+          simulated_skip_output.getvalue())
     check_seat_names_under_mac_range_rules(str(no_option_bash), " (a bash with no globasciiranges)")
 
 
@@ -394,7 +400,7 @@ def run_typora(request, home, mount, open_body=None, log_unwritable=False):
 
 mount, writable_inside = writable_mount_point()
 if mount is None:
-    print("SKIP  open-in-typora end-to-end cases: no writable mount point (/dev/shm or /System/Volumes/Data) on this machine")
+    print("SKIP  [this machine cannot run it] open-in-typora end-to-end cases: no writable mount point (/dev/shm or /System/Volumes/Data) on this machine")
 else:
     # ned-box's home and the Mac's mount are both the same real mount point, so a
     # path maps onto itself and the mount check sees a real mount.
@@ -497,7 +503,7 @@ check("a window request that is refused names the open-in-browser form too",
 
 if mount is None or not os.access(mount, os.W_OK):
     # The log-store must sit at the stand-in mount's top, which the Mac's /System/Volumes/Data does not let the user write.
-    print("SKIP  open-in-browser end-to-end cases: they need a mount point whose top directory this user can write, "
+    print("SKIP  [this machine cannot run it] open-in-browser end-to-end cases: they need a mount point whose top directory this user can write, "
           "to stand in for the Mac's mount of ned-box's home, and this machine has none; "
           "/dev/shm is one on Linux")
 else:
