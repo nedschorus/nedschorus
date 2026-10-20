@@ -41,8 +41,9 @@ Options that widen what Codex may do, each off by default:
                           and --cache, each with its value as the next word
                           or after =, and --include/-i,
                           --paginate and --slurp; `api` has no -R. Any other
-                          `api` option is refused, so `api graphql` cannot
-                          run, since it needs -f to send its query. Codex
+                          `api` option is refused. The endpoint `graphql` is
+                          accepted, but it cannot send a query, because a
+                          query needs -f, -F or --input. Codex
                           cannot run `gh` itself, because its permission
                           profile denies the folder holding
                           gh's login. The files go in
@@ -166,7 +167,7 @@ def api_refusal(words):
         elif word in PREFETCH_API_FLAGS_WITHOUT_VALUE:
             pass
         else:
-            return f"`gh api` option `{word}` is not one of the reading options accepted"
+            return f"`gh api` option `{word}` is not accepted"
         index += 1
     if len(endpoints) != 1:
         return (f"`gh api` needs exactly one endpoint, such as repos/OWNER/REPO/pulls/12, "
