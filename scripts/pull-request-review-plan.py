@@ -9,15 +9,16 @@ claude-and-codex-review-and-head-tests-tier; all of .claude/hooks/ does too,
 including test files there.
 
 Rule 2: a fix round is reviewed by its new commits alone, at the tier those
-commits need, and the seat runs the round's deciding check again on the new
-head. It is reviewed whole when those commits merge main or rewrite the
-branch's history; any merge commit on the delta's first-parent history
-counts as merging main. Rounds count distinct reviewed heads other than the
-current head, so a review already posted on the current head does not start
-another round. When a delta holds a merge, or follows rewritten history, its
-files are restricted to the pull request's own files on either head; main's
-unrelated files should not decide the delta tier. All applicable reasons
-remain listed.
+commits need, and the seat, not this program, runs again on the new head each
+check whose result made the earlier round request changes. A fix round is
+reviewed whole when those commits merge main or rewrite the branch's history;
+any merge commit on the delta's first-parent history counts as merging main.
+Rounds count distinct reviewed heads other than the current head, so a review
+already posted on the current head does not start another round. When a delta
+holds a merge, or follows rewritten history, its files are restricted to the
+pull request's own files on either head; main's unrelated files should not
+decide the delta tier. When delta-only review does not apply, the plan lists
+every reason it does not apply, not only the first.
 
 Rule 3: list changed agent-facing strings, with their context and old text.
 Which strings are agent-facing, and which files are tests, is decided by
@@ -29,7 +30,8 @@ a test's copy of an expected message is not handed to an agent. F-string
 placeholders survive in the listing. Beside each listed string is its
 cold-read-fast-read command, whose target file holds the string's new text and
 is written as the message reminder hook writes it; a target that cannot be
-written is marked in the plan and makes the program exit 3 after printing it.
+written is marked in the plan, which leaves its message with no
+cold-read-fast-read command, so the program exits 3 after printing the plan.
 
 Merged pull requests use the merge commit's first parent as the diff base:
 the current base branch already contains the head and would hide the change.
@@ -44,9 +46,9 @@ tree objects. Writes no file except the cold-read-fast-read target files and
 the optional --brief-skeleton, opened exclusively because a rerun must not
 erase the seat's hand-written checks.
 Exit 0: success. Exit 1: refusal, including malformed arguments or unavailable
-inputs. Exit 2: program defect, with exception and traceback on stderr. Exit 3:
-the plan is printed, but a listed message has no cold-read-fast-read command,
-so that a caller notices the missing reads.
+inputs. Exit 2: program defect, with exception and traceback on stderr.
+Exit 3: the plan is printed, but a listed message has no cold-read-fast-read
+command, so that a caller notices the missing reads.
 
 Usage:
   scripts/pull-request-review-plan.py --pull-request N [--repository DIR]
