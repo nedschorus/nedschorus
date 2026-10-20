@@ -2438,6 +2438,14 @@ check("with a git date, the alternative offered is the next NEWER snapshot",
       any(l.startswith("next to try if it predates the file") and "2026-08-15" in l for l in report.lines),
       str(report.lines))
 
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=FakeRunner([
+    ("tmutil destinationinfo", DESTINATION_INFO),
+    ("diskutil info", DISKUTIL_MOUNTED),
+    ("diskutil apfs listSnapshots", (1, "", "diskutil: injected listing failure")),
+]))
+check("Time Machine whose snapshot listing fails is UNAVAILABLE, with diskutil's words",
+      report.status == UNAVAILABLE and any("injected listing failure" in l for l in report.lines), str(report.lines))
+
 # Without a git date the newest snapshot is all we have, and it may postdate the
 # deletion — the failure mode found by running the real script with --skip git.
 tm_no_date = FakeRunner([
@@ -3821,7 +3829,7 @@ with tempfile.TemporaryDirectory() as tmp:
     seen = local_nanoseconds("2026-10-15 12:21:12")
     path_directory = log_store / "guarded-file-versions-and-approvals" / "ned-box" / path.lstrip("/")
     path_directory.mkdir(parents=True)
-    (path_directory / "log").write_text(blob_seen_line(seen + 10 ** 9, absent) + blob_seen_line(seen, absent)
+    (path_directory / "log").write_text(blob_seen_line(seen, absent) + blob_seen_line(seen + 10 ** 9, absent)
                                         + blob_seen_line(seen, staged))
     mac_directory = log_store / "guarded-file-versions-and-approvals" / "mac" / "Users/el/x/CLAUDE.md"
     mac_directory.mkdir(parents=True)
@@ -3852,6 +3860,16 @@ with tempfile.TemporaryDirectory() as tmp:
                                        log_store_root=str(log_store), on_ned_box=True)
     check("blob id: and the hook's log and Timeshift are searched after it",
           [r.surface for r in reports] == ["git", "guarded-file log", "timeshift"], "%s" % [r.surface for r in reports])
+
+    commit_id = git_clean("rev-parse", "HEAD", cwd=repo).strip()
+    report = finder.search_git_for_blob(commit_id, str(repo), runner)
+    check("blob id: a commit's id is NOT FOUND in git, saying it is a commit, not a file's content",
+          report.status == NOT_FOUND and not report.commit_holds
+          and any("is a commit, not a file's content" in l for l in report.lines), "%s %s" % (report.status, report.lines))
+    report = finder.search_git_for_blob(absent, str(repo), FakeRunner([("cat-file -e", (0, "", "")),
+                                                                       ("cat-file -t", (128, "", "fatal: injected"))]))
+    check("blob id: a type lookup that fails is UNAVAILABLE in git",
+          report.status == UNAVAILABLE and any("injected" in l for l in report.lines), "%s" % report.lines)
 
     report = finder.search_git_for_blob(absent, str(repo), runner)
     check("blob id: a blob git does not hold is NOT FOUND in git", report.status == NOT_FOUND
@@ -3924,11 +3942,22 @@ with tempfile.TemporaryDirectory() as tmp:
         held_file.chmod(0o600)
     check("blob id: a snapshot file that cannot be read is UNAVAILABLE, not NOT FOUND",
           report.status == UNAVAILABLE and any("could not be read" in l for l in report.lines), "%s" % report.lines)
+    held_directory = held_file.parent
+    held_directory.chmod(0o600)
+    try:
+        report = finder.search_timeshift_after(absent, path, seen, "", str(snapshots), runner, on_ned_box=True)
+    finally:
+        held_directory.chmod(0o700)
+    check("blob id: a snapshot directory that cannot be searched is UNAVAILABLE, not NOT FOUND",
+          report.status == UNAVAILABLE and any("Permission denied" in l for l in report.lines), "%s" % report.lines)
+    check("blob id: a path under a file is missing, not unreadable",
+          finder._missing_on_this_machine(str(held_file / "below")), "")
 
     report = finder.search_git_for_blob(absent, str(repo), FakeRunner([("cat-file -e", (128, "", "fatal: injected"))]))
     check("blob id: git that fails is UNAVAILABLE in git, not NOT FOUND",
           report.status == UNAVAILABLE and not report.commit_holds, "%s %s" % (report.status, report.lines))
     report = finder.search_git_for_blob(committed, str(repo), FakeRunner([("cat-file -e", (0, "", "")),
+                                                                          ("cat-file -t", (0, "blob\n", "")),
                                                                           ("--find-object", (128, "", "fatal: injected"))]))
     check("blob id: a git log that fails after git holds the blob still copies it, and does not stop the search",
           report.status == FOUND and not report.commit_holds and any("not known" in l for l in report.lines),
@@ -3967,6 +3996,17 @@ with tempfile.TemporaryDirectory() as tmp:
     report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", local_nanoseconds("2026-10-15 15:00:00"),
                                               tm)
     check("blob id: no Time Machine snapshot after the time is NOT FOUND", report.status == NOT_FOUND,
+          "%s" % report.lines)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen,
+                                              FakeRunner([("listSnapshots", (1, "", "diskutil: injected failure"))]
+                                                         + tm_table))
+    check("blob id: a Time Machine snapshot listing that fails is UNAVAILABLE, with diskutil's words, not NOT FOUND",
+          report.status == UNAVAILABLE and any("injected failure" in l for l in report.lines), "%s" % report.lines)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen,
+                                              FakeRunner([("diskutil info", (0, "Mount Point: /Volumes/Backup\n", ""))]
+                                                         + tm_table))
+    check("blob id: a Time Machine disk whose device node is not known is UNAVAILABLE, not NOT FOUND",
+          report.status == UNAVAILABLE and any("device node is not known" in l for l in report.lines),
           "%s" % report.lines)
 
     finder.running_on_ned_box = lambda: True

@@ -730,6 +730,17 @@ def search_git_for_blob(blob_id, repo, runner=run_command):
                                                     % (blob_id, repo, code, stderr.strip() or "no error text")])
         report.commit_holds = False
         return report
+    code, out, stderr = runner(["git", "-C", repo, "cat-file", "-t", blob_id])
+    if code != 0:
+        report = SurfaceReport("git", UNAVAILABLE, ["git cat-file -t %s in %s exited %s — %s"
+                                                    % (blob_id, repo, code, stderr.strip() or "no error text")])
+        report.commit_holds = False
+        return report
+    if out.strip() != "blob":
+        report = SurfaceReport("git", NOT_FOUND, ["%s in %s is a %s, not a file's content"
+                                                  % (blob_id, repo, out.strip() or "object of no type")])
+        report.commit_holds = False
+        return report
     code, out, stderr = runner(["git", "-C", repo, "log", "--all", "--reflog", "--find-object=" + blob_id,
                                 "--format=COMMIT %H|%ad|%s", "--date=short", "--name-only", "-n", "5"],
                                timeout=LONG_TIMEOUT_SECONDS)
@@ -879,7 +890,7 @@ def search_timeshift_after(blob_id, path, seen, box_ssh_host, snapshot_root, run
     content, why = _version_bytes(version, fetch_bytes)
     first = "the first snapshot after %s, when the hook saw the version, is %s" % (_local_time_of(seen), snapshot)
     if content is None:
-        if (not os.path.lexists(source)) if version.kind == "file" else "No such file" in why:
+        if _missing_on_this_machine(source) if version.kind == "file" else "No such file" in why:
             return SurfaceReport("timeshift", NOT_FOUND, [first, "it does not hold %s" % path])
         return SurfaceReport("timeshift", UNAVAILABLE, [first, "%s could not be read — %s" % (source, why)])
     held = git_blob_id_of(content)
@@ -887,6 +898,18 @@ def search_timeshift_after(blob_id, path, seen, box_ssh_host, snapshot_root, run
         return SurfaceReport("timeshift", NOT_FOUND, [
             first, "it holds %s at another version, %s: the version was replaced before that snapshot" % (path, held)])
     return SurfaceReport("timeshift", FOUND, [first, "it holds %s at this version" % path], versions=[version])
+
+
+def _missing_on_this_machine(path):
+    """True only when path or a directory above it does not exist; a path that cannot be looked at is not
+    missing."""
+    try:
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    return False
 
 
 def search_time_machine_after(blob_id, path, seen, runner=run_command, prompt_for_root=False):
@@ -902,9 +925,12 @@ def search_time_machine_after(blob_id, path, seen, runner=run_command, prompt_fo
         return SurfaceReport("time machine", UNAVAILABLE, ["the backup disk %r is not mounted"
                                                            % destination["name"]],
                              ["diskutil mount %s" % shlex.quote(destination["name"])])
+    snapshots, failure = _time_machine_snapshots(device, runner)
+    if failure is not None:
+        return SurfaceReport("time machine", UNAVAILABLE, ["the snapshots of %r could not be listed — %s"
+                                                           % (destination["name"], failure)])
     seen_stamp = time.strftime("%Y%m%d%H%M%S", time.localtime(seen / 1e9))
-    after = [snapshot for snapshot in _time_machine_snapshots(device, runner)
-             if (_snapshot_timestamp(snapshot) or "") >= seen_stamp]
+    after = [snapshot for snapshot in snapshots if (_snapshot_timestamp(snapshot) or "") >= seen_stamp]
     if not after:
         return SurfaceReport("time machine", NOT_FOUND, ["no snapshot was taken after %s, when the hook saw %s"
                                                          % (_local_time_of(seen), path)])
@@ -1954,7 +1980,10 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
                 ["diskutil mount %s" % shlex.quote(name)],
             )
 
-    snapshots = _time_machine_snapshots(device, runner)
+    snapshots, failure = _time_machine_snapshots(device, runner)
+    if failure is not None:
+        return SurfaceReport("time machine", UNAVAILABLE,
+                             ["the snapshots of %r could not be listed — %s" % (name, failure)])
     if not snapshots:
         return SurfaceReport(
             "time machine",
@@ -2108,11 +2137,12 @@ def _time_machine_volume_state(name, runner):
 
 
 def _time_machine_snapshots(device, runner):
+    """Return (snapshot names, newest first; None) or ([], why the listing failed)."""
     if not device:
-        return []
-    code, out, _ = runner(["diskutil", "apfs", "listSnapshots", device], timeout=LONG_TIMEOUT_SECONDS)
+        return [], "the backup disk's device node is not known"
+    code, out, stderr = runner(["diskutil", "apfs", "listSnapshots", device], timeout=LONG_TIMEOUT_SECONDS)
     if code != 0:
-        return []
+        return [], "diskutil apfs listSnapshots %s exited %s — %s" % (device, code, stderr.strip() or "no error text")
     names = []
     for line in out.splitlines():
         stripped = line.strip().lstrip("|").strip()
@@ -2121,7 +2151,7 @@ def _time_machine_snapshots(device, runner):
             if value:
                 names.append(value)
     # Snapshot timestamps sort lexically.
-    return sorted(names, reverse=True)
+    return sorted(names, reverse=True), None
 
 
 def _time_machine_candidates(snapshots, newest_date_held, limit):
