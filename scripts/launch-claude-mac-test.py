@@ -596,8 +596,9 @@ def main() -> int:
                   len(first) == 1
                   and (lines + ["", ""])[first[0] + 1].startswith(f"launch-claude-mac: any error the ")
                   and "if none is there" in (lines + ["", ""])[first[0] + 1]
-                  and (lines + ["", ""])[first[0] + 2].startswith(f"launch-claude-mac: if you are an agent that ran this launch, tell the user")
-                  and "if you are the user, run the command in the first of these lines" in (lines + ["", ""])[first[0] + 2],
+                  and (lines + ["", "", ""])[first[0] + 2].startswith(f"launch-claude-mac: if you are an agent that ran this launch, tell the user")
+                  and (lines + ["", "", ""])[first[0] + 3].startswith(f"launch-claude-mac: if you are the user, run the command in the first of these lines")
+                  and "if it fails and prints nothing, ask an agent" in (lines + ["", "", ""])[first[0] + 3],
                   result.stderr)
         sandbox = MacLaunchSandbox(root / "boot-programs-succeed")
         result = sandbox.run("~/agents", seat_name="seat-g")

@@ -176,10 +176,10 @@ STOPPED_LINE_START = "clean-worktrees: stopped, because "
 GIT_FAILURE_NEXT_STEP_LINES = (
     "If git's error names a lock file, such as .git/index.lock, wait one minute, then run {rerun}; "
     "do not delete the lock file yourself.\n"
-    "If git's error names a branch, commit or path that does not exist, check that the command "
-    "you ran names the right one, correct it if not, then run it again.\n"
+    "If git's error names a branch, commit or path that does not exist, and you gave that name "
+    "to {program}, correct it in your command, then run the corrected command.\n"
     "In any other case, run {rerun} once more.\n"
-    "If {rerun} fails a second time, stop and tell the user what {program} printed, "
+    "If {rerun} fails again, stop and tell the user what {program} printed, "
     "git's error included; a subagent tells the agent that dispatched it instead.")
 
 

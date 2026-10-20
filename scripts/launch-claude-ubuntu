@@ -362,7 +362,8 @@ fi"
 PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/scripts/clean-worktrees.py --only-done \
 || { status=\$?; echo \"launch-claude-ubuntu: the launch-time worktree report on ned-box (python3 \$HOME/Projects/nedschorus/scripts/clean-worktrees.py --only-done), which lists the finished worktrees, failed with exit \$status, and the launch goes on, because the agent-seat does not need the report.\"; \
 echo \"launch-claude-ubuntu: any error the report printed is above these lines; if none is there, the report ended without printing one, for example because it was killed.\"; \
-echo \"launch-claude-ubuntu: if you are an agent that ran this launch, tell the user these lines and any error above them, run nothing in \$HOME/Projects/nedschorus yourself, and go on with your work; if you are the user, run the command in the first of these lines on ned-box: if it fails again, fix the cause it prints, and if it succeeds, nothing more is needed.\"; \
+echo \"launch-claude-ubuntu: if you are an agent that ran this launch, tell the user these lines and any error above them, change nothing in \$HOME/Projects/nedschorus yourself, and go on with your work.\"; \
+echo \"launch-claude-ubuntu: if you are the user, run the command in the first of these lines on ned-box: if it succeeds, nothing more is needed; if it fails and prints an error, fix the cause that error names; if it fails and prints nothing, ask an agent to find out why the report fails on ned-box without printing an error, and give it that command and its exit code.\"; \
 } >&2; }"
 
 # Launch-time freshness on ned-box — the twin of the same step in
@@ -372,7 +373,8 @@ echo \"launch-claude-ubuntu: if you are an agent that ran this launch, tell the 
 PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/scripts/checkout-freshness-catch-up.py --reference-pull --repo \$HOME/Projects/nedschorus \
 || { status=\$?; echo \"launch-claude-ubuntu: the launch-time fast-forward of the reference checkout on ned-box, \$HOME/Projects/nedschorus, to origin/main (python3 \$HOME/Projects/nedschorus/scripts/checkout-freshness-catch-up.py --reference-pull --repo \$HOME/Projects/nedschorus) failed with exit \$status, so that checkout may be behind origin/main, and the launch goes on with it as it is.\"; \
 echo \"launch-claude-ubuntu: any error the fast-forward printed is above these lines; if none is there, the fast-forward ended without printing one, for example because it was killed.\"; \
-echo \"launch-claude-ubuntu: if you are an agent that ran this launch, tell the user these lines and any error above them, run nothing in \$HOME/Projects/nedschorus yourself, and go on with your work; if you are the user, run the command in the first of these lines on ned-box: if it fails again, fix the cause it prints, and if it succeeds, nothing more is needed.\"; \
+echo \"launch-claude-ubuntu: if you are an agent that ran this launch, tell the user these lines and any error above them, change nothing in \$HOME/Projects/nedschorus yourself, and go on with your work.\"; \
+echo \"launch-claude-ubuntu: if you are the user, run the command in the first of these lines on ned-box: if it succeeds, nothing more is needed; if it fails and prints an error, fix the cause that error names; if it fails and prints nothing, ask an agent to find out why the fast-forward fails on ned-box without printing an error, and give it that command and its exit code.\"; \
 } >&2; }"
 
 # Pre-answer, on the box, the screens that would stop the session at start:

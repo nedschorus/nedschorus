@@ -291,7 +291,8 @@ fi
 report_launch_step_failure() {
     echo "launch-claude-mac: the launch-time $1 failed with exit $4, $2" >&2
     echo "launch-claude-mac: any error the $3 printed is above these lines; if none is there, the $3 ended without printing one, for example because it was killed." >&2
-    echo "launch-claude-mac: if you are an agent that ran this launch, tell the user these lines and any error above them, run nothing in $REPOSITORY yourself, and go on with your work; if you are the user, run the command in the first of these lines on this Mac: if it fails again, fix the cause it prints, and if it succeeds, nothing more is needed." >&2
+    echo "launch-claude-mac: if you are an agent that ran this launch, tell the user these lines and any error above them, change nothing in $REPOSITORY yourself, and go on with your work." >&2
+    echo "launch-claude-mac: if you are the user, run the command in the first of these lines on this Mac: if it succeeds, nothing more is needed; if it fails and prints an error, fix the cause that error names; if it fails and prints nothing, ask an agent to find out why the $3 fails on this Mac without printing an error, and give it that command and its exit code." >&2
 }
 
 # Launch-time worktree report: finished session worktrees pile up invisibly,
