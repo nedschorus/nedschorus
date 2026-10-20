@@ -140,9 +140,14 @@ def load_module(name, path):
     return module
 
 
+# Not resolved, so a fault names a module under the directory the hook was run
+# from, as the agent and the user know it, not under a symlink's target.
+REPOSITORY_TOP = Path(__file__).absolute().parent.parent
+
+
 def _load_general_tools_module(file_name):
     return load_module(file_name.removesuffix(".py").replace("-", "_"),
-                       Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools" / file_name)
+                       REPOSITORY_TOP / "nc-systems" / "general-tools" / file_name)
 
 
 # Constants below are built from these modules, so a load that fails ends the
@@ -179,7 +184,6 @@ TRANSCRIPT_UNREADABLE_LINES = (
 
 TRANSCRIPT_READER_FILE = Path(__file__).with_name("absence-claim-locator-reminder-hook.py")
 SUITE_RUNNER_FILE = Path(__file__).with_name("run-all-test-suites.py")
-REPOSITORY_TOP = Path(__file__).resolve().parent.parent
 
 PATH_END = r"[^\s)\]>\"'`<|*]*?\.md(?![\w-])"
 FILE_URL_PATTERN = re.compile(r"file://(/" + PATH_END + ")")
