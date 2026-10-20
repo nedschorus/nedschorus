@@ -309,6 +309,23 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     for label, target in not_reviewed:
         result = run_hook(decoy, workspace, str(target))
         check(f"{label} passes", result.returncode == 0, result.stderr)
+    record_copies = [
+        ("a CLAUDE.local.md copy in a cold-read record",
+         workspace / "cold-read-records" / "CLAUDE.local-2026-10-18" / "target" / "CLAUDE.local.md"),
+        ("a CLAUDE.md copy in a sanity-check record",
+         workspace / "sanity-check-records" / "2026-10-18-claude" / "CLAUDE.md"),
+        ("a reusable prompt's copy in a cold-read record",
+         workspace / "cold-read-records" / "fleet-2026-10-18" / "target" / "fleet-instructions.md"),
+        ("a .claude/ file's copy in an md-review record",
+         workspace / "md-review-records" / "skill-2026-10-18" / ".claude" / "skills" / "x" / "SKILL.md"),
+    ]
+    for label, target in record_copies:
+        result = run_hook(decoy, workspace, str(target))
+        check(f"{label} passes", result.returncode == 0, result.stderr)
+    result = run_hook(decoy, workspace,
+                      str(workspace / "docs" / "cold-read-records" / "x-2026-10-18" / "CLAUDE.local.md"))
+    check("a CLAUDE.local.md in a record-named directory below the checkout's top is blocked",
+          result.returncode == 2, str(result.returncode))
     result = run_hook(decoy, workspace, str(workspace / "docs" / "agents" / "fleet-instructions.md"))
     check("a reusable prompt in a reviewed home keeps the reusable-prompt message",
           "reusable prompt" in result.stderr, result.stderr)
