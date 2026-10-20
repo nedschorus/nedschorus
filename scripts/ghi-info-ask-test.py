@@ -1024,6 +1024,99 @@ with tempfile.TemporaryDirectory() as temporary:
           and argv[argv.index("--setting-sources") + 1] == "user", argv)
 
 
+    # The prompt rides stdin, not the command line, where one argument may
+    # not exceed 128 KiB on Linux.
+    recorded_stdin = {}
+
+    def stdin_recording_run(command, **keywords):
+        recorded_stdin["argv"] = command
+        recorded_stdin["input"] = keywords.get("input")
+        return FakeCompletedProcess(0, json.dumps({"session_id": "s", "result": "read #1"}))
+
+    patch_module_function(ghi_ask.subprocess, "run", stdin_recording_run)
+    long_prompt = "x" * 300_000
+    run_claude_real(long_prompt, "sess-R", seat_flag, 5)
+    check("run_claude hands claude the prompt on stdin and not as an argument",
+          recorded_stdin.get("input") == long_prompt
+          and long_prompt not in recorded_stdin.get("argv", []),
+          len(recorded_stdin.get("input") or ""))
+
+    # --question-file: a question too long for one argument.
+    question_text = "Draft GHI-MD, verbatim:\n\n" + "y" * 300_000
+    question_path = root / "question.txt"
+    question_path.write_text(question_text, encoding="utf-8")
+    asked = {}
+
+    def recording_ask(question, include_closed, seat_dir, repo, *rest, **keywords):
+        asked["question"] = question
+        return "verdict: unrelated", None
+
+    ask_orig = ghi_ask.ask
+    patch("ask", recording_ask)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            exit_code = ghi_ask.main(["--question-file", str(question_path),
+                                      "--seat-dir", str(seat_flag)])
+        check("--question-file asks the file's text, verbatim",
+              exit_code == 0 and asked.get("question") == question_text,
+              (exit_code, len(asked.get("question") or "")))
+
+        unreadable_error = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(unreadable_error):
+            exit_code = ghi_ask.main(["--question-file", str(root / "absent.txt"),
+                                      "--seat-dir", str(seat_flag)])
+        check("an unreadable --question-file is a failed ask, exit 1, saying so",
+              exit_code == 1 and "could not read the question file"
+              in unreadable_error.getvalue(), unreadable_error.getvalue())
+
+        for arguments, name in (([], "neither"), (["q", "--question-file",
+                                                    str(question_path)], "both")):
+            try:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    ghi_ask.main(arguments + ["--seat-dir", str(seat_flag)])
+                check(f"{name} a question nor a --question-file is refused", False,
+                      "accepted")
+            except SystemExit as refusal:
+                check(f"{name} of a question and --question-file is refused as a "
+                      "usage error", refusal.code == 2, refusal.code)
+
+        # Off the box, the file's text goes to the box on ssh's stdin, and the
+        # box-side run reads it from there.
+        remote = {}
+
+        def ssh_recording_run(command, **keywords):
+            remote["argv"] = command
+            remote["input"] = keywords.get("input")
+            return FakeCompletedProcess(0, "verdict: unrelated\n")
+
+        patch_module_function(ghi_ask.subprocess, "run", ssh_recording_run)
+        seat_orig = ghi_ask.DEFAULT_SEAT_DIR
+        patch("DEFAULT_SEAT_DIR", root / "no-seat-on-this-machine")
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                exit_code = ghi_ask.main(["--question-file", str(question_path)])
+                from_file = dict(remote)
+                plain_exit_code = ghi_ask.main(["a short question"])
+        finally:
+            patch("DEFAULT_SEAT_DIR", seat_orig)
+        check("off the box, a question given as an argument still rides the "
+              "remote command, with nothing on stdin",
+              plain_exit_code == 0 and remote.get("input") is None
+              and "'a short question'" in remote["argv"][-1],
+              remote["argv"][-1][-300:])
+        remote_command = (from_file.get("argv") or ["", "", ""])[-1]
+        check("off the box, --question-file sends the text on ssh's stdin and "
+              "the box reads it with --question-file /dev/stdin",
+              exit_code == 0 and from_file.get("input") == question_text
+              and "--question-file /dev/stdin" in remote_command
+              and question_text not in remote_command,
+              (exit_code, remote_command[-300:]))
+    finally:
+        patch("ask", ask_orig)
+
+
 print()
 if failures:
     print(f"{len(failures)} case(s) failed")

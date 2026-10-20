@@ -1030,8 +1030,7 @@ def refuse_if_filing_is_in_flight(repo: str, issues, title: str, runner):
 
 
 def adjudicate(repo: str, title: str, text: str, repository_root: Path,
-               runner, report, exclude_issue=None, edit_diff=None,
-               files_beside=()):
+               runner, report, exclude_issue=None, edit_diff=None):
     """Step 2. Fail-open by design: ghi-info unreachable means the write
     proceeds, because an infrastructure failure must never look like a
     refusal. A too-similar verdict is a soft block — the caller reconsiders
@@ -1043,11 +1042,9 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
     does not stop the write.
 
     An edit passes `edit_diff`, from
-    `ghi_md_unified_diff_from_main_copy_to_edit_ghi_copy`, and
-    `files_beside`, the (name, text) of each
-    proposed-improvements-or-changes-file beside the GHI-MD. Without them
+    `ghi_md_unified_diff_from_main_copy_to_edit_ghi_copy`. Without it
     ghi-info sees only the whole draft, so text an edit leaves unchanged
-    raises again a ruling question an earlier entry already asked."""
+    raises again a ruling question an earlier edit already raised."""
     marker = repository_root / RECONSIDERED_MARKER_NAME
     if marker.is_file():
         marker.unlink()
@@ -1077,19 +1074,23 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
             "main's copy:\n\n" + (edit_diff or "(no change)\n") +
             "\nJudge the verdict on the whole draft, but raise a ruling "
             "question only about what this edit changes.")
-    if files_beside:
-        question += (
-            "\n\nThe proposed-improvements-or-changes-files beside the "
-            "GHI-MD, verbatim. Do not raise a ruling question that an entry "
-            "in them already asks.")
-        for name, beside_text in files_beside:
-            question += f"\n\n{name}:\n\n{beside_text}"
+    # Sent in a file: one argument may not exceed 128 KiB on Linux, and a
+    # large GHI-MD with its diff is longer.
+    question_path = None
     try:
-        completed = runner([sys.executable, str(ask), question],
+        descriptor, question_path = tempfile.mkstemp(
+            prefix="ghi-issue-write-question-", suffix=".txt")
+        with os.fdopen(descriptor, "w", encoding="utf-8") as question_file:
+            question_file.write(question)
+        completed = runner([sys.executable, str(ask), "--question-file",
+                            question_path],
                            timeout=ADJUDICATION_TIMEOUT_SECONDS, check=False)
     except Exception as failure:                      # noqa: BLE001
         report(f"adjudication skipped: ghi-info did not answer ({failure})")
         return None
+    finally:
+        if question_path is not None:
+            Path(question_path).unlink(missing_ok=True)
     if completed.returncode == GHI_INFO_ASK_RULING_QUESTION_EXIT_CODE:
         conflict = ruling_conflict_from_stderr(completed.stderr)
         if conflict is not None:
@@ -2979,11 +2980,7 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
                 repo, title, text, repository_root, runner, report,
                 exclude_issue=number,
                 edit_diff=ghi_md_unified_diff_from_main_copy_to_edit_ghi_copy(
-                    document_before_this_edit, staged, relative),
-                files_beside=[
-                    (item.name, item.read_text(encoding="utf-8"))
-                    for item in proposed_improvements_or_changes_files_in(
-                        directory, prefix)])
+                    document_before_this_edit, staged, relative))
         refuse_to_land_edit(repo, number, relative, on_main, moved_from,
                             moved_from_on_main, branch, main_commit,
                             repository_root, runner, report, proposed)
@@ -3018,13 +3015,9 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         report("the body follows main's copy of the files, so it changes "
                "when that pull request merges; rerun this command then")
     if landed_now:
-        # A file main already holds is not a new question: this edit changes
-        # its state, as the subagent settling it does.
         report_ruling_questions_landed(
-            number, "edited",
-            [(item, item_text) for item, item_text in proposed
-             if blob_at(main_commit, item, repository_root, runner) is None],
-            report, f"scripts/ghi-issue-write.py edit {relative}")
+            number, "edited", proposed, report,
+            f"scripts/ghi-issue-write.py edit {relative}")
     if waiting:
         return number, False
     if finished:

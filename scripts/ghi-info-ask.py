@@ -6,6 +6,7 @@ filing or editing an issue, to learn what already covers the ground.
 
 Usage:
   ghi-info-ask.py "<question>" [--include-closed]
+  ghi-info-ask.py --question-file <path> [--include-closed]
 
 Exit codes:
   0  the reading list ghi-info returns, printed to stdout; without
@@ -552,7 +553,9 @@ def run_claude(prompt: str, resume_session_id, seat_dir: Path, timeout_seconds: 
     # 0. A cold-read cell had the same leak, and PR #417 gave it the same
     # flag. The seat's own settings.json is project settings, so nothing here
     # needs it: permissions come from bypassPermissions above.
-    command = ["claude", "-p", prompt, "--output-format", "json",
+    # The prompt goes on stdin: one argument may not exceed 128 KiB on
+    # Linux, and a draft GHI-MD with its diff can be larger.
+    command = ["claude", "-p", "--output-format", "json",
               "--setting-sources", "user",
               "--permission-mode", "bypassPermissions", "--model", GHI_INFO_MODEL]
     if resume_session_id:
@@ -565,7 +568,7 @@ def run_claude(prompt: str, resume_session_id, seat_dir: Path, timeout_seconds: 
     try:
         completed = subprocess.run(command, cwd=str(seat_dir), capture_output=True,
                                    text=True, timeout=timeout_seconds, check=False,
-                                   env=environment)
+                                   env=environment, input=prompt)
     except subprocess.TimeoutExpired:
         return None, f"claude was silent for {timeout_seconds}s and was killed"
     except OSError as error:
@@ -859,7 +862,8 @@ def _ask_within_lock(question, include_closed, seat_dir, repo, projects_root,
     return reply_text, None
 
 
-def build_remote_command(question: str, include_closed: bool, repo: str) -> str:
+def build_remote_command(question: str, include_closed: bool, repo: str,
+                         question_on_stdin: bool = False) -> str:
     """The command the box runs, as one string: ssh hands it to the box's
     login shell, which parses it exactly once — no second parse layer here
     (unlike the launchers, which also cross tmux's pane-command parse), so
@@ -883,7 +887,11 @@ def build_remote_command(question: str, include_closed: bool, repo: str) -> str:
         beside it. Suppressing the shell's line would make a permissions
         failure read as "no seat", pointing the operator at the wrong fix.
     """
-    invocation = "python3 scripts/ghi-info-ask.py " + shlex.quote(question)
+    # With `question_on_stdin` the caller hands ssh the question as stdin,
+    # since one argument may not exceed 128 KiB on Linux.
+    invocation = "python3 scripts/ghi-info-ask.py " + (
+        "--question-file /dev/stdin" if question_on_stdin
+        else shlex.quote(question))
     if include_closed:
         invocation += " --include-closed"
     invocation += " --repo " + shlex.quote(repo)
@@ -904,7 +912,11 @@ def main(argv=None) -> int:
         description="Ask ghi-info a reading-list question.",
         formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__,
     )
-    parser.add_argument("question", help="the reading-list question, relayed verbatim")
+    parser.add_argument("question", nargs="?",
+                        help="the reading-list question, relayed verbatim")
+    parser.add_argument("--question-file", default=None,
+                        help="read the question from this file instead; for a "
+                             "question too long to pass as one argument")
     parser.add_argument("--include-closed", action="store_true",
                         help="closed history is wanted (precedent, absence claims)")
     parser.add_argument("--repo", default=DEFAULT_REPO)
@@ -913,19 +925,32 @@ def main(argv=None) -> int:
                              "SSH-to-box decision entirely (testing; an operator running "
                              "box-side with a non-default path)")
     arguments = parser.parse_args(argv)
+    if (arguments.question is None) == (arguments.question_file is None):
+        parser.error("give the question, or --question-file, but not both")
+    question = arguments.question
+    if arguments.question_file is not None:
+        try:
+            question = Path(arguments.question_file).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            print(f"ghi-info-ask: could not read the question file: {error}",
+                  file=sys.stderr)
+            return 1
 
     if arguments.seat_dir is not None:
         seat_dir = Path(arguments.seat_dir).expanduser()
     else:
         seat_dir = DEFAULT_SEAT_DIR
         if not seat_dir.is_dir():
-            remote_command = build_remote_command(arguments.question,
+            question_on_stdin = arguments.question_file is not None
+            remote_command = build_remote_command(question,
                                                   arguments.include_closed,
-                                                  arguments.repo)
+                                                  arguments.repo,
+                                                  question_on_stdin)
             try:
                 completed = subprocess.run(
                     ["ssh", AGENT_BOX, remote_command], capture_output=True, text=True,
                     timeout=SSH_TIMEOUT_SECONDS, check=False,
+                    input=question if question_on_stdin else None,
                 )
             except subprocess.TimeoutExpired:
                 print(f"ghi-info-ask: the box was silent for {SSH_TIMEOUT_SECONDS}s "
@@ -944,7 +969,7 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 1
 
-    answer, error = ask(arguments.question, arguments.include_closed, seat_dir,
+    answer, error = ask(question, arguments.include_closed, seat_dir,
                         arguments.repo)
     if answer is None:
         print(f"ghi-info-ask: {error}", file=sys.stderr)
@@ -957,7 +982,7 @@ def main(argv=None) -> int:
     print(answer)
     if not arguments.include_closed:
         print(open_issues_only_include_closed_hint_message(
-            arguments.question, arguments.repo), file=sys.stderr)
+            question, arguments.repo), file=sys.stderr)
     return 0
 
 
