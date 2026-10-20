@@ -1,8 +1,8 @@
 ---
-issue: "[Daily maintenance in one daily step, starting with a daily check of every wiki page](https://github.com/nedschorus/nedschorus/issues/1058)"
+issue: "[Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user](https://github.com/nedschorus/nedschorus/issues/1058)"
 ---
 
-# Daily maintenance in one daily step, starting with a daily check of every wiki page
+# Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user
 
 This GHI has proposed improvements or changes: read every file in this folder whose name starts with `1058-daily-maintenance-in-one-daily-step-starting-with-proposed-improvements-or-changes-`.
 
