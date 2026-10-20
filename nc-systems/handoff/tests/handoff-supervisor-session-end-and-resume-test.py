@@ -600,18 +600,63 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           refused_report)
     git_in(["worktree", "remove", "--force", str(holding_record)], home)
 
+    # A record that fails to ship, then one whose shipment hangs until the handoff's bound stops
+    # the cleaner: the report must still name the first failure.
+    # The ship request reaches ssh on stdin, so the stubs tell the calls apart by order:
+    # the first call fails as an unreachable ned-box does, and every later one hangs.
+    failing_then_hanging_stubs = root / "failing-then-hanging-ship-stubs"
+    failing_then_hanging_stubs.mkdir()
+    first_call_made = failing_then_hanging_stubs / "first-call-made"
+    for tool in ("ssh", "rsync"):
+        (failing_then_hanging_stubs / tool).write_text(
+            f"#!/bin/sh\nif [ -e '{first_call_made}' ]; then exec sleep 60; fi\n"
+            f": > '{first_call_made}'\nexit 255\n", encoding="utf-8")
+        (failing_then_hanging_stubs / tool).chmod(0o755)
+    hanging_record_worktree = home / ".claude" / "worktrees" / "hanging-record-worktree"
+    git_in(["worktree", "add", "--quiet", "-b", "hanging-record-branch",
+            str(hanging_record_worktree)], home)
+    for record_name in ("a-fails-2026-10-19", "b-hangs-2026-10-19"):
+        (hanging_record_worktree / "cold-read-records" / record_name).mkdir(parents=True)
+        (hanging_record_worktree / "cold-read-records" / record_name / "fast-read.md").write_text(
+            "a read's report\n", encoding="utf-8")
+    os.utime(hanging_record_worktree / ".git", (long_ago, long_ago))
+    saved_path = os.environ["PATH"]
+    os.environ["COLD_READ_RECORD_SHIP_DESTINATION"] = (
+        "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records")
+    os.environ["PATH"] = f"{failing_then_hanging_stubs}{os.pathsep}{saved_path}"
+    try:
+        hanging_ship_report = supervisor.remove_finished_worktrees_at_handoff(
+            home, timeout_seconds=15)
+    finally:
+        del os.environ["COLD_READ_RECORD_SHIP_DESTINATION"]
+        os.environ["PATH"] = saved_path
+    check("WORKTREE CLEANUP: a record that failed to ship is named in the report when a later "
+          "record's shipment hangs until the bound stops the cleaner",
+          hanging_record_worktree.exists()
+          and "1 worktree(s) kept because a record did not reach the log-store: "
+          "hanging-record-worktree" + supervisor.KEPT_FOR_RECORDS_MARKER
+          + "cold-read-records/a-fails-2026-10-19 (FAILED:" in hanging_ship_report
+          and "b-hangs-2026-10-19" not in hanging_ship_report
+          and "did not finish in 15 s" in hanging_ship_report,
+          hanging_ship_report)
+    git_in(["worktree", "remove", "--force", str(hanging_record_worktree)], home)
+
     kept_marker = supervisor.KEPT_FOR_RECORDS_MARKER + "cold-read-records/r-2026-10-19 "
     kept_summary = supervisor.summarize_worktree_cleanup_output([
         "failed-ship-wt" + kept_marker + "(FAILED: r-2026-10-19 — ned-box unreachable)",
+        "failed-ship-wt" + supervisor.KEPT_FOR_RECORDS_MARKER
+        + "sanity-check-records/s-2026-10-19 (FAILED: s-2026-10-19 — ned-box unreachable)",
         "silent-ship-wt" + kept_marker
         + "(the shipper printed nothing (exit 1): NotADirectoryError: store)",
         "locked-wt: removal FAILED — locked",
     ])
-    check("WORKTREE CLEANUP: a kept worktree whose shipment FAILED is counted once, among the "
-          "kept, and a removal failure is still counted among the failures",
+    check("WORKTREE CLEANUP: a kept worktree whose shipments FAILED is counted once, among the "
+          "kept, with each record named, and a removal failure is still counted among the failures",
           "; 1 failed: locked-wt: removal FAILED — locked;" in kept_summary
           and "2 worktree(s) kept because a record did not reach the log-store: failed-ship-wt"
-          in kept_summary and kept_summary.count("failed-ship-wt") == 1, kept_summary)
+          in kept_summary and kept_summary.count("failed-ship-wt") == 2
+          and "cold-read-records/r-2026-10-19" in kept_summary
+          and "sanity-check-records/s-2026-10-19" in kept_summary, kept_summary)
     check("WORKTREE CLEANUP: a kept worktree whose shipper printed nothing carries the "
           "shipper's last error line into the summary",
           "silent-ship-wt" + kept_marker

@@ -1202,7 +1202,7 @@ def stop_worktree_cleaner_process_group(cleaner) -> str:
 
 
 CLEANER_FINISHED_WITH_FAILURES_LINE = "clean-worktrees: finished; each failure is named above"
-# clean-worktrees.py prints this when a record did not ship; the line ends with the shipper's own line.
+# clean-worktrees.py prints this for each record that did not ship; the line ends with the shipper's own line.
 KEPT_FOR_RECORDS_MARKER = (": record shipment FAILED, worktree kept — removing it would delete "
                            "record(s) the log-store does not hold: ")
 
@@ -1254,7 +1254,8 @@ def summarize_worktree_cleanup_output(lines) -> str:
     if failed:
         report += f"; {len(failed)} failed: " + "; ".join(failed)
     if kept_for_records:
-        report += (f"; {len(kept_for_records)} worktree(s) kept because a record did not "
+        kept_worktrees = {line.partition(KEPT_FOR_RECORDS_MARKER)[0] for line in kept_for_records}
+        report += (f"; {len(kept_worktrees)} worktree(s) kept because a record did not "
                    f"reach the log-store: " + "; ".join(kept_for_records))
     if refused:
         report += f"; {len(refused)} branch(es) left in place: " + "; ".join(refused)
