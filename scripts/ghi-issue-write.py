@@ -2926,13 +2926,17 @@ def with_pointer_line_set_by_files_left_after_removal(
     if updated != text:
         path.write_text(updated, encoding="utf-8")
         shown = path_shown_relative_to_repository_root(path, repository_root)
+        line = PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE_TEMPLATE.format(
+            prefix=prefix)
         report(f"added the line pointing to the "
                "proposed-improvements-or-changes-files under the first "
-               f"heading of {shown}: main still holds one this edit keeps"
+               f"heading of {shown}: main still holds one this edit keeps; "
+               f"the line reads: {line}"
                if left else
                "removed the line pointing to the "
                "proposed-improvements-or-changes-files from under the first "
-               f"heading of {shown}: this edit removes the last of them")
+               f"heading of {shown}: this edit removes the last of those files; "
+               f"the line read: {line}")
     return updated
 
 
@@ -2951,9 +2955,11 @@ def with_pointer_line_written(path: Path, text: str, prefix: str,
     if updated != text:
         path.write_text(updated, encoding="utf-8")
         shown = path_shown_relative_to_repository_root(path, repository_root)
+        line = PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE_TEMPLATE.format(
+            prefix=prefix)
         report("added the line pointing to the "
                "proposed-improvements-or-changes-files under the first "
-               f"heading of {shown}")
+               f"heading of {shown}; the line reads: {line}")
     return updated
 
 
@@ -2994,16 +3000,21 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
     except Refused as refusal:
         if not changed_on_disk:
             raise
+        command = ("python3 scripts/ghi-issue-write.py edit "
+                   + path_shown_relative_to_repository_root(path,
+                                                            repository_root))
         raise Refused(
             f"{refusal}\nThe GHI on GitHub is unchanged, but before it "
             "stopped this run changed files in your checkout and left these "
             "changes in place:\n"
             + "".join(f"- {line}\n" for line in changed_on_disk)
-            + "If you rerun this command once the failure above is fixed, "
+            + f"If you rerun `{command}` once the failure above is fixed, "
             "leave these changes as they are: the rerun builds on them.\n"
-            "If you give up this edit instead of rerunning, undo each change "
-            "in the list above: put back a pointer line this run removed, "
-            "take out one it added, and delete each "
+            f"If you give up editing this GHI-MD instead of rerunning "
+            f"`{command}`, undo each change in the list above: put back "
+            "each pointer line this run removed, as the list quotes it, "
+            "directly under the first heading of the file it names; take out "
+            "each one it added; and delete each "
             "proposed-improvements-or-changes-file the list names.",
             refusal.code) from refusal
 

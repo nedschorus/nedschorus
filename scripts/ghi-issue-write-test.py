@@ -2602,9 +2602,12 @@ def run_edit_cases(scratch: Path):
         if author_text == FILE_TEXT:
             check("the pointer line written into the author's moved file is "
                   "reported with its path from the repository root",
-                  "added the line pointing to the "
-                  "proposed-improvements-or-changes-files under the first "
-                  f"heading of {MOVED_RELATIVE}" in moving_lines,
+                  any(line.startswith(
+                      "added the line pointing to the "
+                      "proposed-improvements-or-changes-files under the first "
+                      f"heading of {MOVED_RELATIVE}; the line reads: "
+                      "This GHI has proposed improvements or changes")
+                      for line in moving_lines),
                   moving_lines)
     moved_source = filed_ghi_md(scratch, directory="nc-systems/statusline")
 
@@ -4458,6 +4461,10 @@ def run_settled_file_removal_collision_and_retry_real_git_cases(
             check(name, "git push --quiet failed: injected" in str(refusal)
                   and "removed the line pointing to the "
                   "proposed-improvements-or-changes-files" in str(refusal)
+                  and "the line read: This GHI has proposed improvements or "
+                  "changes" in str(refusal)
+                  and "`python3 scripts/ghi-issue-write.py edit docs/"
+                  in str(refusal)
                   and refusal.code == 1, str(refusal))
         git("pull", "-q", "origin", "main", cwd=other)
         (other / later).write_text("## E1 — possible problem: y\nState: open\n",
