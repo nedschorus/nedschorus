@@ -4516,6 +4516,174 @@ def run_whole_file_set_cases(scratch: Path):
               "refused", False, str(refusal))
 
 
+class RulingAskingGhiInfo(StagedReader):
+    """A fake ghi-info that asks the ruling question about any draft, as the
+    real one did on 2026-10-19 about GHI 1058's unchanged text, unless the
+    question it is sent carries an entry that already asks it."""
+
+    def __init__(self, answers, sentence):
+        super().__init__(answers)
+        self.sentence = sentence
+        self.questions = []
+
+    def __call__(self, arguments, timeout=None, cwd=None, check=True):
+        if ASK in " ".join(arguments):
+            self.calls.append(list(arguments))
+            self.timeouts.append(timeout)
+            self.questions.append(arguments[-1])
+            if f"ghi-info's question: {self.sentence}" in arguments[-1]:
+                return Completed("verdict: unrelated\n")
+            return Completed("", returncode=3, stderr=ruling_stderr(
+                "#46 " + self.sentence))
+        return super().__call__(arguments, timeout, cwd, check)
+
+
+def run_edit_adjudication_context_cases(scratch: Path):
+    """On an edit, ghi-info is sent the edit's diff and the
+    proposed-improvements-or-changes-files beside the GHI-MD, so an edit
+    that leaves the questioned text alone does not raise a settled question
+    again; and an edit that lands a file main already holds does not print
+    the lines for a new question."""
+    ask = scratch / "scripts" / "ghi-info-ask.py"
+    ask.parent.mkdir(parents=True, exist_ok=True)
+    ask.write_text("# stands in for the real one; never executed\n")
+    original_date = tool.proposed_improvements_or_changes_file_date
+    tool.proposed_improvements_or_changes_file_date = lambda: "2026-10-03"
+    prefix = EDIT_NAME[:-len(".md")]
+    pointer_line = tool.PROPOSED_IMPROVEMENTS_OR_CHANGES_POINTER_LINE_TEMPLATE.format(
+        prefix=prefix)
+    sentence = "closed issues are frozen"
+    entry_relative = (f"docs/issues/{prefix}-proposed-improvements-or-"
+                      "changes-ghi-info-2026-10-03.md")
+    second_name = f"{prefix}-proposed-improvements-or-changes-ghi-info-2026-10-03-2.md"
+    entry_text = (
+        "# Proposed improvements or changes from ghi-info, 2026-10-03\n\n"
+        "## E1 — possible problem: the GHI-MD's proposal may go against a "
+        "user-ruling held in GHI [Closed issues are frozen](https://github."
+        "com/nedschorus/nedschorus/issues/46)\n"
+        f"ghi-info's question: {sentence}\n"
+        "Goes wrong when: the proposal is carried out while that user-ruling "
+        "still applies.\n"
+        "State: settled, not worth doing — handler, 2026-10-03: the ruling "
+        "does not bind this GHI.\n")
+    body_text = (f"# {EDIT_TITLE}\n\n{pointer_line}\n\nUnchanged line one.\n"
+                 "Reopen closed issue 12 to add its last finding.\n"
+                 "A citation, PR 10.\n")
+    on_main_text = staged_form(text=body_text)
+    edited_text = body_text.replace("A citation, PR 10.", "A citation, PR 11.")
+    entry_on_disk = scratch / entry_relative
+    try:
+        def answers(listing, entry_on_main=entry_text):
+            # Specific `git show` keys before the catch-all: the recorder
+            # answers with the first key the command contains.
+            return {
+                f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(
+                    on_main_text),
+                f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(
+                    on_main_text),
+                f"git show {MAIN_COMMIT}:{entry_relative}": Completed(
+                    entry_on_main) if listing else Completed("", returncode=128),
+                f"git show {BASE_REVISION}:{entry_relative}": Completed(
+                    entry_on_main) if listing else Completed("", returncode=128),
+                "git show": Completed("", returncode=128),
+                "git merge-base": Completed(BASE_REVISION + "\n"),
+                "git ls-remote": Completed(""),
+                "gh pr create": Completed("https://github.com/x/y/pull/11\n"),
+                "gh issue view 46": Completed("Closed issues are frozen\n"),
+                "gh issue view": issue_json(EDIT_TITLE, tool.links_body(
+                    REPO, [EDIT_RELATIVE] + listing)),
+                "git ls-tree": Completed("".join(
+                    item + "\0" for item in [EDIT_RELATIVE] + listing)),
+            }
+
+        # GHI 1058, PR 1674: a one-citation edit beside a settled entry.
+        source = filed_ghi_md(scratch, text=edited_text)
+        entry_on_disk.write_text(entry_text, encoding="utf-8")
+        settled = RulingAskingGhiInfo(answers([entry_relative]), sentence)
+        settled_lines = []
+        tool.edit(source, REPO, scratch, settled, settled_lines.append)
+        question = settled.questions[0] if settled.questions else ""
+        check("an edit beside a settled entry does not raise its question "
+              "again: no second file is written or landed",
+              not (scratch / "docs" / "issues" / second_name).exists()
+              and not any(second_name in item for item in settled.staged)
+              and not any("Do not settle" in line for line in settled_lines),
+              (sorted(settled.staged), settled_lines[-1:]))
+        check("ghi-info is sent each file beside the GHI-MD, verbatim, and "
+              "told not to raise a question an entry in them already asks",
+              f"{Path(entry_relative).name}:\n\n{entry_text}" in question
+              and "Do not raise a ruling question that an entry in them "
+                  "already asks." in question, question[-1500:])
+        check("ghi-info is sent the edit's diff against main's copy, holding "
+              "the changed line and not the unchanged ones as changes",
+              "-A citation, PR 10.\n+A citation, PR 11.\n" in question
+              and f"--- main:{EDIT_RELATIVE}\n+++ {EDIT_RELATIVE}\n" in question
+              and "-Unchanged line one." not in question
+              and "+Unchanged line one." not in question
+              and "raise a ruling question only about what this edit "
+                  "changes" in question, question[-1500:])
+        entry_on_disk.unlink()
+
+        # The same edit with nothing beside it: the fake raises its question,
+        # so the case above passes on what ghi-info was sent, not on a fake
+        # that never raises.
+        source = filed_ghi_md(scratch, text=edited_text.replace(
+            f"{pointer_line}\n\n", ""))
+        bare = RulingAskingGhiInfo(answers([]), sentence)
+        bare.answers[f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}"] = Completed(
+            staged_form(text=body_text.replace(f"{pointer_line}\n\n", "")))
+        bare.answers[f"git show {BASE_REVISION}:{EDIT_RELATIVE}"] = (
+            bare.answers[f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}"])
+        tool.edit(source, REPO, scratch, bare, quiet)
+        check("the same edit with no entry beside it does write ghi-info's "
+              "question, and its question carries no file section",
+              entry_on_disk.is_file()
+              and "proposed-improvements-or-changes-files beside the GHI-MD"
+              not in (bare.questions or [""])[0],
+              (sorted(bare.staged), (bare.questions or [""])[0][-600:]))
+        entry_on_disk.unlink(missing_ok=True)
+
+        # The settling run: the GHI-MD is main's copy, and the file beside it
+        # differs from main's only in its State line.
+        open_on_main = entry_text.replace(
+            entry_text[entry_text.index("State: "):], "State: open\n")
+        source = filed_ghi_md(scratch, text=body_text)
+        entry_on_disk.write_text(entry_text, encoding="utf-8")
+        settling = StagedReader(answers([entry_relative], open_on_main))
+        settling_lines = []
+        tool.edit(source, REPO, scratch, settling, settling_lines.append)
+        check("a settling run that lands a file main already holds does not "
+              "print ghi-info's question or say not to settle the entry",
+              entry_relative in settling.staged
+              and not any("Do not settle" in line
+                          or "ghi-info thinks" in line
+                          for line in settling_lines),
+              (sorted(settling.staged), settling_lines[-2:]))
+    finally:
+        tool.proposed_improvements_or_changes_file_date = original_date
+        entry_on_disk.unlink(missing_ok=True)
+
+    plain = Recorder({ASK: Completed("verdict: unrelated\n")})
+    tool.adjudicate(REPO, "t", FILE_TEXT, scratch, plain, quiet)
+    plain_question = plain.calls[-1][-1] if plain.calls else ""
+    check("a create's question carries no diff and no file section",
+          "diff against main's copy" not in plain_question
+          and "proposed-improvements-or-changes-files beside" not in
+          plain_question, plain_question[-400:])
+    check("an edit that leaves the GHI-MD's text as main holds it has an "
+          "empty diff, and one main holds no copy of has none",
+          tool.ghi_md_unified_diff_from_main_copy_to_edit_ghi_copy(
+              FILE_TEXT, FILE_TEXT, EDIT_RELATIVE) == ""
+          and tool.ghi_md_unified_diff_from_main_copy_to_edit_ghi_copy(
+              None, FILE_TEXT, EDIT_RELATIVE) is None)
+    unchanged = Recorder({ASK: Completed("verdict: unrelated\n")})
+    tool.adjudicate(REPO, "t", FILE_TEXT, scratch, unchanged, quiet,
+                    exclude_issue=570, edit_diff="")
+    check("an empty diff is sent as no change, not left out",
+          "as a diff against main's copy:\n\n(no change)\n"
+          in unchanged.calls[-1][-1], unchanged.calls[-1][-1][-400:])
+
+
 def main():
     import tempfile
     with tempfile.TemporaryDirectory(prefix="ghi-issue-pull-request-description-test-") as name:
@@ -4539,6 +4707,8 @@ def main():
     # directory would share that.
     with tempfile.TemporaryDirectory(prefix="ghi-issue-edit-test-") as name:
         run_edit_cases(Path(name))
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-adjudication-test-") as name:
+        run_edit_adjudication_context_cases(Path(name))
     print()
     if failures:
         print(f"{len(failures)} case(s) failed")
