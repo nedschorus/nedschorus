@@ -1617,6 +1617,11 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
               and "ssh was killed by signal 15 before the cold-read-fast-read on ned-box finished"
               in stderr and "the fast read on ned-box failed" not in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
+        check("when a signal kills ssh, the message gives the command to run once more "
+              "on the Mac, with the target in its Mac form",
+              "over ssh again:\n" + shlex.join(
+                  ["python3", str(Path(warning_module.__file__).resolve()),
+                   "--target", str(mac_draft)]) + "\n" in stderr, repr(stderr))
 
         exit_code, stdout, stderr = read_from_mac(mac_draft, ssh_mode="hangs",
                                                   timeout_seconds=0.5)
@@ -1645,6 +1650,37 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
               and stderr_lines[-1].endswith(f"if a complete report appears at "
                                             f"{mac_suggestions}, that is its result."),
               repr(stderr))
+
+        # The home's text again further down the path must survive the trip
+        # to ned-box's form and back: only the leading home is the mount.
+        mac_target_holding_home_twice = (mac_worktree / "docs"
+                                         / str(ned_box_home).lstrip("/") / "a b.md")
+        mac_target_holding_home_twice.parent.mkdir(parents=True)
+        mac_target_holding_home_twice.write_text("## Item 1 of 1\n", encoding="utf-8")
+        ned_box_target_holding_home_twice = warning_module.ned_box_path_of_mac_mount_path(
+            mac_target_holding_home_twice)
+        check("a ned-box path holding the home's path twice goes back to its Mac mount "
+              "path, with only the leading home replaced",
+              warning_module.mac_mount_path_of_ned_box_path(ned_box_target_holding_home_twice)
+              == str(mac_target_holding_home_twice),
+              repr(warning_module.mac_mount_path_of_ned_box_path(
+                  ned_box_target_holding_home_twice)))
+        rerun_command_holding_home_twice = shlex.join(
+            ["python3", str(Path(warning_module.__file__).resolve()),
+             "--target", str(mac_target_holding_home_twice)])
+        for ssh_mode, timeout_seconds, condition in (
+                ("killed", attributes_before[
+                    "COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS"],
+                 "a signal kills ssh"),
+                ("hangs", 0.5, "the read on ned-box outlasts the time limit")):
+            exit_code, stdout, stderr = read_from_mac(
+                mac_target_holding_home_twice, ssh_mode=ssh_mode,
+                timeout_seconds=timeout_seconds)
+            check(f"when {condition} on a target whose path holds ned-box's home twice, "
+                  f"the command to run once more names the target's own Mac path",
+                  exit_code == 1
+                  and f"over ssh again:\n{rerun_command_holding_home_twice}\n" in stderr,
+                  repr(stderr))
 
         # A walk draft's frozen copy in a cold-read-record is no walk draft: its
         # read takes the records route, so its report is never a suggestions file.

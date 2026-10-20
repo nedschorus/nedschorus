@@ -314,6 +314,20 @@ def ned_box_path_of_mac_mount_path(path: pathlib.Path):
     return NED_BOX_HOME + "/" + text[len(mount):]
 
 
+def mac_mount_path_of_ned_box_path(ned_box_path: str) -> str:
+    """The path under the Mac's mount of ned-box's home of `ned_box_path`,
+    which is under ned-box's home: only the leading home is replaced, so a
+    path holding the home's text again further down keeps it there."""
+    return MAC_MOUNT_OF_NED_BOX_HOME + ned_box_path[len(NED_BOX_HOME):]
+
+
+def cold_read_fast_read_script_rerun_shell_command_line_for_mac(ned_box_target: str) -> str:
+    """The command line, quoted for a shell, that runs this program once
+    more on the Mac on `ned_box_target` in its Mac mount form."""
+    return shlex.join(["python3", str(pathlib.Path(__file__).resolve()), "--target",
+                       mac_mount_path_of_ned_box_path(ned_box_target)])
+
+
 def text_with_ned_box_paths_rewritten_as_mac_mount_paths(text: str) -> str:
     """`text` with each ned-box home path in its Mac mount form, except in
     a log-store citation, nedlern@ned-box:/home/nedlern/..., which works from
@@ -327,8 +341,7 @@ def cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(ned_
     fast_read_report_path_for_target, for a message on the Mac. git here
     cannot read the worktree, so its top is the nearest directory above the
     target, seen through the mount, that holds a .git entry."""
-    mac_target = pathlib.Path(MAC_MOUNT_OF_NED_BOX_HOME
-                              + ned_box_target[len(NED_BOX_HOME):])
+    mac_target = pathlib.Path(mac_mount_path_of_ned_box_path(ned_box_target))
     checkout_root = next((directory for directory in mac_target.parents
                           if (directory / ".git").exists()), None)
     suggestions = (walk_draft_suggestions_file_path_for_target_in_worktree_or_none(mac_target, checkout_root)
@@ -372,6 +385,7 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
         f"--target {shlex.quote(ned_box_target)}")
     remote_command = f"{checkout_entry}{session_assignment}exec {fast_read_invocation}"
     command_for_a_person = f"{checkout_entry}{fast_read_invocation}"
+    rerun_command = cold_read_fast_read_script_rerun_shell_command_line_for_mac(ned_box_target)
     print(f"{PROGRAM}: git on this machine cannot read the ned-box worktree "
           f"holding the target, so the fast read runs on ned-box on "
           f"{ned_box_target}.", file=sys.stderr)
@@ -386,9 +400,6 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
         report_place = text_with_ned_box_paths_rewritten_as_mac_mount_paths(
             cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(
                 ned_box_target))
-        rerun_command = shlex.join([
-            "python3", str(pathlib.Path(__file__).resolve()), "--target",
-            text_with_ned_box_paths_rewritten_as_mac_mount_paths(ned_box_target)])
         print(f"{PROGRAM}: no cold-read-fast-read result: the cold-read-fast-read on "
               f"ned-box did not finish within {minutes} minutes, so this program "
               f"stopped waiting and ended ssh, and the read's own lines were not "
@@ -409,9 +420,12 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
               f"command that printed this message once more, here on this Mac; it "
               f"runs the read on ned-box over ssh again:\n{rerun_command}\n"
               f"When that run's result line on stdout is a report path, that report "
-              f"is the result. Otherwise, go on with your task "
-              f"without the result, and in the reply you give when the task is "
-              f"done, say that the document has no cold-read-fast-read result.\n"
+              f"is the result. Otherwise, even when that run prints this message "
+              f"again, go on with your task without the result, and in the reply "
+              f"you give when the task is done, say that the document has no cold-read-fast-read result.\n"
+              f"When you get the result after the wait or from the second run, say in "
+              f"the reply you give when the task is done that the result arrived after "
+              f"all, and give its report's path.\n"
               + lines_ending_with_message_for_the_user(
                   f"The cold-read-fast-read of {ned_box_target} ran on ned-box for more "
                   f"than {minutes} minutes, so this program stopped waiting and ended ssh; "
@@ -460,10 +474,15 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
                    f"cold-read-fast-read on ned-box finished")
         print(f"{PROGRAM}: {failure}; the read's own lines up to then, if any, "
               f"are above.\n"
-              f"When the result line on stdout is a report path, the read finished "
-              f"and needs no second run.\n"
-              f"When that line starts FAILED, run the same cold-read-fast-read "
-              f"command once more. If ssh is killed again, tell the user that ssh "
+              f"ssh may have been killed after the read finished: when the result "
+              f"line on stdout is a report path, that report is the result, and the "
+              f"read needs no second run.\n"
+              f"When that line starts FAILED, run the command that printed this "
+              f"message once more, here on this Mac; it runs the read on ned-box over "
+              f"ssh again:\n{rerun_command}\n"
+              f"When that run's result line on stdout is a report path, that report "
+              f"is the result. When it fails another way, follow the message it "
+              f"prints. If ssh is killed again, tell the user that ssh "
               f"from this Mac to ned-box was killed, during a cold-read-fast-read of "
               f"{ned_box_target}, by the signal whose number the second run prints, "
               f"so the document has no cold-read-fast-read result. If you are a "
