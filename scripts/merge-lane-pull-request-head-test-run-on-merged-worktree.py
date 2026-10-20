@@ -98,6 +98,15 @@ def main(argv=None):
                         target.flush()
                     except (OSError, ValueError) as error:
                         copy_failures[name] = f"{type(error).__name__}: {error}"
+                        if target is stderr:
+                            # The line that failed stays in the file's buffer, and the close
+                            # at the end of the with block would raise the same error on it.
+                            try:
+                                stderr.close()
+                            except OSError as close_error:
+                                copy_failures[name] += (f"; closing it then failed too "
+                                                        f"({type(close_error).__name__}: "
+                                                        f"{close_error})")
                         if target is sys.stderr:
                             # Python flushes sys.stderr again at exit, and a failure there
                             # would replace this program's exit code with 120.
