@@ -106,10 +106,17 @@ EXIT_BAD_INVOCATION = 64
 ASK_HEADER = (
     "A guarded file changed, and the user has not approved the new version. The change stays in "
     "place while you ask him; this hook has kept a copy of the version.")
-ASK_FILE = "{path}, version {key}. Its change against the newest approved version:\n{diff}"
+ASK_FILE = "{path}, version {key}.{reason} Its change against the newest approved version:\n{diff}"
+EDIT_ON_UNAPPROVED_VERSION = (
+    " The Edit or Write did not approve this version, because it was made on a version the user "
+    "had not approved: the instruction-file guard's approval covers only that call's change, not "
+    "the unapproved text already in the file.")
 ASK_INSTRUCTIONS = (
-    "If you are a subagent, report the change to the agent that dispatched you instead of "
-    "asking the user, and do none of the steps below.\n"
+    "If you are a subagent and you wrote an obvious-fix marker before you made the change, run "
+    "once: python3 {program} --approve {pairs}, then tell the agent that dispatched you what you "
+    "fixed, and do none of the steps below.\n"
+    "If you are any other subagent, stop: make no further edit, report the change to the agent "
+    "that dispatched you instead of asking the user, and do none of the steps below.\n"
     "Show the user each change above and ask him whether he approves it.\n"
     "If he approves, write his words into {marker} at the top of your session's checkout, then "
     "run once: python3 {program} --approve {pairs}\n"
@@ -120,9 +127,12 @@ ASK_INSTRUCTIONS = (
     "git commit --only -m \"Put back the approved <file name>\" -- <path>")
 REMINDER = (
     "Reminder: {path} still holds version {key}, which the user has not approved.\n"
-    "If you are a subagent, report the change to the agent that dispatched you instead of "
-    "asking the user.\n"
-    "Otherwise show him the change and ask him, as this hook's earlier message said.\n"
+    "If you are a subagent and you wrote an obvious-fix marker before you made the change, run "
+    "once: python3 {program} --approve {path} {key}, then tell the agent that dispatched you what "
+    "you fixed.\n"
+    "If you are any other subagent, stop: make no further edit, and report the change to the "
+    "agent that dispatched you instead of asking the user.\n"
+    "Otherwise show the user the change and ask him, as this hook's earlier message said.\n"
     "If he approves, write his words into {marker} at the top of your session's checkout, then "
     "run: python3 {program} --approve {path} {key}\n"
     "If he declines, run: python3 {program} --restore {path} {key}")
@@ -760,9 +770,12 @@ def diff_text(before: bytes, after: bytes, path: str):
 class Check:
     """What one run found about one checked file, to be settled in the store."""
 
-    def __init__(self, path, data, key, copy_hash, how="", in_git=False):
+    def __init__(self, path, data, key, copy_hash, how="", in_git=False, previous=None):
         self.path, self.data, self.key, self.copy_hash, self.how = path, data, key, copy_hash, how
         self.in_git = in_git
+        # The key of the version the previous run saw: None when it saw none, DELETED when the
+        # file was absent, so in both cases the call wrote the whole file.
+        self.previous = previous
 
 
 def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, quiet):
@@ -788,6 +801,12 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
             store.copy(check.path, check.copy_hash, check.data)
         log = store.log(check.path)
         approved = store.approved(check.path)
+        reason = ""
+        if check.how == HOW_EDIT and check.previous not in (None, DELETED) \
+                and check.previous not in approved:
+            # The guard approved the Edit's change, not the unapproved text it was made on.
+            check.how = ""
+            reason = EDIT_ON_UNAPPROVED_VERSION
         new_approval = ""
         if check.key not in approved and check.how:
             store.approve(check.path, check.key)
@@ -804,7 +823,7 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
         if asking is None or asking[0] == session or not owner_alive(asking[1]):
             if asking is not None and asking[0] != session:
                 log_line(store, check.path, "asking", session, owner, check.key)
-            asks.append(ask_entry(store, check, log))
+            asks.append(ask_entry(store, check, log, reason))
         elif not was_reminded(log, check.key, session):
             log_line(store, check.path, "reminded", session, check.key)
             reminders.append((check.path, check.key))
@@ -836,14 +855,14 @@ def read_file(path):
     return Path(path).read_bytes()
 
 
-def ask_entry(store, check, log):
+def ask_entry(store, check, log, reason=""):
     newest = newest_approved(store, check.path, log, check.key)
     if newest is None or newest[1] == DELETED:
         before = b""
     else:
         before = store.kept_version(check.path, newest[1]) or b""
     after = b"" if check.key == DELETED else check.data
-    return check.path, check.key, diff_text(before, after, check.path)
+    return check.path, check.key, diff_text(before, after, check.path), reason
 
 
 def run_with_deadline(function, deadline_seconds):
@@ -1042,7 +1061,9 @@ def run_hook(payload):
                         how = HOW_STOCK
                 elif edit_succeeded and written == path:
                     how = HOW_EDIT
-                checks.append(Check(path, data, key, copy_hash, how, (path, copy_hash) in held))
+                previous = state["files"].get(path)
+                checks.append(Check(path, data, key, copy_hash, how, (path, copy_hash) in held,
+                                    previous and previous[4]))
             approvals = approvals + renames(store, changed, state["files"])
             results.append(store_phase(store, session, owner(), checks, unsettled, approvals,
                                        quiet))
@@ -1132,9 +1153,9 @@ def messages(asks, reminders):
     out = []
     if asks:
         program = str(HOOK_PATH)
-        pairs = " ".join(f"{path} {key}" for path, key, _ in asks)
-        files = "\n\n".join(ASK_FILE.format(path=path, key=key, diff=diff)
-                            for path, key, diff in asks)
+        pairs = " ".join(f"{path} {key}" for path, key, _, _ in asks)
+        files = "\n\n".join(ASK_FILE.format(path=path, key=key, reason=reason, diff=diff)
+                            for path, key, diff, reason in asks)
         out.append("\n\n".join([ASK_HEADER, files, ASK_INSTRUCTIONS.format(
             marker=APPROVAL_MARKER_NAME, program=program, pairs=pairs)]))
     for path, key in reminders:

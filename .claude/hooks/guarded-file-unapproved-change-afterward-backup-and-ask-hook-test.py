@@ -874,11 +874,73 @@ def cases(scratch):
     claude.write_text("project v2\n")
     message = world.run()
     reminder = world.run()
-    check("the ask tells a subagent what to do before any step that asks the user",
-          0 <= message.find("If you are a subagent") < message.find("Show the user each change"),
-          message)
-    check("the reminder tells a subagent to report instead, and names the approval marker",
-          "If you are a subagent" in reminder and ".walk-approved" in reminder, reminder)
+    check("the ask tells a subagent with an obvious-fix marker to run --approve and tell its "
+          "dispatcher, before any step that asks the user",
+          0 <= message.find("If you are a subagent and you wrote an obvious-fix marker")
+          < message.find("Show the user each change")
+          and "--approve" in message[:message.find("Show the user each change")]
+          and "tell the agent that dispatched you what you fixed" in message, message)
+    check("the ask tells any other subagent to stop editing before any step that asks the user",
+          0 <= message.find("If you are any other subagent, stop: make no further edit")
+          < message.find("Show the user each change"), message)
+    check("the reminder gives a subagent with an obvious-fix marker the --approve command",
+          "If you are a subagent and you wrote an obvious-fix marker" in reminder
+          and f"--approve {claude}" in reminder, reminder)
+    check("the reminder tells any other subagent to stop editing and report, and names the "
+          "approval marker", "If you are any other subagent, stop: make no further edit"
+          in reminder and ".walk-approved" in reminder, reminder)
+
+    # -- an Edit or Write approves its result only when the version it was made on is approved
+    world = fresh(scratch, "edit-on-unapproved-shell-edit")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2 by shell\n")
+    world.run()
+    claude.write_text("project v2 by shell\nan approved Edit's line\n")
+    key = world.key(claude)
+    message = world.run(tool="Edit", file_path=claude)
+    check("an Edit made on an unapproved shell edit does not approve the result",
+          key not in world.store_file(claude, "approved"), world.store_file(claude, "approved"))
+    check("the ask about that Edit's result says why the Edit did not approve it, and gives "
+          "the --approve command for the result",
+          "it was made on a version the user had not approved" in message
+          and f"{HOOK} --approve {claude} {key}" in message, message)
+    claude.write_text("project v3 by shell\n")
+    message = world.run()
+    check("a shell edit made on an unapproved version is asked about without the Edit's reason",
+          str(claude) in message and "made on a version" not in message, message)
+
+    world = fresh(scratch, "edit-on-approved-version")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2 by an approved Edit\n")
+    message = world.run(tool="Edit", file_path=claude)
+    check("an Edit made on an approved version approves the result and says nothing",
+          message == "" and world.key(claude) in world.store_file(claude, "approved"), message)
+
+    world = fresh(scratch, "edit-of-approved-settings")
+    settings = world.home / ".claude" / "settings.json"
+    settings.write_text(json.dumps({"model": "b", "hooks": {"Stop": []}}, indent=2))
+    message = world.run(tool="Edit", file_path=settings)
+    check("an Edit of ~/.claude/settings.json, whose approval hash is not its copy's hash, made "
+          "on an approved version approves the result and says nothing", message == "", message)
+
+    world = fresh(scratch, "write-of-new-file")
+    skill = world.repo / ".claude" / "skills" / "new" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("a new skill\n")
+    message = world.run(tool="Write", file_path=skill)
+    check("a Write of a guarded file the hook never saw approves the result",
+          message == "" and world.key(skill) in world.store_file(skill, "approved"), message)
+
+    world = fresh(scratch, "write-after-unapproved-deletion")
+    claude = world.repo / "CLAUDE.md"
+    claude.unlink()
+    world.run()
+    claude.write_text("project rewritten by Write\n")
+    message = world.run(tool="Write", file_path=claude)
+    check("a Write that recreates a file whose deletion was not approved approves the result, "
+          "since the Write wrote the whole file",
+          world.key(claude) in world.store_file(claude, "approved")
+          and "made on a version" not in message, message)
 
     # -- two files changed by one tool call get one message
     world = fresh(scratch, "two-files")
