@@ -291,8 +291,8 @@ in the nedschorus repository, which this machine also clones:
   `nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py`
 - `guarded-file-versions-and-approvals/` -- each machine's log of every
   version of a guarded file, with its git blob id and the time it was seen, a
-  copy of each version git did not hold, and the record of which versions the
-  user approved, written by
+  copy of each version its checkout's HEAD commit did not hold, and the record
+  of which versions the user approved, written by
   `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py`
 
 To change this file, edit STORE_README in

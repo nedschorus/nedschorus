@@ -372,6 +372,28 @@ def cases(scratch):
     check("a version git does not hold is copied", world.key(claude) in world.versions(claude),
           world.versions(claude))
 
+    world = fresh(scratch, "held-only-outside-durable-refs")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2, staged\n")
+    world.git("add", "CLAUDE.md")
+    world.run()
+    staged = world.key(claude)
+    check("a version git holds only as a staged blob is copied",
+          world.git_holds(staged) and staged in world.versions(claude), world.versions(claude))
+    claude.write_text("project v3, in a work snapshot\n")
+    world.git("stash", "-q")
+    world.git("stash", "apply", "-q")
+    world.run()
+    stashed = world.key(claude)
+    check("a version only refs/stash holds is copied",
+          world.git_holds(stashed) and stashed in world.versions(claude), world.versions(claude))
+    other = world.repo / "sub" / "CLAUDE.md"
+    other.parent.mkdir(exist_ok=True)
+    other.write_text("project v1\n")
+    world.run()
+    check("a version HEAD holds at another path is copied",
+          world.key(other) in world.versions(other), world.versions(other))
+
     world = fresh(scratch, "approved-version-held-nowhere")
     claude = world.repo / "CLAUDE.md"
     claude.write_text("project v2, approved edit\n")
@@ -383,13 +405,13 @@ def cases(scratch):
     world.run()
     result = world.command("--restore", claude, declined)
     check("--restore refuses when the approved version is in neither its copy nor git",
-          result.returncode == 1 and "neither its copy nor git" in result.stderr
+          result.returncode == 1 and "neither the guarded-file store's copies of that file nor the git repository" in result.stderr
           and claude.read_text() == "project v3, shell\n", (result.stderr, claude.read_text()))
 
     world = fresh(scratch, "git-holds-check-fails")
     claude = world.repo / "CLAUDE.md"
     claude.write_text("project v2\n")
-    world.failing_git("cat-file --batch-check")
+    world.failing_git("ls-tree")
     message = world.run()
     check("a run whose git cannot say which versions it holds reports the failure",
           "did not run" in message and "injected failure" in message, message)
@@ -478,10 +500,8 @@ def cases(scratch):
     during = world.run()
     check("nothing is asked while a merge is stopped on a conflict", during == "", during)
     conflicted = world.key(claude)
-    check("the conflicted version is logged during the conflict, and kept by git's merge or "
-          "by a copy", world.seen_in_log(claude, conflicted)
-          and (world.git_holds(conflicted) or conflicted in world.versions(claude)),
-          (world.versions(claude), world.store_file(claude, "log")))
+    check("the conflicted version is copied during the conflict",
+          conflicted in world.versions(claude), world.versions(claude))
     claude.write_text("project merged\n")
     world.git("commit", "-qam", "merged")
     message = world.run()
@@ -658,6 +678,7 @@ def cases(scratch):
 
     # -- the Mac's store over a stand-in mount
     mac_cases(scratch)
+    durable_ref_cases(scratch)
 
     # -- a failing tool call
     world = fresh(scratch, "failure-event")
@@ -1006,6 +1027,34 @@ def store_listing(store):
     """Every path in the store with its size and modification time."""
     return sorted((str(path), path.stat().st_size, path.stat().st_mtime_ns)
                   for path in Path(store).rglob("*"))
+
+
+def durable_ref_cases(scratch):
+    hook = load_hook_in_this_process()
+    environment = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                       GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t",
+                       GIT_CONFIG_GLOBAL="/dev/null")
+
+    def git(directory, *arguments):
+        subprocess.run(["git", "-C", str(directory), *arguments], check=True,
+                       capture_output=True, env=environment)
+
+    empty = Path(scratch) / "durable-refs-no-commit"
+    empty.mkdir()
+    git(empty, "init", "-q")
+    (empty / "CLAUDE.md").write_text("first\n")
+    check("a repository with no commit yet holds no version, and its git is not taken as failing",
+          hook.versions_head_holds(empty, [(str(empty / "CLAUDE.md"),
+                                            hook.blob_hash(b"first\n"))]) == set())
+    git(empty, "add", "CLAUDE.md")
+    git(empty, "commit", "-q", "-m", "first")
+    orphan = Path(scratch) / "durable-refs-orphan-worktree"
+    git(empty, "worktree", "add", "-q", "--orphan", "-b", "orphan", str(orphan))
+    heads = hook.worktree_heads(empty)
+    check("a worktree with no commit yet adds no HEAD to the durable refs",
+          len(heads) == 1 and heads[0].strip("0"), heads)
+    check("and the blobs the durable refs hold can still be listed",
+          hook.blob_hash(b"first\n") in hook.blobs_durable_refs_hold(empty))
 
 
 def mac_cases(scratch):

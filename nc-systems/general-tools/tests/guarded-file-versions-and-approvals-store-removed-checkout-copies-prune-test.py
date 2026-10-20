@@ -142,10 +142,10 @@ def test_removed_checkouts_pruned_and_others_kept():
         dry = run(store, "--dry-run")
         check("--dry-run exits 0", dry.returncode == 0, dry.stderr)
         check("--dry-run deletes nothing", removed.exists() and nested.exists(), dry.stdout)
-        check("--dry-run names the removed checkout", f"would prune {agents}/removed:" in dry.stdout,
+        check("--dry-run names the removed checkout", f"removed checkout {agents}/removed: would delete" in dry.stdout,
               dry.stdout)
         check("--dry-run names no checkout that exists or keeps its copies",
-              all(f"would prune {name}" not in dry.stdout for name in
+              all(f"removed checkout {name}" not in dry.stdout for name in
                   (f"{agents}/live", f"{agents}/declined", f"{repository}:", f"{repository}/docs")),
               dry.stdout)
         result = run(store)
@@ -163,8 +163,8 @@ def test_removed_checkouts_pruned_and_others_kept():
               f"deleting {removed}\n" in result.stdout and f"deleting {nested}\n" in result.stdout
               and "deleting " + str(live) not in result.stdout, result.stdout)
         check("the summary counts two checkouts, one copy not approved and one approved copy kept",
-              "copies of 2 removed checkouts" in result.stdout
-              and "kept 1 copies of versions not approved and 1 approved copies" in result.stdout,
+              "approved copies in 2 removed checkouts" in result.stdout
+              and "a version not approved, 1 copies of such versions and 1 approved copies" in result.stdout,
               result.stdout)
 
 
@@ -185,7 +185,7 @@ def test_copies_of_paths_with_a_version_not_approved_kept():
         check("a copy neither approved nor logged is kept", stray.exists())
         check("and so is the approved copy beside it", accounted.exists())
         check("the summary counts the stray copy as not approved and the other two as approved",
-              "kept 1 copies of versions not approved and 2 approved copies" in result.stdout,
+              "a version not approved, 1 copies of such versions and 2 approved copies" in result.stdout,
               result.stdout)
 
 
@@ -408,7 +408,7 @@ def test_failing_delete_fails():
               result.stderr)
         check("a delete of a copy a commit holds that fails is named and not counted",
               f"{held_stuck} could not be deleted" in result.stderr
-              and "pruned 0 copies a commit holds" in result.stdout,
+              and "deleted 0 copies of versions a commit on a durable ref holds" in result.stdout,
               (result.stdout, result.stderr))
         check("the other checkout is still pruned", not other.exists())
 
@@ -478,7 +478,7 @@ def test_copies_a_commit_holds_deleted():
         dry = run(store, "--dry-run")
         check("--dry-run deletes no copy a commit holds",
               committed.exists() and on_branch.exists(), dry.stdout)
-        check("--dry-run counts them", "would prune 5 copies a commit holds" in dry.stdout,
+        check("--dry-run counts them", "would delete 5 copies of versions a commit on a durable ref holds" in dry.stdout,
               dry.stdout)
         result = run(store)
         check("a run that deletes copies a commit holds exits 0", result.returncode == 0,
@@ -496,8 +496,81 @@ def test_copies_a_commit_holds_deleted():
         check("a copy git holds only as a staged blob is kept", staged.exists())
         check("the run names each copy it deletes", f"deleting {committed}\n" in result.stdout,
               result.stdout)
-        check("the summary counts them", "pruned 5 copies a commit holds" in result.stdout,
+        check("the summary counts them", "deleted 5 copies of versions a commit on a durable ref holds" in result.stdout,
               result.stdout)
+
+
+def test_copies_only_refs_that_are_not_durable_hold_kept():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory).resolve()
+        store, _, repository = scratch(root)
+        (repository / "CLAUDE.md").write_text("on main\n")
+        git("-C", str(repository), "add", "CLAUDE.md")
+        git("-C", str(repository), "commit", "-q", "-m", "one")
+        # A work snapshot: a commit only refs/work-snapshots/ reaches, as the snapshot hook makes.
+        (repository / "CLAUDE.md").write_text("only in a work snapshot\n")
+        git("-C", str(repository), "add", "CLAUDE.md")
+        tree = subprocess.run(["git", "-C", str(repository), "write-tree"], check=True,
+                              capture_output=True, text=True).stdout.strip()
+        snapshot = subprocess.run(
+            ["git", "-C", str(repository), "commit-tree", tree, "-m", "snapshot"], check=True,
+            capture_output=True, text=True,
+            env=dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                     GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")).stdout.strip()
+        git("-C", str(repository), "update-ref", "refs/work-snapshots/agent", snapshot)
+        (repository / "CLAUDE.md").write_text("only in a stash\n")
+        git("-C", str(repository), "stash", "-q")
+        # A detached worktree's HEAD, on no branch, is durable.
+        linked = root / "linked-worktree"
+        git("-C", str(repository), "worktree", "add", "-q", "--detach", str(linked))
+        (linked / "CLAUDE.md").write_text("only at a detached worktree HEAD\n")
+        git("-C", str(linked), "commit", "-q", "-am", "detached")
+        snapshot_only = add_version(store, f"{repository}/CLAUDE.md", "only in a work snapshot\n",
+                                    approved=True)
+        stash_only = add_version(store, f"{repository}/CLAUDE.md", "only in a stash\n",
+                                 approved=True)
+        detached = add_version(store, f"{linked}/CLAUDE.md", "only at a detached worktree HEAD\n",
+                               approved=True)
+        result = run(store)
+        check("a run with versions only refs that are not durable hold exits 0",
+              result.returncode == 0, result.stderr)
+        check("a copy only a refs/work-snapshots/ ref holds is kept", snapshot_only.exists(),
+              result.stdout)
+        check("a copy only refs/stash holds is kept", stash_only.exists(), result.stdout)
+        check("a copy only a detached worktree's HEAD holds is deleted", not detached.exists(),
+              result.stdout)
+
+
+def test_repository_that_cannot_be_named_fails():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory).resolve()
+        store, agents, repository = scratch(root)
+        (repository / "CLAUDE.md").write_text("one\n")
+        git("-C", str(repository), "add", "CLAUDE.md")
+        git("-C", str(repository), "commit", "-q", "-m", "one")
+        copy = add_version(store, f"{repository}/CLAUDE.md", "one\n", approved=True)
+        other = add_version(store, f"{agents}/removed/CLAUDE.md", "two\n", approved=True)
+        result = run(store, PATH=path_failing_git(root, "--git-common-dir"))
+        check("git that cannot name a path's repository exits 1", result.returncode == 1,
+              result.stdout)
+        check("and says so", f"{repository}/CLAUDE.md's copies were kept: git rev-parse" in
+              result.stderr and "injected failure" in result.stderr, result.stderr)
+        check("and keeps that path's copy", copy.exists())
+        check("the other checkout is still pruned", not other.exists(), result.stdout)
+
+
+def test_worktrees_that_cannot_be_listed_fail():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory).resolve()
+        store, _, repository = scratch(root)
+        (repository / "CLAUDE.md").write_text("one\n")
+        git("-C", str(repository), "add", "CLAUDE.md")
+        git("-C", str(repository), "commit", "-q", "-m", "one")
+        copy = add_version(store, f"{repository}/CLAUDE.md", "one\n", approved=True)
+        result = run(store, PATH=path_failing_git(root, "worktree list"))
+        check("git that cannot list the worktrees exits 1, and keeps the copy",
+              result.returncode == 1 and copy.exists() and "injected failure" in result.stderr,
+              (result.stdout, result.stderr))
 
 
 def test_commits_that_cannot_be_listed_fail():
@@ -560,6 +633,9 @@ if __name__ == "__main__":
     test_git_failure_fails()
     test_copies_a_commit_holds_deleted()
     test_commits_that_cannot_be_listed_fail()
+    test_copies_only_refs_that_are_not_durable_hold_kept()
+    test_repository_that_cannot_be_named_fails()
+    test_worktrees_that_cannot_be_listed_fail()
     test_mac_deadline_names_what_was_deleted()
     if failures:
         print(f"{len(failures)} case(s) failed")

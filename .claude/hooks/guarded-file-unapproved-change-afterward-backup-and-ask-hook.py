@@ -7,10 +7,10 @@ instruction-file-guard.py protects, plus ~/.claude/CLAUDE.md and ~/.claude/setti
 each run the hook compares each checked file's stat data with what it stored at its previous
 run, hashes only a file whose stat data differs, logs each new version in this machine's
 directory of the log-store kind guarded-file-versions-and-approvals/, copies it there unless
-the git repository of the file's checkout holds it, and, when the version is not in its path's
+the HEAD commit of the file's checkout holds it, and, when the version is not in its path's
 approved set, tells the agent to show the user the change and run this program with --approve
-or --restore. The change stays in place while he is asked. A version git holds is read back
-from git; a file outside every checkout, such as ~/.claude/CLAUDE.md, is always copied.
+or --restore. The change stays in place while he is asked. A version with no copy is read
+back from git; a file outside every checkout, such as ~/.claude/CLAUDE.md, is always copied.
 
     python3 <this file> --approve <path> <hash> [<path> <hash> ...]
     python3 <this file> --restore <path> <hash> [<path> <hash> ...]
@@ -400,16 +400,56 @@ class Store:
 
 # ---------------------------------------------------------------- versions git holds
 
-def blobs_git_holds(checkout, blob_ids):
-    """The ids among blob_ids that the checkout's repository holds as blobs, as `git cat-file -e`
-    answers for each, asked in one call."""
-    ids = sorted(set(blob_ids) - {DELETED})
-    if not ids:
+# Git holds a version when a commit that a durable ref reaches holds its blob: a branch, a tag,
+# a remote-tracking branch, or a worktree's HEAD. refs/work-snapshots/* and refs/stash are not
+# durable, since they are deleted within hours, and neither is a blob only staged or only in the
+# object store, which gc deletes; a version held only there keeps its copy.
+DURABLE_REF_OPTIONS = ("--branches", "--tags", "--remotes")
+
+
+def worktree_heads(checkout):
+    """The commit at the HEAD of each worktree of the checkout's repository."""
+    output = git_text(checkout, "worktree", "list", "--porcelain", "-z")
+    heads = {field[len("HEAD "):] for field in output.split("\0") if field.startswith("HEAD ")}
+    # A worktree with no commit yet shows HEAD as all zeros.
+    return sorted(head for head in heads if head.strip("0"))
+
+
+def blobs_durable_refs_hold(checkout):
+    """Every blob id a commit reachable from a durable ref of the checkout's repository holds:
+    the whole history, so it is for the daily prune, not for the hook's run on every tool call."""
+    output = git_text(checkout, "rev-list", "--objects", *DURABLE_REF_OPTIONS,
+                      *worktree_heads(checkout), timeout=600)
+    # Commits and trees are listed too; only a blob's id can name a copy.
+    return {line.split(" ", 1)[0] for line in output.splitlines()}
+
+
+def versions_head_holds(checkout, versions):
+    """The (path, blob id) pairs among versions whose path, in the checkout's HEAD commit, is
+    that blob. HEAD is the one durable ref the hook can ask cheaply on every tool call; a
+    version only another durable ref holds is copied, and the daily prune deletes the copy."""
+    relative = {}
+    for path, blob_id in versions:
+        if blob_id == DELETED:
+            continue
+        relative[os.path.relpath(Path(path).parent.resolve() / Path(path).name, checkout)] = (
+            path, blob_id)
+    if not relative:
         return set()
-    output = git_text(checkout, "cat-file", "--batch-check=%(objectname) %(objecttype)",
-                      input_text="".join(blob_id + "\n" for blob_id in ids))
-    return {fields[0] for fields in (line.split() for line in output.splitlines())
-            if len(fields) == 2 and fields[1] == "blob"}
+    if subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify", "HEAD^{commit}"],
+                      capture_output=True, timeout=60, check=False).returncode == 1:
+        # A repository with no commit yet holds nothing.
+        return set()
+    output = git_text(checkout, "--literal-pathspecs", "ls-tree", "-r", "-z", "--full-tree",
+                      "HEAD", "--", *sorted(relative))
+    held = set()
+    for entry in output.split("\0"):
+        header, _, name = entry.partition("\t")
+        fields = header.split()
+        if len(fields) == 3 and fields[1] == "blob" and name in relative \
+                and relative[name][1] == fields[2]:
+            held.add(relative[name])
+    return held
 
 
 def version_from_git(path: str, blob_id: str):
@@ -535,10 +575,10 @@ def is_settings_file(path: str):
     return path == str(home_directory() / ".claude" / "settings.json")
 
 
-def git_text(checkout, *arguments, input_text=None):
+def git_text(checkout, *arguments, input_text=None, timeout=60):
     result = subprocess.run(["git", "-C", str(checkout), *arguments], capture_output=True,
                             input=None if input_text is None else input_text.encode(),
-                            timeout=60, check=False)
+                            timeout=timeout, check=False)
     if result.returncode != 0:
         raise RuntimeError(f"git {' '.join(arguments)} in {checkout} exited {result.returncode}: "
                            f"{result.stderr.decode(errors='replace').strip()}")
@@ -720,9 +760,9 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
     """Everything that touches the store. Returns (asks, reminders, settled paths).
 
     approvals: [(path, key, how, rule)] git's own work and renames, recorded before the checks.
-    checks: the files whose content changed, each copied unless git holds it. unsettled_unchanged: [(path, key)] files left
-    unsettled by an earlier run. quiet: a rebase, merge, cherry-pick or revert is stopped, so
-    every version is copied and nothing is asked."""
+    checks: the files whose content changed, each copied unless its checkout's HEAD holds it.
+    unsettled_unchanged: [(path, key)] files left unsettled by an earlier run. quiet: a rebase,
+    merge, cherry-pick or revert is stopped, so every version is copied and nothing is asked."""
     for path, key, how, rule in approvals:
         approved = store.approved(path)
         if key in approved:
@@ -941,7 +981,8 @@ def run_hook(payload):
         approvals, quiet, new_position, held = [], False, None, set()
         if repository is not None:
             checkout, git_directory = repository
-            held = blobs_git_holds(checkout, [value[3] for value in changed.values()])
+            held = versions_head_holds(checkout, [(path, value[3])
+                                                  for path, value in changed.items()])
             entries = reflog_entries(git_directory)
             new_position = entries[-1][:2] if entries else None
             window = [] if stocking else entries_after(entries, state.get("reflog"))
@@ -991,7 +1032,7 @@ def run_hook(payload):
                         how = HOW_STOCK
                 elif edit_succeeded and written == path:
                     how = HOW_EDIT
-                checks.append(Check(path, data, key, copy_hash, how, copy_hash in held))
+                checks.append(Check(path, data, key, copy_hash, how, (path, copy_hash) in held))
             approvals = approvals + renames(store, changed, state["files"])
             results.append(store_phase(store, session, owner(), checks, unsettled, approvals,
                                        quiet))
@@ -1175,7 +1216,7 @@ def restore(pairs):
                           "latest message gives, and ask him again")
         current[path] = now
         checkout = guard().enclosing_repository_root(Path(path).parent)
-        if checkout is not None and now[1] in blobs_git_holds(checkout, [now[1]]):
+        if checkout is not None and versions_head_holds(checkout, [(path, now[1])]):
             held.add(path)
 
     def work(store, end):
@@ -1191,7 +1232,8 @@ def restore(pairs):
                 content = store.kept_version(path, newest[1])
                 if content is None:
                     raise StoreUnreachable(f"the approved version {newest[1]} of {path} is in "
-                                           "neither its copy nor git")
+                                           "neither the guarded-file store's copies of that "
+                                           "file nor the git repository of its checkout")
             plan.append((path, key, newest, content))
         if time.monotonic() > end:
             raise StoreUnreachable("the deadline passed before any version was put back")
