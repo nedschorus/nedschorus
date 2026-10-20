@@ -198,9 +198,9 @@ class Workspace:
         return recovery.assess_seat(self.name, self.agents_root, self.handoffs,
                                     self.projects)
 
-    def recover(self, dry_run=False, fresh_session_from_dialog_extract=False):
+    def recover(self, dry_run=False, fresh_session_from_conversation_tail=False):
         return recovery.recover_seat(self.name, self.agents_root, self.handoffs,
-                                     self.projects, dry_run, fresh_session_from_dialog_extract)
+                                     self.projects, dry_run, fresh_session_from_conversation_tail)
 
 
 
@@ -323,7 +323,7 @@ def tmux_server_answers(panes_by_socket, tmux_cannot_be_run=False,
     patch("run_tmux", fake_run_tmux)
 
 
-def recover_with_an_operator_typing(workspace, typed, dry_run=False, fresh_session_from_dialog_extract=False):
+def recover_with_an_operator_typing(workspace, typed, dry_run=False, fresh_session_from_conversation_tail=False):
     """One recovery with an operator at a terminal typing `typed` (None is end
     of input). Returns (report, everything the operator saw)."""
     an_operator_terminal()
@@ -332,7 +332,7 @@ def recover_with_an_operator_typing(workspace, typed, dry_run=False, fresh_sessi
     sys.stdin = io.StringIO("" if typed is None else f"{typed}\n")
     try:
         with redirect_stdout(seen):
-            report = workspace.recover(dry_run=dry_run, fresh_session_from_dialog_extract=fresh_session_from_dialog_extract)
+            report = workspace.recover(dry_run=dry_run, fresh_session_from_conversation_tail=fresh_session_from_conversation_tail)
     finally:
         sys.stdin = stdin_before
     return report, seen.getvalue()
@@ -583,11 +583,11 @@ def run_reach_clause_cases(root: Path):
             all_dead()
             write_transcript(workspace.project_directory(), "crashed-session", "real work")
             (workspace.handoffs / f"{workspace.name}-dialog-0007.md").write_text(
-                "the dialog extract", encoding="utf-8")
+                "the conversation-tail", encoding="utf-8")
             capture_launches(workspace)
-            report = workspace.recover(fresh_session_from_dialog_extract=True)
-            check(f"REACH ({machine}): a line for a seat started as a fresh agent-session from the dialog extract ends with the reach clause",
-                  "started a fresh agent-session from the dialog extract seat-a-dialog-0007.md" in report
+            report = workspace.recover(fresh_session_from_conversation_tail=True)
+            check(f"REACH ({machine}): a line for a seat started as a fresh agent-session from the conversation-tail ends with the reach clause",
+                  "started a fresh agent-session from the conversation-tail seat-a-dialog-0007.md" in report
                   and report.endswith(expected_clause), report)
 
             workspace = Workspace(root / f"reach-fresh-{slug}")
@@ -595,7 +595,7 @@ def run_reach_clause_cases(root: Path):
             capture_launches(workspace)
             report = workspace.recover()
             check(f"REACH ({machine}): a fresh seat's line ends with the reach clause",
-                  "relaunched fresh (nothing to resume, no extract to read)" in report
+                  "relaunched fresh (nothing to resume, no conversation-tail to read)" in report
                   and report.endswith(expected_clause), report)
 
             workspace = Workspace(root / f"reach-defer-{slug}")
@@ -1113,7 +1113,7 @@ def run_came_up_cases(root: Path):
     # real one would find no lock and spend SEAT_COMES_UP_DEADLINE_SECONDS twice
     # — 240 real seconds to check two strings, which is what it cost before this
     # was noticed. A resume or a relaunch without resuming that did not come up names the
-    # degraded restart; the fresh-agent-session-from-the-dialog-extract paths do not, because that is what just ran.
+    # degraded restart; the fresh-agent-session-from-the-conversation-tail paths do not, because that is what just ran.
     did_not_survive = "a supervisor started and stopped again within 6s"
     seat_comes_up(False, did_not_survive)
     for offer, expected in ((True, True), (False, False)):
@@ -1121,8 +1121,8 @@ def run_came_up_cases(root: Path):
         check(f"a seat that did not come up reports it (offer={offer})",
               report is not None and "LAUNCHED BUT DID NOT COME UP" in report
               and "relaunched" not in report, report)
-        check(f"and names --fresh-session-from-dialog-extract only when there is one to offer (offer={offer})",
-              ("--fresh-session-from-dialog-extract" in report) == expected, report)
+        check(f"and names --fresh-session-from-conversation-tail only when there is one to offer (offer={offer})",
+              ("--fresh-session-from-conversation-tail" in report) == expected, report)
         # The seam the slow version implied but never asserted: the report says
         # what the waiter found, rather than composing a reason of its own.
         check(f"and it carries the waiter's reason verbatim (offer={offer})",
@@ -1267,14 +1267,14 @@ with tempfile.TemporaryDirectory() as temporary:
                      "You are seat-a. No handoff exists yet; ask what to work on.",
                      records=1)  # never replied at all
     verdict, detail = workspace.assess()
-    check("only empty successors on disk routes to a fresh agent-session from the dialog extract, not resume",
-          verdict == "fresh-session-from-dialog-extract" and "nothing worth resuming" in detail, (verdict, detail))
+    check("only empty successors on disk routes to a fresh agent-session from the conversation-tail, not resume",
+          verdict == "fresh-session-from-conversation-tail" and "nothing worth resuming" in detail, (verdict, detail))
 
     workspace = Workspace(root / "w7")
     all_dead()
     verdict, detail = workspace.assess()
-    check("no transcripts at all routes to a fresh agent-session from the dialog extract",
-          verdict == "fresh-session-from-dialog-extract" and "no harness project directory" in detail,
+    check("no transcripts at all routes to a fresh agent-session from the conversation-tail",
+          verdict == "fresh-session-from-conversation-tail" and "no harness project directory" in detail,
           (verdict, detail))
 
     # Caught live 2026-08-22: a seat's FIRST session legitimately starts with
@@ -1316,18 +1316,18 @@ with tempfile.TemporaryDirectory() as temporary:
     all_dead()
     write_transcript(workspace.project_directory(), "crashed-session", "real work")
     (workspace.handoffs / f"{workspace.name}-dialog-0007.md").write_text(
-        "the dialog extract", encoding="utf-8")
+        "the conversation-tail", encoding="utf-8")
     capture_launches(workspace)
-    report = workspace.recover(fresh_session_from_dialog_extract=True)
-    check("--fresh-session-from-dialog-extract launches fresh reading the newest extract, telling the "
+    report = workspace.recover(fresh_session_from_conversation_tail=True)
+    check("--fresh-session-from-conversation-tail launches fresh reading the newest conversation-tail, telling the "
           "supervisor its first prompt wins over the crashed transcript",
           workspace.launches
-          and workspace.launches[0][1] == recovery.IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS
+          and workspace.launches[0][1] == recovery.IGNITION_FROM_CONVERSATION_TAIL_SUPERVISOR_ARGUMENTS
           and workspace.launches[0][2] is not None
-          and "started a fresh agent-session from the dialog extract seat-a-dialog-0007.md" in report,
+          and "started a fresh agent-session from the conversation-tail seat-a-dialog-0007.md" in report,
           (report, workspace.launches))
     prompt_text = workspace.launches[0][2].read_text(encoding="utf-8")
-    check("the recovery's initial agent instructions name the extract, the missing handoff, and #120",
+    check("the recovery's initial agent instructions name the conversation-tail, the missing handoff, and #120",
           "seat-a-dialog-0007.md" in prompt_text and "ended without writing a handoff" in prompt_text
           and "nedschorus#120" in prompt_text, prompt_text)
 
@@ -1357,7 +1357,7 @@ with tempfile.TemporaryDirectory() as temporary:
               report.startswith(f"{workspace.name}: "
                                 f"{recovery.SEAT_ASKED_TO_BE_CONSULTED_REPORT_MARKER} — ")
               and not workspace.launches and not waited
-              and "--fresh-session-from-dialog-extract" not in report,
+              and "--fresh-session-from-conversation-tail" not in report,
               (report, workspace.launches, waited))
         # Composed in recover_seat since the verdict's detail became (counter,
         # reason); the line is the one assess_seat used to compose, byte for byte.
@@ -1869,9 +1869,9 @@ with tempfile.TemporaryDirectory() as temporary:
                      "older real work", age_seconds=7200, records=8)
     write_transcript(workspace.project_directory(), "ignition-then-crashed",
                      "Read x-dialog-0004.md (crash recovery, nedschorus#120). Continue.",
-                     records=9)  # the --fresh-session-from-dialog-extract loop the reviewer named
+                     records=9)  # the --fresh-session-from-conversation-tail loop the reviewer named
     verdict, detail = workspace.assess()
-    check("R4-1: a --fresh-session-from-dialog-extract successor WITH real work is resumed, not its parent",
+    check("R4-1: a --fresh-session-from-conversation-tail successor WITH real work is resumed, not its parent",
           verdict == "resume" and detail[0] == "ignition-then-crashed",
           (verdict, detail))
 
@@ -2149,8 +2149,8 @@ with tempfile.TemporaryDirectory() as temporary:
         report = recovery.recover_seat(workspace.name, workspace.agents_root,
                                        workspace.handoffs, workspace.projects,
                                        False, True, open_iterm_window=True)
-        check("WINDOW: --fresh-session-from-dialog-extract opens the window fresh, reading the extract",
-              window_launches[-1][1] == recovery.IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS
+        check("WINDOW: --fresh-session-from-conversation-tail opens the window fresh, reading the conversation-tail",
+              window_launches[-1][1] == recovery.IGNITION_FROM_CONVERSATION_TAIL_SUPERVISOR_ARGUMENTS
               and window_launches[-1][2] is not None
               and window_launches[-1][2].name == f"{workspace.name}-recovery-ignition-prompt.md"
               and "iTerm window" in report and not detached_launches,
@@ -3049,10 +3049,10 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a resume that did not come up is never reported as relaunched",
           "LAUNCHED BUT DID NOT COME UP" in report and "relaunched" not in report, report)
     check("and it offers the degraded restart",
-          "--fresh-session-from-dialog-extract" in report, report)
+          "--fresh-session-from-conversation-tail" in report, report)
 
     # The relaunch without resuming that the deferred-handoff verdict chooses. That verdict is
-    # reached on the verdict alone — assess_seat never sees --fresh-session-from-dialog-extract —
+    # reached on the verdict alone — assess_seat never sees --fresh-session-from-conversation-tail —
     # so a run that PASSED the flag lands here too, and was offered the flag it
     # had just used (PR #329 review, finding 2).
     for used_the_flag, offered in ((True, False), (False, True)):
@@ -3063,11 +3063,11 @@ with tempfile.TemporaryDirectory() as temporary:
         seat_comes_up(False, "no supervisor appeared within 120s")
         (workspace.handoffs / f"{workspace.name}-handoff.md").write_text(
             "# Handoff\nrestart-counter: 5\nnext-step: continue\n", encoding="utf-8")
-        report = workspace.recover(fresh_session_from_dialog_extract=used_the_flag)
+        report = workspace.recover(fresh_session_from_conversation_tail=used_the_flag)
         check("a relaunch without resuming that did not come up offers the degraded restart "
-              f"only to an operator who has not just used it (--fresh-session-from-dialog-extract: {used_the_flag})",
+              f"only to an operator who has not just used it (--fresh-session-from-conversation-tail: {used_the_flag})",
               "LAUNCHED BUT DID NOT COME UP" in report
-              and ("--fresh-session-from-dialog-extract" in report) == offered, report)
+              and ("--fresh-session-from-conversation-tail" in report) == offered, report)
 
     workspace = Workspace(root / "came-up-fresh-session", name="fresh-session-did-not-come-up")
     all_dead()
@@ -3075,10 +3075,10 @@ with tempfile.TemporaryDirectory() as temporary:
     seat_comes_up(False, "no supervisor appeared within 120s")
     (workspace.handoffs / f"{workspace.name}-dialog-0001.md").write_text(
         "# Dialog\n", encoding="utf-8")
-    report = workspace.recover(fresh_session_from_dialog_extract=True)
-    check("a fresh agent-session from the dialog extract that did not come up is reported, without offering itself again",
+    report = workspace.recover(fresh_session_from_conversation_tail=True)
+    check("a fresh agent-session from the conversation-tail that did not come up is reported, without offering itself again",
           "LAUNCHED BUT DID NOT COME UP" in report
-          and "--fresh-session-from-dialog-extract" not in report, report)
+          and "--fresh-session-from-conversation-tail" not in report, report)
 
     # A dry run launches nothing, so it must not wait for anything either.
     workspace = Workspace(root / "came-up-dry", name="dry-no-wait")
@@ -3562,7 +3562,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # Ruled 2026-09-02 (the #120 overview, § Ruled 2026-09-02: record how the
     # agent exited): a seat whose supervisor recorded its agent's exit did not
     # crash, so it is offered to be brought back by hand, never resumed or
-    # started fresh from the dialog extract. Presence decides, not the code: zero, nonzero, a signal's
+    # started fresh from the conversation-tail. Presence decides, not the code: zero, nonzero, a signal's
     # negative code and an unknown code all offer; only no record resumes. The
     # record is written here by the supervisor's own writer, so the key names
     # the two programs share are the ones under test.
@@ -3608,7 +3608,7 @@ with tempfile.TemporaryDirectory() as temporary:
           verdict == "resume" and detail[0] == "resume-me", (verdict, detail))
 
     # The report names both ways back by hand, each carrying what launch_seat
-    # would pass, and --fresh-session-from-dialog-extract says the same and launches nothing. A
+    # would pass, and --fresh-session-from-conversation-tail says the same and launches nothing. A
     # dry run quotes that report whole, after the question an operator at a
     # terminal would be asked (ruled 2026-09-18).
     workspace = Workspace(root / "exit-record-report", name="exited-seat")
@@ -3641,8 +3641,8 @@ with tempfile.TemporaryDirectory() as temporary:
           report.endswith(f"; to bring it back by hand resuming session resume-me: "
                           f"{resume_command}; or as a fresh session: {fresh_command}"),
           report)
-    check("EXIT RECORD: --fresh-session-from-dialog-extract offers the same, and neither launches anything",
-          workspace.recover(fresh_session_from_dialog_extract=True) == report
+    check("EXIT RECORD: --fresh-session-from-conversation-tail offers the same, and neither launches anything",
+          workspace.recover(fresh_session_from_conversation_tail=True) == report
           and workspace.launches == [],
           (report, workspace.launches))
     check("EXIT RECORD: a dry run quotes the question, what a yes does, and that report whole",
@@ -3710,7 +3710,7 @@ with tempfile.TemporaryDirectory() as temporary:
           and box_command.startswith("LAUNCH_CLAUDE_SUPERVISOR_EXTRA_ARGUMENTS="),
           box_command)
 
-    # With nothing to resume, the offer stands in for the fresh agent-session from the dialog extract and names only
+    # With nothing to resume, the offer stands in for the fresh agent-session from the conversation-tail and names only
     # the fresh launch.
     workspace = Workspace(root / "exit-record-no-transcript", name="exited-seat")
     all_dead()
@@ -3718,7 +3718,7 @@ with tempfile.TemporaryDirectory() as temporary:
     record_an_agent_exit(workspace, 0)
     verdict, detail = workspace.assess()
     report = workspace.recover()
-    check("EXIT RECORD: a recorded exit with nothing to resume is offered, not started fresh from the dialog extract",
+    check("EXIT RECORD: a recorded exit with nothing to resume is offered, not started fresh from the conversation-tail",
           verdict == "offer-after-recorded-exit" and detail[2] is None
           and report.endswith("; to bring it back by hand as a fresh session: "
                               + recovery.by_hand_launch_command_for_seat(
@@ -3938,18 +3938,18 @@ with tempfile.TemporaryDirectory() as temporary:
               + recovery.reach_clause_for_a_running_seat("seat-a")),
           report_yes_fresh)
 
-    # --fresh-session-from-dialog-extract does not turn that restart into a fresh agent-session from the dialog extract, as it does
+    # --fresh-session-from-conversation-tail does not turn that restart into a fresh agent-session from the conversation-tail, as it does
     # not behind a leftover shell.
     workspace, recorded_at = a_seat_with_a_recorded_exit_and_no_session(
-        "no-leftover-yes-fresh-session-from-dialog-extract", 0)
+        "no-leftover-yes-fresh-session-from-conversation-tail", 0)
     (workspace.handoffs / "seat-a-dialog-0007.md").write_text("the dialog", encoding="utf-8")
     report_fallback, seen = recover_with_an_operator_typing(workspace, "y",
-                                                            fresh_session_from_dialog_extract=True)
-    check("NO LEFTOVER SESSION: with --fresh-session-from-dialog-extract a yes still resumes",
+                                                            fresh_session_from_conversation_tail=True)
+    check("NO LEFTOVER SESSION: with --fresh-session-from-conversation-tail a yes still resumes",
           [launch[:2] for launch in workspace.launches] == [
               ("seat-a", "--resume-session-id resume-me")]
           and report_fallback.startswith("seat-a: relaunched resuming resume-me after ")
-          and "--fresh-session-from-dialog-extract" not in report_fallback,
+          and "--fresh-session-from-conversation-tail" not in report_fallback,
           (workspace.launches, report_fallback))
 
     # A restart that fails is still reported as one the operator asked for.
@@ -4353,20 +4353,20 @@ with tempfile.TemporaryDirectory() as temporary:
               + the_operator_said_to_restart_it),
           (retired, workspace.launches, launched_prompt, report_fresh))
 
-    # --fresh-session-from-dialog-extract does not turn that restart into a fresh agent-session from the dialog extract: the degraded
+    # --fresh-session-from-conversation-tail does not turn that restart into a fresh agent-session from the conversation-tail: the degraded
     # restart's prompt says the session ended without writing a handoff, which the
     # record says it did not, and the ruling names resume-or-fresh only.
-    workspace = a_seat_behind_a_leftover_shell("leftover-shell-exit-record-fresh-session-from-dialog-extract")
+    workspace = a_seat_behind_a_leftover_shell("leftover-shell-exit-record-fresh-session-from-conversation-tail")
     record_an_agent_exit(workspace, 0)
     (workspace.handoffs / "seat-a-dialog-0007.md").write_text("the dialog", encoding="utf-8")
     retired = []
     capture_retires(retired)
-    report_fallback, seen = recover_with_an_operator_typing(workspace, "y", fresh_session_from_dialog_extract=True)
-    check("LEFTOVER SHELL: with --fresh-session-from-dialog-extract a yes on a recorded exit still resumes",
+    report_fallback, seen = recover_with_an_operator_typing(workspace, "y", fresh_session_from_conversation_tail=True)
+    check("LEFTOVER SHELL: with --fresh-session-from-conversation-tail a yes on a recorded exit still resumes",
           [launch[:2] for launch in workspace.launches] == [
               ("seat-a", "--resume-session-id resume-me")]
           and report_fallback.startswith("seat-a: relaunched resuming resume-me after ")
-          and "--fresh-session-from-dialog-extract" not in report_fallback,
+          and "--fresh-session-from-conversation-tail" not in report_fallback,
           (workspace.launches, report_fallback))
 
     # A no on the same question changes nothing: nothing retired, nothing
@@ -4984,7 +4984,7 @@ with tempfile.TemporaryDirectory() as temporary:
              question_that_restarts_the_seat, "assess the seat without it"),
             ("resume", lambda workspace: None,
              question_that_restarts_the_seat, "assess the seat without it"),
-            ("fresh-session-from-dialog-extract", remove_the_transcript,
+            ("fresh-session-from-conversation-tail", remove_the_transcript,
              question_that_restarts_the_seat, "assess the seat without it"),
             ("offer-after-recorded-exit-code-0-resuming",
              lambda workspace: record_an_agent_exit(workspace, 0),
@@ -5206,7 +5206,7 @@ with tempfile.TemporaryDirectory() as temporary:
              question_that_restarts_the_seat),
             ("resume", ("resume-me", Path("/transcripts/resume-me.jsonl")),
              question_that_restarts_the_seat),
-            ("fresh-session-from-dialog-extract", "no transcripts under /transcripts", question_that_restarts_the_seat),
+            ("fresh-session-from-conversation-tail", "no transcripts under /transcripts", question_that_restarts_the_seat),
             ("offer-after-recorded-exit", (0, "2026-09-18T00:00:00+00:00", "resume-me"),
              question_for_a_seat_stopped_on_purpose),
             ("offer-after-recorded-exit", (None, "2026-09-18T00:00:00+00:00", None),

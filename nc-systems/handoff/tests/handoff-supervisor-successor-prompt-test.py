@@ -124,8 +124,8 @@ def run_offline_cases(workspace: Path):
     # A state file written before 2026-09-21 carries the field under the bare
     # name "session_id". A supervisor reading one must come away with the same
     # value under the new name, or carry_over_to_successor sees no retiring
-    # session and the seat starts a fresh agent-session with no dialog extract -- losing the conversation tail
-    # of every live seat on the fleet's first restart after the rename.
+    # session and the seat starts a fresh agent-session without its conversation-tail, as
+    # every live seat would on the fleet's first restart after the rename.
     legacy_state_path = workspace / "legacy-key-supervisor-state.json"
     legacy_state_path.write_text(
         json.dumps({"consumed_counter": 2, "session_id": "written-before-the-rename",
@@ -600,7 +600,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     check("the boot-recovery prompt is exactly its next step, the recovery note, and the branch-state line",
           boot_recovery_prompt == (
               "finish the supervisor\n\n(Recovered at supervisor boot: the previous "
-              "session's dialog extract is unavailable; this next-step and the "
+              "session's conversation-tail is unavailable; this next-step and the "
               "repository are your whole context.) branch sync: fixture-branch is 3 "
               "commit(s) behind main — If this branch has never been pushed, rebase "
               "it onto origin/main before your first substantive action and rerun the "
@@ -2054,7 +2054,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
           "branch-state line and the overview-refresh-due line, exactly",
           boot_recovery_prompt == (
               "finish the supervisor\n\n(Recovered at supervisor boot: the previous "
-              "session's dialog extract is unavailable; this next-step and the "
+              "session's conversation-tail is unavailable; this next-step and the "
               "repository are your whole context.) " + branch_state_line + " " + line),
           repr(boot_recovery_prompt))
 
@@ -2574,9 +2574,9 @@ def run_memory_review_due_prompt_cases(workspace: Path):
         plan_prompt = "compose takes no memory review line"
     check("MEMORY REVIEW: the dialog plan hands its memory review line to the prompt it "
           "composes", plan_prompt == prompt and prompt != "", repr(plan_prompt))
-    recovery_note = ("\n\n(Recovered at supervisor boot: the previous session's dialog "
-                     "extract is unavailable; this next-step and the repository are your "
-                     "whole context.) ")
+    recovery_note = ("\n\n(Recovered at supervisor boot: the previous session's "
+                     "conversation-tail is unavailable; this next-step and the repository "
+                     "are your whole context.) ")
     try:
         boot_recovery_prompt = supervisor.BootRecoveryIgnitionPlan("finish the review").compose(
             branch_sync_report, (overview_line,), (memory_line,))
@@ -2684,12 +2684,12 @@ def run_boot_ignition_case(workspace: Path):
     check("the boot says it is starting a fresh agent-session from the unconsumed handoff",
           "starting a fresh agent-session from an unconsumed handoff" in result.stdout, result.stdout[-400:])
     check("and says the next step is the prompt because the recorded session's dialog could not be extracted",
-          "with its next step as the prompt; there is no dialog extract because session "
+          "with its next step as the prompt; there is no conversation-tail because session "
           "no-such-session's dialog could not be extracted" in result.stdout, result.stdout[-400:])
     launched = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
     check("the initial agent instructions carry the handoff's next step",
           "resume the audit" in launched, launched[:200])
-    # The boot-recovery path builds its own prompt: no dialog extract exists,
+    # The boot-recovery path builds its own prompt: no conversation-tail exists,
     # so the next-step and the repository are the successor's whole context.
     # It composes at the launch site through the same threading as the dialog
     # path, which since the user's second round (2026-08-30) carries the
@@ -2718,8 +2718,8 @@ def run_boot_ignition_case(workspace: Path):
     check("boot-ignition consumes the handoff counter", state.get("consumed_counter") == 5, str(state))
 
 
-def run_boot_ignition_without_a_dialog_extract_cases(workspace: Path):
-    """A boot that finds an unconsumed handoff and gets no dialog extract still
+def run_boot_ignition_without_a_conversation_tail_cases(workspace: Path):
+    """A boot that finds an unconsumed handoff and gets no conversation-tail still
     starts a fresh agent-session from the handoff's next step, and its console
     gives the true reason: the session whose extraction it tried, or that no
     earlier session was recorded. Neither path may say it is not relaunching."""
@@ -2768,35 +2768,35 @@ def run_boot_ignition_without_a_dialog_extract_cases(workspace: Path):
     diverged = boot("bootdivergedwriter",
                     {"consumed_counter": 4, "launched_session_id": tracked, "generation": 4},
                     f"written-by-session: {writer}\n")
-    check("BOOT WITHOUT A DIALOG EXTRACT: the extraction tried is the handoff writer's",
+    check("BOOT WITHOUT A CONVERSATION-TAIL: the extraction tried is the handoff writer's",
           diverged.extracted_from == [writer], repr(diverged.extracted_from))
-    check("BOOT WITHOUT A DIALOG EXTRACT: the reason names the writer whose extraction failed, "
+    check("BOOT WITHOUT A CONVERSATION-TAIL: the reason names the writer whose extraction failed, "
           "not the tracked session",
-          f"there is no dialog extract because session {writer}'s dialog could not be "
+          f"there is no conversation-tail because session {writer}'s dialog could not be "
           "extracted" in diverged.printed
           and f"session {tracked}'s dialog" not in diverged.printed,
           diverged.printed[-600:])
-    check("BOOT WITHOUT A DIALOG EXTRACT: the failed extraction is reported with the writer's id",
+    check("BOOT WITHOUT A CONVERSATION-TAIL: the failed extraction is reported with the writer's id",
           f"extracting session {writer}'s dialog failed" in diverged.errors,
           diverged.errors[-400:])
-    check("BOOT WITHOUT A DIALOG EXTRACT: a failed extraction at boot still starts the successor "
+    check("BOOT WITHOUT A CONVERSATION-TAIL: a failed extraction at boot still starts the successor "
           "from the next step, and never says it is not relaunching",
           len(diverged.launched_prompts) == 1
           and diverged.launched_prompts[0].startswith("resume the audit")
           and "not relaunching" not in diverged.errors + diverged.printed,
           f"{diverged.launched_prompts!r}\n{diverged.errors[-400:]}")
-    check("BOOT WITHOUT A DIALOG EXTRACT: the handoff is consumed",
+    check("BOOT WITHOUT A CONVERSATION-TAIL: the handoff is consumed",
           diverged.state.get("consumed_counter") == 5, str(diverged.state))
 
     # No session was ever recorded: nothing to extract, and the reason says so.
     unrecorded = boot("bootnosessionrecorded", {"consumed_counter": 4, "generation": 4}, "")
-    check("BOOT WITHOUT A DIALOG EXTRACT: with no earlier session recorded, no extraction is tried",
+    check("BOOT WITHOUT A CONVERSATION-TAIL: with no earlier session recorded, no extraction is tried",
           unrecorded.extracted_from == [], repr(unrecorded.extracted_from))
-    check("BOOT WITHOUT A DIALOG EXTRACT: the reason is that no earlier session was recorded",
-          "with its next step as the prompt; there is no dialog extract because no earlier "
+    check("BOOT WITHOUT A CONVERSATION-TAIL: the reason is that no earlier session was recorded",
+          "with its next step as the prompt; there is no conversation-tail because no earlier "
           "session was recorded" in unrecorded.printed,
           unrecorded.printed[-600:])
-    check("BOOT WITHOUT A DIALOG EXTRACT: with no earlier session recorded, the successor starts "
+    check("BOOT WITHOUT A CONVERSATION-TAIL: with no earlier session recorded, the successor starts "
           "from the next step",
           len(unrecorded.launched_prompts) == 1
           and unrecorded.launched_prompts[0].startswith("resume the audit"),
@@ -3117,7 +3117,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_memory_review_due_cases(workspace)
     run_memory_review_due_prompt_cases(workspace)
     run_boot_ignition_case(workspace)
-    run_boot_ignition_without_a_dialog_extract_cases(workspace)
+    run_boot_ignition_without_a_conversation_tail_cases(workspace)
     run_first_prompt_file_cases(workspace)
     run_multi_line_next_step_cases(workspace, recent_timestamp)
     run_launch_and_retention_cases(workspace, recent_timestamp)

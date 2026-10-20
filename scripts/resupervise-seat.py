@@ -36,8 +36,8 @@ WHAT IT DOES -- it retires the unsupervised session rather than adopting it:
      and starts the successor as a fresh agent-session from it (handoff-supervisor.py's boot-ignition
      path, live since 2026-08-14).
 
-The successor is a fresh session carrying the retiring one's handoff and dialog
-extract -- the ordinary reincarnation, not a continuation of the running process.
+The successor is a fresh session carrying the retiring one's handoff and
+conversation-tail -- the ordinary reincarnation, not a continuation of the running process.
 Step 4 ends the running session if it is still alive, which is the point: its
 work is in the handoff. What it does cost is anything the agent did AFTER
 writing that handoff, since the writer tells an unsupervised agent to keep
