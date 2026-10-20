@@ -42,7 +42,7 @@ def check(case_name, condition, detail=""):
 
 
 def run_hook(session_cwd: Path, file_path: str, decoy: Path, notebook: bool = False,
-             path_prefix: Path = None, process_cwd: Path = None):
+             path_prefix: Path = None, process_cwd: Path = None, script_path: Path = None):
     """Invoke the guard.
 
     path_prefix puts a directory first on PATH, so a stub git can drive states
@@ -56,7 +56,7 @@ def run_hook(session_cwd: Path, file_path: str, decoy: Path, notebook: bool = Fa
     if path_prefix is not None:
         environment["PATH"] = f"{path_prefix}{os.pathsep}{environment.get('PATH', '')}"
     return subprocess.run(
-        [sys.executable, str(SCRIPT_PATH)], input=payload,
+        [sys.executable, str(script_path or SCRIPT_PATH)], input=payload,
         capture_output=True, text=True, check=False, env=environment,
         cwd=str(process_cwd) if process_cwd is not None else None,
     )
@@ -305,6 +305,54 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "\"no operation in progress\"",
           result.returncode == 1 and "--absolute-git-dir" in result.stderr
           and "stand-in failure" in result.stderr, (result.returncode, result.stderr))
+
+    def answering_git_directory(name, body):
+        directory = tmp / f"stub-{name}"
+        directory.mkdir()
+        (directory / "git").write_text("#!/bin/sh\n" + body + f'exec {real_git} "$@"\n',
+                                       encoding="utf-8")
+        (directory / "git").chmod(0o755)
+        return directory
+
+    common_dir_empty = answering_git_directory(
+        "git-common-dir-empty",
+        'if [ "$1" = rev-parse ] && [ "$2" = --git-common-dir ]; then exit 0; fi\n')
+    result = run_hook(reference, str(reference / "docs.md"), decoy, path_prefix=common_dir_empty)
+    check("a git that prints no common directory is reported, not read as \"not the reference\"",
+          result.returncode == 1 and "printed no git directory" in result.stderr,
+          (result.returncode, result.stderr))
+    git_dir_empty = answering_git_directory(
+        "absolute-git-dir-empty",
+        'if [ "$1" = rev-parse ] && [ "$2" = --absolute-git-dir ]; then exit 0; fi\n')
+    result = run_hook(detached, str(detached / "notes.md"), decoy, path_prefix=git_dir_empty)
+    check("a git that prints no git directory in a detached checkout is reported",
+          result.returncode == 1 and "printed nothing" in result.stderr,
+          (result.returncode, result.stderr))
+    no_branch_no_commit = answering_git_directory(
+        "no-branch-no-commit",
+        'if [ "$1" = symbolic-ref ]; then exit 1; fi\n'
+        'if [ "$1" = rev-parse ] && [ "$2" = --verify ]; then exit 1; fi\n')
+    result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=no_branch_no_commit)
+    check("a HEAD that git says is on no branch and names no commit is reported, not allowed in "
+          "silence", result.returncode == 1 and "names no commit" in result.stderr,
+          (result.returncode, result.stderr))
+
+    # The guard reads git's in-progress markers from the freshness hook's module, found
+    # relative to the guard's own file; a copy of the guard beside a broken module shows
+    # that a module that cannot be loaded is reported.
+    broken_tree = tmp / "broken-freshness-tree"
+    (broken_tree / ".claude" / "hooks").mkdir(parents=True)
+    (broken_tree / "scripts").mkdir()
+    import shutil as _copier
+    for name in ("session-location-write-guard.py", "guard_approval_marker.py"):
+        _copier.copy(SCRIPT_PATH.with_name(name), broken_tree / ".claude" / "hooks" / name)
+    (broken_tree / "scripts" / "checkout-freshness-catch-up.py").write_text(
+        "raise RuntimeError('stand-in broken module')\n", encoding="utf-8")
+    result = run_hook(detached, str(detached / "notes.md"), decoy,
+                      script_path=broken_tree / ".claude" / "hooks" / "session-location-write-guard.py")
+    check("a marker list that cannot be loaded is reported, not read as \"no operation in progress\"",
+          result.returncode == 1 and "in-progress markers" in result.stderr
+          and "stand-in broken module" in result.stderr, (result.returncode, result.stderr))
 
     # ------------------------------------------------------------------
     # PR #91's review: the .git asymmetry, and marker inertness

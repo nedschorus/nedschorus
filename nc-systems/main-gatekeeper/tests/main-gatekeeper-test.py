@@ -1585,6 +1585,12 @@ with tempfile.TemporaryDirectory() as workspace_name:
     check("a git failure reading the legacy path is reported, not read as \"no such path\"",
           refusal is not None and refusal.error == "workspace-io-error"
           and "stand-in failure" in refusal.facts, refusal)
+    with git_on_path(failing_git("legacy-verify-path", "--verify " + legacy_commit + ":")):
+        refusal = refusal_of(lambda: gatekeeper.read_legacy_content(
+            str(legacy), {"commit": legacy_commit, "source": "old-tool.py", "dest": "x.py"}))
+    check("a git failure checking the legacy path is reported, not read as \"no such path\"",
+          refusal is not None and refusal.error == "workspace-io-error"
+          and "stand-in failure" in refusal.facts, refusal)
     refusal = refusal_of(lambda: gatekeeper.read_legacy_content(
         str(legacy), {"commit": legacy_commit, "source": "no-such-path.py", "dest": "x.py"}))
     check("an absent legacy path still refuses as import-invalid",
@@ -1616,6 +1622,30 @@ with tempfile.TemporaryDirectory() as workspace_name:
     check("a failed count after a push that landed is reported beside the success",
           outcome[0] == "c" * 40 and outcome[1] is None and "stand-in failure" in outcome[2],
           outcome)
+
+    remote, work, base = make_fixture(workspace, "count-fails-end-to-end")
+    rival = workspace / "count-fails-rival"
+    git(["clone", "--quiet", str(remote), str(rival)], workspace)
+    git(["config", "user.name", "rival"], rival)
+    git(["config", "user.email", "rival@nedschorus.invalid"], rival)
+    (rival / "keep.txt").write_text("untouched\nthe rival's line\n", encoding="utf-8")
+    git(["commit", "--quiet", "-am", "a rival commit on main"], rival)
+    git(["push", "--quiet", "origin", "main"], rival)
+    (work / "README.md").write_text("seed\nlands over a rival\n", encoding="utf-8")
+    environment = {**os.environ, "XDG_STATE_HOME": str(state_home),
+                   "PATH": f"{failing_git('rev-list-end-to-end', 'rev-list --count')}"
+                           f"{os.pathsep}{os.environ['PATH']}"}
+    environment.pop("CLAUDE_CODE_SESSION_ID", None)
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), *base_request(work, remote, base, ["README.md"])],
+        capture_output=True, text=True, check=False, env=environment,
+    )
+    payload = load_payload(completed.stdout)
+    check("a check-in whose integration count fails still checks in, and its summary says the "
+          "count is unknown, with git's stderr",
+          payload.get("outcome") == "checked-in"
+          and "is unknown" in payload.get("summary", "")
+          and "stand-in failure" in payload.get("summary", ""), payload)
 
     remote, work, base = make_fixture(workspace, "advisory-status-fails")
     (work / "README.md").write_text("seed\nchecked in while status fails\n", encoding="utf-8")

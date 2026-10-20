@@ -635,7 +635,7 @@ def describe_commits(clone: Path, older: str, newer: str) -> str:
 
 def integrate_and_push(
     clone: Path, request: dict, worktree: dict[str, bytes | None], digest: str
-) -> tuple[str, int]:
+) -> tuple[str, int | None, str | None]:
     """Return (commit, the count of newer commits integrated over or None, why the count is
     None or None) after pushing over concurrent changes."""
     # Refuse overlapping paths rather than choosing which author’s content survives.
