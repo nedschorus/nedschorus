@@ -2718,6 +2718,91 @@ def run_boot_ignition_case(workspace: Path):
     check("boot-ignition consumes the handoff counter", state.get("consumed_counter") == 5, str(state))
 
 
+def run_boot_ignition_without_a_dialog_extract_cases(workspace: Path):
+    """A boot that finds an unconsumed handoff and gets no dialog extract still
+    starts a fresh agent-session from the handoff's next step, and its console
+    gives the true reason: the session whose extraction it tried, or that no
+    earlier session was recorded. Neither path may say it is not relaunching."""
+
+    def boot(case_name: str, state: dict, written_by_session_line: str):
+        """One in-process boot, with the extractor failing and recording its id."""
+        handoff_directory = workspace / case_name
+        handoff_directory.mkdir(parents=True)
+        settings = supervisor.SupervisorSettings(
+            agent=case_name, working_directory=workspace,
+            handoff_directory=handoff_directory,
+            agent_command="unused-stub-agent", first_prompt="")
+        settings.handoff_path.write_text(
+            "written-at: 2026-10-20T00:00:00Z\nnext-step: resume the audit\n"
+            "restart-counter: 5\n" + written_by_session_line, encoding="utf-8")
+        supervisor.write_supervisor_state(settings.state_path, state)
+        extracted_from, launched_prompts = [], []
+
+        def failing_extract_dialog(session_id, working_directory, output_path):
+            extracted_from.append(session_id)
+            return False
+
+        def launch_recording(agent_command, session_id, working_directory, prompt, **_):
+            launched_prompts.append(prompt)
+            return StubLaunchedSession(0)
+
+        console, errors = io.StringIO(), io.StringIO()
+        with supervisor_names_replaced(
+                extract_dialog=failing_extract_dialog,
+                launch_agent_session=launch_recording,
+                sync_working_branch_with_main=lambda working_directory: "branch sync: stubbed",
+                memory_review_due_lines=lambda: (),
+                stdin_isatty=False), \
+                contextlib.redirect_stdout(console), contextlib.redirect_stderr(errors):
+            supervisor.supervise_sessions(settings)
+        return SimpleNamespace(
+            extracted_from=extracted_from, launched_prompts=launched_prompts,
+            printed=console.getvalue(), errors=errors.getvalue(),
+            state=supervisor.read_supervisor_state(settings.state_path))
+
+    # The handoff's writer is not the session the supervisor tracked, and the
+    # writer's extraction fails: the reason names the writer, whose extraction
+    # was tried, not the tracked session, whose extraction never was.
+    tracked = "tracked-session-aaaa"
+    writer = "writer-session-bbbb"
+    diverged = boot("bootdivergedwriter",
+                    {"consumed_counter": 4, "launched_session_id": tracked, "generation": 4},
+                    f"written-by-session: {writer}\n")
+    check("BOOT WITHOUT A DIALOG EXTRACT: the extraction tried is the handoff writer's",
+          diverged.extracted_from == [writer], repr(diverged.extracted_from))
+    check("BOOT WITHOUT A DIALOG EXTRACT: the reason names the writer whose extraction failed, "
+          "not the tracked session",
+          f"there is no dialog extract because session {writer}'s dialog could not be "
+          "extracted" in diverged.printed
+          and f"session {tracked}'s dialog" not in diverged.printed,
+          diverged.printed[-600:])
+    check("BOOT WITHOUT A DIALOG EXTRACT: the failed extraction is reported with the writer's id",
+          f"extracting session {writer}'s dialog failed" in diverged.errors,
+          diverged.errors[-400:])
+    check("BOOT WITHOUT A DIALOG EXTRACT: a failed extraction at boot still starts the successor "
+          "from the next step, and never says it is not relaunching",
+          len(diverged.launched_prompts) == 1
+          and diverged.launched_prompts[0].startswith("resume the audit")
+          and "not relaunching" not in diverged.errors + diverged.printed,
+          f"{diverged.launched_prompts!r}\n{diverged.errors[-400:]}")
+    check("BOOT WITHOUT A DIALOG EXTRACT: the handoff is consumed",
+          diverged.state.get("consumed_counter") == 5, str(diverged.state))
+
+    # No session was ever recorded: nothing to extract, and the reason says so.
+    unrecorded = boot("bootnosessionrecorded", {"consumed_counter": 4, "generation": 4}, "")
+    check("BOOT WITHOUT A DIALOG EXTRACT: with no earlier session recorded, no extraction is tried",
+          unrecorded.extracted_from == [], repr(unrecorded.extracted_from))
+    check("BOOT WITHOUT A DIALOG EXTRACT: the reason is that no earlier session was recorded",
+          "with its next step as the prompt; there is no dialog extract because no earlier "
+          "session was recorded" in unrecorded.printed,
+          unrecorded.printed[-600:])
+    check("BOOT WITHOUT A DIALOG EXTRACT: with no earlier session recorded, the successor starts "
+          "from the next step",
+          len(unrecorded.launched_prompts) == 1
+          and unrecorded.launched_prompts[0].startswith("resume the audit"),
+          repr(unrecorded.launched_prompts))
+
+
 def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
     """The successor is told which subagents were still working when the
     session it replaces ended, and that it may need to re-commission
@@ -2920,10 +3005,11 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
 
 
 def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str):
-    """carry_over_to_successor reads the retiring session's id off the handoff.
+    """retiring_session_id_from_handoff_writer_or_tracked_launch reads the retiring
+    session's id off the handoff, and carry_over_to_successor extracts it.
 
-    Both callers pass the id from the supervisor's state file, which names the
-    session this supervisor launched; the handoff's own written-by-session
+    Both callers start from the id in the supervisor's state file, which names
+    the session this supervisor launched; the handoff's own written-by-session
     names the session that wrote it. The divergent case below FAILS against
     code that trusts the state file: it extracts and cites the
     launched session instead of the writer. The two fallback cases — field
@@ -2965,7 +3051,10 @@ def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str)
             supervisor.extract_dialog = recording_extract_dialog
             with contextlib.redirect_stdout(console):
                 successor_id, plan = supervisor.carry_over_to_successor(
-                    settings, tracked_session_id, handoff_fields, generation=5)
+                    settings,
+                    supervisor.retiring_session_id_from_handoff_writer_or_tracked_launch(
+                        tracked_session_id, handoff_fields),
+                    handoff_fields, generation=5)
         finally:
             supervisor.extract_dialog = original_extract_dialog
 
@@ -3028,6 +3117,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_memory_review_due_cases(workspace)
     run_memory_review_due_prompt_cases(workspace)
     run_boot_ignition_case(workspace)
+    run_boot_ignition_without_a_dialog_extract_cases(workspace)
     run_first_prompt_file_cases(workspace)
     run_multi_line_next_step_cases(workspace, recent_timestamp)
     run_launch_and_retention_cases(workspace, recent_timestamp)
