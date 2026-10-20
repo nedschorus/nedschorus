@@ -1074,12 +1074,23 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
         "naming the ruling and the doubt>`, where #<issue> is the issue "
         "that holds the ruling.\n\n" + excluded +
         f"Draft title: {title}\n\nDraft GHI-MD, verbatim:\n\n{text}")
+    # Sent in a file: one argument may not exceed 128 KiB on Linux, and a
+    # large GHI-MD is longer.
+    question_path = None
     try:
-        completed = runner([sys.executable, str(ask), question],
+        descriptor, question_path = tempfile.mkstemp(
+            prefix="ghi-issue-write-question-", suffix=".txt")
+        with os.fdopen(descriptor, "w", encoding="utf-8") as question_file:
+            question_file.write(question)
+        completed = runner([sys.executable, str(ask), "--question-file",
+                            question_path],
                            timeout=ADJUDICATION_TIMEOUT_SECONDS, check=False)
     except Exception as failure:                      # noqa: BLE001
         report(f"adjudication skipped: ghi-info did not answer ({failure})")
         return None
+    finally:
+        if question_path is not None:
+            Path(question_path).unlink(missing_ok=True)
     if completed.returncode == GHI_INFO_ASK_RULING_QUESTION_EXIT_CODE:
         conflict = ruling_conflict_from_stderr(completed.stderr)
         if conflict is not None:
@@ -1087,21 +1098,24 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
                    "user's; the write goes ahead and records it in a "
                    "proposed-improvements-or-changes-file beside the GHI-MD")
             return conflict
+    stderr_lines = [line.strip() for line in
+                    (completed.stderr or "").splitlines() if line.strip()]
     if completed.returncode in GHI_INFO_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES:
         # ghi-info answered, but with no verdict: the question was not about
         # issues, or it found a ruling it may not judge. Fail-open like any
         # other missing verdict, and say which, rather than "did not answer".
         # The ask's own progress lines can come first, so the message is found
         # by its opening, falling back on the last line, where main() puts it.
-        stderr_lines = [line.strip() for line in
-                        (completed.stderr or "").splitlines() if line.strip()]
         said = next((line for line in stderr_lines if line.startswith(
             GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS)),
             stderr_lines[-1] if stderr_lines else "no detail")
         report(f"adjudication skipped: ghi-info gave no verdict: {said}")
         return None
     if completed.returncode != 0:
-        report("adjudication skipped: ghi-info did not answer")
+        # The ask prints why it failed, such as ned-box being unreachable,
+        # as its last stderr line.
+        report("adjudication skipped: ghi-info did not answer" +
+               (f": {stderr_lines[-1]}" if stderr_lines else ""))
         return None
     verdict = ""
     for line in (completed.stdout or "").splitlines():

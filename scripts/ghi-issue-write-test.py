@@ -97,6 +97,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -139,6 +140,15 @@ class Completed:
         self.returncode = returncode
 
 
+def with_question_read(arguments):
+    """The command, with the text of a `--question-file` appended."""
+    arguments = list(arguments)
+    if "--question-file" in arguments:
+        question_path = arguments[arguments.index("--question-file") + 1]
+        arguments.append(Path(question_path).read_text(encoding="utf-8"))
+    return arguments
+
+
 class Recorder:
     """Stands in for every subprocess the tool makes.
 
@@ -162,7 +172,11 @@ class Recorder:
     Resolving origin/main is answered for every case, because every create
     does it before reading main and a case that has nothing filed there
     still makes the call. A case that wants that resolution to fail passes
-    its own answer under the same key."""
+    its own answer under the same key.
+
+    The tool sends ghi-info its question in a file it deletes after the
+    call, so the recorder reads the file during the call and records its
+    text as the call's last word, where a case looks for it."""
 
     def __init__(self, answers=None):
         self.calls = []
@@ -171,7 +185,7 @@ class Recorder:
                         **(answers or {})}
 
     def __call__(self, arguments, timeout=None, cwd=None, check=True):
-        self.calls.append(list(arguments))
+        self.calls.append(with_question_read(arguments))
         self.timeouts.append(timeout)
         for prefix, answer in self.answers.items():
             if prefix in " ".join(arguments):
@@ -1239,6 +1253,21 @@ def run_cases(scratch: Path):
                             f"verdict: {first_line}"], lines)
         except tool.Refused as refusal:
             check(case_name, False, f"refused: {refusal}")
+
+    # Any other failing exit carries the ask's last stderr line, which says
+    # why, and the bare report stands when the ask printed nothing.
+    for case_name, stderr, expected in [
+            ("a failing ask's last stderr line is carried into the report",
+             "ghi-info-ask: a progress line\nghi-info-ask: ned-box cannot "
+             "be reached\n",
+             "adjudication skipped: ghi-info did not answer: ghi-info-ask: "
+             "ned-box cannot be reached"),
+            ("a failing ask that printed nothing gets the bare report", "",
+             "adjudication skipped: ghi-info did not answer")]:
+        lines = []
+        tool.adjudicate(REPO, "t", FILE_TEXT, scratch, Recorder({ASK: Completed(
+            "", returncode=1, stderr=stderr)}), lines.append)
+        check(case_name, lines == [expected], lines)
 
     # On the locked path ghi-info-ask.py writes its seat-checkout refresh line
     # or its reincarnation line to stderr before the message, and the Mac
@@ -4924,40 +4953,103 @@ def run_whole_file_set_cases(scratch: Path):
               "refused", False, str(refusal))
 
 
+def run_adjudication_question_file_cases(scratch: Path):
+    """ghi-info's question travels in a file, not as one command-line
+    argument, so a question over Linux's 128 KiB limit for one argument
+    still reaches ghi-info."""
+    ask = scratch / "scripts" / "ghi-info-ask.py"
+    ask.parent.mkdir(parents=True, exist_ok=True)
+    ask.write_text("# stands in for the real one; never executed\n")
+    # A request over Linux's 128 KiB limit for one argument, run for real
+    # against a stand-in ghi-info-ask.py that records what it was asked.
+    oversized_root = scratch / "oversized"
+    (oversized_root / "scripts").mkdir(parents=True)
+    received = oversized_root / "received.txt"
+    (oversized_root / "scripts" / "ghi-info-ask.py").write_text(
+        "import sys\n"
+        "from pathlib import Path\n"
+        "arguments = sys.argv[1:]\n"
+        "path = arguments[arguments.index('--question-file') + 1]\n"
+        f"Path({str(received)!r}).write_text(Path(path).read_text())\n"
+        "print('verdict: unrelated')\n", encoding="utf-8")
+    oversized_text = f"# {EDIT_TITLE}\n\n" + "A long line of the GHI-MD.\n" * 6000
+    oversized_lines = []
+    tool.adjudicate(REPO, EDIT_TITLE, oversized_text, oversized_root,
+                    tool.run, oversized_lines.append, exclude_issue=570)
+    received_text = received.read_text() if received.is_file() else ""
+    check("a request over 128 KiB reaches ghi-info whole, and its verdict "
+          "is read",
+          len(received_text.encode()) > 128 * 1024
+          and oversized_text in received_text
+          and "ghi-info: verdict: unrelated" in oversized_lines
+          and not list(Path(tempfile.gettempdir()).glob(
+              "ghi-issue-write-question-*")),
+          (len(received_text), oversized_lines))
+
+    mkstemp_orig = tool.tempfile.mkstemp
+
+    def failing_mkstemp(*arguments, **keywords):
+        raise OSError(28, "No space left on device")
+
+    tool.tempfile.mkstemp = failing_mkstemp
+    unwritable = Recorder({ASK: Completed("verdict: too-similar #13\n")})
+    unwritable_lines = []
+    try:
+        unwritable_result = tool.adjudicate(
+            REPO, "t", FILE_TEXT, scratch, unwritable, unwritable_lines.append)
+    finally:
+        tool.tempfile.mkstemp = mkstemp_orig
+    check("a question file that cannot be written fails open and says so, "
+          "without asking ghi-info",
+          unwritable_result is None and not unwritable.ran(ASK)
+          and any(line.startswith("adjudication skipped: ghi-info did not "
+                                  "answer") and "No space left" in line
+                  for line in unwritable_lines), unwritable_lines)
+
 def main():
-    import tempfile
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-pull-request-description-test-") as name:
-        run_pull_request_description_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-write-test-") as name:
-        run_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-real-git-test-") as name:
-        run_real_git_listing_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-landing-test-") as name:
-        run_edit_landing_real_git_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-removal-test-") as name:
-        run_settled_file_removal_real_git_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-retry-test-") as name:
-        run_settled_file_removal_collision_and_retry_real_git_cases(
-            Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-landed-test-") as name:
-        run_landed_design_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-push-test-") as name:
-        run_push_time_limit_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-main-test-") as name:
-        run_main_dispatch_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-file-set-test-") as name:
-        run_whole_file_set_cases(Path(name))
-    # A checkout of its own: the reconsidered marker lives at the root of
-    # one and is consumed by the write it passes, so two groups sharing a
-    # directory would share that.
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-edit-test-") as name:
-        run_edit_cases(Path(name))
-    print()
-    if failures:
-        print(f"{len(failures)} case(s) failed")
-        return 1
-    print("all cases passed")
-    return 0
+    # Every tempfile name the tool picks, mkstemp's question files included,
+    # lands in this run's own directory: a check for leftovers sees only this
+    # run's, and a mutant that skips a cleanup leaves nothing in /tmp.
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-write-test-run-") as run_directory:
+        default_tempdir = tempfile.tempdir
+        tempfile.tempdir = run_directory
+        try:
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-pull-request-description-test-") as name:
+                run_pull_request_description_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-write-test-") as name:
+                run_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-real-git-test-") as name:
+                run_real_git_listing_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-landing-test-") as name:
+                run_edit_landing_real_git_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-removal-test-") as name:
+                run_settled_file_removal_real_git_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-retry-test-") as name:
+                run_settled_file_removal_collision_and_retry_real_git_cases(
+                    Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-landed-test-") as name:
+                run_landed_design_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-push-test-") as name:
+                run_push_time_limit_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-main-test-") as name:
+                run_main_dispatch_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-file-set-test-") as name:
+                run_whole_file_set_cases(Path(name))
+            # A checkout of its own: the reconsidered marker lives at the root of
+            # one and is consumed by the write it passes, so two groups sharing a
+            # directory would share that.
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-edit-test-") as name:
+                run_edit_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-adjudication-test-") as name:
+                run_adjudication_question_file_cases(Path(name))
+            print()
+            if failures:
+                print(f"{len(failures)} case(s) failed")
+                return 1
+            print("all cases passed")
+            return 0
+        finally:
+            tempfile.tempdir = default_tempdir
 
 
 if __name__ == "__main__":
