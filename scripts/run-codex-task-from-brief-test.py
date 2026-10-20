@@ -659,6 +659,9 @@ try:
 
         def wait(self, timeout=None):
             return -15
+
+        def poll(self):
+            return -15
     real_killpg, real_sleep = runner.os.killpg, runner.time.sleep
     runner.os.killpg, runner.time.sleep = killpg_answering, sleeps.append
     try:
@@ -693,6 +696,49 @@ try:
               f"error {stop_error!r}, killpg calls {len(killpg_calls)}")
     finally:
         runner.os.killpg, runner.time.sleep = real_killpg, real_sleep
+
+    # A Codex that exits just as the deadline passes is a zombie until reaped, alone in its
+    # group; macOS answers killpg for such a group with EPERM, Linux does not.
+    zombie_codex = subprocess.Popen([sys.executable, "-c", ""], start_new_session=True)
+    time.sleep(0.5)
+    stop_started = time.monotonic()
+    stop_error = None
+    try:
+        runner.stop_process_group(zombie_codex)
+    except OSError as error:
+        stop_error = error
+    stop_seconds = time.monotonic() - stop_started
+    check("stopping a Codex that has exited but is not yet reaped ends at once, without "
+          "an error",
+          stop_error is None and stop_seconds < 2 and zombie_codex.returncode is not None,
+          f"error {stop_error!r}, took {stop_seconds:.1f}s")
+
+    # A failure to stop Codex at the deadline is not a failure to start it.
+    def stop_refused(process):
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        raise PermissionError(1, "Operation not permitted")
+    real_stop, real_codex_command = runner.stop_process_group, runner.codex_command
+    runner.stop_process_group = stop_refused
+    runner.codex_command = lambda *arguments, **options: [
+        sys.executable, "-c", "import time; time.sleep(60)"]
+    fresh_prefetch_case()
+    real_stderr, captured = sys.stderr, __import__("io").StringIO()
+    sys.stderr = captured
+    main_error = main_exit = None
+    try:
+        main_exit = runner.main(["-C", str(checkout), "--brief", str(brief),
+                                 "-o", str(scratch / "stop-refused-report.md"),
+                                 "--deadline-minutes", "0.01"])
+    except PermissionError as error:
+        main_error = error
+    finally:
+        sys.stderr = real_stderr
+        runner.stop_process_group, runner.codex_command = real_stop, real_codex_command
+    check("a failure to stop Codex at the deadline surfaces as that error, not as "
+          "\"could not start Codex\"",
+          main_error is not None and "could not start Codex" not in captured.getvalue(),
+          f"error {main_error!r}, exit {main_exit}, stderr {captured.getvalue()!r}")
 
     empty_brief = scratch / "empty.md"
     empty_brief.write_text("  \n")

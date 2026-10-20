@@ -85,8 +85,9 @@ SANDBOX_TO_PROFILE_BASE = {"read-only": ":read-only", "workspace-write": ":works
 DEFAULT_DEADLINE_MINUTES = 60
 # Codex gets this long to exit after SIGTERM before its process group is killed.
 STOP_GRACE_SECONDS = 10
-# macOS refuses a signal with EPERM while every process left in the group is exiting;
-# the group is gone, and killpg says so, within about 0.2 s.
+# macOS refuses a signal with EPERM while every process left in the group is a zombie,
+# Codex itself included until it is reaped; the group is gone within about 0.2 s of
+# Codex being reaped.
 EXITING_GROUP_SIGNAL_ATTEMPTS = 50
 EXITING_GROUP_SIGNAL_RETRY_SECONDS = 0.1
 # The gh commands --prefetch-github runs: each only reads from GitHub.
@@ -264,12 +265,12 @@ def codex_command(checkout: pathlib.Path, report: pathlib.Path, sandbox: str,
     return command + ["--", prompt]
 
 
-def signal_process_group(group_id: int, signal_number: int) -> bool:
-    """Send the signal to the group; return False when the group is already gone."""
+def signal_process_group(process: subprocess.Popen, signal_number: int) -> bool:
+    """Send the signal to Codex's group; return False when the group is already gone."""
     attempts_left = EXITING_GROUP_SIGNAL_ATTEMPTS
     while True:
         try:
-            os.killpg(group_id, signal_number)
+            os.killpg(process.pid, signal_number)
             return True
         except ProcessLookupError:
             return False
@@ -277,18 +278,21 @@ def signal_process_group(group_id: int, signal_number: int) -> bool:
             attempts_left -= 1
             if attempts_left == 0:
                 raise
+            # Only this program can reap Codex, so a group whose last member is Codex's
+            # zombie would refuse every attempt.
+            process.poll()
             time.sleep(EXITING_GROUP_SIGNAL_RETRY_SECONDS)
 
 
 def stop_process_group(process: subprocess.Popen) -> None:
-    if not signal_process_group(process.pid, signal.SIGTERM):
+    if not signal_process_group(process, signal.SIGTERM):
         return
     try:
         process.wait(timeout=STOP_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
         pass
     # Codex exiting is not enough: a process it started may outlive SIGTERM in the same group.
-    signal_process_group(process.pid, signal.SIGKILL)
+    signal_process_group(process, signal.SIGKILL)
     process.wait()
 
 
