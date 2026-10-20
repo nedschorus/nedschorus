@@ -13,6 +13,9 @@ Usage:
       --target docs/cross-project/foo.md \\
       --report cold-read-records/foo-2026-01-01/codex-restate-second-strongest-model.md
 
+The cold-read-tier `second-strongest-model` asks for the agent-binary's
+second-strongest model.
+
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.
 
