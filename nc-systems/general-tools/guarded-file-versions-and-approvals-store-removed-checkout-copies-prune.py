@@ -19,10 +19,10 @@ with "would delete" for "deleted", and deletes nothing.
 WHEN A COMMIT HOLDS A COPY'S VERSION. A copy whose blob a commit reachable from a durable ref
 of the path's repository holds is deleted, approved or not, in live and removed checkouts
 alike, since the hook's --restore and its diffs read such a version back from git. The durable
-refs are the branches, tags and remote-tracking branches, and each worktree's HEAD, as
-blobs_durable_refs_hold in the hook lists them. refs/work-snapshots/* and refs/stash are not
-durable, since they are deleted within hours, so a version only they hold, like a blob only
-staged, keeps its copy. The path's repository is the git repository enclosing the path, or,
+refs are the branches, tags and remote-tracking branches, as blobs_durable_refs_hold in the
+hook lists them. A worktree's detached HEAD is not durable, since removing the worktree drops it
+and gc then drops its commits, and neither are refs/work-snapshots/* and refs/stash, deleted
+within hours, so a version only they hold, like a blob only staged, keeps its copy. The path's repository is the git repository enclosing the path, or,
 when the path's directory is gone, its nearest directory that still exists: so the
 repository of a removed worktree under the main clone's .claude/worktrees/ is the main clone,
 which shares its commits. A path that no repository encloses, such as one under a removed
@@ -54,7 +54,7 @@ against the approved version. `approved` and `log` are never deleted: they are s
 kept copy means nothing without them.
 
 CONCURRENCY. The hook takes no lock on the store, and none is needed: the hook writes a copy only
-of a version its checkout's HEAD does not hold, of a file that exists, in its own live checkout
+of a version its checkout's branch HEAD does not hold, of a file that exists, in its own live checkout
 or in ~/.claude, and this program deletes only copies a commit on a durable ref holds, which
 loses nothing even when the hook has just written one, or copies under directories that are
 gone, rechecked just before each path's copies go. Each unlink is atomic. A checkout re-created at the same path between that check and the unlinks loses
@@ -321,10 +321,12 @@ def main(arguments=None):
         print(failure, file=sys.stderr)
     print(f"{verb} {result['held_by_commits']} copies of versions a commit on a durable ref "
           f"holds ({result['held_by_commits_bytes']} bytes), and approved copies in "
-          f"{len(result['checkouts'])} removed checkouts ({result['bytes']} bytes); kept, in "
-          f"removed checkouts whose files have a version not approved, "
-          f"{result['kept_not_approved']} copies of such versions and {result['kept_approved']} "
-          f"approved copies; {len(result['failures'])} failures, each named on stderr above")
+          f"{len(result['checkouts'])} removed checkouts ({result['bytes']} bytes); kept, for "
+          f"each file of a removed checkout that has a version not approved, all of that file's "
+          f"copies no commit holds, so the change can still be shown against its approved "
+          f"version: {result['kept_not_approved']} copies of versions not approved and "
+          f"{result['kept_approved']} approved copies of the same files; "
+          f"{len(result['failures'])} failures, each named on stderr above")
     return EXIT_FAILED if result["failures"] else EXIT_DONE
 
 

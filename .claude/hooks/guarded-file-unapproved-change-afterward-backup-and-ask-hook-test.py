@@ -394,6 +394,15 @@ def cases(scratch):
     check("a version HEAD holds at another path is copied",
           world.key(other) in world.versions(other), world.versions(other))
 
+    world = fresh(scratch, "held-only-by-a-detached-head")
+    claude = world.repo / "CLAUDE.md"
+    world.git("checkout", "-q", "--detach")
+    claude.write_text("project v2, committed on a detached HEAD\n")
+    world.git("commit", "-qam", "detached")
+    world.run()
+    check("a version only a detached HEAD holds is copied",
+          world.key(claude) in world.versions(claude), world.versions(claude))
+
     world = fresh(scratch, "approved-version-held-nowhere")
     claude = world.repo / "CLAUDE.md"
     claude.write_text("project v2, approved edit\n")
@@ -1048,13 +1057,14 @@ def durable_ref_cases(scratch):
                                             hook.blob_hash(b"first\n"))]) == set())
     git(empty, "add", "CLAUDE.md")
     git(empty, "commit", "-q", "-m", "first")
-    orphan = Path(scratch) / "durable-refs-orphan-worktree"
-    git(empty, "worktree", "add", "-q", "--orphan", "-b", "orphan", str(orphan))
-    heads = hook.worktree_heads(empty)
-    check("a worktree with no commit yet adds no HEAD to the durable refs",
-          len(heads) == 1 and heads[0].strip("0"), heads)
-    check("and the blobs the durable refs hold can still be listed",
-          hook.blob_hash(b"first\n") in hook.blobs_durable_refs_hold(empty))
+    detached = Path(scratch) / "durable-refs-detached-worktree"
+    git(empty, "worktree", "add", "-q", "--detach", str(detached))
+    (detached / "CLAUDE.md").write_text("only at a detached worktree HEAD\n")
+    git(detached, "commit", "-q", "-am", "detached")
+    held = hook.blobs_durable_refs_hold(empty)
+    check("a branch's blobs are held by the durable refs", hook.blob_hash(b"first\n") in held)
+    check("a blob only a detached worktree's HEAD holds is not",
+          hook.blob_hash(b"only at a detached worktree HEAD\n") not in held)
 
 
 def mac_cases(scratch):

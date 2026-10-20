@@ -164,7 +164,7 @@ def test_removed_checkouts_pruned_and_others_kept():
               and "deleting " + str(live) not in result.stdout, result.stdout)
         check("the summary counts two checkouts, one copy not approved and one approved copy kept",
               "approved copies in 2 removed checkouts" in result.stdout
-              and "a version not approved, 1 copies of such versions and 1 approved copies" in result.stdout,
+              and "1 copies of versions not approved and 1 approved copies of the same files" in result.stdout,
               result.stdout)
 
 
@@ -185,7 +185,7 @@ def test_copies_of_paths_with_a_version_not_approved_kept():
         check("a copy neither approved nor logged is kept", stray.exists())
         check("and so is the approved copy beside it", accounted.exists())
         check("the summary counts the stray copy as not approved and the other two as approved",
-              "a version not approved, 1 copies of such versions and 2 approved copies" in result.stdout,
+              "1 copies of versions not approved and 2 approved copies of the same files" in result.stdout,
               result.stdout)
 
 
@@ -520,7 +520,7 @@ def test_copies_only_refs_that_are_not_durable_hold_kept():
         git("-C", str(repository), "update-ref", "refs/work-snapshots/agent", snapshot)
         (repository / "CLAUDE.md").write_text("only in a stash\n")
         git("-C", str(repository), "stash", "-q")
-        # A detached worktree's HEAD, on no branch, is durable.
+        # A detached worktree's HEAD, on no branch, is not durable: removing the worktree drops it.
         linked = root / "linked-worktree"
         git("-C", str(repository), "worktree", "add", "-q", "--detach", str(linked))
         (linked / "CLAUDE.md").write_text("only at a detached worktree HEAD\n")
@@ -537,7 +537,7 @@ def test_copies_only_refs_that_are_not_durable_hold_kept():
         check("a copy only a refs/work-snapshots/ ref holds is kept", snapshot_only.exists(),
               result.stdout)
         check("a copy only refs/stash holds is kept", stash_only.exists(), result.stdout)
-        check("a copy only a detached worktree's HEAD holds is deleted", not detached.exists(),
+        check("a copy only a detached worktree's HEAD holds is kept", detached.exists(),
               result.stdout)
 
 
@@ -557,20 +557,6 @@ def test_repository_that_cannot_be_named_fails():
               result.stderr and "injected failure" in result.stderr, result.stderr)
         check("and keeps that path's copy", copy.exists())
         check("the other checkout is still pruned", not other.exists(), result.stdout)
-
-
-def test_worktrees_that_cannot_be_listed_fail():
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory).resolve()
-        store, _, repository = scratch(root)
-        (repository / "CLAUDE.md").write_text("one\n")
-        git("-C", str(repository), "add", "CLAUDE.md")
-        git("-C", str(repository), "commit", "-q", "-m", "one")
-        copy = add_version(store, f"{repository}/CLAUDE.md", "one\n", approved=True)
-        result = run(store, PATH=path_failing_git(root, "worktree list"))
-        check("git that cannot list the worktrees exits 1, and keeps the copy",
-              result.returncode == 1 and copy.exists() and "injected failure" in result.stderr,
-              (result.stdout, result.stderr))
 
 
 def test_commits_that_cannot_be_listed_fail():
@@ -635,7 +621,6 @@ if __name__ == "__main__":
     test_commits_that_cannot_be_listed_fail()
     test_copies_only_refs_that_are_not_durable_hold_kept()
     test_repository_that_cannot_be_named_fails()
-    test_worktrees_that_cannot_be_listed_fail()
     test_mac_deadline_names_what_was_deleted()
     if failures:
         print(f"{len(failures)} case(s) failed")

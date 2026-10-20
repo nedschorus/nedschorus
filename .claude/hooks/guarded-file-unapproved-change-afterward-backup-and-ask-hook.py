@@ -7,7 +7,7 @@ instruction-file-guard.py protects, plus ~/.claude/CLAUDE.md and ~/.claude/setti
 each run the hook compares each checked file's stat data with what it stored at its previous
 run, hashes only a file whose stat data differs, logs each new version in this machine's
 directory of the log-store kind guarded-file-versions-and-approvals/, copies it there unless
-the HEAD commit of the file's checkout holds it, and, when the version is not in its path's
+the file's checkout is on a branch whose HEAD commit holds it, and, when the version is not in its path's
 approved set, tells the agent to show the user the change and run this program with --approve
 or --restore. The change stays in place while he is asked. A version with no copy is read
 back from git; a file outside every checkout, such as ~/.claude/CLAUDE.md, is always copied.
@@ -400,34 +400,28 @@ class Store:
 
 # ---------------------------------------------------------------- versions git holds
 
-# Git holds a version when a commit that a durable ref reaches holds its blob: a branch, a tag,
-# a remote-tracking branch, or a worktree's HEAD. refs/work-snapshots/* and refs/stash are not
-# durable, since they are deleted within hours, and neither is a blob only staged or only in the
-# object store, which gc deletes; a version held only there keeps its copy.
+# Git holds a version when a commit that a durable ref reaches holds its blob: a branch, a tag
+# or a remote-tracking branch. A worktree's detached HEAD is not durable, since removing the
+# worktree drops it and gc then drops its commits, and neither are refs/work-snapshots/* and
+# refs/stash, deleted within hours, or a blob only staged or only in the object store; a version
+# held only there keeps its copy.
 DURABLE_REF_OPTIONS = ("--branches", "--tags", "--remotes")
-
-
-def worktree_heads(checkout):
-    """The commit at the HEAD of each worktree of the checkout's repository."""
-    output = git_text(checkout, "worktree", "list", "--porcelain", "-z")
-    heads = {field[len("HEAD "):] for field in output.split("\0") if field.startswith("HEAD ")}
-    # A worktree with no commit yet shows HEAD as all zeros.
-    return sorted(head for head in heads if head.strip("0"))
 
 
 def blobs_durable_refs_hold(checkout):
     """Every blob id a commit reachable from a durable ref of the checkout's repository holds:
     the whole history, so it is for the daily prune, not for the hook's run on every tool call."""
-    output = git_text(checkout, "rev-list", "--objects", *DURABLE_REF_OPTIONS,
-                      *worktree_heads(checkout), timeout=600)
+    output = git_text(checkout, "rev-list", "--objects", *DURABLE_REF_OPTIONS, timeout=600)
     # Commits and trees are listed too; only a blob's id can name a copy.
     return {line.split(" ", 1)[0] for line in output.splitlines()}
 
 
 def versions_head_holds(checkout, versions):
     """The (path, blob id) pairs among versions whose path, in the checkout's HEAD commit, is
-    that blob. HEAD is the one durable ref the hook can ask cheaply on every tool call; a
-    version only another durable ref holds is copied, and the daily prune deletes the copy."""
+    that blob, when HEAD is on a branch; none when HEAD is detached, since a detached HEAD is
+    not a durable ref. A branch's HEAD is the one durable ref the hook can ask cheaply on every
+    tool call; a version only another durable ref holds is copied, and the daily prune deletes
+    the copy."""
     relative = {}
     for path, blob_id in versions:
         if blob_id == DELETED:
@@ -439,6 +433,11 @@ def versions_head_holds(checkout, versions):
     if subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify", "HEAD^{commit}"],
                       capture_output=True, timeout=60, check=False).returncode == 1:
         # A repository with no commit yet holds nothing.
+        return set()
+    # git symbolic-ref -q exits 1 when HEAD is detached. Any failure counts as detached, which
+    # costs only a copy the daily prune deletes later.
+    if subprocess.run(["git", "-C", str(checkout), "symbolic-ref", "-q", "HEAD"],
+                      capture_output=True, timeout=60, check=False).returncode != 0:
         return set()
     output = git_text(checkout, "--literal-pathspecs", "ls-tree", "-r", "-z", "--full-tree",
                       "HEAD", "--", *sorted(relative))
@@ -760,7 +759,8 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
     """Everything that touches the store. Returns (asks, reminders, settled paths).
 
     approvals: [(path, key, how, rule)] git's own work and renames, recorded before the checks.
-    checks: the files whose content changed, each copied unless its checkout's HEAD holds it.
+    checks: the files whose content changed, each copied unless its checkout's branch HEAD
+    holds it.
     unsettled_unchanged: [(path, key)] files left unsettled by an earlier run. quiet: a rebase,
     merge, cherry-pick or revert is stopped, so every version is copied and nothing is asked."""
     for path, key, how, rule in approvals:
