@@ -1606,27 +1606,33 @@ class SupervisorSettings:
         return self.handoff_directory / f"{self.agent}-appended-system-prompt-agent-part.md"
 
 
-def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: str,
-                            handoff_fields: dict, generation: int):
-    """Return (successor_session_id, ignition_plan), or (None, None) if extraction fails."""
+def retiring_session_id_from_handoff_writer_or_tracked_launch(tracked_session_id: str,
+                                                              handoff_fields: dict) -> str:
+    """Return the session whose dialog the successor inherits: the handoff's writer, else the tracked session."""
     # Prefer written-by-session: another session may have taken over the worktree since the supervisor launched.
     handoff_written_by_session = handoff_fields.get(WRITTEN_BY_SESSION_FIELD, "")
     if (handoff_written_by_session
             and handoff_written_by_session != WRITTEN_BY_SESSION_UNKNOWN_VALUE
-            and handoff_written_by_session != retiring_session_id):
+            and handoff_written_by_session != tracked_session_id):
         print(f"handoff-supervisor: the handoff names session "
               f"{handoff_written_by_session} as its writer, not the tracked "
-              f"{retiring_session_id}; carrying over the writer's dialog")
-        retiring_session_id = handoff_written_by_session
+              f"{tracked_session_id}; carrying over the writer's dialog")
+        return handoff_written_by_session
+    return tracked_session_id
 
+
+def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: str,
+                            handoff_fields: dict, generation: int):
+    """Return (successor_session_id, ignition_plan), or (None, None) if extraction fails.
+
+    Pass retiring_session_id as retiring_session_id_from_handoff_writer_or_tracked_launch
+    returns it. Each caller decides whether a failed extraction stops the relaunch.
+    """
     extract_path = settings.handoff_directory / f"{settings.agent}-dialog-{generation:04d}.md"
     extracted = extract_dialog(retiring_session_id, settings.working_directory, extract_path)
     if not extracted:
-        print(
-            "handoff-supervisor: extraction failed; not relaunching "
-            "(the transcript is intact — recover by hand)",
-            file=sys.stderr,
-        )
+        print(f"handoff-supervisor: extracting session {retiring_session_id}'s dialog failed",
+              file=sys.stderr)
         return None, None
 
     shutil.copy2(
@@ -1709,7 +1715,10 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                         settings.state_path, state, None, reason=AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF)
                     return 0
             generation += 1
-            retiring_session_id = state.get(LAUNCHED_SESSION_ID_STATE_KEY)
+            tracked_session_id = state.get(LAUNCHED_SESSION_ID_STATE_KEY)
+            retiring_session_id = (
+                retiring_session_id_from_handoff_writer_or_tracked_launch(tracked_session_id, boot_fields)
+                if tracked_session_id else None)
             successor_session_id, ignition_plan = (
                 carry_over_to_successor(settings, retiring_session_id, boot_fields, generation)
                 if retiring_session_id else (None, None)
@@ -1876,9 +1885,12 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 return 0
 
         successor_session_id, ignition_plan = carry_over_to_successor(
-            settings, session_id, handoff_fields, generation
+            settings, retiring_session_id_from_handoff_writer_or_tracked_launch(session_id, handoff_fields),
+            handoff_fields, generation
         )
         if successor_session_id is None:
+            print("handoff-supervisor: not relaunching (the transcript is intact — recover by hand)",
+                  file=sys.stderr)
             # Leave the handoff unconsumed so recovery still prefers boot-ignition to the exit record.
             record_agent_exit_in_supervisor_state(settings.state_path, state, process.returncode)
             return 0

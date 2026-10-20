@@ -405,6 +405,59 @@ def run_agent_exit_record_cases(workspace: Path):
           str(state))
 
 
+def run_failed_extraction_at_a_handoff_case(workspace: Path):
+    """A handoff arrives, the retiring session's dialog cannot be extracted: no
+    successor starts, the handoff stays unconsumed, the exit is recorded, and
+    the console says so and names the session whose extraction failed. The
+    handoff names another session as its writer, so the extraction must be
+    tried on the writer, not on the session the supervisor launched."""
+    handoff_directory = workspace / "failedextraction"
+    handoff_directory.mkdir(parents=True)
+    settings = supervisor.SupervisorSettings(
+        agent="failedextraction", working_directory=workspace,
+        handoff_directory=handoff_directory, agent_command="unused-stub-agent",
+        first_prompt="")
+    launched_session_ids, extracted_from = [], []
+    writer_session_id = "11111111-2222-3333-4444-555555555555"
+
+    def launch(agent_command, session_id, working_directory, prompt, **_):
+        launched_session_ids.append(session_id)
+        settings.handoff_path.write_text(
+            f"restart-counter: 1\nwritten-by-session: {writer_session_id}\n"
+            "next-step: carry on\n", encoding="utf-8")
+        return StubLaunchedSession(-15, ended=False)
+
+    def failing_extract_dialog(session_id, working_directory, output_path):
+        extracted_from.append(session_id)
+        return False
+
+    console, errors = io.StringIO(), io.StringIO()
+    with supervisor_names_replaced(
+            launch_agent_session=launch,
+            stop_session=lambda process: process.terminate(),
+            extract_dialog=failing_extract_dialog,
+            sync_working_branch_with_main=lambda working_directory: "branch sync: stubbed",
+            stdin_isatty=True), \
+            contextlib.redirect_stdout(console), contextlib.redirect_stderr(errors):
+        exit_code = supervisor.supervise_sessions(settings)
+    state = supervisor.read_supervisor_state(settings.state_path)
+    check("FAILED EXTRACTION: a handoff whose dialog cannot be extracted starts no successor",
+          exit_code == 0 and len(launched_session_ids) == 1,
+          f"{exit_code!r} {launched_session_ids!r} {extracted_from!r}")
+    check("FAILED EXTRACTION: the extraction is tried on the handoff's writer, "
+          "not on the launched session",
+          extracted_from == [writer_session_id], f"{extracted_from!r} {launched_session_ids!r}")
+    check("FAILED EXTRACTION: the console names the session whose extraction failed "
+          "and says it is not relaunching",
+          f"extracting session {writer_session_id}'s dialog failed" in errors.getvalue()
+          and "not relaunching (the transcript is intact — recover by hand)" in errors.getvalue(),
+          errors.getvalue()[-400:])
+    check("FAILED EXTRACTION: the handoff stays unconsumed and the exit is recorded",
+          state.get("consumed_counter") is None
+          and supervisor.agent_exit_record_from_supervisor_state(state) is not None,
+          str(state))
+
+
 def process_is_gone_within_seconds(process_id: int, seconds: float) -> bool:
     """True once `ps` finds no process with this id, or finds it a zombie: a
     killed process whose parent has died waits as one until it is reaped."""
@@ -1494,6 +1547,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_dont_restart_without_a_terminal_case(workspace)
     run_no_seat_recycle_refusal_case(workspace)
     run_agent_exit_record_cases(workspace)
+    run_failed_extraction_at_a_handoff_case(workspace)
     run_handoff_worktree_cleanup_cases(workspace)
     run_resume_after_a_death_without_a_handoff_cases(workspace)
     run_by_hand_resume_cases(workspace)
