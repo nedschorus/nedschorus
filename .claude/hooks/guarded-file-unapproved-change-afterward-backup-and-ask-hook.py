@@ -90,6 +90,7 @@ HOW_GIT = "git"
 HOW_EDIT = "edit"
 HOW_USER = "user"
 HOW_OBVIOUS_FIX = "obvious-fix"
+HOW_PRE_APPROVED = "pre-approved"
 HOW_STOCK = "stock"
 HOW_RENAME = "rename"
 
@@ -115,6 +116,8 @@ ASK_INSTRUCTIONS = (
     "run once: python3 {program} --approve {pairs}\n"
     "If you wrote an obvious-fix marker before you made the change, run that --approve command "
     "without asking him, then tell him what you fixed.\n"
+    "If you wrote a `#pre_approved_change` marker before you made the change, run that "
+    "--approve command without asking him.\n"
     "If he declines, run: python3 {program} --restore {pairs}\n"
     "If he declines a version that is in a commit, also run, for each such file: "
     "git commit --only -m \"Put back the approved <file name>\" -- <path>")
@@ -1164,7 +1167,8 @@ def pairs_from(arguments):
 
 
 def approve(pairs, cwd: Path):
-    """Record the user's yes for each (path, hash), spending the approval marker once."""
+    """Record each (path, hash) as approved, by the user's words, an obvious-fix marker or a
+    pre-approved-change marker, spending the approval marker once."""
     checkout = guard().enclosing_repository_root(cwd)
     if checkout is None:
         raise Refused(f"{cwd} is in no checkout, so there is no {APPROVAL_MARKER_NAME} to read; "
@@ -1175,9 +1179,34 @@ def approve(pairs, cwd: Path):
     if words is None:
         raise Refused(f"there is no approval in {marker}. Show the user each change and ask him; "
                       f"if he approves, write his words into {marker} and run this command again")
+    first_line = guard().PRE_APPROVED_CHANGE_MARKER_FIRST_LINE
+    pre_approved = words.splitlines()[0].rstrip() == first_line
+    if pre_approved and guard().pre_approved_change_marker_gives_no_reason(words):
+        raise Refused(f"{marker} has `{first_line}` as its first line but no second line naming "
+                      "the exception on the approval page the change falls under, or `on neither "
+                      "list`, so it approves nothing. Put that on its second line and run this "
+                      "command again")
     obvious_fix = words.startswith(OBVIOUS_FIX_MARKER_PREFIX)
-    fix = " ".join(line.strip() for line in words[len(OBVIOUS_FIX_MARKER_PREFIX):].splitlines()
-                   if line.strip()) or "(the marker does not say what)"
+    if pre_approved:
+        # One log field: a tab in the agent's words would split it.
+        exception = " ".join(words.splitlines()[1].split())
+        how, extra_fields = HOW_PRE_APPROVED, [exception]
+        late_marker_kind = f"`{first_line}` marker"
+
+        def late_marker_line(path):
+            return (f"A change to the guarded file {path} that needs no approval as "
+                    f"`{exception}`; the marker was written after the change, so it needs your yes")
+    elif obvious_fix:
+        fix = " ".join(line.strip() for line in words[len(OBVIOUS_FIX_MARKER_PREFIX):].splitlines()
+                       if line.strip()) or "(the marker does not say what)"
+        how, extra_fields = HOW_OBVIOUS_FIX, []
+        late_marker_kind = "obvious-fix marker"
+
+        def late_marker_line(path):
+            return (f"An obvious fix to the guarded file {path}; the marker was written after the "
+                    f"change, so it needs your yes: {fix}")
+    else:
+        how, extra_fields = HOW_USER, []
     marker_time = os.stat(marker).st_mtime_ns
     for path, key in pairs:
         now = current_version(path)[0]
@@ -1185,28 +1214,26 @@ def approve(pairs, cwd: Path):
             raise Refused(f"{path} no longer holds version {key} but {now}, so the user was not "
                           "shown this version. Show him the change the hook's latest message "
                           "gives, and ask him again")
-    how = HOW_OBVIOUS_FIX if obvious_fix else HOW_USER
 
     def work(store, end):
         logs = {path: store.log(path) for path, _ in pairs}
-        if obvious_fix:
+        if how != HOW_USER:
             for path, key in pairs:
                 seen = first_seen_time(logs[path], key)
                 # Equal times count as the marker coming after, so the change goes to the user.
                 if seen is None or marker_time >= seen:
                     raise Refused(
-                        f"the obvious-fix marker in {marker} was written after this hook first "
+                        f"the {late_marker_kind} in {marker} was written after this hook first "
                         f"saw {path} at version {key}, so it cannot approve that version. Show "
-                        "the user the change and ask him, starting with this line: \"An obvious "
-                        f"fix to the guarded file {path}; the marker was written after the "
-                        f"change, so it needs your yes: {fix}\". If he approves, write his words "
+                        "the user the change and ask him, starting with this line: "
+                        f"\"{late_marker_line(path)}\". If he approves, write his words "
                         f"into {marker} and run this command again")
         if time.monotonic() > end:
             raise StoreUnreachable("the deadline passed before the approval was recorded")
         for path, key in pairs:
             if key not in store.approved(path):
                 store.approve(path, key)
-            log_line(store, path, "approved", "command-line", "", key, how)
+            log_line(store, path, "approved", "command-line", "", key, how, *extra_fields)
         return True
 
     run_command_work(work)
