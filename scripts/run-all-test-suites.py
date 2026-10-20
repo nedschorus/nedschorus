@@ -136,7 +136,8 @@ inside the sandbox, such as one a suite of this program starts, does not
 start another: bwrap cannot start inside bwrap, and its suites are already
 confined. The suites listed in SUITES_RUN_WITHOUT_ANY_SANDBOX cannot
 work inside it and run unconfined, each named in the report with the reason.
-Three lists say which sandbox a suite gets: SUITES_RUN_WITHOUT_ANY_SANDBOX,
+Three dicts say which sandbox a suite gets, each mapping a suite's path to the
+reason it gets that sandbox: SUITES_RUN_WITHOUT_ANY_SANDBOX,
 SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY (suites
 whose sandbox gets a writable copy-on-write overlay of the repository's git
 directory) and SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK (suites
@@ -1171,7 +1172,7 @@ def suite_sandbox_lists_read_from_checkout_under_test(top):
         raise CouldNotRun(
             f"{PROGRAM}: not run — {source_file} could not be read "
             f"({type(error).__name__}: {error}), so which sandbox each suite runs in is unknown.\n"
-            f"If the file is missing or unreadable, check that it exists and that you can read it; "
+            f"If the file is unreadable, check that you can read it; "
             f"if it is not UTF-8, save it as UTF-8.\n"
             f"Then rerun the command you ran.")
     try:
