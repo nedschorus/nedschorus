@@ -1027,12 +1027,16 @@ with tempfile.TemporaryDirectory() as scratch:
           unreachable_wt.exists()
           and (unreachable_wt / "cold-read-records" / cold_read_record_name / "fast-read.md").is_file()
           and "unreachable-wt: record shipment FAILED, worktree kept — removing it would delete "
-          "record(s) the log-store does not hold" in unreachable.stdout
+          "a record the log-store does not hold" in unreachable.stdout
           and "FAILED:" in unreachable.stdout and unreachable.returncode == 1
           and "unreachable-wt: removed" not in unreachable.stdout,
           unreachable.stdout + unreachable.stderr)
-    check("--remove prints each failed shipment's line once, inside the record shipment FAILED line",
-          unreachable.stdout.count("FAILED:") == 2  # one per record, both on the FAILED line
+    check("--remove prints each failed shipment's line once, inside a record shipment FAILED line "
+          "of its own",
+          unreachable.stdout.count("FAILED:") == 2
+          and len([line for line in unreachable.stdout.splitlines()
+                   if line.startswith("unreachable-wt: record shipment FAILED")
+                   and line.count("FAILED:") == 1]) == 2
           and "unreachable-wt: FAILED" not in unreachable.stdout,
           unreachable.stdout)
     check("--remove tells a worktree whose records failed to ship that the next --remove retries, "
@@ -1045,8 +1049,8 @@ with tempfile.TemporaryDirectory() as scratch:
           unreachable.stdout)
     unreachable_lines = unreachable.stdout.splitlines()
     finished_line = "clean-worktrees: finished; each failure is named above"
-    check("--remove names the unshipped record on a FAILED line before the finished line, "
-          "and that line is the run's only FAILED line outside the shippers' own",
+    check("--remove names each unshipped record on a FAILED line before the finished line, "
+          "and those are the run's only FAILED lines",
           finished_line in unreachable_lines
           and [line for line in unreachable_lines if "FAILED" in line]
           == [line for line in unreachable_lines[:unreachable_lines.index(finished_line)]

@@ -330,7 +330,7 @@ def log_store_records_in(worktree):
 
 
 def ship_log_store_records(worktree):
-    """Ship every record the worktree holds; return (record path, shipper line) for each that did not ship."""
+    """Ship every record the worktree holds, printing a line for each; return the shipper lines of those that did not ship."""
     unshipped = []
     for shipper, record in log_store_records_in(worktree):
         shipment = subprocess.run([sys.executable, str(shipper), str(record)],
@@ -342,9 +342,12 @@ def ship_log_store_records(worktree):
             last_error = shipment.stderr.strip().splitlines()[-1:]
             line = (f"the shipper printed nothing (exit {shipment.returncode})"
                     + (f": {last_error[0]}" if last_error else ""))
-        # A failed shipment's line is printed once, inside the FAILED line, so a reader counts it once.
         if shipment.returncode:
-            unshipped.append((record.relative_to(worktree), line))
+            # Printed now, not after the loop: a later shipment can hang until the handoff's timeout kills this run.
+            # The shipper's line appears only inside this FAILED line, so a reader counts it once.
+            print(f"{worktree.name}: record shipment FAILED, worktree kept — removing it would delete "
+                  f"a record the log-store does not hold: {record.relative_to(worktree)} ({line})")
+            unshipped.append(line)
         else:
             print(f"{worktree.name}: {line}")
     return unshipped
@@ -391,15 +394,12 @@ def remove_worktree(worktree, branch, repo, discarded):
     """Ship its log-store records, then remove a done worktree and its merged branch; return success."""
     unshipped = ship_log_store_records(worktree)
     if unshipped:
-        print(f"{worktree.name}: record shipment FAILED, worktree kept — removing it would delete "
-              f"record(s) the log-store does not hold: "
-              + "; ".join(f"{record} ({line})" for record, line in unshipped))
         # No next-step line may contain FAILED: the handoff-supervisor counts each such line as a failure.
-        if any(line.startswith("REFUSED:") for _, line in unshipped):
+        if any(line.startswith("REFUSED:") for line in unshipped):
             print(f"{worktree.name}: for each record whose line starts REFUSED:, rename its directory "
                   f"as that line says; the next scripts/clean-worktrees.py --remove then ships it "
                   f"and removes the worktree")
-        if not all(line.startswith("REFUSED:") for _, line in unshipped):
+        if not all(line.startswith("REFUSED:") for line in unshipped):
             print(f"{worktree.name}: for each record whose line does not start REFUSED:, do nothing "
                   f"now: the next scripts/clean-worktrees.py --remove, daily or at a handoff, "
                   f"ships the record again; "
