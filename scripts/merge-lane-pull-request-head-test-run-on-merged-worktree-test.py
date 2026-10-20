@@ -155,6 +155,26 @@ def main():
               and stdout == "PR 7 head test run: exit 0; SUMMARY: fake summary for pr7-merged\n",
               f"exit {live.returncode}\n{first!r}\n{stdout}{rest}")
 
+        # /dev/full fails every write with ENOSPC, as a full disk under the outputs does.
+        if Path("/dev/full").exists():
+            (helpers / "hr" / "pr9").mkdir(parents=True, exist_ok=True)
+            (helpers / "hr" / "pr9" / "stderr").symlink_to("/dev/full")
+            completed, calls = run_program(scratch, helpers, {}, "9")
+            lines = completed.stdout.splitlines()
+            check("when writing the run's stderr to <outputs>/stderr fails, the program "
+                  "says so, with the failed close of that file, prints the run's exit code "
+                  "and SUMMARY line, and exits 2",
+                  completed.returncode == 2 and "Traceback" not in completed.stderr
+                  and lines and lines[0].startswith("PR 9 head test run, process ")
+                  and (f"writing its stderr to {helpers}/hr/pr9/stderr failed (OSError: "
+                       "[Errno 28] No space left on device; closing it then failed too "
+                       "(OSError: [Errno 28] No space left on device))") in lines[0]
+                  and lines[-1]
+                  == "PR 9 head test run: exit 0; SUMMARY: fake summary for pr9-merged",
+                  f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+        else:
+            print("SKIP  a failing write to <outputs>/stderr: /dev/full does not exist here")
+
         # The program's stderr is a pipe whose reading end is closed, so each write to it
         # fails; the run prints far more than a pipe holds.
         unread = subprocess.Popen(
