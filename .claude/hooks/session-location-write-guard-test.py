@@ -63,8 +63,9 @@ def run_hook(session_cwd: Path, file_path: str, decoy: Path, notebook: bool = Fa
 
 
 def git(arguments, cwd: Path):
+    """Run a fixture's git command; a failed setup step stops the suite and names the command."""
     return subprocess.run(["git", *arguments], cwd=str(cwd),
-                          capture_output=True, text=True, check=False)
+                          capture_output=True, text=True, check=True)
 
 
 with tempfile.TemporaryDirectory() as temporary_directory:
@@ -228,8 +229,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     stub_git.chmod(0o755)
     # With no marker present the old reading's refusal is visible directly.
     result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=stub_directory)
-    check("an unreadable HEAD does not refuse a healthy seat as detached",
-          result.returncode == 0, result.stderr)
+    check("an unreadable HEAD does not refuse a healthy seat, and reports that it could not check",
+          result.returncode == 1 and "could not check the write" in result.stderr
+          and "exited 128" in result.stderr, (result.returncode, result.stderr))
     check("an unreadable HEAD does not claim the seat is on a detached HEAD",
           "detached HEAD" not in result.stderr, result.stderr)
     # And with one present, the old reading spent it to let the write through —
@@ -240,7 +242,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("an unreadable HEAD does not spend the seat's marker", stub_marker.exists())
     stub_marker.unlink(missing_ok=True)
 
-    # One-sided git failures must reach "unknown", not a repository state.
+    # One-sided git failures must be reported as a failure, not read as a repository state.
     # Found on PR #103's review, in the replacement for is_detached: with only
     # symbolic-ref broken the seat read as detached, and with only verify
     # broken it read as unborn — the same class the replacement was written to
@@ -260,10 +262,49 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                         encoding="utf-8")
         stub.chmod(0o755)
         result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=one_sided)
-        check(f"a healthy seat survives a broken {broken}",
-              result.returncode == 0, result.stderr)
+        check(f"a healthy seat survives a broken {broken}, and the guard says it could not check",
+              result.returncode == 1 and "could not check the write" in result.stderr
+              and "exited 3" in result.stderr, (result.returncode, result.stderr))
         check(f"a broken {broken} is not reported as \"{wrong_state}\"",
               wrong_state not in result.stderr, result.stderr)
+
+    # A git failure in any other question the guard asks is reported, not read as an answer.
+    def failing_git_directory(name, condition):
+        directory = tmp / f"stub-{name}"
+        directory.mkdir()
+        (directory / "git").write_text(
+            "#!/bin/sh\n"
+            f"if {condition}; then echo 'fatal: stand-in failure' >&2; exit 128; fi\n"
+            f'exec {real_git} "$@"\n', encoding="utf-8")
+        (directory / "git").chmod(0o755)
+        return directory
+
+    common_dir_failing = failing_git_directory(
+        "git-common-dir", '[ "$1" = rev-parse ] && [ "$2" = --git-common-dir ]')
+    result = run_hook(reference, str(reference / "docs.md"), decoy,
+                      path_prefix=common_dir_failing)
+    check("a failed reference-checkout question in the session's checkout is reported, "
+          "not read as \"not the reference\"",
+          result.returncode == 1 and "stand-in failure" in result.stderr,
+          (result.returncode, result.stderr))
+    result = run_hook(seat, str(reference / "landed-from-seat.md"), decoy,
+                      path_prefix=common_dir_failing)
+    check("a failed reference-checkout question about a write's target is reported",
+          result.returncode == 1 and "stand-in failure" in result.stderr,
+          (result.returncode, result.stderr))
+    check_ignore_failing = failing_git_directory("check-ignore", '[ "$1" = check-ignore ]')
+    result = run_hook(detached, str(detached / "notes.md"), decoy,
+                      path_prefix=check_ignore_failing)
+    check("a failed git check-ignore in a detached checkout is reported, not read as \"not ignored\"",
+          result.returncode == 1 and "check-ignore" in result.stderr
+          and "stand-in failure" in result.stderr, (result.returncode, result.stderr))
+    git_dir_failing = failing_git_directory(
+        "absolute-git-dir", '[ "$1" = rev-parse ] && [ "$2" = --absolute-git-dir ]')
+    result = run_hook(detached, str(detached / "notes.md"), decoy, path_prefix=git_dir_failing)
+    check("a failed git-directory lookup in a detached checkout is reported, not read as "
+          "\"no operation in progress\"",
+          result.returncode == 1 and "--absolute-git-dir" in result.stderr
+          and "stand-in failure" in result.stderr, (result.returncode, result.stderr))
 
     # ------------------------------------------------------------------
     # PR #91's review: the .git asymmetry, and marker inertness

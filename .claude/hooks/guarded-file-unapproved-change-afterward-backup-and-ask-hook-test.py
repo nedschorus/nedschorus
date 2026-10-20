@@ -436,6 +436,38 @@ def cases(scratch):
           and second in world.versions(claude),
           (result.returncode, result.stderr, claude.read_text(), world.versions(claude)))
 
+    world = fresh(scratch, "restore-commit-check-fails")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2, committed\n")
+    world.git("commit", "-qam", "v2")
+    second = world.key(claude)
+    world.run()
+    world.failing_git("ls-tree HEAD --")
+    result = world.command("--restore", claude, second)
+    world.failing_git(None)
+    check("--restore whose git ls-tree fails says it could not tell whether the declined version "
+          "is in a commit, with git's stderr and the command to run if it is",
+          result.returncode == 0 and claude.read_text() == "project v1\n"
+          and "Could not tell whether the declined version" in result.stdout
+          and "injected failure" in result.stdout and "git commit --only" in result.stdout,
+          (result.returncode, result.stdout, result.stderr))
+
+    world = fresh(scratch, "restore-unborn-repository")
+    unborn = world.agents / "unborn"
+    unborn.mkdir()
+    world.git("init", "-q", cwd=unborn)
+    unborn_claude = unborn / "CLAUDE.md"
+    unborn_claude.write_text("unborn v1\n")
+    world.run(tool="Edit", file_path=unborn_claude, cwd=unborn)
+    unborn_claude.write_text("unborn v2\n")
+    declined = world.key(unborn_claude)
+    world.run(cwd=unborn)
+    result = world.command("--restore", unborn_claude, declined)
+    check("--restore in a repository with no commit yet gives no commit advice and reports no "
+          "failure", result.returncode == 0 and "commit" not in result.stdout.lower()
+          and unborn_claude.read_text() == "unborn v1\n",
+          (result.returncode, result.stdout, result.stderr, unborn_claude.read_text()))
+
     # -- a version git holds is logged, not copied, and read back from git
     world = fresh(scratch, "git-holds")
     claude = world.repo / "CLAUDE.md"
@@ -539,6 +571,16 @@ def cases(scratch):
     world.failing_git(None)
     check("a hook run whose git symbolic-ref exits 128 exits 0 and tells the agent, with git's stderr",
           "symbolic-ref -q HEAD" in message and "exited 128" in message
+          and "injected failure" in message, message)
+
+    world = fresh(scratch, "hook-run-head-commit-unreadable")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2\n")
+    world.failing_git("rev-parse -q --verify HEAD^{commit}")
+    message = world.run()
+    world.failing_git(None)
+    check("a hook run whose git rev-parse --verify exits 128 tells the agent, with git's stderr",
+          "rev-parse -q --verify" in message and "exited 128" in message
           and "injected failure" in message, message)
 
     world = fresh(scratch, "git-read-back-fails")
@@ -1307,6 +1349,21 @@ def mac_cases(scratch):
     check("and nothing is created", not world.store.exists())
     world.store = saved
     del world.extra_environment["GUARDED_FILE_VERSIONS_STORE_DIRECTORY"]
+
+    failing_mount = Path(scratch) / "mac" / "failing-mount"
+    failing_mount.mkdir()
+    (failing_mount / "mount").write_text(
+        "#!/bin/sh\necho 'mount: stand-in failure' >&2\nexit 1\n")
+    (failing_mount / "mount").chmod(0o755)
+    del world.extra_environment["GUARDED_FILE_VERSIONS_MOUNT_TABLE"]
+    world.extra_environment["PATH"] = f"{failing_mount}:{os.environ['PATH']}"
+    claude.write_text("project v4 while mount fails\n")
+    message = world.run()
+    check("a failed mount command is reported as the failure it is, not as the share not mounted",
+          "did not run" in message and "mount exited 1" in message
+          and "stand-in failure" in message and "is not mounted" not in message, message)
+    del world.extra_environment["PATH"]
+    world.extra_environment["GUARDED_FILE_VERSIONS_MOUNT_TABLE"] = str(table)
 
     directory = world.store / str(claude).lstrip("/")
     (directory / "approved").unlink()

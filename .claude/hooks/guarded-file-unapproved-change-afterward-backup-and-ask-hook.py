@@ -167,7 +167,7 @@ class Refused(Exception):
 
 
 class BranchUnreadable(RuntimeError):
-    """git could not say whether HEAD is on a branch."""
+    """git could not say whether HEAD is a commit on a branch."""
 
 
 def load_module(name, path):
@@ -299,9 +299,16 @@ class Store:
             mount_point = Path(os.environ.get(MOUNT_POINT_VARIABLE) or MAC_MOUNT_POINT)
             table_file = os.environ.get(MOUNT_TABLE_VARIABLE)
             try:
-                table = (Path(table_file).read_text(encoding="utf-8") if table_file else
-                         subprocess.run(["mount"], capture_output=True, text=True, timeout=10,
-                                        check=False).stdout)
+                if table_file:
+                    table = Path(table_file).read_text(encoding="utf-8")
+                else:
+                    listed = subprocess.run(["mount"], capture_output=True, text=True,
+                                            timeout=10, check=False)
+                    if listed.returncode != 0:
+                        raise StoreUnreachable(
+                            f"the mount table could not be read: mount exited "
+                            f"{listed.returncode}: {listed.stderr.strip() or 'no stderr'}")
+                    table = listed.stdout
             except (OSError, subprocess.SubprocessError) as error:
                 raise StoreUnreachable(f"the mount table could not be read: {error}")
             problem = mac_mount_problem(table, mount_point)
@@ -439,7 +446,7 @@ def versions_head_holds(checkout, versions):
     not a durable ref. A branch's HEAD is the one durable ref the hook can ask cheaply on every
     tool call; a version only another durable ref holds is copied, and the daily prune deletes
     the copy. Raises BranchUnreadable, a RuntimeError carrying git's stderr, when git
-    symbolic-ref fails with any exit other than 1."""
+    rev-parse --verify or git symbolic-ref fails with any exit other than 1."""
     relative = {}
     for path, blob_id in versions:
         if blob_id == DELETED:
@@ -448,10 +455,15 @@ def versions_head_holds(checkout, versions):
             path, blob_id)
     if not relative:
         return set()
-    if subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify", "HEAD^{commit}"],
-                      capture_output=True, timeout=60, check=False).returncode == 1:
-        # A repository with no commit yet holds nothing.
+    # git rev-parse -q --verify exits 1, with nothing on stderr, when HEAD names no commit yet.
+    head_commit = subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify",
+                                  "HEAD^{commit}"], capture_output=True, timeout=60, check=False)
+    if head_commit.returncode == 1:
         return set()
+    if head_commit.returncode != 0:
+        raise BranchUnreadable(f"git rev-parse -q --verify HEAD^{{commit}} in {checkout} exited "
+                               f"{head_commit.returncode}: "
+                               f"{head_commit.stderr.decode(errors='replace').strip()}")
     # git symbolic-ref -q exits 1, with nothing on stderr, when HEAD is detached; any other
     # nonzero exit is git failing.
     on_branch = subprocess.run(["git", "-C", str(checkout), "symbolic-ref", "-q", "HEAD"],
@@ -1329,11 +1341,23 @@ def restore(pairs):
         if checkout is None or key == DELETED or path in failed:
             continue
         relative = os.path.relpath(path, checkout)
-        tree = subprocess.run(["git", "-C", str(checkout), "ls-tree", "HEAD", "--", relative],
-                              capture_output=True, text=True, check=False).stdout.split()
+        # A repository with no commit yet has no commit to hold the declined version.
+        if subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify",
+                           "HEAD^{commit}"], capture_output=True, check=False).returncode == 1:
+            continue
+        listed = subprocess.run(["git", "-C", str(checkout), "ls-tree", "HEAD", "--", relative],
+                                capture_output=True, text=True, check=False)
+        commit_command = (f"git commit --only -m \"Put back the approved {Path(path).name}\" "
+                          f"-- {path}")
+        if listed.returncode != 0:
+            lines.append(f"Could not tell whether the declined version of {path} is in a commit: "
+                         f"git ls-tree exited {listed.returncode}: "
+                         f"{listed.stderr.strip() or 'no stderr'}\n"
+                         f"If the declined version is in a commit, run: {commit_command}")
+            continue
+        tree = listed.stdout.split()
         if len(tree) >= 3 and tree[2] == current[path][1]:
-            lines.append(f"The declined version is in a commit; run: git commit --only -m "
-                         f"\"Put back the approved {Path(path).name}\" -- {path}")
+            lines.append(f"The declined version is in a commit; run: {commit_command}")
     if failed:
         raise RestoreIncomplete(lines)
     return lines

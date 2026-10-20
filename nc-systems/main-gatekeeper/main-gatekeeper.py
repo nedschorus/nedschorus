@@ -82,13 +82,16 @@ def emit(payload: dict, exit_code: int) -> int:
     return exit_code
 
 
-def run_git(arguments: list[str], cwd: Path | None = None, check: bool = True):
-    """Return the git process result with stdout and stderr as text."""
+def run_git(arguments: list[str], cwd: Path | None = None, check: bool = True,
+            answers: tuple[int, ...] = ()):
+    """Return the git process result with stdout and stderr as text. With check, an exit other
+    than 0 and the exits in answers, which the command uses for an answer such as "absent",
+    raises the workspace-io-error refusal."""
     completed = subprocess.run(
         ["git", *arguments], cwd=str(cwd) if cwd else None,
         capture_output=True, text=True, check=False,
     )
-    if check and completed.returncode != 0:
+    if check and completed.returncode not in (0, *answers):
         raise Refusal(
             "workspace-io-error",
             f"git {' '.join(arguments)} failed: {completed.stderr.strip() or 'no stderr'}",
@@ -260,12 +263,11 @@ def read_legacy_content(legacy_repository: str, import_declaration: dict) -> byt
             "repository. Nothing was changed.",
         )
 
-    known = subprocess.run(
-        ["git", "-C", legacy_repository, "cat-file", "-e",
-         f"{import_declaration['commit']}^{{commit}}"],
-        capture_output=True, text=True, check=False,
-    )
-    if known.returncode != 0:
+    # git rev-parse -q --verify exits 1 for an absent object; git cat-file -e and git show exit
+    # 128 for an absent object and for a failing git alike.
+    known = run_git(["-C", legacy_repository, "rev-parse", "-q", "--verify",
+                     f"{import_declaration['commit']}^{{commit}}"], answers=(1,))
+    if known.returncode == 1:
         raise Refusal(
             "import-invalid",
             f"no commit {import_declaration['commit']} exists in the legacy repository",
@@ -273,18 +275,29 @@ def read_legacy_content(legacy_repository: str, import_declaration: dict) -> byt
             "repository.",
         )
 
-    shown = subprocess.run(
-        ["git", "-C", legacy_repository, "show",
-         f"{import_declaration['commit']}:{import_declaration['source']}"],
-        capture_output=True, check=False,
-    )
-    if shown.returncode != 0:
+    source = f"{import_declaration['commit']}:{import_declaration['source']}"
+    if run_git(["-C", legacy_repository, "rev-parse", "-q", "--verify", source],
+               answers=(1,)).returncode == 1:
         raise Refusal(
             "import-invalid",
             f"the path {import_declaration['source']!r} does not exist in the legacy "
             f"repository at commit {import_declaration['commit']}",
             "Resubmit with --import-source set to the path as it stood at that commit; "
             "read it with: git -C <legacy> ls-tree --name-only <commit>",
+        )
+    return git_show_bytes(["-C", legacy_repository, "show", source])
+
+
+def git_show_bytes(arguments: list[str], cwd: Path | None = None) -> bytes:
+    """Return git show's output as bytes; any failure raises the workspace-io-error refusal."""
+    shown = subprocess.run(["git", *arguments], cwd=str(cwd) if cwd else None,
+                           capture_output=True, check=False)
+    if shown.returncode != 0:
+        raise Refusal(
+            "workspace-io-error",
+            f"git {' '.join(arguments)} failed: "
+            f"{shown.stderr.decode(errors='replace').strip() or 'no stderr'}",
+            "Resubmit the same request; this class of failure is safe to retry.",
         )
     return shown.stdout
 
@@ -333,7 +346,7 @@ def screen_form(arguments) -> dict:
 def compute_base(repository: Path) -> str:
     """Return the merge base of the caller’s HEAD and origin/main."""
     # Refreshing from main mid-task can make this fork point too new.
-    run_git(["fetch", "--quiet", "origin", MAIN_BRANCH], cwd=repository, check=False)
+    run_git(["fetch", "--quiet", "origin", MAIN_BRANCH], cwd=repository)
     merged = subprocess.run(
         ["git", "merge-base", "HEAD", f"origin/{MAIN_BRANCH}"],
         cwd=str(repository), capture_output=True, text=True, check=False,
@@ -407,11 +420,12 @@ def read_base_content(clone: Path, base: str, paths: list[str]) -> dict[str, byt
     """Return each declared path’s base content, or None if absent."""
     content: dict[str, bytes | None] = {}
     for path in paths:
-        shown = subprocess.run(
-            ["git", "show", f"{base}:{path}"], cwd=str(clone),
-            capture_output=True, check=False,
-        )
-        content[path] = shown.stdout if shown.returncode == 0 else None
+        # git show exits 128 for an absent path and for a failing git alike.
+        if run_git(["rev-parse", "-q", "--verify", f"{base}:{path}"], cwd=clone,
+                   answers=(1,)).returncode == 1:
+            content[path] = None
+        else:
+            content[path] = git_show_bytes(["show", f"{base}:{path}"], cwd=clone)
     return content
 
 
@@ -469,10 +483,7 @@ def undeclared_changes(repository: Path, declared: list[str]) -> list[str]:
     # Unrelated work in the same worktree is legitimate and must not block check-in.
     # Include untracked files so forgotten new files are reported.
     # -z preserves arbitrary names; -uall lists files instead of collapsing new directories.
-    status = run_git(["status", "--porcelain", "-z", "--untracked-files=all"],
-                     cwd=repository, check=False)
-    if status.returncode != 0:
-        return []
+    status = run_git(["status", "--porcelain", "-z", "--untracked-files=all"], cwd=repository)
     others = []
     for entry in status.stdout.split("\0"):
         path = entry[3:]
@@ -504,8 +515,11 @@ def resolve_repository(argument: str | None) -> Path:
         capture_output=True, text=True, check=False,
     )
     if toplevel.returncode != 0:
+        # git exits 128 both outside a repository and when it fails inside one, so give its words.
         raise Refusal(
-            "malformed-field", f"{str(start)!r} is not inside a git repository",
+            "malformed-field",
+            f"git could not find a repository at {str(start)!r}: "
+            f"{toplevel.stderr.strip() or 'no stderr'}",
             "Run the gatekeeper from inside the repository holding the work, or pass "
             "--repo <dir> naming it.",
         )
@@ -515,8 +529,9 @@ def resolve_repository(argument: str | None) -> Path:
 def resolve_remote(repository: Path, argument: str | None) -> str:
     if argument:
         return argument
-    remote = run_git(["remote", "get-url", "origin"], cwd=repository, check=False)
-    if remote.returncode != 0 or not remote.stdout.strip():
+    # git remote get-url exits 2 when the remote does not exist.
+    remote = run_git(["remote", "get-url", "origin"], cwd=repository, answers=(2,))
+    if remote.returncode == 2 or not remote.stdout.strip():
         raise Refusal(
             "malformed-field", "the repository has no 'origin' remote",
             "Resubmit with --remote <url> naming where main lives.",
@@ -546,10 +561,8 @@ def find_existing_check_in(clone: Path, digest: str, ref: str | None = None) -> 
     found = run_git(
         ["log", ref or f"origin/{MAIN_BRANCH}", "--format=%H",
          "--grep", f"Gatekeeper-digest: {digest}"],
-        cwd=clone, check=False,
+        cwd=clone,
     )
-    if found.returncode != 0:
-        return None
     lines = [line.strip() for line in found.stdout.splitlines() if line.strip()]
     return lines[0] if lines else None
 
@@ -611,7 +624,7 @@ def fetch_main_tip(clone: Path) -> str:
 
 
 def paths_changed_between(clone: Path, older: str, newer: str) -> set[str]:
-    listed = run_git(["diff", "--name-only", f"{older}..{newer}"], cwd=clone, check=False)
+    listed = run_git(["diff", "--name-only", f"{older}..{newer}"], cwd=clone)
     return {line.strip() for line in listed.stdout.splitlines() if line.strip()}
 
 
@@ -623,7 +636,8 @@ def describe_commits(clone: Path, older: str, newer: str) -> str:
 def integrate_and_push(
     clone: Path, request: dict, worktree: dict[str, bytes | None], digest: str
 ) -> tuple[str, int]:
-    """Return (commit, attempt count) after pushing over concurrent changes."""
+    """Return (commit, the count of newer commits integrated over or None, why the count is
+    None or None) after pushing over concurrent changes."""
     # Refuse overlapping paths rather than choosing which author’s content survives.
     base = request["base"]
     target = base
@@ -632,10 +646,12 @@ def integrate_and_push(
         commit = build_candidate(clone, request, worktree, digest, target)
         won, stderr = attempt_push(clone)
         if won:
-            integrated_over = run_git(
-                ["rev-list", "--count", f"{base}..{target}"], cwd=clone, check=False
-            ).stdout.strip()
-            return commit, int(integrated_over or 0)
+            # The push has landed, so a failed count is reported beside the success, not as a refusal.
+            counted = run_git(["rev-list", "--count", f"{base}..{target}"], cwd=clone, check=False)
+            if counted.returncode != 0:
+                return commit, None, (f"git rev-list --count {base}..{target} failed: "
+                                      f"{counted.stderr.strip() or 'no stderr'}")
+            return commit, int(counted.stdout.strip() or 0), None
 
         failure = classify_push_failure(stderr)
         if failure == "push-auth-failed":
@@ -1011,7 +1027,15 @@ EXPECTED_MAIN_PUSHER_ACCOUNTS = {"NedLern", "ned-review-merge"}
 
 
 def derive_repo_slug(repository: Path) -> str:
-    remote = run_git(["remote", "get-url", "origin"], cwd=repository, check=False)
+    remote = subprocess.run(["git", "remote", "get-url", "origin"], cwd=str(repository),
+                            capture_output=True, text=True, check=False)
+    # git remote get-url exits 2 when the remote does not exist.
+    if remote.returncode not in (0, 2):
+        raise Refusal(
+            "audit-failed",
+            f"git remote get-url origin failed: {remote.stderr.strip() or 'no stderr'}",
+            "Run the audit again; if it fails the same way, pass --repo-slug owner/repo.",
+        )
     url = remote.stdout.strip()
     match = re.search(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?/?$", url)
     if remote.returncode != 0 or not match:
@@ -1227,14 +1251,14 @@ def check_in(arguments) -> int:
             }, EXIT_SUCCESS)
 
         try:
-            commit, integrated_over = integrate_and_push(clone, request, worktree, digest)
+            commit, integrated_over, count_problem = integrate_and_push(
+                clone, request, worktree, digest)
         except AlreadyCheckedIn as raced:
             return emit({
                 "outcome": "already-checked-in", "digest": digest, "commit": raced.commit,
                 "summary": f"already-checked-in {raced.commit}",
             }, EXIT_SUCCESS)
 
-        advisory = undeclared_changes(repository, request["paths"])
         payload = {
             "outcome": "checked-in", "commit": commit, "digest": digest,
             "summary": f"checked-in {commit}",
@@ -1242,10 +1266,22 @@ def check_in(arguments) -> int:
         if integrated_over:
             payload["integrated_over"] = integrated_over
             payload["summary"] += f" (integrated over {integrated_over} newer commit(s))"
-        if advisory:
+        if count_problem:
+            payload["summary"] += (f" (the count of newer commits it integrated over is unknown: "
+                                   f"{count_problem})")
+        try:
+            advisory = undeclared_changes(repository, request["paths"])
+        except Refusal as unreadable:
+            # The work is on main; a status that could not be read changes only the advisory.
             payload["advisory"] = (
-                f"the working copy also differs at {', '.join(advisory)}; confirm intentional"
+                f"the working copy's other changes are unknown, because {unreadable.facts}; "
+                f"run git status in {repository} to see them"
             )
+        else:
+            if advisory:
+                payload["advisory"] = (
+                    f"the working copy also differs at {', '.join(advisory)}; confirm intentional"
+                )
         return emit(payload, EXIT_SUCCESS)
     finally:
         if clone_parent is not None:
