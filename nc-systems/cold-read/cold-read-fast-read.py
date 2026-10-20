@@ -336,18 +336,20 @@ def text_with_ned_box_paths_rewritten_as_mac_mount_paths(text: str) -> str:
                   lambda _: MAC_MOUNT_OF_NED_BOX_HOME + "/", text)
 
 
-def cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(ned_box_target: str) -> str:
+def cold_read_fast_read_report_location_seen_from_mac_for_target_sent_over_ssh(ned_box_target: str) -> str:
     """Where the read on ned-box writes its report, by the rule of
-    fast_read_report_path_for_target, for a message on the Mac. git here
-    cannot read the worktree, so its top is the nearest directory above the
-    target, seen through the mount, that holds a .git entry."""
+    fast_read_report_path_for_target, in the form a message on the Mac
+    names: a suggestions file by its Mac mount path, a cold-read-record by
+    its log-store citation. git here cannot read the worktree, so its top is
+    the nearest directory above the target, seen through the mount, that
+    holds a .git entry."""
     mac_target = pathlib.Path(mac_mount_path_of_ned_box_path(ned_box_target))
     checkout_root = next((directory for directory in mac_target.parents
                           if (directory / ".git").exists()), None)
     suggestions = (walk_draft_suggestions_file_path_for_target_in_worktree_or_none(mac_target, checkout_root)
                    if checkout_root is not None else None)
     if suggestions is not None:
-        return ned_box_path_of_mac_mount_path(suggestions)
+        return str(suggestions)
     return (f"fast-read.md in the newest directory whose name starts "
             f"{record_names.record_name_for_target(mac_target)}- in "
             f"{record_shipper.LOG_STORE_RECORDS_DESTINATION}/")
@@ -396,10 +398,7 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
             timeout=COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         minutes = f"{COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS / 60:g}"
-        # In the form this Mac opens; a log-store citation stays as it is.
-        report_place = text_with_ned_box_paths_rewritten_as_mac_mount_paths(
-            cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(
-                ned_box_target))
+        report_place = cold_read_fast_read_report_location_seen_from_mac_for_target_sent_over_ssh(ned_box_target)
         print(f"{PROGRAM}: no cold-read-fast-read result: the cold-read-fast-read on "
               f"ned-box did not finish within {minutes} minutes, so this program "
               f"stopped waiting and ended ssh, and the read's own lines were not "
@@ -481,12 +480,14 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
               f"message once more, here on this Mac; it runs the read on ned-box over "
               f"ssh again:\n{rerun_command}\n"
               f"When that run's result line on stdout is a report path, that report "
-              f"is the result. When it fails another way, follow the message it "
-              f"prints. If ssh is killed again, tell the user that ssh "
+              f"is the result. If ssh is killed again, do not run the command a third "
+              f"time: tell the user that ssh "
               f"from this Mac to ned-box was killed, during a cold-read-fast-read of "
               f"{ned_box_target}, by the signal whose number the second run prints, "
-              f"so the document has no cold-read-fast-read result. If you are a "
-              f"subagent, tell the agent that dispatched you instead.", file=sys.stderr)
+              f"so the document has no cold-read-fast-read result; if you are a "
+              f"subagent, tell the agent that dispatched you instead; then go on with "
+              f"your task without the result. When the second run fails in any other "
+              f"way, follow the message it prints.", file=sys.stderr)
     else:
         failure = (f"the fast read on ned-box exited {completed.returncode} "
                    f"and printed no result line")
