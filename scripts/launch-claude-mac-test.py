@@ -574,8 +574,8 @@ def main() -> int:
               (sandbox.claude_updates(), sandbox.update_lock_path().exists(),
                result.returncode, result.stderr[:300]))
 
-        # --- the boot-time worktree report and fast-forward fail: each
-        # failure's own error and a line saying the launch continued reach
+        # --- the launch-time worktree report and fast-forward fail: each
+        # failure's own error and lines saying the launch goes on reach
         # stderr, and the seat still starts. --------------------------------
         sandbox = MacLaunchSandbox(root / "boot-programs-fail")
         sandbox.boot_programs_fail()
@@ -587,16 +587,22 @@ def main() -> int:
                               ("checkout-freshness-catch-up.py", "fast-forward")):
             check(f"boot programs fail: {program}'s own error reaches stderr",
                   f"stand-in failure of {program}" in result.stderr, result.stderr)
-            check(f"boot programs fail: stderr says the {step} failed with exit 2 "
-                  "and the launch continued",
-                  any(f"launch-claude-mac: the boot-time {step}" in line
-                      and "failed with exit 2" in line
-                      and line.endswith("the launch continued")
-                      for line in result.stderr.splitlines()), result.stderr)
+            lines = result.stderr.splitlines()
+            first = [index for index, line in enumerate(lines)
+                     if line.startswith(f"launch-claude-mac: the launch-time {step}")
+                     and "failed with exit 2" in line and "the launch goes on" in line]
+            check(f"boot programs fail: stderr says the {step} failed with exit 2, "
+                  "that the launch goes on, where its error is, and who acts",
+                  len(first) == 1
+                  and (lines + ["", ""])[first[0] + 1].startswith(f"launch-claude-mac: any error the ")
+                  and "if none is there" in (lines + ["", ""])[first[0] + 1]
+                  and (lines + ["", ""])[first[0] + 2].startswith(f"launch-claude-mac: if you are an agent that ran this launch, tell the user")
+                  and "if you are the user, run the command in the first of these lines" in (lines + ["", ""])[first[0] + 2],
+                  result.stderr)
         sandbox = MacLaunchSandbox(root / "boot-programs-succeed")
         result = sandbox.run("~/agents", seat_name="seat-g")
-        check("boot programs succeed: no line says the launch continued after a failure",
-              result.returncode == 0 and "the launch continued" not in result.stderr,
+        check("boot programs succeed: no line says the launch goes on after a failure",
+              result.returncode == 0 and "the launch goes on" not in result.stderr,
               (result.returncode, result.stderr[:300]))
 
         # --- task-list persistence, detached: both variables reach the

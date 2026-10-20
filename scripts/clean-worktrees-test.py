@@ -54,6 +54,7 @@ import atexit
 import importlib.util
 import os
 import select
+import shlex
 import shutil
 import subprocess
 import sys
@@ -958,14 +959,21 @@ with tempfile.TemporaryDirectory() as scratch:
         failed_listing = subprocess.run(
             [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), *flags],
             capture_output=True, text=True, check=False, env=environment)
+        stderr_lines = failed_listing.stderr.strip().splitlines()
+        rerun = shlex.join([sys.executable, str(CLEAN_SCRIPT.resolve()), "--repo", str(checkout), *flags])
         check(f"a failed worktree listing{' under ' + flags[0] if flags else ''} exits 2 "
-              "with git's error on one stderr line, and prints nothing as found",
+              "with git's error on its first stderr line, and prints nothing as found",
               failed_listing.returncode == 2
               and failed_listing.stdout == ""
-              and "clean-worktrees: stopped, because git worktree list" in failed_listing.stderr
-              and LISTING_FAILURE_TEXT in failed_listing.stderr
-              and len(failed_listing.stderr.strip().splitlines()) == 1,
+              and stderr_lines[:1] != []
+              and stderr_lines[0].startswith("clean-worktrees: stopped, because git worktree list")
+              and LISTING_FAILURE_TEXT in stderr_lines[0],
               (failed_listing.returncode, failed_listing.stdout, failed_listing.stderr))
+        check(f"a failed worktree listing{' under ' + flags[0] if flags else ''} gives the "
+              "shared next steps, naming the command that was run",
+              stderr_lines[1:] == load_clean_worktrees_module().GIT_FAILURE_NEXT_STEP_LINES.format(
+                  rerun=rerun, program="scripts/clean-worktrees.py").splitlines(),
+              failed_listing.stderr)
 
     module = load_clean_worktrees_module()
     saved_path = os.environ.get("PATH", "")

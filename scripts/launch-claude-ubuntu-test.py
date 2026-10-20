@@ -1169,9 +1169,9 @@ def main() -> int:
               (result["replay"].returncode, result["replay"].stdout[:200],
                harness.prepare_ran()))
 
-        # --- 19. the boot-time worktree report and fast-forward fail on the
-        # box: each failure's own error and a line saying the launch
-        # continued reach stderr, and the seat is still prepared and started.
+        # --- 19. the launch-time worktree report and fast-forward fail on
+        # ned-box: each failure's own error and lines saying the launch goes
+        # on reach stderr, and the seat is still prepared and started.
         harness = LaunchHarness(root / "boot-programs-fail")
         harness.boot_programs_fail()
         result = harness.run(["seat-f", "--no-attach"])
@@ -1184,18 +1184,23 @@ def main() -> int:
             check(f"boot programs fail: {program}'s own error reaches stderr",
                   f"stand-in failure of {program}" in result["replay"].stderr,
                   result["replay"].stderr)
-            check(f"boot programs fail: stderr says the {step} failed with exit 2 "
-                  "and the launch continued",
-                  any(f"launch-claude-ubuntu: the boot-time {step}" in line
-                      and "failed with exit 2" in line
-                      and line.endswith("the launch continued")
-                      for line in result["replay"].stderr.splitlines()),
+            lines = result["replay"].stderr.splitlines()
+            first = [index for index, line in enumerate(lines)
+                     if line.startswith(f"launch-claude-ubuntu: the launch-time {step}")
+                     and "failed with exit 2" in line and "the launch goes on" in line]
+            check(f"boot programs fail: stderr says the {step} failed with exit 2, "
+                  "that the launch goes on, where its error is, and who acts",
+                  len(first) == 1
+                  and (lines + ["", ""])[first[0] + 1].startswith(f"launch-claude-ubuntu: any error the ")
+                  and "if none is there" in (lines + ["", ""])[first[0] + 1]
+                  and (lines + ["", ""])[first[0] + 2].startswith(f"launch-claude-ubuntu: if you are an agent that ran this launch, tell the user")
+                  and "if you are the user, run the command in the first of these lines" in (lines + ["", ""])[first[0] + 2],
                   result["replay"].stderr)
         harness = LaunchHarness(root / "boot-programs-succeed")
         result = harness.run(["seat-g", "--no-attach"])
-        check("boot programs succeed: no line says the launch continued after a failure",
+        check("boot programs succeed: no line says the launch goes on after a failure",
               result["replay"].returncode == 0
-              and "the launch continued" not in result["replay"].stderr,
+              and "the launch goes on" not in result["replay"].stderr,
               (result["replay"].returncode, result["replay"].stderr[:300]))
 
     print()

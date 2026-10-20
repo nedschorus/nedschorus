@@ -120,6 +120,7 @@ list the worktrees or the branches, which stops the run where it failed.
 
 import importlib.util
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -170,6 +171,16 @@ def run_git(repo, *arguments):
 
 
 FINISHED_WITH_FAILURES_LINE = "clean-worktrees: finished; each failure is named above"
+STOPPED_LINE_START = "clean-worktrees: stopped, because "
+
+GIT_FAILURE_NEXT_STEP_LINES = (
+    "If git's error names a lock file, such as .git/index.lock, wait one minute, then run {rerun}; "
+    "do not delete the lock file yourself.\n"
+    "If git's error names a branch, commit or path that does not exist, check that the command "
+    "you ran names the right one, correct it if not, then run it again.\n"
+    "In any other case, run {rerun} once more.\n"
+    "If {rerun} fails a second time, stop and tell the user what {program} printed, "
+    "git's error included; a subagent tells the agent that dispatched it instead.")
 
 
 def main_checkout_of(repo):
@@ -472,6 +483,7 @@ def main(argv=None):
     # The daily job writes to a log without -u; a run killed mid-removal must still show what it announced.
     sys.stdout.reconfigure(line_buffering=True)
     arguments = sys.argv[1:] if argv is None else list(argv)
+    given_arguments = list(arguments)
     if arguments in (["--help"], ["-h"]):
         print(__doc__)
         return 0
@@ -499,10 +511,11 @@ def main(argv=None):
     try:
         failures = clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done)
     except git_output.GitCommandFailed as error:
-        # One line: the handoff-supervisor reports only the last line of this stderr.
-        print(f"clean-worktrees: stopped, because {' '.join(str(error).split())}; "
-              f"nothing after the lines above was checked or done. "
-              f"Fix the cause git names, then run scripts/clean-worktrees.py again",
+        # The cause stays on one line: the handoff-supervisor reports this line alone.
+        rerun = shlex.join([sys.executable, str(Path(__file__).resolve()), *given_arguments])
+        print(f"{STOPPED_LINE_START}{' '.join(str(error).split())}; "
+              f"this run checked and did nothing beyond what it printed before this line.\n"
+              + GIT_FAILURE_NEXT_STEP_LINES.format(rerun=rerun, program="scripts/clean-worktrees.py"),
               file=sys.stderr)
         return 2
 

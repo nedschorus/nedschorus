@@ -286,20 +286,30 @@ if ! git -C "$AGENT_DIRECTORY" rev-parse --show-toplevel >/dev/null 2>&1; then
         || echo "launch-claude-mac: could not make $AGENT_DIRECTORY a checkout; the agent will start without project settings" >&2
 fi
 
-# Boot-time worktree report: finished session worktrees pile up invisibly,
+# $1 names the step and its command, $2 says why the launch goes on, $3 is
+# the step's short name, $4 its exit code.
+report_launch_step_failure() {
+    echo "launch-claude-mac: the launch-time $1 failed with exit $4, $2" >&2
+    echo "launch-claude-mac: any error the $3 printed is above these lines; if none is there, the $3 ended without printing one, for example because it was killed." >&2
+    echo "launch-claude-mac: if you are an agent that ran this launch, tell the user these lines and any error above them, run nothing in $REPOSITORY yourself, and go on with your work; if you are the user, run the command in the first of these lines on this Mac: if it fails again, fix the cause it prints, and if it succeeds, nothing more is needed." >&2
+}
+
+# Launch-time worktree report: finished session worktrees pile up invisibly,
 # so each launch names any that are done (landed and vacant) and the
 # command that removes them. Report only — removal stays a deliberate,
 # separate call — and a report problem never blocks a launch.
 python3 "$SCRIPT_DIRECTORY/clean-worktrees.py" --only-done \
-    || echo "launch-claude-mac: the boot-time worktree report (scripts/clean-worktrees.py --only-done) failed with exit $?, as its error above says; the launch continued" >&2
+    || report_launch_step_failure "worktree report (python3 $SCRIPT_DIRECTORY/clean-worktrees.py --only-done), which lists the finished worktrees," \
+        "and the launch goes on, because the agent-seat does not need the report." report "$?"
 
-# Boot-time freshness: fast-forward the machine's reference checkout to
+# Launch-time freshness: fast-forward the machine's reference checkout to
 # origin/main (ff-only, never a merge — it carries no work of its own by
 # construction). The mid-session half runs as a Stop hook
 # (scripts/checkout-freshness-catch-up.py); this covers machines between
 # sessions, and never blocks a launch.
 python3 "$SCRIPT_DIRECTORY/checkout-freshness-catch-up.py" --reference-pull --repo "$REPOSITORY" \
-    || echo "launch-claude-mac: the boot-time fast-forward of the reference checkout (scripts/checkout-freshness-catch-up.py --reference-pull) failed with exit $?, as its error above says; the launch continued" >&2
+    || report_launch_step_failure "fast-forward of the reference checkout $REPOSITORY to origin/main (python3 $SCRIPT_DIRECTORY/checkout-freshness-catch-up.py --reference-pull --repo $REPOSITORY)" \
+        "so that checkout may be behind origin/main, and the launch goes on with it as it is." fast-forward "$?"
 
 # Per-seat tmux servers: every seat runs on its OWN tmux server, socket
 # `-L <name>`, because one server crash must not kill the whole per-machine
