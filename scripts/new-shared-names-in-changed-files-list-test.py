@@ -229,6 +229,28 @@ def case_exemptions(root):
           ("docs/project-glossary.md", "glossary-entry", "fresh-term-x") in listed, str(listed))
 
 
+def case_forms_of_a_listed_word(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    write(clone, EXCEPTION_LIST_PATH,
+          BASE_MAIN_FILES[EXCEPTION_LIST_PATH] + "- brand-old\n- re-zap\n- near-mess\n- hand-code\n")
+    write(clone, "usage.md",
+          "The brand-olds were brand-olded while brand-olding; we re-zapped by re-zapping, "
+          "logged near-messes, hand-coded and kept hand-coding. Not brand-oldish, nor "
+          "other-olds, nor brand-olden.\n")
+    _, listed, _ = run_lister(clone)
+    phrases = {name for _, kind, name in listed if kind == "markdown-hyphenated-phrase"}
+    for form, description in (("brand-olds", "-s"), ("brand-olded", "-ed"), ("brand-olding", "-ing"),
+                              ("re-zapped", "-ed with the final consonant doubled"),
+                              ("re-zapping", "-ing with the final consonant doubled"),
+                              ("near-messes", "-es"), ("hand-coded", "-d after a final e"),
+                              ("hand-coding", "-ing with the final e dropped")):
+        check(f"the {description} form of a listed word is not listed", form not in phrases, str(listed))
+    for phrase, description in (("brand-oldish", "a listed word with another ending"),
+                                ("other-olds", "the -s form of a word not on the list"),
+                                ("brand-olden", "a listed word with -en")):
+        check(f"{description} is still listed", phrase in phrases, str(listed))
+
+
 def case_new_glossary_entry(root):
     clone = make_clone(root, BASE_MAIN_FILES)
     write(clone, "docs/project-glossary.md",
@@ -1149,7 +1171,7 @@ def main() -> int:
              case_no_listed_word_is_a_glossary_term, case_committed_changes_are_listed,
              case_changed_file_on_main_is_not_a_new_path, case_function_listed_once_its_caller_appears,
              case_same_name_defined_in_two_files_is_not_a_use, case_one_word_constant_used_elsewhere_is_listed,
-             case_markdown_names, case_exemptions, case_new_glossary_entry, case_branch_name,
+             case_markdown_names, case_exemptions, case_forms_of_a_listed_word, case_new_glossary_entry, case_branch_name,
              case_nothing_new_is_silent, case_git_failure_exits_nonzero, case_file_cache, case_file_only_main_has_counts_as_on_main,
              case_paths_git_would_quote_are_read_whole,
              case_binary_file_naming_a_candidate_does_not_hide_other_uses,
