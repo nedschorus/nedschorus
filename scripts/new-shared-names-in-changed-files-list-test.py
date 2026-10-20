@@ -236,7 +236,7 @@ def case_forms_of_a_listed_word(root):
     write(clone, "usage.md",
           "The brand-olds were brand-olded while brand-olding; we re-zapped by re-zapping, "
           "logged near-messes, hand-coded and kept hand-coding. Not brand-oldish, nor "
-          "other-olds, nor brand-olden.\n")
+          "other-olds, nor brand-olden, nor brand-oldxed.\n")
     _, listed, _ = run_lister(clone)
     phrases = {name for _, kind, name in listed if kind == "markdown-hyphenated-phrase"}
     for form, description in (("brand-olds", "-s"), ("brand-olded", "-ed"), ("brand-olding", "-ing"),
@@ -247,7 +247,8 @@ def case_forms_of_a_listed_word(root):
         check(f"the {description} form of a listed word is not listed", form not in phrases, str(listed))
     for phrase, description in (("brand-oldish", "a listed word with another ending"),
                                 ("other-olds", "the -s form of a word not on the list"),
-                                ("brand-olden", "a listed word with -en")):
+                                ("brand-olden", "a listed word with -en"),
+                                ("brand-oldxed", "a listed word with one more letter and -ed")):
         check(f"{description} is still listed", phrase in phrases, str(listed))
 
 
