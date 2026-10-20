@@ -1172,9 +1172,7 @@ def suite_sandbox_lists_read_from_checkout_under_test(top):
         raise CouldNotRun(
             f"{PROGRAM}: not run — {source_file} could not be read "
             f"({type(error).__name__}: {error}), so which sandbox each suite runs in is unknown.\n"
-            f"If the file is unreadable, check that you can read it; "
-            f"if it is not UTF-8, save it as UTF-8.\n"
-            f"Then rerun the command you ran.")
+            f"Fix what {error} names, then rerun the command you ran.")
     try:
         tree = ast.parse(source, filename=str(source_file))
     except (SyntaxError, ValueError) as error:
