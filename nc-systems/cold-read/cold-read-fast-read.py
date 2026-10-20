@@ -280,10 +280,16 @@ NED_BOX_SSH_TARGET = "nedlern@ned-box"
 # BatchMode: a password prompt would hang a read no one is typing into.
 SSH_OPTIONS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=10")
 SSH_EXIT_CONNECTION_FAILED = 255
-# Each attempt of the read on ned-box is bounded by the --print-timeout of
-# 30m that nc-systems/cold-read/cold-read-agy-cell.py gives agy; the five
-# minutes more cover git, the shipper and the connect.
-COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS = FAST_READ_ATTEMPTS * 30 * 60 + 5 * 60
+# Loaded only for the time limit agy gets for each model of a cold-read-tier.
+_agy_cell_spec = importlib.util.spec_from_file_location("cold_read_agy_cell", AGY_CELL_LAUNCHER)
+agy_cell = importlib.util.module_from_spec(_agy_cell_spec)
+_agy_cell_spec.loader.exec_module(agy_cell)
+# Each attempt of the read on ned-box is bounded by the --print-timeout the
+# agy cell gives each model of the cold-read-tier's chain; the five minutes
+# more cover git, the shipper and the connect.
+COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS = (
+    FAST_READ_ATTEMPTS * len(agy_cell.TIER_TO_AGY_MODEL_CHAIN[FAST_READ_TIER])
+    * agy_cell.COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS + 5 * 60)
 
 
 class CheckoutRootUnreadable(RuntimeError):
@@ -407,15 +413,16 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
         ssh_words = completed.stderr.strip() or "nothing"
         print(f"{PROGRAM}: no cold-read-fast-read ran: ssh exited "
               f"{SSH_EXIT_CONNECTION_FAILED}, most often for one of two causes: ned-box "
-              f"could not be reached, or ned-box refused this machine's key. ssh said: "
-              f"{ssh_words}\n"
-              f"If you are a subagent, pass the quoted text that follows to the agent that "
-              f"dispatched you; otherwise tell the user, in these words: \"The "
-              f"cold-read-fast-read could not run on ned-box from this Mac: ssh "
+              f"could not be reached, or ned-box refused this Mac's key. ssh said: "
+              f"'{ssh_words}'.\n"
+              f"The next line is a message for the user; do not run its command yourself. "
+              f"If you are a subagent, pass it word for word to the agent that dispatched "
+              f"you, for the user; otherwise tell it to the user word for word:\n"
+              f"The cold-read-fast-read could not run on ned-box from this Mac: ssh "
               f"exited {SSH_EXIT_CONNECTION_FAILED} and said: '{ssh_words}'. Run "
-              f"`ssh {NED_BOX_SSH_TARGET} true` from a Terminal on your Mac. If it "
-              f"fails with 'Permission denied', ned-box refused this Mac's key; if "
-              f"it fails another way, check that ned-box is on and on the LAN.\"",
+              f"`ssh {NED_BOX_SSH_TARGET} true` from a Terminal on your Mac. If that "
+              f"command fails with 'Permission denied', ned-box refused this Mac's key; if "
+              f"it fails another way, check that ned-box is on and on the LAN.",
               file=sys.stderr)
         print("FAILED (no fast read ran: ned-box could not be reached)")
         return 1
