@@ -20,6 +20,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -3079,6 +3080,44 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a fresh agent-session from the conversation-tail that did not come up is reported, without offering itself again",
           "LAUNCHED BUT DID NOT COME UP" in report
           and "--fresh-session-from-conversation-tail" not in report, report)
+
+    # The cases above pass the option to recover_seat by keyword, so only these see
+    # the spelling main's parser accepts, which the offer and the usage text name.
+    def main_dry_run_output(workspace, *flags):
+        output = io.StringIO()
+        with redirect_stdout(output), redirect_stderr(output):
+            try:
+                exit_code = recovery.main([workspace.name, "--dry-run", *flags,
+                                           "--agents-root", str(workspace.agents_root),
+                                           "--handoff-dir", str(workspace.handoffs),
+                                           "--projects-root", str(workspace.projects)])
+            except SystemExit as refused:
+                exit_code = refused.code
+        return exit_code, output.getvalue()
+
+    workspace = Workspace(root / "came-up-flag-through-main", name="flag-through-main")
+    all_dead()
+    capture_launches(workspace)
+    write_transcript(workspace.project_directory(), "resumable", "real work", records=4)
+    (workspace.handoffs / f"{workspace.name}-dialog-0003.md").write_text(
+        "# Dialog\n", encoding="utf-8")
+    exit_code, output = main_dry_run_output(workspace, "--fresh-session-from-conversation-tail")
+    check("main accepts --fresh-session-from-conversation-tail and starts from the conversation-tail, not the resumable transcript",
+          exit_code == 0
+          and "would launch and start a fresh agent-session from the conversation-tail "
+              f"{workspace.name}-dialog-0003.md" in output
+          and "would resume" not in output, (exit_code, output))
+
+    seat_comes_up(False, "no supervisor appeared within 120s")
+    offer_report = recovery.came_up_or_failure_report(workspace.name, workspace.handoffs, True)
+    seat_comes_up()
+    offered_flags = re.findall(r"--[a-z][a-z-]*", offer_report)
+    exit_code, output = (main_dry_run_output(workspace, *offered_flags) if offered_flags
+                         else (None, ""))
+    check("the flag a did-not-come-up report offers is one main accepts, and it starts from the conversation-tail",
+          offered_flags and exit_code == 0
+          and "would launch and start a fresh agent-session from the conversation-tail" in output,
+          (offer_report, offered_flags, exit_code, output))
 
     # A dry run launches nothing, so it must not wait for anything either.
     workspace = Workspace(root / "came-up-dry", name="dry-no-wait")
