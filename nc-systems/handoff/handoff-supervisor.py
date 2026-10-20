@@ -267,6 +267,23 @@ SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
 WRITTEN_BY_SESSION_FIELD = "written-by-session"
 WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 
+GIT_FAILURE_NEXT_STEP_LINES = (
+    "If git's error names a lock file, such as .git/index.lock, wait one minute, then run "
+    "{rerun}; do not delete the lock file yourself.\n"
+    "If git's error names a branch, commit or path that does not exist, check that the "
+    "command you ran names the right one, correct it if not, then run it again.\n"
+    "In any other case, run {rerun} once more.\n"
+    "If {rerun} fails a second time, stop and tell the user what {program} printed, "
+    "git's error included; a subagent tells the agent that dispatched it instead.")
+BRANCH_SYNC_PROGRAM_NAME = "the handoff-supervisor's branch sync"
+
+
+def branch_sync_git_failure_next_steps(error) -> str:
+    """The next-step lines for a GitCommandFailed the branch sync reports."""
+    rerun = f"`git -C {error.directory} {' '.join(error.arguments)}`"
+    return GIT_FAILURE_NEXT_STEP_LINES.format(rerun=rerun, program=BRANCH_SYNC_PROGRAM_NAME)
+
+
 BRANCH_STATE_INSTRUCTION = (
     " — If this branch has never been pushed, rebase it onto origin/main "
     "before your first substantive action and rerun the tests for what you "
@@ -879,7 +896,8 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
         toplevel = git.run_git_unless_outside_a_repository(
             working_directory, ["rev-parse", "--show-toplevel"], timeout_seconds=15)
     except git.GitCommandFailed as error:
-        return f"branch sync: could not tell whether this is a git checkout, left as is — {error}"
+        return (f"branch sync: could not tell whether this is a git checkout, left as is — "
+                f"{error}\n{branch_sync_git_failure_next_steps(error)}")
     if toplevel is None:
         return "branch sync: not a git checkout, nothing to sync"
 
@@ -917,6 +935,9 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
         elif tracked_changes:
             reasons.append(f"{tracked_changes} uncommitted tracked change(s)")
         git_dir = checkout_freshness_catch_up.git_directory(working_directory)
+        # --show-toplevel answered above, so no git directory means git could not read it.
+        if git_dir is None:
+            reasons.append("git directory unreadable")
         marker = (checkout_freshness_catch_up.in_progress_marker(git_dir)
                   if git_dir is not None else None)
         if marker is not None:
@@ -937,8 +958,11 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
             behind = answer(["rev-list", "--count", "HEAD..origin/main"], 30)
             return (f"branch sync: {branch} is {ahead} ahead of main and {behind} "
                     f"behind{fetch_note}")
-    except git.GitCommandFailed as error:
-        return f"branch sync: {branch} left as is — {error}{fetch_note}"
+    except (git.GitCommandFailed,
+            checkout_freshness_catch_up.git_output.GitCommandFailed) as error:
+        # Each module loads its own copy of the git helper file, so each raises its own GitCommandFailed class.
+        return (f"branch sync: {branch} left as is — {error}{fetch_note}\n"
+                f"{branch_sync_git_failure_next_steps(error)}")
 
     merged = run_git_here(["merge", "--ff-only", "origin/main"], working_directory)
     if merged.returncode != 0:
@@ -948,7 +972,8 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
     try:
         tip = answer(["rev-parse", "--short", "HEAD"], 15)
     except git.GitCommandFailed as error:
-        tip = f"its new commit could not be read: {error}"
+        return (f"branch sync: {branch} fast-forwarded to main (its new commit could not be "
+                f"read: {error}){fetch_note}\n{branch_sync_git_failure_next_steps(error)}")
     return f"branch sync: {branch} fast-forwarded to main ({tip}){fetch_note}"
 
 

@@ -986,6 +986,10 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
     git_in(["config", "user.email", "agent@nedschorus.invalid"], home)
 
     report = sync_with_failing_call(home, "rev-parse --show-toplevel")
+    check("a branch sync git failure ends with the next steps, naming the git command to rerun",
+          report.endswith(supervisor.GIT_FAILURE_NEXT_STEP_LINES.format(
+              rerun=f"`git -C {home} rev-parse --show-toplevel`",
+              program="the handoff-supervisor's branch sync")), report)
     check("a failed --show-toplevel is reported with git's error, not as no checkout",
           report.startswith("branch sync: could not tell whether this is a git checkout")
           and "fatal: stub failure" in report, report)
@@ -998,9 +1002,18 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
         report = sync_with_failing_call(home, call)
         check(f"a failed `git {call}` on a level branch is reported with git's error",
               " left as is — " in report and "fatal: stub failure" in report
+              and f"In any other case, run `git -C {home} {call}" in report
               and wrong_answer not in report, report)
 
     main_moves("main moves past the failing-git home")
+    head_before = git_in(["rev-parse", "HEAD"], home).stdout.strip()
+    try:
+        report = sync_with_failing_call(home, "rev-parse --absolute-git-dir")
+    except Exception as error:
+        report = f"raised {type(error).__name__}: {error}"
+    check("a git directory git cannot read is reported, and the checkout is not moved",
+          report.startswith("branch sync: main left as is — ")
+          and git_in(["rev-parse", "HEAD"], home).stdout.strip() == head_before, report)
     head_before = git_in(["rev-parse", "HEAD"], home).stdout.strip()
     report = sync_with_failing_call(home, "merge-base --is-ancestor HEAD origin/main")
     check("a failed `git merge-base --is-ancestor HEAD origin/main` is reported, and "
@@ -1013,7 +1026,8 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
     check("a fast-forward whose new commit cannot be read says it fast-forwarded, "
           "with git's error in place of the commit",
           "fast-forwarded to main (its new commit could not be read" in report
-          and "fatal: stub failure" in report, report)
+          and "fatal: stub failure" in report
+          and f"In any other case, run `git -C {home} rev-parse --short HEAD`" in report, report)
 
     (home / "agent-note.txt").write_text("own work\n", encoding="utf-8")
     git_in(["add", "-A"], home)
