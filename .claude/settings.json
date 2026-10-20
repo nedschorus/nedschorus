@@ -8,7 +8,8 @@
   },
   "permissions": {
     "allow": [
-      "Bash(gh pr merge *)"
+      "Bash(gh pr merge *)",
+      "Bash(python3 */.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py --approve *)"
     ]
   },
   "hooks": {
