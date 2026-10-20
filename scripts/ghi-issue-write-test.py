@@ -1254,6 +1254,21 @@ def run_cases(scratch: Path):
         except tool.Refused as refusal:
             check(case_name, False, f"refused: {refusal}")
 
+    # Any other failing exit carries the ask's last stderr line, which says
+    # why, and the bare report stands when the ask printed nothing.
+    for case_name, stderr, expected in [
+            ("a failing ask's last stderr line is carried into the report",
+             "ghi-info-ask: a progress line\nghi-info-ask: ned-box cannot "
+             "be reached\n",
+             "adjudication skipped: ghi-info did not answer: ghi-info-ask: "
+             "ned-box cannot be reached"),
+            ("a failing ask that printed nothing gets the bare report", "",
+             "adjudication skipped: ghi-info did not answer")]:
+        lines = []
+        tool.adjudicate(REPO, "t", FILE_TEXT, scratch, Recorder({ASK: Completed(
+            "", returncode=1, stderr=stderr)}), lines.append)
+        check(case_name, lines == [expected], lines)
+
     # On the locked path ghi-info-ask.py writes its seat-checkout refresh line
     # or its reincarnation line to stderr before the message, and the Mac
     # relay copies them through; the report still carries the message.
@@ -4696,35 +4711,44 @@ def run_edit_adjudication_context_cases(scratch: Path):
 
 def main():
     import tempfile
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-pull-request-description-test-") as name:
-        run_pull_request_description_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-write-test-") as name:
-        run_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-real-git-test-") as name:
-        run_real_git_listing_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-landing-test-") as name:
-        run_edit_landing_real_git_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-landed-test-") as name:
-        run_landed_design_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-push-test-") as name:
-        run_push_time_limit_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-main-test-") as name:
-        run_main_dispatch_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-file-set-test-") as name:
-        run_whole_file_set_cases(Path(name))
-    # A checkout of its own: the reconsidered marker lives at the root of
-    # one and is consumed by the write it passes, so two groups sharing a
-    # directory would share that.
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-edit-test-") as name:
-        run_edit_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-adjudication-test-") as name:
-        run_edit_adjudication_context_cases(Path(name))
-    print()
-    if failures:
-        print(f"{len(failures)} case(s) failed")
-        return 1
-    print("all cases passed")
-    return 0
+    # Every tempfile name the tool picks, mkstemp's question files included,
+    # lands in this run's own directory: a check for leftovers sees only this
+    # run's, and a mutant that skips a cleanup leaves nothing in /tmp.
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-write-test-run-") as run_directory:
+        default_tempdir = tempfile.tempdir
+        tempfile.tempdir = run_directory
+        try:
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-pull-request-description-test-") as name:
+                run_pull_request_description_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-write-test-") as name:
+                run_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-real-git-test-") as name:
+                run_real_git_listing_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-landing-test-") as name:
+                run_edit_landing_real_git_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-landed-test-") as name:
+                run_landed_design_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-push-test-") as name:
+                run_push_time_limit_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-main-test-") as name:
+                run_main_dispatch_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-file-set-test-") as name:
+                run_whole_file_set_cases(Path(name))
+            # A checkout of its own: the reconsidered marker lives at the root of
+            # one and is consumed by the write it passes, so two groups sharing a
+            # directory would share that.
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-edit-test-") as name:
+                run_edit_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-adjudication-test-") as name:
+                run_edit_adjudication_context_cases(Path(name))
+            print()
+            if failures:
+                print(f"{len(failures)} case(s) failed")
+                return 1
+            print("all cases passed")
+            return 0
+        finally:
+            tempfile.tempdir = default_tempdir
 
 
 if __name__ == "__main__":
