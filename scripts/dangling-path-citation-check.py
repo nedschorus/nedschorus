@@ -5,8 +5,10 @@ Run on a clean tree: diff line numbers come from HEAD, but citation text and
 existence checks read the working tree."""
 import argparse
 import importlib.util
+import os
 import pathlib
 import re
+import shlex
 import subprocess
 import sys
 
@@ -337,13 +339,26 @@ def citations_of_removed_paths(removed: list, repository_root: pathlib.Path, lin
     return findings
 
 
+def git_failure_next_steps(argv) -> str:
+    """The lines telling an agent what to do after a git command failed."""
+    # The rerun must start in this directory: FILE arguments are relative to it.
+    rerun = (f"cd {shlex.quote(os.getcwd())} && "
+             + shlex.join(["python3", str(pathlib.Path(__file__).resolve()),
+                           *(sys.argv[1:] if argv is None else argv)]))
+    return (
+        f"If git's error names a lock file, such as .git/index.lock, wait one minute, then run {rerun}; do not delete the lock file yourself.\n"
+        f"If git's error names a branch, commit or path that does not exist, check that the command you ran names the right one, correct it if not, then run it again.\n"
+        f"In any other case, run {rerun} once more.\n"
+        f"If {rerun} fails a second time, stop and tell the user what {PROGRAM} printed, git's error included; a subagent tells the agent that dispatched it instead.")
+
+
 def main(argv=None) -> int:
     try:
         return run_check(argv)
     except git_output.GitCommandFailed as failure:
         fail_bad_invocation(f"could not check, because a git command failed, so "
                             f"no result is reported: {failure}\n"
-                            f"Fix what git's error names, then run the check again.")
+                            f"{git_failure_next_steps(argv)}")
 
 
 def run_check(argv) -> int:

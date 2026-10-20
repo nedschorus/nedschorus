@@ -129,9 +129,15 @@ def run_with_git_failing(root: Path, failing_arguments: str, *arguments):
     return run(root, *arguments, environment=environment)
 
 
-def reports_the_git_failure_and_no_result(code, out, err):
+def reports_the_git_failure_and_no_result(root, arguments, code, out, err):
+    """Exit 2, git's error, no result, and the exact rerun command."""
+    rerun = (f"cd {root} && python3 {(root / 'scripts' / PROGRAM.name).resolve()} "
+             + " ".join(arguments))
     return (code == 2 and INJECTED_GIT_ERROR in err and "a git command failed" in err
-            and "finding(s)" not in err)
+            and "finding(s)" not in err
+            and f"In any other case, run {rerun} once more." in err
+            and f"If {rerun} fails a second time, stop and tell the user what "
+                f"stale-code-citation-check printed" in err)
 
 
 def document(stamp="2026-05-01", status="design", body=""):
@@ -794,14 +800,16 @@ with tempfile.TemporaryDirectory() as workspace:
             ("ls-files -z -- *.md", "the document listing")):
         code, out, err = run_with_git_failing(root, failing_arguments, "--base", base)
         check(f"changed-paths mode exits 2 with git's error when {what} fails",
-              reports_the_git_failure_and_no_result(code, out, err), f"{code} {out} {err}")
+              reports_the_git_failure_and_no_result(root, ["--base", base], code, out, err),
+              f"{code} {out} {err}")
 
     for failing_arguments, what in (
             ("log -1 --format=%cs -- scripts/cited.py", "a cited file's history"),
             ("rev-parse --verify --quiet 1234567abc", "resolving a pinned commit")):
         code, out, err = run_with_git_failing(root, failing_arguments, "docs/design.md")
         check(f"document mode exits 2 with git's error when {what} fails",
-              reports_the_git_failure_and_no_result(code, out, err), f"{code} {out} {err}")
+              reports_the_git_failure_and_no_result(root, ["docs/design.md"], code, out, err),
+              f"{code} {out} {err}")
 
 print()
 if failures:

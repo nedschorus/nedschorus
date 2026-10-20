@@ -1074,14 +1074,23 @@ with tempfile.TemporaryDirectory() as workspace:
     code, out, err = run_check_with_git_failing(root, "no git command fails here", base)
     check("the stand-in git passes every other command to the real git",
           code == 1 and "scripts/not-there.py" in out, f"{code} {out!r} {err!r}")
+    def reports_the_git_failure_and_no_result(base, code, err):
+        """Exit 2, git's error, no result, and the exact rerun command."""
+        rerun = (f"cd {root} && python3 "
+                 f"{(root / 'scripts' / CHECK_SCRIPT.name).resolve()} --base {base}")
+        return (code == 2 and INJECTED_GIT_ERROR in err and "a git command failed" in err
+                and "finding(s)" not in err
+                and f"In any other case, run {rerun} once more." in err
+                and f"If {rerun} fails a second time, stop and tell the user what "
+                    f"dangling-path-citation-check printed" in err)
+
     for failing_arguments, what in (
             ("ls-tree -z HEAD --name-only -d", "listing the root directories"),
             (f"ls-tree -z {base} -- scripts/launcher", "asking whether the base holds a file"),
             ("grep -z -l", "searching for citations of a removed path")):
         code, out, err = run_check_with_git_failing(root, failing_arguments, base)
         check(f"the check exits 2 with git's error when {what} fails",
-              code == 2 and INJECTED_GIT_ERROR in err and "a git command failed" in err
-              and "finding(s)" not in err, f"{code} {out!r} {err!r}")
+              reports_the_git_failure_and_no_result(base, code, err), f"{code} {out!r} {err!r}")
 
     # A file the base holds, so its base text is read.
     base_with_launcher = git(root, "rev-parse", "HEAD").stdout.strip()
@@ -1095,8 +1104,8 @@ with tempfile.TemporaryDirectory() as workspace:
     code, out, err = run_check_with_git_failing(root, f"show {base_with_launcher}:",
                                                 base_with_launcher)
     check("the check exits 2 with git's error when reading a file's base text fails",
-          code == 2 and INJECTED_GIT_ERROR in err and "a git command failed" in err
-          and "finding(s)" not in err, f"{code} {out!r} {err!r}")
+          reports_the_git_failure_and_no_result(base_with_launcher, code, err),
+          f"{code} {out!r} {err!r}")
 
 if failures:
     print(f"\n{len(failures)} case(s) failed: {', '.join(failures)}")

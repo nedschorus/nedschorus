@@ -4,8 +4,10 @@
 import argparse
 import datetime
 import importlib.util
+import os
 import pathlib
 import re
+import shlex
 import sys
 
 PROGRAM = "stale-code-citation-check"
@@ -346,13 +348,26 @@ def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
     return findings, pinned_count
 
 
+def git_failure_next_steps(argv) -> str:
+    """The lines telling an agent what to do after a git command failed."""
+    # The rerun must start in this directory: FILE arguments are relative to it.
+    rerun = (f"cd {shlex.quote(os.getcwd())} && "
+             + shlex.join(["python3", str(pathlib.Path(__file__).resolve()),
+                           *(sys.argv[1:] if argv is None else argv)]))
+    return (
+        f"If git's error names a lock file, such as .git/index.lock, wait one minute, then run {rerun}; do not delete the lock file yourself.\n"
+        f"If git's error names a branch, commit or path that does not exist, check that the command you ran names the right one, correct it if not, then run it again.\n"
+        f"In any other case, run {rerun} once more.\n"
+        f"If {rerun} fails a second time, stop and tell the user what {PROGRAM} printed, git's error included; a subagent tells the agent that dispatched it instead.")
+
+
 def main(argv=None) -> int:
     try:
         return run_check(argv)
     except git_machine_readable_output.GitCommandFailed as failure:
         print(f"{PROGRAM}: could not check, because a git command failed, so "
               f"no result is reported: {failure}\n"
-              f"Fix what git's error names, then run the check again.",
+              f"{git_failure_next_steps(argv)}",
               file=sys.stderr)
         return EXIT_COULD_NOT_CHECK
 
