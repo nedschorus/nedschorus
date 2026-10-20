@@ -111,28 +111,31 @@ ASK_FILE = "{path}, version {key}.{reason} Its change against the newest approve
 EDIT_ON_UNAPPROVED_VERSION = (
     " The Edit or Write did not approve this version, because it was made on a version the user "
     "had not approved: the instruction-file guard's approval covers only that call's change, not "
-    "the unapproved text already in the file.")
+    "the unapproved text already in the file. An obvious-fix or `#pre_approved_change` marker you "
+    "wrote before the Edit or Write does not change this: the call spent it, so the lines below "
+    "about those two markers do not apply to you, and the text it was made on needs the user's "
+    "yes.")
 ASK_INSTRUCTIONS = (
-    "If you are a subagent and you wrote an obvious-fix marker before you made the change, run "
-    "once: python3 {program} --approve {pairs}, then tell the agent that dispatched you what you "
-    "fixed, and do none of the steps below.\n"
+    "If you are a subagent, and you wrote an obvious-fix marker and then made the change with a "
+    "command other than Edit or Write, run once: python3 {program} --approve {pairs}, then tell "
+    "the agent that dispatched you what you fixed, and do none of the steps below.\n"
     "If you are any other subagent, stop: make no further edit, report the change to the agent "
     "that dispatched you instead of asking the user, and do none of the steps below.\n"
     "Show the user each change above and ask him whether he approves it.\n"
     "If he approves, write his words into {marker} at the top of your session's checkout, then "
     "run once: python3 {program} --approve {pairs}\n"
-    "If you wrote an obvious-fix marker before you made the change, run that --approve command "
-    "without asking him, then tell him what you fixed.\n"
-    "If you wrote a `#pre_approved_change` marker before you made the change, run that "
-    "--approve command without asking him.\n"
+    "If you wrote an obvious-fix marker and then made the change with a command other than Edit "
+    "or Write, run that --approve command without asking him, then tell him what you fixed.\n"
+    "If you wrote a `#pre_approved_change` marker and then made the change with a command other "
+    "than Edit or Write, run that --approve command without asking him.\n"
     "If he declines, run: python3 {program} --restore {pairs}\n"
     "If he declines a version that is in a commit, also run, for each such file: "
     "git commit --only -m \"Put back the approved <file name>\" -- <path>")
 REMINDER = (
     "Reminder: {path} still holds version {key}, which the user has not approved.\n"
-    "If you are a subagent and you wrote an obvious-fix marker before you made the change, run "
-    "once: python3 {program} --approve {path} {key}, then tell the agent that dispatched you what "
-    "you fixed.\n"
+    "If you are a subagent, and you wrote an obvious-fix marker and then made the change with a "
+    "command other than Edit or Write, run once: python3 {program} --approve {path} {key}, then "
+    "tell the agent that dispatched you what you fixed.\n"
     "If you are any other subagent, stop: make no further edit, and report the change to the "
     "agent that dispatched you instead of asking the user.\n"
     "Otherwise show the user the change and ask him, as this hook's earlier message said.\n"
@@ -776,8 +779,10 @@ class Check:
     def __init__(self, path, data, key, copy_hash, how="", in_git=False, previous=None):
         self.path, self.data, self.key, self.copy_hash, self.how = path, data, key, copy_hash, how
         self.in_git = in_git
-        # The key of the version the previous run saw: None when it saw none, DELETED when the
-        # file was absent, so in both cases the call wrote the whole file.
+        # The key of the version the previous run saw: None when no run recorded the file,
+        # DELETED when it was absent. A Write then wrote the whole file, but an Edit was made on
+        # a version no run saw, such as one a shell command wrote in a run that saved no state;
+        # that version is approved with the Edit's result without asking the user.
         self.previous = previous
 
 

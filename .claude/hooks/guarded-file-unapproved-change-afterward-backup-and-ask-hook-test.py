@@ -953,23 +953,49 @@ def cases(scratch):
     world = fresh(scratch, "subagent-line")
     claude = world.repo / "CLAUDE.md"
     claude.write_text("project v2\n")
+    key = world.key(claude)
     message = world.run()
     reminder = world.run()
-    check("the ask tells a subagent with an obvious-fix marker to run --approve and tell its "
-          "dispatcher, before any step that asks the user",
-          0 <= message.find("If you are a subagent and you wrote an obvious-fix marker")
+    obvious_fix_subagent = ("If you are a subagent, and you wrote an obvious-fix marker and then "
+                            "made the change with a command other than Edit or Write, run once")
+    other_subagent = "If you are any other subagent, stop: make no further edit"
+    ask_subagent_line = message[message.find(obvious_fix_subagent):message.find(other_subagent)]
+    check("the ask tells a subagent that wrote an obvious-fix marker and then changed the file by "
+          "a command other than Edit or Write to run --approve and tell its dispatcher, on its "
+          "own line before any step that asks the user",
+          0 <= message.find(obvious_fix_subagent) < message.find(other_subagent)
           < message.find("Show the user each change")
-          and "--approve" in message[:message.find("Show the user each change")]
-          and "tell the agent that dispatched you what you fixed" in message, message)
+          and f"--approve {claude} {key}" in ask_subagent_line
+          and "tell the agent that dispatched you what you fixed" in ask_subagent_line, message)
     check("the ask tells any other subagent to stop editing before any step that asks the user",
-          0 <= message.find("If you are any other subagent, stop: make no further edit")
-          < message.find("Show the user each change"), message)
-    check("the reminder gives a subagent with an obvious-fix marker the --approve command",
-          "If you are a subagent and you wrote an obvious-fix marker" in reminder
-          and f"--approve {claude}" in reminder, reminder)
+          0 <= message.find(other_subagent) < message.find("Show the user each change"), message)
+    check("the ask tells an agent that is not a subagent to approve with its obvious-fix or "
+          "#pre_approved_change marker only a change it made by a command other than Edit or "
+          "Write",
+          "If you wrote an obvious-fix marker and then made the change with a command other than "
+          "Edit or Write, run that --approve command without asking him" in message
+          and "If you wrote a `#pre_approved_change` marker and then made the change with a "
+          "command other than Edit or Write, run that --approve command without asking him"
+          in message, message)
+    reminder_subagent_line = reminder[reminder.find(obvious_fix_subagent):
+                                      reminder.find(other_subagent)]
+    check("the reminder gives a subagent that wrote an obvious-fix marker and then changed the "
+          "file by a command other than Edit or Write the --approve command, on its own line",
+          0 <= reminder.find(obvious_fix_subagent) < reminder.find(other_subagent)
+          and f"--approve {claude} {key}" in reminder_subagent_line, reminder)
     check("the reminder tells any other subagent to stop editing and report, and names the "
-          "approval marker", "If you are any other subagent, stop: make no further edit"
-          in reminder and ".walk-approved" in reminder, reminder)
+          "approval marker", other_subagent in reminder and ".walk-approved" in reminder, reminder)
+
+    # -- an Edit of a file no run recorded is approved with the text it was made on
+    world = fresh(scratch, "edit-on-version-no-run-recorded")
+    skill = world.repo / ".claude" / "skills" / "unrecorded" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("a skill a shell command wrote, in a run that saved no state\n")
+    skill.write_text("a skill a shell command wrote, in a run that saved no state\nan Edit's line\n")
+    message = world.run(tool="Edit", file_path=skill)
+    check("an Edit of a guarded file no run recorded approves the result without asking, though "
+          "no one approved the text it was made on: the gap the comment on Check.previous names",
+          message == "" and world.key(skill) in world.store_file(skill, "approved"), message)
 
     # -- an Edit or Write approves its result only when the version it was made on is approved
     world = fresh(scratch, "edit-on-unapproved-shell-edit")
@@ -985,6 +1011,11 @@ def cases(scratch):
           "the --approve command for the result",
           "it was made on a version the user had not approved" in message
           and f"{HOOK} --approve {claude} {key}" in message, message)
+    check("the ask about that Edit's result says a marker written before the Edit does not "
+          "approve it, since the Edit spent the marker",
+          "An obvious-fix or `#pre_approved_change` marker you wrote before the Edit or Write does "
+          "not change this: the call spent it, so the lines below about those two markers do not "
+          "apply to you, and the text it was made on needs the user's yes." in message, message)
     claude.write_text("project v3 by shell\n")
     message = world.run()
     check("a shell edit made on an unapproved version is asked about without the Edit's reason",
