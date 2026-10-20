@@ -61,7 +61,7 @@ A term used by one system alone is defined in that system's glossary, not here. 
 - **log-store** — the directory on ned-box, `/home/nedlern/nedschorus-logs/`, holding the byproducts of the work that are not the system, cold-read records first.
 - **main-gatekeeper** — the program that will be the only way a change reaches main. Until it is live, changes reach main by PR through merge-lane.
 - **maintenance-job** — a job that runs on a regular schedule, some of them daily, to catch what an immediate check, such as a hook, missed, or to clear what builds up, such as old worktrees.
-- **merge-lane** — the role that reviews and merges every PR into main, held by the agent-seat merge-lane-2 on ned-box.
+- **merge-lane** — the role that manages the review of every PR and merges the PR into main, held by the agent-seat merge-lane-2 on ned-box.
 - **NBD** — nice-but-dirty.
 - **NC** — this project, NedsChorus.
 - **ned-box** — the Ubuntu machine on the user's LAN, reached as `ssh nedlern@ned-box`: the project's hub and server, where most agent-seats run and the log-store lives.

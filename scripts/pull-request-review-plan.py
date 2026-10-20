@@ -2,9 +2,9 @@
 """Compute the merge seat's review tier and facts for a pull request's brief.
 
 Rule 1: tiers follow content. Tests, fenced Markdown code, and Python changes
-limited to docstrings, comments and string constants get seat-and-codex.
-Python behaviour changes and other code get full-reviewer. Prose gets
-seat-alone. Settings, Bash guards and registered hooks always get a full
+limited to docstrings, comments and string constants get codex-review-and-head-tests-tier.
+Python behaviour changes and other code get claude-and-codex-review-and-head-tests-tier. Prose gets
+no-reviewer-tier. Settings, Bash guards and registered hooks always get a full
 reviewer; all of .claude/hooks/ does too, including test files there.
 
 Rule 2: a fix round is reviewed by its new commits alone, at the tier those
@@ -34,7 +34,7 @@ Merged pull requests use the merge commit's first parent as the diff base:
 the current base branch already contains the head and would hide the change.
 No rename detection is used: moving a program changes behaviour for callers,
 so a rename is a deletion and an addition. Markdown prose anywhere is
-seat-alone because prose outside code is outside the review scope.
+no-reviewer-tier because prose outside code is outside the review scope.
 
 Reads the pull request, reviews, inline comments and live base tip through
 four read-only gh calls, and commits, refs and diffs from the local repository.
@@ -99,7 +99,7 @@ cold_read_fast_read_review_command_line_for_target_file = _message_reminder_hook
 FAST_READ_COMMAND = _message_reminder_hook.FAST_READ_COMMAND
 PLAN_PRINTED_WITH_MESSAGES_MISSING_FAST_READ_COMMAND_EXIT_STATUS = 3
 
-REVIEW_TIER_ORDER = {"seat-alone": 0, "seat-and-codex": 1, "full-reviewer": 2}
+REVIEW_TIER_ORDER = {"no-reviewer-tier": 0, "codex-review-and-head-tests-tier": 1, "claude-and-codex-review-and-head-tests-tier": 2}
 GITHUB_PULL_REQUEST_FIELDS = "number,title,url,state,author,headRefOid,baseRefName,mergeCommit"
 GIT_FULL_HASH_PATTERN = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 DIFF_HUNK_HEADER_PATTERN = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
@@ -336,12 +336,12 @@ def hook_path_rule_reason(path, registered_paths):
 def classify_changed_file_into_class_tier_and_reason(repository, old_revision, new_revision,
                                                       path, status, registered_paths):
     if path == ".claude/settings.json":
-        return ("settings", "full-reviewer", ".claude/settings.json registers the hooks; a change to it always gets a full reviewer")
+        return ("settings", "claude-and-codex-review-and-head-tests-tier", ".claude/settings.json registers the hooks; a change to it always gets a full reviewer")
     hook_reason = hook_path_rule_reason(path, registered_paths)
     if hook_reason:
-        return "hook", "full-reviewer", hook_reason
+        return "hook", "claude-and-codex-review-and-head-tests-tier", hook_reason
     if path_is_test_file(path):
-        return "test", "seat-and-codex", f"{path} is a test file"
+        return "test", "codex-review-and-head-tests-tier", f"{path} is a test file"
     if path.endswith(".md"):
         old_lines = fenced_code_block_line_numbers_in_markdown(read_revision_blob_or_none(repository, old_revision, path))
         new_lines = fenced_code_block_line_numbers_in_markdown(read_revision_blob_or_none(repository, new_revision, path))
@@ -352,16 +352,16 @@ def classify_changed_file_into_class_tier_and_reason(repository, old_revision, n
             for old_start, old_count, new_start, new_count in parse_diff_hunk_line_ranges(diff_text)
             for start, count, inside in ((old_start, old_count, old_lines), (new_start, new_count, new_lines)))
         if changes_code:
-            return "code", "seat-and-codex", f"{path} changes lines inside fenced code blocks"
-        return "prose", "seat-alone", f"{path} changes only prose outside fenced code blocks"
+            return "code", "codex-review-and-head-tests-tier", f"{path} changes lines inside fenced code blocks"
+        return "prose", "no-reviewer-tier", f"{path} changes only prose outside fenced code blocks"
     if (path.startswith(("docs/", "nc-queue/"))
             and Path(path).suffix not in PROSE_DIRECTORY_CODE_EXTENSIONS):
-        return "prose", "seat-alone", f"{path} is prose under docs/ or nc-queue/"
+        return "prose", "no-reviewer-tier", f"{path} is prose under docs/ or nc-queue/"
     if path.endswith(".py"):
         if status == "A":
-            return "code", "full-reviewer", f"{path} is a new program"
+            return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} is a new program"
         if status == "D":
-            return "code", "full-reviewer", f"{path} is deleted"
+            return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} is deleted"
         syntax_dumps = []
         for side, revision in (("old side", old_revision), ("new side", new_revision)):
             source = read_revision_blob_or_none(repository, revision, path)
@@ -370,11 +370,11 @@ def classify_changed_file_into_class_tier_and_reason(repository, old_revision, n
                     raise SyntaxError("no source blob")
                 syntax_dumps.append(normalized_syntax_tree_dump_without_strings(source))
             except (SyntaxError, ValueError):
-                return "code", "full-reviewer", f"{path} does not parse at {side}"
+                return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} does not parse at {side}"
         if syntax_dumps[0] == syntax_dumps[1]:
-            return "code", "seat-and-codex", f"{path} changes only docstrings, comments and string constants"
-        return "code", "full-reviewer", f"{path} changes its syntax tree beyond docstrings, comments and string constants"
-    return "code", "full-reviewer", f"{path} is not Python or Markdown, so no check shows its change leaves behaviour alone"
+            return "code", "codex-review-and-head-tests-tier", f"{path} changes only docstrings, comments and string constants"
+        return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} changes its syntax tree beyond docstrings, comments and string constants"
+    return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} is not Python or Markdown, so no check shows its change leaves behaviour alone"
 
 
 def changed_files_with_classes_and_tiers(repository, old_revision, new_revision,
@@ -407,7 +407,7 @@ def changed_files_with_classes_and_tiers(repository, old_revision, new_revision,
 
 def review_tier_and_deciding_reason(changed_files):
     if not changed_files:
-        return "seat-alone", "the pull request changes no file"
+        return "no-reviewer-tier", "the pull request changes no file"
     deciding_file = min(changed_files, key=lambda entry: (
         -REVIEW_TIER_ORDER[entry["tier"]], entry["class"] not in ("hook", "settings"),
         path_is_test_file(entry["path"]), entry["path"]))
