@@ -4517,9 +4517,8 @@ def run_whole_file_set_cases(scratch: Path):
 
 
 class RulingAskingGhiInfo(StagedReader):
-    """A fake ghi-info that asks the ruling question about any draft, as the
-    real one did on 2026-10-19 about GHI 1058's unchanged text, unless the
-    question it is sent carries an entry that already asks it."""
+    """A fake ghi-info that asks the ruling question about any draft,
+    unless the question it is sent carries an entry that already asks it."""
 
     def __init__(self, answers, sentence):
         super().__init__(answers)
@@ -4596,7 +4595,7 @@ def run_edit_adjudication_context_cases(scratch: Path):
                     item + "\0" for item in [EDIT_RELATIVE] + listing)),
             }
 
-        # GHI 1058, PR 1674: a one-citation edit beside a settled entry.
+        # A one-citation edit beside a settled entry.
         source = filed_ghi_md(scratch, text=edited_text)
         entry_on_disk.write_text(entry_text, encoding="utf-8")
         settled = RulingAskingGhiInfo(answers([entry_relative]), sentence)
