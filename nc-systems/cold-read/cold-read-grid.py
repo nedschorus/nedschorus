@@ -2,7 +2,8 @@
 """Run a cold-read-full-run against a cold-read-target.
 
 One invocation = one review: six cold-read-cells launched in parallel -- the
-defect-hunt pass in four ({deep, second} x {claude, codex}) and the
+defect-hunt pass in four ({deep, second-strongest-model} x {claude, codex}, where
+second-strongest-model is the agent-binary's second-strongest model) and the
 terminology pass in two (deep x {claude, codex}) -- every report saved
 into a cold-read-record named
 `cold-read-records/<file stem>-<YYYY-MM-DD>/`, or `SKILL-<skill name>-<YYYY-MM-DD>/` for a skill
@@ -178,7 +179,7 @@ CELL_PROGRAM_NAMES = tuple(path.stem for path in CELL_LAUNCHERS.values())
 # Pin terminology effort explicitly so launcher tier-map changes cannot change the pass.
 GRID_CELL_ROSTER = (
     ("defect-hunt", "deep", None),
-    ("defect-hunt", "second", None),
+    ("defect-hunt", "second-strongest-model", None),
     ("terminology", "deep", "max"),
 )
 
