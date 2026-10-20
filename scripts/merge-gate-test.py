@@ -114,7 +114,10 @@ without merging. The stand-in serves each link's lookup, `gh api
 repos/<owner>/<repo>/issues/<n>`, from the route "link <endpoint>", one capture
 per state: 1154 an open issue, 1585 an issue closed as completed, 735 one
 closed as not planned, 1636 an open pull request, 1724 a merged one, 1639 one
-closed without merging, and 999999 a number GitHub does not find.
+closed without merging, and 999999 a number GitHub does not find. A link with a
+#fragment or a sub-path is read as the issue or pull request it names. The gate
+refuses a link to the pull request being merged before any lookup, and a
+/pull/<n> link whose lookup shows an issue.
 
 Run: python3 scripts/merge-gate-test.py
 """
@@ -1200,6 +1203,64 @@ def case_follow_up_link_not_found(gate):
         "user this message and gh's error.\n"), run.summary()
 
 
+def case_follow_up_link_with_a_fragment(gate):
+    return follow_up_passes(
+        gate, [f"#root_cause_not_fixed the harness drops the variable. #follow_up {FOLLOW_UP_LINK}#issuecomment-1"],
+        link_route("open issue"))
+
+
+def case_follow_up_link_with_a_sub_path(gate):
+    return follow_up_passes(
+        gate, ["#root_cause_not_fixed the harness drops the variable. #follow_up "
+               "https://github.com/nedschorus/nedschorus/pull/1636/files"],
+        link_route("open pull request", "repos/nedschorus/nedschorus/issues/1636"))
+
+
+def self_link_refused(gate, link, normalised_link):
+    line = f"#root_cause_not_fixed the harness drops the variable. #follow_up {link}"
+    run = description_with_lines_run(gate, [line], [])
+    return (refused_with(
+        run, BASE_PR,
+        f"GATE REFUSED (#{BASE_PR}): the description's line `{line}` names after `#follow_up` "
+        f"{normalised_link}, which is this pull request; a pull request cannot be the follow-up for "
+        "a cause it leaves in place.\n",
+        "\nReplace that link with an open issue or pull request that fixes the cause, or, if the "
+        "cause is not known, an open issue that looks for it.\n"
+        "If no such issue exists, open one with the /ghi-write skill",
+        "\nIf this pull request does remove the cause, replace the whole line with a \"#root_cause\" "
+        "line that names the cause it removes, and link nothing.\n"
+        "Editing the description is enough; no new commit is needed.\n"
+        "Once the description has the link, run the gate again.\n")
+            and not any(is_link_lookup(call) for call in run.calls)), run.summary()
+
+
+def case_follow_up_link_to_this_pull_request(gate):
+    link = f"https://github.com/nedschorus/nedschorus/pull/{BASE_PR}"
+    return self_link_refused(gate, link + "/files", link)
+
+
+def case_follow_up_issue_form_link_to_this_pull_request_in_other_letter_case(gate):
+    link = f"https://github.com/Nedschorus/nedschorus/issues/{BASE_PR}"
+    return self_link_refused(gate, link, link)
+
+
+def case_follow_up_pull_request_link_whose_number_is_an_issue(gate):
+    link = "https://github.com/nedschorus/nedschorus/pull/1154"
+    line = f"#root_cause_not_fixed the harness drops the variable. #follow_up {link}"
+    run = description_with_lines_run(gate, [line], [link_route("open issue")])
+    return refused_with(
+        run, BASE_PR,
+        f"GATE REFUSED (#{BASE_PR}): the description's line `{line}` names after `#follow_up` "
+        f"{link}, a pull-request link, but 1154 in nedschorus/nedschorus is an issue, not a pull "
+        "request.\n",
+        "\nIf that issue is the follow-up, change the link to "
+        "https://github.com/nedschorus/nedschorus/issues/1154.\n"
+        "If you meant a pull request, link it as "
+        "https://github.com/<owner>/<repository>/pull/<its number>.\n"
+        "Editing the description is enough; no new commit is needed.\n"
+        "Once the description has the link, run the gate again.\n"), run.summary()
+
+
 def case_follow_up_lookup_unparsable(gate):
     route = {"link repos/nedschorus/nedschorus/issues/1154": {
         "stdout_file": str(captured("nedschorus-nedschorus-665-inline-channel-paginated.json"))}}
@@ -1415,6 +1476,14 @@ CASES = [
      case_follow_up_pull_request_closed_unmerged),
     ("H4 a #follow_up link GitHub does not find could not run", case_follow_up_link_not_found),
     ("H4 a link lookup jq cannot read could not run", case_follow_up_lookup_unparsable),
+    ("H5 a #follow_up link with a #fragment passes", case_follow_up_link_with_a_fragment),
+    ("H5 a #follow_up link with a sub-path passes", case_follow_up_link_with_a_sub_path),
+    ("H6 a #follow_up link to the pull request being merged refuses before any lookup",
+     case_follow_up_link_to_this_pull_request),
+    ("H6 an /issues/ link to the pull request being merged, owner in capitals, refuses",
+     case_follow_up_issue_form_link_to_this_pull_request_in_other_letter_case),
+    ("H7 a /pull/ #follow_up link whose number is an issue refuses",
+     case_follow_up_pull_request_link_whose_number_is_an_issue),
 ]
 
 
@@ -1585,7 +1654,7 @@ MUTATIONS = [
      [('capture("#follow_up(?!\\\\w).*?', 'capture(".*?')],
      [case_follow_up_link_without_the_hashtag]),
     ("a link other than an issue or pull request accepted",
-     [("(?:issues|pull)/[0-9]+$", "[a-z]+/[0-9a-z]+$")], [case_follow_up_link_to_a_commit]),
+     [("(?:issues|pull)/[0-9]+)", "[a-z]+/[0-9a-z]+)")], [case_follow_up_link_to_a_commit]),
     ("trailing punctuation kept on the link", [('sub("[.,;:]+$"; "")', '.')],
      [case_follow_up_bare_link_ending_a_sentence]),
     ("the carriage return kept on the line", [('| sub("\\r$"; "")', "")],
@@ -1604,6 +1673,18 @@ MUTATIONS = [
     ("without the link lookup parse check",
      [('[ $? -eq 0 ] || cannot "could not parse what GitHub returned', ': || cannot "could not parse what GitHub returned')],
      [case_follow_up_lookup_unparsable]),
+    ("a #fragment or sub-path no longer cut from the link", [("(?:[/#?].*)?$", "$")],
+     [case_follow_up_link_with_a_fragment, case_follow_up_link_with_a_sub_path]),
+    ("a link to the pull request being merged not refused",
+     [('[ "$link_number" != "$PR" ] || fail', 'true || fail')],
+     [case_follow_up_link_to_this_pull_request,
+      case_follow_up_issue_form_link_to_this_pull_request_in_other_letter_case]),
+    ("the link's owner and repository compared in their own letter case",
+     [("\"$(tr '[:upper:]' '[:lower:]' <<<\"$link_repo\")\"", '"$link_repo"')],
+     [case_follow_up_issue_form_link_to_this_pull_request_in_other_letter_case]),
+    ("a /pull/ link whose number is an issue read as live",
+     [('then "issue-at-a-pull-request-link"', 'then "live"')],
+     [case_follow_up_pull_request_link_whose_number_is_an_issue]),
     ("without the description read check",
      [('[ $? -eq 0 ] || cannot "could not read pull request $PR\'s description',
        ': || cannot "could not read pull request $PR\'s description')],
