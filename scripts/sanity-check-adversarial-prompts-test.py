@@ -3285,8 +3285,8 @@ sys.exit(module.main())
 
     # Case 58: a stop signal that lands while the last cell is in a git call
     # it makes to save its report, after its agent-binary has exited. The
-    # stop's walk ends that call; the call runs with check=False, so the cell
-    # saves its report anyway, with `commit=unknown`. That report is what the
+    # stop's walk ends that call, and the cell saves its report anyway, with
+    # the commit token that says git could not read it. That report is what the
     # stop cut short, so the run ends with its STOPPED line, not as a finished
     # run over it. A stand-in `git`, first on the runner's PATH, holds the
     # cell inside its `git rev-parse --short HEAD`.
@@ -3298,7 +3298,7 @@ sys.exit(module.main())
         real_git = shutil.which("git")
         (programs / "git").write_text(
             "#!/bin/sh\n"
-            'if [ -n "$GIT_HOLD_REV_PARSE" ] && [ "$1" = rev-parse ] && [ "$2" = --short ]; then\n'
+            'if [ -n "$GIT_HOLD_REV_PARSE" ] && [ "$1" = -C ] && [ "$3" = rev-parse ] && [ "$4" = --short ]; then\n'
             '    : > "$GIT_HOLD_REV_PARSE.held"\n'
             '    while [ ! -e "$GIT_HOLD_REV_PARSE" ]; do sleep 0.05; done\n'
             "fi\n"
@@ -3329,7 +3329,8 @@ sys.exit(module.main())
                            if report is not None and report.is_file() else "")
             check("a stop that ends the git call a cell makes to save its report ends "
                   "the run with its STOPPED line, not as a finished run",
-                  held and walked and "commit=unknown" in report_text
+                  held and walked
+                  and f"commit={runner.COMMIT_NOT_READ} " in report_text
                   and "STOPPED: SIGTERM ended this run" in out
                   and "sanity-check complete" not in out,
                   f"held {held}, walked {walked}, report {report_text[:200]!r}, "
@@ -3465,6 +3466,184 @@ sys.exit(module.main())
     check("a version probe that returns while the run is stopped is not cached",
           probed == "unknown" and "codex" not in runner_probe.CLI_VERSION_CACHE,
           f"probed {probed!r}, cache {runner_probe.CLI_VERSION_CACHE!r}")
+
+    # Git failures the runner reads. A directory whose .git file names no git
+    # directory makes every git command in it exit 128, as a broken review
+    # copy would; each reader must raise, never answer from git's empty
+    # output: no stray writes, no tracked file, nothing uncommitted.
+    runner_git = load_runner()
+    with tempfile.TemporaryDirectory() as scratch:
+        broken = pathlib.Path(scratch)
+        (broken / ".git").write_text("gitdir: /nonexistent-git-directory\n", encoding="utf-8")
+        (broken / "tracked.md").write_text("x\n", encoding="utf-8")
+        for reader_name, read in (
+                ("worktree_snapshot", lambda: runner_git.worktree_snapshot(broken)),
+                ("tracked_files_corpus", lambda: runner_git.tracked_files_corpus(broken)),
+                ("reviewed_revision", lambda: runner_git.reviewed_revision({}, broken)),
+                ("uncommitted_review_paths",
+                 lambda: runner_git.uncommitted_review_paths(["tracked.md"], broken))):
+            try:
+                answer = read()
+                raised = None
+            except runner_git.git_output.GitCommandFailed as failure:
+                answer, raised = None, failure
+            check(f"{reader_name} raises when git fails, naming git's exit code",
+                  raised is not None and raised.returncode == 128,
+                  f"answered {answer!r}")
+
+    # uncommitted_review_paths runs two git commands; a stand-in git that
+    # fails only one of them shows each is read on its own.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch)
+        (base / "repo").mkdir()
+        repo = new_repo(base / "repo")
+        stand_ins = base / "stand-ins"
+        stand_ins.mkdir()
+        (stand_ins / "git").write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = -C ] && [ "$3" = "$GIT_SUBCOMMAND_TO_FAIL" ]; then\n'
+            "    echo 'fatal: a failure this case made' >&2; exit 128\n"
+            "fi\n"
+            f'exec {shlex.quote(shutil.which("git"))} "$@"\n', encoding="utf-8")
+        (stand_ins / "git").chmod(0o755)
+        real_path = os.environ["PATH"]
+        for subcommand in ("ls-files", "status"):
+            os.environ["PATH"] = f"{stand_ins}{os.pathsep}{real_path}"
+            os.environ["GIT_SUBCOMMAND_TO_FAIL"] = subcommand
+            try:
+                answer = runner_git.uncommitted_review_paths(["tracked.md"], repo)
+                raised = None
+            except runner_git.git_output.GitCommandFailed as failure:
+                answer, raised = None, failure
+            finally:
+                os.environ["PATH"] = real_path
+                del os.environ["GIT_SUBCOMMAND_TO_FAIL"]
+            check(f"uncommitted_review_paths raises when only its git {subcommand} fails",
+                  raised is not None and "a failure this case made" in str(raised),
+                  f"answered {answer!r}")
+
+    def git_failure(runner_raising, arguments):
+        # Each load_runner loads its own copy of the git helper, so the error
+        # must be that runner's class for its `except` to catch it.
+        return runner_raising.git_output.GitCommandFailed(
+            arguments, "/review-copy", 128, "fatal: a git failure this case made\n")
+
+    # A git failure before any agent launches stops the run with exit 2 and
+    # git's words, before a record directory is claimed.
+    runner_git_main = load_runner()
+    runner_git_main.uncommitted_review_paths = lambda *arguments: []
+
+    @contextlib.contextmanager
+    def empty_copy(commit, record_name, repo_root):
+        with tempfile.TemporaryDirectory() as copy:
+            yield pathlib.Path(copy)
+
+    runner_git_main.review_copy_of_commit = empty_copy
+
+    def failing_snapshot(*arguments):
+        raise git_failure(runner_git_main, ["status", "--porcelain", "-z", "-uall"])
+
+    runner_git_main.worktree_snapshot = failing_snapshot
+    runner_git_main.run_claude = lambda prompt, checkout=None: (0, cut_report, "a-test-model", "")
+    with tempfile.TemporaryDirectory() as scratch:
+        runner_git_main.RECORDS_ROOT = pathlib.Path(scratch) / "sanity-check-records"
+        sys.argv = [str(RUNNER_SCRIPT), "--adversarial-prompt", "cut", "--runtime", "claude",
+                    "--target", "docs/agents/sanity-checker-cut-adversarial-prompt.md"]
+        printed, errors = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(errors):
+                exit_code = runner_git_main.main()
+        finally:
+            sys.argv = real_argv
+        claimed = (sorted(runner_git_main.RECORDS_ROOT.iterdir())
+                   if runner_git_main.RECORDS_ROOT.is_dir() else [])
+    check("a baseline snapshot git fails ends the run with exit 2 and git's words, "
+          "claiming no record",
+          exit_code == 2 and "a git failure this case made" in errors.getvalue()
+          and claimed == [],
+          f"exit {exit_code}, stderr {errors.getvalue()!r}, records {claimed}")
+
+    # A git failure in a cell's thread, once its agent has finished: the report
+    # is saved, the failure is printed, the provenance line says the commit was
+    # not read, and the run exits 2.
+    for failing_name in ("stray_paths_since", "reviewed_revision"):
+        runner_cell_git = load_runner()
+        runner_cell_git.CLI_VERSION_CACHE.update({"claude": "1.1.1-test"})
+        runner_cell_git.worktree_snapshot = lambda *arguments: {}
+        runner_cell_git.tracked_files_corpus = lambda *arguments: ()
+        runner_cell_git.uncommitted_review_paths = lambda *arguments: []
+        runner_cell_git.review_copy_of_commit = empty_copy
+        if failing_name == "reviewed_revision":
+            runner_cell_git.stray_paths_since = lambda *arguments: []
+        else:
+            runner_cell_git.reviewed_revision = lambda *arguments: "commit=test worktree=clean"
+
+        def failing_check(*arguments):
+            raise git_failure(runner_cell_git, ["rev-parse", "--short", "HEAD"])
+
+        setattr(runner_cell_git, failing_name, failing_check)
+        runner_cell_git.run_claude = lambda prompt, checkout=None: (
+            0, cut_report, "a-test-model", "")
+        with tempfile.TemporaryDirectory() as scratch:
+            runner_cell_git.RECORDS_ROOT = pathlib.Path(scratch) / "sanity-check-records"
+            sys.argv = [str(RUNNER_SCRIPT), "--adversarial-prompt", "cut", "--runtime", "claude",
+                        "--target", "docs/agents/sanity-checker-cut-adversarial-prompt.md"]
+            printed = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(printed):
+                    exit_code = runner_cell_git.main()
+            finally:
+                sys.argv = real_argv
+            reports = sorted(runner_cell_git.RECORDS_ROOT.glob("*/cut-adversarial-prompt-claude.md"))
+            report_text = reports[0].read_text(encoding="utf-8") if reports else ""
+        expected_commit = (f"commit={runner_cell_git.COMMIT_NOT_READ} "
+                           if failing_name == "reviewed_revision" else "commit=test ")
+        check(f"a git failure in {failing_name} after a cell's agent finished saves the "
+              f"report, prints git's words and exits 2",
+              exit_code == 2 and expected_commit in report_text
+              and "WARNING: the runner could not check" in printed.getvalue()
+              and "a git failure this case made" in printed.getvalue(),
+              f"exit {exit_code}, report {report_text[:200]!r}, output {printed.getvalue()!r}")
+
+    # The same failure while the run is stopping is the stop's own kill of
+    # git, so it prints nothing and fails nothing.
+    runner_stopping_git = load_runner()
+    runner_stopping_git.RUN_STOPPED.set()
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        runner_stopping_git.git_check_failed_after_a_cell(
+            "cut-adversarial-prompt-claude", "the commit its report describes",
+            git_failure(runner_stopping_git, ["rev-parse", "--short", "HEAD"]))
+    runner_stopping_git.RUN_STOPPED.clear()
+    check("a git failure while the run is stopping prints nothing and fails nothing",
+          printed.getvalue() == "" and runner_stopping_git.GIT_CHECKS_FAILED_AFTER_A_CELL == [],
+          f"printed {printed.getvalue()!r}, "
+          f"failed {runner_stopping_git.GIT_CHECKS_FAILED_AFTER_A_CELL}")
+
+    # A `ps` that fails, or cannot be run, while a stop walks this run's
+    # processes: the walk finds none, and the STOPPED line says the agents
+    # may still be running and why.
+    with tempfile.TemporaryDirectory() as scratch:
+        stand_ins = pathlib.Path(scratch)
+        (stand_ins / "ps").write_text(
+            "#!/bin/sh\necho 'ps: a failure this case made' >&2\nexit 1\n", encoding="utf-8")
+        (stand_ins / "ps").chmod(0o755)
+        for situation, path in (("fails", f"{stand_ins}{os.pathsep}{os.environ['PATH']}"),
+                                ("cannot be run", str(stand_ins / "no-such-directory"))):
+            runner_ps = load_runner()
+            real_path = os.environ["PATH"]
+            os.environ["PATH"] = path
+            try:
+                listed = runner_ps.processes_under_this_one()
+            finally:
+                os.environ["PATH"] = real_path
+            line = runner_ps.run_stopped_line(signal.SIGTERM, None)
+            expected = ("ps exited 1: ps: a failure this case made" if situation == "fails"
+                        else "ps could not be run")
+            check(f"a ps that {situation} during the stop walk is named in the STOPPED line",
+                  listed == {} and expected in line
+                  and "agents it started may still be running" in line,
+                  f"listed {listed}, line {line!r}")
 
     # The containment set at import: no case asked the PATH's `claude` or
     # `codex` for more than its version.

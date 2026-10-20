@@ -18,6 +18,8 @@ PROGRAM = "unvalidated-negative-result-check"
 EXIT_QUIET = 0
 EXIT_FIRED = 1
 EXIT_BAD_INVOCATION = 2
+# Nothing fired, and a weakened control search that could have fired did not run.
+EXIT_CONTROL_SEARCH_COULD_NOT_RUN = 2
 
 FIXTURES_DIRECTORY_NAME = "unvalidated-negative-result-check-fixtures"
 
@@ -45,8 +47,9 @@ STDERR_DISCARDED = re.compile(r"2>\s*/dev/null|2>&-|2>\s*&\s*-")
 
 QUOTED_SPAN = re.compile(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"")
 
-# grep exit 1 means no match, not failure.
-ERROR_EXIT_STATUSES = frozenset({2, 126, 127, 255})
+# grep's 1 means no match; every code above it, a timeout's 124 and a
+# signal's 128 + N included, means the search did not finish.
+FIRST_ERROR_EXIT_STATUS = 2
 
 EXIT_STATUS_PROGRAM_NOT_FOUND = 127
 
@@ -91,12 +94,17 @@ REGEX_ELEMENT = re.compile(r"\[[^\]]+\]|\\\+|\\\*|\\\{|\.\*|\.\+|\\d|\\w|\\s|\+|
 SHELL_PUNCTUATION_THAT_REFUSES_A_CONTROL = re.compile(r"[|;&<>`]|\$\(")
 
 
+class ControlSearchCouldNotRun(Exception):
+    """A weakened control search, or the git call that filters what it
+    found, failed, so it is no evidence either way."""
+
+
 class Verdict:
     """The decision about one command and its result."""
 
     def __init__(self, applicable, empty_kind=None, signals=None,
                  instructions=None, control=None, reason=None,
-                 corroboration=None):
+                 corroboration=None, control_errors=None):
         self.applicable = applicable
         self.empty_kind = empty_kind
         self.signals = signals or []
@@ -104,6 +112,7 @@ class Verdict:
         self.control = control
         self.reason = reason
         self.corroboration = corroboration or []
+        self.control_errors = control_errors or []
 
     @property
     def fires(self):
@@ -118,6 +127,7 @@ class Verdict:
             "control": self.control,
             "reason": self.reason,
             "corroboration": list(self.corroboration),
+            "control_errors": list(self.control_errors),
         }
 
 
@@ -488,7 +498,8 @@ def path_is_at_or_below(path, directory):
 
 
 def gitignore_rules_ignoring(relative_paths, search_root):
-    """Return paths ignored by .gitignore files at or below search_root."""
+    """Return paths ignored by .gitignore files at or below search_root.
+    Raises ControlSearchCouldNotRun when git fails."""
     # ugrep reads .gitignore rules regardless of tracked status or repository boundaries.
     # Use an empty index and exclude global rules to match that behavior.
     environment = {key: value for key, value in os.environ.items()
@@ -496,17 +507,26 @@ def gitignore_rules_ignoring(relative_paths, search_root):
     environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
     try:
         with tempfile.TemporaryDirectory(prefix=f"{PROGRAM}-") as empty:
-            subprocess.run(["git", "init", "-q", "--bare", empty],
-                           env=environment, capture_output=True, check=True,
-                           timeout=60)
+            initialized = subprocess.run(
+                ["git", "init", "-q", "--bare", empty],
+                env=environment, capture_output=True, text=True, timeout=60)
+            if initialized.returncode != 0:
+                raise ControlSearchCouldNotRun(
+                    f"git init --bare exited {initialized.returncode}: "
+                    f"{initialized.stderr.strip() or 'no error text'}")
             finished = subprocess.run(
                 ["git", f"--git-dir={empty}", f"--work-tree={search_root}",
                  "check-ignore", "--no-index", "--verbose", "--stdin", "-z"],
                 cwd=search_root, env=environment,
                 input="\0".join(relative_paths) + "\0",
                 capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return set()
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ControlSearchCouldNotRun(f"git could not run: {error}") from None
+    # 0: some path is ignored; 1: none is.
+    if finished.returncode not in (0, 1):
+        raise ControlSearchCouldNotRun(
+            f"git check-ignore exited {finished.returncode}: "
+            f"{finished.stderr.strip() or 'no error text'}")
     fields = finished.stdout.split("\0")
     ignored = set()
     for index in range(0, len(fields) - 3, 4):
@@ -569,7 +589,8 @@ def grep_flags_and_file_operands(control_tokens):
 
 
 def lines_the_agents_grep_could_read(lines, corpus_root, control_tokens):
-    """Return output lines from files the agent's grep could read."""
+    """Return output lines from files the agent's grep could read. Raises
+    ControlSearchCouldNotRun when git cannot say which files are ignored."""
     # ugrep applies .gitignore rules below each directory operand, even to tracked files.
     # Without filename output, matched text that spells a path must not be filtered as that file.
     flags, operands = grep_flags_and_file_operands(control_tokens)
@@ -615,7 +636,10 @@ def lines_the_agents_grep_could_read(lines, corpus_root, control_tokens):
 
 
 def run_control(stage, pattern, corpus_root, zero_inputs):
-    """Run weakened searches and report the first that matches."""
+    """Run weakened searches and report the first that matches. Raises
+    ControlSearchCouldNotRun when none matched and one or more could not run,
+    because a search that failed found nothing for a reason that is not
+    absence."""
     if control_refusal(stage):
         return None
     tokens = shlex.split(stage)
@@ -624,6 +648,7 @@ def run_control(stage, pattern, corpus_root, zero_inputs):
     words = shell_words_marking_globs(stage)
     if words is None or [word for word, _ in words] != tokens:
         return None
+    errors = []
     for name, weaker in weaken_pattern(pattern):
         control_tokens = []
         for token, glob_pattern in words:
@@ -635,28 +660,33 @@ def run_control(stage, pattern, corpus_root, zero_inputs):
             else:
                 control_tokens.append(token)
         control_tokens = as_the_agents_shell_runs_it(control_tokens)
+        control_command = " ".join(control_tokens)
         try:
             finished = subprocess.run(
                 control_tokens, cwd=corpus_root, capture_output=True, text=True,
                 timeout=60)
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError) as error:
+            errors.append(f"`{control_command}` could not run: {error}")
             continue
         control_shape = empty_shape_of(finished.stdout)
         if control_shape is None:
             matched = [line for line in finished.stdout.strip().splitlines()
                        if line.strip() and line.strip() != "--"]
             if control_tokens[0] == "grep":
-                matched = lines_the_agents_grep_could_read(
-                    matched, corpus_root, control_tokens)
-            if not matched:
-                continue
-            return {
-                "weakening": name,
-                "pattern": weaker,
-                "command": " ".join(control_tokens),
-                "matched": matched[:5],
-            }
-        if control_shape == "zero-count-lines" and zero_inputs:
+                try:
+                    matched = lines_the_agents_grep_could_read(
+                        matched, corpus_root, control_tokens)
+                except ControlSearchCouldNotRun as error:
+                    errors.append(f"`{control_command}` matched, but {error}")
+                    continue
+            if matched:
+                return {
+                    "weakening": name,
+                    "pattern": weaker,
+                    "command": control_command,
+                    "matched": matched[:5],
+                }
+        elif control_shape == "zero-count-lines" and zero_inputs:
             # Compare files, not spellings: ugrep may print a.py where system grep prints ./a.py.
             control_counts = {}
             for line in finished.stdout.splitlines():
@@ -670,10 +700,15 @@ def run_control(stage, pattern, corpus_root, zero_inputs):
                 return {
                     "weakening": name,
                     "pattern": weaker,
-                    "command": " ".join(control_tokens),
+                    "command": control_command,
                     "matched": [f"{path}: counted 0 by the original, matched by "
                                 f"the weakened search" for path in recovered[:5]],
                 }
+        if finished.returncode >= FIRST_ERROR_EXIT_STATUS:
+            errors.append(f"`{control_command}` exited {finished.returncode}: "
+                          f"{finished.stderr.strip() or 'no error text'}")
+    if errors:
+        raise ControlSearchCouldNotRun("; ".join(errors))
     return None
 
 
@@ -749,7 +784,8 @@ def judge_command_result(command, exit_code=None, stdout="", stderr="",
     status_is_the_searchs = any(
         exit_status_is_the_searchs(command, pipelines, search)
         for search in searches)
-    if status_is_the_searchs and exit_code in ERROR_EXIT_STATUSES:
+    if status_is_the_searchs and exit_code is not None and \
+            exit_code >= FIRST_ERROR_EXIT_STATUS:
         signals.append("exit-status-reports-an-error-not-an-absence")
         instructions.append(
             f"Fix what exit status {exit_code} reports and re-run before "
@@ -773,10 +809,15 @@ def judge_command_result(command, exit_code=None, stdout="", stderr="",
             "and nothing to stdout, which is what an error looks like.")
 
     control = None
+    control_errors = []
     if control_corpus_root is not None:
         for stage, pattern in control_candidates(pipelines, searches):
-            control = run_control(stage, pattern, control_corpus_root,
-                                  zero_counted_inputs(stdout))
+            try:
+                control = run_control(stage, pattern, control_corpus_root,
+                                      zero_counted_inputs(stdout))
+            except ControlSearchCouldNotRun as error:
+                control_errors.append(str(error))
+                continue
             if control:
                 signals.append("weakened-pattern-control-run-found-matches")
                 instructions.append(
@@ -800,9 +841,21 @@ def judge_command_result(command, exit_code=None, stdout="", stderr="",
         return Verdict(True, empty_kind=empty_kind, signals=[],
                        corroboration=ordered,
                        reason="the search's exit status was swallowed, but its "
-                              "stderr was empty, so it did not error")
+                              "stderr was empty, so it did not error",
+                       control_errors=control_errors)
     return Verdict(True, empty_kind=empty_kind, signals=ordered,
-                   instructions=seen_instructions, control=control)
+                   instructions=seen_instructions, control=control,
+                   control_errors=control_errors)
+
+
+def control_errors_lines(verdict):
+    """The lines that say a control search could not run, for a verdict
+    that did not fire: then its silence is not a clean answer."""
+    if verdict.fires:
+        return []
+    return [f"The weakened control search could not run, so this result was "
+            f"not checked against it: {error}. Fix what it names and run this "
+            f"check again." for error in verdict.control_errors]
 
 
 
@@ -1003,6 +1056,8 @@ def replay_fixtures(directory, run_control=False, checkout_root=None, out=sys.st
             print(f"    control: {verdict.control['command']}", file=out)
             for line in verdict.control["matched"]:
                 print(f"      + {line}", file=out)
+        for line in control_errors_lines(verdict):
+            print(f"    {line}", file=out)
         print("", file=out)
     print(f"{PROGRAM}: {sum(1 for _, v in results if v.fires)} of {len(results)} "
           f"fixtures fired", file=out)
@@ -1056,10 +1111,14 @@ def main(argv=None):
         if not pathlib.Path(directory).is_dir():
             print(f"{PROGRAM}: {directory} is not a directory", file=sys.stderr)
             return EXIT_BAD_INVOCATION
-        _results, every_one_fired = replay_fixtures(
+        results, every_one_fired = replay_fixtures(
             directory, run_control=arguments.run_control,
             checkout_root=arguments.control_corpus_root)
-        return EXIT_QUIET if every_one_fired else EXIT_FIRED
+        if not every_one_fired:
+            return EXIT_FIRED
+        if any(control_errors_lines(verdict) for _, verdict in results):
+            return EXIT_CONTROL_SEARCH_COULD_NOT_RUN
+        return EXIT_QUIET
 
     stdout = _read_or_empty(arguments.stdout_file)
     stderr = _read_or_empty(arguments.stderr_file)
@@ -1076,10 +1135,17 @@ def main(argv=None):
         print(f"{PROGRAM}: this empty result is not evidence of absence.")
         for instruction in verdict.instructions:
             print(instruction)
+    elif control_errors_lines(verdict):
+        for line in control_errors_lines(verdict):
+            print(line)
     else:
         print(f"{PROGRAM}: nothing to report "
               f"({verdict.reason or 'no signal fired'}).")
-    return EXIT_FIRED if verdict.fires else EXIT_QUIET
+    if verdict.fires:
+        return EXIT_FIRED
+    if control_errors_lines(verdict):
+        return EXIT_CONTROL_SEARCH_COULD_NOT_RUN
+    return EXIT_QUIET
 
 
 def _read_or_empty(path):
