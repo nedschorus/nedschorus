@@ -135,8 +135,9 @@ def reports_the_git_failure_and_no_result(root, arguments, code, out, err):
              + " ".join(arguments))
     return (code == 2 and INJECTED_GIT_ERROR in err and "a git command failed" in err
             and "finding(s)" not in err
+            and "and you gave that name to stale-code-citation-check, correct it in your command" in err
             and f"In any other case, run {rerun} once more." in err
-            and f"If {rerun} fails a second time, stop and tell the user what "
+            and f"If {rerun} fails again, stop and tell the user what "
                 f"stale-code-citation-check printed" in err)
 
 

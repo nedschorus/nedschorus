@@ -347,9 +347,9 @@ def git_failure_next_steps(argv) -> str:
                            *(sys.argv[1:] if argv is None else argv)]))
     return (
         f"If git's error names a lock file, such as .git/index.lock, wait one minute, then run {rerun}; do not delete the lock file yourself.\n"
-        f"If git's error names a branch, commit or path that does not exist, check that the command you ran names the right one, correct it if not, then run it again.\n"
+        f"If git's error names a branch, commit or path that does not exist, and you gave that name to {PROGRAM}, correct it in your command, then run the corrected command.\n"
         f"In any other case, run {rerun} once more.\n"
-        f"If {rerun} fails a second time, stop and tell the user what {PROGRAM} printed, git's error included; a subagent tells the agent that dispatched it instead.")
+        f"If {rerun} fails again, stop and tell the user what {PROGRAM} printed, git's error included; a subagent tells the agent that dispatched it instead.")
 
 
 def main(argv=None) -> int:
