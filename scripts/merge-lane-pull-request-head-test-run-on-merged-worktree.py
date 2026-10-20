@@ -122,7 +122,7 @@ def main(argv=None):
                   f"Before you run it, give it a stderr that takes every write: do not close "
                   f"its stderr, pipe it to a program that exits before the run ends, or "
                   f"redirect it to a read-only file or a file on a full disk; and when "
-                  f"{outputs}/stderr is the copy that failed, free space on its disk first.",
+                  f"{outputs}/stderr is the copy that failed, fix what {failure} names first.",
                   flush=True)
             if first_failure == 0:
                 first_failure = 2
