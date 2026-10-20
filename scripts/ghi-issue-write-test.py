@@ -2012,6 +2012,239 @@ def ran_with(recorder, *fragments):
                for call in recorder.calls)
 
 
+GHI_INFO_HEAD = (f"{EDIT_NAME[:-len('.md')]}-proposed-improvements-or-changes-"
+                 "ghi-info-")
+
+
+def ghi_info_file(question, state="State: open"):
+    """A file from ghi-info as an older tool landed it beside a GHI-MD."""
+    return ("# Proposed improvements or changes from ghi-info, 2026-10-19\n\n"
+            "## E1 — possible problem: the GHI-MD's proposal may go against "
+            "a user-ruling\n"
+            f"ghi-info's question: {question}\n{state}\n")
+
+
+def run_old_ghi_info_files_on_main_cases(scratch: Path):
+    """Files from ghi-info that an older version of the tool landed on main
+    beside a GHI-MD."""
+    one_link = tool.links_body(REPO, [EDIT_RELATIVE])
+    old_file = f"docs/issues/{GHI_INFO_HEAD}2026-10-19.md"
+    old_file_2 = f"docs/issues/{GHI_INFO_HEAD}2026-10-19-2.md"
+    listing = Completed(f"{EDIT_RELATIVE}\0{old_file}\0{old_file_2}\0")
+    check("a file from ghi-info beside a GHI-MD is not one of the issue's "
+          "files",
+          tool.ghi_md_paths_for_issue(570, scratch, Recorder(
+              {"git ls-tree": listing}), MAIN_COMMIT) == [EDIT_RELATIVE])
+
+    source = filed_ghi_md(scratch)
+    store = log_store_at(scratch / "old-files-store")
+    store.mkdir()
+    settled_name = f"{GHI_INFO_HEAD}2026-10-19.md"
+    (store / settled_name).write_text(ghi_info_file(
+        "does ruling one still hold?", "State: settled, not worth doing"))
+    answers = {
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        f"git show {MAIN_COMMIT}:{old_file}": Completed(
+            ghi_info_file("does ruling two still hold?")),
+        f"git show {MAIN_COMMIT}:{old_file_2}": Completed(
+            ghi_info_file("does ruling one still hold?")),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed("# Older\n"),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        ASK: Completed("verdict: unrelated\n"),
+        "gh issue view": issue_json("Older", one_link),
+        "git ls-tree": listing,
+    }
+    renaming = Recorder(answers)
+    lines = []
+    tool.edit(source, REPO, scratch, renaming, lines.append)
+    check("a heading change still renames an issue whose only other files "
+          "on main are from ghi-info, and the body still links the GHI-MD "
+          "alone",
+          ran_with(renaming, "gh issue edit", "--title", EDIT_TITLE)
+          and not ran_with(renaming, "gh issue edit", "--body"),
+          str(renaming.commands()))
+    copied = store / f"{GHI_INFO_HEAD}2026-10-19-2.md"
+    check("an open question on main that the log-store lacks is copied in "
+          "under the next free name, and one the log-store already settled "
+          "is not",
+          {item.name for item in store.iterdir()}
+          == {settled_name, copied.name}
+          and "does ruling two still hold?" in copied.read_text()
+          and (store / settled_name).read_text().endswith(
+              "State: settled, not worth doing\n"),
+          sorted(item.name for item in store.iterdir()))
+    dispatch = [line for line in lines if "Dispatch a forked subagent" in line]
+    check("the copied open question ends the run with its dispatch block, "
+          "and the settled one gets none",
+          len(dispatch) == 1 and str(copied) in dispatch[0]
+          and "does ruling two still hold?" in dispatch[0], dispatch)
+
+    again = Recorder(answers)
+    again_lines = []
+    tool.edit(source, REPO, scratch, again, again_lines.append)
+    check("a second run copies nothing again",
+          len(list(store.iterdir())) == 2
+          and not any(line.startswith("copied ") for line in again_lines),
+          again_lines)
+
+    unwritable_store = log_store_at(scratch / "old-files-unwritable")
+    unwritable_store.mkdir()
+    unwritable_store.chmod(0o500)
+    blocked_lines = []
+    try:
+        tool.edit(source, REPO, scratch, Recorder(answers),
+                  blocked_lines.append)
+    finally:
+        unwritable_store.chmod(0o700)
+    blocked = [line for line in blocked_lines if "copying it into the "
+               "log-store failed" in line]
+    check("an open question on main that cannot be copied is shown with "
+          "its question and where to copy it",
+          len(blocked) == 2
+          and any("does ruling two still hold?" in line for line in blocked)
+          and all("Dispatch a forked subagent now to copy the file" in line
+                  for line in blocked), blocked_lines)
+
+    unread_store = log_store_at(scratch / "old-files-unread")
+    unread_store.mkdir()
+    held = unread_store / f"{GHI_INFO_HEAD}2026-10-18.md"
+    held.write_text("held\n")
+    held.chmod(0)
+    unread_lines = []
+    try:
+        tool.edit(source, REPO, scratch, Recorder(answers),
+                  unread_lines.append)
+    finally:
+        held.chmod(0o600)
+    check("when the log-store cannot be read, nothing is copied blind and "
+          "each open question on main is shown with what failed",
+          sorted(item.name for item in unread_store.iterdir()) == [held.name]
+          and sum("copying it into the log-store failed" in line
+                  and "Permission denied" in line
+                  for line in unread_lines) == 2, unread_lines)
+    log_store_at(scratch / "default-log-store")
+
+
+def run_saved_question_on_resume_cases(scratch: Path):
+    """A run that saved ghi-info's question and stopped before its last
+    lines: the rerun takes a path that asks ghi-info nothing, and must still
+    show the question."""
+    store = log_store_at(scratch / "resume-store")
+    store.mkdir()
+    saved = store / f"{GHI_INFO_HEAD}2026-10-19.md"
+    saved.write_text(ghi_info_file("does the ruling still hold?"))
+    source = filed_ghi_md(scratch)
+    staged = staged_form()
+    for landing_name, extra in (
+            ("already-on-main", {
+                f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(staged)}),
+            ("already-pushed", {
+                f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(
+                    "# Older\n"),
+                "git ls-remote": Completed(
+                    "abc\trefs/heads/ghi-570-edit\n"),
+                "git show origin/ghi-570": Completed(staged),
+                "git merge-base": Completed(BASE_REVISION + "\n"),
+                f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(
+                    "# Older\n")})):
+        resumed = Recorder({
+            "gh issue view": issue_json(EDIT_TITLE,
+                                        tool.links_body(REPO, [EDIT_RELATIVE])),
+            "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
+            **extra})
+        lines = []
+        try:
+            tool.edit(source, REPO, scratch, resumed, lines.append)
+        except tool.Refused as refusal:
+            lines.append(f"refused: {refusal}")
+        check(f"an edit rerun on the {landing_name} path shows the question "
+              "an earlier run saved, without asking ghi-info",
+              not resumed.ran(ASK) and bool(lines)
+              and lines[-1].startswith("Edited GHI 570.")
+              and str(saved) in lines[-1]
+              and "Dispatch a forked subagent now" in lines[-1],
+              (resumed.commands(), lines[-2:]))
+
+    created_name = "a-statusline-that-drops-its-branch-name"
+    created_saved = store / (f"{created_name}-proposed-improvements-or-"
+                             "changes-ghi-info-2026-10-19.md")
+    created_saved.write_text(ghi_info_file("may the filing go ahead?"))
+    numbered = Recorder({
+        "gh issue view 570": Completed(json.dumps(
+            {"body": tool.placeholder_body(tool.pairing_key(FILE_TEXT))})),
+        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
+    })
+    lines = []
+    tool.create(source, REPO, scratch, numbered, lines.append)
+    dispatch = [line for line in lines if "Dispatch a forked subagent" in line]
+    check("a create resumed on its numbered file shows the question saved "
+          "when it was filed, named after the title, and the one saved by "
+          "an edit, named after the file",
+          len(dispatch) == 2
+          and any(str(created_saved) in line for line in dispatch)
+          and any(str(saved) in line for line in dispatch)
+          and all(line.startswith("Filed GHI 570.") for line in dispatch),
+          lines[-3:])
+
+    unreadable = log_store_at(scratch / "resume-unreadable")
+    unreadable.mkdir()
+    (unreadable / f"{GHI_INFO_HEAD}2026-10-19.md").write_text("x")
+    (unreadable / f"{GHI_INFO_HEAD}2026-10-19.md").chmod(0)
+    lines = []
+    try:
+        tool.edit(source, REPO, scratch, Recorder({
+            f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(staged),
+            "gh issue view": issue_json(EDIT_TITLE,
+                                        tool.links_body(REPO, [EDIT_RELATIVE])),
+            "git ls-tree": Completed(EDIT_RELATIVE + "\0")}), lines.append)
+    finally:
+        (unreadable / f"{GHI_INFO_HEAD}2026-10-19.md").chmod(0o600)
+    check("a log-store that cannot be read at the end of a run is reported, "
+          "with where to look and what to dispatch",
+          any(line.startswith("could not read ghi-info's questions in the "
+                              "log-store, so an open one may be missing")
+              and GHI_INFO_HEAD in line
+              and "dispatch a forked subagent" in line for line in lines),
+          lines[-2:])
+    log_store_at(scratch / "default-log-store")
+
+
+def run_remote_read_failure_cases(scratch: Path):
+    """The read over ssh tells a store with no directory yet from one it
+    could not read."""
+    original_store = tool.ghi_info_log_store
+    remote = scratch / "remote-unreadable"
+    remote.mkdir()
+    blocked = remote / "570-a-proposed-improvements-or-changes-ghi-info-2026-10-03.md"
+    blocked.write_text("held\n")
+    # A readable file after it, so the loop's last step succeeds and only
+    # the read's own failure can make the script exit nonzero.
+    (remote / "570-a-proposed-improvements-or-changes-ghi-info-"
+     "2026-10-04.md").write_text("readable\n")
+    try:
+        tool.ghi_info_log_store = lambda: (tool.GHI_INFO_LOG_STORE_HOST,
+                                           str(remote))
+        for name, change, undo in (
+                ("a file in it that cannot be read",
+                 lambda: blocked.chmod(0), lambda: blocked.chmod(0o600)),
+                ("a directory that cannot be entered",
+                 lambda: remote.chmod(0), lambda: remote.chmod(0o700))):
+            change()
+            try:
+                tool.ghi_info_files_in_log_store("570-a", SshRunsLocally())
+                check(f"over ssh, a store with {name} is refused, not read "
+                      "as empty", False, "it read as a store")
+            except tool.Refused:
+                check(f"over ssh, a store with {name} is refused, not read "
+                      "as empty", True)
+            finally:
+                undo()
+    finally:
+        tool.ghi_info_log_store = original_store
+
+
 def run_edit_cases(scratch: Path):
     ask = scratch / "scripts" / "ghi-info-ask.py"
     ask.parent.mkdir(parents=True, exist_ok=True)
@@ -4308,6 +4541,12 @@ def main():
         run_main_dispatch_cases(Path(name))
     with tempfile.TemporaryDirectory(prefix="ghi-issue-file-set-test-") as name:
         run_whole_file_set_cases(Path(name))
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-old-files-test-") as name:
+        run_old_ghi_info_files_on_main_cases(Path(name))
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-resume-test-") as name:
+        run_saved_question_on_resume_cases(Path(name))
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-remote-read-test-") as name:
+        run_remote_read_failure_cases(Path(name))
     # A checkout of its own: the reconsidered marker lives at the root of
     # one and is consumed by the write it passes, so two groups sharing a
     # directory would share that.

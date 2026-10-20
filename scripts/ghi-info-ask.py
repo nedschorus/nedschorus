@@ -331,7 +331,7 @@ NOT_ABOUT_ISSUES_MESSAGE = (
     '--state all --search "<terms>"')
 RULING_QUESTION_MESSAGE_TEMPLATE = (
     "ghi-info found a ruling of the user's that it cannot tell still applies: {sentence}\n"
-    "If you file or edit the GHI, scripts/ghi-issue-write.py records this question beside the GHI-MD, and once that write's pull request merges, you dispatch a subagent to settle it.\n"
+    "If you file or edit the GHI, scripts/ghi-issue-write.py records this question in the log-store on ned-box, and its run tells you to dispatch a subagent to settle it.\n"
     "Otherwise, ask the user whether that ruling still applies, and put the question on your task list.")
 # What follows the sentence when it opened with the number of the issue
 # holding the ruling; scripts/ghi-issue-write.py reads the number back from it.
