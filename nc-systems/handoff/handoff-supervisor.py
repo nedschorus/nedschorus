@@ -161,12 +161,8 @@ _uncommitted_work_snapshots_spec = importlib.util.spec_from_file_location(
 uncommitted_work_snapshots = importlib.util.module_from_spec(_uncommitted_work_snapshots_spec)
 _uncommitted_work_snapshots_spec.loader.exec_module(uncommitted_work_snapshots)
 
-_git_machine_readable_output_spec = importlib.util.spec_from_file_location(
-    "git_machine_readable_output_runner_and_parser_common",
-    Path(__file__).resolve().parents[2] / "nc-systems" / "general-tools"
-    / "git-machine-readable-output-runner-and-parser-common.py")
-git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
-_git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
+# One loaded copy, so the GitCommandFailed checkout_freshness_catch_up raises is the class caught here.
+git_machine_readable_output = checkout_freshness_catch_up.git_output
 
 # The opening is an EMPTY_SUCCESSOR_MARKERS entry used to recognize a workless resume.
 RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF = (
@@ -270,10 +266,8 @@ WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 GIT_FAILURE_NEXT_STEP_LINES = (
     "If git's error names a lock file, such as .git/index.lock, wait one minute, then run "
     "{rerun}; do not delete the lock file yourself.\n"
-    "If git's error names a branch, commit or path that does not exist, check that the "
-    "command you ran names the right one, correct it if not, then run it again.\n"
     "In any other case, run {rerun} once more.\n"
-    "If {rerun} fails a second time, stop and tell the user what {program} printed, "
+    "If {rerun} fails again, stop and tell the user what {program} printed, "
     "git's error included; a subagent tells the agent that dispatched it instead.")
 BRANCH_SYNC_PROGRAM_NAME = "the handoff-supervisor's branch sync"
 
@@ -607,7 +601,8 @@ def process_exists_by_signal(process_id: int) -> bool:
 
 
 def process_is_supervisor_for_agent(process_id, agent_name: str,
-                                    read_command_line=read_process_command_line):
+                                    read_command_line=read_process_command_line,
+                                    lock_path: Optional[Path] = None):
     """Return (is_supervisor, explanation), assuming ownership when a live PID cannot be identified."""
     # PIDs survive in locks and can be reused; heartbeat freshness does not prove ownership.
     # An unidentified live PID must block another supervisor, which could kill and relaunch the same session.
@@ -622,17 +617,26 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
     command_line, ps_answered = read_command_line(process_id)
     if not ps_answered:
         if not process_exists_by_signal(process_id):
-            return False, (f"process {process_id} is not running — ps could not be run or failed, "
-                           "but os.kill reports no such process")
-        print(f"handoff-supervisor: could not identify process {process_id} — ps could "
-              f"not be run or failed. A process with that id exists, so it is treated as a live "
-              f"supervisor of {agent_name}; if none is in fact running, whatever asked "
-              "is acting on that assumption until ps works or the lock is removed by hand.",
+            return False, (f"process {process_id} is not running — ps could not be run, or "
+                           "ran and failed, but os.kill reports no such process")
+        program = Path(sys.argv[0]).name or "the program that asked"
+        lock = (f"the supervisor lock {lock_path}" if lock_path is not None
+                else f"the supervisor lock of {agent_name} in the handoff directory")
+        print(f"handoff-supervisor: could not identify process {process_id}: ps could not be "
+              "run, or it ran and failed, in which case ps's own error was printed just before "
+              f"this message. A process with id {process_id} exists, so {program} is told a "
+              f"supervisor of {agent_name} is running, and treats {agent_name} as supervised "
+              f"until ps answers or the lock is gone.\n"
+              f"To find out whether a supervisor of {agent_name} is running, the user runs "
+              f"`ps -p {process_id}`; if its output does not show {SUPERVISOR_SCRIPT_FILE_NAME} "
+              f"with --agent {agent_name}, none is, and the user removes {lock}.\n"
+              "An agent that sees this message tells the user what it says, and does not "
+              "remove the lock itself.",
               file=sys.stderr)
         return True, (f"cannot tell whether process {process_id} is the supervisor of "
-                      f"{agent_name} — ps could not be run or failed, and a process with that id "
-                      "exists, so a supervisor is assumed present rather than risk "
-                      "starting a second one")
+                      f"{agent_name} — ps could not be run, or ran and failed, and a process "
+                      "with that id exists, so a supervisor is assumed present rather than "
+                      "risk starting a second one")
     if command_line is None:
         return False, f"process {process_id} is not running"
 
@@ -666,7 +670,7 @@ def supervisor_liveness(state_path: Path):
         return False, (f"no supervisor is watching — the supervisor lock at {lock_path} "
                        f"is unreadable: {error}")
 
-    running, identity = process_is_supervisor_for_agent(holder, agent_name)
+    running, identity = process_is_supervisor_for_agent(holder, agent_name, lock_path=lock_path)
     if running:
         return True, f"supervisor alive — {identity}{heartbeat_age_sentence(state_path)}"
     return False, f"no supervisor is watching — {identity}"
@@ -925,6 +929,14 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
                       accepted_exit_codes=(0, 1)):
             return f"branch sync: no origin/main to sync with{fetch_note}"
 
+        # --verify --quiet exits 1 for an unborn HEAD, which every HEAD comparison below fails on with 128.
+        if not answer(["rev-parse", "--verify", "--quiet", "HEAD"], 15,
+                      accepted_exit_codes=(0, 1)):
+            unborn_branch = answer(["symbolic-ref", "-q", "--short", "HEAD"], 15,
+                                   accepted_exit_codes=(0, 1)) or "HEAD"
+            return (f"branch sync: {unborn_branch} has no commits yet, so not compared "
+                    f"with main{fetch_note}")
+
         branch = answer(["rev-parse", "--abbrev-ref", "HEAD"], 15)
 
         reasons = []
@@ -958,9 +970,7 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
             behind = answer(["rev-list", "--count", "HEAD..origin/main"], 30)
             return (f"branch sync: {branch} is {ahead} ahead of main and {behind} "
                     f"behind{fetch_note}")
-    except (git.GitCommandFailed,
-            checkout_freshness_catch_up.git_output.GitCommandFailed) as error:
-        # Each module loads its own copy of the git helper file, so each raises its own GitCommandFailed class.
+    except git.GitCommandFailed as error:
         return (f"branch sync: {branch} left as is — {error}{fetch_note}\n"
                 f"{branch_sync_git_failure_next_steps(error)}")
 

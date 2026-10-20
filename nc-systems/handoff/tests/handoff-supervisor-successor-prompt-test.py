@@ -943,6 +943,16 @@ def run_branch_sync_cases(workspace: Path):
     check("a checkout with no origin/main reports that, not a failure",
           report.startswith("branch sync: no origin/main to sync with"), report)
 
+    # A checkout made with git init and given origin/main, before its first commit.
+    unborn = root / "unborn-home"
+    git_in(["init", "--quiet", "--initial-branch=topic", str(unborn)], root)
+    git_in(["remote", "add", "origin", str(remote)], unborn)
+    git_in(["fetch", "--quiet", "origin"], unborn)
+    report = supervisor.sync_working_branch_with_main(unborn)
+    check("a checkout with no commits yet is reported as such, not as a git failure",
+          report.startswith("branch sync: topic has no commits yet, so not compared with main"),
+          report)
+
     run_branch_sync_git_failure_cases(root, remote, seed)
 
 
@@ -996,6 +1006,7 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
 
     for call, wrong_answer in (
             ("rev-parse --verify --quiet origin/main", "no origin/main"),
+            ("rev-parse --verify --quiet HEAD", "no commits yet"),
             ("rev-parse --abbrev-ref HEAD", "current with main"),
             ("merge-base --is-ancestor origin/main HEAD", " ahead of main"),
             ("rev-list --count origin/main..HEAD", "current with main")):

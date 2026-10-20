@@ -279,7 +279,8 @@ def run_process_identity_cases(workspace: Path):
     try:
         with contextlib.redirect_stderr(complaints):
             alive, detail = supervisor.process_is_supervisor_for_agent(
-                unidentifiable.pid, "x", read_command_line=ps_could_not_run)
+                unidentifiable.pid, "x", read_command_line=ps_could_not_run,
+                lock_path=Path("/handoffs/x-supervisor.lock"))
         check("a live but unidentifiable process IS assumed to be the supervisor",
               alive, detail)
         check("and it says it cannot tell, rather than claiming the process is gone",
@@ -288,8 +289,11 @@ def run_process_identity_cases(workspace: Path):
               "could not identify" in complaints.getvalue()
               and "ps could not be run" in complaints.getvalue(),
               complaints.getvalue())
-        check("and names the way out, since whoever asked is now stuck on an assumption",
-              "lock is removed" in complaints.getvalue(), complaints.getvalue())
+        check("and names the way out, since whoever asked is now stuck on an assumption: "
+              "the user checks with ps -p, then removes the named lock file",
+              f"the user runs `ps -p {unidentifiable.pid}`" in complaints.getvalue()
+              and "the user removes the supervisor lock /handoffs/x-supervisor.lock"
+              in complaints.getvalue(), complaints.getvalue())
         check("and does not claim a consequence only one of the callers has",
               "this seat will not start" not in complaints.getvalue(),
               complaints.getvalue())
