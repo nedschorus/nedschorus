@@ -9,9 +9,9 @@ contract, the write-detection rule, and why the reviewer writes a file rather
 than answering in chat.
 
 Usage:
-  nc-systems/cold-read/cold-read-codex-cell.py --cell restate --tier second \\
+  nc-systems/cold-read/cold-read-codex-cell.py --cell restate --tier second-strongest-model \\
       --target docs/cross-project/foo.md \\
-      --report cold-read-records/foo-2026-01-01/codex-restate-second.md
+      --report cold-read-records/foo-2026-01-01/codex-restate-second-strongest-model.md
 
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.
@@ -154,13 +154,13 @@ PROGRAM = "cold-read-codex-cell"
 # Use version-prefixed model IDs; gpt-6.1-sol requires codex-cli 0.159.1 or later.
 TIER_TO_CODEX_MODEL_CHAIN = {
     "deep": ("gpt-6.1-sol",),
-    "second": ("gpt-6-luna",),
+    "second-strongest-model": ("gpt-6-luna",),
 }
 
 # Pin effort so machine-local Codex defaults cannot change review behavior.
 TIER_TO_REASONING_EFFORT = {
     "deep": "xhigh",
-    "second": "xhigh",
+    "second-strongest-model": "xhigh",
 }
 
 

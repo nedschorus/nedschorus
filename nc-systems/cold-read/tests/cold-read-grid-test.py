@@ -607,7 +607,7 @@ with tempfile.TemporaryDirectory() as scratch:
     started = time.monotonic()
     result = run_grid(repository, slow_stubs, {
         "COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": "120",
-        "COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT": "codex-hunt-second",
+        "COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT": "codex-hunt-second-strongest-model",
         "COLD_READ_GRID_TEST_STUB_EDIT_GIVEN_TARGET": "1"})
     elapsed = time.monotonic() - started
     check("a frozen copy moved mid-run stops the run long before the readers finish",
@@ -626,11 +626,11 @@ with tempfile.TemporaryDirectory() as scratch:
                          if line.startswith("Stopped before finishing:")), "")
     check("the closing text names the five cells still reading as stopped",
           all(name in stopped_line for name in (
-              "claude-hunt-deep", "claude-hunt-second", "claude-terminology-deep",
+              "claude-hunt-deep", "claude-hunt-second-strongest-model", "claude-terminology-deep",
               "codex-hunt-deep", "codex-terminology-deep")), repr(stopped_line))
     saved_lines = [line for line in result.stdout.splitlines() if line.startswith("saved:")]
     check("no cell that was still reading lands",
-          all("codex-hunt-second" in line for line in saved_lines), repr(saved_lines))
+          all("codex-hunt-second-strongest-model" in line for line in saved_lines), repr(saved_lines))
     check("a stopped run is told not to triage and to start a new cold-read run",
           "Do not triage this set" in result.stdout
           and "Start a new cold-read run" in result.stdout, repr(result.stdout))
@@ -660,7 +660,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("every stopped cell is named as not checked for stray writes",
           all(any(line.startswith(f"WRITE CHECK DID NOT RUN: {name}.md — ")
                   for line in unchecked_lines)
-              for name in ("claude-hunt-deep", "claude-hunt-second",
+              for name in ("claude-hunt-deep", "claude-hunt-second-strongest-model",
                            "claude-terminology-deep", "codex-hunt-deep",
                            "codex-terminology-deep")),
           repr(unchecked_lines))
@@ -677,7 +677,7 @@ with tempfile.TemporaryDirectory() as scratch:
     still_reading_seconds = 10 * float(CELL_POLL_INTERVAL_FOR_TESTS_SECONDS)
     result = run_grid(repository, scratch / "stub-bin-original-moves-mid-run", {
         "COLD_READ_GRID_TEST_STUB_SLEEP_SECONDS": str(still_reading_seconds),
-        "COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT": "codex-hunt-second",
+        "COLD_READ_GRID_TEST_STUB_FAST_REPORT_NAME_FRAGMENT": "codex-hunt-second-strongest-model",
         "COLD_READ_GRID_TEST_STUB_EDIT_PATH": str(repository / TARGET_RELATIVE_PATH)})
     check("an original edited mid-run lets every cell finish: six reviews, exit 0",
           result.returncode == 0
@@ -728,12 +728,12 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- A cell fails once and lands on retry --------------------------------
     repository = build_scratch_repository(scratch, "checkout-retry-lands")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "claude-hunt-second.md", "attempts": 1}])})
+        [{"fragment": "claude-hunt-second-strongest-model.md", "attempts": 1}])})
     saved_lines = lines_opening(result, "saved:")
     retrying_lines = lines_opening(result, "RETRYING:")
     check("a first failure prints RETRYING: naming the cell and its cause",
           len(retrying_lines) == 1
-          and retrying_lines[0].startswith("RETRYING: claude-hunt-second — exit-1 — ")
+          and retrying_lines[0].startswith("RETRYING: claude-hunt-second-strongest-model — exit-1 — ")
           and "first attempt's log kept:" in retrying_lines[0],
           f"stdout was {result.stdout!r}")
     check("the retry lands: six saved, no FAILED line, the all-landed text, exit 0",
@@ -744,7 +744,7 @@ with tempfile.TemporaryDirectory() as scratch:
     record_directory = record_directory_of(repository)
     check("the attempt-1 log is kept and the attempt-2 log is deleted with the landed cells'",
           sorted(path.name for path in record_directory.glob("*.stderr.log"))
-          == ["claude-hunt-second.md.attempt-1.stderr.log"],
+          == ["claude-hunt-second-strongest-model.md.attempt-1.stderr.log"],
           sorted(path.name for path in record_directory.glob("*.stderr.log")))
     check("a set with no absent report carries no INCOMPLETE SET marker",
           markers_in(record_directory, "<!-- INCOMPLETE SET:") == [])
@@ -873,7 +873,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # the limit hit does not stop the agent-binary from being reported down.
     repository = build_scratch_repository(scratch, "checkout-claude-down-after-one-landed")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "claude-hunt-second.md", "attempts": 0},
+        [{"fragment": "claude-hunt-second-strongest-model.md", "attempts": 0},
          {"fragment": "claude-", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
     check("one landed Claude cell and two absent with the account limit is still claude down",
           lines_opening(result, "AGENT-BINARY DOWN:")
@@ -894,7 +894,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("each absence names model-limit and the model's family",
           any(line.startswith("- claude-hunt-deep: model-limit — Opus (log:")
               for line in result.stdout.splitlines())
-          and any(line.startswith("- claude-hunt-second: model-limit — Fable (log:")
+          and any(line.startswith("- claude-hunt-second-strongest-model: model-limit — Fable (log:")
                   for line in result.stdout.splitlines()), repr(result.stdout))
     check("the user is told, one cause per agent-binary and class",
           result.stdout.count("Tell the user: claude model-limit — ") == 1, repr(result.stdout))
@@ -902,7 +902,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # --- First attempts all account-limit; one retry fails otherwise ---------
     repository = build_scratch_repository(scratch, "checkout-mixed-causes")
     result = run_grid(repository, stubs, {"COLD_READ_GRID_TEST_STUB_FAILURE_PLAN": json.dumps(
-        [{"fragment": "claude-hunt-second.md", "attempts": 2,
+        [{"fragment": "claude-hunt-second-strongest-model.md", "attempts": 2,
           "stdout_by_attempt": {"1": SESSION_LIMIT_LINE, "2": ""}},
          {"fragment": "claude-", "attempts": 2, "stdout": SESSION_LIMIT_LINE}])})
     retrying_lines = lines_opening(result, "RETRYING:")
@@ -910,7 +910,7 @@ with tempfile.TemporaryDirectory() as scratch:
           len(retrying_lines) == 3 and all("account-limit" in line for line in retrying_lines),
           repr(retrying_lines))
     check("the retry that failed otherwise is FAILED as exit-1, the others as account-limit",
-          any(line.startswith("FAILED (exit 1): claude-hunt-second — exit-1 — ")
+          any(line.startswith("FAILED (exit 1): claude-hunt-second-strongest-model — exit-1 — ")
               for line in lines_opening(result, "FAILED"))
           and sum("account-limit" in line for line in lines_opening(result, "FAILED")) == 2,
           repr(lines_opening(result, "FAILED")))
@@ -988,7 +988,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the target-changed text prints, then the absent report",
           "Do not triage this set" in result.stdout
           and result.stdout.index("Do not triage this set")
-          < result.stdout.index("- claude-hunt-second: exit-1 — "),
+          < result.stdout.index("- claude-hunt-second-strongest-model: exit-1 — "),
           repr(result.stdout))
     check("the changed-target path carries no triage instructions",
           "reports landed in" not in result.stdout and "Read every report in full" not in result.stdout,
@@ -1751,7 +1751,7 @@ with tempfile.TemporaryDirectory() as scratch:
         ["reference-check.md", "frozen-copy-changed-during-run-stop-marker.txt"]
         + [f"{runtime}-{pass_token}-{tier}.md"
            for runtime in ("claude", "codex")
-           for pass_token, tier in (("hunt", "deep"), ("hunt", "second"),
+           for pass_token, tier in (("hunt", "deep"), ("hunt", "second-strongest-model"),
                                     ("terminology", "deep"))])
     check("the set holds the six cells, the reference-integrity pre-pass and the stop marker",
           written_names == expected_names, written_names)

@@ -37,7 +37,7 @@ PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
 CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
 # The judge reads four files per case and needs its own prompt and fixed tier.
-TIER_CHOICES = ["deep", "second", "fast"]
+TIER_CHOICES = ["deep", "second-strongest-model", "fast"]
 
 # Draft prompts need free labels; labels become report filename tokens.
 PROMPT_FILE_CELL_LABEL_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
