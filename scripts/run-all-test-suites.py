@@ -1179,10 +1179,31 @@ def suite_sandbox_lists_read_from_checkout_under_test(top):
         return own, (f"{Path(__file__).resolve()}, since the checkout has no "
                      f"{source_file.relative_to(top)}")
     except (OSError, UnicodeDecodeError) as error:
+        restore = f"git -C {top} checkout -- {source_file.relative_to(top)}"
+        rerun = "Once the step for your case succeeds, rerun the command you ran.\n"
+        tell_the_user = ("this same error appears again after you rerun, stop and tell the user, "
+                         "quoting this message; a subagent tells the agent that dispatched it "
+                         "instead.")
+        if isinstance(error, UnicodeDecodeError):
+            raise CouldNotRun(
+                f"{PROGRAM}: not run — {source_file} is not UTF-8 text "
+                f"({type(error).__name__}: {error}), so which sandbox each suite runs in is "
+                f"unknown.\n"
+                f"If the file holds no uncommitted change you need, restore it with: {restore}\n"
+                f"If it holds an uncommitted change you need, re-save it as UTF-8, keeping "
+                f"that change.\n"
+                f"{rerun}"
+                f"If a step fails, or {tell_the_user}")
         raise CouldNotRun(
             f"{PROGRAM}: not run — {source_file} could not be read "
             f"({type(error).__name__}: {error}), so which sandbox each suite runs in is unknown.\n"
-            f"Fix what {error} names, then rerun the command you ran.")
+            f"If you lack permission to read the file, grant yourself read permission, such as "
+            f"with: chmod u+r {source_file}\n"
+            f"If a directory or anything else that is not a regular file stands at that path, "
+            f"move it aside and restore the file with: "
+            f"mv {source_file} {source_file}.moved-aside && {restore}\n"
+            f"{rerun}"
+            f"If neither case fits, a step fails, or {tell_the_user}")
     try:
         tree = ast.parse(source, filename=str(source_file))
     except (SyntaxError, ValueError) as error:
