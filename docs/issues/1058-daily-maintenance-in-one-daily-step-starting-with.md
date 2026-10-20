@@ -4,8 +4,6 @@ issue: "[Daily maintenance in one daily step, starting with a daily check of eve
 
 # Daily maintenance in one daily step, starting with a daily check of every wiki page
 
-This GHI has proposed improvements or changes: read every file in this folder whose name starts with `1058-daily-maintenance-in-one-daily-step-starting-with-proposed-improvements-or-changes-`.
-
 Gather the project's daily maintenance into one daily step, which today is the noon step, and give that step its second job: every day, check every page of the wiki against the things the pages describe, fix the obvious errors, and list the rest for the user. That the wiki check is part of the daily maintenance is decided; how the daily step runs it is open, under Deferred-decisions.
 
 ## Why
