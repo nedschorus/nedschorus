@@ -43,6 +43,16 @@ GIT_ENVIRONMENT = {
     "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
 }
 
+# A stand-in git that fails as a broken repository does, only when asked whether
+# the trigger names a commit, and runs the real git for everything else.
+FAILING_REV_PARSE_GIT = r'''#!/usr/bin/env python3
+import os, sys
+if sys.argv[-1] == os.environ["MERGE_LANE_RUN_WITHOUT_MERGE_TEST_GIT_TRIGGER"] + "^{commit}":
+    sys.stderr.write("fatal: injected repository failure\n")
+    sys.exit(128)
+os.execv(os.environ["MERGE_LANE_RUN_WITHOUT_MERGE_TEST_REAL_GIT"], ["git", *sys.argv[1:]])
+'''
+
 STUB_STEP = r'''#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
@@ -107,7 +117,7 @@ def build_repositories(scratch):
 
 
 def run_program(scratch, checkout, helpers, specifications, *options, failing_step=None,
-                failing_exit="3", number="7"):
+                failing_exit="3", number="7", environment_changes=None):
     log = scratch / "steps.log"
     log.unlink(missing_ok=True)
     specifications_file = scratch / "brief-specifications.json"
@@ -127,7 +137,8 @@ def run_program(scratch, checkout, helpers, specifications, *options, failing_st
              "GIT_DIR": str(scratch / "no-such-git-directory"),
              "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_STEP_LOG": str(log),
              "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_FAILING_STEP": failing_step or "",
-             "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_FAILING_STEP_EXIT": failing_exit})
+             "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_FAILING_STEP_EXIT": failing_exit,
+             **(environment_changes or {})})
     calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
     return completed, calls, specifications_file
 
@@ -203,6 +214,24 @@ def main():
         check("an abbreviated reviewed_before is written into the filled-in copy as the full "
               "commit the Codex review runs from",
               filled_in[0]["reviewed_before"] == head_reviewed_before, f"{filled_in}")
+
+        stand_in_directory = scratch / "failing-rev-parse-git"
+        stand_in_directory.mkdir()
+        (stand_in_directory / "git").write_text(FAILING_REV_PARSE_GIT)
+        (stand_in_directory / "git").chmod(0o755)
+        completed, calls, _ = run_program(
+            scratch, checkout, helpers, [fix_round],
+            "--head-commit-reviewed-before", head_reviewed_before,
+            environment_changes={
+                "PATH": f"{stand_in_directory}{os.pathsep}{GIT_ENVIRONMENT['PATH']}",
+                "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_REAL_GIT": shutil.which("git"),
+                "MERGE_LANE_RUN_WITHOUT_MERGE_TEST_GIT_TRIGGER": head_reviewed_before})
+        detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}"
+        check("git failing while resolving --head-commit-reviewed-before exits 2 with git's "
+              "exit code and error, not as a commit missing from the checkout",
+              completed.returncode == 2 and calls == []
+              and "exited 128: fatal: injected repository failure" in completed.stdout
+              and "is not a commit in" not in completed.stdout, detail)
 
         for position, step in enumerate(STEPS, start=1):
             completed, calls, _ = run_program(scratch, checkout, helpers, [first_round],

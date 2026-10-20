@@ -212,10 +212,11 @@ approval=$(jq -s -c \
   "If its review found a defect, do not merge until the defect is fixed and the new head commit is approved." \
   "If its review found no defect, approve the head commit as an account other than the pull request's author: the merge account, or mac-claude when the merge account opened the pull request. Then run the gate again."
 
-approved_sha=$(jq -r '.commit_id' <<<"$approval")
-approval_id=$(jq -r '.id' <<<"$approval")
-approval_at=$(jq -r '.submitted_at' <<<"$approval")
-approver=$(jq -r '.user.login' <<<"$approval")
+APPROVAL_UNPARSABLE="could not parse the approving review"
+approved_sha=$(jq -r '.commit_id' <<<"$approval")    || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+approval_id=$(jq -r '.id' <<<"$approval")            || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+approval_at=$(jq -r '.submitted_at' <<<"$approval")  || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+approver=$(jq -r '.user.login' <<<"$approval")       || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
 [ -n "$approved_sha" ] && [ "$approved_sha" != "null" ] || fail "the approving review https://github.com/$REPO/pull/$PR#pullrequestreview-$approval_id records no commit_id, so the gate cannot tell which commit it approved." \
   "Do not merge. Tell the user this message."
 
@@ -345,10 +346,11 @@ FOLLOW_UP_IF_NO_ISSUE="If no such issue exists, open one with the /ghi-write ski
 FOLLOW_UP_EDIT_ONLY="Editing the description is enough; no new commit is needed."
 FOLLOW_UP_RERUN="Once the description has the link, run the gate again."
 FOLLOW_UP_REPLACE="Replace that link with an open issue or pull request that fixes the cause, or, if the cause is not known, an open issue that looks for it."
-not_fixed_count=$(jq length <<<"$not_fixed")
+DESCRIPTION_UNPARSABLE="could not parse pull request $PR's description"
+not_fixed_count=$(jq length <<<"$not_fixed")                    || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
 for ((line_index = 0; line_index < not_fixed_count; line_index++)); do
-  line=$(jq -r ".[$line_index].line" <<<"$not_fixed")
-  link=$(jq -r ".[$line_index].link // empty" <<<"$not_fixed")
+  line=$(jq -r ".[$line_index].line" <<<"$not_fixed")           || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  link=$(jq -r ".[$line_index].link // empty" <<<"$not_fixed")  || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
   [ -n "$link" ] || fail "the description's line \`$line\` has no \`#follow_up\` followed by a full https://github.com/ link." \
     "Add \`#follow_up <link>\` to the end of that line." \
     "If the cause is known, link the open issue or pull request that fixes it." \
