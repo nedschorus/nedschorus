@@ -114,7 +114,7 @@ def skip(case_name, reason):
     left out, which read as a clean run once already: on ned-box the suite
     died at the attached-launcher probe with 55 PASS lines and no verdict,
     and a pull request reported that as "55 pass, 0 fail"."""
-    print(f"SKIP  {case_name}: {reason}")
+    print(f"SKIP  [this machine cannot run it] {case_name}: {reason}")
     skips.append(case_name)
 
 

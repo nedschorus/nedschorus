@@ -73,7 +73,7 @@ def linux_only_cases_run_here(cases):
     """
     if sys.platform.startswith("linux"):
         return True
-    print(f"SKIP  {cases}: test sandboxes, bwrap and /proc exist only on Linux")
+    print(f"SKIP  [this machine cannot run it] {cases}: test sandboxes, bwrap and /proc exist only on Linux")
     return False
 
 
@@ -836,7 +836,7 @@ MACOS_PROBE = (
     "print(' '.join(results))\n")
 
 if sys.platform != "darwin":
-    print("SKIP  the end-to-end sandbox-exec case: sandbox-exec exists only on macOS")
+    print("SKIP  [this machine cannot run it] the end-to-end sandbox-exec case: sandbox-exec exists only on macOS")
 # Inside an inherited sandbox, the probe signals the process outside it that the
 # runner named, and this file's own process, which shares the sandbox, is allowed.
 MACOS_INHERITED_SANDBOX_PROBE = (
@@ -897,7 +897,7 @@ if sys.platform == "darwin" and os.environ.get(runner.SIGNAL_SANDBOX_INSIDE_VARI
     check("on macOS, inside the runner's sandbox-exec, a signal to the runner outside it is "
           "refused, while the probe stops its own child", passed, detail)
 elif sys.platform == "darwin" and not os.path.isfile(runner.SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC):
-    print(f"SKIP  the end-to-end sandbox-exec case: {runner.SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC} "
+    print(f"SKIP  [this machine cannot run it] the end-to-end sandbox-exec case: {runner.SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC} "
           f"is not on this Mac")
 elif sys.platform == "darwin":
     # Not confined yet: a process in a fresh sandbox-exec may signal neither this
