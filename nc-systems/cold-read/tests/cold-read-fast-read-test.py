@@ -1444,6 +1444,11 @@ if [ "$STAND_IN_SSH_MODE" = unreachable ]; then
     echo "ssh: connect to host ned-box port 22: No route to host" >&2
     exit 255
 fi
+if [ "$STAND_IN_SSH_MODE" = unreachable-saying-two-lines ]; then
+    echo "Warning: Permanently added 'ned-box' (ED25519) to the list of known hosts." >&2
+    echo "nedlern@ned-box: Permission denied (publickey)." >&2
+    exit 255
+fi
 if [ "$STAND_IN_SSH_MODE" = killed ]; then
     kill -TERM $$
 fi
@@ -1592,6 +1597,18 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
                   "LAN.\n" in stderr,
               repr(stderr))
 
+        exit_code, stdout, stderr = read_from_mac(mac_draft, ssh_mode="unreachable-saying-two-lines")
+        stderr_lines = stderr.splitlines()
+        check("when ssh says two lines and exits 255, the message for the user is the one "
+              "last line, holding both of ssh's lines and the remedy",
+              exit_code == 1 and len(stderr_lines) >= 2
+              and stderr_lines[-2].endswith("otherwise tell it to the user word for word:")
+              and stderr_lines[-1].startswith("The cold-read-fast-read could not run on ned-box")
+              and "'Warning: Permanently added 'ned-box' (ED25519) to the list of known "
+                  "hosts. nedlern@ned-box: Permission denied (publickey).'" in stderr_lines[-1]
+              and stderr_lines[-1].endswith("check that ned-box is on and on the LAN."),
+              repr(stderr))
+
         exit_code, stdout, stderr = read_from_mac(mac_draft, ssh_mode="killed")
         check("when a signal kills ssh, the read says which signal, prints a FAILED line "
               "and exits 1",
@@ -1610,9 +1627,19 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
                                     "did not finish within")
               and "so this program stopped waiting and ended ssh, and" in stderr
               and f"report, which this Mac sees at {mac_suggestions}." in stderr
-              and f"look for a report at {mac_suggestions}. The report is not written" in stderr
-              and f"The cold-read-fast-read of {ned_box_draft} ran on ned-box" in stderr,
+              and f"look for a report at {mac_suggestions}. The report is not written" in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
+        stderr_lines = stderr.splitlines()
+        check("when the read on ned-box outlasts the time limit, the message for the user, "
+              "naming the target and the report place, is the one last line",
+              len(stderr_lines) >= 2
+              and stderr_lines[-2].startswith("The next line is a message for the user. ")
+              and stderr_lines[-2].endswith("otherwise tell it to the user word for word:")
+              and stderr_lines[-1].startswith(f"The cold-read-fast-read of {ned_box_draft} "
+                                              f"ran on ned-box for more than")
+              and stderr_lines[-1].endswith(f"if a complete report appears at "
+                                            f"{mac_suggestions}, that is its result."),
+              repr(stderr))
 
         # A walk draft's frozen copy in a cold-read-record is no walk draft: its
         # read takes the records route, so its report is never a suggestions file.

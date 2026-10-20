@@ -340,6 +340,21 @@ def cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(ned_
             f"{record_shipper.LOG_STORE_RECORDS_DESTINATION}/")
 
 
+def lines_ending_with_message_for_the_user(message_for_the_user: str,
+                                           holds_a_command: bool) -> str:
+    """A line telling the agent to relay the next line to the user word for
+    word, then `message_for_the_user` as that one line: each line break, with
+    the spaces around it, becomes one space, because text such as ssh's stderr
+    may hold several lines, and an agent told "the next line" would relay only
+    the first."""
+    command_clause = "; do not run its command yourself" if holds_a_command else ""
+    one_line = re.sub(r"\s*[\r\n]+\s*", " ", message_for_the_user.strip())
+    return (f"The next line is a message for the user{command_clause}. "
+            f"If you are a subagent, pass it word for word to the agent that dispatched "
+            f"you, for the user; otherwise tell it to the user word for word:\n"
+            f"{one_line}")
+
+
 def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
     """Run the fast read on ned-box on `ned_box_target`, with the script of
     the ned-box checkout holding it, relay its output in Mac mount paths, and
@@ -376,14 +391,10 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
               f"stopped waiting and ended ssh, and the read's own lines were not "
               f"relayed. The read on ned-box may still be running and may still "
               f"write its report, which this Mac sees at {report_place}.\n"
-              f"Now, if you are a subagent, pass the quoted text that follows to the agent "
-              f"that dispatched you; otherwise tell the user, in these words: \"The "
-              f"cold-read-fast-read of {ned_box_target} ran on ned-box for more than "
-              f"{minutes} minutes, so this program stopped waiting and ended ssh; the "
-              f"document has no cold-read-fast-read result yet; if a complete report "
-              f"appears at {report_place}, that is its result.\"\n"
-              f"Then, subagent or not, take whichever of the next two steps applies "
-              f"yourself, as the agent that ran this command:\n"
+              f"First pass on the message for the user that comes after the next two "
+              f"steps, as the line introducing it says. Then, subagent or not, take "
+              f"whichever one of the next two steps applies yourself, as the agent that "
+              f"ran this command:\n"
               f"If you can go on without the result: go on, and say in your "
               f"reply that the document has no cold-read-fast-read result.\n"
               f"If you need the result: wait 5 minutes, then look for a report at "
@@ -392,7 +403,13 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
               f"which only the read's last write of the report adds; a complete "
               f"report is the result. If there is no complete report, run the same "
               f"cold-read-fast-read command once more; if that run fails too, go "
-              f"on without the result, and say so in your reply.", file=sys.stderr)
+              f"on without the result, and say so in your reply.\n"
+              + lines_ending_with_message_for_the_user(
+                  f"The cold-read-fast-read of {ned_box_target} ran on ned-box for more "
+                  f"than {minutes} minutes, so this program stopped waiting and ended ssh; "
+                  f"the document has no cold-read-fast-read result yet; if a complete "
+                  f"report appears at {report_place}, that is its result.",
+                  holds_a_command=False), file=sys.stderr)
         print(f"FAILED (no fast read result: the fast read on ned-box did not finish "
               f"within {minutes} minutes)")
         return 1
@@ -415,15 +432,13 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
               f"{SSH_EXIT_CONNECTION_FAILED}, most often for one of two causes: ned-box "
               f"could not be reached, or ned-box refused this Mac's key. ssh said: "
               f"'{ssh_words}'.\n"
-              f"The next line is a message for the user; do not run its command yourself. "
-              f"If you are a subagent, pass it word for word to the agent that dispatched "
-              f"you, for the user; otherwise tell it to the user word for word:\n"
-              f"The cold-read-fast-read could not run on ned-box from this Mac: ssh "
-              f"exited {SSH_EXIT_CONNECTION_FAILED} and said: '{ssh_words}'. Run "
-              f"`ssh {NED_BOX_SSH_TARGET} true` from a Terminal on your Mac. If that "
-              f"command fails with 'Permission denied', ned-box refused this Mac's key; if "
-              f"it fails another way, check that ned-box is on and on the LAN.",
-              file=sys.stderr)
+              + lines_ending_with_message_for_the_user(
+                  f"The cold-read-fast-read could not run on ned-box from this Mac: ssh "
+                  f"exited {SSH_EXIT_CONNECTION_FAILED} and said: '{ssh_words}'. Run "
+                  f"`ssh {NED_BOX_SSH_TARGET} true` from a Terminal on your Mac. If that "
+                  f"command fails with 'Permission denied', ned-box refused this Mac's key; "
+                  f"if it fails another way, check that ned-box is on and on the LAN.",
+                  holds_a_command=True), file=sys.stderr)
         print("FAILED (no fast read ran: ned-box could not be reached)")
         return 1
     sys.stderr.write(text_with_ned_box_paths_rewritten_as_mac_mount_paths(completed.stderr))

@@ -260,6 +260,30 @@ with tempfile.TemporaryDirectory() as scratch:
           and "{REPORT_PATH}" not in received_prompt,
           repr(received_prompt[:300]))
 
+    # The fast read on the Mac sizes its ssh time limit from the per-model
+    # constant, so --print-timeout must follow it, not a literal that happens
+    # to equal it.
+    repository = build_scratch_repository(scratch)
+    copied_cell = repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"
+    cell_text = copied_cell.read_text(encoding="utf-8")
+    constant_line = "COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60\n"
+    check("the agy cell sets its per-model time limit on one line this suite can change",
+          cell_text.count(constant_line) == 1, repr(constant_line))
+    copied_cell.write_text(cell_text.replace(
+        constant_line, "COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 45 * 60\n"),
+        encoding="utf-8")
+    report = report_path_for(repository, "print-timeout-follows-constant")
+    argv_dump = scratch / "print-timeout-follows-constant-argv.json"
+    result = run_agy_cell(
+        repository, stubs,
+        {"*": {"report": "STUB AGY REVIEW\n", "dump_argv": str(argv_dump)}}, report,
+    )
+    argv = json.loads(argv_dump.read_text(encoding="utf-8")) if argv_dump.is_file() else []
+    check("agy's --print-timeout follows the cell's per-model time limit",
+          result.returncode == 0 and "--print-timeout" in argv
+          and argv[argv.index("--print-timeout") + 1] == "45m",
+          f"exit {result.returncode}; argv={argv!r}; stderr={result.stderr!r}")
+
     # --- The other tiers are refused before agy runs ----------------------
     for other_tier in ("deep", "second-strongest-model"):
         repository = build_scratch_repository(scratch)
