@@ -7,7 +7,8 @@ copy of this directory's compose-pull-request-reviewer-brief.py and an
 instructions file committed on main. wt/pr7-merged is a worktree of that
 repository. The reviewer's scratch directories are made in their own directory
 of the scratch, in place of the default parent outside the log-store. The program runs with GIT_DIR pointing at a directory that does
-not exist, so a case passes only if the program drops it.
+not exist, so a case passes only if the program drops it. A stand-in gh first on PATH
+prints the author FAKE_GH_AUTHOR names, or fails when FAKE_GH_FAILS is set.
 
 Run: python3 scripts/merge-lane-pull-request-reviewer-brief-compose-with-facts-test.py
 """
@@ -40,6 +41,17 @@ GIT_ENVIRONMENT = {
 STANDING_TEXT = "Review pull request <N>.\n<<PR-REVIEWER-INSTRUCTIONS>>\nEnd of standing text.\n"
 INSTRUCTIONS = "The reviewing instructions.\n"
 ADDENDUM = "The ned-box addendum.\n"
+FAKE_GH = """#!/usr/bin/env python3
+import os, sys
+if os.environ.get("FAKE_GH_FAILS"):
+    print("gh: HTTP 401: Bad credentials", file=sys.stderr)
+    sys.exit(1)
+expected = ["pr", "view", "--repo", "nedschorus/nedschorus", "--json", "author", "--jq", ".author.login"]
+if sys.argv[1:3] + sys.argv[4:] != expected or not sys.argv[3].isdigit():
+    print("stand-in gh: unexpected arguments " + repr(sys.argv[1:]), file=sys.stderr)
+    sys.exit(2)
+print(os.environ.get("FAKE_GH_AUTHOR", "an author"))
+"""
 
 failures = []
 
@@ -65,7 +77,12 @@ def commit_file(repository, path, text, message):
     return git(repository, "rev-parse", "HEAD")
 
 
-def run_program(scratch, helpers, specs, *extra):
+def run_program(scratch, helpers, specs, *extra, gh_environment=None):
+    fake_gh_directory = scratch / "fake-gh"
+    if not (fake_gh_directory / "gh").exists():
+        fake_gh_directory.mkdir(exist_ok=True)
+        (fake_gh_directory / "gh").write_text(FAKE_GH)
+        (fake_gh_directory / "gh").chmod(0o755)
     specs_file = scratch / "brief-specs.json"
     specs_file.write_text(json.dumps(specs))
     return subprocess.run(
@@ -76,7 +93,9 @@ def run_program(scratch, helpers, specs, *extra):
          "--ned-box-reviewer-brief-environment-addendum-file", str(scratch / "addendum.md"),
          "--merge-lane-pull-request-reviewer-scratch-directories-parent-directory", str(scratch / "reviewer-scratch"), *extra],
         capture_output=True, text=True,
-        env={**GIT_ENVIRONMENT, "GIT_DIR": str(scratch / "no-such-git-directory")})
+        env={**GIT_ENVIRONMENT, "GIT_DIR": str(scratch / "no-such-git-directory"),
+             "PATH": f"{fake_gh_directory}{os.pathsep}{GIT_ENVIRONMENT.get('PATH', '')}",
+             **(gh_environment or {})})
 
 
 def main():
@@ -203,6 +222,31 @@ def main():
         check("a composer refusal exits 1 and names the composer's reason",
               completed.returncode == 1 and "marker lines" in completed.stderr
               and not (helpers / "briefs" / "brief-9-mac-claude.md").exists(),
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+
+        (scratch / "standing.md").write_text(STANDING_TEXT)
+        completed = run_program(scratch, helpers, [{**first_round, "tag": "7m"}],
+                                gh_environment={"FAKE_GH_AUTHOR": "ned-review-merge"})
+        brief_file = helpers / "briefs" / "brief-7m-mac-claude.md"
+        brief = brief_file.read_text() if brief_file.exists() else ""
+        check("a brief for a pull request ned-review-merge opened ends by telling the reviewer "
+              "to post its verdict as the review's event",
+              completed.returncode == 0
+              and brief.endswith("- Hazards: Check the thing.\n"
+                                 + program.POST_VERDICT_AS_REVIEW_EVENT_LINE + "\n")
+              and "`event` set to your verdict, `APPROVE` or `REQUEST_CHANGES`" in brief,
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
+              f"\n--- brief ---\n{brief}")
+        brief = (helpers / "briefs" / "brief-7-mac-claude.md").read_text()
+        check("a brief for a pull request another account opened leaves the standing text's "
+              "COMMENT alone", program.POST_VERDICT_AS_REVIEW_EVENT_LINE not in brief, brief)
+
+        completed = run_program(scratch, helpers, [{**first_round, "tag": "7g"}],
+                                gh_environment={"FAKE_GH_FAILS": "1"})
+        check("a failed author lookup exits 1, names gh's error and writes no brief",
+              completed.returncode == 1 and "brief not composed" in completed.stderr
+              and "Bad credentials" in completed.stderr
+              and not (helpers / "briefs" / "brief-7g-mac-claude.md").exists(),
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

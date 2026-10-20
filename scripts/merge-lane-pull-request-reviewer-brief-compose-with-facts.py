@@ -11,6 +11,10 @@ The file holds a JSON list. Each entry has tag, number, title, author, head,
 main, tests and hazards, and may have overlaps. A fix-round entry also has
 reviewed_before, previous_reviews, new_commits and answer.
 
+The pull request's author is read from GitHub with gh. When it is
+ned-review-merge, the facts tell the reviewer to post its verdict as the
+review's event, in place of the standing text's COMMENT.
+
 Each brief is three parts: the standing text, composed by --review-tools-worktree-at-main's
 scripts/compose-pull-request-reviewer-brief.py with the reviewing
 instructions inserted; the ned-box environment addendum; and a section of
@@ -52,6 +56,16 @@ _git_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
+
+
+MERGE_LANE_ACCOUNT = "ned-review-merge"
+# GitHub refuses an approving review from a pull request's own author, so on a pull request
+# merge-lane-2 opened as MERGE_LANE_ACCOUNT the reviewer's review is the only approval it can get.
+POST_VERDICT_AS_REVIEW_EVENT_LINE = (
+    f"- This pull request's author is `{MERGE_LANE_ACCOUNT}`, the account merge-lane-2 approves "
+    f"with, and GitHub refuses an approving review from a pull request's author. So post your "
+    f"review with `event` set to your verdict, `APPROVE` or `REQUEST_CHANGES`, in place of "
+    f"`COMMENT`, and still put the verdict as the body's first line.")
 
 
 class StepFailed(Exception):
@@ -97,6 +111,11 @@ def git(directory, *arguments):
     return run(["git", "-C", str(directory), *arguments]).strip()
 
 
+def pull_request_author(number):
+    return run(["gh", "pr", "view", str(number), "--repo", common.REPOSITORY,
+                "--json", "author", "--jq", ".author.login"]).strip()
+
+
 def files_touched_text(review_tools_worktree, base, head):
     """The files changed between base and head, each with its line counts, for the brief."""
     entries = git_output.numstat_entries(
@@ -118,6 +137,7 @@ def compose(spec, arguments, review_tools_worktree, instructions_file):
     helpers = arguments.merge_lane_worktrees_and_outputs_directory
     merge_base = git(review_tools_worktree, "merge-base", main, head)
     merged_tree = git(helpers / "wt" / f"pr{number}-merged", "rev-parse", "HEAD^{tree}")
+    author = pull_request_author(number)
     standing = run([sys.executable,
                     str(review_tools_worktree / "scripts" / "compose-pull-request-reviewer-brief.py"),
                     "--pull-request", str(number),
@@ -151,6 +171,8 @@ def compose(spec, arguments, review_tools_worktree, instructions_file):
     facts.append("- Other open pull requests changing the same files: "
                  + spec.get("overlaps", "none") + ".")
     facts.append(f"- Hazards: {spec['hazards']}")
+    if author == MERGE_LANE_ACCOUNT:
+        facts.append(POST_VERDICT_AS_REVIEW_EVENT_LINE)
     addendum = arguments.ned_box_reviewer_brief_environment_addendum_file.read_text()
     brief = (standing.rstrip("\n") + "\n\n" + addendum.rstrip("\n") + "\n\n"
              + "\n".join(facts) + "\n")
