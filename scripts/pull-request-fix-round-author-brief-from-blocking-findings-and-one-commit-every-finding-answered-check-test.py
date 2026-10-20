@@ -156,7 +156,11 @@ GOOD_ANSWERS = "1. Fixed: the error is raised,\n   and a case covers it.\n2. Add
 
 def case(name, body):
     with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
+        # git prints resolved paths, and the Mac's temporary directory is behind the /var -> /private/var
+        # symlink. Every case starts behind a symlink of its own, so ned-box meets the Mac's condition too.
+        (Path(directory) / "real").mkdir()
+        (Path(directory) / "behind-a-symlink").symlink_to(Path(directory) / "real")
+        root = (Path(directory) / "behind-a-symlink").resolve()
         repository, base, frozen_head = scratch_repository(root)
         body(root, repository, base, frozen_head)
 
