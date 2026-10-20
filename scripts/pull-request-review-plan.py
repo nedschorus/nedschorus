@@ -1,35 +1,49 @@
 #!/usr/bin/env python3
-"""Compute the merge seat's review tier and facts for a pull request's brief.
+"""Compute the review tier and facts the merge-lane puts in a pull request's review brief.
 
 Rule 1: tiers follow content. Tests, fenced Markdown code, and Python changes
 limited to docstrings, comments and string constants get codex-review-and-head-tests-tier.
 Python behaviour changes and other code get claude-and-codex-review-and-head-tests-tier. Prose gets
 no-reviewer-tier. Settings, Bash guards and registered hooks always get
 claude-and-codex-review-and-head-tests-tier; all of .claude/hooks/ does too,
-including test files there.
+including test files there. A pull request gets the strictest tier that any of
+its changed files gets; from least to most strict, the tiers are
+no-reviewer-tier, codex-review-and-head-tests-tier and
+claude-and-codex-review-and-head-tests-tier.
 
 Rule 2: a fix round is reviewed by its new commits alone, at the tier those
 commits need, and the seat, not this program, runs again on the new head each
 check whose result made the earlier round request changes. A fix round is
-reviewed whole when those commits merge main or rewrite the branch's history;
-any merge commit on the delta's first-parent history counts as merging main.
-Rounds count distinct reviewed heads other than the current head, so a review
-already posted on the current head does not start another round. When a delta
-holds a merge, or follows rewritten history, its files are restricted to the
-pull request's own files on either head; main's unrelated files should not
-decide the delta tier. When delta-only review does not apply, the plan lists
+reviewed whole when those commits merge main or rewrite the branch's history.
+Any merge commit on the first-parent history from the earlier reviewed head to
+the current head counts as merging main; the history counts as rewritten when
+the earlier reviewed head is not an ancestor of the current head, or is not in
+the local repository.
+The round number is one more than the number of distinct heads reviewed before
+the current head, so a review already posted on the current head does not start
+another round. The earlier reviewed head is the head of the most recently
+submitted review on a head other than the current one. When a delta
+holds a merge, or follows rewritten history, the delta tier, which the plan
+still prints, is computed only from files the pull request itself changes:
+those changed from the base branch to the current head, and those changed from
+the base branch to the earlier reviewed head, each measured from its merge
+base; main's unrelated files should not decide the delta tier. When delta-only review does not apply, the plan lists
 every reason it does not apply, not only the first.
 
 Rule 3: list changed agent-facing strings, with their context and old text.
 Which strings are agent-facing, and which files are tests, is decided by
 nc-systems/general-tools/python-source-agent-facing-string-collector-common.py:
-printed, written or raised strings, strings assigned to names with a message
-suffix, string values of a hook's agent-facing JSON output keys in a dict
+printed, written or raised strings, strings assigned to names ending in
+_ADVICE, _INSTRUCTION, _LINE, _MESSAGE, _NOTICE, _REASON, _REFUSAL or _TEMPLATE, string values of a hook's agent-facing JSON output keys in a dict
 literal, and a module docstring printed through __doc__. Tests are excluded:
 a test's copy of an expected message is not handed to an agent. F-string
 placeholders survive in the listing. Beside each listed string is its
-cold-read-fast-read command, whose target file holds the string's new text and
-is written as the message reminder hook writes it; a target that cannot be
+cold-read-fast-read command, whose target file holds the string's new text. The
+target file is written as
+nc-systems/general-tools/python-edit-changed-agent-facing-message-check-reminder-hook.py
+writes it: in the directory agent-facing-message-fast-read-targets under the
+system temporary directory, named after the source file and a digest of the
+text. A target that cannot be
 written is marked in the plan, which leaves its message with no
 cold-read-fast-read command, so the program exits 3 after printing the plan.
 
@@ -43,8 +57,9 @@ Reads the pull request, reviews, inline comments and live base tip through
 four read-only gh calls, and commits, refs and diffs from the local repository.
 Never fetches, pushes or writes refs. git merge-tree --write-tree may write
 tree objects. Writes no file except the cold-read-fast-read target files and
-the optional --brief-skeleton, opened exclusively because a rerun must not
-erase the seat's hand-written checks.
+the optional --brief-skeleton file. The program refuses, with exit 1 and no
+plan, to write --brief-skeleton over an existing file, because a rerun must not
+erase the checks the merge-lane wrote into it by hand.
 Exit 0: success. Exit 1: refusal, including malformed arguments or unavailable
 inputs. Exit 2: program defect, with exception and traceback on stderr.
 Exit 3: the plan is printed, but a listed message has no cold-read-fast-read
