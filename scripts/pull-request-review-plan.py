@@ -1,51 +1,74 @@
 #!/usr/bin/env python3
-"""Compute the merge seat's review tier and facts for a pull request's brief.
+"""Compute the review tier and facts the merge-lane puts in a pull request's review brief.
 
 Rule 1: tiers follow content. Tests, fenced Markdown code, and Python changes
-limited to docstrings, comments and string constants get seat-and-codex.
-Python behaviour changes and other code get full-reviewer. Prose gets
-seat-alone. Settings, Bash guards and registered hooks always get a full
-reviewer; all of .claude/hooks/ does too, including test files there.
+limited to docstrings, comments and string constants get codex-review-and-head-tests-tier.
+Python behaviour changes and other code get claude-and-codex-review-and-head-tests-tier. Prose gets
+no-reviewer-tier. Settings, Bash guards and registered hooks always get
+claude-and-codex-review-and-head-tests-tier; all of .claude/hooks/ does too,
+including test files there. A pull request gets the strictest tier that any of
+its changed files gets; from least to most strict, the tiers are
+no-reviewer-tier, codex-review-and-head-tests-tier and
+claude-and-codex-review-and-head-tests-tier.
 
 Rule 2: a fix round is reviewed by its new commits alone, at the tier those
-commits need, and the seat runs the round's deciding check again on the new
-head. It is reviewed whole when those commits merge main or rewrite the
-branch's history; any merge commit on the delta's first-parent history
-counts as merging main. Rounds count distinct reviewed heads other than the
+commits need, and the merge-lane, not this program, runs again on the new head
+each check whose result made the earlier round request changes. The round
+number is one more than the number of distinct heads reviewed before the
 current head, so a review already posted on the current head does not start
-another round. When a delta holds a merge, or follows rewritten history, its
-files are restricted to the pull request's own files on either head; main's
-unrelated files should not decide the delta tier. All applicable reasons
-remain listed.
+another round. The earlier reviewed head is the head of the most recently
+submitted review on a head other than the current one.
+A fix round is reviewed whole, at the pull request's tier, in three cases, and
+the plan lists every case that holds, not only the first:
+- The earlier reviewed head is not in the local repository. No delta is
+  computed, and the plan prints "delta tier: not available".
+- The delta holds a merge: a merge commit on the first-parent history from the
+  earlier reviewed head to the current head, which counts as merging main.
+- The history was rewritten: the earlier reviewed head is not an ancestor of
+  the current head.
+In the last two cases the plan still prints a delta tier, for information
+only. It is computed only from files the pull request itself changes: those
+changed from the base branch to the current head, and those changed from the
+base branch to the earlier reviewed head, each measured from its merge base;
+main's unrelated files should not decide it.
 
 Rule 3: list changed agent-facing strings, with their context and old text.
-Which strings are agent-facing, and which files are tests, is decided by
-nc-systems/general-tools/python-source-agent-facing-string-collector-common.py:
-printed, written or raised strings, strings assigned to names with a message
-suffix, string values of a hook's agent-facing JSON output keys in a dict
-literal, and a module docstring printed through __doc__. Tests are excluded:
-a test's copy of an expected message is not handed to an agent. F-string
+nc-systems/general-tools/python-source-agent-facing-string-collector-common.py
+decides which strings are agent-facing and which files are tests. Agent-facing
+strings are printed, written or raised strings; strings assigned to names
+ending in _ADVICE, _INSTRUCTION, _LINE, _MESSAGE, _NOTICE, _REASON, _REFUSAL
+or _TEMPLATE, or in one of those followed by S, such as _MESSAGES; string
+values of a hook's agent-facing JSON output keys in a dict literal; and a
+module docstring printed through __doc__. Test files are those ending in
+-test.py or under a tests directory, and are excluded: a test's copy of an
+expected message is not handed to an agent. F-string
 placeholders survive in the listing. Beside each listed string is its
-cold-read-fast-read command, whose target file holds the string's new text and
-is written as the message reminder hook writes it; a target that cannot be
-written is marked in the plan and makes the program exit 3 after printing it.
+cold-read-fast-read command, whose target file holds the string's new text. The
+target file is written as
+nc-systems/general-tools/python-edit-changed-agent-facing-message-check-reminder-hook.py
+writes it: in the directory agent-facing-message-fast-read-targets under the
+system temporary directory, named after the source file and a digest of the
+text. A target that cannot be
+written is marked in the plan, which leaves its message with no
+cold-read-fast-read command, so the program exits 3 after printing the plan.
 
 Merged pull requests use the merge commit's first parent as the diff base:
 the current base branch already contains the head and would hide the change.
 No rename detection is used: moving a program changes behaviour for callers,
 so a rename is a deletion and an addition. Markdown prose anywhere is
-seat-alone because prose outside code is outside the review scope.
+no-reviewer-tier because prose outside code is outside the review scope.
 
 Reads the pull request, reviews, inline comments and live base tip through
 four read-only gh calls, and commits, refs and diffs from the local repository.
 Never fetches, pushes or writes refs. git merge-tree --write-tree may write
 tree objects. Writes no file except the cold-read-fast-read target files and
-the optional --brief-skeleton, opened exclusively because a rerun must not
-erase the seat's hand-written checks.
+the optional --brief-skeleton file. The program refuses, with exit 1 and no
+plan, to write --brief-skeleton over an existing file, because a rerun must not
+erase the checks the merge-lane wrote into it by hand.
 Exit 0: success. Exit 1: refusal, including malformed arguments or unavailable
-inputs. Exit 2: program defect, with exception and traceback on stderr. Exit 3:
-the plan is printed, but a listed message has no cold-read-fast-read command,
-so that a caller notices the missing reads.
+inputs. Exit 2: program defect, with exception and traceback on stderr.
+Exit 3: the plan is printed, but a listed message has no cold-read-fast-read
+command, so that a caller notices the missing reads.
 
 Usage:
   scripts/pull-request-review-plan.py --pull-request N [--repository DIR]
@@ -99,7 +122,7 @@ cold_read_fast_read_review_command_line_for_target_file = _message_reminder_hook
 FAST_READ_COMMAND = _message_reminder_hook.FAST_READ_COMMAND
 PLAN_PRINTED_WITH_MESSAGES_MISSING_FAST_READ_COMMAND_EXIT_STATUS = 3
 
-REVIEW_TIER_ORDER = {"seat-alone": 0, "seat-and-codex": 1, "full-reviewer": 2}
+REVIEW_TIER_ORDER = {"no-reviewer-tier": 0, "codex-review-and-head-tests-tier": 1, "claude-and-codex-review-and-head-tests-tier": 2}
 GITHUB_PULL_REQUEST_FIELDS = "number,title,url,state,author,headRefOid,baseRefName,mergeCommit"
 GIT_FULL_HASH_PATTERN = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 DIFF_HUNK_HEADER_PATTERN = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.MULTILINE)
@@ -325,23 +348,23 @@ def registered_hook_paths_at_revision(repository, revision):
 
 def hook_path_rule_reason(path, registered_paths):
     if path.startswith(".claude/hooks/"):
-        return f"{path} is under .claude/hooks/; every file there always gets a full reviewer"
+        return f"{path} is under .claude/hooks/; every file there always gets claude-and-codex-review-and-head-tests-tier"
     if path.startswith("scripts/") and path.count("/") == 1 and path.endswith("guard-hook.py"):
-        return f"{path} is a Bash guard; a change to it always gets a full reviewer"
+        return f"{path} is a Bash guard; a change to it always gets claude-and-codex-review-and-head-tests-tier"
     if path in registered_paths:
-        return f"{path} is registered as a hook in .claude/settings.json; a change to it always gets a full reviewer"
+        return f"{path} is registered as a hook in .claude/settings.json; a change to it always gets claude-and-codex-review-and-head-tests-tier"
     return None
 
 
 def classify_changed_file_into_class_tier_and_reason(repository, old_revision, new_revision,
                                                       path, status, registered_paths):
     if path == ".claude/settings.json":
-        return ("settings", "full-reviewer", ".claude/settings.json registers the hooks; a change to it always gets a full reviewer")
+        return ("settings", "claude-and-codex-review-and-head-tests-tier", ".claude/settings.json registers the hooks; a change to it always gets claude-and-codex-review-and-head-tests-tier")
     hook_reason = hook_path_rule_reason(path, registered_paths)
     if hook_reason:
-        return "hook", "full-reviewer", hook_reason
+        return "hook", "claude-and-codex-review-and-head-tests-tier", hook_reason
     if path_is_test_file(path):
-        return "test", "seat-and-codex", f"{path} is a test file"
+        return "test", "codex-review-and-head-tests-tier", f"{path} is a test file"
     if path.endswith(".md"):
         old_lines = fenced_code_block_line_numbers_in_markdown(read_revision_blob_or_none(repository, old_revision, path))
         new_lines = fenced_code_block_line_numbers_in_markdown(read_revision_blob_or_none(repository, new_revision, path))
@@ -352,16 +375,16 @@ def classify_changed_file_into_class_tier_and_reason(repository, old_revision, n
             for old_start, old_count, new_start, new_count in parse_diff_hunk_line_ranges(diff_text)
             for start, count, inside in ((old_start, old_count, old_lines), (new_start, new_count, new_lines)))
         if changes_code:
-            return "code", "seat-and-codex", f"{path} changes lines inside fenced code blocks"
-        return "prose", "seat-alone", f"{path} changes only prose outside fenced code blocks"
+            return "code", "codex-review-and-head-tests-tier", f"{path} changes lines inside fenced code blocks"
+        return "prose", "no-reviewer-tier", f"{path} changes only prose outside fenced code blocks"
     if (path.startswith(("docs/", "nc-queue/"))
             and Path(path).suffix not in PROSE_DIRECTORY_CODE_EXTENSIONS):
-        return "prose", "seat-alone", f"{path} is prose under docs/ or nc-queue/"
+        return "prose", "no-reviewer-tier", f"{path} is prose under docs/ or nc-queue/"
     if path.endswith(".py"):
         if status == "A":
-            return "code", "full-reviewer", f"{path} is a new program"
+            return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} is a new program"
         if status == "D":
-            return "code", "full-reviewer", f"{path} is deleted"
+            return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} is deleted"
         syntax_dumps = []
         for side, revision in (("old side", old_revision), ("new side", new_revision)):
             source = read_revision_blob_or_none(repository, revision, path)
@@ -370,11 +393,11 @@ def classify_changed_file_into_class_tier_and_reason(repository, old_revision, n
                     raise SyntaxError("no source blob")
                 syntax_dumps.append(normalized_syntax_tree_dump_without_strings(source))
             except (SyntaxError, ValueError):
-                return "code", "full-reviewer", f"{path} does not parse at {side}"
+                return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} does not parse at {side}"
         if syntax_dumps[0] == syntax_dumps[1]:
-            return "code", "seat-and-codex", f"{path} changes only docstrings, comments and string constants"
-        return "code", "full-reviewer", f"{path} changes its syntax tree beyond docstrings, comments and string constants"
-    return "code", "full-reviewer", f"{path} is not Python or Markdown, so no check shows its change leaves behaviour alone"
+            return "code", "codex-review-and-head-tests-tier", f"{path} changes only docstrings, comments and string constants"
+        return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} changes its syntax tree beyond docstrings, comments and string constants"
+    return "code", "claude-and-codex-review-and-head-tests-tier", f"{path} is not Python or Markdown, so no check shows its change leaves behaviour alone"
 
 
 def changed_files_with_classes_and_tiers(repository, old_revision, new_revision,
@@ -407,7 +430,7 @@ def changed_files_with_classes_and_tiers(repository, old_revision, new_revision,
 
 def review_tier_and_deciding_reason(changed_files):
     if not changed_files:
-        return "seat-alone", "the pull request changes no file"
+        return "no-reviewer-tier", "the pull request changes no file"
     deciding_file = min(changed_files, key=lambda entry: (
         -REVIEW_TIER_ORDER[entry["tier"]], entry["class"] not in ("hook", "settings"),
         path_is_test_file(entry["path"]), entry["path"]))

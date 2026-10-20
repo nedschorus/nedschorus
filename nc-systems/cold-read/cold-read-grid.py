@@ -2,7 +2,8 @@
 """Run a cold-read-full-run against a cold-read-target.
 
 One invocation = one review: six cold-read-cells launched in parallel -- the
-defect-hunt pass in four ({deep, second} x {claude, codex}) and the
+defect-hunt pass in four ({deep, second-strongest-model} x {claude, codex}, where
+second-strongest-model is the agent-binary's second-strongest model) and the
 terminology pass in two (deep x {claude, codex}) -- every report saved
 into a cold-read-record named
 `cold-read-records/<file stem>-<YYYY-MM-DD>/`, or `SKILL-<skill name>-<YYYY-MM-DD>/` for a skill
@@ -178,7 +179,7 @@ CELL_PROGRAM_NAMES = tuple(path.stem for path in CELL_LAUNCHERS.values())
 # Pin terminology effort explicitly so launcher tier-map changes cannot change the pass.
 GRID_CELL_ROSTER = (
     ("defect-hunt", "deep", None),
-    ("defect-hunt", "second", None),
+    ("defect-hunt", "second-strongest-model", None),
     ("terminology", "deep", "max"),
 )
 
@@ -195,10 +196,13 @@ GRID_MARKER_PREFIXES = (FROZEN_COPY_CHANGED_MARKER_PREFIX, INCOMPLETE_SET_MARKER
 RETRYING_PREFIX = "RETRYING:"
 AGENT_BINARY_DOWN_PREFIX = "AGENT-BINARY DOWN:"
 STOPPED_CELL_WRITE_CHECK_LINE = (
-    "this cell was stopped before its stray-write check ran, which is a failure "
-    "to look, not a clean result. Before the new run, read `git status` against "
-    "the edits you know are your own, revert only what a reviewer evidently wrote, "
-    "and ask the user about any other change you did not make.")
+    "The {cell} cell was stopped before it could check for files it wrote outside its "
+    "report, so no such check ran; that is a failure to look, not a clean result. Before "
+    "you do anything else, read `git status` against the edits you know are your own. "
+    "Undo a change git status lists, by deleting the file or directory if it is untracked or running "
+    "`git restore --staged --worktree <path>` if it is tracked, only when its content shows a reviewer wrote "
+    "it, such as notes about the document under review. Ask the user about any other "
+    "change you did not make, and whenever you are unsure.")
 
 ALL_LANDED_OPENING = "All six reports landed in {record_dir}, one file per reviewer."
 SOME_LANDED_OPENING = (
@@ -341,13 +345,6 @@ def record_file_listing(host, store) -> list:
         raise FullRunCountUnavailable(
             f"listing {host}:{store} exited {listing.returncode}: {listing.stderr.strip()}")
     return listing.stdout.splitlines()
-
-
-def earlier_full_runs_since_count_start(frozen_paths: set, landed_at, listing: list) -> list:
-    """The record directories of this document's cold-read-full-runs since
-    main last took a change to it, oldest first, from the last one started on
-    the user's ruling onward."""
-    return full_run_history_since_count_start(frozen_paths, landed_at, listing)[0]
 
 
 def full_run_history_since_count_start(frozen_paths: set, landed_at, listing: list) -> tuple:
@@ -552,22 +549,43 @@ WINDOW_SEEN_MID_RUN = ("changed while some cells were still reading it, and the 
                        "run stopped those cells; reports already written stay in the set")
 
 
-TARGET_CHANGED_INSTRUCTIONS = """\
-The reports are in {record_dir}, and every one of them is marked: the frozen
-copy's bytes {window}, so no report can say which text it reviewed.
+# One line per paragraph: the paths are long, and a wrapped line would split one from its words.
+TARGET_CHANGED_INSTRUCTIONS = (
+    "The reports are in {record_dir}, and every one of them is marked, because the frozen "
+    "copy {frozen_target} {window}. No report can say which text it reviewed.\n"
+    "\n"
+    "Do not triage any finding in this set, because none can be matched to the text it "
+    "was made on. Keep the set: each report still records truthfully what one reviewer read.\n"
+    "\n"
+    "Before any new run, find what edited the frozen copy, because only "
+    "cold-read-grid.py should write it. Compare the frozen copy with {target}, the "
+    "document it was copied from, as in `diff {target_operand} {frozen_target_operand}`: that shows the "
+    "edit. When a #cold_read_target_changed_during_run line above says {target} changed "
+    "too, the diff also shows that change as its opposite: a line you added to {target} "
+    "appears as removed, and a line you removed appears as added. While you read the "
+    "diff, ignore the lines you know you changed in {target}. The edit often shows its "
+    "source. If the source is you, such as an edit you meant for {target}, "
+    "make that edit in {target} and edit nothing under {record_dir} again. If it is another "
+    "agent or program, or you cannot tell, tell the user what the diff shows and wait for "
+    "his answer.\n")
 
-Do not triage this set as a review of the document. Find what edited the
-frozen copy.
 
-Keep the set. Each report still records truthfully what one reviewer read, which
-is evidence of what the reviewers saw — not of how the file now stands.
-"""
+def target_changed_instructions(record_dir: pathlib.Path, frozen_target: pathlib.Path,
+                                target: pathlib.Path, window: str) -> str:
+    """The closing text's frozen-copy-changed paragraphs."""
+    # The diff is a command to paste into a shell, so its paths are quoted; the prose keeps them bare.
+    return TARGET_CHANGED_INSTRUCTIONS.format(
+        record_dir=record_dir, frozen_target=frozen_target, target=target, window=window,
+        target_operand=shlex.quote(str(target)),
+        frozen_target_operand=shlex.quote(str(frozen_target)))
 
 
 def frozen_copy_stop_count_line(stop_number: int) -> str:
     """Say where this stop leaves the attempt, for the closing text."""
     if stop_number < FROZEN_COPY_CHANGED_STOPS_IN_A_ROW_LIMIT:
-        return (f"Start a new cold-read run. This run does not count toward the "
+        return (f"Start a new cold-read run once nothing but cold-read-grid.py will write "
+                f"under the record directory, or once the user says to. "
+                f"This run does not count toward the "
                 f"{FULL_RUN_LIMIT} cold-read-full-runs: it is stop {stop_number} of "
                 f"{FROZEN_COPY_CHANGED_STOPS_IN_A_ROW_LIMIT} in a row because the frozen "
                 f"copy changed.")
@@ -837,7 +855,8 @@ def wait_for_cells(running: dict,
                     log_lines = (attempt.stderr_path.read_text(encoding="utf-8").splitlines()
                                  if attempt.stderr_path.is_file() else [])
                     lift_cell_status_lines(report_path, log_lines)
-                    print(f"WRITE CHECK DID NOT RUN: {report_path.name} — {STOPPED_CELL_WRITE_CHECK_LINE}",
+                    print(f"WRITE CHECK DID NOT RUN: {report_path.name} — "
+                          f"{STOPPED_CELL_WRITE_CHECK_LINE.format(cell=cell_name_of(report_path))}",
                           flush=True)
                 return outcome._replace(moved_mid_run=move)
     return outcome
@@ -1039,9 +1058,9 @@ def main() -> int:
     tell = tell_the_user_sentence(outcome.absent)
     absences = absence_lines(outcome)
     if target_changed:
-        print(TARGET_CHANGED_INSTRUCTIONS.format(
-            record_dir=record_dir,
-            window=WINDOW_SEEN_MID_RUN if outcome.moved_mid_run else WINDOW_SEEN_AT_END))
+        print(target_changed_instructions(
+            record_dir, frozen_target, target,
+            WINDOW_SEEN_MID_RUN if outcome.moved_mid_run else WINDOW_SEEN_AT_END))
         print(frozen_copy_stop_count_line(stops_in_a_row + 1))
         if outcome.stopped:
             print("Stopped before finishing: " + ", ".join(outcome.stopped) + ".")

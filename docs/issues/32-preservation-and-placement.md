@@ -175,6 +175,28 @@ making orphaned dispatches visible — reduces the sweep's load but is not the
 guarantee. No dedicated drift-detection machinery beyond the sweep until
 incidents earn it, per the enforcement ladder.
 
+## The user's ruling of 2026-10-19: backups, preservation and records are documented together
+
+On 2026-10-19, ruling on item 2 of the approval-walk `reboot-test-questions-owed-to-the-user-2026-10-19` (minutes, item 2 row: `nedlern@ned-box:/home/nedlern/agents/reboot-test/docs/walk/reboot-test-questions-owed-to-the-user-2026-10-19-minutes.md`, in the reboot-test agent-seat's checkout until the walk's files are shipped to the log-store's `walk/`), which made the guarded-file hook keep a copy only of a version git does not hold, the user said, in his words:
+
+> My concern isn't size it's the ability to find the right stuff, which is almost always quite recent . That is we want grep not to return a massive load of crap. If we have a wiki page on backups, some things we want as many records as possible for analysis, others we want as few as prudent to make it easy to find the right one. In any case everything is backed up by time shift or Time Machine and gig has anything that has been prd.
+
+> I would think they're kind of related tasks, and if we do document them, we should make it clear what the categories are and what we do with each and what the priorities are for each.
+
+> Generally, if something is not needed anymore, we should get rid of it ... the exception being stuff we need for analysis, which just needs to be in a log and moved, hopefully, in a log outside of main
+
+His words are dictated: "time shift" is Timeshift, "gig" is git, and "prd" means went through a pull request.
+
+What this ruling directs for the wiki page this design becomes:
+
+- Backups, preservation and keeping records are documented together, on one page with its subpages, not on separate pages.
+- The page names the categories of record, says what is done with each, and gives each category its priority.
+- Some records are kept in as great a number as possible, for analysis; others are kept as few as prudent, so that the right one, usually a recent one, is easy to find with a search such as grep.
+- A record no longer needed is deleted. A record kept for analysis goes in a log, outside main where possible.
+- Timeshift on ned-box, Time Machine on the Mac, and git, for everything that went through a pull request, hold everything else.
+
+Part 1's four classes do not yet carry priorities, and Class 1 keeps on main some records whose value is analysis, such as handoffs and their task exports. Before this design graduates, the page gives each class its priority and settles, under this ruling, which records kept for analysis move to a log outside main.
+
 ## Open questions
 
 1. **Memory placement — RESOLVED (user-walked 2026-07-31, fleet-side walk

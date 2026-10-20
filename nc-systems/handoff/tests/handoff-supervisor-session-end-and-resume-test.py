@@ -405,6 +405,59 @@ def run_agent_exit_record_cases(workspace: Path):
           str(state))
 
 
+def run_failed_extraction_at_a_handoff_case(workspace: Path):
+    """A handoff arrives, the retiring session's dialog cannot be extracted: no
+    successor starts, the handoff stays unconsumed, the exit is recorded, and
+    the console says so and names the session whose extraction failed. The
+    handoff names another session as its writer, so the extraction must be
+    tried on the writer, not on the session the supervisor launched."""
+    handoff_directory = workspace / "failedextraction"
+    handoff_directory.mkdir(parents=True)
+    settings = supervisor.SupervisorSettings(
+        agent="failedextraction", working_directory=workspace,
+        handoff_directory=handoff_directory, agent_command="unused-stub-agent",
+        first_prompt="")
+    launched_session_ids, extracted_from = [], []
+    writer_session_id = "11111111-2222-3333-4444-555555555555"
+
+    def launch(agent_command, session_id, working_directory, prompt, **_):
+        launched_session_ids.append(session_id)
+        settings.handoff_path.write_text(
+            f"restart-counter: 1\nwritten-by-session: {writer_session_id}\n"
+            "next-step: carry on\n", encoding="utf-8")
+        return StubLaunchedSession(-15, ended=False)
+
+    def failing_extract_dialog(session_id, working_directory, output_path):
+        extracted_from.append(session_id)
+        return False
+
+    console, errors = io.StringIO(), io.StringIO()
+    with supervisor_names_replaced(
+            launch_agent_session=launch,
+            stop_session=lambda process: process.terminate(),
+            extract_dialog=failing_extract_dialog,
+            sync_working_branch_with_main=lambda working_directory: "branch sync: stubbed",
+            stdin_isatty=True), \
+            contextlib.redirect_stdout(console), contextlib.redirect_stderr(errors):
+        exit_code = supervisor.supervise_sessions(settings)
+    state = supervisor.read_supervisor_state(settings.state_path)
+    check("FAILED EXTRACTION: a handoff whose dialog cannot be extracted starts no successor",
+          exit_code == 0 and len(launched_session_ids) == 1,
+          f"{exit_code!r} {launched_session_ids!r} {extracted_from!r}")
+    check("FAILED EXTRACTION: the extraction is tried on the handoff's writer, "
+          "not on the launched session",
+          extracted_from == [writer_session_id], f"{extracted_from!r} {launched_session_ids!r}")
+    check("FAILED EXTRACTION: the console names the session whose extraction failed "
+          "and says it is not relaunching",
+          f"extracting session {writer_session_id}'s dialog failed" in errors.getvalue()
+          and "not relaunching (the transcript is intact — recover by hand)" in errors.getvalue(),
+          errors.getvalue()[-400:])
+    check("FAILED EXTRACTION: the handoff stays unconsumed and the exit is recorded",
+          state.get("consumed_counter") is None
+          and supervisor.agent_exit_record_from_supervisor_state(state) is not None,
+          str(state))
+
+
 def process_is_gone_within_seconds(process_id: int, seconds: float) -> bool:
     """True once `ps` finds no process with this id, or finds it a zombie: a
     killed process whose parent has died waits as one until it is reaped."""
@@ -571,6 +624,98 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           "1 work-snapshot failure(s): work-snapshots: could not be listed" in listing_failure,
           listing_failure)
 
+    # A record the log-store refuses keeps its worktree, and the handoff report must
+    # name the worktree, the record and the shipper's line, once.
+    refused_store = root / "refused-store"
+    (refused_store / "cold-read-records" / "foo-2026-10-19").mkdir(parents=True)
+    (refused_store / "cold-read-records" / "foo-2026-10-19" / "fast-read.md").write_text(
+        "another read's report\n", encoding="utf-8")
+    holding_record = home / ".claude" / "worktrees" / "record-holding-worktree"
+    git_in(["worktree", "add", "--quiet", "-b", "record-holding-branch", str(holding_record)], home)
+    (holding_record / "cold-read-records" / "foo-2026-10-19").mkdir(parents=True)
+    (holding_record / "cold-read-records" / "foo-2026-10-19" / "fast-read.md").write_text(
+        "this read's report\n", encoding="utf-8")
+    os.utime(holding_record / ".git", (long_ago, long_ago))
+    os.environ["COLD_READ_RECORD_SHIP_DESTINATION"] = str(refused_store / "cold-read-records")
+    try:
+        refused_report = supervisor.remove_finished_worktrees_at_handoff(home)
+    finally:
+        del os.environ["COLD_READ_RECORD_SHIP_DESTINATION"]
+    check("WORKTREE CLEANUP: a worktree kept because the log-store refused its record is "
+          "named once in the report, with the record and the shipper's REFUSED line",
+          holding_record.exists()
+          and "1 worktree(s) kept because a record did not reach the log-store: "
+          "record-holding-worktree: record shipment FAILED, worktree kept — removing it would "
+          "delete a record the log-store does not hold: cold-read-records/foo-2026-10-19 "
+          "(REFUSED:" in refused_report
+          and refused_report.count("record-holding-worktree") == 1
+          and "exited 1" not in refused_report and "failed:" not in refused_report,
+          refused_report)
+    git_in(["worktree", "remove", "--force", str(holding_record)], home)
+
+    # A record that fails to ship, then one whose shipment hangs until the handoff's bound stops
+    # the cleaner: the report must still name the first failure.
+    # The ship request reaches ssh on stdin, so the stubs tell the calls apart by order:
+    # the first call fails as an unreachable ned-box does, and every later one hangs.
+    failing_then_hanging_stubs = root / "failing-then-hanging-ship-stubs"
+    failing_then_hanging_stubs.mkdir()
+    first_call_made = failing_then_hanging_stubs / "first-call-made"
+    for tool in ("ssh", "rsync"):
+        (failing_then_hanging_stubs / tool).write_text(
+            f"#!/bin/sh\nif [ -e '{first_call_made}' ]; then exec sleep 60; fi\n"
+            f": > '{first_call_made}'\nexit 255\n", encoding="utf-8")
+        (failing_then_hanging_stubs / tool).chmod(0o755)
+    hanging_record_worktree = home / ".claude" / "worktrees" / "hanging-record-worktree"
+    git_in(["worktree", "add", "--quiet", "-b", "hanging-record-branch",
+            str(hanging_record_worktree)], home)
+    for record_name in ("a-fails-2026-10-19", "b-hangs-2026-10-19"):
+        (hanging_record_worktree / "cold-read-records" / record_name).mkdir(parents=True)
+        (hanging_record_worktree / "cold-read-records" / record_name / "fast-read.md").write_text(
+            "a read's report\n", encoding="utf-8")
+    os.utime(hanging_record_worktree / ".git", (long_ago, long_ago))
+    saved_path = os.environ["PATH"]
+    os.environ["COLD_READ_RECORD_SHIP_DESTINATION"] = (
+        "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records")
+    os.environ["PATH"] = f"{failing_then_hanging_stubs}{os.pathsep}{saved_path}"
+    try:
+        hanging_ship_report = supervisor.remove_finished_worktrees_at_handoff(
+            home, timeout_seconds=15)
+    finally:
+        del os.environ["COLD_READ_RECORD_SHIP_DESTINATION"]
+        os.environ["PATH"] = saved_path
+    check("WORKTREE CLEANUP: a record that failed to ship is named in the report when a later "
+          "record's shipment hangs until the bound stops the cleaner",
+          hanging_record_worktree.exists()
+          and "1 worktree(s) kept because a record did not reach the log-store: "
+          "hanging-record-worktree" + supervisor.KEPT_FOR_RECORDS_MARKER
+          + "cold-read-records/a-fails-2026-10-19 (FAILED:" in hanging_ship_report
+          and "b-hangs-2026-10-19" not in hanging_ship_report
+          and "did not finish in 15 s" in hanging_ship_report,
+          hanging_ship_report)
+    git_in(["worktree", "remove", "--force", str(hanging_record_worktree)], home)
+
+    kept_marker = supervisor.KEPT_FOR_RECORDS_MARKER + "cold-read-records/r-2026-10-19 "
+    kept_summary = supervisor.summarize_worktree_cleanup_output([
+        "failed-ship-wt" + kept_marker + "(FAILED: r-2026-10-19 — ned-box unreachable)",
+        "failed-ship-wt" + supervisor.KEPT_FOR_RECORDS_MARKER
+        + "sanity-check-records/s-2026-10-19 (FAILED: s-2026-10-19 — ned-box unreachable)",
+        "silent-ship-wt" + kept_marker
+        + "(the shipper printed nothing (exit 1): NotADirectoryError: store)",
+        "locked-wt: removal FAILED — locked",
+    ])
+    check("WORKTREE CLEANUP: a kept worktree whose shipments FAILED is counted once, among the "
+          "kept, with each record named, and a removal failure is still counted among the failures",
+          "; 1 failed: locked-wt: removal FAILED — locked;" in kept_summary
+          and "2 worktree(s) kept because a record did not reach the log-store: failed-ship-wt"
+          in kept_summary and kept_summary.count("failed-ship-wt") == 2
+          and "cold-read-records/r-2026-10-19" in kept_summary
+          and "sanity-check-records/s-2026-10-19" in kept_summary, kept_summary)
+    check("WORKTREE CLEANUP: a kept worktree whose shipper printed nothing carries the "
+          "shipper's last error line into the summary",
+          "silent-ship-wt" + kept_marker
+          + "(the shipper printed nothing (exit 1): NotADirectoryError: store)" in kept_summary,
+          kept_summary)
+
     # With GIT_DIR naming another repository, the cleanup still acts on the
     # seat's own, and leaves the other alone.
     other = root / "other-repository"
@@ -649,6 +794,35 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
     check("WORKTREE CLEANUP: a cleaner that crashes is reported with its error, "
           "not as nothing removed",
           "exited 1" in report and "the cleaner broke" in report, report)
+
+    # A printed failure explains a nonzero exit only when the cleaner went on to finish.
+    kept_for_record_line = ("rec-wt" + supervisor.KEPT_FOR_RECORDS_MARKER
+                            + "cold-read-records/r (FAILED: ned-box unreachable)")
+    for kind, printed in (
+            ("worktree kept for an unshipped record", f"print({kept_for_record_line!r})\n"),
+            ("failed removal", "print('locked-wt: removal FAILED — locked')\n")):
+        aborting = root / "aborting-after-printed-failure-cleaner.py"
+        aborting.write_text(printed + "raise OSError('listing the next worktree broke')\n",
+                            encoding="utf-8")
+        with supervisor_names_replaced(CLEAN_WORKTREES_PATH=aborting):
+            report = supervisor.remove_finished_worktrees_at_handoff(home)
+        check(f"WORKTREE CLEANUP: a cleaner that aborts after a {kind} is reported "
+              f"with its error, not hidden behind the printed failure",
+              "exited 1" in report and "listing the next worktree broke" in report, report)
+
+    finishing = root / "finishing-with-failure-cleaner.py"
+    finishing.write_text(
+        "import sys\n"
+        "print('locked-wt: removal FAILED — locked')\n"
+        "print('clean-worktrees: finished; each failure is named above')\n"
+        "print('stderr noise', file=sys.stderr)\n"
+        "sys.exit(1)\n", encoding="utf-8")
+    with supervisor_names_replaced(CLEAN_WORKTREES_PATH=finishing):
+        report = supervisor.remove_finished_worktrees_at_handoff(home)
+    check("WORKTREE CLEANUP: a cleaner that finished and named its failure adds no "
+          "exit line, since the failure line explains the exit",
+          "1 failed: locked-wt: removal FAILED" in report
+          and "exited 1" not in report and "stderr noise" not in report, report)
 
     unusable = root / "unusable-vacancy-cleaner.py"
     unusable.write_text(
@@ -1264,7 +1438,7 @@ def run_by_hand_resume_cases(workspace: Path):
           and "ignoring the first prompt" not in printed,
           (session_id, resume))
 
-    # recover-crashed-seats.py --ignite-fallback chose not to resume: its ignition
+    # recover-crashed-seats.py --fresh-session-from-dialog-extract chose not to resume: its ignition
     # prompt must win over the crashed transcript. Run through main() with the
     # supervisor arguments the recovery composes, so a flag the recovery stops
     # passing, or the supervisor stops honouring, turns this case red.
@@ -1297,7 +1471,7 @@ def run_by_hand_resume_cases(workspace: Path):
                 os.environ["CLAUDE_CODE_TASK_LIST_ID"] = saved_task_list_id
         return exit_code, (launched[0] if launched else (None, None, None)), console.getvalue()
 
-    ignition_directory = directory / "ignite-fallback"
+    ignition_directory = directory / "fresh-session-from-dialog-extract"
     ignition_directory.mkdir(parents=True, exist_ok=True)
     ignition_prompt_path = ignition_directory / "byhandignite-recovery-ignition-prompt.md"
     ignition_prompt_path.write_text("Read the dialog extract and continue.", encoding="utf-8")
@@ -1308,7 +1482,7 @@ def run_by_hand_resume_cases(workspace: Path):
             ignition_directory, recovery.IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS))
         + ["--first-prompt-file", str(ignition_prompt_path)])
     exit_code, (session_id, prompt, resume), printed = run_main_once(ignition_argv)
-    check("IGNITION: --ignite-fallback's arguments start fresh on its ignition prompt "
+    check("IGNITION: --fresh-session-from-dialog-extract's arguments start fresh on its ignition prompt "
           "despite a crashed transcript",
           exit_code == 0 and resume is not True and session_id != crashed.stem
           and prompt == "Read the dialog extract and continue.",
@@ -1316,7 +1490,7 @@ def run_by_hand_resume_cases(workspace: Path):
 
     # Control: the same launch without the recovery's flag resumes the transcript,
     # so the case above is the flag's doing.
-    control_directory = directory / "ignite-fallback-control"
+    control_directory = directory / "fresh-session-from-dialog-extract-control"
     control_directory.mkdir(parents=True, exist_ok=True)
     exit_code, (session_id, prompt, resume), printed = run_main_once(
         ["--agent", "byhandignitecontrol", "--cd", str(workspace),
@@ -1328,7 +1502,7 @@ def run_by_hand_resume_cases(workspace: Path):
 
     # The flag means nothing without a prompt file to win with; refused before any launch,
     # or the seat would resume its transcript as though the flag were not there.
-    refusal_directory = directory / "ignite-flag-without-file"
+    refusal_directory = directory / "fresh-session-flag-without-file"
     refusal_directory.mkdir(parents=True, exist_ok=True)
     refusal_stderr = io.StringIO()
     refusal_exit_code = None
@@ -1351,7 +1525,7 @@ def run_by_hand_resume_cases(workspace: Path):
     # login-time restart pass. No case ran it through the loop until the
     # 2026-09-21 ruling renamed the flag it sets, so this one holds the path
     # that rename touched: the named session is resumed, not a fresh id, and a
-    # handoff waiting on disk is marked consumed rather than igniting over it.
+    # handoff waiting on disk is marked consumed rather than a fresh agent-session being started from it over the resume.
     settings = settings_for("resume-session-id")
     settings.resume_session_id = "session-named-by-recovery"
     supervisor.write_supervisor_state(settings.state_path, {"generation": 1})
@@ -1363,7 +1537,7 @@ def run_by_hand_resume_cases(workspace: Path):
           (session_id, resume))
     check("RESUME-SESSION-ID: and tells it the previous session ended without a handoff",
           prompt == supervisor.RESUME_PROMPT_WHEN_A_SESSION_ENDED_WITHOUT_A_HANDOFF, prompt)
-    check("RESUME-SESSION-ID: a waiting handoff is marked consumed, not ignited over the resume",
+    check("RESUME-SESSION-ID: a waiting handoff is marked consumed, no fresh agent-session started from it over the resume",
           supervisor.read_supervisor_state(settings.state_path).get("consumed_counter") == 4,
           str(supervisor.read_supervisor_state(settings.state_path)))
 
@@ -1373,6 +1547,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_dont_restart_without_a_terminal_case(workspace)
     run_no_seat_recycle_refusal_case(workspace)
     run_agent_exit_record_cases(workspace)
+    run_failed_extraction_at_a_handoff_case(workspace)
     run_handoff_worktree_cleanup_cases(workspace)
     run_resume_after_a_death_without_a_handoff_cases(workspace)
     run_by_hand_resume_cases(workspace)

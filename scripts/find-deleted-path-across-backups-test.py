@@ -23,6 +23,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 # A variable that redirects git, left in this process, would send the scratch
@@ -2437,6 +2438,14 @@ check("with a git date, the alternative offered is the next NEWER snapshot",
       any(l.startswith("next to try if it predates the file") and "2026-08-15" in l for l in report.lines),
       str(report.lines))
 
+report = finder.search_time_machine("a/b.md", newest_date_held="2026-08-14", runner=FakeRunner([
+    ("tmutil destinationinfo", DESTINATION_INFO),
+    ("diskutil info", DISKUTIL_MOUNTED),
+    ("diskutil apfs listSnapshots", (1, "", "diskutil: injected listing failure")),
+]))
+check("Time Machine whose snapshot listing fails is UNAVAILABLE, with diskutil's words",
+      report.status == UNAVAILABLE and any("injected listing failure" in l for l in report.lines), str(report.lines))
+
 # Without a git date the newest snapshot is all we have, and it may postdate the
 # deletion — the failure mode found by running the real script with --skip git.
 tm_no_date = FakeRunner([
@@ -3771,6 +3780,247 @@ check("found copies: a fetch whose program is absent reports exit 127 and says s
 code, out, err = finder.fetch_bytes(["sleep", "5"], timeout=0.2)
 check("found copies: a fetch that runs past its time limit reports exit 124, instead of raising",
       code == 124 and "timed out after" in err, "%s %r" % (code, err))
+
+
+# -- a git blob id: git first, then the guarded-file hook's log and the first snapshot after it
+
+def blob_seen_line(seen, blob_id):
+    body = "\t".join(["seen", str(seen), "session", "owner", blob_id, blob_id, ""])
+    return "%s\t%s\n" % (body, "0" * 16)
+
+
+def local_nanoseconds(stamp):
+    return int(time.mktime(time.strptime(stamp, "%Y-%m-%d %H:%M:%S")) * 1e9)
+
+
+class RunsBashGitAndGrepHere(RunsBashAndGrepHere):
+    """RunsBashAndGrepHere that runs git for real too."""
+
+    def __call__(self, argv, timeout=None, cwd=None):
+        if argv[0] == "git":
+            self.calls.append(" ".join(argv))
+            return finder.run_command(argv, timeout=timeout or finder.SHORT_TIMEOUT_SECONDS)
+        return RunsBashAndGrepHere.__call__(self, argv, timeout, cwd)
+
+
+check("blob id: 40 lowercase hexadecimal characters are a git blob id",
+      finder.is_git_blob_id("0123456789abcdef0123456789abcdef01234567"))
+check("blob id: 39 characters, capitals, or a path are not",
+      not any(finder.is_git_blob_id(query) for query in (
+          "0123456789abcdef0123456789abcdef0123456", "0123456789ABCDEF0123456789ABCDEF01234567",
+          "docs/0123456789abcdef0123456789abcdef01234567")))
+
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp).resolve()
+    repo = tmp / "repo"
+    repo.mkdir()
+    git_clean("init", "-q", cwd=repo)
+    (repo / "CLAUDE.md").write_text("committed\n")
+    git_clean("add", "CLAUDE.md", cwd=repo)
+    git_clean("commit", "-q", "-m", "add CLAUDE.md", cwd=repo)
+    committed = finder.git_blob_id_of(b"committed\n")
+    (repo / "CLAUDE.md").write_text("only staged\n")
+    git_clean("add", "CLAUDE.md", cwd=repo)
+    staged = finder.git_blob_id_of(b"only staged\n")
+    absent = finder.git_blob_id_of(b"never in git\n")
+
+    log_store = tmp / "log-store"
+    path = "/home/nedlern/agents/seat/CLAUDE.md"
+    seen = local_nanoseconds("2026-10-15 12:21:12")
+    path_directory = log_store / "guarded-file-versions-and-approvals" / "ned-box" / path.lstrip("/")
+    path_directory.mkdir(parents=True)
+    (path_directory / "log").write_text(blob_seen_line(seen, absent) + blob_seen_line(seen + 10 ** 9, absent)
+                                        + blob_seen_line(seen, staged))
+    mac_directory = log_store / "guarded-file-versions-and-approvals" / "mac" / "Users/el/x/CLAUDE.md"
+    mac_directory.mkdir(parents=True)
+    (mac_directory / "log").write_text(blob_seen_line(seen, absent))
+    snapshots = tmp / "snapshots"
+    for name, text in (("2026-10-15_12-00-00", "never in git\n"), ("2026-10-15_13-00-00", "never in git\n"),
+                       ("2026-10-15_14-00-00", "later\n")):
+        (snapshots / name / "localhost" / path.lstrip("/")).parent.mkdir(parents=True)
+        (snapshots / name / "localhost" / path.lstrip("/")).write_text(text)
+    runner = RunsBashGitAndGrepHere([], tmp)
+
+    report = finder.search_git_for_blob(committed, str(repo), runner)
+    check("blob id: a blob a commit holds is FOUND in git, with the commit and the path, and copied",
+          report.status == FOUND and report.commit_holds and any("CLAUDE.md, added or removed by" in l
+                                                                 for l in report.lines)
+          and report.versions[0].source == committed, "%s %s" % (report.status, report.lines))
+    reports = finder.build_blob_report(committed, str(repo), "", str(snapshots), runner=runner,
+                                       log_store_root=str(log_store), on_ned_box=True)
+    check("blob id: when a commit holds it, nothing else is searched and the copy is the blob",
+          [r.surface for r in reports] == ["git"] and len(reports[0].copied) == 1
+          and Path(reports[0].copied[0]).read_bytes() == b"committed\n", "%s" % [r.render() for r in reports])
+
+    report = finder.search_git_for_blob(staged, str(repo), runner)
+    check("blob id: a blob git holds outside every commit is FOUND, and says no commit holds it",
+          report.status == FOUND and not report.commit_holds
+          and any("no commit and no reflog entry holds it" in l for l in report.lines), "%s" % report.lines)
+    reports = finder.build_blob_report(staged, str(repo), "", str(snapshots), runner=runner,
+                                       log_store_root=str(log_store), on_ned_box=True)
+    check("blob id: and the hook's log and Timeshift are searched after it",
+          [r.surface for r in reports] == ["git", "guarded-file log", "timeshift"], "%s" % [r.surface for r in reports])
+
+    commit_id = git_clean("rev-parse", "HEAD", cwd=repo).strip()
+    report = finder.search_git_for_blob(commit_id, str(repo), runner)
+    check("blob id: a commit's id is NOT FOUND in git, saying it is a commit, not a file's content",
+          report.status == NOT_FOUND and not report.commit_holds
+          and any("is a commit, not a file's content" in l for l in report.lines), "%s %s" % (report.status, report.lines))
+    report = finder.search_git_for_blob(absent, str(repo), FakeRunner([("cat-file -e", (0, "", "")),
+                                                                       ("cat-file -t", (128, "", "fatal: injected"))]))
+    check("blob id: a type lookup that fails is UNAVAILABLE in git",
+          report.status == UNAVAILABLE and any("injected" in l for l in report.lines), "%s" % report.lines)
+
+    report = finder.search_git_for_blob(absent, str(repo), runner)
+    check("blob id: a blob git does not hold is NOT FOUND in git", report.status == NOT_FOUND
+          and not report.commit_holds, "%s %s" % (report.status, report.lines))
+
+    report = finder.search_guarded_file_versions_log(absent, str(log_store), "", runner)
+    check("blob id: the hook's log gives each path and machine that saw it, with the first time, earliest first",
+          report.sightings == [("mac", "/Users/el/x/CLAUDE.md", seen), ("ned-box", path, seen)]
+          or report.sightings == [("ned-box", path, seen), ("mac", "/Users/el/x/CLAUDE.md", seen)],
+          "%s" % report.sightings)
+    check("blob id: with no copy in the store, the log surface is NOT FOUND and says so",
+          report.status == NOT_FOUND and "the store keeps no copy of it" in report.lines
+          and any("first at 2026-10-15 12:21:12" in l for l in report.lines), "%s" % report.lines)
+    (path_directory / absent).write_text("never in git\n")
+    report = finder.copy_found_versions(finder.search_guarded_file_versions_log(absent, str(log_store), "", runner))
+    check("blob id: a copy the store keeps is FOUND and copied",
+          report.status == FOUND and len(report.copied) == 1
+          and Path(report.copied[0]).read_bytes() == b"never in git\n", "%s" % report.lines)
+    (path_directory / absent).unlink()
+    report = finder.search_guarded_file_versions_log(finder.git_blob_id_of(b"unseen\n"), str(log_store), "", runner)
+    check("blob id: a blob no log line names is NOT FOUND, and there is no time for a snapshot",
+          report.status == NOT_FOUND and report.sightings == []
+          and any("no seen line" in l for l in report.lines), "%s" % report.lines)
+    failing = FakeRunner([("bash", (2, "", "grep: injected failure"))])
+    report = finder.search_guarded_file_versions_log(absent, str(log_store), "", failing)
+    check("blob id: a log search that fails is UNAVAILABLE, with grep's words",
+          report.status == UNAVAILABLE and any("injected failure" in l for l in report.lines), "%s" % report.lines)
+    unreadable = log_store / "guarded-file-versions-and-approvals" / "ned-box" / "home"
+    unreadable.chmod(0)
+    try:
+        report = finder.search_guarded_file_versions_log(absent, str(log_store), "", runner)
+    finally:
+        unreadable.chmod(0o700)
+    check("blob id: a log directory grep cannot read makes the log surface UNAVAILABLE",
+          report.status == UNAVAILABLE and any("exited 2" in l for l in report.lines), "%s" % report.lines)
+    report = finder.search_guarded_file_versions_log(absent, str(tmp / "no-log-store"), "", runner,
+                                                     store_is_here=True)
+    check("blob id: a log-store without the hook's directory is UNAVAILABLE",
+          report.status == UNAVAILABLE and any("does not exist" in l for l in report.lines), "%s" % report.lines)
+
+    report = finder.copy_found_versions(finder.search_timeshift_after(absent, path, seen, "", str(snapshots), runner,
+                                                                      on_ned_box=True))
+    check("blob id: the first Timeshift snapshot after the time the hook saw it is opened, and kept when its id matches",
+          report.status == FOUND and any("is 2026-10-15_13-00-00" in l for l in report.lines)
+          and Path(report.copied[0]).read_bytes() == b"never in git\n", "%s" % report.lines)
+    report = finder.search_timeshift_after(finder.git_blob_id_of(b"other\n"), path, seen, "", str(snapshots), runner,
+                                           on_ned_box=True)
+    check("blob id: a snapshot holding another version is NOT FOUND, naming that version's id",
+          report.status == NOT_FOUND and any(finder.git_blob_id_of(b"never in git\n") in l for l in report.lines),
+          "%s" % report.lines)
+    report = finder.search_timeshift_after(absent, "/home/nedlern/elsewhere.md", seen, "", str(snapshots), runner,
+                                           on_ned_box=True)
+    check("blob id: a snapshot without the path is NOT FOUND", report.status == NOT_FOUND
+          and any("does not hold" in l for l in report.lines), "%s" % report.lines)
+    report = finder.search_timeshift_after(absent, path, local_nanoseconds("2026-10-15 15:00:00"), "",
+                                           str(snapshots), runner, on_ned_box=True)
+    check("blob id: no snapshot after the time is NOT FOUND, and says so", report.status == NOT_FOUND
+          and any("no snapshot" in l for l in report.lines), "%s" % report.lines)
+    report = finder.search_timeshift_after(absent, path, seen, "", str(tmp / "no-snapshots"), runner, on_ned_box=True)
+    check("blob id: a missing Timeshift root is UNAVAILABLE", report.status == UNAVAILABLE, "%s" % report.lines)
+    report = finder.search_timeshift_after(absent, path, seen, "", str(snapshots),
+                                           FakeRunner([("bash", (2, "", "ls: injected failure"))]), on_ned_box=True)
+    check("blob id: a snapshot listing that fails is UNAVAILABLE", report.status == UNAVAILABLE
+          and any("injected failure" in l for l in report.lines), "%s" % report.lines)
+    held_file = snapshots / "2026-10-15_13-00-00" / "localhost" / path.lstrip("/")
+    held_file.chmod(0)
+    try:
+        report = finder.search_timeshift_after(absent, path, seen, "", str(snapshots), runner, on_ned_box=True)
+    finally:
+        held_file.chmod(0o600)
+    check("blob id: a snapshot file that cannot be read is UNAVAILABLE, not NOT FOUND",
+          report.status == UNAVAILABLE and any("could not be read" in l for l in report.lines), "%s" % report.lines)
+    held_directory = held_file.parent
+    held_directory.chmod(0o600)
+    try:
+        report = finder.search_timeshift_after(absent, path, seen, "", str(snapshots), runner, on_ned_box=True)
+    finally:
+        held_directory.chmod(0o700)
+    check("blob id: a snapshot directory that cannot be searched is UNAVAILABLE, not NOT FOUND",
+          report.status == UNAVAILABLE and any("Permission denied" in l for l in report.lines), "%s" % report.lines)
+    check("blob id: a path under a file is missing, not unreadable",
+          finder._missing_on_this_machine(str(held_file / "below")), "")
+
+    report = finder.search_git_for_blob(absent, str(repo), FakeRunner([("cat-file -e", (128, "", "fatal: injected"))]))
+    check("blob id: git that fails is UNAVAILABLE in git, not NOT FOUND",
+          report.status == UNAVAILABLE and not report.commit_holds, "%s %s" % (report.status, report.lines))
+    report = finder.search_git_for_blob(committed, str(repo), FakeRunner([("cat-file -e", (0, "", "")),
+                                                                          ("cat-file -t", (0, "blob\n", "")),
+                                                                          ("--find-object", (128, "", "fatal: injected"))]))
+    check("blob id: a git log that fails after git holds the blob still copies it, and does not stop the search",
+          report.status == FOUND and not report.commit_holds and any("not known" in l for l in report.lines),
+          "%s" % report.lines)
+
+    tm_table = [("tmutil destinationinfo", (0, "Name : Backup\n", "")),
+                ("diskutil info", (0, "Device Node: /dev/disk5s2\nMount Point: /Volumes/Backup\n", "")),
+                ("listSnapshots", (0, "Name: com.apple.TimeMachine.2026-10-15-140000.backup\n"
+                                      "Name: com.apple.TimeMachine.2026-10-15-130000.backup\n"
+                                      "Name: com.apple.TimeMachine.2026-10-15-120000.backup\n", "")),
+                ("diskutil unmount", (0, "", "")), ("mkdir -p", (0, "", "")), ("mount_apfs", (0, "", "")),
+                ("test -d", (0, "", "")), ("test -e", (0, "", ""))]
+    tm = FakeRunner(tm_table)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen, tm)
+    check("blob id: the first Time Machine snapshot after the time is opened, and its copy command printed",
+          report.status == FOUND and any("2026-10-15-130000" in l for l in report.lines)
+          and report.prints_copy_command and any("git hash-object" in l for l in report.lines)
+          and any("2026-10-15-130000" in c for c in report.recovery), "%s %s" % (report.lines, report.recovery))
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen,
+                                              FakeRunner([("mount_apfs", (1, "", "sudo: a password is required"))]
+                                                         + tm_table))
+    check("blob id: a Time Machine mount refused for want of a password is UNAVAILABLE, with the command printed",
+          report.status == UNAVAILABLE and report.prints_copy_command, "%s" % report.lines)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen,
+                                              FakeRunner([("test -e", (1, "", ""))] + tm_table))
+    check("blob id: a Time Machine snapshot without the path is NOT FOUND", report.status == NOT_FOUND,
+          "%s" % report.lines)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen, FakeRunner([]))
+    check("blob id: with no Time Machine destination, as on ned-box, it is UNAVAILABLE and says to run on the Mac",
+          report.status == UNAVAILABLE and any("run this program there" in l for l in report.lines), "%s" % report.lines)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen,
+                                              FakeRunner([("diskutil info", (0, "Device Node: /dev/disk5s2\n", ""))]
+                                                         + tm_table))
+    check("blob id: a Time Machine disk that is not mounted is UNAVAILABLE, with the mount command",
+          report.status == UNAVAILABLE and report.recovery == ["diskutil mount Backup"], "%s" % report.recovery)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", local_nanoseconds("2026-10-15 15:00:00"),
+                                              tm)
+    check("blob id: no Time Machine snapshot after the time is NOT FOUND", report.status == NOT_FOUND,
+          "%s" % report.lines)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen,
+                                              FakeRunner([("listSnapshots", (1, "", "diskutil: injected failure"))]
+                                                         + tm_table))
+    check("blob id: a Time Machine snapshot listing that fails is UNAVAILABLE, with diskutil's words, not NOT FOUND",
+          report.status == UNAVAILABLE and any("injected failure" in l for l in report.lines), "%s" % report.lines)
+    report = finder.search_time_machine_after(absent, "/Users/el/x/CLAUDE.md", seen,
+                                              FakeRunner([("diskutil info", (0, "Mount Point: /Volumes/Backup\n", ""))]
+                                                         + tm_table))
+    check("blob id: a Time Machine disk whose device node is not known is UNAVAILABLE, not NOT FOUND",
+          report.status == UNAVAILABLE and any("device node is not known" in l for l in report.lines),
+          "%s" % report.lines)
+
+    finder.running_on_ned_box = lambda: True
+    try:
+        code, text = run_main([absent, "--repo", str(repo), "--log-store-root", str(log_store), "--box-ssh-host", "",
+                               "--timeshift-snapshot-root", str(snapshots), "--skip", "timemachine"], runner)
+    finally:
+        finder.running_on_ned_box = lambda: False
+    check("blob id: main reads 40 hexadecimal characters as a blob id, and exits 0 once Timeshift's copy is made",
+          code == 0 and "the version whose git blob id is %s" % absent in text and "timeshift       FOUND" in text,
+          "exit=%s\n%s" % (code, text))
+    code, text = run_main([finder.git_blob_id_of(b"unseen\n"), "--repo", str(repo), "--log-store-root",
+                           str(log_store), "--box-ssh-host", "", "--skip", "timemachine"], runner)
+    check("blob id: a blob neither git nor the hook's log knows exits 1", code == 1, "exit=%s\n%s" % (code, text))
 
 print()
 if failures:

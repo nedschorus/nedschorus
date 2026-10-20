@@ -40,9 +40,17 @@ check cannot see into: kept while its transcript or the worktree itself was
 written in the last hour, removable after. It runs the reaper under a scratch
 HOME so the transcripts it reads are the suite's own.
 
+A last section covers the records whose home is the log-store: before --remove
+removes a done worktree it ships the worktree's cold-read-records and
+sanity-check records, and keeps the worktree when a record fails to ship, is
+refused, or its shipper prints nothing. The shippers run for real, into a
+scratch store named by COLD_READ_RECORD_SHIP_DESTINATION; the failure to reach
+ned-box is a stub ssh and rsync that exit 255.
+
 Run: python3 scripts/clean-worktrees-test.py
 """
 
+import atexit
 import importlib.util
 import os
 import select
@@ -65,6 +73,13 @@ _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
 CLEAN_SCRIPT = Path(__file__).with_name("clean-worktrees.py")
+
+SHIP_DESTINATION_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
+# A worktree holding a record makes --remove run the real shipper; without this, a run would ship
+# into the real log-store.
+_ship_store_for_every_run = tempfile.mkdtemp(prefix="clean-worktrees-test-ship-store-")
+atexit.register(shutil.rmtree, _ship_store_for_every_run, ignore_errors=True)
+os.environ[SHIP_DESTINATION_VARIABLE] = str(Path(_ship_store_for_every_run) / "cold-read-records")
 
 ORPHANED_BRANCH_REF_LINE_MARKER = (
     "branch ref(s) with no worktree, nothing beyond origin/main:")
@@ -576,6 +591,13 @@ with tempfile.TemporaryDirectory() as scratch:
               "file(s): locked-untracked.txt" in removal.stdout, removal.stdout)
         check("--remove exits 1 when a removal failed", removal.returncode == 1,
               str(removal.returncode))
+        check("--remove ends a run with failures on the line saying it finished",
+              removal.stdout.splitlines()[-1:] == [
+                  "clean-worktrees: finished; each failure is named above"],
+              removal.stdout)
+        check("--remove prints the finished line once, after every failure line",
+              removal.stdout.count("clean-worktrees: finished; each failure is named above") == 1,
+              removal.stdout)
         git(checkout, "worktree", "unlock", str(locked_wt))
         check("--remove reports the dead registration too",
               "dead-registration-wt" in removal.stdout
@@ -670,6 +692,8 @@ with tempfile.TemporaryDirectory() as scratch:
               orphan_removal.stdout)
         check("--remove exits 0 when every named ref was deletable",
               orphan_removal.returncode == 0, str(orphan_removal.returncode))
+        check("a run with no failure prints no line saying it finished with failures",
+              "clean-worktrees: finished" not in orphan_removal.stdout, orphan_removal.stdout)
 
         # A local main behind origin/main is the ordinary state of a checkout
         # after somebody else's work lands, and in it git branch -d refuses a
@@ -898,6 +922,182 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a prunable registration is reported with git's reason",
           [path for path, reason in dead] == [str(gone_path)] and dead[0][1] != "no reason given",
           str(dead))
+
+# --- Records whose home is the log-store are shipped before the removal ---
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch).resolve()
+    checkout = scratch / "checkout"
+    origin = scratch / "origin.git"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    (checkout / ".gitignore").write_text(
+        "cold-read-records/\nsanity-check-records/\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    subprocess.run(["git", "init", "--bare", str(origin)], capture_output=True, check=True)
+    git(checkout, "remote", "add", "origin", str(origin))
+    git(checkout, "push", "-u", "origin", "main")
+    managed = checkout / ".claude" / "worktrees"
+    managed.mkdir(parents=True)
+    cold_read_record_name = "foo-2026-10-19"
+    sanity_check_record_name = "bar-2026-10-19"
+
+    def worktree_holding_records(name):
+        path = managed / name
+        git(checkout, "worktree", "add", "-b", f"{name}-branch", str(path), "origin/main")
+        cold_read_record = path / "cold-read-records" / cold_read_record_name
+        cold_read_record.mkdir(parents=True)
+        (cold_read_record / "fast-read.md").write_text("report\n", encoding="utf-8")
+        sanity_check_record = path / "sanity-check-records" / sanity_check_record_name
+        sanity_check_record.mkdir(parents=True)
+        (sanity_check_record / "cell-1.md").write_text("cell\n", encoding="utf-8")
+        return path
+
+    def run_clean_shipping_to(destination, path_prefix=None, *flags):
+        environment = dict(os.environ)
+        environment[SHIP_DESTINATION_VARIABLE] = destination
+        if path_prefix is not None:
+            environment["PATH"] = f"{path_prefix}{os.pathsep}{environment['PATH']}"
+        return subprocess.run(
+            [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), *flags],
+            capture_output=True, text=True, check=False, env=environment)
+
+    def remove_worktree_for_next_case(path):
+        # A case that wrongly removed the worktree has already failed; the next cases still run.
+        if path.exists():
+            git(checkout, "worktree", "remove", "--force", str(path))
+
+    # The report modes name the records and ship nothing.
+    store = scratch / "store"
+    reported_wt = worktree_holding_records("reported-wt")
+    report = run_clean_shipping_to(str(store / "cold-read-records")).stdout
+    reported_line = next((line for line in report.splitlines()
+                          if line.startswith("reported-wt:")), "")
+    check("the report names a done worktree's records and says --remove ships them first",
+          "reported-wt: done" in reported_line
+          and "--remove first ships its 2 record(s)" in reported_line
+          and f"cold-read-records/{cold_read_record_name}" in reported_line
+          and f"sanity-check-records/{sanity_check_record_name}" in reported_line,
+          reported_line)
+    check("the report ships nothing", not store.exists(), str(list(store.rglob("*"))))
+    remove_worktree_for_next_case(reported_wt)
+
+    # The loss: --remove deleted a record the log-store did not hold.
+    shipped_wt = worktree_holding_records("shipped-wt")
+    empty_record = shipped_wt / "cold-read-records" / "empty-2026-10-19"
+    empty_record.mkdir()
+    shipped = run_clean_shipping_to(str(store / "cold-read-records"), None, "--remove")
+    check("--remove ships a done worktree's cold-read-record to the log-store before removing it",
+          (store / "cold-read-records" / cold_read_record_name / "fast-read.md").is_file()
+          and not shipped_wt.exists(), shipped.stdout + shipped.stderr)
+    check("--remove ships a done worktree's sanity-check record to the log-store before removing it",
+          (store / "sanity-check-records" / sanity_check_record_name / "cell-1.md").is_file(),
+          shipped.stdout + shipped.stderr)
+    check("--remove prints each shipper's line and an empty record directory is not shipped",
+          f"shipped-wt: shipped: {cold_read_record_name}" in shipped.stdout
+          and f"shipped-wt: shipped: {sanity_check_record_name}" in shipped.stdout
+          and not (store / "cold-read-records" / "empty-2026-10-19").exists()
+          and shipped.returncode == 0, shipped.stdout + shipped.stderr)
+
+    # A worktree holding only one kind of record directory.
+    sanity_only_wt = worktree_holding_records("sanity-only-wt")
+    shutil.rmtree(sanity_only_wt / "cold-read-records")
+    sanity_only_store = scratch / "sanity-only-store"
+    sanity_only = run_clean_shipping_to(
+        str(sanity_only_store / "cold-read-records"), None, "--remove")
+    check("--remove ships a sanity-check record from a worktree without cold-read-records/",
+          (sanity_only_store / "sanity-check-records" / sanity_check_record_name
+           / "cell-1.md").is_file() and not sanity_only_wt.exists(),
+          sanity_only.stdout + sanity_only.stderr)
+
+    # ned-box cannot be reached: ssh and rsync exit 255, as the shipper's own tests stub them.
+    unreachable_stubs = scratch / "unreachable-stubs"
+    unreachable_stubs.mkdir()
+    for tool in ("ssh", "rsync"):
+        (unreachable_stubs / tool).write_text("#!/bin/sh\nexit 255\n", encoding="utf-8")
+        (unreachable_stubs / tool).chmod(0o755)
+    unreachable_wt = worktree_holding_records("unreachable-wt")
+    unreachable = run_clean_shipping_to(
+        "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records",
+        unreachable_stubs, "--remove")
+    check("--remove keeps a worktree whose record fails to ship, exits 1, and says why",
+          unreachable_wt.exists()
+          and (unreachable_wt / "cold-read-records" / cold_read_record_name / "fast-read.md").is_file()
+          and "unreachable-wt: record shipment FAILED, worktree kept — removing it would delete "
+          "a record the log-store does not hold" in unreachable.stdout
+          and "FAILED:" in unreachable.stdout and unreachable.returncode == 1
+          and "unreachable-wt: removed" not in unreachable.stdout,
+          unreachable.stdout + unreachable.stderr)
+    check("--remove prints each failed shipment's line once, inside a record shipment FAILED line "
+          "of its own",
+          unreachable.stdout.count("FAILED:") == 2
+          and len([line for line in unreachable.stdout.splitlines()
+                   if line.startswith("unreachable-wt: record shipment FAILED")
+                   and line.count("FAILED:") == 1]) == 2
+          and "unreachable-wt: FAILED" not in unreachable.stdout,
+          unreachable.stdout)
+    check("--remove tells a worktree whose records failed to ship that the next --remove retries, "
+          "and gives no rename step when no record was refused",
+          "unreachable-wt: for each record whose line does not start REFUSED:, do nothing now: "
+          "the next scripts/clean-worktrees.py --remove, daily or at a handoff, ships the record again; "
+          "if the record fails the same way there, fix the cause its line names"
+          in unreachable.stdout
+          and "whose line starts REFUSED:" not in unreachable.stdout,
+          unreachable.stdout)
+    unreachable_lines = unreachable.stdout.splitlines()
+    finished_line = "clean-worktrees: finished; each failure is named above"
+    check("--remove names each unshipped record on a FAILED line before the finished line, "
+          "and those are the run's only FAILED lines",
+          finished_line in unreachable_lines
+          and [line for line in unreachable_lines if "FAILED" in line]
+          == [line for line in unreachable_lines[:unreachable_lines.index(finished_line)]
+              if line.startswith("unreachable-wt: record shipment FAILED")],
+          unreachable.stdout)
+    remove_worktree_for_next_case(unreachable_wt)
+
+    # A record the store holds with other bytes is a second read: refused, so the worktree stays.
+    refused_store = scratch / "refused-store"
+    stored_record = refused_store / "cold-read-records" / cold_read_record_name
+    stored_record.mkdir(parents=True)
+    (stored_record / "fast-read.md").write_text("another read's report\n", encoding="utf-8")
+    refused_wt = worktree_holding_records("refused-wt")
+    refused = run_clean_shipping_to(str(refused_store / "cold-read-records"), None, "--remove")
+    check("--remove keeps a worktree whose record the log-store refuses, and exits 1",
+          refused_wt.exists() and "REFUSED:" in refused.stdout
+          and "refused-wt: record shipment FAILED, worktree kept — " in refused.stdout
+          and refused.returncode == 1,
+          refused.stdout + refused.stderr)
+    check("--remove tells a worktree whose record was refused to rename it, and gives no retry "
+          "step when every unshipped record was refused",
+          "refused-wt: for each record whose line starts REFUSED:, rename its directory as that "
+          "line says; the next scripts/clean-worktrees.py --remove then ships it and removes "
+          "the worktree" in refused.stdout
+          and "whose line does not start REFUSED:" not in refused.stdout,
+          refused.stdout)
+    remove_worktree_for_next_case(refused_wt)
+
+    # A shipper that dies before printing its line: a store path under a regular file cannot be made.
+    not_a_directory = scratch / "not-a-directory"
+    not_a_directory.write_text("a file\n", encoding="utf-8")
+    silent_wt = worktree_holding_records("silent-wt")
+    silent = run_clean_shipping_to(str(not_a_directory / "cold-read-records"), None, "--remove")
+    check("--remove keeps a worktree whose shipper printed nothing, and says so",
+          silent_wt.exists() and "the shipper printed nothing (exit 1)" in silent.stdout
+          and "silent-wt: record shipment FAILED, worktree kept — " in silent.stdout
+          and silent.returncode == 1,
+          silent.stdout + silent.stderr)
+    check("--remove carries a silent shipper's last error line into the kept line",
+          "the shipper printed nothing (exit 1): " in silent.stdout
+          and silent.stderr.strip().splitlines()[-1] in silent.stdout,
+          silent.stdout + silent.stderr)
+    remove_worktree_for_next_case(silent_wt)
+
+check("no run of the suite shipped into the store every run defaults to",
+      not any(Path(_ship_store_for_every_run).iterdir()),
+      str(list(Path(_ship_store_for_every_run).rglob("*"))))
 
 print()
 if failures:

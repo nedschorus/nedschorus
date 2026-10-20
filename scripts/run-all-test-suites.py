@@ -1739,7 +1739,8 @@ class MachineWideTestSuiteAdmission:
             reasons = sorted(set(self.waiting.values()))
             count = len(self.waiting)
         self.say(f"{count} suite{'s' if count != 1 else ''} of this run "
-                 f"{'wait' if count != 1 else 'waits'} to start: " + "; ".join(reasons))
+                 f"{'wait' if count != 1 else 'waits'} to start: " + "; ".join(reasons)
+                 + ". Each suite starts by itself once the reason it waits for clears.")
 
     def cancel(self):
         """Stop admitting: every suite still waiting raises MachineWideTestSuiteAdmissionCancelled."""

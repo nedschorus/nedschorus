@@ -1175,8 +1175,9 @@ def remove_finished_worktrees_at_handoff(
         return (f"worktree cleanup: clean-worktrees.py could not be run: "
                 f"{type(error).__name__}: {error}")
     report = summarize_worktree_cleanup_output(stdout.splitlines())
-    if (cleaner.returncode != 0 and "FAILED" not in stdout
-            and "work-snapshot failure(s)" not in report):
+    # Only a run that finished prints this line; any other nonzero exit aborted or was refused.
+    finished = CLEANER_FINISHED_WITH_FAILURES_LINE in stdout.splitlines()
+    if cleaner.returncode != 0 and not finished:
         detail = stderr.strip().splitlines()[-1:] or ["no detail"]
         report += f"; clean-worktrees.py exited {cleaner.returncode}: {detail[0]}"
     return report
@@ -1200,13 +1201,21 @@ def stop_worktree_cleaner_process_group(cleaner) -> str:
     return partial
 
 
+CLEANER_FINISHED_WITH_FAILURES_LINE = "clean-worktrees: finished; each failure is named above"
+# clean-worktrees.py prints this for each record that did not ship; the line ends with the shipper's own line.
+KEPT_FOR_RECORDS_MARKER = (": record shipment FAILED, worktree kept — removing it would delete "
+                           "a record the log-store does not hold: ")
+
+
 def summarize_worktree_cleanup_output(lines) -> str:
     """Return one report line from the cleaner's output."""
     removed = sum(1 for line in lines if ": removed" in line)
     deleted = sum(1 for line in lines
                   if (line.startswith("branch ") and ": deleted" in line)
                   or (": removed" in line and line.endswith(" deleted")))
-    failed = [line for line in lines if "FAILED" in line]
+    kept_for_records = [line for line in lines if KEPT_FOR_RECORDS_MARKER in line]
+    # A kept-for-records line holds FAILED, so it is counted here and not again among the failures.
+    failed = [line for line in lines if "FAILED" in line and KEPT_FOR_RECORDS_MARKER not in line]
     refused = [line for line in lines if "left in place" in line]
     unchecked = [line for line in lines
                  if ": kept — " in line
@@ -1244,6 +1253,10 @@ def summarize_worktree_cleanup_output(lines) -> str:
                    f"files may be partly gone: " + "; ".join(unconfirmed))
     if failed:
         report += f"; {len(failed)} failed: " + "; ".join(failed)
+    if kept_for_records:
+        kept_worktrees = {line.partition(KEPT_FOR_RECORDS_MARKER)[0] for line in kept_for_records}
+        report += (f"; {len(kept_worktrees)} worktree(s) kept because a record did not "
+                   f"reach the log-store: " + "; ".join(kept_for_records))
     if refused:
         report += f"; {len(refused)} branch(es) left in place: " + "; ".join(refused)
     if unchecked:
@@ -1593,27 +1606,33 @@ class SupervisorSettings:
         return self.handoff_directory / f"{self.agent}-appended-system-prompt-agent-part.md"
 
 
-def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: str,
-                            handoff_fields: dict, generation: int):
-    """Return (successor_session_id, ignition_plan), or (None, None) if extraction fails."""
+def retiring_session_id_from_handoff_writer_or_tracked_launch(tracked_session_id: str,
+                                                              handoff_fields: dict) -> str:
+    """Return the session whose dialog the successor inherits: the handoff's writer, else the tracked session."""
     # Prefer written-by-session: another session may have taken over the worktree since the supervisor launched.
     handoff_written_by_session = handoff_fields.get(WRITTEN_BY_SESSION_FIELD, "")
     if (handoff_written_by_session
             and handoff_written_by_session != WRITTEN_BY_SESSION_UNKNOWN_VALUE
-            and handoff_written_by_session != retiring_session_id):
+            and handoff_written_by_session != tracked_session_id):
         print(f"handoff-supervisor: the handoff names session "
               f"{handoff_written_by_session} as its writer, not the tracked "
-              f"{retiring_session_id}; carrying over the writer's dialog")
-        retiring_session_id = handoff_written_by_session
+              f"{tracked_session_id}; carrying over the writer's dialog")
+        return handoff_written_by_session
+    return tracked_session_id
 
+
+def carry_over_to_successor(settings: SupervisorSettings, retiring_session_id: str,
+                            handoff_fields: dict, generation: int):
+    """Return (successor_session_id, ignition_plan), or (None, None) if extraction fails.
+
+    Pass retiring_session_id as retiring_session_id_from_handoff_writer_or_tracked_launch
+    returns it. Each caller decides whether a failed extraction stops the relaunch.
+    """
     extract_path = settings.handoff_directory / f"{settings.agent}-dialog-{generation:04d}.md"
     extracted = extract_dialog(retiring_session_id, settings.working_directory, extract_path)
     if not extracted:
-        print(
-            "handoff-supervisor: extraction failed; not relaunching "
-            "(the transcript is intact — recover by hand)",
-            file=sys.stderr,
-        )
+        print(f"handoff-supervisor: extracting session {retiring_session_id}'s dialog failed",
+              file=sys.stderr)
         return None, None
 
     shutil.copy2(
@@ -1696,7 +1715,10 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                         settings.state_path, state, None, reason=AGENT_EXIT_REASON_STOPPED_AT_A_DONT_RESTART_HANDOFF)
                     return 0
             generation += 1
-            retiring_session_id = state.get(LAUNCHED_SESSION_ID_STATE_KEY)
+            tracked_session_id = state.get(LAUNCHED_SESSION_ID_STATE_KEY)
+            retiring_session_id = (
+                retiring_session_id_from_handoff_writer_or_tracked_launch(tracked_session_id, boot_fields)
+                if tracked_session_id else None)
             successor_session_id, ignition_plan = (
                 carry_over_to_successor(settings, retiring_session_id, boot_fields, generation)
                 if retiring_session_id else (None, None)
@@ -1705,9 +1727,14 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 # When the retiring transcript is unavailable, the next step still provides work to carry forward.
                 successor_session_id = str(uuid.uuid4())
                 ignition_plan = BootRecoveryIgnitionPlan(next_step_from(boot_fields))
-                print("handoff-supervisor: igniting from an unconsumed handoff without a dialog extract")
+                why_no_dialog_extract = (
+                    f"session {retiring_session_id}'s dialog could not be extracted"
+                    if retiring_session_id else "no earlier session was recorded")
+                print("handoff-supervisor: starting a fresh agent-session from an unconsumed "
+                      "handoff, with its next step as the prompt; there is no dialog extract "
+                      f"because {why_no_dialog_extract}")
             else:
-                print("handoff-supervisor: igniting from an unconsumed handoff left by a previous cycle")
+                print("handoff-supervisor: starting a fresh agent-session from an unconsumed handoff left by a previous cycle")
             state["consumed_counter"] = boot_counter
             session_id = successor_session_id
 
@@ -1858,9 +1885,12 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 return 0
 
         successor_session_id, ignition_plan = carry_over_to_successor(
-            settings, session_id, handoff_fields, generation
+            settings, retiring_session_id_from_handoff_writer_or_tracked_launch(session_id, handoff_fields),
+            handoff_fields, generation
         )
         if successor_session_id is None:
+            print("handoff-supervisor: not relaunching (the transcript is intact — recover by hand)",
+                  file=sys.stderr)
             # Leave the handoff unconsumed so recovery still prefers boot-ignition to the exit record.
             record_agent_exit_in_supervisor_state(settings.state_path, state, process.returncode)
             return 0
@@ -1915,14 +1945,14 @@ def main(argv=None) -> int:
         help="crash recovery (nedschorus#120): the first launch resumes this "
              "session's transcript (claude --resume) instead of starting fresh; "
              "later reincarnations mint fresh ids as always. A handoff already on disk "
-             "is marked consumed rather than igniting or reincarnating — passing this "
+             "is marked consumed rather than starting a fresh agent-session from it or reincarnating — passing this "
              "flag chooses the transcript over any waiting handoff",
     )
     parser.add_argument(
         "--first-prompt-file-wins-over-crashed-transcript", action="store_true",
         help="start fresh on --first-prompt-file even when this seat has a crashed "
              "transcript worth resuming; for a recovery that chose not to resume, such as "
-             "recover-crashed-seats.py --ignite-fallback. Without it, a crashed transcript "
+             "recover-crashed-seats.py --fresh-session-from-dialog-extract. Without it, a crashed transcript "
              "wins over --first-prompt-file",
     )
     parser.add_argument(

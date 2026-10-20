@@ -481,18 +481,18 @@ try:
 
     for refused_arguments, reason in (
             ("pr merge 12", "is not `pr list`"),
-            ("api -XPOST repos/o/r/issues", "`-XPOST` is not one of the reading options"),
-            ("api repos/o/r/issues --method=PATCH", "`--method=PATCH` is not one of"),
-            ("api repos/o/r/issues -f title=x", "`-f` is not one of"),
-            ("api repos/o/r/issues --input body.json", "`--input` is not one of"),
-            ("api -iXDELETE repos/o/r/git/refs/heads/b", "`-iXDELETE` is not one of"),
-            ("api -iFtitle=x repos/o/r/issues", "`-iFtitle=x` is not one of"),
-            ("api --jq -- -XPOST repos/o/r/issues", "`-XPOST` is not one of"),
-            ("api -q -- -XDELETE repos/o/r/git/refs/heads/b", "`-XDELETE` is not one of"),
-            ("api --template '--' -XDELETE repos/o/r/git/refs/heads/b", "`-XDELETE` is not one of"),
-            ("api -- -XPOST repos/o/r/issues", "`--` is not one of"),
-            ("api --verbose repos/o/r", "`--verbose` is not one of"),
-            ("api -R o/r repos/o/r", "`-R` is not one of"),
+            ("api -XPOST repos/o/r/issues", "`-XPOST` is not accepted"),
+            ("api repos/o/r/issues --method=PATCH", "`--method=PATCH` is not accepted"),
+            ("api repos/o/r/issues -f title=x", "`-f` is not accepted"),
+            ("api repos/o/r/issues --input body.json", "`--input` is not accepted"),
+            ("api -iXDELETE repos/o/r/git/refs/heads/b", "`-iXDELETE` is not accepted"),
+            ("api -iFtitle=x repos/o/r/issues", "`-iFtitle=x` is not accepted"),
+            ("api --jq -- -XPOST repos/o/r/issues", "`-XPOST` is not accepted"),
+            ("api -q -- -XDELETE repos/o/r/git/refs/heads/b", "`-XDELETE` is not accepted"),
+            ("api --template '--' -XDELETE repos/o/r/git/refs/heads/b", "`-XDELETE` is not accepted"),
+            ("api -- -XPOST repos/o/r/issues", "`--` is not accepted"),
+            ("api --verbose repos/o/r", "`--verbose` is not accepted"),
+            ("api -R o/r repos/o/r", "`-R` is not accepted"),
             ("api repos/o/r/pulls repos/o/r/issues", "exactly one endpoint"),
             ("api repos/o/r --jq", "`--jq` has no value after it"),
             ("api repos/o/r -q", "`-q` has no value after it")):
@@ -583,10 +583,19 @@ try:
     fresh_prefetch_case()
     no_gh_dir = scratch / "no-gh-bin"
     no_gh_dir.mkdir()
+    # Without the fake codex and the find its command line needs, a runner that went on
+    # to start Codex would fail first and leave no arguments file to show it. The fake
+    # names its interpreter, since this PATH holds no python3.
+    codex_without_gh = no_gh_dir / "codex"
+    codex_without_gh.write_text(FAKE_CODEX.replace("#!/usr/bin/env python3",
+                                                   f"#!{sys.executable}", 1))
+    codex_without_gh.chmod(0o755)
+    (no_gh_dir / "find").symlink_to(shutil.which("find"))
     completed = subprocess.run(
         [sys.executable, str(PROGRAM), "-C", str(checkout), "--brief", str(brief),
          "-o", str(scratch / "no-gh-report.md"), "--prefetch-github", "pr view 1"],
-        env=dict(os.environ, PATH=str(no_gh_dir), HOME=str(scratch_home)),
+        env=dict(os.environ, PATH=str(no_gh_dir), HOME=str(scratch_home),
+                 FAKE_CODEX_MODE="report", FAKE_CODEX_ARGUMENTS_FILE=str(arguments_file)),
         capture_output=True, text=True, check=False)
     check("a missing gh exits 1, says gh could not run, and Codex is not started",
           completed.returncode == 1 and "could not run `gh pr view 1`" in completed.stderr
@@ -609,24 +618,133 @@ try:
         clock[0] = deadline
         return [], None
     runner.prefetch_github_data = prefetch_using_whole_deadline
+    # A started fake codex would be stopped at once by a zero timeout, before it could
+    # leave any trace, so the case records the runner building Codex's command instead.
+    codex_commands_built = []
+
+    def codex_command_recorded(*arguments, **options):
+        codex_commands_built.append(arguments)
+        return [sys.executable, "-c", ""]
+    runner.codex_command = codex_command_recorded
     real_stderr, captured = sys.stderr, __import__("io").StringIO()
     sys.stderr = captured
-    real_path = os.environ["PATH"]
-    # The fake codex, should the runner start Codex after all.
-    os.environ["PATH"] = f"{bin_dir}{os.pathsep}{real_path}"
     try:
         exit_code = runner.main(["-C", str(checkout), "--brief", str(brief),
                                  "-o", str(scratch / "no-time-report.md"),
                                  "--prefetch-github", "pr view 1", "--deadline-minutes", "1"])
     finally:
         sys.stderr = real_stderr
-        os.environ["PATH"] = real_path
         runner.time.monotonic = real_monotonic
     check("when the --prefetch-github commands use the whole deadline, Codex is not started "
           "and the run exits 1 saying so",
           exit_code == 1 and "used the whole 1-minute deadline" in captured.getvalue()
-          and "Codex was not started" in captured.getvalue() and not arguments_file.exists(),
-          f"exit {exit_code}, stderr {captured.getvalue()!r}")
+          and "Codex was not started" in captured.getvalue() and not codex_commands_built,
+          f"exit {exit_code}, Codex commands built {len(codex_commands_built)}, "
+          f"stderr {captured.getvalue()!r}")
+
+    # macOS answers killpg with EPERM while every process left in the group is exiting,
+    # which cannot be timed from a test, so a stand-in killpg gives that answer.
+    killpg_answers = []
+    killpg_calls = []
+    killpg_calls_before_each_poll = []
+    sleeps = []
+
+    def killpg_answering(group_id, signal_number):
+        killpg_calls.append(signal_number)
+        answer = killpg_answers.pop(0) if killpg_answers else ProcessLookupError()
+        if answer is not None:
+            raise answer
+
+    class StoppedProcess:
+        pid = 4242
+
+        def wait(self, timeout=None):
+            return -15
+
+        def poll(self):
+            killpg_calls_before_each_poll.append(len(killpg_calls))
+            return -15
+    real_killpg, real_sleep = runner.os.killpg, runner.time.sleep
+    runner.os.killpg, runner.time.sleep = killpg_answering, sleeps.append
+    try:
+        killpg_answers[:] = [None, PermissionError(1, "Operation not permitted"),
+                             PermissionError(1, "Operation not permitted"),
+                             ProcessLookupError()]
+        stop_error = None
+        try:
+            runner.stop_process_group(StoppedProcess())
+        except OSError as error:
+            stop_error = error
+        check("stopping Codex at the deadline waits out macOS's EPERM from a group whose "
+              "last processes are exiting, and ends when the group is gone",
+              stop_error is None
+              and killpg_calls == [signal.SIGTERM] + [signal.SIGKILL] * 3
+              and len(sleeps) == 2,
+              f"error {stop_error!r}, killpg signals {killpg_calls!r}, sleeps {sleeps!r}")
+        # On Linux nothing else catches a retry that skips reaping Codex's zombie.
+        check("each retry of a refused stop signal first reaps Codex if it has exited",
+              killpg_calls_before_each_poll == [2, 3],
+              f"killpg calls made before each poll {killpg_calls_before_each_poll!r}")
+
+        killpg_calls.clear()
+        sleeps.clear()
+        killpg_answers[:] = [PermissionError(1, "Operation not permitted")
+                             for _ in range(runner.EXITING_GROUP_SIGNAL_ATTEMPTS + 5)]
+        stop_error = None
+        try:
+            runner.stop_process_group(StoppedProcess())
+        except PermissionError as error:
+            stop_error = error
+        check("a process group that keeps refusing the stop signal raises PermissionError "
+              "after a bounded number of attempts",
+              stop_error is not None
+              and len(killpg_calls) == runner.EXITING_GROUP_SIGNAL_ATTEMPTS,
+              f"error {stop_error!r}, killpg calls {len(killpg_calls)}")
+    finally:
+        runner.os.killpg, runner.time.sleep = real_killpg, real_sleep
+
+    # A Codex that exits just as the deadline passes is a zombie until reaped, alone in its
+    # group; macOS answers killpg for such a group with EPERM, Linux does not.
+    zombie_codex = subprocess.Popen([sys.executable, "-c", ""], start_new_session=True)
+    time.sleep(0.5)
+    stop_started = time.monotonic()
+    stop_error = None
+    try:
+        runner.stop_process_group(zombie_codex)
+    except OSError as error:
+        stop_error = error
+    stop_seconds = time.monotonic() - stop_started
+    check("stopping a Codex that has exited but is not yet reaped ends at once, without "
+          "an error",
+          stop_error is None and stop_seconds < 2 and zombie_codex.returncode is not None,
+          f"error {stop_error!r}, took {stop_seconds:.1f}s")
+
+    # A failure to stop Codex at the deadline is not a failure to start it.
+    def stop_refused(process):
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+        raise PermissionError(1, "Operation not permitted")
+    real_stop, real_codex_command = runner.stop_process_group, runner.codex_command
+    runner.stop_process_group = stop_refused
+    runner.codex_command = lambda *arguments, **options: [
+        sys.executable, "-c", "import time; time.sleep(60)"]
+    fresh_prefetch_case()
+    real_stderr, captured = sys.stderr, __import__("io").StringIO()
+    sys.stderr = captured
+    main_error = main_exit = None
+    try:
+        main_exit = runner.main(["-C", str(checkout), "--brief", str(brief),
+                                 "-o", str(scratch / "stop-refused-report.md"),
+                                 "--deadline-minutes", "0.01"])
+    except PermissionError as error:
+        main_error = error
+    finally:
+        sys.stderr = real_stderr
+        runner.stop_process_group, runner.codex_command = real_stop, real_codex_command
+    check("a failure to stop Codex at the deadline surfaces as that error, not as "
+          "\"could not start Codex\"",
+          main_error is not None and "could not start Codex" not in captured.getvalue(),
+          f"error {main_error!r}, exit {main_exit}, stderr {captured.getvalue()!r}")
 
     empty_brief = scratch / "empty.md"
     empty_brief.write_text("  \n")

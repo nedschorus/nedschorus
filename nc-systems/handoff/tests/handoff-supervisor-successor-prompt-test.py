@@ -124,7 +124,7 @@ def run_offline_cases(workspace: Path):
     # A state file written before 2026-09-21 carries the field under the bare
     # name "session_id". A supervisor reading one must come away with the same
     # value under the new name, or carry_over_to_successor sees no retiring
-    # session and the seat ignites dialog-less -- losing the conversation tail
+    # session and the seat starts a fresh agent-session with no dialog extract -- losing the conversation tail
     # of every live seat on the fleet's first restart after the rename.
     legacy_state_path = workspace / "legacy-key-supervisor-state.json"
     legacy_state_path.write_text(
@@ -436,7 +436,7 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
     legacy.write_text("written-at: " + recent + "\nnext-step: do the old thing\n", encoding="utf-8")
     legacy_prompt = supervisor.build_ignition_prompt(
         Path("/tmp/d.md"), supervisor.parse_handoff_file(legacy))
-    check("a handoff with no block still ignites from next-step",
+    check("a handoff with no block still starts a fresh agent-session from next-step",
           "do the old thing" in legacy_prompt, repr(legacy_prompt))
 
     # End to end: what the writer wrote is what the reader hands over.
@@ -2058,7 +2058,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
               "repository are your whole context.) " + branch_state_line + " " + line),
           repr(boot_recovery_prompt))
 
-    # End to end: a supervisor igniting agent-instructions-editor, the one
+    # End to end: a supervisor starting a fresh agent-session for agent-instructions-editor, the one
     # agent-seat given overview-refresh lines, in a checkout with a system due
     # hands the successor the line, after the branch-state instruction, and
     # prints it on its console.
@@ -2112,7 +2112,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
         env={**os.environ,
              "PATH": f"{no_open_pull_requests}{os.pathsep}{os.environ.get('PATH', '')}"})
     launched = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
-    check("an ignited successor of agent-instructions-editor is given the "
+    check("a successor started as a fresh agent-session of agent-instructions-editor is given the "
           "overview-refresh-due line after the branch-state instruction",
           expected in launched and "already pushed." in launched
           and launched.index("already pushed.") < launched.index(expected),
@@ -2120,7 +2120,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     check("the supervisor prints the overview-refresh-due line on its console",
           f"handoff-supervisor: {expected}" in result.stdout, result.stdout[-900:])
 
-    # Any other agent-seat, igniting in the same checkout with the same system
+    # Any other agent-seat, started as a fresh agent-session in the same checkout with the same system
     # due: the overview check is never run, so its successor gets no
     # overview-refresh line and the console shows none.
     other_seat_directory = workspace / "overview-refresh-other-seat-handoffs"
@@ -2156,7 +2156,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
         supervisor.supervise_sessions(other_seat_settings)
     check("an agent-seat other than agent-instructions-editor never runs the overview check",
           overview_check_calls == [], repr(overview_check_calls))
-    check("an ignited successor of an agent-seat other than agent-instructions-editor "
+    check("a successor started as a fresh agent-session of an agent-seat other than agent-instructions-editor "
           "is given no overview-refresh line",
           len(other_seat_launched_prompts) == 1
           and other_seat_launched_prompts[0].startswith("resume the audit")
@@ -2204,7 +2204,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
                      f"{os.pathsep}{os.environ.get('PATH', '')}"})
     launched = (unread_record_path.read_text(encoding="utf-8")
                 if unread_record_path.is_file() else "")
-    check("an ignited successor whose reminder marks cannot be read is given the "
+    check("a successor started as a fresh agent-session whose reminder marks cannot be read is given the "
           "overview-refresh-due line and, after it, the line saying the marks could "
           "not be read, with the error, and the instruction to tell the user",
           expected in launched and REMINDER_MARKS_UNREAD_LINE_OPENING in launched
@@ -2588,7 +2588,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
                                    + " " + overview_line + " " + memory_line),
           repr(boot_recovery_prompt))
 
-    # Through the launch site: a supervisor igniting from an unconsumed handoff
+    # Through the launch site: a supervisor starting a fresh agent-session from an unconsumed handoff
     # at noon Pacific, with the real check against fixture stores, hands the
     # successor the line after the overview line and prints it on its console.
     root = workspace / "memory-review-due-launch"
@@ -2632,7 +2632,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
             memory_review_due_lines=at_noon,
             stdin_isatty=False), contextlib.redirect_stdout(console):
         supervisor.supervise_sessions(settings)
-    check("MEMORY REVIEW: an ignited successor's prompt carries the line after the "
+    check("MEMORY REVIEW: a successor started as a fresh agent-session's prompt carries the line after the "
           "branch-state line and the overview line, exactly",
           launched_prompts == ["resume the audit" + recovery_note + branch_state_line
                                + " " + overview_line + " " + launched_memory_line],
@@ -2643,7 +2643,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
 
 
 def run_boot_ignition_case(workspace: Path):
-    """A fresh boot that finds an unconsumed handoff ignites from it directly.
+    """A fresh boot that finds an unconsumed handoff starts a fresh agent-session from it directly.
     Launching first and letting the wait loop find the file would kill the
     just-born session for a handoff that predates it (observed 2026-08-14 in
     the crash-restart window)."""
@@ -2681,8 +2681,11 @@ def run_boot_ignition_case(workspace: Path):
     )
     check("boot with an unconsumed handoff exits cleanly after the ignition session",
           result.returncode == 0, result.stderr[-300:])
-    check("the boot says it is igniting from the unconsumed handoff",
-          "igniting from an unconsumed handoff" in result.stdout, result.stdout[-400:])
+    check("the boot says it is starting a fresh agent-session from the unconsumed handoff",
+          "starting a fresh agent-session from an unconsumed handoff" in result.stdout, result.stdout[-400:])
+    check("and says the next step is the prompt because the recorded session's dialog could not be extracted",
+          "with its next step as the prompt; there is no dialog extract because session "
+          "no-such-session's dialog could not be extracted" in result.stdout, result.stdout[-400:])
     launched = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
     check("the initial agent instructions carry the handoff's next step",
           "resume the audit" in launched, launched[:200])
@@ -2713,6 +2716,91 @@ def run_boot_ignition_case(workspace: Path):
           launched[:700])
     state = supervisor.read_supervisor_state(handoff_directory / "bootignite-supervisor-state.json")
     check("boot-ignition consumes the handoff counter", state.get("consumed_counter") == 5, str(state))
+
+
+def run_boot_ignition_without_a_dialog_extract_cases(workspace: Path):
+    """A boot that finds an unconsumed handoff and gets no dialog extract still
+    starts a fresh agent-session from the handoff's next step, and its console
+    gives the true reason: the session whose extraction it tried, or that no
+    earlier session was recorded. Neither path may say it is not relaunching."""
+
+    def boot(case_name: str, state: dict, written_by_session_line: str):
+        """One in-process boot, with the extractor failing and recording its id."""
+        handoff_directory = workspace / case_name
+        handoff_directory.mkdir(parents=True)
+        settings = supervisor.SupervisorSettings(
+            agent=case_name, working_directory=workspace,
+            handoff_directory=handoff_directory,
+            agent_command="unused-stub-agent", first_prompt="")
+        settings.handoff_path.write_text(
+            "written-at: 2026-10-20T00:00:00Z\nnext-step: resume the audit\n"
+            "restart-counter: 5\n" + written_by_session_line, encoding="utf-8")
+        supervisor.write_supervisor_state(settings.state_path, state)
+        extracted_from, launched_prompts = [], []
+
+        def failing_extract_dialog(session_id, working_directory, output_path):
+            extracted_from.append(session_id)
+            return False
+
+        def launch_recording(agent_command, session_id, working_directory, prompt, **_):
+            launched_prompts.append(prompt)
+            return StubLaunchedSession(0)
+
+        console, errors = io.StringIO(), io.StringIO()
+        with supervisor_names_replaced(
+                extract_dialog=failing_extract_dialog,
+                launch_agent_session=launch_recording,
+                sync_working_branch_with_main=lambda working_directory: "branch sync: stubbed",
+                memory_review_due_lines=lambda: (),
+                stdin_isatty=False), \
+                contextlib.redirect_stdout(console), contextlib.redirect_stderr(errors):
+            supervisor.supervise_sessions(settings)
+        return SimpleNamespace(
+            extracted_from=extracted_from, launched_prompts=launched_prompts,
+            printed=console.getvalue(), errors=errors.getvalue(),
+            state=supervisor.read_supervisor_state(settings.state_path))
+
+    # The handoff's writer is not the session the supervisor tracked, and the
+    # writer's extraction fails: the reason names the writer, whose extraction
+    # was tried, not the tracked session, whose extraction never was.
+    tracked = "tracked-session-aaaa"
+    writer = "writer-session-bbbb"
+    diverged = boot("bootdivergedwriter",
+                    {"consumed_counter": 4, "launched_session_id": tracked, "generation": 4},
+                    f"written-by-session: {writer}\n")
+    check("BOOT WITHOUT A DIALOG EXTRACT: the extraction tried is the handoff writer's",
+          diverged.extracted_from == [writer], repr(diverged.extracted_from))
+    check("BOOT WITHOUT A DIALOG EXTRACT: the reason names the writer whose extraction failed, "
+          "not the tracked session",
+          f"there is no dialog extract because session {writer}'s dialog could not be "
+          "extracted" in diverged.printed
+          and f"session {tracked}'s dialog" not in diverged.printed,
+          diverged.printed[-600:])
+    check("BOOT WITHOUT A DIALOG EXTRACT: the failed extraction is reported with the writer's id",
+          f"extracting session {writer}'s dialog failed" in diverged.errors,
+          diverged.errors[-400:])
+    check("BOOT WITHOUT A DIALOG EXTRACT: a failed extraction at boot still starts the successor "
+          "from the next step, and never says it is not relaunching",
+          len(diverged.launched_prompts) == 1
+          and diverged.launched_prompts[0].startswith("resume the audit")
+          and "not relaunching" not in diverged.errors + diverged.printed,
+          f"{diverged.launched_prompts!r}\n{diverged.errors[-400:]}")
+    check("BOOT WITHOUT A DIALOG EXTRACT: the handoff is consumed",
+          diverged.state.get("consumed_counter") == 5, str(diverged.state))
+
+    # No session was ever recorded: nothing to extract, and the reason says so.
+    unrecorded = boot("bootnosessionrecorded", {"consumed_counter": 4, "generation": 4}, "")
+    check("BOOT WITHOUT A DIALOG EXTRACT: with no earlier session recorded, no extraction is tried",
+          unrecorded.extracted_from == [], repr(unrecorded.extracted_from))
+    check("BOOT WITHOUT A DIALOG EXTRACT: the reason is that no earlier session was recorded",
+          "with its next step as the prompt; there is no dialog extract because no earlier "
+          "session was recorded" in unrecorded.printed,
+          unrecorded.printed[-600:])
+    check("BOOT WITHOUT A DIALOG EXTRACT: with no earlier session recorded, the successor starts "
+          "from the next step",
+          len(unrecorded.launched_prompts) == 1
+          and unrecorded.launched_prompts[0].startswith("resume the audit"),
+          repr(unrecorded.launched_prompts))
 
 
 def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
@@ -2912,15 +3000,16 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
           in prompt, prompt)
     check("the reincarnation prompt points at the predecessor's subagent transcripts",
           f"{plan.predecessor_session_directory}/subagents/agent-<id>.jsonl" in prompt, prompt)
-    check("the reincarnation prompt still ignites from the next step",
+    check("the reincarnation prompt still starts the fresh agent-session from the next step",
           "keep composing" in prompt, prompt)
 
 
 def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str):
-    """carry_over_to_successor reads the retiring session's id off the handoff.
+    """retiring_session_id_from_handoff_writer_or_tracked_launch reads the retiring
+    session's id off the handoff, and carry_over_to_successor extracts it.
 
-    Both callers pass the id from the supervisor's state file, which names the
-    session this supervisor launched; the handoff's own written-by-session
+    Both callers start from the id in the supervisor's state file, which names
+    the session this supervisor launched; the handoff's own written-by-session
     names the session that wrote it. The divergent case below FAILS against
     code that trusts the state file: it extracts and cites the
     launched session instead of the writer. The two fallback cases — field
@@ -2962,7 +3051,10 @@ def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str)
             supervisor.extract_dialog = recording_extract_dialog
             with contextlib.redirect_stdout(console):
                 successor_id, plan = supervisor.carry_over_to_successor(
-                    settings, tracked_session_id, handoff_fields, generation=5)
+                    settings,
+                    supervisor.retiring_session_id_from_handoff_writer_or_tracked_launch(
+                        tracked_session_id, handoff_fields),
+                    handoff_fields, generation=5)
         finally:
             supervisor.extract_dialog = original_extract_dialog
 
@@ -3025,6 +3117,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_memory_review_due_cases(workspace)
     run_memory_review_due_prompt_cases(workspace)
     run_boot_ignition_case(workspace)
+    run_boot_ignition_without_a_dialog_extract_cases(workspace)
     run_first_prompt_file_cases(workspace)
     run_multi_line_next_step_cases(workspace, recent_timestamp)
     run_launch_and_retention_cases(workspace, recent_timestamp)
