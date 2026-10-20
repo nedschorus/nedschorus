@@ -562,28 +562,52 @@ def git_failure_refusal(arguments, completed, not_done: str) -> Refused:
         + git_failure_next_steps(rerun, "scripts/ghi-issue-write.py"), 1)
 
 
+def head_is_unborn(repository_root: Path, runner) -> bool:
+    """Whether the checkout has no commit yet, which makes every git command
+    that names HEAD exit 128 as a real failure does. `rev-parse --verify
+    --quiet` says so with exit 1; any other failure is raised."""
+    arguments = ["git", "rev-parse", "--verify", "--quiet", "HEAD^{commit}"]
+    resolved = runner(arguments, cwd=str(repository_root), check=False)
+    if resolved.returncode not in (0, 1):
+        raise git_failure_refusal(
+            arguments, resolved,
+            "this run could not tell whether the checkout has a commit, and "
+            "stopped before landing anything")
+    return resolved.returncode == 1
+
+
 def remove_landing_worktree(worktree: Path, worktree_parent: Path,
-                            repository_root: Path, runner):
+                            repository_root: Path, runner,
+                            pull_request_opened: bool):
     """Removes the throwaway worktree a landing staged its commit in. A
     failed removal is printed, not raised: this runs in a `finally`, where
     raising would replace the landing's own error, and after a landing that
-    succeeded the issue and its pull request are already made."""
+    succeeded the issue and its pull request are already made.
+    `pull_request_opened` says which of the two the message reports."""
     arguments = ["git", "worktree", "remove", "--force", str(worktree)]
     removed = runner(arguments, cwd=str(repository_root), check=False)
     shutil.rmtree(worktree_parent, ignore_errors=True)
     if removed.returncode == 0:
         return
-    # `prune` drops a registration only once its directory is gone.
-    cleanup = shlex.join(
-        ["git", "-C", str(repository_root), "worktree"]
-        + (["remove", "--force", str(worktree)] if worktree.exists()
-           else ["prune"]))
+    # Forced twice, because `prune` and a single --force both leave a
+    # locked worktree's record in place; this clears it whether or not the
+    # directory is still there.
+    cleanup = shlex.join(["git", "-C", str(repository_root), "worktree",
+                          "remove", "-f", "-f", str(worktree)])
     said = (removed.stderr or removed.stdout or "").strip() or "no detail"
+    outcome = (
+        "This run had already pushed its branch and opened its pull "
+        "request; the record left behind does not change either."
+        if pull_request_opened else
+        "This run stopped before it opened a pull request, on the error "
+        "printed after this message; once the record is removed, do what "
+        "that error's message says.")
     print(f"{shlex.join(arguments)} exited {removed.returncode}: {said}\n"
-          f"So the worktree's registration in {repository_root} was left "
-          "behind; what this run did to the issue and the pull request is "
-          "not changed by it.\n"
-          f"Run {cleanup} to remove the registration.\n"
+          f"So git's record of the temporary worktree {worktree}, which "
+          f"`git -C {repository_root} worktree list` still shows, was left "
+          "behind.\n"
+          f"{outcome}\n"
+          f"Run {cleanup} to remove that record.\n"
           "If that fails, tell the user what it printed; a subagent tells "
           "the agent that dispatched it instead.", file=sys.stderr)
 
@@ -686,8 +710,9 @@ def tracked_paths_at_head(repository_root: Path, runner) -> list:
     decides whether to refuse, and the reviews of PR [GHI heading check runs
     after the duplicate refusals](https://github.com/nedschorus/nedschorus/pull/838)
     found this docstring promising "let through" while a timeout stopped
-    the run. A failed listing is printed on stderr before it is let
-    through, so the agent checks the heading itself."""
+    the run. A checkout with no commit yet tracks nothing, so its listing's
+    128 is that answer; any other failed listing is printed on stderr before
+    it is let through, so the agent checks the heading itself."""
     arguments = ["git", "ls-tree", "-r", "--name-only", "-z", "HEAD"]
     try:
         completed = runner(arguments, timeout=30, cwd=str(repository_root),
@@ -695,6 +720,12 @@ def tracked_paths_at_head(repository_root: Path, runner) -> list:
     except subprocess.TimeoutExpired:
         return []
     if completed.returncode != 0:
+        try:
+            unborn = head_is_unborn(repository_root, runner)
+        except Refused:
+            unborn = False
+        if unborn:
+            return []
         said = ((completed.stderr or completed.stdout or "").strip()
                 or "no detail")
         print(f"{shlex.join(arguments)} exited {completed.returncode}: "
@@ -706,8 +737,15 @@ def tracked_paths_at_head(repository_root: Path, runner) -> list:
               ".claude/skills/ghi-write/SKILL.md).\n"
               "If it names none, nothing more is needed.\n"
               "If it names one, move the path into the text below the "
-              "heading; if this run filed the issue, land that change with "
-              "this program's edit operation.",
+              "heading, then:\n"
+              "If this run created the issue on GitHub, or edited an issue "
+              "created earlier, wait until the pull request this run opened "
+              "has merged, then run this program's edit operation on the "
+              "issue's GHI-MD as main holds it, which renames the issue "
+              "after the corrected heading.\n"
+              "If this run created no issue, because it was a dry run or "
+              "because it stopped before filing, run the same command "
+              "again.",
               file=sys.stderr)
         return []
     return git_output.nul_separated_fields(completed.stdout)
@@ -1749,7 +1787,7 @@ def land_file(repo: str, number: int, title: str, source: Path,
 
     worktree_parent = Path(tempfile.mkdtemp(prefix="ghi-issue-write-"))
     worktree = worktree_parent / "worktree"
-    added = False
+    added = pull_request_opened = False
     try:
         # --detach, and the push names the branch as a refspec, so this run
         # creates nothing in the filing checkout: a branch made with -b
@@ -1792,11 +1830,13 @@ def land_file(repo: str, number: int, title: str, source: Path,
         push_branch(worktree, branch, runner)
         create_pull_request_for_branch(repo, branch, number, title, worktree,
                                        runner, report)
+        pull_request_opened = True
         remove_landed_proposed_beside_draft(proposed)
     finally:
         if added:
             remove_landing_worktree(worktree, worktree_parent,
-                                    repository_root, runner)
+                                    repository_root, runner,
+                                    pull_request_opened)
         else:
             shutil.rmtree(worktree_parent, ignore_errors=True)
     return destination, landed_proposed
@@ -2222,16 +2262,19 @@ def merge_base_with_main(main_commit: str, repository_root: Path,
                          runner) -> str:
     """The commit the author's checkout started from: its merge base with
     main, or "" where git finds none, which `git merge-base` says with exit
-    1. Any other failure is raised."""
+    1, and in a checkout with no commit yet, where it exits 128. Any other
+    failure is raised."""
     arguments = ["git", "merge-base", "HEAD", main_commit]
     located = runner(arguments, cwd=str(repository_root), check=False)
     if located.returncode == 1:
         return ""
+    if located.returncode != 0 and head_is_unborn(repository_root, runner):
+        return ""
     if located.returncode != 0:
         raise git_failure_refusal(
             arguments, located,
-            "the conflict check against main did not run, and nothing was "
-            "landed")
+            "the conflict check against main did not run, and this run "
+            "stopped before landing anything")
     return (located.stdout or "").strip()
 
 
@@ -2631,7 +2674,7 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
                                 main_commit, repository_root, runner)
     worktree_parent = Path(tempfile.mkdtemp(prefix="ghi-issue-write-"))
     worktree = worktree_parent / "worktree"
-    added = False
+    added = pull_request_opened = False
     try:
         # --detach, and the push names the branch as a refspec, so this run
         # creates nothing in the author's checkout: a branch made with -b
@@ -2684,10 +2727,12 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
         push_branch(worktree, branch, runner)
         create_pull_request_for_edit_branch(repo, branch, number, title,
                                             worktree, runner, report)
+        pull_request_opened = True
     finally:
         if added:
             remove_landing_worktree(worktree, worktree_parent,
-                                    repository_root, runner)
+                                    repository_root, runner,
+                                    pull_request_opened)
         else:
             shutil.rmtree(worktree_parent, ignore_errors=True)
     return True, True

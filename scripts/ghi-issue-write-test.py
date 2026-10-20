@@ -1971,7 +1971,7 @@ WORKTREE_REMOVAL_STDERR = "fatal: cannot remove a locked working tree"
 
 def check_failed_worktree_removal_is_printed(operation, land, answers):
     """Lands once with `git worktree remove` failing and once with `git
-    worktree add` failing: the first prints the left-behind registration and
+    worktree add` failing: the first prints the left-behind record and
     the command that clears it, the second, which registered nothing, does
     not."""
     for removal_fails in (True, False):
@@ -1991,14 +1991,18 @@ def check_failed_worktree_removal_is_printed(operation, land, answers):
         said = complaint.getvalue()
         if removal_fails:
             check(f"{operation} whose worktree cannot be removed says the "
-                  "registration was left behind and how to clear it",
+                  "record was left behind, that the pull request was "
+                  "opened, and how to clear it",
                   WORKTREE_REMOVAL_STDERR in said
-                  and "registration" in said and "worktree prune" in said,
+                  and "record of the temporary worktree" in said
+                  and "worktree remove -f -f" in said
+                  and "already pushed its branch" in said,
                   said)
         else:
             check(f"{operation} whose worktree was never added says nothing "
                   "about removing it",
-                  "registration" not in said and not recorder.ran(
+                  "record of the temporary worktree" not in said
+                  and not recorder.ran(
                       "git worktree remove"), (said, recorder.commands()))
 
 
@@ -2096,6 +2100,41 @@ def run_git_failure_cases(scratch: Path):
           in complaint.getvalue() and "not checked for a file path"
           in complaint.getvalue(), complaint.getvalue())
 
+    # A checkout with no commit yet, where git exits 128 for HEAD as it does
+    # for a failure, and the stand-in for one whose HEAD git cannot read.
+    unborn = scratch / "unborn"
+    subprocess.run(["git", "init", "-q", str(unborn)], check=True,
+                   capture_output=True)
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        tracked = tool.tracked_paths_at_head(unborn, tool.run)
+        located = tool.merge_base_with_main(
+            "4b825dc642cb6eb9a060e54bf8d69288fbee4904", unborn, tool.run)
+    check("a checkout with no commit yet tracks nothing, and says nothing "
+          "about it", tracked == [] and not complaint.getvalue(),
+          (tracked, complaint.getvalue()))
+    check("a checkout with no commit yet has no merge base with main",
+          located == "", repr(located))
+    try:
+        tool.head_is_unborn(scratch, Recorder({
+            "git rev-parse --verify --quiet HEAD": Completed(
+                "", 128, "fatal: not a git repository")}))
+        outcome = "no refusal"
+    except tool.Refused as refusal:
+        outcome = str(refusal)
+    check("a HEAD git cannot read is raised, not taken for no commit yet",
+          "fatal: not a git repository" in outcome, outcome)
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        tracked = tool.tracked_paths_at_head(scratch, Recorder({
+            "git ls-tree -r --name-only -z HEAD": Completed(
+                "", 128, "fatal: not a git repository"),
+            "git rev-parse --verify --quiet HEAD": Completed(
+                "", 128, "fatal: not a git repository")}))
+    check("and the heading check still lets the heading through, saying so",
+          tracked == [] and "not checked for a file path"
+          in complaint.getvalue(), complaint.getvalue())
+
     worktree_parent = scratch / "removal"
     worktree = worktree_parent / "worktree"
     worktree.mkdir(parents=True)
@@ -2103,17 +2142,57 @@ def run_git_failure_cases(scratch: Path):
     with contextlib.redirect_stderr(complaint):
         tool.remove_landing_worktree(worktree, worktree_parent, scratch,
                                      Recorder({"git worktree remove": Completed(
-                                         "", 128, WORKTREE_REMOVAL_STDERR)}))
-    check("a worktree whose removal failed has its directory deleted and "
-          "the printed command prunes its registration",
+                                         "", 128, WORKTREE_REMOVAL_STDERR)}),
+                                     False)
+    check("a worktree whose removal failed after a landing that stopped "
+          "early has its directory deleted, says no pull request was "
+          "opened, and prints the command that clears git's record",
           not worktree_parent.exists()
-          and f"git -C {scratch} worktree prune" in complaint.getvalue(),
+          and "stopped before it opened a pull request" in complaint.getvalue()
+          and f"git -C {scratch} worktree remove -f -f {worktree}"
+          in complaint.getvalue(),
           complaint.getvalue())
+    # A locked worktree in a real repository: the tool's own removal fails,
+    # and the command it prints must clear the record git keeps, which
+    # `git worktree prune` and a single --force both leave in place.
+    locked_repository = scratch / "locked-repository"
+    subprocess.run(["git", "init", "-q", str(locked_repository)], check=True,
+                   capture_output=True)
+    subprocess.run(["git", "-C", str(locked_repository), "-c",
+                    "user.email=test@example.com", "-c", "user.name=test",
+                    "commit", "-q", "--allow-empty", "-m", "one"],
+                   check=True, capture_output=True)
+    locked_parent = scratch / "locked-parent"
+    locked = locked_parent / "worktree"
+    for arguments in (["worktree", "add", "-q", "--detach", str(locked)],
+                      ["worktree", "lock", str(locked)]):
+        subprocess.run(["git", "-C", str(locked_repository), *arguments],
+                       check=True, capture_output=True)
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        tool.remove_landing_worktree(locked, locked_parent, locked_repository,
+                                     tool.run, True)
+    printed = next((line for line in complaint.getvalue().splitlines()
+                    if line.startswith("Run ")
+                    and line.endswith(" to remove that record.")), "")
+    cleared = subprocess.run(
+        printed[len("Run "):-len(" to remove that record.")], shell=True,
+        capture_output=True, text=True) if printed else None
+    listed = subprocess.run(
+        ["git", "-C", str(locked_repository), "worktree", "list",
+         "--porcelain"], capture_output=True, text=True, check=True).stdout
+    check("the command printed for a locked worktree clears git's record of "
+          "it",
+          "locked working tree" in complaint.getvalue()
+          and cleared is not None and cleared.returncode == 0
+          and str(locked) not in listed,
+          (complaint.getvalue(), cleared and cleared.stderr, listed))
+
     complaint = io.StringIO()
     with contextlib.redirect_stderr(complaint):
         worktree.mkdir(parents=True)
         tool.remove_landing_worktree(worktree, worktree_parent, scratch,
-                                     Recorder())
+                                     Recorder(), True)
     check("a worktree removed cleanly prints nothing",
           not complaint.getvalue() and not worktree_parent.exists(),
           complaint.getvalue())
