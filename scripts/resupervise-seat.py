@@ -328,10 +328,26 @@ def resupervise_box_seat(arguments) -> int:
             ["ssh", "-o", "ConnectTimeout=10", arguments.agent_box, f"test -f {BOX_SCRIPT_PATH}"],
             capture_output=True, text=True, check=False,
         )
-        if missing.returncode != 0:
+        # test exits 1 for an absent file; ssh exits 255 when it could not reach the box.
+        if missing.returncode == 1:
             return refuse(
                 f"{BOX_SCRIPT_PATH} is not on {arguments.agent_box}. The box checkout is pulled "
                 "by hand (nedschorus#45) -- pull it there, then re-run. Nothing was changed."
+            )
+        ssh_error = " ".join(missing.stderr.split()) or "nothing on stderr"
+        if missing.returncode == 255:
+            return refuse(
+                f"the box-side checks exited {remote.returncode}, and ssh could not reach "
+                f"{arguments.agent_box} to ask why (exit 255: {ssh_error}); nothing was "
+                f"launched. Check that `ssh {arguments.agent_box} true` succeeds from this "
+                "machine, then re-run."
+            )
+        if missing.returncode != 0:
+            return refuse(
+                f"the box-side checks exited {remote.returncode}, and `ssh {arguments.agent_box} "
+                f"test -f {BOX_SCRIPT_PATH}` exited {missing.returncode} ({ssh_error}), so "
+                "whether the script is on the box is unknown; nothing was launched. Run that "
+                "command, read what it prints, and re-run after that cause is removed."
             )
         return refuse(
             f"the box-side checks refused (exit {remote.returncode}); nothing was launched. "
@@ -452,8 +468,18 @@ def main(argv=None) -> int:
     # Omit -L so tmux resolves the surrounding server through $TMUX.
     if os.environ.get("TMUX"):
         current_session = run_tmux("display-message", "-p", "#{session_name}")
-        if (current_session is not None and current_session.returncode == 0
-                and current_session.stdout.strip() == arguments.name):
+        if current_session is None or current_session.returncode != 0:
+            reason = TMUX_GAVE_NO_ANSWER if current_session is None else (
+                f"`tmux display-message -p '#{{session_name}}'` exited "
+                f"{current_session.returncode}: "
+                f"{' '.join(current_session.stderr.split()) or 'with no output'}")
+            return refuse(
+                f"$TMUX is set, so this may be running inside the {arguments.name} tmux session, "
+                f"which clearing would kill, and asking tmux which session this is failed: "
+                f"{reason}. Nothing was killed or started. Run it from another window, or from "
+                "outside tmux."
+            )
+        if current_session.stdout.strip() == arguments.name:
             return refuse(
                 f"this command is running inside the {arguments.name} tmux session, and clearing "
                 "that session would kill the terminal doing the clearing. Run it from another "

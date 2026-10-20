@@ -53,6 +53,10 @@ with open(os.environ["MIRROR_TEST_ARGV_LOG"], "a") as log:
 if "--files-from=-" in sys.argv:
     with open(os.environ["MIRROR_TEST_STDIN_LOG"], "a") as log:
         log.write(json.dumps([sys.argv[-1], sys.stdin.read()]) + "\\n")
+if sys.argv[0].endswith("ssh") and "wc -l" in " ".join(sys.argv) and os.environ.get("MIRROR_TEST_FAILING_FIND_DIRECTORY"):
+    import subprocess
+    environment = dict(os.environ, PATH=os.environ["MIRROR_TEST_FAILING_FIND_DIRECTORY"] + os.pathsep + os.environ["PATH"])
+    sys.exit(subprocess.run(["bash", "-c", sys.argv[-1]], env=environment).returncode)
 if sys.argv[0].endswith("ssh") and "wc -l" in " ".join(sys.argv):
     print(os.environ.get("MIRROR_TEST_STORE_COUNT", "0"))
 if sys.argv[0].endswith("rsync") and os.environ.get("MIRROR_TEST_RSYNC_STDERR"):
@@ -365,9 +369,9 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
           and all(option in c[c.index("-e") + 1] for c in rsync_calls for option in SERVER_ALIVE_OPTIONS),
           str(calls))
 
-    # Files vanishing mid-run is exit 24 from GNU rsync (ned-box) and exit 23
-    # from openrsync (the Mac's /usr/bin/rsync); each is a note on its own
-    # implementation only, and the other implementation's code stays FAILED.
+    # Files vanishing mid-run is exit 24 from GNU rsync (ned-box), a note. The
+    # Mac's openrsync exits 23 for that and for every other partial transfer,
+    # so its 23 is FAILED, and so is its 24.
     GNU_VERSION_LINE = "rsync  version 3.4.1  protocol version 32"
     OPENRSYNC_VERSION_LINE = "openrsync: protocol version 29"
     argv_log.unlink()
@@ -387,9 +391,14 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
           argv_log.read_text())
     argv_log.unlink()
     result = run_mirror(home, RULED_DESTINATION, dict(
-        remote_env, MIRROR_TEST_RSYNC_VERSION_LINE=OPENRSYNC_VERSION_LINE, MIRROR_TEST_RSYNC_EXIT="23"))
-    check("openrsync exit 23, files vanished mid-run, is a mirrored line with a note, exit 0",
-          result.returncode == 0 and result.stdout.count("vanished mid-run") == 5, result.stdout)
+        remote_env, MIRROR_TEST_RSYNC_VERSION_LINE=OPENRSYNC_VERSION_LINE, MIRROR_TEST_RSYNC_EXIT="23",
+        MIRROR_TEST_RSYNC_STDERR="openrsync: error: some files could not be transferred"), QUIET)
+    check("openrsync exit 23 is FAILED naming the exit, with openrsync's stderr, exit 1, even "
+          "with --failures-only",
+          result.returncode == 1 and result.stdout.count("FAILED:") == 5
+          and "rsync exit 23" in result.stdout and "vanished mid-run" not in result.stdout
+          and result.stderr.count("openrsync: error: some files could not be transferred") == 5,
+          result.stdout + result.stderr)
     argv_log.unlink()
     result = run_mirror(home, RULED_DESTINATION, dict(
         remote_env, MIRROR_TEST_RSYNC_VERSION_LINE=OPENRSYNC_VERSION_LINE, MIRROR_TEST_RSYNC_EXIT="24"))
@@ -397,6 +406,21 @@ os.execv({shutil.which("rsync")!r}, ["rsync", *sys.argv[1:]])
           result.returncode == 1 and result.stdout.count("FAILED:") == 5
           and "rsync exit 24" in result.stdout and "ned-box unreachable" not in result.stdout,
           result.stdout)
+    failing_find_directory = scratch / "failing-find-bin"
+    failing_find_directory.mkdir()
+    failing_find = failing_find_directory / "find"
+    failing_find.write_text("#!/bin/sh\nprintf 'one\\ntwo\\n'\n"
+                            "echo 'find: injected: Permission denied' >&2\nexit 1\n")
+    failing_find.chmod(0o755)
+    argv_log.unlink()
+    result = run_mirror(home, RULED_DESTINATION, dict(
+        remote_env, MIRROR_TEST_FAILING_FIND_DIRECTORY=str(failing_find_directory)))
+    check("a store count whose find fails after counting two files is unknown, not 2, and "
+          "find's error is passed on",
+          result.returncode == 0 and result.stdout.count("store unknown files") == 5
+          and "store 2 files" not in result.stdout
+          and result.stderr.count("find: injected: Permission denied") == 5,
+          result.stdout + result.stderr)
     argv_log.unlink()
     result = run_mirror(home, RULED_DESTINATION, dict(remote_env, MIRROR_TEST_RSYNC_EXIT="255"))
     check("rsync exit 255 is FAILED naming ned-box unreachable, exit 1",
