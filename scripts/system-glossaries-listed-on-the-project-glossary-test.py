@@ -140,6 +140,16 @@ def git(checkout, *arguments):
                           capture_output=True, text=True, check=False)
 
 
+def git_or_raise(checkout, *arguments):
+    """Run a git command that builds a scratch checkout, raising on failure,
+    so a case never judges a checkout git left half-built."""
+    completed = git(checkout, *arguments)
+    if completed.returncode != 0:
+        raise RuntimeError(f"git {' '.join(arguments)} in {checkout} failed "
+                           f"(exit {completed.returncode}): {completed.stderr.strip()}")
+    return completed
+
+
 class CouldNotListGlossaries(Exception):
     """git could not list the checkout's tracked files."""
 
@@ -303,19 +313,14 @@ def build_scratch_checkout(root, page_text, tracked_glossaries=(),
     glossaries named, plus any glossary written but never added, so a case
     can tell git's list from what is on the disk."""
     root.mkdir(parents=True, exist_ok=True)
-    git(root, "init", "-q", "-b", "main")
-    git(root, "config", "user.email", "test@nedschorus.invalid")
-    git(root, "config", "user.name", "system-glossaries-listed test")
+    git_or_raise(root, "init", "-q", "-b", "main")
+    git_or_raise(root, "config", "user.email", "test@nedschorus.invalid")
+    git_or_raise(root, "config", "user.name", "system-glossaries-listed test")
     write_file(root / PROJECT_GLOSSARY_RELATIVE_PATH, page_text)
     for relative in tracked_glossaries:
         write_file(root / relative, f"# {relative}\n")
-    git(root, "add", "-A")
-    committed = git(root, "commit", "-qm",
-                    "the project glossary and its system glossaries")
-    if committed.returncode != 0:
-        # Loudly, rather than leave a case judging an empty index.
-        raise RuntimeError(f"the scratch checkout {root} could not be committed: "
-                           f"{committed.stderr.strip()}")
+    git_or_raise(root, "add", "-A")
+    git_or_raise(root, "commit", "-qm", "the project glossary and its system glossaries")
     for relative in untracked_glossaries:
         write_file(root / relative, f"# {relative}\n")
     return root
@@ -358,8 +363,8 @@ if __name__ == "__main__":
             tracked_glossaries=(SCRATCH_SKILLS_GLOSSARY,
                                 SCRATCH_DESIGN_TO_MAIN_GLOSSARY))
         nested = with_worktree / ".claude" / "worktrees" / "agent-probe"
-        git(with_worktree, "worktree", "add", "-q", "-b", "agent-probe-branch",
-            str(nested), "HEAD")
+        git_or_raise(with_worktree, "worktree", "add", "-q", "-b", "agent-probe-branch",
+                     str(nested), "HEAD")
         nested_copies = [nested / relative
                          for relative in (PROJECT_GLOSSARY_RELATIVE_PATH,
                                           SCRATCH_SKILLS_GLOSSARY,
@@ -470,5 +475,16 @@ if __name__ == "__main__":
         check("a path the page names that git does not track is faulted by name",
               any("docs/gone/gone-glossary.md" in fault for fault in faults),
               faults)
+
+        # A scratch checkout's git step that fails must stop the build, not
+        # leave a half-built checkout for a case to judge. Nothing is staged,
+        # so this commit exits 1.
+        try:
+            git_or_raise(names_an_untracked_path, "commit", "-qm", "nothing staged")
+            raised = None
+        except RuntimeError as error:
+            raised = str(error)
+        check("a failing git step in a scratch checkout's build raises, with git's code",
+              raised is not None and "exit 1" in raised, raised)
 
     sys.exit(1 if failures else 0)
