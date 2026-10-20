@@ -3001,9 +3001,10 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
             + "".join(f"- {line}\n" for line in changed_on_disk)
             + "If you rerun this command once the failure above is fixed, "
             "leave these changes as they are: the rerun builds on them.\n"
-            "If you abandon this edit instead, undo each change listed: put "
-            "back a pointer line it removed, take out one it added, and "
-            "delete each proposed-improvements-or-changes-file it names.",
+            "If you give up this edit instead of rerunning, undo each change "
+            "in the list above: put back a pointer line this run removed, "
+            "take out one it added, and delete each "
+            "proposed-improvements-or-changes-file the list names.",
             refusal.code) from refusal
 
 
