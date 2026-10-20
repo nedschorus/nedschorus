@@ -1629,6 +1629,11 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
               and f"report, which this Mac sees at {mac_suggestions}." in stderr
               and f"look for a report at {mac_suggestions}. The report is not written" in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
+        rerun_command = shlex.join(["python3", str(Path(warning_module.__file__).resolve()),
+                                    "--target", str(mac_draft)])
+        check("when the read on ned-box outlasts the time limit, the message gives the "
+              "command to run once more on the Mac, with the target in its Mac form",
+              f"over ssh again:\n{rerun_command}\n" in stderr, repr(stderr))
         stderr_lines = stderr.splitlines()
         check("when the read on ned-box outlasts the time limit, the message for the user, "
               "naming the target and the report place, is the one last line",
