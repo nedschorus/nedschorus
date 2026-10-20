@@ -84,18 +84,37 @@ class World:
         environment.update(self.extra_environment)
         return environment
 
-    def git(self, *arguments, check_ok=True, cwd=None):
+    def git(self, *arguments, check_ok=True, cwd=None, input_text=None):
         result = subprocess.run(["git", "-C", str(cwd or self.repo), *arguments],
-                                capture_output=True, text=True, env=self.environment())
+                                capture_output=True, text=True, env=self.environment(),
+                                input=input_text)
         if check_ok and result.returncode:
             raise RuntimeError(f"git {arguments}: {result.stderr}")
         return result
 
+    def call(self, change, tool="Bash", file_path=None, event="PostToolUse", **keywords):
+        """One tool call as Claude Code makes it: the PreToolUse run, the change the call
+        makes, then the run after the call, both with one tool_use_id."""
+        self.calls = getattr(self, "calls", 0) + 1
+        tool_use_id = f"toolu_test_{self.calls}"
+        before = self.run(tool=tool, event="PreToolUse", file_path=file_path,
+                          tool_use_id=tool_use_id, **keywords)
+        if before:
+            raise RuntimeError(f"the PreToolUse run spoke: {before}")
+        change()
+        return self.run(tool=tool, event=event, file_path=file_path, tool_use_id=tool_use_id,
+                        **keywords)
+
+    def text_key(self, text):
+        return self.git("hash-object", "--stdin", input_text=text).stdout.strip()
+
     def run(self, session="session-a", owner="owner-a", tool="Bash", event="PostToolUse",
-            file_path=None, cwd=None):
+            file_path=None, cwd=None, tool_use_id=None):
         payload = {"session_id": session, "hook_event_name": event, "tool_name": tool,
                    "cwd": str(cwd or self.repo),
                    "tool_input": {"file_path": str(file_path)} if file_path else {"command": "x"}}
+        if tool_use_id:
+            payload["tool_use_id"] = tool_use_id
         started = time.monotonic()
         cpu_before = resource.getrusage(resource.RUSAGE_CHILDREN)
         result = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload),
@@ -167,8 +186,300 @@ def fresh(scratch_root, name, machine="ned-box"):
     return world
 
 
+STORE_CITATION = ("nedlern@ned-box:/home/nedlern/nedschorus-logs/"
+                  "guarded-file-versions-and-approvals/ned-box")
+V1 = "project v1\n"
+V2 = "project v2 by shell\n"
+
+
+def put_back_cases(scratch):
+    # -- this tool call's unapproved change is put back, and can be reapplied once approved
+    world = fresh(scratch, "put-back")
+    claude = world.repo / "CLAUDE.md"
+    approved_key, key = world.key(claude), world.text_key(V2)
+    message = world.call(lambda: claude.write_text(V2))
+    check("a shell edit this tool call made to a file whose earlier version was approved is put "
+          "back", claude.read_text() == V1, claude.read_text())
+    check("the put-back message names the approved version and where the unapproved one is kept",
+          f"{claude}: put back the approved version {approved_key}" in message
+          and f"{STORE_CITATION}{claude}/{key}" in message, message)
+    check("the unapproved version is kept in the store and is not approved",
+          key in world.versions(claude) and key not in world.store_file(claude, "approved"),
+          world.versions(claude))
+    check("the store's log records the put-back",
+          any(line.startswith("restored\t") and key in line
+              for line in world.store_file(claude, "log").splitlines()),
+          world.store_file(claude, "log"))
+    check("the put-back message tells a subagent to stop and report before any other step",
+          0 <= message.find("If you are a subagent, stop: make no further edit")
+          < message.find("If the change is still wanted"), message)
+    check("the put-back message gives the command that reapplies the kept version",
+          f"python3 {HOOK} --approve-and-reapply-kept-version {claude} {key}" in message, message)
+    check("the run after the call removes the record the PreToolUse run made",
+          not list((world.repo / ".git").glob("*-files-unchanged-before-tool-call-*")),
+          list((world.repo / ".git").glob("*-files-unchanged-before-tool-call-*")))
+    check("a file put back is settled: the next run says nothing", world.run() == "", "")
+    result = world.command("--approve-and-reapply-kept-version", claude, key)
+    check("--approve-and-reapply-kept-version refuses without the user's words in the marker file",
+          result.returncode == 1 and "ask him" in result.stderr and claude.read_text() == V1,
+          result.stderr)
+    marker = world.marker('The user said "y" to the CLAUDE.md change')
+    result = world.command("--approve-and-reapply-kept-version", claude, key)
+    check("--approve-and-reapply-kept-version with the user's words puts the kept version back, approves it, "
+          "spends the marker file and says so",
+          result.returncode == 0 and claude.read_text() == V2
+          and key in world.store_file(claude, "approved") and not marker.exists()
+          and f"Approved {claude} at version {key} and put that kept version back."
+          in result.stdout, (result.stdout, result.stderr))
+    check("after --approve-and-reapply-kept-version the next run says nothing", world.run() == "", "")
+    check("a change in no commit gets no git commit command", "git commit --only" not in message,
+          message)
+
+    world = fresh(scratch, "two-files-put-back")
+    claude, local = world.repo / "CLAUDE.md", world.repo / "CLAUDE.local.md"
+    world.call(lambda: local.write_text("seat v1\n"), tool="Write", file_path=local)
+
+    def change_both():
+        claude.write_text(V2)
+        local.write_text("seat v2 by shell\n")
+
+    message = world.call(change_both)
+    check("two files one tool call changed are both put back, in one message",
+          claude.read_text() == V1 and local.read_text() == "seat v1\n"
+          and message.count("This tool call changed a guarded file") == 1
+          and f"--approve-and-reapply-kept-version {local} {world.text_key('seat v2 by shell' + chr(10))} "
+          f"{claude} {world.text_key(V2)}" in message, message)
+
+    world = fresh(scratch, "reapply-deletion-and-change-together")
+    claude, local = world.repo / "CLAUDE.md", world.repo / "CLAUDE.local.md"
+    world.call(lambda: local.write_text("seat v1\n"), tool="Write", file_path=local)
+
+    def delete_one_change_other():
+        claude.unlink()
+        local.write_text("seat v2 by shell\n")
+
+    world.call(delete_one_change_other)
+    world.marker('The user said "y" to both changes')
+    result = world.command("--approve-and-reapply-kept-version", claude, "deleted", local,
+                           world.text_key("seat v2 by shell\n"))
+    check("--approve-and-reapply-kept-version of a deletion and a change in one command reapplies both",
+          result.returncode == 0 and not claude.exists()
+          and local.read_text() == "seat v2 by shell\n", (result.stdout, result.stderr))
+
+    world = fresh(scratch, "before-call-run-records-nothing-it-cannot")
+    outside = Path(scratch) / "before-call-run-records-nothing-it-cannot" / "outside"
+    outside.mkdir()
+    check("the PreToolUse run with no tool_use_id says nothing and records nothing",
+          world.run(event="PreToolUse") == ""
+          and not list((world.repo / ".git").glob("*-files-unchanged-before-tool-call-*")), "")
+    check("the PreToolUse run outside every checkout says nothing",
+          world.run(event="PreToolUse", cwd=outside, tool_use_id="toolu_outside") == "", "")
+
+    world = fresh(scratch, "mac-put-back", machine="mac")
+    claude = world.repo / "CLAUDE.md"
+    mount_point = Path(scratch) / "mac-put-back" / "store"
+    table = Path(scratch) / "mac-put-back" / "mount-table"
+    table.write_text(f"//nedlern@ned-box/nedlern on {mount_point} (smbfs)\n")
+    world.extra_environment = {"GUARDED_FILE_VERSIONS_MOUNT_POINT": str(mount_point),
+                               "GUARDED_FILE_VERSIONS_MOUNT_TABLE": str(table)}
+    world.run()
+    message = world.call(lambda: claude.write_text(V2))
+    check("on the Mac a change this tool call made is put back, and the kept copy is cited in "
+          "the Mac's directory of the store",
+          claude.read_text() == V1 and "guarded-file-versions-and-approvals/mac/" in message,
+          message)
+
+    world = fresh(scratch, "reapply-refusals")
+    claude = world.repo / "CLAUDE.md"
+    key = world.text_key(V2)
+    world.call(lambda: claude.write_text(V2))
+    message = world.call(lambda: claude.write_text("project v3 by Edit\n"), tool="Edit",
+                         file_path=claude)
+    check("an Edit of a version that was put back is approved", message == "", message)
+    world.marker('The user said "y"')
+    result = world.command("--approve-and-reapply-kept-version", claude, key)
+    check("--approve-and-reapply-kept-version refuses when the file changed after the put-back",
+          result.returncode == 1 and "would overwrite a later change" in result.stderr
+          and claude.read_text() == "project v3 by Edit\n", result.stderr)
+    result = world.command("--approve-and-reapply-kept-version", claude, world.key(claude))
+    check("--approve-and-reapply-kept-version refuses a version the hook never put back",
+          result.returncode == 1 and "never put back" in result.stderr, result.stderr)
+
+    world = fresh(scratch, "deletion-put-back")
+    claude = world.repo / "CLAUDE.md"
+    message = world.call(claude.unlink)
+    check("a shell deletion this tool call made is put back",
+          claude.read_text() == V1 and "deletion" in message, message)
+    world.marker('The user said "y" to deleting CLAUDE.md')
+    result = world.command("--approve-and-reapply-kept-version", claude, "deleted")
+    check("--approve-and-reapply-kept-version of a deletion deletes the file again",
+          result.returncode == 0 and not claude.exists(), (result.stdout, result.stderr))
+
+    world = fresh(scratch, "failure-event-put-back")
+    claude = world.repo / "CLAUDE.md"
+    world.call(lambda: claude.write_text(V2), event="PostToolUseFailure")
+    check("a failing tool call's change is put back too", claude.read_text() == V1,
+          claude.read_text())
+
+    # -- every case where putting back is not safe keeps the ask, and says why
+    world = fresh(scratch, "changed-before-the-call")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2, changed outside any tool call\n")
+    message = world.call(lambda: None)
+    check("a change made before the tool call is not put back, and the message says why",
+          claude.read_text() == "project v2, changed outside any tool call\n"
+          and "cannot show that this tool call made the change" in message
+          and "has not approved" in message, message)
+    earlier = world.key(claude)
+    message = world.call(lambda: claude.write_text("project v3 by shell\n"))
+    check("a tool call's change to a version that was itself unapproved is not put back",
+          claude.read_text() == "project v3 by shell\n"
+          and f"the version this hook saw before, {earlier}, was not approved either" in message,
+          message)
+
+    world = fresh(scratch, "no-record-before-the-call")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text(V2)
+    message = world.run(tool_use_id="toolu_with_no_record")
+    check("with no record from before the call, nothing is put back",
+          claude.read_text() == V2 and "cannot show that this tool call" in message, message)
+
+    world = fresh(scratch, "put-back-fails")
+    claude = world.repo / "CLAUDE.md"
+
+    def change_and_lock():
+        claude.write_text(V2)
+        world.repo.chmod(0o500)
+
+    try:
+        message = world.call(change_and_lock)
+    finally:
+        world.repo.chmod(0o755)
+    check("when putting back fails, the change stays, the message says what failed, and the "
+          "agent is asked as before",
+          claude.read_text() == V2 and "putting back the approved version failed" in message
+          and "Permission denied" in message
+          and f"--restore {claude} {world.key(claude)}" in message, message)
+
+    world = fresh(scratch, "approved-copy-missing")
+    claude = world.repo / "CLAUDE.md"
+    # An approved version no commit holds, so the store's copy is its only copy.
+    world.call(lambda: claude.write_text("project v1, an approved Edit\n"), tool="Edit",
+               file_path=claude)
+    approved_key = world.key(claude)
+    (world.store / str(claude).lstrip("/") / approved_key).unlink()
+    message = world.call(lambda: claude.write_text(V2))
+    check("with the approved version in neither the store nor git, nothing is put back",
+          claude.read_text() == V2
+          and f"the approved version {approved_key} is in neither the store's copies" in message,
+          message)
+
+    world = fresh(scratch, "approved-version-only-in-git")
+    claude = world.repo / "CLAUDE.md"
+    approved_key = world.key(claude)
+    message = world.call(lambda: claude.write_text(V2))
+    check("an approved version the branch's HEAD commit holds, with no copy in the store, is put "
+          "back from git", approved_key not in world.versions(claude)
+          and claude.read_text() == V1 and "put back the approved version" in message,
+          (world.versions(claude), message))
+
+    world = fresh(scratch, "outside-the-checkout")
+    home_claude = world.home / ".claude" / "CLAUDE.md"
+    message = world.call(lambda: home_claude.write_text("global v2 by shell\n"))
+    check("a guarded file outside the agent-session's checkout is not put back",
+          home_claude.read_text() == "global v2 by shell\n"
+          and "outside your agent-session's own checkout" in message, message)
+
+    world = fresh(scratch, "settings-local-not-put-back")
+    local = world.repo / ".claude" / "settings.local.json"
+    local.parent.mkdir()
+    message = world.call(lambda: local.write_text('{"a": 1}\n'), tool="Write", file_path=local)
+    check("a Write of a new guarded file is approved", message == "", message)
+    grant = '{"permissions": {"allow": ["Bash(ls)"]}}\n'
+    message = world.call(lambda: local.write_text(grant))
+    check("a change to .claude/settings.local.json, which Claude Code writes itself, is not put "
+          "back", local.read_text() == grant and "Claude Code writes this file itself" in message,
+          message)
+
+    world = fresh(scratch, "git-work-not-put-back")
+    claude = world.repo / "CLAUDE.md"
+    # The branch switched to is on another commit, so its reflog entry differs from the last.
+    world.git("checkout", "-q", "-b", "elsewhere")
+    (world.repo / "notes.txt").write_text("elsewhere\n")
+    world.git("commit", "-qam", "elsewhere moves")
+    world.git("checkout", "-q", "main")
+    world.run()
+
+    def change_and_switch():
+        claude.write_text(V2)
+        world.git("checkout", "-q", "elsewhere")
+
+    message = world.call(change_and_switch)
+    check("a change in a tool call that also switched branches is not put back",
+          claude.read_text() == V2 and "git's own work" in message, message)
+
+    world = fresh(scratch, "unpushed-commit-put-back")
+    claude = world.repo / "CLAUDE.md"
+
+    def change_and_commit():
+        claude.write_text(V2)
+        world.git("commit", "-qam", "a shell edit")
+
+    message = world.call(change_and_commit)
+    check("a change committed but not pushed in the same tool call is put back, and the message "
+          "gives the commit that puts back the approved version",
+          claude.read_text() == V1 and f'git commit --only -m "Put back the approved CLAUDE.md" '
+          f"-- {claude}" in message
+          and "is kept at the commit HEAD points to in your checkout's git repository" in message,
+          message)
+    world.marker('The user said "y" to the committed change')
+    result = world.command("--approve-and-reapply-kept-version", claude, world.text_key(V2))
+    check("--approve-and-reapply-kept-version reads a kept version that only the commit holds from git",
+          result.returncode == 0 and claude.read_text() == V2, (result.stdout, result.stderr))
+
+    world = fresh(scratch, "pushed-commit-not-put-back")
+    claude = world.repo / "CLAUDE.md"
+    remote = Path(scratch) / "pushed-commit-not-put-back" / "remote.git"
+    world.git("init", "-q", "--bare", str(remote))
+    world.git("remote", "add", "origin", str(remote))
+    world.git("push", "-q", "origin", "main")
+    world.run()
+
+    def change_commit_and_push():
+        claude.write_text(V2)
+        world.git("commit", "-qam", "a shell edit")
+        world.git("push", "-q", "origin", "main")
+
+    message = world.call(change_commit_and_push)
+    check("a change already pushed in the same tool call is not put back",
+          claude.read_text() == V2 and "already pushed" in message, message)
+
+    # -- an Edit made on an unapproved version does not approve the unapproved text
+    world = fresh(scratch, "edit-after-unapproved-shell-edit")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text(V2)
+    world.run()
+    message = world.call(lambda: claude.write_text(V2 + "an approved Edit's line\n"),
+                         tool="Edit", file_path=claude)
+    check("an Edit of a file that holds an unapproved version is not approved, and the message "
+          "says why", world.key(claude) not in world.store_file(claude, "approved")
+          and "covers only that call's change" in message, message)
+
+    # -- a mv of a settled guarded file is a rename, not put back
+    world = fresh(scratch, "rename-in-a-call")
+    skills = world.repo / ".claude" / "skills"
+    skills.mkdir(parents=True)
+    world.call(lambda: (skills / "a.md").write_text("skill a\n"), tool="Write",
+               file_path=skills / "a.md")
+    message = world.call(lambda: os.rename(skills / "a.md", skills / "b.md"))
+    check("a mv of a settled guarded file in a tool call is neither put back nor asked about",
+          message == "" and (skills / "b.md").exists() and not (skills / "a.md").exists(),
+          message)
+
+
 def main():
     with tempfile.TemporaryDirectory() as scratch:
+        put_back_cases(os.path.realpath(scratch))
         cases(os.path.realpath(scratch))
     print(f"\n{'FAILED' if failures else 'PASSED'}: {failures} failing case(s)")
     return 1 if failures else 0

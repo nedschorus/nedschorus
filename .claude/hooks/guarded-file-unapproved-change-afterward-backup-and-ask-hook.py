@@ -1,18 +1,28 @@
 #!/usr/bin/env python3
 """After every tool call, notice a guarded file changed without the user's approval, keep
-every version, and tell the agent to ask him.
+every version, put back the approved version where that is safe, and otherwise tell the agent
+to ask him.
 
 Registered under PostToolUse and PostToolUseFailure for every tool. A guarded file is a file
 instruction-file-guard.py protects, plus ~/.claude/CLAUDE.md and ~/.claude/settings.json. At
 each run the hook compares each checked file's stat data with what it stored at its previous
 run, hashes only a file whose stat data differs, logs each new version in this machine's
-directory of the log-store kind guarded-file-versions-and-approvals/, copies it there unless
-the file's checkout is on a branch whose HEAD commit holds it, and, when the version is not in its path's
-approved set, tells the agent to show the user the change and run this program with --approve
-or --restore. The change stays in place while he is asked. A version with no copy is read
+directory of the log-store kind guarded-file-versions-and-approvals/, and copies it there unless
+the file's checkout is on a branch whose HEAD commit holds it. A version with no copy is read
 back from git; a file outside every checkout, such as ~/.claude/CLAUDE.md, is always copied.
 
+Registered under PreToolUse too, where it only records which of the checkout's guarded files
+still match the stat data its previous run stored, so the run after the call knows the call
+itself changed them. When a new version is not in its path's approved set, the hook puts back
+the approved version only when this tool call made the change in the agent-session's own
+checkout, the version before the call was approved, and nothing else forbids it (git's own
+work, a pushed commit, Claude Code's own settings.local.json); it
+then tells the agent how to reapply the kept version with the user's approval. Otherwise the
+change stays in place and the hook tells the agent why, and to show the user the change and run
+this program with --approve or --restore.
+
     python3 <this file> --approve <path> <hash> [<path> <hash> ...]
+    python3 <this file> --approve-and-reapply-kept-version <path> <hash> [<path> <hash> ...]
     python3 <this file> --restore <path> <hash> [<path> <hash> ...]
 
 Design and tests: docs/issues/1268-catch-a-guarded-file-changed-without-the-user.md.
@@ -104,12 +114,75 @@ EXIT_REFUSED = 1
 EXIT_BAD_INVOCATION = 64
 
 ASK_HEADER = (
-    "A guarded file changed, and the user has not approved the new version. The change stays in "
-    "place while you ask him; this hook has kept a copy of the version.")
-ASK_FILE = "{path}, version {key}. Its change against the newest approved version:\n{diff}"
+    "A guarded file changed, and the user has not approved the new version. This hook did not "
+    "put back the approved version, for the reason given under each file below. The change "
+    "stays in place while you ask him; this hook has kept a copy of the version.")
+ASK_FILE = ("{path}, version {key}. Not put back because {reason}.\n"
+            "Its change against the newest approved version:\n{diff}")
+NOT_PUT_BACK_NO_EARLIER_VERSION = (
+    "this hook saw no earlier version of the file, so there is no approved version to put back")
+NOT_PUT_BACK_EARLIER_UNAPPROVED = (
+    "the version this hook saw before, {key}, was not approved either, so putting it back would "
+    "not restore an approved version")
+NOT_PUT_BACK_EDIT_ON_UNAPPROVED = (
+    "the Edit or Write changed a version the user had not approved, and the instruction-file "
+    "guard's approval covers only that call's change, not the unapproved text already in the file")
+NOT_PUT_BACK_NOT_THIS_CALL = (
+    "this hook cannot show that this tool call made the change: the file changed before the "
+    "call, or the hook has no record of the file from just before the call, so the change may "
+    "be another process's, such as the user's editor or another agent-session")
+NOT_PUT_BACK_OUTSIDE_CHECKOUT = (
+    "the file is outside your agent-session's own checkout, where other agent-sessions and the "
+    "user also write")
+NOT_PUT_BACK_CLAUDE_CODE_SETTINGS = (
+    "Claude Code writes this file itself when the user grants a permission or changes a setting, "
+    "so the change may be his")
+NOT_PUT_BACK_GIT_WORK = (
+    "git's own work (a switch, reset, merge, pull, rebase, cherry-pick or revert) moved HEAD "
+    "since this hook's previous run, and putting the file back could undo that work")
+NOT_PUT_BACK_PUSHED = (
+    "the unapproved version is in a commit that is already pushed, which putting back the file "
+    "would not undo")
+NOT_PUT_BACK_COPY_MISSING = (
+    "the approved version {copy} is in neither the store's copies of the file nor the git "
+    "repository of its checkout")
+NOT_PUT_BACK_FAILED = "putting back the approved version failed: {error}"
+NOT_PUT_BACK_ALREADY_ASKED = (
+    "an earlier run asked about this version in an agent-session that has since ended, and "
+    "only a version this run sees change is put back")
+RESTORED_HEADER = (
+    "This tool call changed a guarded file without the user's approval, by a route the "
+    "instruction-file guard does not check, such as a shell command. This hook put back the "
+    "approved version, and kept the unapproved version in the store, so nothing is lost.")
+RESTORED_FILE = (
+    "{path}: put back the approved version {approved}. The unapproved version {key} is kept at "
+    "{copy}.")
+RESTORED_DELETION = "{path}: undid the deletion, putting back the approved version {approved}."
+KEPT_IN_HEAD_COMMIT = "the commit HEAD points to in your checkout's git repository"
+RESTORED_FILE_IN_COMMIT = (
+    "The unapproved version of {path} is also in a commit that is not pushed yet. If the change "
+    "is no longer wanted, also run: git commit --only -m \"Put back the approved {name}\" -- "
+    "{path}")
+RESTORED_INSTRUCTIONS = (
+    "If you are a subagent, stop: make no further edit, report this message to the agent that "
+    "dispatched you, and do none of the steps below.\n"
+    "If the change is still wanted and the user has already approved it, write his exact "
+    "approval words into {marker} at the root of your agent-session's own checkout with the "
+    "Write tool, then run once: python3 {program} --approve-and-reapply-kept-version {pairs}\n"
+    "If the change is still wanted and the user has not approved it, ask him whether he "
+    "approves it: quote the difference between the kept version and the file, and give your "
+    "recommendation and why. If he approves, write his words into {marker} and run the "
+    "--approve-and-reapply-kept-version command given above.\n"
+    "If the change is an obvious fix under CLAUDE.md's standing approval, write the obvious-fix "
+    "marker file the instruction-file guard's refusal describes, then make the change again "
+    "with the Edit or Write tool.\n"
+    "If the change is no longer wanted, do nothing more, apart from any git commit command "
+    "given above.\n"
+    "From now on, change a guarded file only with the Edit or Write tool, never with a shell "
+    "command.")
 ASK_INSTRUCTIONS = (
-    "If you are a subagent, report the change to the agent that dispatched you instead of "
-    "asking the user, and do none of the steps below.\n"
+    "If you are a subagent, stop: make no further edit, report the change to the agent that "
+    "dispatched you instead of asking the user, and do none of the steps below.\n"
     "Show the user each change above and ask him whether he approves it.\n"
     "If he approves, write his words into {marker} at the top of your session's checkout, then "
     "run once: python3 {program} --approve {pairs}\n"
@@ -120,8 +193,8 @@ ASK_INSTRUCTIONS = (
     "git commit --only -m \"Put back the approved <file name>\" -- <path>")
 REMINDER = (
     "Reminder: {path} still holds version {key}, which the user has not approved.\n"
-    "If you are a subagent, report the change to the agent that dispatched you instead of "
-    "asking the user.\n"
+    "If you are a subagent, stop: make no further edit, and report the change to the agent "
+    "that dispatched you instead of asking the user.\n"
     "Otherwise show him the change and ask him, as this hook's earlier message said.\n"
     "If he approves, write his words into {marker} at the top of your session's checkout, then "
     "run: python3 {program} --approve {path} {key}\n"
@@ -750,19 +823,47 @@ def diff_text(before: bytes, after: bytes, path: str):
 class Check:
     """What one run found about one checked file, to be settled in the store."""
 
-    def __init__(self, path, data, key, copy_hash, how="", in_git=False):
+    def __init__(self, path, data, key, copy_hash, how="", previous=None, not_restorable="",
+                 in_commit=False, in_git=False):
         self.path, self.data, self.key, self.copy_hash, self.how = path, data, key, copy_hash, how
         self.in_git = in_git
+        # (key, copy hash) of the version the previous run saw, or None when it saw none.
+        self.previous = previous
+        # Why the approved version must not be put back, found without the store; "" when
+        # nothing outside the store forbids it.
+        self.not_restorable = not_restorable
+        # The version is in HEAD's commit, which no remote-tracking branch contains.
+        self.in_commit = in_commit
+
+
+def put_back_previous(store, check, approved):
+    """Put back the approved version the previous run saw and return "", or return why not."""
+    if check.previous is None or check.previous[0] == DELETED:
+        return NOT_PUT_BACK_NO_EARLIER_VERSION
+    if check.previous[0] not in approved:
+        return NOT_PUT_BACK_EARLIER_UNAPPROVED.format(key=check.previous[0])
+    if check.not_restorable:
+        return check.not_restorable
+    content = store.kept_version(check.path, check.previous[1])
+    if content is None:
+        return NOT_PUT_BACK_COPY_MISSING.format(copy=check.previous[1])
+    try:
+        put_back(check.path, content)
+    except OSError as error:
+        return NOT_PUT_BACK_FAILED.format(error=error)
+    return ""
 
 
 def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, quiet):
-    """Everything that touches the store. Returns (asks, reminders, settled paths).
+    """Everything that touches the store. Returns (asks, reminders, settled paths, restored).
 
     approvals: [(path, key, how, rule)] git's own work and renames, recorded before the checks.
     checks: the files whose content changed, each copied unless its checkout's branch HEAD
     holds it.
     unsettled_unchanged: [(path, key)] files left unsettled by an earlier run. quiet: a rebase,
-    merge, cherry-pick or revert is stopped, so every version is copied and nothing is asked."""
+    merge, cherry-pick or revert is stopped, so every version is copied and nothing is asked.
+    restored: [(path, key, copy hash, approved key, approved copy hash, in commit)] the files
+    whose approved version this run put back."""
     for path, key, how, rule in approvals:
         approved = store.approved(path)
         if key in approved:
@@ -772,12 +873,18 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
                 continue
         store.approve(path, key)
         log_line(store, path, "approved", session, owner, key, how)
-    asks, reminders, settled = [], [], {}
+    asks, reminders, settled, restored = [], [], {}, []
     for check in checks:
         if check.key != DELETED and not check.in_git:
             store.copy(check.path, check.copy_hash, check.data)
         log = store.log(check.path)
         approved = store.approved(check.path)
+        reason = ""
+        if check.how == HOW_EDIT and check.previous is not None \
+                and check.previous[0] not in approved:
+            # The guard approved the Edit's change, not the unapproved text it was made on.
+            check.how = ""
+            reason = NOT_PUT_BACK_EDIT_ON_UNAPPROVED
         new_approval = ""
         if check.key not in approved and check.how:
             store.approve(check.path, check.key)
@@ -790,11 +897,18 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
         settled[check.path] = False
         if quiet:
             continue
+        reason = reason or put_back_previous(store, check, approved)
+        if not reason:
+            log_line(store, check.path, "restored", session, owner, check.key, check.previous[0])
+            settled[check.path] = True
+            restored.append((check.path, check.key, check.copy_hash, *check.previous,
+                             check.in_commit))
+            continue
         asking = asking_session(log, check.key)
         if asking is None or asking[0] == session or not owner_alive(asking[1]):
             if asking is not None and asking[0] != session:
                 log_line(store, check.path, "asking", session, owner, check.key)
-            asks.append(ask_entry(store, check, log))
+            asks.append(ask_entry(store, check, log, reason))
         elif not was_reminded(log, check.key, session):
             log_line(store, check.path, "reminded", session, check.key)
             reminders.append((check.path, check.key))
@@ -811,13 +925,14 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
         if asking is not None and asking[0] != session and not owner_alive(asking[1]):
             data = b"" if key == DELETED else read_file(path)
             log_line(store, path, "asking", session, owner, key)
-            asks.append(ask_entry(store, Check(path, data, key, copy_of(log, key)), log))
+            asks.append(ask_entry(store, Check(path, data, key, copy_of(log, key)), log,
+                                  NOT_PUT_BACK_ALREADY_ASKED))
         elif asking is None or asking[0] == session:
             reminders.append((path, key))
         elif not was_reminded(log, key, session):
             log_line(store, path, "reminded", session, key)
             reminders.append((path, key))
-    return asks, reminders, settled
+    return asks, reminders, settled, restored
 
 
 def read_file(path):
@@ -826,14 +941,77 @@ def read_file(path):
     return Path(path).read_bytes()
 
 
-def ask_entry(store, check, log):
+def ask_entry(store, check, log, reason):
     newest = newest_approved(store, check.path, log, check.key)
     if newest is None or newest[1] == DELETED:
         before = b""
     else:
         before = store.kept_version(check.path, newest[1]) or b""
     after = b"" if check.key == DELETED else check.data
-    return check.path, check.key, diff_text(before, after, check.path)
+    return check.path, check.key, diff_text(before, after, check.path), reason
+
+
+def before_call_record_path(git_directory: Path, tool_use_id: str):
+    # Claude Code's tool_use_id, such as toolu_01AbC..., is letters, digits and underscores.
+    return git_directory / f"{HOOK_NAME}-files-unchanged-before-tool-call-{tool_use_id}.json"
+
+
+def record_before_tool_call(payload):
+    """At PreToolUse: record which guarded files of the checkout still match the stat data
+    the previous run stored, so the run after the call knows the call itself changed them."""
+    tool_use_id = payload.get("tool_use_id")
+    cwd = Path(payload.get("cwd") or os.getcwd())
+    if not tool_use_id or not cwd.is_dir():
+        return
+    try:
+        git_directory = Path(git_text(cwd, "rev-parse", "--absolute-git-dir").strip())
+    except RuntimeError:
+        return  # in no checkout, where nothing is put back
+    state = read_state(git_directory / STATE_FILE_NAME)
+    if state is None:
+        return
+    unchanged = [path for path, value in state["files"].items()
+                 if value[4] != DELETED and stat_data(path) == value[:4]]
+    write_state(before_call_record_path(git_directory, tool_use_id), {"unchanged": unchanged})
+
+
+def take_before_call_record(git_directory: Path, tool_use_id):
+    """The paths the record made before this tool call names as unchanged; the record is
+    removed. An empty set when there is none, so nothing is put back."""
+    if not tool_use_id:
+        return set()
+    path = before_call_record_path(git_directory, tool_use_id)
+    record = read_state(path)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    return set(record.get("unchanged", [])) if isinstance(record, dict) else set()
+
+
+def version_in_head_commit(checkout: Path, path: str, copy_hash: str):
+    relative = os.path.relpath(path, checkout)
+    tree = subprocess.run(["git", "-C", str(checkout), "ls-tree", "HEAD", "--", relative],
+                          capture_output=True, text=True, check=False).stdout.split()
+    return len(tree) >= 3 and tree[2] == copy_hash
+
+
+def restore_obstacle(path, copy_hash, checkout, unchanged_before_call, git_work):
+    """(why putting back path's approved version is not safe, found without the store, or "";
+    whether the new version is in HEAD's commit, which is not pushed)."""
+    if checkout is None:
+        return NOT_PUT_BACK_OUTSIDE_CHECKOUT, False
+    if path.endswith("/.claude/settings.local.json"):
+        return NOT_PUT_BACK_CLAUDE_CODE_SETTINGS, False
+    if path not in unchanged_before_call:
+        return NOT_PUT_BACK_NOT_THIS_CALL, False
+    if git_work:
+        return NOT_PUT_BACK_GIT_WORK, False
+    if copy_hash == DELETED or not version_in_head_commit(checkout, path, copy_hash):
+        return "", False
+    if git_text(checkout, "for-each-ref", "--contains", "HEAD", "refs/remotes").strip():
+        return NOT_PUT_BACK_PUSHED, False
+    return "", True
 
 
 def run_with_deadline(function, deadline_seconds):
@@ -939,12 +1117,16 @@ def run_hook(payload):
     session = str(payload.get("session_id") or "unknown-session")
     tool = payload.get("tool_name") or ""
     event = payload.get("hook_event_name") or "PostToolUse"
+    if event == "PreToolUse":
+        record_before_tool_call(payload)
+        return []
     tool_input = payload.get("tool_input") or {}
     written = tool_input.get("file_path") or tool_input.get("notebook_path")
     written = os.path.abspath(written) if written else None
     edit_succeeded = event == "PostToolUse" and tool in FILE_WRITING_TOOLS
     machine = this_machine()
     cwd = Path(payload.get("cwd") or os.getcwd())
+    unchanged_before_call = set()
     groups = []
 
     outside_path = outside_state_path()
@@ -962,6 +1144,7 @@ def run_hook(payload):
         checkout_state = checkout_state or {"files": {}, "reflog": None, "stopped": False}
         decisions = checkout_state.setdefault("guarded", {})
         decisions_before = dict(decisions)
+        unchanged_before_call = take_before_call_record(git_directory, payload.get("tool_use_id"))
         groups.append(("checkout", checkout_path, checkout_state, checkout_files(checkout, decisions),
                        (checkout, git_directory), checkout_stocking))
 
@@ -978,7 +1161,7 @@ def run_hook(payload):
                          if repository else (lambda paths: {}))
         listed_before = set(state["files"])
         changed, unsettled = scan(files, state["files"], hash_function)
-        approvals, quiet, new_position, held = [], False, None, set()
+        approvals, quiet, new_position, held, git_work = [], False, None, set(), False
         if repository is not None:
             checkout, git_directory = repository
             held = versions_head_holds(checkout, [(path, value[3])
@@ -994,8 +1177,14 @@ def run_hook(payload):
                 new_position = state.get("reflog")
             elif window:
                 approvals = git_own_work(checkout, window, state, changed)
+                git_work = bool(state.get("stopped")) or not all(
+                    entry[2].startswith(COMMIT_SUBJECT_PREFIX) for entry in window)
+        obstacles = {path: restore_obstacle(path, value[3], repository and repository[0],
+                                            unchanged_before_call, git_work)
+                     for path, value in changed.items()}
         plans.append([kind, state_path, state, files, changed, unsettled, approvals, quiet,
-                      new_position, stocking, set(state["files"]) != listed_before, held])
+                      new_position, stocking, set(state["files"]) != listed_before, held,
+                      obstacles])
 
     stocking_machine = outside_stocking
     nothing_to_do = all(not plan[4] and not plan[5] and not plan[6] and not plan[9]
@@ -1022,7 +1211,7 @@ def run_hook(payload):
                     log_seen(store, path, session, owner(), key, key, HOW_STOCK)
         for plan in plans:
             (kind, state_path, state, files, changed, unsettled, approvals, quiet, _, stocking, _,
-             held) = plan
+             held, obstacles) = plan
             checks = []
             for path, (now, data, key, copy_hash) in changed.items():
                 how = ""
@@ -1032,7 +1221,10 @@ def run_hook(payload):
                         how = HOW_STOCK
                 elif edit_succeeded and written == path:
                     how = HOW_EDIT
-                checks.append(Check(path, data, key, copy_hash, how, (path, copy_hash) in held))
+                previous = state["files"].get(path)
+                checks.append(Check(path, data, key, copy_hash, how,
+                                    previous and (previous[4], previous[5]), *obstacles[path],
+                                    in_git=(path, copy_hash) in held))
             approvals = approvals + renames(store, changed, state["files"])
             results.append(store_phase(store, session, owner(), checks, unsettled, approvals,
                                        quiet))
@@ -1045,8 +1237,8 @@ def run_hook(payload):
             store=store_directory(machine))
         return [STORE_FAILED.format(reason=str(error).rstrip("."), remedy=remedy)]
 
-    asks, reminders = [], []
-    for plan, (plan_asks, plan_reminders, settled) in zip(plans, results):
+    asks, reminders, restored = [], [], []
+    for plan, (plan_asks, plan_reminders, settled, plan_restored) in zip(plans, results):
         state, changed = plan[2], plan[4]
         for path, (now, _, key, copy_hash) in changed.items():
             if now is None:
@@ -1056,6 +1248,10 @@ def run_hook(payload):
         for path, is_settled in settled.items():
             if path in state["files"]:
                 state["files"][path][6] = is_settled
+        for path, _, _, approved_key, approved_copy, _ in plan_restored:
+            # The file now holds the version put back, so the next run sees no change.
+            state["files"][path] = stat_data(path) + [approved_key, approved_copy, True]
+        restored += plan_restored
         for path in [path for path, value in state["files"].items()
                      if value[4] == DELETED and value[6]]:
             del state["files"][path]
@@ -1066,7 +1262,7 @@ def run_hook(payload):
         write_state(plan[1], state)
         asks += plan_asks
         reminders += plan_reminders
-    return messages(asks, reminders)
+    return messages(asks, reminders, restored, machine)
 
 
 def seat_briefs():
@@ -1118,13 +1314,36 @@ def git_own_work(checkout, window, state, changed):
     return approvals
 
 
-def messages(asks, reminders):
+def kept_copy_citation(machine, path, copy_hash):
+    """Where the store keeps a version, cited as CLAUDE.md asks, which works from both
+    machines."""
+    directory = NED_BOX_STORE.parent / ("ned-box" if machine == "ned-box" else "mac")
+    return f"nedlern@ned-box:{directory}/{path.lstrip('/')}/{copy_hash}"
+
+
+def messages(asks, reminders, restored=(), machine="ned-box"):
     out = []
+    program = str(HOOK_PATH)
+    if restored:
+        files = []
+        for path, key, copy_hash, approved_key, _, in_commit in restored:
+            if key == DELETED:
+                files.append(RESTORED_DELETION.format(path=path, approved=approved_key))
+            else:
+                files.append(RESTORED_FILE.format(
+                    path=path, approved=approved_key, key=key,
+                    # A version HEAD's commit holds may have no copy in the store.
+                    copy=(KEPT_IN_HEAD_COMMIT if in_commit
+                          else kept_copy_citation(machine, path, copy_hash))))
+            if in_commit:
+                files.append(RESTORED_FILE_IN_COMMIT.format(path=path, name=Path(path).name))
+        pairs = " ".join(f"{entry[0]} {entry[1]}" for entry in restored)
+        out.append("\n\n".join([RESTORED_HEADER, "\n".join(files), RESTORED_INSTRUCTIONS.format(
+            marker=APPROVAL_MARKER_NAME, program=program, pairs=pairs)]))
     if asks:
-        program = str(HOOK_PATH)
-        pairs = " ".join(f"{path} {key}" for path, key, _ in asks)
-        files = "\n\n".join(ASK_FILE.format(path=path, key=key, diff=diff)
-                            for path, key, diff in asks)
+        pairs = " ".join(f"{path} {key}" for path, key, _, _ in asks)
+        files = "\n\n".join(ASK_FILE.format(path=path, key=key, reason=reason, diff=diff)
+                            for path, key, diff, reason in asks)
         out.append("\n\n".join([ASK_HEADER, files, ASK_INSTRUCTIONS.format(
             marker=APPROVAL_MARKER_NAME, program=program, pairs=pairs)]))
     for path, key in reminders:
@@ -1153,8 +1372,18 @@ def pairs_from(arguments):
     return [(os.path.abspath(path), key) for path, key in zip(arguments[0::2], arguments[1::2])]
 
 
-def approve(pairs, cwd: Path):
-    """Record the user's yes for each (path, hash), spending the approval marker once."""
+def put_back_by(log, key):
+    """The version this hook put back in place of key, or None when it put none back."""
+    for fields in reversed(log):
+        if fields[0] == "restored" and len(fields) >= 6 and fields[4] == key:
+            return fields[5]
+    return None
+
+
+def approve(pairs, cwd: Path, reapply=False):
+    """Record the user's yes for each (path, hash), spending the approval marker once. With
+    reapply, also put the kept version back in place of the approved version the hook put back
+    when it undid the change."""
     checkout = guard().enclosing_repository_root(cwd)
     if checkout is None:
         raise Refused(f"{cwd} is in no checkout, so there is no {APPROVAL_MARKER_NAME} to read; "
@@ -1169,16 +1398,35 @@ def approve(pairs, cwd: Path):
     fix = " ".join(line.strip() for line in words[len(OBVIOUS_FIX_MARKER_PREFIX):].splitlines()
                    if line.strip()) or "(the marker does not say what)"
     marker_time = os.stat(marker).st_mtime_ns
+    now = {path: current_version(path)[0] for path, _ in pairs}
     for path, key in pairs:
-        now = current_version(path)[0]
-        if now != key:
-            raise Refused(f"{path} no longer holds version {key} but {now}, so the user was not "
-                          "shown this version. Show him the change the hook's latest message "
+        if not reapply and now[path] != key:
+            raise Refused(f"{path} no longer holds version {key} but {now[path]}, so the user was "
+                          "not shown this version. Show him the change the hook's latest message "
                           "gives, and ask him again")
     how = HOW_OBVIOUS_FIX if obvious_fix else HOW_USER
 
     def work(store, end):
         logs = {path: store.log(path) for path, _ in pairs}
+        kept = {}
+        for path, key in pairs if reapply else ():
+            put_back_version = put_back_by(logs[path], key)
+            if put_back_version is None:
+                raise Refused(f"this hook never put back {path} in place of version {key}, so "
+                              "there is no kept version to reapply. If the file holds the "
+                              "version the user approved, run --approve instead")
+            if now[path] != put_back_version:
+                raise Refused(f"{path} no longer holds version {put_back_version}, which this "
+                              f"hook put back, but {now[path]}, so reapplying the kept version "
+                              "would overwrite a later change. Show the user the kept version "
+                              "and the file, and ask him how to combine them")
+            if key == DELETED:
+                continue
+            kept[path] = store.kept_version(path, copy_of(logs[path], key))
+            if kept[path] is None:
+                raise StoreUnreachable(f"the kept version {key} of {path} is in neither the "
+                                       "guarded-file store's copies of that file nor the git "
+                                       "repository of its checkout")
         if obvious_fix:
             for path, key in pairs:
                 seen = first_seen_time(logs[path], key)
@@ -1197,11 +1445,18 @@ def approve(pairs, cwd: Path):
             if key not in store.approved(path):
                 store.approve(path, key)
             log_line(store, path, "approved", "command-line", "", key, how)
+            if reapply and key == DELETED:
+                os.unlink(path)
+            elif reapply:
+                put_back(path, kept[path])
         return True
 
     run_command_work(work)
     loaded("guard_approval_marker", HOOK_PATH.parent / "guard_approval_marker.py") \
         .consume_approval_marker(marker)
+    if reapply:
+        return [f"Approved {path} at version {key} and put that kept version back."
+                for path, key in pairs]
     return [f"Approved {path} at version {key}." for path, key in pairs]
 
 
@@ -1265,10 +1520,7 @@ def restore(pairs):
         checkout = guard().enclosing_repository_root(Path(path).parent)
         if checkout is None or key == DELETED or path in failed:
             continue
-        relative = os.path.relpath(path, checkout)
-        tree = subprocess.run(["git", "-C", str(checkout), "ls-tree", "HEAD", "--", relative],
-                              capture_output=True, text=True, check=False).stdout.split()
-        if len(tree) >= 3 and tree[2] == current[path][1]:
+        if version_in_head_commit(checkout, path, current[path][1]):
             lines.append(f"The declined version is in a commit; run: git commit --only -m "
                          f"\"Put back the approved {Path(path).name}\" -- {path}")
     if failed:
@@ -1302,7 +1554,7 @@ def run_command_work(work):
 
 def main(arguments=None):
     arguments = sys.argv[1:] if arguments is None else arguments
-    if arguments and arguments[0] in ("--approve", "--restore"):
+    if arguments and arguments[0] in ("--approve", "--approve-and-reapply-kept-version", "--restore"):
         mode = arguments[0]
         pairs = pairs_from(arguments[1:])
         if pairs is None:
@@ -1310,7 +1562,8 @@ def main(arguments=None):
                   file=sys.stderr)
             return EXIT_BAD_INVOCATION
         try:
-            lines = approve(pairs, Path.cwd()) if mode == "--approve" else restore(pairs)
+            lines = (restore(pairs) if mode == "--restore" else
+                     approve(pairs, Path.cwd(), reapply=mode == "--approve-and-reapply-kept-version"))
         except RestoreIncomplete as error:
             print("\n".join(error.args[0]))
             print(RESTORE_INCOMPLETE.format(program_name=HOOK_PATH.name), file=sys.stderr)

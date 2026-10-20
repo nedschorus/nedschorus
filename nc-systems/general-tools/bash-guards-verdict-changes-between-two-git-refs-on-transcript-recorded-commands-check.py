@@ -239,8 +239,16 @@ def recorded_command_pairs(transcript_directories):
 
 # ---------------------------------------------------------------- step 2: the guards a checkout has
 
+# PreToolUse hooks that run on a Bash call but give no verdict on the command, so there is
+# nothing to replay: at PreToolUse this hook only records the guarded files' stat data.
+BASH_HOOKS_WITHOUT_A_VERDICT = frozenset({
+    ".claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py",
+})
+
+
 def bash_hook_files(checkout):
-    """Return the repository paths of the PreToolUse hooks that .claude/settings.json runs on a Bash call."""
+    """Return the repository paths of the PreToolUse hooks that .claude/settings.json runs on a Bash
+    call, less those in BASH_HOOKS_WITHOUT_A_VERDICT."""
     settings = json.loads((Path(checkout) / ".claude" / "settings.json").read_text())
     files = set()
     for entry in settings.get("hooks", {}).get("PreToolUse", []):
@@ -253,7 +261,7 @@ def bash_hook_files(checkout):
                 raise ReplayFailed(f"a Bash hook in {checkout}/.claude/settings.json runs "
                                    f"{hook.get('command')!r}, which names no file in the repository")
             files.add(found.group(1))
-    return files
+    return files - BASH_HOOKS_WITHOUT_A_VERDICT
 
 
 def check_guards_match_settings(hooks, replayed, label):
