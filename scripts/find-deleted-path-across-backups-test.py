@@ -17,6 +17,7 @@ AND that the output says what to do about it.
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import re
 import shlex
@@ -113,6 +114,10 @@ class FakeRunner:
             if needle in joined:
                 return answer(argv) if callable(answer) else answer
         return self.default
+
+
+# The rerun command a build_report call passes when no git failure can print it.
+RERUN_NOT_PRINTED = "python3 /rerun-not-printed"
 
 
 def top_level_is_the_directory_given(argv):
@@ -1004,7 +1009,7 @@ skip_local = FakeRunner([("rev-parse --git-dir", (128, "", "not a git repository
 reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts", "",
                               "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
                               skip={"localsnapshots", "box", "timemachine"}, runner=skip_local, on_ned_box=False,
-                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE)
+                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, rerun=RERUN_NOT_PRINTED)
 skip_local_report_lines = [line for r in reports for line in r.lines]
 check("--skip localsnapshots drops the surface and lists no snapshots",
       not any(r.surface == "local snapshots" for r in reports)
@@ -1016,7 +1021,7 @@ order_probe = FakeRunner([LISTS_SNAPSHOTS, MOUNTS_FINE, RELEASES_FINE, ("test -e
 reports = finder.build_report("/private/tmp/x/b.md", "/not-a-repo", "/nonexistent-transcripts", "",
                               "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
                               skip={"box", "timemachine"}, runner=order_probe, on_ned_box=False,
-                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE)
+                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, rerun=RERUN_NOT_PRINTED)
 order_probe_report_lines = [line for r in reports for line in r.lines]
 check("local snapshots are searched first, before git",
       [r.surface for r in reports][:2] == ["local snapshots", "git"], str([r.surface for r in reports]))
@@ -1650,7 +1655,7 @@ skip_box = FakeRunner([("rev-parse --git-dir", (128, "", "not a git repository")
 reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts", "nedlern@ned-box",
                               "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
                               skip={"box", "timemachine"}, runner=skip_box,
-                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE)
+                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, rerun=RERUN_NOT_PRINTED)
 check("--skip box sends nothing over ssh",
       not any(c.startswith("ssh") for c in skip_box.calls), str(skip_box.calls))
 transcripts_report = [r for r in reports if r.surface == "transcripts"][0]
@@ -1667,7 +1672,7 @@ skip_timeshift = FakeRunner([
 reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts", "nedlern@ned-box",
                               "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
                               skip={"timeshift", "timemachine"}, runner=skip_timeshift,
-                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE)
+                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, rerun=RERUN_NOT_PRINTED)
 check("--skip timeshift still greps the box's transcripts",
       sum(1 for c in skip_timeshift.calls if c.startswith("ssh") and ".claude/projects" in c) == 1 and
       not any(r.surface == "timeshift" for r in reports),
@@ -2155,7 +2160,7 @@ with tempfile.TemporaryDirectory() as tmp:
     reports = finder.build_report("docs/drafts/pr-main-process-design.md", "/not-a-repo", "/nonexistent-transcripts",
                                   "nedlern@ned-box", "/mnt/backup/timeshift/snapshots",
                                   finder.DEFAULT_BOX_SEARCH_ROOTS, skip={"localsnapshots", "box", "timemachine"},
-                                  runner=here_skip_box, log_store_root=str(store))
+                                  runner=here_skip_box, log_store_root=str(store), rerun=RERUN_NOT_PRINTED)
     check("--skip box on the machine that holds the store still reads it in place, sending nothing over ssh",
           [r.status for r in reports if r.surface == "log-store"] == [FOUND]
           and not any(c.startswith("ssh") for c in here_skip_box.calls),
@@ -2165,7 +2170,7 @@ skip_log_store = FakeRunner([("rev-parse --git-dir", (128, "", "not a git reposi
 reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts", "nedlern@ned-box",
                               "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
                               skip={"localsnapshots", "logstore", "reflog", "timemachine"}, runner=skip_log_store,
-                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE)
+                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, rerun=RERUN_NOT_PRINTED)
 check("--skip logstore and --skip reflog drop those two surfaces and nothing else",
       [r.surface for r in reports] == ["git", "transcripts", "timeshift"]
       and not any("python3 -c" in c for c in skip_log_store.calls),
@@ -2175,7 +2180,7 @@ order_everything = FakeRunner([("rev-parse --git-dir", (128, "", "not a git repo
 reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts", "nedlern@ned-box",
                               "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
                               skip={"localsnapshots", "timemachine"}, runner=order_everything,
-                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE)
+                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, rerun=RERUN_NOT_PRINTED)
 check("the surfaces run in the docstring's order: the two fast new ones before transcripts and Timeshift",
       [r.surface for r in reports] == ["git", "git reflog", "log-store", "transcripts", "timeshift"],
       str([r.surface for r in reports]))
@@ -2217,7 +2222,7 @@ def run_as_if_on(machine_is_ned_box, wanted, box, runner, snapshot_root=None,
     try:
         return finder.build_report(wanted, "/not-a-repo", str(Path(box, ".claude", "projects")), "nedlern@ned-box",
                                    snapshot_root or str(Path(box, "snapshots")), ("/seat-a",), skip=set(skip),
-                                   runner=runner, log_store_root=log_store_root)
+                                   runner=runner, log_store_root=log_store_root, rerun=RERUN_NOT_PRINTED)
     finally:
         finder.running_on_ned_box = lambda: False
 
@@ -2842,10 +2847,6 @@ check("an absolute path git cannot make repo-relative is searched as that absolu
       code == 3 and "Searching every history this fleet keeps for: /repo/a/b.md" in text
       and "unable to read index" in main_errors.getvalue(),
       "exit=%s\n%s\n%s" % (code, text, main_errors.getvalue()))
-check("... and the next steps name the command to run again, with every argument it was given",
-      "In any other case, run python3 scripts/find-deleted-path-across-backups.py /repo/a/b.md --repo /repo "
-      "--transcripts-dir /nonexistent --box-ssh-host '' --skip timemachine --skip localsnapshots once more."
-      in main_errors.getvalue(), main_errors.getvalue())
 check("... and the docstring's exit-code block promises exactly that",
       "3 when" in finder.__doc__ and "could NOT be searched" in finder.__doc__)
 
@@ -2935,7 +2936,7 @@ recording = RecordsWhatWasAnnouncedAtEachCall([("rev-parse --git-dir", (128, "",
 reports = finder.build_report("a/b.md", "/not-a-repo", "/nonexistent-transcripts", "nedlern@ned-box",
                               "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
                               skip={"localsnapshots", "timemachine"}, runner=recording,
-                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, on_surface_done=announced.append)
+                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, on_surface_done=announced.append, rerun=RERUN_NOT_PRINTED)
 timeshift_call = [seen for joined, seen in recording.announced_at_call if "timeshift/snapshots" in joined]
 check("each surface is handed on before the next one starts searching",
       timeshift_call == [["git", "git reflog", "log-store", "transcripts"]]
@@ -2958,7 +2959,7 @@ code, text = run_main(streamed_args, FakeRunner(completed_table))
 reports = finder.build_report("md-review-records/x/dispositions.md", "/repo", "/nonexistent", "nedlern@ned-box",
                               "/mnt/backup/timeshift/snapshots", finder.DEFAULT_BOX_SEARCH_ROOTS,
                               skip={"localsnapshots", "timemachine"}, runner=FakeRunner(completed_table),
-                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE)
+                              log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, rerun=RERUN_NOT_PRINTED)
 check("a run that completes prints exactly the report it printed before streaming, summary last",
       text == finder.render("md-review-records/x/dispositions.md", reports) + "\n"
       and text.rstrip().splitlines()[-1].startswith("Could NOT search:"),
@@ -3278,26 +3279,18 @@ deletion_lookup_fails = FakeRunner([("rev-parse --show-toplevel", top_level_is_t
 spoken_errors = io.StringIO()
 with contextlib.redirect_stderr(spoken_errors):
     announced = finder.announce_root_password_wall_by_speech(
-        "docs/a/b.md", missed + [tm_wall_report()], "/repo", (), deletion_lookup_fails)
-check("condition 3 — a deletion lookup git fails speaks nothing, and says so with git's words",
-      announced is None and not any(c.startswith("say") for c in deletion_lookup_fails.calls)
-      and "bad object refs/heads/gone" in spoken_errors.getvalue(),
-      "%r %s %r" % (announced, deletion_lookup_fails.calls, spoken_errors.getvalue()))
-given_errors = io.StringIO()
-with contextlib.redirect_stderr(given_errors):
-    finder.announce_root_password_wall_by_speech(
         "docs/a/b.md", missed + [tm_wall_report()], "/repo", (), deletion_lookup_fails, "python3 RUN-AS-GIVEN")
-check("condition 3 — ... and, given the run's command, the next steps name that command",
-      "In any other case, run python3 RUN-AS-GIVEN once more." in given_errors.getvalue(), given_errors.getvalue())
-check("condition 3 — ... and, called without the run's command, the next steps name a search for the same path",
-      "In any other case, run python3 scripts/find-deleted-path-across-backups.py docs/a/b.md once more."
-      in spoken_errors.getvalue(), spoken_errors.getvalue())
+check("condition 3 — a deletion lookup git fails speaks nothing, and says so with git's words and the run's command",
+      announced is None and not any(c.startswith("say") for c in deletion_lookup_fails.calls)
+      and "bad object refs/heads/gone" in spoken_errors.getvalue()
+      and "In any other case, run python3 RUN-AS-GIVEN once more." in spoken_errors.getvalue(),
+      "%r %s %r" % (announced, deletion_lookup_fails.calls, spoken_errors.getvalue()))
 no_repository = FakeRunner([("rev-parse --show-toplevel", (128, "", "fatal: not a git repository\n")),
                             DELETED_2026_08_13_NOON])
 spoken_errors = io.StringIO()
 with contextlib.redirect_stderr(spoken_errors):
     announced = finder.announce_root_password_wall_by_speech(
-        "docs/a/b.md", missed + [tm_wall_report()], "/not-a-repo", (), no_repository)
+        "docs/a/b.md", missed + [tm_wall_report()], "/not-a-repo", (), no_repository, RERUN_NOT_PRINTED)
 check("condition 3 — outside a repository there is no deletion commit: nothing is spoken, and no failure printed",
       announced is None and spoken_errors.getvalue() == "" and not any(" log " in c for c in no_repository.calls),
       "%r %s %r" % (announced, no_repository.calls, spoken_errors.getvalue()))
@@ -3332,7 +3325,7 @@ SPEAKS = [
 
 speaking_runner = FakeRunner(SPEAKS)
 finder.build_report("docs/a/b.md", "/repo", "/nonexistent", "", "/snap", (),
-                    log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, skip={"localsnapshots", "transcripts", "box"}, runner=speaking_runner)
+                    log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, skip={"localsnapshots", "transcripts", "box"}, runner=speaking_runner, rerun=RERUN_NOT_PRINTED)
 said = [c for c in speaking_runner.calls if c.startswith("say ")]
 check("a whole run that hits the wall speaks, once, without an agent in between",
       len(said) == 1 and "b.md" in said[0] and finder.SPOKEN_TOOL_NAME in said[0],
@@ -3343,7 +3336,7 @@ silent_runner = FakeRunner(SPEAKS + [("sudo mount_apfs", (0, "", "")),
                                      (TM_FIND, (0, "", ""))])
 finder.build_report("docs/a/b.md", "/repo", "/nonexistent", "", "/snap", (),
                     log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, skip={"localsnapshots", "transcripts", "box"}, runner=silent_runner,
-                    prompt_for_root=True)
+                    prompt_for_root=True, rerun=RERUN_NOT_PRINTED)
 check("--prompt-for-root never speaks: the person is already at the terminal",
       not any(c.startswith("say ") for c in silent_runner.calls), str(silent_runner.calls))
 
@@ -3392,7 +3385,7 @@ rule_installed_run = FakeRunner(RULE_INSTALLED + [
     DELETED_2026_08_13_NOON,
 ])
 finder.build_report("docs/a/b.md", "/repo", "/nonexistent", "", "/snap", (),
-                    log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, skip={"localsnapshots", "transcripts", "box"}, runner=rule_installed_run)
+                    log_store_root=NO_LOG_STORE_ON_THIS_MACHINE, skip={"localsnapshots", "transcripts", "box"}, runner=rule_installed_run, rerun=RERUN_NOT_PRINTED)
 check("with the rule installed nothing is spoken: the wall was never reached",
       not any(c.startswith("say ") for c in rule_installed_run.calls), str(rule_installed_run.calls))
 
@@ -4165,6 +4158,68 @@ with tempfile.TemporaryDirectory() as tmp:
     code, text = run_main([finder.git_blob_id_of(b"unseen\n"), "--repo", str(repo), "--log-store-root",
                            str(log_store), "--box-ssh-host", "", "--skip", "timemachine"], runner)
     check("blob id: a blob neither git nor the hook's log knows exits 1", code == 1, "exit=%s\n%s" % (code, text))
+
+
+# --------------------------------------------------------------------------
+# The rerun command in both git-failure messages, from a real run of the
+# program by its absolute path in another directory. Stand-in commands on
+# PATH answer from a table: git fails inside the repository, and Time
+# Machine refuses the mount for want of a password, so the spoken
+# announcement's message prints too.
+# --------------------------------------------------------------------------
+
+STAND_IN_COMMAND = """#!/usr/bin/env python3
+import json, os, sys
+joined = " ".join([os.path.basename(sys.argv[0])] + sys.argv[1:])
+with open(os.environ["STAND_IN_CALLS"], "a") as calls:
+    calls.write(joined + "\\n")
+for needle, (code, out, err) in json.load(open(os.environ["STAND_IN_TABLE"])):
+    if needle in joined:
+        sys.stdout.write(out)
+        sys.stderr.write(err)
+        sys.exit(code)
+sys.exit(1)
+"""
+
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp).resolve()
+    stand_ins, elsewhere, repo = tmp / "bin", tmp / "elsewhere", tmp / "repo"
+    for directory in (stand_ins, elsewhere, repo):
+        directory.mkdir()
+    for name in ("git", "tmutil", "diskutil", "sudo", "mkdir", "say"):
+        (stand_ins / name).write_text(STAND_IN_COMMAND)
+        (stand_ins / name).chmod(0o755)
+    table = tmp / "table.json"
+    table.write_text(json.dumps([
+        ["git -C %s rev-parse --git-dir" % repo, [0, ".git\n", ""]],
+        ["rev-parse --show-toplevel", [128, "", "fatal: unable to read index\n"]],
+        ["tmutil destinationinfo", list(DESTINATION_INFO)],
+        ["diskutil info", list(DISKUTIL_MOUNTED)],
+        ["diskutil apfs listSnapshots", list(SNAPSHOT_LIST)],
+        ["sudo -n true", [1, "", "sudo: a password is required\n"]],
+        ["sudo -n mount_apfs", [1, "", "sudo: a password is required\n"]],
+        ["mkdir -p", [0, "", ""]],
+    ]))
+    calls = tmp / "calls.txt"
+    program = str(Path(finder.__file__).resolve())
+    arguments = [str(repo / "a" / "b.md"), "--repo", str(repo), "--found-copies-root", str(tmp / "found"),
+                 "--skip", "box", "--skip", "localsnapshots", "--skip", "transcripts", "--skip", "logstore"]
+    rerun_line = "In any other case, run %s once more." % shlex.join(["python3", program] + arguments)
+    checkout = str(Path(program).parents[1])
+    for how, typed, directory in (("by absolute path from another directory", program, str(elsewhere)),
+                                  ("by a path relative to its checkout", os.path.relpath(program, checkout),
+                                   checkout)):
+        completed = subprocess.run(
+            [sys.executable, typed] + arguments, cwd=directory, capture_output=True, text=True,
+            env=dict(os.environ, PATH="%s%s%s" % (stand_ins, os.pathsep, os.environ["PATH"]),
+                     STAND_IN_TABLE=str(table), STAND_IN_CALLS=str(calls)))
+        check("a run %s prints both git-failure messages" % how,
+              "git could not find the top level of the repository at %s" % repo in completed.stderr
+              and "did not speak its announcement" in completed.stderr, completed.stderr + completed.stdout)
+        check("... and each names the program's absolute path, with every argument, as the command to rerun",
+              completed.stderr.count(rerun_line) == 2, "%r\n%s" % (rerun_line, completed.stderr))
+    check("... and the password announcement is never spoken",
+          not any(line.startswith("say ") for line in calls.read_text().splitlines()), calls.read_text())
 
 print()
 if failures:

@@ -2296,12 +2296,12 @@ def git_failure_next_steps(rerun):
             % (rerun, PROGRAM_PATH, rerun, rerun, PROGRAM_PATH))
 
 
-def rerun_command(program, arguments):
-    """The command line that runs program again with arguments, as a shell would take it."""
-    return shlex.join(["python3", program] + list(arguments))
+def rerun_command(arguments):
+    """The command line that runs this program again with arguments, from any directory."""
+    return shlex.join(["python3", os.path.abspath(__file__)] + list(arguments))
 
 
-def announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner, rerun=None):
+def announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner, rerun):
     """Speak and return the password request, or return None."""
     # Wait for speech to finish so script exit does not orphan the announcement.
     try:
@@ -2314,7 +2314,7 @@ def announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner, r
               "so %s could not check.\n"
               "git's failure: %s\n%s"
               % (THIS_SCRIPT_NAME, THIS_SCRIPT_NAME, wanted, THIS_SCRIPT_NAME, failure,
-                 git_failure_next_steps(rerun or rerun_command(PROGRAM_PATH, [wanted]))),
+                 git_failure_next_steps(rerun)),
               file=sys.stderr, flush=True)
         return None
     if sentence is None:
@@ -2377,7 +2377,7 @@ def _combine(statuses):
 
 def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, search_roots, skip=(),
                  runner=run_command, prompt_for_root=False, log_store_root=DEFAULT_LOG_STORE_ROOT,
-                 on_surface_done=None, on_ned_box=None, rerun=None):
+                 on_surface_done=None, on_ned_box=None, *, rerun):
     if on_ned_box is None:
         on_ned_box = running_on_ned_box()
     reports = []
@@ -2514,7 +2514,7 @@ def main(argv=None, runner=run_command):
                              "password in this terminal, instead of printing the command. Only ever "
                              "pass this by hand: a hook has no terminal to answer a prompt in")
     args = parser.parse_args(argv)
-    rerun = rerun_command(sys.argv[0], sys.argv[1:]) if argv is None else rerun_command(PROGRAM_PATH, argv)
+    rerun = rerun_command(sys.argv[1:] if argv is None else argv)
 
     use_found_copies_folder(FoundCopiesFolder(args.found_copies_root))
     if is_git_blob_id(args.path):
