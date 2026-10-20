@@ -13,7 +13,7 @@ Ask these questions in order. Question 2 can lead on to question 3; otherwise st
 3. **Can a check see the wrong act only after it happens?** Then detect it, tell the agent, and have it corrected: detect-inform-correct.
 4. **Does the agent need to know something at one moment, with nothing wrong yet?** Then deliver it at that moment: a skill whose description triggers it, the next step printed by the program the agent is running, or a reminder hook on the act.
 5. **Is it judgment no check can make?** If another agent can judge it, a review by another agent; if only the user can decide it, an approval-walk.
-6. **Only if none fits:** a line in the seat-brief when only one agent-seat does that work, in the glossary when it is what a word means, or, last of all, in CLAUDE.md. For a rule that several agent-seats need but not every agent, ask the user where it goes. Text that is loaded at the start of an agent-session is easily ignored by the time it applies.
+6. **Only if none fits:** a line in the seat-brief when only one agent-seat does that work, in the glossary when it is what a word means, or, last of all, in CLAUDE.md or the user's own `~/.claude/CLAUDE.md`. For a rule that several agent-seats need but not every agent, ask the user where it goes. Text that is loaded at the start of an agent-session is easily ignored by the time it applies.
 
 A hook should speak only in the case it can recognise exactly. A hook that speaks on most turns is ignored, and costs context.
 
@@ -84,4 +84,4 @@ A hook should speak only in the case it can recognise exactly. A hook that speak
 - *Pending a user-ruling:* a hook that reminds an agent to run macOS `say` when it needs the user's attention; today that rule is only a line in his `~/.claude/CLAUDE.md`.
 - *Pending a user-ruling:* a store that recalls lessons by subject: GHI [Save each lesson where agents meet it at the moment it applies, and decide whether a store that recalls lessons by subject is worth building](https://github.com/nedschorus/nedschorus/issues/1349).
 
-**Checked against:** commit [ae70c3c430ada1ffb2580590ab10f8b575dfbdbd](https://github.com/nedschorus/nedschorus/commit/ae70c3c430ada1ffb2580590ab10f8b575dfbdbd)
+**Checked against:** commit [ce539455629470f01b6d247b20c47bb058c3a221](https://github.com/nedschorus/nedschorus/commit/ce539455629470f01b6d247b20c47bb058c3a221)

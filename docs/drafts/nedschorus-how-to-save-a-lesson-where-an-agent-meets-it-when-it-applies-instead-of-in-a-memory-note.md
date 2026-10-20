@@ -46,4 +46,4 @@ The user tells an agent: "I can only deal with these one at a time." The lesson:
 
 A store would hold each instruction with a trigger, such as a tool name and a pattern on the command, the file path or the reply, and one hook would deliver an instruction when its trigger matches. It is not built. Of the eight lessons studied when the store was considered, every instruction but one had a place in text the agent already reads, so a store would add a second place to look and little else. GHI [Save each lesson where agents meet it at the moment it applies, and decide whether a store that recalls lessons by subject is worth building](https://github.com/nedschorus/nedschorus/issues/1349) holds the case for and against, and what would reopen the question.
 
-**Checked against:** commit [ae70c3c430ada1ffb2580590ab10f8b575dfbdbd](https://github.com/nedschorus/nedschorus/commit/ae70c3c430ada1ffb2580590ab10f8b575dfbdbd)
+**Checked against:** commit [ce539455629470f01b6d247b20c47bb058c3a221](https://github.com/nedschorus/nedschorus/commit/ce539455629470f01b6d247b20c47bb058c3a221)
