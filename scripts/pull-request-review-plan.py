@@ -4,8 +4,9 @@
 Rule 1: tiers follow content. Tests, fenced Markdown code, and Python changes
 limited to docstrings, comments and string constants get codex-review-and-head-tests-tier.
 Python behaviour changes and other code get claude-and-codex-review-and-head-tests-tier. Prose gets
-no-reviewer-tier. Settings, Bash guards and registered hooks always get a full
-reviewer; all of .claude/hooks/ does too, including test files there.
+no-reviewer-tier. Settings, Bash guards and registered hooks always get
+claude-and-codex-review-and-head-tests-tier; all of .claude/hooks/ does too,
+including test files there.
 
 Rule 2: a fix round is reviewed by its new commits alone, at the tier those
 commits need, and the seat runs the round's deciding check again on the new
@@ -325,18 +326,18 @@ def registered_hook_paths_at_revision(repository, revision):
 
 def hook_path_rule_reason(path, registered_paths):
     if path.startswith(".claude/hooks/"):
-        return f"{path} is under .claude/hooks/; every file there always gets a full reviewer"
+        return f"{path} is under .claude/hooks/; every file there always gets claude-and-codex-review-and-head-tests-tier"
     if path.startswith("scripts/") and path.count("/") == 1 and path.endswith("guard-hook.py"):
-        return f"{path} is a Bash guard; a change to it always gets a full reviewer"
+        return f"{path} is a Bash guard; a change to it always gets claude-and-codex-review-and-head-tests-tier"
     if path in registered_paths:
-        return f"{path} is registered as a hook in .claude/settings.json; a change to it always gets a full reviewer"
+        return f"{path} is registered as a hook in .claude/settings.json; a change to it always gets claude-and-codex-review-and-head-tests-tier"
     return None
 
 
 def classify_changed_file_into_class_tier_and_reason(repository, old_revision, new_revision,
                                                       path, status, registered_paths):
     if path == ".claude/settings.json":
-        return ("settings", "claude-and-codex-review-and-head-tests-tier", ".claude/settings.json registers the hooks; a change to it always gets a full reviewer")
+        return ("settings", "claude-and-codex-review-and-head-tests-tier", ".claude/settings.json registers the hooks; a change to it always gets claude-and-codex-review-and-head-tests-tier")
     hook_reason = hook_path_rule_reason(path, registered_paths)
     if hook_reason:
         return "hook", "claude-and-codex-review-and-head-tests-tier", hook_reason
