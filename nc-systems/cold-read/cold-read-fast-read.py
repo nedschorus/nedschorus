@@ -159,6 +159,11 @@ _record_names_spec = importlib.util.spec_from_file_location(
     pathlib.Path(__file__).with_name("cold-read-record-names.py"))
 record_names = importlib.util.module_from_spec(_record_names_spec)
 _record_names_spec.loader.exec_module(record_names)
+# Loaded only for LOG_STORE_RECORDS_DESTINATION, where a read's record lands.
+_record_shipper_spec = importlib.util.spec_from_file_location(
+    "cold_read_record_ship", RECORD_SHIPPER)
+record_shipper = importlib.util.module_from_spec(_record_shipper_spec)
+_record_shipper_spec.loader.exec_module(record_shipper)
 _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
     "git_redirecting_environment_variables_removal_common",
     REPO_ROOT / "nc-systems" / "general-tools"
@@ -275,6 +280,10 @@ NED_BOX_SSH_TARGET = "nedlern@ned-box"
 # BatchMode: a password prompt would hang a read no one is typing into.
 SSH_OPTIONS = ("-o", "BatchMode=yes", "-o", "ConnectTimeout=10")
 SSH_EXIT_CONNECTION_FAILED = 255
+# Each attempt of the read on ned-box is bounded by the --print-timeout of
+# 30m that nc-systems/cold-read/cold-read-agy-cell.py gives agy; the five
+# minutes more cover git, the shipper and the connect.
+COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS = FAST_READ_ATTEMPTS * 30 * 60 + 5 * 60
 
 
 class CheckoutRootUnreadable(RuntimeError):
@@ -307,6 +316,24 @@ def text_with_ned_box_paths_rewritten_as_mac_mount_paths(text: str) -> str:
                   lambda _: MAC_MOUNT_OF_NED_BOX_HOME + "/", text)
 
 
+def cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(ned_box_target: str) -> str:
+    """Where the read on ned-box writes its report, by the rule of
+    fast_read_report_path_for_target, for a message on the Mac. git here
+    cannot read the worktree, so its top is the nearest directory above the
+    target, seen through the mount, that holds a .git entry."""
+    mac_target = pathlib.Path(MAC_MOUNT_OF_NED_BOX_HOME
+                              + ned_box_target[len(NED_BOX_HOME):])
+    checkout_root = next((directory for directory in mac_target.parents
+                          if (directory / ".git").exists()), None)
+    suggestions = (walk_draft_suggestions_file_path_for_target_in_worktree_or_none(mac_target, checkout_root)
+                   if checkout_root is not None else None)
+    if suggestions is not None:
+        return ned_box_path_of_mac_mount_path(suggestions)
+    return (f"fast-read.md in the newest directory whose name starts "
+            f"{record_names.record_name_for_target(mac_target)}- in "
+            f"{record_shipper.LOG_STORE_RECORDS_DESTINATION}/")
+
+
 def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
     """Run the fast read on ned-box on `ned_box_target`, with the script of
     the ned-box checkout holding it, relay its output in Mac mount paths, and
@@ -330,23 +357,66 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
     try:
         completed = subprocess.run(
             [SSH_PROGRAM, *SSH_OPTIONS, NED_BOX_SSH_TARGET, remote_command],
-            capture_output=True, stdin=subprocess.DEVNULL, text=True, check=False)
+            capture_output=True, stdin=subprocess.DEVNULL, text=True, check=False,
+            timeout=COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        minutes = f"{COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS / 60:g}"
+        # In the form this Mac opens; a log-store citation stays as it is.
+        report_place = text_with_ned_box_paths_rewritten_as_mac_mount_paths(
+            cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(
+                ned_box_target))
+        print(f"{PROGRAM}: no cold-read-fast-read result: the cold-read-fast-read on "
+              f"ned-box did not finish within {minutes} minutes, so this program "
+              f"stopped waiting and ended ssh, and the read's own lines were not "
+              f"relayed. The read on ned-box may still be running and may still "
+              f"write its report, which this Mac sees at {report_place}.\n"
+              f"Now, if you are a subagent, pass the quoted text that follows to the agent "
+              f"that dispatched you; otherwise tell the user, in these words: \"The "
+              f"cold-read-fast-read of {ned_box_target} ran on ned-box for more than "
+              f"{minutes} minutes, so this program stopped waiting and ended ssh; the "
+              f"document has no cold-read-fast-read result yet; if a complete report "
+              f"appears at {report_place}, that is its result.\"\n"
+              f"Then, subagent or not, take whichever of the next two steps applies "
+              f"yourself, as the agent that ran this command:\n"
+              f"If you can go on without the result: go on, and say in your "
+              f"reply that the document has no cold-read-fast-read result.\n"
+              f"If you need the result: wait 5 minutes, then look for a report at "
+              f"{report_place}. The report is not written in one step, so it is "
+              f"complete only once it holds the line \"{SENTENCE_COVERAGE_HEADING}\", "
+              f"which only the read's last write of the report adds; a complete "
+              f"report is the result. If there is no complete report, run the same "
+              f"cold-read-fast-read command once more; if that run fails too, go "
+              f"on without the result, and say so in your reply.", file=sys.stderr)
+        print(f"FAILED (no fast read result: the fast read on ned-box did not finish "
+              f"within {minutes} minutes)")
+        return 1
     except OSError as error:
-        print(f"{PROGRAM}: no fast read ran: ssh could not be started ({error}).\n"
-              f"Ask an agent-seat on ned-box to run the fast read there, with this "
+        print(f"{PROGRAM}: no cold-read-fast-read ran: ssh could not be started ({error}).\n"
+              f"Ask any agent-seat on ned-box, by a message sent with Claude Code's "
+              f"SendMessage tool, to run the cold-read-fast-read there, with this "
               f"command:\n{command_for_a_person}\n"
-              f"Or, when no agent-seat on ned-box can, ask the user to run it from a "
-              f"Terminal on his Mac:\n"
+              f"When ListAgents lists no agent-seat on ned-box, or none answers "
+              f"within 30 minutes, ask the user instead to run it from a Terminal "
+              f"on his Mac, whose shell has its own PATH and may find ssh where "
+              f"this program could not:\n"
               f"ssh {NED_BOX_SSH_TARGET} {shlex.quote(command_for_a_person)}",
               file=sys.stderr)
         print("FAILED (no fast read ran: ssh could not be started to reach ned-box)")
         return 1
     if completed.returncode == SSH_EXIT_CONNECTION_FAILED:
-        print(f"{PROGRAM}: no fast read ran: ned-box could not be reached "
-              f"(ssh exited {SSH_EXIT_CONNECTION_FAILED}): "
-              f"{completed.stderr.strip() or 'ssh said nothing'}\n"
-              f"Check that ned-box is on and on the LAN, and that this machine's "
-              f"key reaches it: ssh {NED_BOX_SSH_TARGET} true", file=sys.stderr)
+        ssh_words = completed.stderr.strip() or "nothing"
+        print(f"{PROGRAM}: no cold-read-fast-read ran: ssh exited "
+              f"{SSH_EXIT_CONNECTION_FAILED}, most often for one of two causes: ned-box "
+              f"could not be reached, or ned-box refused this machine's key. ssh said: "
+              f"{ssh_words}\n"
+              f"If you are a subagent, pass the quoted text that follows to the agent that "
+              f"dispatched you; otherwise tell the user, in these words: \"The "
+              f"cold-read-fast-read could not run on ned-box from this Mac: ssh "
+              f"exited {SSH_EXIT_CONNECTION_FAILED} and said: '{ssh_words}'. Run "
+              f"`ssh {NED_BOX_SSH_TARGET} true` from a Terminal on your Mac. If it "
+              f"fails with 'Permission denied', ned-box refused this Mac's key; if "
+              f"it fails another way, check that ned-box is on and on the LAN.\"",
+              file=sys.stderr)
         print("FAILED (no fast read ran: ned-box could not be reached)")
         return 1
     sys.stderr.write(text_with_ned_box_paths_rewritten_as_mac_mount_paths(completed.stderr))
@@ -354,12 +424,26 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
     if completed.returncode == 0:
         sys.stdout.write(stdout)
         return 0
-    print(f"{PROGRAM}: the fast read on ned-box failed (exit {completed.returncode}); "
-          f"its own lines, above, say why.", file=sys.stderr)
-    sys.stdout.write(stdout if stdout.strip() else
-                     f"FAILED (the fast read on ned-box exited {completed.returncode} "
-                     f"and printed no result line)\n")
     # Negative when a signal killed ssh, which is no exit status.
+    if completed.returncode < 0:
+        failure = (f"ssh was killed by signal {-completed.returncode} before the "
+                   f"cold-read-fast-read on ned-box finished")
+        print(f"{PROGRAM}: {failure}; the read's own lines up to then, if any, "
+              f"are above.\n"
+              f"When the result line on stdout is a report path, the read finished "
+              f"and needs no second run.\n"
+              f"When that line starts FAILED, run the same cold-read-fast-read "
+              f"command once more. If ssh is killed again, tell the user that ssh "
+              f"from this Mac to ned-box was killed, during a cold-read-fast-read of "
+              f"{ned_box_target}, by the signal whose number the second run prints, "
+              f"so the document has no cold-read-fast-read result. If you are a "
+              f"subagent, tell the agent that dispatched you instead.", file=sys.stderr)
+    else:
+        failure = (f"the fast read on ned-box exited {completed.returncode} "
+                   f"and printed no result line")
+        print(f"{PROGRAM}: the fast read on ned-box failed (exit {completed.returncode}); "
+              f"its own lines, above, say why.", file=sys.stderr)
+    sys.stdout.write(stdout if stdout.strip() else f"FAILED ({failure})\n")
     return max(completed.returncode, 1)
 
 
@@ -450,20 +534,31 @@ def fast_read_report_path_for_target(
     walk file not named `-draft.md`, takes the records route like everything
     else.
     """
-    checkout_root = checkout_root_holding(target)
+    suggestions = walk_draft_suggestions_file_path_for_target_in_worktree_or_none(
+        target, checkout_root_holding(target))
+    if suggestions is not None:
+        return suggestions
+    return (fresh_record_dir(RECORDS_DIR / record_directory_name_for_target(target, now))
+            / "fast-read.md")
+
+
+def walk_draft_suggestions_file_path_for_target_in_worktree_or_none(
+    target: pathlib.Path, checkout_root: pathlib.Path,
+):
+    """The suggestions file of `target` when it is a walk draft of the
+    worktree whose top is `checkout_root`, else None: the walk half of
+    fast_read_report_path_for_target's rule."""
     try:
         relative = target.relative_to(checkout_root)
     except ValueError:
-        relative = None
-    if (relative is not None
-            and relative.parent == WALK_DIRECTORY_RELATIVE
+        return None
+    if (relative.parent == WALK_DIRECTORY_RELATIVE
             and relative.name.endswith(WALK_DRAFT_SUFFIX)
             and len(relative.name) > len(WALK_DRAFT_SUFFIX)):
         name = relative.name[:-len(WALK_DRAFT_SUFFIX)]
         return (checkout_root / WALK_DIRECTORY_RELATIVE
                 / f"{name}{WALK_SUGGESTIONS_SUFFIX}")
-    return (fresh_record_dir(RECORDS_DIR / record_directory_name_for_target(target, now))
-            / "fast-read.md")
+    return None
 
 
 # THE RECORD-NAME RULE: `<file stem>-<YYYY-MM-DD>`, and

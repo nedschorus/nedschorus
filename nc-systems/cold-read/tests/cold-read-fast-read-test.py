@@ -1408,7 +1408,8 @@ with tempfile.TemporaryDirectory() as missing_git_directory_scratch:
 # ssh. No machine here has the mount, so the mount and ned-box's home are
 # scratch directories, and a stand-in ssh runs the remote command on this
 # machine, where a stand-in fast read in the "ned-box" checkout records what
-# it was given.
+# it was given. The stand-in drops the agent-session ID, as real OpenSSH
+# forwards no local environment, so only the remote command can carry it.
 STAND_IN_SSH = """#!/bin/sh
 printf '%s\n' "$@" > "$STAND_IN_SSH_ARGUMENTS_FILE"
 if [ "$STAND_IN_SSH_MODE" = unreachable ]; then
@@ -1418,8 +1419,11 @@ fi
 if [ "$STAND_IN_SSH_MODE" = killed ]; then
     kill -TERM $$
 fi
+if [ "$STAND_IN_SSH_MODE" = hangs ]; then
+    exec sleep 30
+fi
 for last; do :; done
-exec sh -c "$last"
+exec env -u CLAUDE_CODE_SESSION_ID sh -c "$last"
 """
 STAND_IN_REMOTE_FAST_READ = """import json, os, pathlib, sys
 plan = json.loads(os.environ["STAND_IN_REMOTE_FAST_READ_PLAN"])
@@ -1463,14 +1467,16 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
     log_store_citation = f"nedlern@ned-box:{ned_box_home}/nedschorus-logs/x/"
 
     attributes_before = {name: getattr(warning_module, name) for name in
-                         ("MAC_MOUNT_OF_NED_BOX_HOME", "NED_BOX_HOME", "SSH_PROGRAM")}
+                         ("MAC_MOUNT_OF_NED_BOX_HOME", "NED_BOX_HOME", "SSH_PROGRAM",
+                          "COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS")}
     environment_names = ("STAND_IN_SSH_ARGUMENTS_FILE", "STAND_IN_SSH_MODE",
                          "STAND_IN_REMOTE_FAST_READ_PLAN", AGENT_SESSION_ID_VARIABLE)
     environment_before = {name: os.environ.get(name) for name in environment_names}
     argv_before = sys.argv
 
     def read_from_mac(target, ssh_mode="", remote_exit=0, remote_stdout=None,
-                      ssh_program=stand_in_ssh, session_id=None):
+                      ssh_program=stand_in_ssh, session_id=None,
+                      timeout_seconds=attributes_before["COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS"]):
         """main() on `target` as the Mac runs it: (exit, stdout, stderr)."""
         for stale in (ssh_arguments_file, remote_record):
             if stale.exists():
@@ -1478,6 +1484,7 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
         warning_module.MAC_MOUNT_OF_NED_BOX_HOME = str(mac_mount)
         warning_module.NED_BOX_HOME = str(ned_box_home)
         warning_module.SSH_PROGRAM = str(ssh_program)
+        warning_module.COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS = timeout_seconds
         os.environ["STAND_IN_SSH_ARGUMENTS_FILE"] = str(ssh_arguments_file)
         os.environ["STAND_IN_SSH_MODE"] = ssh_mode
         os.environ["STAND_IN_REMOTE_FAST_READ_PLAN"] = json.dumps({
@@ -1541,12 +1548,82 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
               and "ned-box could not be reached" in stderr
               and "No route to host" in stderr and "ssh nedlern@ned-box true" in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
+        check("when ned-box cannot be reached, the read gives the agent a sentence for the "
+              "user holding ssh's words and the remedy",
+              "most often for one of two causes: ned-box could not be reached" in stderr
+              and "dispatched you; otherwise tell the user, in these words: \"The cold-read-fast-read could not run "
+                  "on ned-box from this Mac: ssh exited 255 and said: 'ssh: connect to host "
+                  "ned-box port 22: No route to host'. Run `ssh nedlern@ned-box true` from "
+                  "a Terminal on your Mac. If it fails with 'Permission denied', ned-box "
+                  "refused this Mac's key; if it fails another way, check that ned-box is on and on the "
+                  "LAN.\"" in stderr,
+              repr(stderr))
 
         exit_code, stdout, stderr = read_from_mac(mac_draft, ssh_mode="killed")
-        check("when a signal kills ssh, the read reports a failure and exits 1",
-              exit_code == 1 and stdout.startswith("FAILED")
-              and "the fast read on ned-box failed" in stderr,
+        check("when a signal kills ssh, the read says which signal, prints a FAILED line "
+              "and exits 1",
+              exit_code == 1
+              and stdout.startswith("FAILED (ssh was killed by signal 15")
+              and "ssh was killed by signal 15 before the cold-read-fast-read on ned-box finished"
+              in stderr and "the fast read on ned-box failed" not in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft, ssh_mode="hangs",
+                                                  timeout_seconds=0.5)
+        check("when the read on ned-box outlasts the time limit, ssh is stopped, the read "
+              "says so with the target and exits 1",
+              exit_code == 1
+              and stdout.startswith("FAILED (no fast read result: the fast read on ned-box "
+                                    "did not finish within")
+              and "so this program stopped waiting and ended ssh, and" in stderr
+              and f"report, which this Mac sees at {mac_suggestions}." in stderr
+              and f"look for a report at {mac_suggestions}. The report is not written" in stderr
+              and f"The cold-read-fast-read of {ned_box_draft} ran on ned-box" in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        # A walk draft's frozen copy in a cold-read-record is no walk draft: its
+        # read takes the records route, so its report is never a suggestions file.
+        frozen_copy_relative = (seat_relative / "cold-read-records" / "item-2026-10-19"
+                                / "target" / "docs" / "walk" / "item-draft.md")
+        place = warning_module.cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(
+            str(ned_box_home / frozen_copy_relative))
+        check("the report place named for a walk draft's frozen copy read over ssh is "
+              "its cold-read-record in the log-store",
+              place == "fast-read.md in the newest directory whose name starts item-draft- in "
+                       "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/",
+              repr(place))
+        place = warning_module.cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(str(ned_box_draft))
+        check("the report place named for a walk draft read over ssh is its suggestions "
+              "file on ned-box", place == str(ned_box_suggestions), repr(place))
+
+        # The same frozen copy read from the Mac through main(), with ssh hanging:
+        # the timeout message names the cold-read-record, not a suggestions file.
+        mac_frozen_copy = mac_mount / frozen_copy_relative
+        mac_frozen_copy.parent.mkdir(parents=True)
+        mac_frozen_copy.write_text("## Item 1 of 1\n", encoding="utf-8")
+        exit_code, stdout, stderr = read_from_mac(mac_frozen_copy, ssh_mode="hangs",
+                                                  timeout_seconds=0.5)
+        records_place = ("fast-read.md in the newest directory whose name starts item-draft- in "
+                         "nedlern@ned-box:/home/nedlern/nedschorus-logs/cold-read-records/")
+        check("when the read of a walk draft's frozen copy outlasts the time limit, the "
+              "message names its cold-read-record in the log-store, not a suggestions file",
+              exit_code == 1 and f"report, which this Mac sees at {records_place}." in stderr
+              and f"if a complete report appears at {records_place}, that is its result" in stderr
+              and "suggestions" not in stderr,
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        # A worktree inside another: the nearer .git is the worktree that holds the target.
+        inner_relative = seat_relative / "inner seat"
+        (mac_mount / inner_relative / "docs" / "walk").mkdir(parents=True)
+        (mac_mount / inner_relative / ".git").write_text(
+            f"gitdir: {ned_box_home / 'Projects' / 'gone-too' / '.git'}\n", encoding="utf-8")
+        place = warning_module.cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(
+            str(ned_box_home / inner_relative / "docs" / "walk" / "inner-draft.md"))
+        check("the report place of a walk draft in a worktree inside another worktree is "
+              "taken from the nearer worktree",
+              place == str(ned_box_home / inner_relative / "docs" / "walk"
+                           / "inner-suggestions.md"),
+              repr(place))
 
         exit_code, stdout, stderr = read_from_mac(
             mac_draft, ssh_program=over_ssh_scratch / "no-such-ssh")
@@ -1554,10 +1631,34 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
               "it on ned-box and with what command, and exits 1",
               exit_code == 1 and stdout.startswith("FAILED")
               and "ssh could not be started" in stderr
-              and "Ask an agent-seat on ned-box" in stderr
+              and "Ask any agent-seat on ned-box" in stderr
               and f"--target {shlex.quote(str(ned_box_draft))}" in stderr
               and "\nssh nedlern@ned-box '" in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
+        stderr_lines = stderr.splitlines()
+        printed = {}
+        for name, opening in (("an agent-seat on ned-box", "Ask any agent-seat on ned-box"),
+                              ("the user", "When ListAgents lists no agent-seat on ned-box")):
+            index = next((index for index, line in enumerate(stderr_lines)
+                          if line.startswith(opening)), None)
+            printed[name] = (stderr_lines[index + 1]
+                             if index is not None and index + 1 < len(stderr_lines) else "")
+        # Run from outside the ned-box checkout, as an agent-seat in its own checkout
+        # would: only the printed checkout entry can reach the target's checkout.
+        for name, line in printed.items():
+            if remote_record.exists():
+                remote_record.unlink()
+            subprocess.run(["sh", "-c", line], cwd=over_ssh_scratch, check=False,
+                           capture_output=True, text=True,
+                           env={**os.environ,
+                                "PATH": f"{over_ssh_scratch}{os.pathsep}{os.environ['PATH']}"})
+            remote = (json.loads(remote_record.read_text(encoding="utf-8"))
+                      if remote_record.exists() else {})
+            check(f"the command printed for {name} runs as printed: it reads the target "
+                  f"from the ned-box checkout holding it",
+                  remote.get("argv") == ["--target", str(ned_box_draft)]
+                  and remote.get("cwd") == str(ned_box_worktree),
+                  f"{line!r}; {remote!r}")
 
         exit_code, stdout, stderr = read_from_mac(
             mac_draft, remote_exit=64,
