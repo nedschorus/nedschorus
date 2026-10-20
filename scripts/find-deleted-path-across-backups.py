@@ -640,11 +640,15 @@ def running_on_ned_box(hostname=None):
 def run_command(argv, timeout=SHORT_TIMEOUT_SECONDS, cwd=None):
     """Run a command and return (returncode, stdout, stderr)."""
     # Git redirect variables override -C and must not leak into recovery commands.
+    environment = locator.environment_without_git_redirecting_variables()
+    if argv[0] == "git":
+        # _git_top_level reads git's English error text to tell "not a repository" from a failure.
+        environment["LC_ALL"] = "C"
     try:
         completed = subprocess.run(
             argv,
             cwd=cwd,
-            env=locator.environment_without_git_redirecting_variables(),
+            env=environment,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=timeout,
@@ -782,7 +786,9 @@ def _guarded_file_log_script(blob_id, directory):
         'printf "%s\\n" "$files" | while IFS= read -r f; do',
         '  [ -n "$f" ] || continue',
         "  printf 'LOG %s\\n' \"$f\"",
-        "  grep -F -e %s \"$f\" | sed 's/^/LINE /'" % quoted_id,
+        "  lines=$(grep -F -e %s \"$f\"); rc=$?" % quoted_id,
+        '  if [ "$rc" -gt 1 ]; then exit "$rc"; fi',
+        "  [ -z \"$lines\" ] || printf '%s\\n' \"$lines\" | sed 's/^/LINE /'",
         '  copy="$(dirname "$f")"/%s' % quoted_id,
         "  if [ -f \"$copy\" ]; then printf 'COPY %s\\n' \"$copy\"; fi",
         "done",
@@ -1134,7 +1140,7 @@ def _ended_run_process_id(where, mount_point):
 def _run_of_this_script_is_live(process_id, runner):
     """Return (live, why, ps failed): whether process_id is a run of this script that is still running."""
     code, out, stderr = runner(["ps", "-p", str(process_id), "-o", "command="])
-    if code == 1 and not out.strip():
+    if code == 1 and not out.strip() and not stderr.strip():
         return False, "process %d has ended" % process_id, False
     if code != 0:
         first = stderr.strip().splitlines()[0] if stderr.strip() else "no error text"
@@ -1301,14 +1307,21 @@ def _local_snapshot_probe_path(wanted, repo, runner):
             "git, transcripts and Timeshift do answer a bare filename; re-run with at least one "
             "directory component, or the absolute path, to search this surface too",
         ]
-    code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
-    if code != 0 or not out.strip():
+    try:
+        top_level = _git_top_level(repo, runner)
+    except _GitCommandFailed as failure:
+        return None, [
+            "%r is relative, and git could not give the top level of %s to resolve it against — %s"
+            % (wanted, repo, failure),
+            "re-run with the absolute path, or fix the git failure above",
+        ]
+    if top_level is None:
         return None, [
             "%r is relative and %s is not a git repository, so there is no top level to resolve it "
             "against and no absolute path to test inside a snapshot" % (wanted, repo),
             "re-run with the absolute path, or with --repo pointing at the repository it belongs to",
         ]
-    return _below_data_volume(os.path.join(out.strip(), stripped)), []
+    return _below_data_volume(os.path.join(top_level, stripped)), []
 
 
 def _below_data_volume(path):
@@ -1371,23 +1384,20 @@ def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contai
     if code != 0:
         return SurfaceReport(surface, UNAVAILABLE, ["%s is not a git repository (%s)" % (repo, stderr.strip())])
 
-    wanted, toplevel = _repo_relative_form(wanted, repo, runner)
-    if wanted.startswith("/"):
-        return SurfaceReport(
-            surface,
-            UNAVAILABLE,
-            ["%s is outside %s, so git was not asked for it" % (wanted, toplevel or repo),
-             "re-run with the path relative to the repository, or a trailing fragment of it"],
-        )
-
-    # git pathspecs are relative to -C, but these queries and --name-only results are repo-relative.
-    code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
-    top_level = out.strip() if code == 0 and out.strip() else repo
-
     lines = []
     versions = []
     dates_held = []
     try:
+        wanted, toplevel = _repo_relative_form(wanted, repo, runner)
+        if wanted.startswith("/"):
+            return SurfaceReport(
+                surface,
+                UNAVAILABLE,
+                ["%s is outside %s, so git was not asked for it" % (wanted, toplevel or repo),
+                 "re-run with the path relative to the repository, or a trailing fragment of it"],
+            )
+        # git pathspecs are relative to -C, but these queries and --name-only results are repo-relative.
+        top_level = _git_top_level(repo, runner) or repo
         paths = _git_candidate_paths(wanted, top_level, runner, revisions)
         if not paths:
             return SurfaceReport(surface, NOT_FOUND, [never_contained_template % (repo, wanted)])
@@ -1413,14 +1423,14 @@ def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contai
 
 
 def _repo_relative_form(wanted, repo, runner=run_command):
-    """Return (normalized query, repository top level or None)."""
-    # git log accepts absolute paths, but cat-file blob addresses require repo-relative paths.
+    """Return (normalized query, repository top level or None); raises _GitCommandFailed when git fails."""
+    # git log accepts absolute paths, but git ls-tree matches repo-relative paths only.
     if not wanted.startswith("/"):
         return wanted, None
-    code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
-    if code != 0 or not out.strip():
+    toplevel = _git_top_level(repo, runner)
+    if toplevel is None:
         return wanted, None
-    toplevel = os.path.realpath(out.strip())
+    toplevel = os.path.realpath(toplevel)
     real = os.path.realpath(wanted)
     if real.startswith(toplevel + "/"):
         return real[len(toplevel) + 1:], toplevel
@@ -1451,7 +1461,20 @@ def _git_candidate_paths(wanted, repo, runner, revisions=GIT_REVISIONS_EVERY_REF
 
 
 class _GitCommandFailed(Exception):
-    """A required git command failed; the exception text is stderr."""
+    """A required git command failed; the exception text carries git's stderr."""
+
+
+def _git_top_level(repo, runner):
+    """Return the top level of the repository holding repo, or None when repo is in no git repository.
+
+    Raises _GitCommandFailed for any other git failure, such as a bare repository or a corrupt one."""
+    code, out, stderr = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
+    if code == 0 and out.strip():
+        return out.strip()
+    if code != 0 and git_output.git_stderr_says_outside_a_repository(stderr):
+        return None
+    raise _GitCommandFailed("git -C %s rev-parse --show-toplevel exited %s — %s"
+                            % (repo, code, stderr.strip() or "no error text"))
 
 
 def _git_newest_commit_holding(path, repo, runner, revisions=GIT_REVISIONS_EVERY_REF,
@@ -1495,8 +1518,11 @@ def _git_newest_commit_holding(path, repo, runner, revisions=GIT_REVISIONS_EVERY
 
 
 def _git_tree_holds(sha, path, repo, runner):
-    code, _, _ = runner(["git", "-C", repo, "cat-file", "-e", "%s:%s" % (sha, path)])
-    return code == 0
+    # git cat-file -e exits 128 both for an absent path and for a git failure; ls-tree tells them apart.
+    code, out, stderr = runner(["git", "-C", repo, "ls-tree", "-z", sha, "--", path])
+    if code != 0:
+        raise _GitCommandFailed(stderr.strip() or "git ls-tree exited %s" % code)
+    return any(entry.path == path for entry in git_output.tree_entries(out))
 
 
 def _git_some_ref_reaches(sha, repo, runner):
@@ -2260,7 +2286,13 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
 def announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner):
     """Speak and return the password request, or return None."""
     # Wait for speech to finish so script exit does not orphan the announcement.
-    sentence = speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner)
+    try:
+        sentence = speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner)
+    except _GitCommandFailed as failure:
+        print("%s did not speak its request for your password: git could not say when %s was deleted, so it "
+              "could not tell whether a backup predates the deletion — %s" % (SPOKEN_TOOL_NAME, wanted, failure),
+              file=sys.stderr, flush=True)
+        return None
     if sentence is None:
         return None
     runner(["say", sentence])
@@ -2294,12 +2326,16 @@ def speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner
 def _git_deletion_timestamp(wanted, repo, runner):
     """Return the deletion commit's local timestamp as YYYYMMDDhhmmss, or None."""
     # Snapshot names use local time; query from the repo root because wanted is repo-relative.
-    code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
-    top_level = out.strip() if code == 0 and out.strip() else repo
-    code, out, _ = runner(["git", "-C", top_level, "log", "--all", "--full-history", "-1",
-                           "--diff-filter=D", "--date=format-local:%Y%m%d%H%M%S",
-                           "--format=%cd", "--", wanted])
-    if code != 0 or not out.strip():
+    top_level = _git_top_level(repo, runner)
+    if top_level is None:
+        return None
+    code, out, stderr = runner(["git", "-C", top_level, "log", "--all", "--full-history", "-1",
+                                "--diff-filter=D", "--date=format-local:%Y%m%d%H%M%S",
+                                "--format=%cd", "--", wanted])
+    if code != 0:
+        raise _GitCommandFailed("git log --diff-filter=D in %s exited %s — %s"
+                                % (top_level, code, stderr.strip() or "no error text"))
+    if not out.strip():
         return None
     stamp = out.strip().splitlines()[0].strip()
     return stamp if len(stamp) == 14 and stamp.isdigit() else None
@@ -2469,7 +2505,13 @@ def main(argv=None, runner=run_command):
         named = _plain_path_from_cited_query(args.path)
     except CitedQueryCannotBePlaced as refusal:
         parser.error(str(refusal))
-    wanted, _ = _repo_relative_form(named, args.repo, runner)
+    try:
+        wanted, _ = _repo_relative_form(named, args.repo, runner)
+    except _GitCommandFailed as failure:
+        # The git surfaces report the same failure as UNAVAILABLE; the other surfaces can still search.
+        print("could not make %s relative to the repository, so it is searched as given — %s"
+              % (named, failure), file=sys.stderr, flush=True)
+        wanted = named
     shown = wanted if wanted == args.path else "%s (given as %s)" % (wanted, args.path)
 
     print(render_header(shown) + "\n", flush=True)

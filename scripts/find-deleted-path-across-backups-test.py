@@ -20,6 +20,7 @@ import io
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -110,8 +111,18 @@ class FakeRunner:
         self.calls.append(joined)
         for needle, answer in self.table:
             if needle in joined:
-                return answer
+                return answer(argv) if callable(answer) else answer
         return self.default
+
+
+def top_level_is_the_directory_given(argv):
+    """Answer git -C <directory> rev-parse --show-toplevel as a repository's top level would."""
+    return 0, argv[2] + "\n", ""
+
+
+def tree_holds_the_path(argv):
+    """Answer git ls-tree -z <commit> -- <path> as a tree that holds <path> would."""
+    return 0, "100644 blob %s\t%s\0" % ("0" * 40, argv[-1]), ""
 
 
 class LocalShellRunner(FakeRunner):
@@ -166,13 +177,14 @@ check("a dotfile still matches itself by suffix",
 # suffix scan runs) and some non-dot path ends with the same remainder.
 git_dotfile = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
     ("--name-only", (0, "scripts/env\0README.md\0", "")),
     # scripts/env is alive and well in history; the fixture must let the
     # wrong match go all the way to a FOUND, or the case proves nothing.
     ("log --all --full-history --format=%H|%ad|%s", (0, "ba432e8e5|2026-08-20|add env\n", "")),
     ("log --all --full-history --format=%H|%P|%ct|%ad|%s", (0, "ba432e8e5|0a0a0a0a0|1787000000|2026-08-20|add env\n", "")),
-    ("cat-file -e", (0, "", "")),
+    ("ls-tree -z", tree_holds_the_path),
 ])
 report = finder.search_git(".env", "/repo", git_dotfile)
 check("a request for '.env' is NOT FOUND when history only has 'scripts/env'",
@@ -622,6 +634,17 @@ check("when ps cannot say whether the run still runs, its mount is left alone an
               for l in report.lines),
       "%s %s %s" % (ps_fails.calls, report.status, report.lines))
 
+# ps exits 1 for a bad option too, saying so on stderr; only a silent 1 says the process has ended.
+ps_refuses = MountTableRunner([
+    ("ps -p 900000002 -o command=", (1, "", "ps: illegal option -- o\n")),
+    NO_EMPTY_MOUNT_POINTS, REMOVES_FINE, MOUNTS_FINE, RELEASES_FINE, ("test -e", (1, "", "")), LISTS_SNAPSHOTS,
+], ended_listing)
+report = finder.search_local_snapshots(REAPED, "/repo", ps_refuses)
+check("when ps exits 1 with an error, the run is not taken as ended: its mount is left alone, with ps's words",
+      "diskutil unmount " + ENDED_RUNS_MOUNT_POINT not in ps_refuses.calls
+      and any("ps exited 1: ps: illegal option -- o" in l for l in report.lines),
+      "%s %s %s" % (ps_refuses.calls, report.status, report.lines))
+
 # An ended run's mount that will not release is not read in place: another run reclaiming it at the same
 # time may finish unmounting it between this run's two tests, and an empty directory would read as a miss.
 ended_stuck = MountTableRunner([
@@ -811,6 +834,34 @@ local_no_repo = FakeRunner([LISTS_SNAPSHOTS, ("rev-parse --show-toplevel", (128,
 report = finder.search_local_snapshots("docs/a/b.md", "/not-a-repo", local_no_repo)
 check("a relative path with no repository to resolve it against is UNAVAILABLE, not NOT FOUND",
       report.status == UNAVAILABLE and any("no top level to resolve it against" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+
+# git translates "not a git repository" for a user whose locale is not English, so the run sets LC_ALL=C.
+with tempfile.TemporaryDirectory() as stand_in_bin:
+    with open(os.path.join(stand_in_bin, "git"), "w") as stand_in:
+        stand_in.write('#!/bin/sh\nif [ "$LC_ALL" = C ]; then echo "fatal: not a git repository" >&2; '
+                       'else echo "fatal: kein Git-Repository" >&2; fi\nexit 128\n')
+    os.chmod(os.path.join(stand_in_bin, "git"), 0o755)
+    path_before, locale_before = os.environ["PATH"], os.environ.get("LC_ALL")
+    os.environ["PATH"] = stand_in_bin + os.pathsep + path_before
+    os.environ["LC_ALL"] = "de_DE.UTF-8"
+    try:
+        _, translated_lines = finder._local_snapshot_probe_path("docs/a/b.md", stand_in_bin, finder.run_command)
+    finally:
+        os.environ["PATH"] = path_before
+        if locale_before is None:
+            del os.environ["LC_ALL"]
+        else:
+            os.environ["LC_ALL"] = locale_before
+check("a user whose locale is not English still gets 'not a git repository', not a git failure",
+      any("no top level to resolve it against" in l for l in translated_lines), str(translated_lines))
+
+local_top_level_fails = FakeRunner([
+    LISTS_SNAPSHOTS, ("rev-parse --show-toplevel", (128, "", "fatal: unable to read index\n"))])
+report = finder.search_local_snapshots("docs/a/b.md", "/repo", local_top_level_fails)
+check("a top-level lookup git fails is reported with git's words, not as 'not a git repository'",
+      report.status == UNAVAILABLE and any("unable to read index" in l for l in report.lines)
+      and not any("not a git repository" in l for l in report.lines),
       "%s %s" % (report.status, report.lines))
 
 local_relative = FakeRunner([
@@ -1005,6 +1056,7 @@ check("the report column is wide enough for 'local snapshots' to keep the status
 # Both log formats are answered so an older walk gets real data too.
 git_found = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --all --full-history -1 --format=%H", (0, "abc123def\n", "")),
     ("log --all --full-history --format=%H|%ad|%s",
      (0, "abc123def|2026-08-14|retire review records\nfeedface|2026-08-12|write it\n", "")),
@@ -1012,9 +1064,9 @@ git_found = FakeRunner([
      (0, "abc123def|merge0123|1786708800|2026-08-14|retire review records\n"
          "feedface|00000000|1786536000|2026-08-12|write it\n", "")),
     ("--date=short merge0123", (0, "1786701600|2026-08-14|merge seat branch\n", "")),
-    ("cat-file -e abc123def:", (128, "", "does not exist")),
-    ("cat-file -e merge0123:", (0, "", "")),
-    ("cat-file -e feedface:", (0, "", "")),
+    ("ls-tree -z abc123def ", (0, "", "")),
+    ("ls-tree -z merge0123 ", tree_holds_the_path),
+    ("ls-tree -z feedface ", tree_holds_the_path),
 ])
 report = finder.search_git("md-review-records/x/dispositions.md", "/repo", git_found)
 check("git reports FOUND for a deleted path still in history", report.status == FOUND)
@@ -1034,6 +1086,7 @@ check("git records the last date it HELD the file, not the last date it modified
 
 git_log_fails = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --all --full-history -1 --format=%H", (0, "abc123def\n", "")),
     ("log --all --full-history --format=%H|", (128, "", "fatal: bad object HEAD")),
 ])
@@ -1044,6 +1097,7 @@ check("a git log that fails mid-search is UNAVAILABLE with git's words, not NOT 
 
 git_absent = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
     ("--name-only", (0, "docs/other.md\0README.md\0", "")),
 ])
@@ -1058,14 +1112,15 @@ check("a non-repo is UNAVAILABLE, not NOT FOUND", report.status == UNAVAILABLE)
 # keep going back to a commit that does.
 git_walks_back = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --all --full-history -1 --format=%H", (0, "deadbeef\n", "")),
     ("log --all --full-history --format=%H|%ad|%s",
      (0, "deadbeef|2026-08-14|delete it\nfeedface|2026-08-13|write it\n", "")),
     ("log --all --full-history --format=%H|%P|%ct|%ad|%s",
      (0, "deadbeef|feedface|1786708800|2026-08-14|delete it\nfeedface|00000000|1786622400|2026-08-13|write it\n", "")),
     ("--date=short feedface", (0, "1786622400|2026-08-13|write it\n", "")),
-    ("cat-file -e deadbeef:", (128, "", "does not exist")),
-    ("cat-file -e feedface:", (0, "", "")),
+    ("ls-tree -z deadbeef ", (0, "", "")),
+    ("ls-tree -z feedface ", tree_holds_the_path),
 ])
 report = finder.search_git("a/b.md", "/repo", git_walks_back)
 check("git skips the deleting commit and cites one whose tree has the blob",
@@ -1076,8 +1131,8 @@ check("... and the date it records is that commit's, not the deletion's",
       repr(getattr(report, "newest_date_held", None)))
 
 # The documented absolute-path form. `git log` accepts an absolute pathspec,
-# so the fast path succeeded and returned the absolute string; `cat-file`
-# cannot address a blob that way, so every commit failed the tree check and
+# so the fast path succeeded and returned the absolute string; a tree lookup
+# cannot address a path that way, so every commit failed the tree check and
 # git said NOT FOUND for a file it had the whole time.
 git_absolute = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
@@ -1086,7 +1141,7 @@ git_absolute = FakeRunner([
     ("log --all --full-history --format=%H|%ad|%s", (0, "abc123def|2026-08-14|retire review records\n", "")),
     ("log --all --full-history --format=%H|%P|%ct|%ad|%s", (0, "abc123def|00000000|1786708800|2026-08-14|retire review records\n", "")),
     # Only the repo-relative form can be addressed in a tree.
-    ("cat-file -e abc123def:md-review-records/x/dispositions.md", (0, "", "")),
+    ("ls-tree -z abc123def -- md-review-records/x/dispositions.md", tree_holds_the_path),
 ])
 report = finder.search_git("/repo/md-review-records/x/dispositions.md", "/repo", git_absolute)
 check("an absolute path inside the repository is searched by its repo-relative form",
@@ -1104,6 +1159,32 @@ check("an absolute path outside the repository is UNAVAILABLE with the re-run in
       "%s %s" % (report.status, report.lines))
 check("... and git was not asked to search for it",
       not any(" log " in c for c in git_outside.calls), str(git_outside.calls))
+
+# git cat-file -e exits 128 both for a path a tree lacks and for a git failure, so a broken repository read
+# as "no tree holds it", NOT FOUND.
+git_tree_lookup_fails = FakeRunner([
+    ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
+    ("log --all --full-history -1 --format=%H", (0, "deadbeef\n", "")),
+    ("log --all --full-history --format=%H|%P|%ct|%ad|%s",
+     (0, "deadbeef|feedface|1786708800|2026-08-14|delete it\n", "")),
+    ("ls-tree -z", (128, "", "fatal: bad object deadbeef\n")),
+])
+report = finder.search_git("a/b.md", "/repo", git_tree_lookup_fails)
+check("a tree lookup git fails is UNAVAILABLE with git's words, not NOT FOUND",
+      report.status == UNAVAILABLE and any("bad object deadbeef" in l for l in report.lines),
+      "%s %s" % (report.status, report.lines))
+
+# A top-level lookup that fails inside a repository is a git failure, not "outside the repository".
+TOP_LEVEL_FAILS = ("rev-parse --show-toplevel", (128, "", "fatal: unable to read index\n"))
+for query in ("a/b.md", "/repo/a/b.md"):
+    git_top_level_fails = FakeRunner([("rev-parse --git-dir", (0, ".git\n", "")), TOP_LEVEL_FAILS])
+    report = finder.search_git(query, "/repo", git_top_level_fails)
+    check("git: a top-level lookup that fails for %s is UNAVAILABLE with git's words, and nothing is searched"
+          % query,
+          report.status == UNAVAILABLE and any("unable to read index" in l for l in report.lines)
+          and not any(" log " in c for c in git_top_level_fails.calls),
+          "%s %s %s" % (report.status, report.lines, git_top_level_fails.calls))
 
 
 def git_fixture_repo(tmp):
@@ -1349,6 +1430,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
 reflog_git_fails = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --reflog --not --all", (128, "", "fatal: bad object refs/heads/broken")),
 ])
 report = finder.search_git_reflog("a/b.md", "/repo", reflog_git_fails)
@@ -2751,6 +2833,15 @@ code, text = run_main(["a/b.md", "--repo", "/nonexistent-not-a-repo", "--transcr
 check("exit 3 when no surface could be searched (git, its reflog, the log-store, transcripts, timeshift all UNAVAILABLE)",
       code == 3 and "Could NOT search: git, git reflog, log-store, transcripts, timeshift" in text,
       "exit=%s\n%s" % (code, text))
+main_errors = io.StringIO()
+with contextlib.redirect_stderr(main_errors):
+    code, text = run_main(["/repo/a/b.md", "--repo", "/repo", "--transcripts-dir", "/nonexistent",
+                           "--box-ssh-host", "", "--skip", "timemachine", "--skip", "localsnapshots"],
+                          FakeRunner([("rev-parse --git-dir", (0, ".git\n", "")), TOP_LEVEL_FAILS]))
+check("an absolute path git cannot make repo-relative is searched as given, with git's words on stderr",
+      code == 3 and "Searching every history this fleet keeps for: /repo/a/b.md" in text
+      and "unable to read index" in main_errors.getvalue(),
+      "exit=%s\n%s\n%s" % (code, text, main_errors.getvalue()))
 check("... and the docstring's exit-code block promises exactly that",
       "3 when" in finder.__doc__ and "could NOT be searched" in finder.__doc__)
 
@@ -2780,6 +2871,7 @@ check("exit 0 when a surface FOUND it and its version was copied",
 
 mixed = FakeRunner([
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
     ("--name-only", (0, "docs/other.md\0", "")),
     ("ssh", (255, "", "ssh: connect to host ned-box port 22: No route to host\n")),
@@ -2848,10 +2940,11 @@ check("each surface is handed on before the next one starts searching",
 
 completed_table = [
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --all --full-history -1 --format=%H", (0, "abc123def\n", "")),
     ("log --all --full-history --format=%H|%P|%ct|%ad|%s",
      (0, "abc123def|00000000|1786708800|2026-08-14|retire review records\n", "")),
-    ("cat-file -e abc123def:", (0, "", "")),
+    ("ls-tree -z abc123def ", tree_holds_the_path),
     ("ssh", (255, "", "ssh: connect to host ned-box port 22: No route to host\n")),
 ]
 streamed_args = ["md-review-records/x/dispositions.md", "--repo", "/repo", "--transcripts-dir", "/nonexistent",
@@ -3132,7 +3225,8 @@ def tm_report_without_the_wall_mark(status, line):
 
 def spoken(wanted, reports, table=(DELETED_2026_08_13_NOON,), skip=()):
     return finder.speech_line_when_root_password_is_needed(
-        wanted, reports, "/repo", skip, FakeRunner(list(table)))
+        wanted, reports, "/repo", skip,
+        FakeRunner([("rev-parse --show-toplevel", top_level_is_the_directory_given)] + list(table)))
 
 
 missed = [finder.SurfaceReport("git", NOT_FOUND, ["searched"]),
@@ -3173,8 +3267,27 @@ check("condition 2 — a disconnected disk is UNAVAILABLE but is not a credentia
       "speaking here sends him to type a password at a disk that is not plugged in")
 
 check("condition 3 — a path git never tracked has no deletion commit, so no line",
-      spoken("docs/a/b.md", missed + [tm_wall_report()], table=()) is None,
+      spoken("docs/a/b.md", missed + [tm_wall_report()], table=(("--diff-filter=D", (0, "", "")),)) is None,
       "no deletion commit means no bound, so no backup can be shown to predate anything")
+deletion_lookup_fails = FakeRunner([("rev-parse --show-toplevel", top_level_is_the_directory_given),
+                                    ("--diff-filter=D", (128, "", "fatal: bad object refs/heads/gone\n"))])
+spoken_errors = io.StringIO()
+with contextlib.redirect_stderr(spoken_errors):
+    announced = finder.announce_root_password_wall_by_speech(
+        "docs/a/b.md", missed + [tm_wall_report()], "/repo", (), deletion_lookup_fails)
+check("condition 3 — a deletion lookup git fails speaks nothing, and says so with git's words",
+      announced is None and not any(c.startswith("say") for c in deletion_lookup_fails.calls)
+      and "bad object refs/heads/gone" in spoken_errors.getvalue(),
+      "%r %s %r" % (announced, deletion_lookup_fails.calls, spoken_errors.getvalue()))
+no_repository = FakeRunner([("rev-parse --show-toplevel", (128, "", "fatal: not a git repository\n")),
+                            DELETED_2026_08_13_NOON])
+spoken_errors = io.StringIO()
+with contextlib.redirect_stderr(spoken_errors):
+    announced = finder.announce_root_password_wall_by_speech(
+        "docs/a/b.md", missed + [tm_wall_report()], "/not-a-repo", (), no_repository)
+check("condition 3 — outside a repository there is no deletion commit: nothing is spoken, and no failure printed",
+      announced is None and spoken_errors.getvalue() == "" and not any(" log " in c for c in no_repository.calls),
+      "%r %s %r" % (announced, no_repository.calls, spoken_errors.getvalue()))
 check("condition 3 — every snapshot postdating the deletion means the password cannot help",
       spoken("docs/a/b.md", missed + [tm_wall_report(snapshots=(SNAPSHOT_SAME_DAY_AFTER,))]) is None,
       "18:31 is after a 12:00 deletion; comparing DATES rather than timestamps speaks wrongly here")
@@ -3192,6 +3305,7 @@ check("condition 4 — an absolute path is a known path and does qualify",
 
 SPEAKS = [
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
     ("--name-only", (0, "docs/other.md\0", "")),
     DELETED_2026_08_13_NOON,
@@ -3259,6 +3373,7 @@ check("... and since the rule lets its printed sudo mount run with no password, 
 
 rule_installed_run = FakeRunner(RULE_INSTALLED + [
     ("rev-parse --git-dir", (0, ".git\n", "")),
+    ("rev-parse --show-toplevel", top_level_is_the_directory_given),
     ("log --all --full-history -1 --format=%H", (0, "\n", "")),
     ("--name-only", (0, "docs/other.md\0", "")),
     DELETED_2026_08_13_NOON,
@@ -3897,6 +4012,22 @@ with tempfile.TemporaryDirectory() as tmp:
     report = finder.search_guarded_file_versions_log(absent, str(log_store), "", failing)
     check("blob id: a log search that fails is UNAVAILABLE, with grep's words",
           report.status == UNAVAILABLE and any("injected failure" in l for l in report.lines), "%s" % report.lines)
+    # The inner grep reads each log file the outer one listed; its failure is the search's, not "no line".
+    stand_in_bin = tmp / "grep-fails-on-one-file"
+    stand_in_bin.mkdir()
+    (stand_in_bin / "grep").write_text(
+        '#!/bin/sh\nif [ "$1" = "-F" ]; then echo "grep: injected read failure" >&2; exit 2; fi\n'
+        'exec %s "$@"\n' % shlex.quote(shutil.which("grep")))
+    (stand_in_bin / "grep").chmod(0o755)
+    path_before = os.environ["PATH"]
+    os.environ["PATH"] = "%s%s%s" % (stand_in_bin, os.pathsep, path_before)
+    try:
+        report = finder.search_guarded_file_versions_log(absent, str(log_store), "", runner)
+    finally:
+        os.environ["PATH"] = path_before
+    check("blob id: a log file the inner grep cannot read makes the log surface UNAVAILABLE, with grep's words",
+          report.status == UNAVAILABLE and any("exited 2" in l and "injected read failure" in l
+                                               for l in report.lines), "%s %s" % (report.status, report.lines))
     unreadable = log_store / "guarded-file-versions-and-approvals" / "ned-box" / "home"
     unreadable.chmod(0)
     try:
