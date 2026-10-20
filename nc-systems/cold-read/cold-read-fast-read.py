@@ -386,6 +386,9 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
         report_place = text_with_ned_box_paths_rewritten_as_mac_mount_paths(
             cold_read_fast_read_report_location_on_ned_box_for_target_sent_over_ssh(
                 ned_box_target))
+        rerun_command = shlex.join([
+            "python3", str(pathlib.Path(__file__).resolve()), "--target",
+            text_with_ned_box_paths_rewritten_as_mac_mount_paths(ned_box_target)])
         print(f"{PROGRAM}: no cold-read-fast-read result: the cold-read-fast-read on "
               f"ned-box did not finish within {minutes} minutes, so this program "
               f"stopped waiting and ended ssh, and the read's own lines were not "
@@ -395,15 +398,20 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
               f"its introducing line says; then, subagent or not, take whichever one "
               f"of the next two steps applies yourself, as the agent that ran this "
               f"command:\n"
-              f"If you can go on without the result: go on, and say in your "
-              f"reply that the document has no cold-read-fast-read result.\n"
+              f"If you can go on without the result: go on with your task, and in "
+              f"the reply you give when the task is done, say that the document has "
+              f"no cold-read-fast-read result.\n"
               f"If you need the result: wait 5 minutes, then look for a report at "
               f"{report_place}. The report is not written in one step, so it is "
               f"complete only once it holds the line \"{SENTENCE_COVERAGE_HEADING}\", "
               f"which only the read's last write of the report adds; a complete "
-              f"report is the result. If there is no complete report, run the same "
-              f"cold-read-fast-read command once more; if that run fails too, go "
-              f"on without the result, and say so in your reply.\n"
+              f"report is the result. If there is no complete report, run the "
+              f"command that printed this message once more, here on this Mac; it "
+              f"runs the read on ned-box over ssh again:\n{rerun_command}\n"
+              f"When that run's result line on stdout is a report path, that report "
+              f"is the result. Otherwise, go on with your task "
+              f"without the result, and in the reply you give when the task is "
+              f"done, say that the document has no cold-read-fast-read result.\n"
               + lines_ending_with_message_for_the_user(
                   f"The cold-read-fast-read of {ned_box_target} ran on ned-box for more "
                   f"than {minutes} minutes, so this program stopped waiting and ended ssh; "
