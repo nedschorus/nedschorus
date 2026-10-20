@@ -120,22 +120,18 @@ def silent(result) -> bool:
 
 
 GIT_FAILURE_NEXT_STEP_LINES = [
-    "If git's error names a lock file, such as .git/index.lock, wait one minute, then "
-    "run your last command; do not delete the lock file yourself.",
-    "If git's error names a branch, commit or path that does not exist, check that the "
-    "command you ran names the right one, correct it if not, then run it again.",
-    "In any other case, run your last command once more.",
-    "If your last command fails a second time, stop and tell the user what "
-    "obsolete-file-edit-warning-hook printed, git's error included; a subagent tells "
-    "the agent that dispatched it instead.",
+    "Nothing needs rerunning: this check runs again at your next Edit or Write.",
+    "If the same failure is reported again at your next Edit or Write, tell the user "
+    "what obsolete-file-edit-warning-hook printed, git's error included; a subagent "
+    "tells the agent that dispatched it instead.",
 ]
 
 
 def reported_git_failure(result, command_words, git_error) -> bool:
     """A git failure: exit 1, no warning on stdout, a stderr cause line naming the git
-    command and quoting git's error, then the four next-step lines."""
+    command and quoting git's error, then the two next-step lines."""
     lines = result.stderr.splitlines()
-    return (result.returncode == 1 and result.stdout == "" and len(lines) == 5
+    return (result.returncode == 1 and result.stdout == "" and len(lines) == 3
             and lines[0].startswith("obsolete-file-edit-warning-hook: git " + command_words)
             and git_error in lines[0]
             and lines[0].endswith(", so the edited file was not checked against "

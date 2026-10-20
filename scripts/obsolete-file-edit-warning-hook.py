@@ -188,14 +188,10 @@ GIT_FAILURE_CAUSE_LINE = (
     "against origin/main; the edit itself succeeded."
 )
 GIT_FAILURE_NEXT_STEP_LINES = (
-    "If git's error names a lock file, such as .git/index.lock, wait one minute, then "
-    "run your last command; do not delete the lock file yourself.\n"
-    "If git's error names a branch, commit or path that does not exist, check that the "
-    "command you ran names the right one, correct it if not, then run it again.\n"
-    "In any other case, run your last command once more.\n"
-    "If your last command fails a second time, stop and tell the user what "
-    "obsolete-file-edit-warning-hook printed, git's error included; a subagent tells "
-    "the agent that dispatched it instead."
+    "Nothing needs rerunning: this check runs again at your next Edit or Write.\n"
+    "If the same failure is reported again at your next Edit or Write, tell the user "
+    "what obsolete-file-edit-warning-hook printed, git's error included; a subagent "
+    "tells the agent that dispatched it instead."
 )
 RECORD_WRITE_FAILED_LINE = (
     "obsolete-file-edit-warning could not record that it gave this warning, so it "
