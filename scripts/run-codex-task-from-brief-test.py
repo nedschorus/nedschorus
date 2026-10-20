@@ -646,6 +646,7 @@ try:
     # which cannot be timed from a test, so a stand-in killpg gives that answer.
     killpg_answers = []
     killpg_calls = []
+    killpg_calls_before_each_poll = []
     sleeps = []
 
     def killpg_answering(group_id, signal_number):
@@ -661,6 +662,7 @@ try:
             return -15
 
         def poll(self):
+            killpg_calls_before_each_poll.append(len(killpg_calls))
             return -15
     real_killpg, real_sleep = runner.os.killpg, runner.time.sleep
     runner.os.killpg, runner.time.sleep = killpg_answering, sleeps.append
@@ -679,6 +681,10 @@ try:
               and killpg_calls == [signal.SIGTERM] + [signal.SIGKILL] * 3
               and len(sleeps) == 2,
               f"error {stop_error!r}, killpg signals {killpg_calls!r}, sleeps {sleeps!r}")
+        # On Linux nothing else catches a retry that skips reaping Codex's zombie.
+        check("each retry of a refused stop signal first reaps Codex if it has exited",
+              killpg_calls_before_each_poll == [2, 3],
+              f"killpg calls made before each poll {killpg_calls_before_each_poll!r}")
 
         killpg_calls.clear()
         sleeps.clear()
