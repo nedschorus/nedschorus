@@ -340,6 +340,21 @@ def cases(scratch):
     check("--restore keeps the current version before it restores",
           result.returncode == 0 and key in world.versions(claude), world.versions(claude))
 
+    world = fresh(scratch, "restore-branch-unreadable")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2, committed\n")
+    world.git("commit", "-qam", "v2")
+    second = world.key(claude)
+    world.run()
+    world.failing_git("symbolic-ref -q HEAD")
+    result = world.command("--restore", claude, second)
+    world.failing_git(None)
+    check("--restore with git symbolic-ref exiting 128 still exits 0, copies the declined version "
+          "and puts back the approved one",
+          result.returncode == 0 and claude.read_text() == "project v1\n"
+          and second in world.versions(claude),
+          (result.returncode, result.stderr, claude.read_text(), world.versions(claude)))
+
     # -- a version git holds is logged, not copied, and read back from git
     world = fresh(scratch, "git-holds")
     claude = world.repo / "CLAUDE.md"
@@ -434,6 +449,16 @@ def cases(scratch):
     world.failing_git(None)
     message = world.run()
     check("the next run checks the file", str(claude) in message, message)
+
+    world = fresh(scratch, "hook-run-branch-unreadable")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2\n")
+    world.failing_git("symbolic-ref -q HEAD")
+    message = world.run()
+    world.failing_git(None)
+    check("a hook run whose git symbolic-ref exits 128 exits 0 and tells the agent, with git's stderr",
+          "symbolic-ref -q HEAD" in message and "exited 128" in message
+          and "injected failure" in message, message)
 
     world = fresh(scratch, "git-read-back-fails")
     claude = world.repo / "CLAUDE.md"
@@ -1065,6 +1090,30 @@ def durable_ref_cases(scratch):
     check("a branch's blobs are held by the durable refs", hook.blob_hash(b"first\n") in held)
     check("a blob only a detached worktree's HEAD holds is not",
           hook.blob_hash(b"only at a detached worktree HEAD\n") not in held)
+
+    stand_in = Path(scratch) / "durable-refs-failing-symbolic-ref"
+    stand_in.mkdir()
+    (stand_in / "git").write_text(
+        "#!/bin/sh\n"
+        "for argument in \"$@\"; do\n"
+        "  if [ \"$argument\" = symbolic-ref ]; then\n"
+        "    echo 'fatal: stand-in symbolic-ref failure' >&2; exit 128\n"
+        "  fi\n"
+        "done\n"
+        f"exec {shutil.which('git')} \"$@\"\n")
+    (stand_in / "git").chmod(0o755)
+    path_before = os.environ["PATH"]
+    os.environ["PATH"] = f"{stand_in}:{path_before}"
+    try:
+        hook.versions_head_holds(empty, [(str(empty / "CLAUDE.md"), hook.blob_hash(b"first\n"))])
+        raised = None
+    except hook.BranchUnreadable as error:
+        raised = str(error)
+    finally:
+        os.environ["PATH"] = path_before
+    check("git symbolic-ref failing with 128 raises an error carrying git's stderr, not a detached HEAD",
+          raised is not None and "exited 128" in raised
+          and "stand-in symbolic-ref failure" in raised)
 
 
 def mac_cases(scratch):

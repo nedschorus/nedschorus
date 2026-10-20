@@ -153,6 +153,10 @@ class Refused(Exception):
     """--approve or --restore must not go on."""
 
 
+class BranchUnreadable(RuntimeError):
+    """git could not say whether HEAD is on a branch."""
+
+
 def load_module(name, path):
     specification = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(specification)
@@ -421,7 +425,8 @@ def versions_head_holds(checkout, versions):
     that blob, when HEAD is on a branch; none when HEAD is detached, since a detached HEAD is
     not a durable ref. A branch's HEAD is the one durable ref the hook can ask cheaply on every
     tool call; a version only another durable ref holds is copied, and the daily prune deletes
-    the copy."""
+    the copy. Raises BranchUnreadable, a RuntimeError carrying git's stderr, when git
+    symbolic-ref fails with any exit other than 1."""
     relative = {}
     for path, blob_id in versions:
         if blob_id == DELETED:
@@ -434,11 +439,16 @@ def versions_head_holds(checkout, versions):
                       capture_output=True, timeout=60, check=False).returncode == 1:
         # A repository with no commit yet holds nothing.
         return set()
-    # git symbolic-ref -q exits 1 when HEAD is detached. Any failure counts as detached, which
-    # costs only a copy the daily prune deletes later.
-    if subprocess.run(["git", "-C", str(checkout), "symbolic-ref", "-q", "HEAD"],
-                      capture_output=True, timeout=60, check=False).returncode != 0:
+    # git symbolic-ref -q exits 1, with nothing on stderr, when HEAD is detached; any other
+    # nonzero exit is git failing.
+    on_branch = subprocess.run(["git", "-C", str(checkout), "symbolic-ref", "-q", "HEAD"],
+                               capture_output=True, timeout=60, check=False)
+    if on_branch.returncode == 1:
         return set()
+    if on_branch.returncode != 0:
+        raise BranchUnreadable(f"git symbolic-ref -q HEAD in {checkout} exited "
+                               f"{on_branch.returncode}: "
+                               f"{on_branch.stderr.decode(errors='replace').strip()}")
     output = git_text(checkout, "--literal-pathspecs", "ls-tree", "-r", "-z", "--full-tree",
                       "HEAD", "--", *sorted(relative))
     held = set()
@@ -1216,8 +1226,13 @@ def restore(pairs):
                           "latest message gives, and ask him again")
         current[path] = now
         checkout = guard().enclosing_repository_root(Path(path).parent)
-        if checkout is not None and versions_head_holds(checkout, [(path, now[1])]):
-            held.add(path)
+        try:
+            if checkout is not None and versions_head_holds(checkout, [(path, now[1])]):
+                held.add(path)
+        except BranchUnreadable:
+            # --restore keeps its exit code by reading this as a detached HEAD; copying a
+            # version a commit may hold loses nothing.
+            pass
 
     def work(store, end):
         plan = []
