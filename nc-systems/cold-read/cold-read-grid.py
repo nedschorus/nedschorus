@@ -200,7 +200,7 @@ STOPPED_CELL_WRITE_CHECK_LINE = (
     "report, so no such check ran; that is a failure to look, not a clean result. Before "
     "you do anything else, read `git status` against the edits you know are your own. "
     "Undo a change git status lists, by deleting the file or directory if it is untracked or running "
-    "`git restore <path>` if it is tracked, only when its content shows a reviewer wrote "
+    "`git restore --staged --worktree <path>` if it is tracked, only when its content shows a reviewer wrote "
     "it, such as notes about the document under review. Ask the user about any other "
     "change you did not make, and whenever you are unsure.")
 
