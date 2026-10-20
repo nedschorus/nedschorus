@@ -2289,8 +2289,13 @@ def announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner):
     try:
         sentence = speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner)
     except _GitCommandFailed as failure:
-        print("%s did not speak its request for your password: git could not say when %s was deleted, so it "
-              "could not tell whether a backup predates the deletion — %s" % (SPOKEN_TOOL_NAME, wanted, failure),
+        print("%s did not speak its announcement, through the macOS say command, that a Time Machine backup "
+              "needs your sudo password; the search ran to the end, and the Time Machine lines above still give "
+              "the mount command to run by hand. %s makes that announcement only when it can show that a Time "
+              "Machine snapshot predates the file's deletion, and git could not give the date %s was deleted, "
+              "so %s could not check.\n"
+              "If you want that check made, fix the git failure below and re-run.\n"
+              "git's failure: %s" % (THIS_SCRIPT_NAME, THIS_SCRIPT_NAME, wanted, THIS_SCRIPT_NAME, failure),
               file=sys.stderr, flush=True)
         return None
     if sentence is None:
@@ -2509,8 +2514,15 @@ def main(argv=None, runner=run_command):
         wanted, _ = _repo_relative_form(named, args.repo, runner)
     except _GitCommandFailed as failure:
         # The git surfaces report the same failure as UNAVAILABLE; the other surfaces can still search.
-        print("could not make %s relative to the repository, so it is searched as given — %s"
-              % (named, failure), file=sys.stderr, flush=True)
+        print("%s: git could not find the top level of the repository at %s. The search runs to the end, matching "
+              "the absolute path %s as that absolute path, not as a path inside the repository; its git and git "
+              "reflog lines will say UNAVAILABLE for this same failure, and its other lines are complete.\n"
+              "If --repo names the wrong directory, or was left out and the current directory is not in the "
+              "path's checkout, re-run with --repo naming that checkout.\n"
+              "If --repo is right and git and its reflog must be searched too, fix the git failure below and "
+              "re-run.\n"
+              "git's failure: %s" % (THIS_SCRIPT_NAME, args.repo, named, failure),
+              file=sys.stderr, flush=True)
         wanted = named
     shown = wanted if wanted == args.path else "%s (given as %s)" % (wanted, args.path)
 

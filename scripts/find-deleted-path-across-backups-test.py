@@ -2838,7 +2838,7 @@ with contextlib.redirect_stderr(main_errors):
     code, text = run_main(["/repo/a/b.md", "--repo", "/repo", "--transcripts-dir", "/nonexistent",
                            "--box-ssh-host", "", "--skip", "timemachine", "--skip", "localsnapshots"],
                           FakeRunner([("rev-parse --git-dir", (0, ".git\n", "")), TOP_LEVEL_FAILS]))
-check("an absolute path git cannot make repo-relative is searched as given, with git's words on stderr",
+check("an absolute path git cannot make repo-relative is searched as that absolute path, with git's words on stderr",
       code == 3 and "Searching every history this fleet keeps for: /repo/a/b.md" in text
       and "unable to read index" in main_errors.getvalue(),
       "exit=%s\n%s\n%s" % (code, text, main_errors.getvalue()))
