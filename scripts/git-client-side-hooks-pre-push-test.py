@@ -1159,7 +1159,7 @@ def run_selective_test_run_cases(scratch):
           "and the whole report's path",
           refusal[:3] == [SELECTIVE_TEST_RUN_REFUSED + FAKE_FAILED_SUMMARY,
                           FAKE_FAILING_SUITE_LINE,
-                          "The whole report: %s/report.txt" % FAKE_LOG_DIRECTORY],
+                          "The whole report: %s/test-run-report.txt" % FAKE_LOG_DIRECTORY],
           result.describe())
     check("a failing suite: then says to fix and push again, and when to tell the user",
           len(refusal) >= 6 and refusal[3].startswith("Fix what each failing suite's log shows")

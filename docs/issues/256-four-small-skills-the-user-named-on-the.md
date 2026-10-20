@@ -23,14 +23,14 @@ Related issues, none the same matter:
 
 - GHI [pull-request skill: how a change reaches main — durable-file disposition, the description, and topic-branch creation](https://github.com/nedschorus/nedschorus/issues/236), the pull-request skill (how a change reaches main), is the workflow **/push** starts. GHI [pull-request skill: how a change reaches main — durable-file disposition, the description, and topic-branch creation](https://github.com/nedschorus/nedschorus/issues/236) stays the design home; this issue only records the user's name for the entry point.
 - GHI [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11), MD-placement guidance as pre-tool remind hooks, holds the placement rules **/save-MD** would apply.
-- GHI [Queue drain procedure — the review process that empties wiki/queue, the pair queue, and the draft-label issue queue](https://github.com/nedschorus/nedschorus/issues/24), the queue drain procedure, is the review that the **/save-MD-as-draft** destination feeds.
+- GHI [Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, the drafts directory and the queue-drain-candidate-label issue queue](https://github.com/nedschorus/nedschorus/issues/24), the queue drain procedure, is the review that the **/save-MD-as-draft** destination feeds.
 - GHI [Build draft-md: the drafting-stage skill run before md-review (user-ruled 2026-08-22)](https://github.com/nedschorus/nedschorus/issues/142), draft-md, is about drafting an MD's text, not moving it.
 
 Search receipt: `gh issue list --repo nedschorus/nedschorus --state all --limit 100 --search "<terms>"` for "save skill", "push skill", "skill move MD", "draft-md", "check-in skill", 2026-09-05: no issue names any of the four.
 
 ## Open questions for the user, to settle before the build
 
-1. **/save-MD-as-draft's destination.** The project has three review queues: `docs/wiki/queue/`, `docs/issues/queue/`, and the `draft` issue label; `docs/drafts/` holds in-progress documents that are not queued for review. Which directory does the skill move a file into, or does it choose by the file's kind?
+1. **/save-MD-as-draft's destination.** The project has three review queues: `docs/wiki/queue/`, `docs/issues/queue/`, and the `queue-drain-candidate` issue label; `docs/drafts/` holds in-progress documents that are not queued for review. Which directory does the skill move a file into, or does it choose by the file's kind?
 2. **/save-MD's rules.** "The right place" for an MD is what GHI [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11) was to define. Does /save-MD wait for GHI [MD-placement guidance as symmetric pre-tool remind hooks on both runtimes (boss-directed design, build deferred)](https://github.com/nedschorus/nedschorus/issues/11), or carry a short table of its own (wiki page, GHI-MD, design, walk file, draft)?
 3. **/save's scope.** Commit everything in the working tree, or only the files named? Push to the seat's own branch on origin, never to main.
 

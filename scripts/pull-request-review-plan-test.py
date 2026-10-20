@@ -107,8 +107,9 @@ class ReviewPlanTemporaryRepositoryFixture:
         self.control_directory.mkdir()
         self.binary_directory = temporary_directory / "bin"
         self.binary_directory.mkdir()
-        # A space and a quote in the name: each printed command must shell-quote its target.
-        self.message_target_temporary_directory = temporary_directory / "message target temporary directory's"
+        # A space, an apostrophe, a dollar sign, a backtick and a double quote in the name: each printed
+        # command must shell-quote its target, and double quotes would leave $, ` and " live.
+        self.message_target_temporary_directory = temporary_directory / "message target temporary directory's $HOME `id` \"q\""
         self.message_target_temporary_directory.mkdir()
         stand_in_path = self.binary_directory / "gh"
         stand_in_path.write_text(STAND_IN_GITHUB_SOURCE, encoding="utf-8")
@@ -218,29 +219,29 @@ def run_unit_cases():
 
 def run_classification_cases(fixture):
     plan = fixture.plan_for_changed_file("docs/review-note.md", BASELINE_FILE_CONTENTS["docs/review-note.md"].replace("Old prose", "New prose"))
-    check("Markdown prose only gets seat-alone", plan["tier"] == "seat-alone" and plan["changed_files"][0]["class"] == "prose", plan)
+    check("Markdown prose only gets no-reviewer-tier", plan["tier"] == "no-reviewer-tier" and plan["changed_files"][0]["class"] == "prose", plan)
     check("no reviews gives round one", plan["round"] == 1 and not plan["fix_round"] and plan["delta_only_review_applies"] is None, plan)
     check("clean merged tree is a 40-hex tree", bool(re.fullmatch(r"[0-9a-f]{40}", plan["merged_tree"]["tree"])) and not plan["merged_tree"]["conflicting_paths"], plan)
     plan = fixture.plan_for_changed_file("operative-note.md", "New prose outside docs.\n")
-    check("Markdown prose outside docs also gets seat-alone", plan["tier"] == "seat-alone", plan)
+    check("Markdown prose outside docs also gets no-reviewer-tier", plan["tier"] == "no-reviewer-tier", plan)
     plan = fixture.plan_for_changed_file("scripts/example-program-test.py", 'EXPECTED = "new"\nassert EXPECTED\n')
-    check("a changed test gets seat-and-codex", plan["tier"] == "seat-and-codex" and plan["changed_files"][0]["class"] == "test", plan)
+    check("a changed test gets codex-review-and-head-tests-tier", plan["tier"] == "codex-review-and-head-tests-tier" and plan["changed_files"][0]["class"] == "test", plan)
     plan = fixture.plan_for_changed_file("scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace("Old", "New").replace('"old"', '"new"'))
-    check("Python string, docstring and comment changes get seat-and-codex", plan["tier"] == "seat-and-codex" and "string constants" in plan["tier_decided_by"], plan)
+    check("Python string, docstring and comment changes get codex-review-and-head-tests-tier", plan["tier"] == "codex-review-and-head-tests-tier" and "string constants" in plan["tier_decided_by"], plan)
     plan = fixture.plan_for_changed_file("docs/review-note.md", BASELINE_FILE_CONTENTS["docs/review-note.md"].replace("print('old')", "print('new')"))
-    check("fenced Markdown code changes get seat-and-codex", plan["tier"] == "seat-and-codex" and "fenced code blocks" in plan["tier_decided_by"], plan)
+    check("fenced Markdown code changes get codex-review-and-head-tests-tier", plan["tier"] == "codex-review-and-head-tests-tier" and "fenced code blocks" in plan["tier_decided_by"], plan)
     full_reviewer_cases = [
-        ("Python logic changes get full-reviewer", "scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace("return 1", "return 2")),
-        ("every hook directory file gets full-reviewer", ".claude/hooks/example-hook.py", 'print("new")\n'),
-        ("settings gets full-reviewer", ".claude/settings.json", '{"hooks": {}}\n'),
-        ("a Bash guard string-only change gets full-reviewer", "scripts/synthetic-keystroke-guard-hook.py", 'print("new")\n'),
-        ("a registered hook string-only change gets full-reviewer", "scripts/registered-example-hook.py", 'print("new")\n'),
-        ("a new Python program gets full-reviewer", "scripts/new-example-program.py", 'print("new")\n'),
-        ("a test under the hook directory gets full-reviewer", ".claude/hooks/example-hook-test.py", 'print("new")\n'),
+        ("Python logic changes get claude-and-codex-review-and-head-tests-tier", "scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"].replace("return 1", "return 2")),
+        ("every hook directory file gets claude-and-codex-review-and-head-tests-tier", ".claude/hooks/example-hook.py", 'print("new")\n'),
+        ("settings gets claude-and-codex-review-and-head-tests-tier", ".claude/settings.json", '{"hooks": {}}\n'),
+        ("a Bash guard string-only change gets claude-and-codex-review-and-head-tests-tier", "scripts/synthetic-keystroke-guard-hook.py", 'print("new")\n'),
+        ("a registered hook string-only change gets claude-and-codex-review-and-head-tests-tier", "scripts/registered-example-hook.py", 'print("new")\n'),
+        ("a new Python program gets claude-and-codex-review-and-head-tests-tier", "scripts/new-example-program.py", 'print("new")\n'),
+        ("a test under the hook directory gets claude-and-codex-review-and-head-tests-tier", ".claude/hooks/example-hook-test.py", 'print("new")\n'),
     ]
     for case_name, path, content in full_reviewer_cases:
         plan = fixture.plan_for_changed_file(path, content)
-        check(case_name, plan["tier"] == "full-reviewer" and path in plan["tier_decided_by"], plan)
+        check(case_name, plan["tier"] == "claude-and-codex-review-and-head-tests-tier" and path in plan["tier_decided_by"], plan)
     fixture.reset_fixture_to_base()
     fixture.write_fixture_file("scripts/a-new-program.py", "VALUE = 1\n")
     fixture.write_fixture_file("scripts/registered-example-hook.py", 'print("new")\n')
@@ -255,21 +256,21 @@ def run_classification_cases(fixture):
     fixture.configure_github_answers(head)
     plan = fixture.read_review_plan()
     check("the deciding line prefers the hook program over its earlier-sorting test",
-          plan["tier"] == "full-reviewer"
+          plan["tier"] == "claude-and-codex-review-and-head-tests-tier"
           and ".claude/hooks/example-hook.py" in plan["tier_decided_by"]
           and "example-hook-test.py" not in plan["tier_decided_by"], plan)
     plan = fixture.plan_for_changed_file("scripts/example-program.py", "def broken(:\n")
-    check("unparseable Python gets full-reviewer with side named", plan["tier"] == "full-reviewer" and "does not parse at new side" in plan["tier_decided_by"], plan)
+    check("unparseable Python gets claude-and-codex-review-and-head-tests-tier with side named", plan["tier"] == "claude-and-codex-review-and-head-tests-tier" and "does not parse at new side" in plan["tier_decided_by"], plan)
     fixture.reset_fixture_to_base()
     (fixture.repository / "scripts/example-program.py").unlink()
     head = fixture.commit_fixture_changes("delete program")
     fixture.configure_github_answers(head)
     plan = fixture.read_review_plan()
-    check("deleted Python gets full-reviewer", plan["tier"] == "full-reviewer" and "is deleted" in plan["tier_decided_by"], plan)
+    check("deleted Python gets claude-and-codex-review-and-head-tests-tier", plan["tier"] == "claude-and-codex-review-and-head-tests-tier" and "is deleted" in plan["tier_decided_by"], plan)
     fixture.reset_fixture_to_base()
     fixture.configure_github_answers(fixture.base_head)
     plan = fixture.read_review_plan()
-    check("an empty change set gets seat-alone with explicit reason", plan["tier"] == "seat-alone" and plan["tier_decided_by"] == "the pull request changes no file", plan)
+    check("an empty change set gets no-reviewer-tier with explicit reason", plan["tier"] == "no-reviewer-tier" and plan["tier_decided_by"] == "the pull request changes no file", plan)
 
 
 def run_fix_round_cases(fixture):
@@ -285,17 +286,17 @@ def run_fix_round_cases(fixture):
                                      comments=[[{"pull_request_review_id": 101}, {"pull_request_review_id": 101}],
                                                [{"pull_request_review_id": 102}, {"pull_request_review_id": 104}]])
     plan = fixture.read_review_plan()
-    check("a string fix gives round two and delta-only seat-and-codex", plan["round"] == 2 and plan["fix_round"] and plan["delta_tier"] == "seat-and-codex" and plan["delta_only_review_applies"] and plan["delta_range"] == f"{earlier}..{head}", plan)
+    check("a string fix gives round two and delta-only codex-review-and-head-tests-tier", plan["round"] == 2 and plan["fix_round"] and plan["delta_tier"] == "codex-review-and-head-tests-tier" and plan["delta_only_review_applies"] and plan["delta_range"] == f"{earlier}..{head}", plan)
     check("inline comments are counted per review across pages", [review["inline_comments"] for review in plan["reviews"]] == [2, 1, 0], plan["reviews"])
     check("pending reviews are ignored and current-head reviews do not raise the round", len(plan["reviews"]) == 3 and plan["round"] == 2 and plan["reviews"][-1]["head_relation"] == "current head", plan)
     fixture.write_fixture_file("scripts/example-program.py", (fixture.repository / "scripts/example-program.py").read_text().replace("return 2", "return 3"))
     logic_head = fixture.commit_fixture_changes("logic fix")
     fixture.configure_github_answers(logic_head, reviews=[[fixture_review(101, earlier)]])
     plan = fixture.read_review_plan()
-    check("a program logic delta keeps delta-only review at the full-reviewer delta tier",
+    check("a program logic delta keeps delta-only review at the claude-and-codex-review-and-head-tests-tier delta tier",
           plan["delta_only_review_applies"] is True and plan["delta_only_review_reasons"] == []
           and [entry["path"] for entry in plan["delta_files"]] == ["scripts/example-program.py"]
-          and plan["delta_tier"] == "full-reviewer"
+          and plan["delta_tier"] == "claude-and-codex-review-and-head-tests-tier"
           and "scripts/example-program.py" in plan["delta_tier_decided_by"], plan)
     fixture.configure_github_answers(logic_head, reviews=[[fixture_review(101, "a" * 40)]])
     plan = fixture.read_review_plan()
@@ -320,7 +321,7 @@ def run_fix_round_cases(fixture):
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]], live_base=main_head)
     plan = fixture.read_review_plan()
     check("a main merge voids delta-only review and names its short hash", not plan["delta_only_review_applies"] and any(merge_head[:12] in reason for reason in plan["delta_only_review_reasons"]), plan)
-    check("a main merge restricts delta files to the pull request's own files", plan["delta_files_restricted_to_pull_request_files"] and [entry["path"] for entry in plan["delta_files"]] == ["scripts/example-program.py"] and plan["delta_tier"] == "seat-and-codex", plan)
+    check("a main merge restricts delta files to the pull request's own files", plan["delta_files_restricted_to_pull_request_files"] and [entry["path"] for entry in plan["delta_files"]] == ["scripts/example-program.py"] and plan["delta_tier"] == "codex-review-and-head-tests-tier", plan)
     check("a main merge excludes main-only files and messages from delta agent-facing text",
           not any(entry["path"] == "scripts/unrelated-main-program.py"
                   or "main-only message" in (entry["old_text"] or "")
@@ -328,7 +329,7 @@ def run_fix_round_cases(fixture):
                   for entry in plan["agent_facing_text_delta"]), plan["agent_facing_text_delta"])
     skeleton_result = fixture.run_review_plan("--brief-skeleton", str(fixture.control_directory / "fix-round-brief.md"))
     skeleton_text = (fixture.control_directory / "fix-round-brief.md").read_text()
-    check("a fix round brief includes delta tier, restrictions and every verdict reason", skeleton_result.returncode == 0 and "delta tier: seat-and-codex" in skeleton_text and "files restricted" in skeleton_text and merge_head[:12] in skeleton_text, skeleton_text)
+    check("a fix round brief includes delta tier, restrictions and every verdict reason", skeleton_result.returncode == 0 and "delta tier: codex-review-and-head-tests-tier" in skeleton_text and "files restricted" in skeleton_text and merge_head[:12] in skeleton_text, skeleton_text)
 
     fixture.reset_fixture_to_base()
     fixture.write_fixture_file("docs/main-side-note.txt", "Main side history.\n")
@@ -380,8 +381,8 @@ def run_hook_registration_and_delta_boundary_cases(fixture):
     plan = fixture.read_review_plan()
     merge_base_hook_entry = next(entry for entry in plan["changed_files"]
                                 if entry["path"] == "scripts/registered-example-hook.py")
-    check("a registration present only at the merge base keeps the program a full-reviewer hook",
-          merge_base_hook_entry["class"] == "hook" and merge_base_hook_entry["tier"] == "full-reviewer", plan)
+    check("a registration present only at the merge base keeps the program a claude-and-codex-review-and-head-tests-tier hook",
+          merge_base_hook_entry["class"] == "hook" and merge_base_hook_entry["tier"] == "claude-and-codex-review-and-head-tests-tier", plan)
 
     fixture.reset_fixture_to_base()
     fixture.write_fixture_file("scripts/sibling-program.py", 'print("branch message")\n')
@@ -395,7 +396,7 @@ def run_hook_registration_and_delta_boundary_cases(fixture):
     fixture.configure_github_answers(head, live_base=main_head)
     plan = fixture.read_review_plan()
     check("whole PR hook registrations come from the diff base rather than the merge base",
-          plan["tier"] == "full-reviewer" and plan["changed_files"][0]["class"] == "hook"
+          plan["tier"] == "claude-and-codex-review-and-head-tests-tier" and plan["changed_files"][0]["class"] == "hook"
           and plan["merge_base"] != main_head, plan)
 
     fixture.reset_fixture_to_base()
@@ -414,8 +415,8 @@ def run_hook_registration_and_delta_boundary_cases(fixture):
     delta_hook_program_entry = next(entry for entry in plan["delta_files"]
                                    if entry["path"] == "scripts/sibling-program.py")
     check("delta hook registrations include the diff base when main registers the program after the branch was cut",
-          delta_hook_program_entry["class"] == "hook" and delta_hook_program_entry["tier"] == "full-reviewer"
-          and plan["delta_tier"] == "full-reviewer" and plan["delta_only_review_applies"] is True, plan)
+          delta_hook_program_entry["class"] == "hook" and delta_hook_program_entry["tier"] == "claude-and-codex-review-and-head-tests-tier"
+          and plan["delta_tier"] == "claude-and-codex-review-and-head-tests-tier" and plan["delta_only_review_applies"] is True, plan)
 
     fixture.reset_fixture_to_base()
     fixture.write_fixture_file(".claude/settings.json", sibling_hook_settings)
@@ -427,7 +428,7 @@ def run_hook_registration_and_delta_boundary_cases(fixture):
     plan = fixture.read_review_plan()
     delta_entry = next(entry for entry in plan["delta_files"] if entry["path"] == "scripts/sibling-program.py")
     check("delta hook registrations include the earlier reviewed head even after removal",
-          delta_entry["class"] == "hook" and delta_entry["tier"] == "full-reviewer"
+          delta_entry["class"] == "hook" and delta_entry["tier"] == "claude-and-codex-review-and-head-tests-tier"
           and plan["changed_files"][0]["class"] == "code", plan)
 
     fixture.reset_fixture_to_base()
@@ -444,8 +445,8 @@ def run_hook_registration_and_delta_boundary_cases(fixture):
     head = fixture.git_command("rev-parse", "HEAD")
     fixture.configure_github_answers(head, reviews=[[fixture_review(101, earlier)]], live_base=main_head)
     plan = fixture.read_review_plan()
-    check("a full-reviewer program delta after a merge and rewritten history lists only those two reasons",
-          plan["delta_only_review_applies"] is False and plan["delta_tier"] == "full-reviewer"
+    check("a claude-and-codex-review-and-head-tests-tier program delta after a merge and rewritten history lists only those two reasons",
+          plan["delta_only_review_applies"] is False and plan["delta_tier"] == "claude-and-codex-review-and-head-tests-tier"
           and len(plan["delta_only_review_reasons"]) == 2
           and head[:12] in plan["delta_only_review_reasons"][0]
           and "history was rewritten" in plan["delta_only_review_reasons"][1], plan)
@@ -466,16 +467,16 @@ def run_hook_registration_and_delta_boundary_cases(fixture):
     plan = fixture.read_review_plan()
     check("restricted delta retains files belonging only to the earlier PR diff",
           [entry["path"] for entry in plan["delta_files"]] == ["docs/plain-note.txt"]
-          and plan["delta_tier"] == "seat-alone", plan)
+          and plan["delta_tier"] == "no-reviewer-tier", plan)
 
     fixture.reset_fixture_to_base()
     fixture.git_command("mv", "scripts/sibling-program.py", "scripts/renamed-sibling-program.py")
     head = fixture.commit_fixture_changes("program rename")
     fixture.configure_github_answers(head)
     plan = fixture.read_review_plan()
-    check("program renames are deletion plus addition and get full-reviewer",
+    check("program renames are deletion plus addition and get claude-and-codex-review-and-head-tests-tier",
           sorted(entry["status"] for entry in plan["changed_files"]) == ["A", "D"]
-          and plan["tier"] == "full-reviewer", plan)
+          and plan["tier"] == "claude-and-codex-review-and-head-tests-tier", plan)
 
 
 def run_agent_text_cases(fixture):
@@ -561,7 +562,10 @@ def run_fast_read_command_cases(fixture):
     whole_entry = next(entry for entry in plan["agent_facing_text_whole_pull_request"] if entry["label"] == "raise in show_message()")
     delta_entry = next(entry for entry in plan["agent_facing_text_delta"] if entry["label"] == "raise in show_message()")
     command_prefix = "python3 nc-systems/cold-read/cold-read-fast-read.py --target "
-    command_words = shlex.split(whole_entry["fast_read_command"])
+    try:
+        command_words = shlex.split(whole_entry["fast_read_command"])
+    except ValueError:
+        command_words = []  # An unquoted target can leave a quote unclosed; the case below then fails by name.
     target = Path(command_words[-1]) if len(command_words) == 4 else Path()
     check("each listed message gets a fast-read command whose target holds its new text",
           whole_entry["fast_read_command"].startswith(command_prefix) and whole_entry["fast_read_target_error"] is None
@@ -599,7 +603,7 @@ def run_fast_read_command_cases(fixture):
           and "1 listed agent-facing message has no cold-read-fast-read command, because its text" in json_result.stderr
           and "--target <that file's full path>" in json_result.stderr, json_result)
     blocked_entry = blocked_entries[0] if blocked_entries else {"path": "", "line": 0, "new_text": ""}
-    file_name = review_plan_module.fast_read_target_path(blocked_entry["path"], blocked_entry["new_text"]).name
+    file_name = review_plan_module._message_reminder_hook.fast_read_target_path(blocked_entry["path"], blocked_entry["new_text"]).name
     listing_lines = [line for line in json_result.stderr.splitlines() if line.startswith("  ")]
     check("the message lists each message without a command once, by path, line and label, with the file name to write",
           listing_lines == [f"  {blocked_entry['path']}:{blocked_entry['line']}  label: {blocked_entry.get('label')}  file name: {file_name}"]
@@ -610,13 +614,63 @@ def run_fast_read_command_cases(fixture):
           "2 listed agent-facing messages have no cold-read-fast-read command, because their text"
           in review_plan_module.missing_fast_read_commands_message(two_entries))
     check("each entry carries the file name the message lists, so the message's file name finds its entry",
-          all(entry["fast_read_target_file_name"] == review_plan_module.fast_read_target_path(entry["path"], entry["new_text"]).name
+          all(entry["fast_read_target_file_name"] == review_plan_module._message_reminder_hook.fast_read_target_path(entry["path"], entry["new_text"]).name
               for entry in blocked_entries)
           and "whose fast_read_target_file_name is that file name" in json_result.stderr, json_result)
     check("the text plan says why a message has no command",
           text_result.returncode == 3
           and "cold-read-fast-read: none, because this message's text could not be written to a file: " in text_result.stdout,
           text_result)
+    check("after a JSON run, the message says to use the JSON this run printed",
+          "1. Use the plan this run printed as JSON on stdout." in json_result.stderr, json_result.stderr)
+    text_stderr_lines = text_result.stderr.splitlines()
+    rerun_index = next((index for index, line in enumerate(text_stderr_lines) if line.startswith("1. Get the plan as JSON")), None)
+    try:
+        rerun_words = shlex.split(text_stderr_lines[rerun_index + 1]) if rerun_index is not None else []
+    except (ValueError, IndexError):
+        rerun_words = []
+    check("after a text run, the message gives this run's own command with --json and without --brief-skeleton",
+          rerun_words == ["python3", "scripts/pull-request-review-plan.py",
+                          "--pull-request", str(FIXTURE_PULL_REQUEST_NUMBER), "--repository", str(fixture.repository.resolve()),
+                          "--github-repository", FIXTURE_GITHUB_REPOSITORY, "--json"], text_result.stderr)
+    fixture.environment = {**saved_environment, "TMPDIR": str(blocked_temporary_directory)}
+    try:
+        relative_result = subprocess.run(
+            [sys.executable, str(REVIEW_PLAN_SCRIPT), "--pull-request", str(FIXTURE_PULL_REQUEST_NUMBER),
+             "--repository", "..", "--github-repository", FIXTURE_GITHUB_REPOSITORY],
+            cwd=fixture.repository / "scripts", env=fixture.environment, capture_output=True, text=True, timeout=10)
+    finally:
+        fixture.environment = saved_environment
+    relative_lines = relative_result.stderr.splitlines()
+    relative_index = next((index for index, line in enumerate(relative_lines) if line.startswith("1. Get the plan as JSON")), None)
+    try:
+        relative_words = shlex.split(relative_lines[relative_index + 1]) if relative_index is not None else []
+    except (ValueError, IndexError):
+        relative_words = []
+    check("run from a subdirectory with a relative --repository, the rerun command names the repository by its absolute path",
+          relative_result.returncode == 3 and "--repository" in relative_words
+          and relative_words[relative_words.index("--repository") + 1] == str(fixture.repository.resolve()),
+          relative_result.stderr)
+
+    hook_tempfile = review_plan_module._message_reminder_hook.tempfile
+    saved_gettempdir = hook_tempfile.gettempdir
+
+    def gettempdir_finding_no_usable_directory():
+        raise FileNotFoundError(2, "No usable temporary directory found")
+    hook_tempfile.gettempdir = gettempdir_finding_no_usable_directory
+    try:
+        try:
+            unplaced = review_plan_module.entries_with_fast_read_commands(
+                [{"path": "scripts/a.py", "line": 1, "label": "raise in f()", "new_text": "text"}])
+        except OSError as escaped:
+            unplaced = [{"escaped": f"{type(escaped).__name__}: {escaped}"}]
+    finally:
+        hook_tempfile.gettempdir = saved_gettempdir
+    check("no usable temporary directory marks the entry, with its file name, instead of ending the run",
+          len(unplaced) == 1 and unplaced[0].get("fast_read_command", "absent") is None
+          and "FileNotFoundError" in (unplaced[0].get("fast_read_target_error") or "")
+          and unplaced[0].get("fast_read_target_file_name")
+          == review_plan_module._message_reminder_hook.fast_read_target_file_name("scripts/a.py", "text"), unplaced)
 
 
 def run_repository_and_output_cases(fixture):
@@ -732,7 +786,7 @@ def run_repository_and_output_cases(fixture):
           subdirectory_result.returncode == 0 and json.loads(subdirectory_result.stdout) == top_level_plan
           and "scripts/sibling-program-launch-test.py" in top_level_plan["test_files_to_run"]
           and top_level_plan["agent_facing_text_whole_pull_request"]
-          and any(entry["path"] == "docs/review-note.md" and entry["tier"] == "seat-and-codex" for entry in top_level_plan["changed_files"]),
+          and any(entry["path"] == "docs/review-note.md" and entry["tier"] == "codex-review-and-head-tests-tier" for entry in top_level_plan["changed_files"]),
           subdirectory_result.stdout or subdirectory_result.stderr)
 
 

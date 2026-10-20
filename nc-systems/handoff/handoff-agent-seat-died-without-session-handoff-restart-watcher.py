@@ -13,7 +13,7 @@ scripts/recover-crashed-seats.py makes (assess_seat), and:
 - notes each agent-seat it finds running;
 - restarts, with scripts/recover-crashed-seats.py <seat>, an agent-seat it saw
   running earlier in this boot and has since found crashed (verdict resume or
-  ignite: no live supervisor, no waiting handoff, no recorded exit) on two runs
+  fresh-session-from-conversation-tail: no live supervisor, no waiting handoff, no recorded exit) on two runs
   at least CRASH_CONFIRMATION_SECONDS apart;
 - tells the user, without restarting it, about an agent-seat it saw running
   that is now down in a state only he should restart from: a handoff waiting
@@ -111,7 +111,7 @@ STATE_DIRECTORY = Path("~/.local/state/nedschorus").expanduser()
 STATE_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_STATE_DIRECTORY"
 LOG_DIRECTORY_ENVIRONMENT_VARIABLE = "NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_LOG_DIRECTORY"
 
-CRASHED_VERDICTS = ("resume", "ignite")
+CRASHED_VERDICTS = ("resume", "fresh-session-from-conversation-tail")
 RUNNING_VERDICT = "seat-already-running"
 WAITING_HANDOFF_VERDICT = "defer-to-boot-ignition"
 RECORDED_EXIT_VERDICT = "offer-after-recorded-exit"

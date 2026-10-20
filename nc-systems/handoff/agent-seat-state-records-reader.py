@@ -203,7 +203,7 @@ def waiting_handoff_verdict(handoff_directory: Path, name: str, state_path: Path
             return "seat-asked-to-be-consulted", (counter, dont_restart)
         return "defer-to-boot-ignition", (
             f"an unconsumed handoff waits (counter {counter}, consumed "
-            f"{consumed}) — plain relaunch is correct; the supervisor's "
+            f"{consumed}) — relaunching without resuming is correct; the supervisor's "
             "boot-ignition consumes it"
         )
     return None

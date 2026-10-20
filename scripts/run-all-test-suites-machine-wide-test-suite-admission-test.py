@@ -54,7 +54,7 @@ def linux_only_cases_run_here(cases):
     """
     if sys.platform.startswith("linux"):
         return True
-    print(f"SKIP  {cases}: test sandboxes, bwrap and /proc exist only on Linux")
+    print(f"SKIP  [this machine cannot run it] {cases}: test sandboxes, bwrap and /proc exist only on Linux")
     return False
 
 
@@ -743,7 +743,11 @@ with tempfile.TemporaryDirectory() as scratch_name:
               scoped["cpu_seconds"] is not None and scoped["peak_memory_bytes"]
               and scoped["exit"] == 1, scoped)
     else:
-        print(f"SKIP  the cgroup scope case: {cgroup_unavailable}")
+        # A trial that timed out or could not start may be a disturbed run, so is not marked.
+        machine = (cgroup_unavailable.endswith(" is not on PATH")
+                   or "Failed to connect to user scope bus" in cgroup_unavailable)
+        print(f"SKIP  {'[this machine cannot run it] ' if machine else ''}the cgroup scope case: "
+              f"{cgroup_unavailable}")
 
     # --- On the Mac, the suite's output goes straight to its log, as it always did ---
     mac_result = runner.run_one_suite(repository, sys.executable, "timed-test.py", log_dir,
@@ -1073,9 +1077,11 @@ with tempfile.TemporaryDirectory() as scratch_name:
             # The line is said at most once per interval, so each report comes after one.
             clock.sleep(runner.TEST_SUITE_ADMISSION_WAIT_REPORT_INTERVAL_SECONDS)
             admission.report_waiting(suite, "the machine is busy")
-        check(f"with {len(suites)} suite(s) waiting, the waiting line says \"{verb}\"",
+        check(f"with {len(suites)} suite(s) waiting, the waiting line says \"{verb}\", and that "
+              f"the wait ends by itself",
               said[-1:] == [f"{len(suites)} suite{'s' if len(suites) != 1 else ''} of this run "
-                            f"{verb} to start: the machine is busy"], said)
+                            f"{verb} to start: the machine is busy. Each suite starts by itself "
+                            f"once the reason it waits for clears."], said)
 
 print(f"{len(failures)} failed" if failures else "all cases passed")
 sys.exit(1 if failures else 0)

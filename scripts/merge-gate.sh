@@ -319,16 +319,70 @@ NEW_ACTIVITY_RECORD="When nothing is left open, post a review as the merge accou
   "$NEW_ACTIVITY_READ" "$NEW_ACTIVITY_FINDING" "$NEW_ACTIVITY_RECORD"
 
 # The gate checks only that a labelled line is there. Whether the line is true
-# is a reviewer's judgement, not the gate's.
+# is a reviewer's judgement, not the gate's. The colon-and-period labels still
+# pass because descriptions written before the hashtags carry them.
 body_read=$(gh pr view "$PR" --repo "$REPO" --json body)
 [ $? -eq 0 ] || cannot "could not read pull request $PR's description; any error gh printed is just above this line." "$RERUN_ONCE_GH"
 has_defect_line=$(jq -r '.body
   | split("\n")
-  | any(test("^\\s*(?:[-*+]\\s+)?(?:\\*\\*|__)?(?:Root cause(?: not fixed)?(?:\\*\\*|__)?:|No defect fixed(?:\\*\\*|__)?\\.)"))' <<<"$body_read")
+  | any(test("^\\s*(?:[-*+]\\s+)?(?:\\*\\*|__)?(?:#(?:root_cause(?:_not_fixed)?|no_defect_fixed)(?!\\w)|Root cause(?: not fixed)?(?:\\*\\*|__)?:|No defect fixed(?:\\*\\*|__)?\\.)"))' <<<"$body_read")
 [ $? -eq 0 ] || cannot "could not parse pull request $PR's description" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
-[ "$has_defect_line" = "true" ] || fail "the pull request's description has no line beginning \"Root cause:\", \"Root cause not fixed:\" or \"No defect fixed.\", so it does not say whether the pull request fixes a defect and, if it does, whether the change removes the defect's root cause." \
-  "Have the pull request's author add one of these lines to the description, starting the line with the label, which may follow a bullet and may be in bold type: \"Root cause:\" and the root cause the change removes; \"Root cause not fixed:\" and the root cause that stays, or that none was found, with the reason; or \"No defect fixed.\" when the pull request fixes no defect." \
+[ "$has_defect_line" = "true" ] || fail "the pull request's description has no line beginning \"#root_cause\", \"#root_cause_not_fixed\" or \"#no_defect_fixed\", so it does not say whether the pull request fixes a defect and, if it does, whether the change removes the defect's root cause." \
+  "Have the pull request's author add one of these lines to the description, starting the line with the hashtag, which may follow a bullet and may be in bold type: \"#root_cause\" and the root cause the change removes; \"#root_cause_not_fixed\" and the root cause that stays, or that none was found, with the reason; or \"#no_defect_fixed\" when the pull request fixes no defect." \
   "Editing the description needs no new commit. Once the description has the line, run the gate again."
+
+# A not-fixed line, in either form, names after #follow_up the issue or pull
+# request that will fix its cause or look for it, and GitHub must not show that
+# work abandoned. Only the first link after #follow_up is read, cut back to the
+# issue or pull request it names when it carries a #fragment or a sub-path.
+not_fixed=$(jq -c '[.body | split("\n")[] | sub("\r$"; "")
+  | select(test("^\\s*(?:[-*+]\\s+)?(?:\\*\\*|__)?(?:#root_cause_not_fixed(?!\\w)|Root cause not fixed(?:\\*\\*|__)?:)"))
+  | {line: ., link: ((capture("#follow_up(?!\\w).*?(?<url>https?://[^\\s)>\\]`]+)").url // null)
+                     | if . == null then null else sub("[.,;:]+$"; "") end
+                     | if . == null then null else (capture("^(?<item>https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:issues|pull)/[0-9]+)(?:[/#?].*)?$").item // null) end)}]' <<<"$body_read")
+[ $? -eq 0 ] || cannot "could not parse pull request $PR's description" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+FOLLOW_UP_IF_NO_ISSUE="If no such issue exists, open one with the /ghi-write skill, or link the outside project's issue when the cause is outside this repository."
+FOLLOW_UP_EDIT_ONLY="Editing the description is enough; no new commit is needed."
+FOLLOW_UP_RERUN="Once the description has the link, run the gate again."
+FOLLOW_UP_REPLACE="Replace that link with an open issue or pull request that fixes the cause, or, if the cause is not known, an open issue that looks for it."
+not_fixed_count=$(jq length <<<"$not_fixed")
+for ((line_index = 0; line_index < not_fixed_count; line_index++)); do
+  line=$(jq -r ".[$line_index].line" <<<"$not_fixed")
+  link=$(jq -r ".[$line_index].link // empty" <<<"$not_fixed")
+  [ -n "$link" ] || fail "the description's line \`$line\` has no \`#follow_up\` followed by a full https://github.com/ link." \
+    "Add \`#follow_up <link>\` to the end of that line." \
+    "If the cause is known, link the open issue or pull request that fixes it." \
+    "If the cause is not known, link an open issue that looks for it." \
+    "$FOLLOW_UP_IF_NO_ISSUE" "$FOLLOW_UP_EDIT_ONLY" "$FOLLOW_UP_RERUN"
+  [[ $link =~ ^https://github\.com/([^/]+)/([^/]+)/(issues|pull)/([0-9]+)$ ]]
+  link_repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"; link_path_kind=${BASH_REMATCH[3]}; link_number=${BASH_REMATCH[4]}
+  # GitHub sends /issues/<n> and /pull/<n> to the same item, so either form names this pull request.
+  [ "$(tr '[:upper:]' '[:lower:]' <<<"$link_repo")" != "$REPO" ] || [ "$link_number" != "$PR" ] || fail "the description's line \`$line\` names after \`#follow_up\` $link, which is this pull request; a pull request cannot be the follow-up for a cause it leaves in place." \
+    "$FOLLOW_UP_REPLACE" "$FOLLOW_UP_IF_NO_ISSUE" \
+    "If this pull request does remove the cause, replace the whole line with a \"#root_cause\" line that names the cause it removes, and link nothing." \
+    "$FOLLOW_UP_EDIT_ONLY" "$FOLLOW_UP_RERUN"
+  # The issues endpoint answers for a pull request too, with its merged_at, and
+  # says which of the two the number is; the pulls endpoint would answer an
+  # issue's number only with Not Found.
+  linked=$(gh api "repos/$link_repo/issues/$link_number")
+  [ $? -eq 0 ] || cannot "could not read $link, which the description's line \`$line\` names after \`#follow_up\`; any error gh printed is just above this line." \
+    "If gh's error says Not Found, the link names no issue or pull request the merge account can see: have the pull request's author correct the link in the description, then run the gate again." \
+    "Otherwise run the gate again once; if it fails the same way, tell the user this message and gh's error."
+  linked_kind=$(jq -r --arg path_kind "$link_path_kind" 'if $path_kind == "pull" and (.pull_request | not) then "issue-at-a-pull-request-link"
+                       elif .pull_request then (if .state == "closed" and .pull_request.merged_at == null then "pull-request-closed-unmerged" else "live" end)
+                       elif .state == "closed" and .state_reason == "not_planned" then "issue-closed-not-planned" else "live" end' <<<"$linked")
+  [ $? -eq 0 ] || cannot "could not parse what GitHub returned for $link" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  case "$linked_kind" in
+    issue-closed-not-planned) fail "the description's line \`$line\` names after \`#follow_up\` $link, an issue closed as not planned, so no work is planned on the cause the line leaves in place." \
+      "$FOLLOW_UP_REPLACE" "$FOLLOW_UP_IF_NO_ISSUE" "$FOLLOW_UP_EDIT_ONLY" "$FOLLOW_UP_RERUN" ;;
+    pull-request-closed-unmerged) fail "the description's line \`$line\` names after \`#follow_up\` $link, a pull request closed without merging, so it will not fix the cause the line leaves in place." \
+      "$FOLLOW_UP_REPLACE" "$FOLLOW_UP_IF_NO_ISSUE" "$FOLLOW_UP_EDIT_ONLY" "$FOLLOW_UP_RERUN" ;;
+    issue-at-a-pull-request-link) fail "the description's line \`$line\` names after \`#follow_up\` $link, a pull-request link, but $link_number in $link_repo is an issue, not a pull request." \
+      "If that issue is the follow-up, change the link to https://github.com/$link_repo/issues/$link_number." \
+      "If you meant a pull request, link it as https://github.com/<owner>/<repository>/pull/<its number>." \
+      "$FOLLOW_UP_EDIT_ONLY" "$FOLLOW_UP_RERUN" ;;
+  esac
+done
 
 echo "gate passed (#$PR): approved commit $approved_sha by $approver at $approval_at, $decision, $merge_state, no new channel activity since $SINCE"
 # The pin (--match-head-commit) is what makes the approval binding: GitHub

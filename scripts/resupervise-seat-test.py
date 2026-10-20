@@ -174,8 +174,8 @@ def run_no_handoff_cases(workspace: Path):
     result = run_resupervise(workspace, "prose", "--dry-run")
     check("a handoff with no restart-counter refuses",
           result.returncode == 1, result.stdout + result.stderr)
-    check("the unreadable-handoff refusal says the supervisor would not ignite",
-          "not ignite" in result.stderr, result.stderr)
+    check("the unreadable-handoff refusal says the supervisor would not start a fresh agent-session from it",
+          "not start a fresh agent-session from it" in result.stderr, result.stderr)
 
 
 def run_already_consumed_case(workspace: Path):

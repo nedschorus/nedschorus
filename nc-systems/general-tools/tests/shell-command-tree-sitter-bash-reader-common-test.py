@@ -588,6 +588,68 @@ found = [list(words) for words in reader.simple_commands(command)]
 check(f"a case terminator a line continuation splits is replaced over its whole length in the text "
       f"as given, so the command after the next case is read: {command!r}",
       found == [["zzp"], ["zzq"], ["zzr"]], found)
+# A heredoc after continued lines is taken out in the parse that removes them, unless that parse
+# reads it otherwise. Each expected reading was checked against bash 5.3.9.
+for command, expected in [
+    # bash joins <\<newline><A into a heredoc on the same line as <<B, which takes its body first.
+    ("zzp <\\\n<A zzq <<B\na\nA\nb\nB\nzzr", [(["zzp", "zzq"], ["a\n", "b\n"]), (["zzr"], [])]),
+    # bash joins $\<newline>( into a substitution, inside which the body also ends at B).
+    ("zzp $\\\n(zzq <<B\nx\nB)\nzzr",
+     [(["zzq"], ["x\n"]), (["zzp", "$(zzq <<B\nx\nB)"], []), (["zzr"], [])])]:
+    found = [(list(words), [heredoc.body for heredoc in words.heredocs])
+             for words in reader.simple_commands(command)]
+    check(f"a continuation removed before a heredoc that changes how the heredoc is read is removed in a "
+          f"parse of its own: {command!r}", found == expected, found)
+for command in ("zzp << \\\n  EOF\nbody\nEOF\nzzr", "zzp <<- \\\n\tEOF\n\tbody\n\tEOF\nzzr",
+                "zzp 0<< \\\n EOF\nbody\nEOF\nzzr"):
+    found = [(list(words), [heredoc.body for heredoc in words.heredocs])
+             for words in reader.simple_commands(command)]
+    check(f"a heredoc delimiter after a line continuation and blanks ends the body at its line, as bash "
+          f"reads it, so the command after it is read: {command!r}",
+          found == [(["zzp"], ["body\n"]), (["zzr"], [])], found)
+counted = parses_counted_in_a_child("'zzp <<\\'E\\'\\nbody\\nE\\nzzq a \\\\\\n  b\\n' * n + 'tmux kill-server'",
+                                    [50, 100])
+check("a heredoc after a continued line costs at most two parses, one of them of its opening line alone, "
+      "and the command after 100 of them is read",
+      isinstance(counted, list) and counted[1][0] - counted[0][0] <= 2 * 50
+      and counted[1][1:] == [201, ["tmux", "kill-server"]], counted)
+source = b"zzp a\\\nb <<'E'\nx\nE\n# c\n"
+read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(source)
+check("a comment after a heredoc taken out in the parse that removes a continuation before it is reported "
+      "at its offsets in the source as given", read.comments == [(19, 22)], read)
+# The opening line's end is found in a parse of the lines after the operator, as few as hold no error.
+for command, expected in [
+        ("zzp <<EOF; x=$(zzq a\nzzq b)\nbody\nEOF\nzzr",
+         [(["zzp"], ["body\n"]), (["zzq", "a"], []), (["zzq", "b"], []), (["zzr"], [])]),
+        ('zzp <<EOF; zzq "a\nb"\nbody\nEOF\nzzr', [(["zzp"], ["body\n"]), (["zzq", "a\nb"], []), (["zzr"], [])]),
+        ("zzp <<EOF; zzq a \\\nb\nbody\nEOF\nzzr", [(["zzp"], ["body\n"]), (["zzq", "a", "b"], []), (["zzr"], [])])]:
+    found = [(list(words), [heredoc.body for heredoc in words.heredocs])
+             for words in reader.simple_commands(command)]
+    check(f"a heredoc's opening line that a substitution, quotes or a line continuation carry onto the next line ends after them: "
+          f"{command!r}", found == expected, found)
+# Time is counted in parses of the same command, and on the processor, so the machine's load
+# does not decide it: one parse of the whole command per heredoc, each walked in Python, and a
+# parse for its continued line besides, took about 2,200 parses' time for 2,000 heredocs.
+PARSES_TIME_CHILD_CODE = (
+    "import importlib.util, json, sys, time; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+    "r = importlib.util.module_from_spec(s); s.loader.exec_module(r)\n"
+    "text = eval(sys.argv[2]); encoded = text.encode(); r.parser().parse(encoded); parses = []\n"
+    "for _ in range(5):\n"
+    " started = time.process_time(); r.parser().parse(encoded); parses.append(time.process_time() - started)\n"
+    "started = time.process_time(); found = r.simple_commands(text); took = time.process_time() - started\n"
+    "print(json.dumps([took / min(parses), took, len(found), list(found[-1])]))")
+try:
+    completed = subprocess.run(
+        [sys.executable, "-c", PARSES_TIME_CHILD_CODE, str(MODULE_PATH),
+         "'zzp <<EOF\\nbody\\nEOF\\nzzq a \\\\\\n  b\\n' * 2000 + 'tmux kill-server'"],
+        timeout=120, check=True, capture_output=True, text=True)
+    timed = json.loads(completed.stdout)
+except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
+    timed = repr(problem)
+check("2,000 heredocs, each followed by a continued line, are read in less than 1,000 times the time of one "
+      "parse of the command, inside a guard's 30 s, and the command after them is read",
+      isinstance(timed, list) and timed[0] < 1000 and timed[1] < 30 and timed[3] == ["tmux", "kill-server"],
+      timed)
 for source, expected in [(b"zzp a\\\nb # c\n", [(9, 12)]), (b"zzp a\\\n\\\nb \\\n#c\n", [(13, 15)])]:
     read = reader.shell_source_comments_and_unreadable_spans_after_reader_corrections(source)
     check(f"a comment after line continuations is reported at its offsets in the source as given: {source!r}",
@@ -764,6 +826,15 @@ check("30,000 terminators written in one round have their offsets moved in less 
       "of 7,500, inside a guard's 30 s",
       isinstance(timed, list) and timed[0][1] < 30 and timed[0][1] < 12 * timed[0][0]
       and timed[1] == [7500, 30000], timed)
+counted = parses_counted_in_a_child("'case a in a) zzp;& esac\\n' * n + 'tmux kill-server'", [500, 2000])
+check("2,000 cases ended by ;& are repaired in at most two parses more than 500 such cases, inside a "
+      "guard's 30 s, and the command after them is read",
+      parses_grow_by_a_constant(counted) and counted[1][1:] == [2001, ["tmux", "kill-server"]], counted)
+command = "case x in x) zzq;& esac\nzzp <<'E'\ncase y in y) :;;& esac\nE\nzzr"
+found = [(list(words), [heredoc.body for heredoc in words.heredocs]) for words in reader.simple_commands(command)]
+check("a terminator in a heredoc body after a repaired case is not repaired, since a parse that has not "
+      "read the case right does not show the body",
+      found == [(["zzq"], []), (["zzp"], ["case y in y) :;;& esac\n"]), (["zzr"], [])], found)
 # Each ;;& written as ;; shortens the text, so a later terminator's offset in the command as written is further on.
 found = words_of("case a in a) :;;& esac; " * 20 + "echo 'x;;' $(case b in b) :;& esac)")
 check("a terminator repaired after twenty that shortened the text is put back where it was written",

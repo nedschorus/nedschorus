@@ -42,6 +42,7 @@ The program outside Claude starts the switch. Where a step of the switch needs a
 5. What happens to agent-seats that are running when the login changes, since all of them on ned-box share one login file? And does a program switch back to the first account after its weekly reset?
 6. Does a long-lived token from `claude setup-token`, made in advance for each account, remove the email step from a switch?
 7. Do the terms of the user's Claude subscriptions bear on running the agent-seats across several accounts?
+8. Does the switcher also act when `claude` on ned-box is logged out, not only when the account reaches its weekly limit, with Codex logging `claude` back in, on the same account or on another that has room? The user raised this on 2026-10-20, in agent-instructions-editor's agent-session fd3dde6d-34c5-4198-9aa4-1209e4d8b1a6: "when Claude is logged out, Claude is dead ... if there's some background task monitoring ... someday Codex could actually re-log me in by changing to an account that has tokens."
 
 ## Next action
 

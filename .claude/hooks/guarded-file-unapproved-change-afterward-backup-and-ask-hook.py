@@ -5,10 +5,12 @@ every version, and tell the agent to ask him.
 Registered under PostToolUse and PostToolUseFailure for every tool. A guarded file is a file
 instruction-file-guard.py protects, plus ~/.claude/CLAUDE.md and ~/.claude/settings.json. At
 each run the hook compares each checked file's stat data with what it stored at its previous
-run, hashes only a file whose stat data differs, copies each new version into this machine's
-directory of the log-store kind guarded-file-versions-and-approvals/, and, when the version is
-not in its path's approved set, tells the agent to show the user the change and run this
-program with --approve or --restore. The change stays in place while he is asked.
+run, hashes only a file whose stat data differs, logs each new version in this machine's
+directory of the log-store kind guarded-file-versions-and-approvals/, copies it there unless
+the file's checkout is on a branch whose HEAD commit holds it, and, when the version is not in its path's
+approved set, tells the agent to show the user the change and run this program with --approve
+or --restore. The change stays in place while he is asked. A version with no copy is read
+back from git; a file outside every checkout, such as ~/.claude/CLAUDE.md, is always copied.
 
     python3 <this file> --approve <path> <hash> [<path> <hash> ...]
     python3 <this file> --restore <path> <hash> [<path> <hash> ...]
@@ -17,7 +19,7 @@ Design and tests: docs/issues/1268-catch-a-guarded-file-changed-without-the-user
 
 Exit status: the hook always exits 0, since the tool call has already happened. --approve and
 --restore exit 0 when done, 1 when they refuse, when the store cannot be reached, when a
-file operation fails, or when --restore changes some files and fails on others, and 64 on a bad
+file operation or git fails, or when --restore changes some files and fails on others, and 64 on a bad
 command line.
 """
 
@@ -88,6 +90,7 @@ HOW_GIT = "git"
 HOW_EDIT = "edit"
 HOW_USER = "user"
 HOW_OBVIOUS_FIX = "obvious-fix"
+HOW_PRE_APPROVED = "pre-approved"
 HOW_STOCK = "stock"
 HOW_RENAME = "rename"
 
@@ -104,23 +107,35 @@ EXIT_BAD_INVOCATION = 64
 ASK_HEADER = (
     "A guarded file changed, and the user has not approved the new version. The change stays in "
     "place while you ask him; this hook has kept a copy of the version.")
-ASK_FILE = "{path}, version {key}. Its change against the newest approved version:\n{diff}"
+ASK_FILE = "{path}, version {key}.{reason} Its change against the newest approved version:\n{diff}"
+EDIT_ON_UNAPPROVED_VERSION = (
+    " The Edit or Write did not approve this version, because it was made on a version the user "
+    "had not approved: the instruction-file guard's approval covers only that call's change, not "
+    "the unapproved text already in the file.")
 ASK_INSTRUCTIONS = (
-    "If you are a subagent, report the change to the agent that dispatched you instead of "
-    "asking the user, and do none of the steps below.\n"
+    "If you are a subagent and you wrote an obvious-fix marker before you made the change, run "
+    "once: python3 {program} --approve {pairs}, then tell the agent that dispatched you what you "
+    "fixed, and do none of the steps below.\n"
+    "If you are any other subagent, stop: make no further edit, report the change to the agent "
+    "that dispatched you instead of asking the user, and do none of the steps below.\n"
     "Show the user each change above and ask him whether he approves it.\n"
     "If he approves, write his words into {marker} at the top of your session's checkout, then "
     "run once: python3 {program} --approve {pairs}\n"
     "If you wrote an obvious-fix marker before you made the change, run that --approve command "
     "without asking him, then tell him what you fixed.\n"
+    "If you wrote a `#pre_approved_change` marker before you made the change, run that "
+    "--approve command without asking him.\n"
     "If he declines, run: python3 {program} --restore {pairs}\n"
     "If he declines a version that is in a commit, also run, for each such file: "
     "git commit --only -m \"Put back the approved <file name>\" -- <path>")
 REMINDER = (
     "Reminder: {path} still holds version {key}, which the user has not approved.\n"
-    "If you are a subagent, report the change to the agent that dispatched you instead of "
-    "asking the user.\n"
-    "Otherwise show him the change and ask him, as this hook's earlier message said.\n"
+    "If you are a subagent and you wrote an obvious-fix marker before you made the change, run "
+    "once: python3 {program} --approve {path} {key}, then tell the agent that dispatched you what "
+    "you fixed.\n"
+    "If you are any other subagent, stop: make no further edit, and report the change to the "
+    "agent that dispatched you instead of asking the user.\n"
+    "Otherwise show the user the change and ask him, as this hook's earlier message said.\n"
     "If he approves, write his words into {marker} at the top of your session's checkout, then "
     "run: python3 {program} --approve {path} {key}\n"
     "If he declines, run: python3 {program} --restore {path} {key}")
@@ -149,6 +164,10 @@ class RestoreIncomplete(Exception):
 
 class Refused(Exception):
     """--approve or --restore must not go on."""
+
+
+class BranchUnreadable(RuntimeError):
+    """git could not say whether HEAD is on a branch."""
 
 
 def load_module(name, path):
@@ -387,6 +406,95 @@ class Store:
         data = self.read(path, copy_hash)
         return data if blob_hash(data) == copy_hash else None
 
+    def kept_version(self, path: str, copy_hash: str):
+        """The version's bytes from its copy, else from the git repository of path's checkout;
+        None when neither holds it."""
+        data = self.copied_version(path, copy_hash)
+        if data is None:
+            data = version_from_git(path, copy_hash)
+        return data
+
+
+# ---------------------------------------------------------------- versions git holds
+
+# Git holds a version when a commit that a durable ref reaches holds its blob: a branch, a tag
+# or a remote-tracking branch. A worktree's detached HEAD is not durable, since removing the
+# worktree drops it and gc then drops its commits, and neither are refs/work-snapshots/* and
+# refs/stash, deleted within hours, or a blob only staged or only in the object store; a version
+# held only there keeps its copy.
+DURABLE_REF_OPTIONS = ("--branches", "--tags", "--remotes")
+
+
+def blobs_durable_refs_hold(checkout):
+    """Every blob id a commit reachable from a durable ref of the checkout's repository holds:
+    the whole history, so it is for the daily prune, not for the hook's run on every tool call."""
+    output = git_text(checkout, "rev-list", "--objects", *DURABLE_REF_OPTIONS, timeout=600)
+    # Commits and trees are listed too; only a blob's id can name a copy.
+    return {line.split(" ", 1)[0] for line in output.splitlines()}
+
+
+def versions_head_holds(checkout, versions):
+    """The (path, blob id) pairs among versions whose path, in the checkout's HEAD commit, is
+    that blob, when HEAD is on a branch; none when HEAD is detached, since a detached HEAD is
+    not a durable ref. A branch's HEAD is the one durable ref the hook can ask cheaply on every
+    tool call; a version only another durable ref holds is copied, and the daily prune deletes
+    the copy. Raises BranchUnreadable, a RuntimeError carrying git's stderr, when git
+    symbolic-ref fails with any exit other than 1."""
+    relative = {}
+    for path, blob_id in versions:
+        if blob_id == DELETED:
+            continue
+        relative[os.path.relpath(Path(path).parent.resolve() / Path(path).name, checkout)] = (
+            path, blob_id)
+    if not relative:
+        return set()
+    if subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify", "HEAD^{commit}"],
+                      capture_output=True, timeout=60, check=False).returncode == 1:
+        # A repository with no commit yet holds nothing.
+        return set()
+    # git symbolic-ref -q exits 1, with nothing on stderr, when HEAD is detached; any other
+    # nonzero exit is git failing.
+    on_branch = subprocess.run(["git", "-C", str(checkout), "symbolic-ref", "-q", "HEAD"],
+                               capture_output=True, timeout=60, check=False)
+    if on_branch.returncode == 1:
+        return set()
+    if on_branch.returncode != 0:
+        raise BranchUnreadable(f"git symbolic-ref -q HEAD in {checkout} exited "
+                               f"{on_branch.returncode}: "
+                               f"{on_branch.stderr.decode(errors='replace').strip()}")
+    output = git_text(checkout, "--literal-pathspecs", "ls-tree", "-r", "-z", "--full-tree",
+                      "HEAD", "--", *sorted(relative))
+    held = set()
+    for entry in output.split("\0"):
+        header, _, name = entry.partition("\t")
+        fields = header.split()
+        if len(fields) == 3 and fields[1] == "blob" and name in relative \
+                and relative[name][1] == fields[2]:
+            held.add(relative[name])
+    return held
+
+
+def version_from_git(path: str, blob_id: str):
+    """The blob's bytes from the repository of path's checkout, or None when path is in no
+    checkout or the repository does not hold the blob. A git that fails otherwise raises."""
+    checkout = guard().enclosing_repository_root(Path(path).parent)
+    if checkout is None:
+        return None
+    exists = subprocess.run(["git", "-C", str(checkout), "cat-file", "-e", blob_id],
+                            capture_output=True, timeout=60, check=False)
+    # git cat-file -e exits 1, silently, for an object the repository does not hold.
+    if exists.returncode == 1 and not exists.stderr:
+        return None
+    if exists.returncode != 0:
+        raise RuntimeError(f"git cat-file -e {blob_id} in {checkout} exited {exists.returncode}: "
+                           f"{exists.stderr.decode(errors='replace').strip()}")
+    data = subprocess.run(["git", "-C", str(checkout), "cat-file", "blob", blob_id],
+                          capture_output=True, timeout=60, check=False)
+    if data.returncode != 0 or blob_hash(data.stdout) != blob_id:
+        raise RuntimeError(f"git cat-file blob {blob_id} in {checkout} exited {data.returncode}: "
+                           f"{data.stderr.decode(errors='replace').strip()}")
+    return data.stdout
+
 
 # ---------------------------------------------------------------- the log
 
@@ -489,10 +597,10 @@ def is_settings_file(path: str):
     return path == str(home_directory() / ".claude" / "settings.json")
 
 
-def git_text(checkout, *arguments, input_text=None):
+def git_text(checkout, *arguments, input_text=None, timeout=60):
     result = subprocess.run(["git", "-C", str(checkout), *arguments], capture_output=True,
                             input=None if input_text is None else input_text.encode(),
-                            timeout=60, check=False)
+                            timeout=timeout, check=False)
     if result.returncode != 0:
         raise RuntimeError(f"git {' '.join(arguments)} in {checkout} exited {result.returncode}: "
                            f"{result.stderr.decode(errors='replace').strip()}")
@@ -665,17 +773,22 @@ def diff_text(before: bytes, after: bytes, path: str):
 class Check:
     """What one run found about one checked file, to be settled in the store."""
 
-    def __init__(self, path, data, key, copy_hash, how=""):
+    def __init__(self, path, data, key, copy_hash, how="", in_git=False, previous=None):
         self.path, self.data, self.key, self.copy_hash, self.how = path, data, key, copy_hash, how
+        self.in_git = in_git
+        # The key of the version the previous run saw: None when it saw none, DELETED when the
+        # file was absent, so in both cases the call wrote the whole file.
+        self.previous = previous
 
 
 def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, quiet):
     """Everything that touches the store. Returns (asks, reminders, settled paths).
 
     approvals: [(path, key, how, rule)] git's own work and renames, recorded before the checks.
-    checks: the files whose content changed. unsettled_unchanged: [(path, key)] files left
-    unsettled by an earlier run. quiet: a rebase, merge, cherry-pick or revert is stopped, so
-    every version is copied and nothing is asked."""
+    checks: the files whose content changed, each copied unless its checkout's branch HEAD
+    holds it.
+    unsettled_unchanged: [(path, key)] files left unsettled by an earlier run. quiet: a rebase,
+    merge, cherry-pick or revert is stopped, so every version is copied and nothing is asked."""
     for path, key, how, rule in approvals:
         approved = store.approved(path)
         if key in approved:
@@ -687,10 +800,16 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
         log_line(store, path, "approved", session, owner, key, how)
     asks, reminders, settled = [], [], {}
     for check in checks:
-        if check.key != DELETED:
+        if check.key != DELETED and not check.in_git:
             store.copy(check.path, check.copy_hash, check.data)
         log = store.log(check.path)
         approved = store.approved(check.path)
+        reason = ""
+        if check.how == HOW_EDIT and check.previous not in (None, DELETED) \
+                and check.previous not in approved:
+            # The guard approved the Edit's change, not the unapproved text it was made on.
+            check.how = ""
+            reason = EDIT_ON_UNAPPROVED_VERSION
         new_approval = ""
         if check.key not in approved and check.how:
             store.approve(check.path, check.key)
@@ -707,7 +826,7 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
         if asking is None or asking[0] == session or not owner_alive(asking[1]):
             if asking is not None and asking[0] != session:
                 log_line(store, check.path, "asking", session, owner, check.key)
-            asks.append(ask_entry(store, check, log))
+            asks.append(ask_entry(store, check, log, reason))
         elif not was_reminded(log, check.key, session):
             log_line(store, check.path, "reminded", session, check.key)
             reminders.append((check.path, check.key))
@@ -739,14 +858,14 @@ def read_file(path):
     return Path(path).read_bytes()
 
 
-def ask_entry(store, check, log):
+def ask_entry(store, check, log, reason=""):
     newest = newest_approved(store, check.path, log, check.key)
     if newest is None or newest[1] == DELETED:
         before = b""
     else:
-        before = store.copied_version(check.path, newest[1]) or b""
+        before = store.kept_version(check.path, newest[1]) or b""
     after = b"" if check.key == DELETED else check.data
-    return check.path, check.key, diff_text(before, after, check.path)
+    return check.path, check.key, diff_text(before, after, check.path), reason
 
 
 def run_with_deadline(function, deadline_seconds):
@@ -891,9 +1010,11 @@ def run_hook(payload):
                          if repository else (lambda paths: {}))
         listed_before = set(state["files"])
         changed, unsettled = scan(files, state["files"], hash_function)
-        approvals, quiet, new_position = [], False, None
+        approvals, quiet, new_position, held = [], False, None, set()
         if repository is not None:
             checkout, git_directory = repository
+            held = versions_head_holds(checkout, [(path, value[3])
+                                                  for path, value in changed.items()])
             entries = reflog_entries(git_directory)
             new_position = entries[-1][:2] if entries else None
             window = [] if stocking else entries_after(entries, state.get("reflog"))
@@ -906,7 +1027,7 @@ def run_hook(payload):
             elif window:
                 approvals = git_own_work(checkout, window, state, changed)
         plans.append([kind, state_path, state, files, changed, unsettled, approvals, quiet,
-                      new_position, stocking, set(state["files"]) != listed_before])
+                      new_position, stocking, set(state["files"]) != listed_before, held])
 
     stocking_machine = outside_stocking
     nothing_to_do = all(not plan[4] and not plan[5] and not plan[6] and not plan[9]
@@ -932,7 +1053,8 @@ def run_hook(payload):
                     store.approve(path, key)
                     log_seen(store, path, session, owner(), key, key, HOW_STOCK)
         for plan in plans:
-            kind, state_path, state, files, changed, unsettled, approvals, quiet, _, stocking, _ = plan
+            (kind, state_path, state, files, changed, unsettled, approvals, quiet, _, stocking, _,
+             held) = plan
             checks = []
             for path, (now, data, key, copy_hash) in changed.items():
                 how = ""
@@ -942,7 +1064,9 @@ def run_hook(payload):
                         how = HOW_STOCK
                 elif edit_succeeded and written == path:
                     how = HOW_EDIT
-                checks.append(Check(path, data, key, copy_hash, how))
+                previous = state["files"].get(path)
+                checks.append(Check(path, data, key, copy_hash, how, (path, copy_hash) in held,
+                                    previous and previous[4]))
             approvals = approvals + renames(store, changed, state["files"])
             results.append(store_phase(store, session, owner(), checks, unsettled, approvals,
                                        quiet))
@@ -1032,9 +1156,9 @@ def messages(asks, reminders):
     out = []
     if asks:
         program = str(HOOK_PATH)
-        pairs = " ".join(f"{path} {key}" for path, key, _ in asks)
-        files = "\n\n".join(ASK_FILE.format(path=path, key=key, diff=diff)
-                            for path, key, diff in asks)
+        pairs = " ".join(f"{path} {key}" for path, key, _, _ in asks)
+        files = "\n\n".join(ASK_FILE.format(path=path, key=key, reason=reason, diff=diff)
+                            for path, key, diff, reason in asks)
         out.append("\n\n".join([ASK_HEADER, files, ASK_INSTRUCTIONS.format(
             marker=APPROVAL_MARKER_NAME, program=program, pairs=pairs)]))
     for path, key in reminders:
@@ -1064,7 +1188,8 @@ def pairs_from(arguments):
 
 
 def approve(pairs, cwd: Path):
-    """Record the user's yes for each (path, hash), spending the approval marker once."""
+    """Record each (path, hash) as approved, by the user's words, an obvious-fix marker or a
+    pre-approved-change marker, spending the approval marker once."""
     checkout = guard().enclosing_repository_root(cwd)
     if checkout is None:
         raise Refused(f"{cwd} is in no checkout, so there is no {APPROVAL_MARKER_NAME} to read; "
@@ -1075,7 +1200,34 @@ def approve(pairs, cwd: Path):
     if words is None:
         raise Refused(f"there is no approval in {marker}. Show the user each change and ask him; "
                       f"if he approves, write his words into {marker} and run this command again")
+    first_line = guard().PRE_APPROVED_CHANGE_MARKER_FIRST_LINE
+    pre_approved = guard().is_pre_approved_change_marker(words)
+    if guard().pre_approved_change_marker_gives_no_reason(words):
+        raise Refused(f"{marker} has `{first_line}` as its first line but no second line naming "
+                      "the exception on the approval page the change falls under, or `on neither "
+                      "list`, so it approves nothing. Put that on its second line and run this "
+                      "command again")
     obvious_fix = words.startswith(OBVIOUS_FIX_MARKER_PREFIX)
+    if pre_approved:
+        # One log field: a tab in the agent's words would split it.
+        exception = " ".join(words.splitlines()[1].split())
+        how, extra_fields = HOW_PRE_APPROVED, [exception]
+        late_marker_kind = f"`{first_line}` marker"
+
+        def late_marker_line(path):
+            return (f"A change to the guarded file {path} that needs no approval as "
+                    f"`{exception}`; the marker was written after the change, so it needs your yes")
+    elif obvious_fix:
+        fix = " ".join(line.strip() for line in words[len(OBVIOUS_FIX_MARKER_PREFIX):].splitlines()
+                       if line.strip()) or "(the marker does not say what)"
+        how, extra_fields = HOW_OBVIOUS_FIX, []
+        late_marker_kind = "obvious-fix marker"
+
+        def late_marker_line(path):
+            return (f"An obvious fix to the guarded file {path}; the marker was written after the "
+                    f"change, so it needs your yes: {fix}")
+    else:
+        how, extra_fields = HOW_USER, []
     marker_time = os.stat(marker).st_mtime_ns
     for path, key in pairs:
         now = current_version(path)[0]
@@ -1083,26 +1235,26 @@ def approve(pairs, cwd: Path):
             raise Refused(f"{path} no longer holds version {key} but {now}, so the user was not "
                           "shown this version. Show him the change the hook's latest message "
                           "gives, and ask him again")
-    how = HOW_OBVIOUS_FIX if obvious_fix else HOW_USER
 
     def work(store, end):
         logs = {path: store.log(path) for path, _ in pairs}
-        if obvious_fix:
+        if how != HOW_USER:
             for path, key in pairs:
                 seen = first_seen_time(logs[path], key)
                 # Equal times count as the marker coming after, so the change goes to the user.
                 if seen is None or marker_time >= seen:
                     raise Refused(
-                        f"the obvious-fix marker in {marker} was written after this hook first "
+                        f"the {late_marker_kind} in {marker} was written after this hook first "
                         f"saw {path} at version {key}, so it cannot approve that version. Show "
-                        "the user the change and ask him; if he approves, write his words into "
-                        f"{marker} and run this command again")
+                        "the user the change and ask him, starting with this line: "
+                        f"\"{late_marker_line(path)}\". If he approves, write his words "
+                        f"into {marker} and run this command again")
         if time.monotonic() > end:
             raise StoreUnreachable("the deadline passed before the approval was recorded")
         for path, key in pairs:
             if key not in store.approved(path):
                 store.approve(path, key)
-            log_line(store, path, "approved", "command-line", "", key, how)
+            log_line(store, path, "approved", "command-line", "", key, how, *extra_fields)
         return True
 
     run_command_work(work)
@@ -1113,7 +1265,7 @@ def approve(pairs, cwd: Path):
 
 def restore(pairs):
     """Put back the newest approved version of each declined (path, hash)."""
-    current = {}
+    current, held = {}, set()
     for path, key in pairs:
         now = current_version(path)
         if now[0] != key:
@@ -1121,21 +1273,30 @@ def restore(pairs):
                           "changed after the user was shown it. Show him the change the hook's "
                           "latest message gives, and ask him again")
         current[path] = now
+        checkout = guard().enclosing_repository_root(Path(path).parent)
+        try:
+            if checkout is not None and versions_head_holds(checkout, [(path, now[1])]):
+                held.add(path)
+        except BranchUnreadable:
+            # --restore keeps its exit code by reading this as a detached HEAD; copying a
+            # version a commit may hold loses nothing.
+            pass
 
     def work(store, end):
         plan = []
         for path, key in pairs:
             _, copy_hash, data = current[path]
-            if key != DELETED:
+            if key != DELETED and path not in held:
                 store.copy(path, copy_hash, data)
             log = store.log(path)
             newest = newest_approved(store, path, log, key)
             content = None
             if newest is not None and newest[0] != DELETED:
-                content = store.copied_version(path, newest[1])
+                content = store.kept_version(path, newest[1])
                 if content is None:
-                    raise StoreUnreachable(f"the approved copy {newest[1]} of {path} is missing "
-                                           "or does not match its hash")
+                    raise StoreUnreachable(f"the approved version {newest[1]} of {path} is in "
+                                           "neither the guarded-file store's copies of that "
+                                           "file nor the git repository of its checkout")
             plan.append((path, key, newest, content))
         if time.monotonic() > end:
             raise StoreUnreachable("the deadline passed before any version was put back")
@@ -1221,7 +1382,7 @@ def main(arguments=None):
             print(REFUSED.format(program_name=HOOK_PATH.name, mode=mode, reason=error),
                   file=sys.stderr)
             return EXIT_REFUSED
-        except OSError as error:
+        except (OSError, RuntimeError) as error:
             print(COMMAND_FAILED.format(program_name=HOOK_PATH.name, mode=mode, reason=error),
                   file=sys.stderr)
             return EXIT_REFUSED

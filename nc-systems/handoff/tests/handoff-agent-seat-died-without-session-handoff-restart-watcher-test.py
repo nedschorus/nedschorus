@@ -12,6 +12,7 @@ and log directories pointed at fixture directories.
 Prints one line per case and exits non-zero if any case fails.
 """
 
+import ast
 import fcntl
 import importlib.util
 import json
@@ -1275,6 +1276,28 @@ def run_watch_wiring_cases(root: Path):
           records is not None and records("seat-a") is True, repr(built))
 
 
+def verdicts_assess_seat_returns_in_its_source():
+    """The verdict strings recover-crashed-seats.py's assess_seat returns,
+    read from its source: each `return "<verdict>", detail` in the function."""
+    source = (REPOSITORY / "scripts" / "recover-crashed-seats.py").read_text(encoding="utf-8")
+    assess_seat = next(node for node in ast.walk(ast.parse(source))
+                       if isinstance(node, ast.FunctionDef) and node.name == "assess_seat")
+    return {node.value.elts[0].value for node in ast.walk(assess_seat)
+            if isinstance(node, ast.Return) and isinstance(node.value, ast.Tuple)
+            and isinstance(node.value.elts[0], ast.Constant)
+            and isinstance(node.value.elts[0].value, str)}
+
+
+def run_crashed_verdict_spelling_cases():
+    returned = verdicts_assess_seat_returns_in_its_source()
+    check("assess_seat's verdicts are found in recover-crashed-seats.py's source",
+          {"refuse", "seat-already-running", "resume"} <= returned, repr(returned))
+    for verdict in watcher_module.CRASHED_VERDICTS:
+        check(f"the crashed verdict {verdict!r} is spelled as recover-crashed-seats.py's "
+              "assess_seat returns it",
+              verdict in returned, repr(returned))
+
+
 with tempfile.TemporaryDirectory() as temporary_directory:
     run_watch_wiring_cases(Path(temporary_directory))
     run_decision_cases(Path(temporary_directory))
@@ -1290,6 +1313,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     run_report_run_failure_state_cases(Path(temporary_directory))
     run_state_cases(Path(temporary_directory))
     run_notice_page_cases(Path(temporary_directory))
+    run_crashed_verdict_spelling_cases()
 
 if failures:
     print(f"\n{len(failures)} case(s) failed")

@@ -318,8 +318,8 @@ with tempfile.TemporaryDirectory() as scratch:
           out[0].startswith(f"run-all-test-suites: {repo.resolve()} at ")
           and "(tracked files match that commit); 6 suites listed by git;" in out[0],
           out[:1])
-    check("the whole report is also written to report.txt in the log directory",
-          (root / "logs" / "report.txt").read_text() == result.stdout)
+    check("the whole report is also written to test-run-report.txt in the log directory",
+          (root / "logs" / "test-run-report.txt").read_text() == result.stdout)
     nested_log = root / "logs" / "nested__deeper__b-test.py.log"
     check("each suite's log is named by its whole path, so no two can collide",
           nested_log.exists() and nested_log.read_text() == "ok\n",
@@ -1592,23 +1592,62 @@ with tempfile.TemporaryDirectory() as scratch:
               for line in lines(result.stdout))
           and not list((root / "recordings").glob("*/a-test.py.json")), result.stdout)
 
-# A recorded run that skipped cases recorded nothing for them.
+# A recorded run that skipped cases recorded nothing for them, unless the machine itself
+# is what each skip names.
+MARKER = module.SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
-    repo = make_repo(root, {"skips-one-test.py": "print('SKIP  a case this fixture skips')\n",
-                            "passes-test.py": PASSES})
+    repo = make_repo(root, {
+        "skips-one-test.py": "print('SKIP  a case this fixture skips')\n",
+        "marked-only-test.py": f"print('SKIP  {MARKER} a macOS case: macOS only')\n"
+                               f"print('SKIP {MARKER} an rg case: rg is not on PATH')\n",
+        "both-test.py": f"print('SKIP  {MARKER} a macOS case: macOS only')\n"
+                        "print('SKIP  a tmux case: the tmux server did not start')\n",
+        "marker-later-test.py": f"print('SKIP  a case: {MARKER}')\n",
+        "passes-test.py": PASSES})
     base = head(repo)
-    run(root)
+    first = run(root)
+    check("a marked skip is still counted beside its suite and printed with the skipped cases",
+          any(line.startswith("PASS marked-only-test.py (") and line.endswith(", 2 skipped)")
+              for line in lines(first.stdout))
+          and f"marked-only-test.py: SKIP  {MARKER} a macOS case: macOS only" in lines(first.stdout)
+          and f"both-test.py: SKIP  {MARKER} a macOS case: macOS only" in lines(first.stdout)
+          and "both-test.py: SKIP  a tmux case: the tmux server did not start"
+              in lines(first.stdout), first.stdout)
     result = select_since(root, base)
-    check("a suite whose recorded run skipped cases is selected again, and says why",
-          ran(root) == ["skips-one-test.py"]
-          and "SELECTED skips-one-test.py: its last recorded run skipped 1 case(s), so it "
-              "recorded only what the cases that ran read" in lines(result.stdout),
+    check("a suite whose recorded run skipped only marked cases is not selected again; one "
+          "with an unmarked skip is, beside marked ones too, and the mark counts only right "
+          "after SKIP",
+          ran(root) == ["both-test.py", "marker-later-test.py", "skips-one-test.py"],
           (ran(root), result.stdout))
-    stored = next((root / "recordings").glob("*/skips-one-test.py.json"))
-    recorded = json.loads(stored.read_text())
-    recorded.pop("skipped_cases")
-    stored.write_text(json.dumps(recorded))
+    check("a suite whose recorded run skipped cases is selected again, and says why",
+          "SELECTED skips-one-test.py: its last recorded run skipped 1 case(s) without the mark "
+          f"{MARKER}, so it recorded only what the cases that ran read" in lines(result.stdout)
+          and "SELECTED both-test.py: its last recorded run skipped 1 case(s) without the mark "
+          f"{MARKER}, so it recorded only what the cases that ran read" in lines(result.stdout),
+          result.stdout)
+
+    def recording_of(suite):
+        return next((root / "recordings").glob(f"*/{suite}.json"))
+
+    def rewrite_recording(suite, change):
+        stored = recording_of(suite)
+        recorded = json.loads(stored.read_text())
+        change(recorded)
+        stored.write_text(json.dumps(recorded))
+
+    rewrite_recording("marked-only-test.py",
+                      lambda recorded: recorded.pop("skipped_cases_this_machine_cannot_run"))
+    rewrite_recording("skips-one-test.py",
+                      lambda recorded: recorded.update(skipped_cases_this_machine_cannot_run=True))
+    result = select_since(root, base)
+    check("a recording that does not say how many of its skips were marked counts none as marked",
+          "SELECTED marked-only-test.py: its last recorded run skipped 2 case(s) without the mark "
+          f"{MARKER}, so it recorded only what the cases that ran read" in lines(result.stdout)
+          and "SELECTED skips-one-test.py: its last recorded run skipped 1 case(s) without the "
+          f"mark {MARKER}, so it recorded only what the cases that ran read" in lines(result.stdout),
+          result.stdout)
+    rewrite_recording("skips-one-test.py", lambda recorded: recorded.pop("skipped_cases"))
     result = select_since(root, base)
     check("and so is one whose recording does not say how many cases it skipped",
           "SELECTED skips-one-test.py: its last recorded run skipped an unrecorded number "
@@ -2435,13 +2474,13 @@ with tempfile.TemporaryDirectory() as scratch:
     other = temp / "another-program-old"
     for directory in (old, recent, named, other):
         directory.mkdir(parents=True)
-        (directory / "report.txt").write_text("report\n")
+        (directory / "test-run-report.txt").write_text("report\n")
     (runs / "9-9.json").write_text(json.dumps({"log_dir": str(named)}))
     now = time.time() + module.FINISHED_RUN_LOG_RETENTION_SECONDS + 60
     for directory in (old, named, other):
-        for path in (directory, directory / "report.txt"):
+        for path in (directory, directory / "test-run-report.txt"):
             os.utime(path, (time.time(), time.time()))
-    for path in (recent, recent / "report.txt"):
+    for path in (recent, recent / "test-run-report.txt"):
         os.utime(path, (now, now))
     explicit = temp / "run-all-test-suites-explicit"
     deep = temp / "run-all-test-suites-deep"

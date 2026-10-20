@@ -42,7 +42,7 @@ Two kinds of agent, each defined in the glossary, `docs/nedschorus-wiki/nedschor
 | `docs/nedschorus-wiki/queue/`, `docs/issues/queue/` | Destination-rooted queues: wiki-bound doctrine and GHI-MD-bound documents awaiting the user's drain (promote / edit / demote / drop). |
 | `nc-systems/` | The project's built systems, one directory each with its program, design document and tests: `handoff/` (session reincarnation, the handoff-supervisor and the handoff writer) and `main-gatekeeper/` (the program meant to be the only way a change reaches main, dormant until activated). |
 | `entry-manifest.md` | The founding-era record of the six files migrated from the legacy system; no longer appended. |
-| Issues labeled `draft` | Draft issues awaiting the user's drain — same format as every issue, walkable; no work ever waits on one, and nothing requiring the user's admission takes effect without it. |
+| Issues labeled `queue-drain-candidate` | Issues awaiting the user's drain — same format as every issue, walkable; no work ever waits on one, and nothing requiring the user's admission takes effect without it. |
 
 ## Working in a fresh clone
 

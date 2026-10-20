@@ -209,7 +209,9 @@ def turn_start(records):
     """Return the index of the record that starts the transcript's last turn, or None."""
     for index in range(len(records) - 1, -1, -1):
         record = records[index]
-        if record.get("type") != "user":
+        # A compaction's summary is a user record without isMeta, but Claude Code writes it, not
+        # a prompt, so it opens no turn.
+        if record.get("type") != "user" or record.get("isCompactSummary"):
             continue
         content = record.get("message", {}).get("content")
         if (isinstance(content, list) and content

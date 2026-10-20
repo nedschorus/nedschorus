@@ -345,7 +345,7 @@ def main():
         (repo / ".gitignore").write_text(f"{records_name}/\n", encoding="utf-8")
         git(repo, "add", "-A")
         git(repo, "commit", "-qm", "ignore the record directory")
-        report = repo / records_name / "2026-08-23-design" / "cut-claude.md"
+        report = repo / records_name / "2026-08-23-design" / "cut-adversarial-prompt-claude.md"
         report.parent.mkdir(parents=True)
         report.write_text("a finished report\n", encoding="utf-8")
         # Precondition: git really is blind here. Without it the case below
@@ -360,7 +360,7 @@ def main():
         report.write_text("a cell wrote over this report\n", encoding="utf-8")
         found = strays(baseline, snapshot(repo))
         check("a cell overwriting a report in the ignored record directory is detected",
-              f"{records_name}/2026-08-23-design/cut-claude.md" in found,
+              f"{records_name}/2026-08-23-design/cut-adversarial-prompt-claude.md" in found,
               f"stray list was {found}; baseline was {baseline}")
 
     # Case 10: the watched ignored paths belong to the write detector, not to
@@ -370,7 +370,7 @@ def main():
     # snapshot entry counted naively would do.
     ignored_status = getattr(runner, "IGNORED_PATH_STATUS_CODE", "!!")
     revision = runner.reviewed_revision(
-        {f"{records_name}/2026-08-01-earlier-run/cut-codex.md": (ignored_status, "0" * 40)})
+        {f"{records_name}/2026-08-01-earlier-run/cut-adversarial-prompt-codex.md": (ignored_status, "0" * 40)})
     check("a leftover record file does not make the reviewed revision dirty",
           "worktree=clean" in revision, f"provenance line said {revision!r}")
 
@@ -399,13 +399,13 @@ def main():
 
     with tempfile.TemporaryDirectory() as scratch:
         out_dir = pathlib.Path(scratch)
-        scribbled = out_dir / "cut-claude.md"
+        scribbled = out_dir / "cut-adversarial-prompt-claude.md"
         scribbled.write_text("a cell scribbled here first\n", encoding="utf-8")
         check("a report path a cell wrote to first is reported",
               runner.write_report(scribbled, "the claude report\n") is True,
               "write_report did not report the occupied path")
         check("an unoccupied report path is not reported",
-              runner.write_report(out_dir / "cut-codex.md", "the codex report\n") is False,
+              runner.write_report(out_dir / "cut-adversarial-prompt-codex.md", "the codex report\n") is False,
               "write_report reported an unoccupied path")
         check("the occupied report contains the runner's report",
               scribbled.read_text(encoding="utf-8") == "the claude report\n")
@@ -436,7 +436,7 @@ def main():
         out_dir.mkdir()
         copy_record_dir = repo / records_name / "current-run"
         baseline = snapshot(repo)
-        runner.write_report(out_dir / "cut-claude.md", "report\n")
+        runner.write_report(out_dir / "cut-adversarial-prompt-claude.md", "report\n")
         found = runner.stray_paths_since(baseline, repo, copy_record_dir)
         check("reports outside the review copy do not appear as stray writes",
               found == [], f"stray list was {found}")
@@ -465,7 +465,7 @@ def main():
     # scratch directory under the one it is handed, and a relative path here
     # would leave that directory wherever this file happens to be run from.
     with tempfile.TemporaryDirectory() as scratch:
-        out_path = pathlib.Path(scratch) / "cut-claude.md"
+        out_path = pathlib.Path(scratch) / "cut-adversarial-prompt-claude.md"
         out_path.write_text("occupied", encoding="utf-8")
         with contextlib.redirect_stdout(buffer):
             runner_gate.run_cell(
@@ -474,12 +474,12 @@ def main():
                 pathlib.Path(scratch), {}, ())
     output = buffer.getvalue()
     check("an occupied report path prints the existing warning",
-          f"WARNING: cut-claude found a stray write at its own report path and "
+          f"WARNING: cut-adversarial-prompt-claude found a stray write at its own report path and "
           f"overwrote it: {out_path}\n" in output, f"output was {output!r}")
     check("a claude cell that leaves a stray path behind is warned about, "
           "same as a codex cell",
           "WARNING: the review copy was modified outside the cells' scratch "
-          f"directories, seen when cut-claude finished: {stray_name}" in output,
+          f"directories, seen when cut-adversarial-prompt-claude finished: {stray_name}" in output,
           f"output was {output!r}")
 
     # Case 19: the per-cell scratch directory the runner makes. The prompts
@@ -491,13 +491,13 @@ def main():
     with tempfile.TemporaryDirectory() as scratch:
         out_dir = pathlib.Path(scratch) / "2026-08-29-design"
         out_dir.mkdir()
-        made = runner.cell_scratch_dir(out_dir, "cut-claude")
+        made = runner.cell_scratch_dir(out_dir, "cut-adversarial-prompt-claude")
         check("the runner creates the cell's scratch directory", made.is_dir(),
               f"{made} is not a directory")
         check("the scratch directory is per cell, under the run's record directory",
-              made == out_dir / "scratch" / "cut-claude", f"the runner made {made}")
+              made == out_dir / "scratch" / "cut-adversarial-prompt-claude", f"the runner made {made}")
         check("a scratch directory that already exists is not an error",
-              runner.cell_scratch_dir(out_dir, "cut-claude") == made,
+              runner.cell_scratch_dir(out_dir, "cut-adversarial-prompt-claude") == made,
               "the second call did not return the same directory")
 
     # Case 20: the write detector exempts this run's scratch subtree. A cell
@@ -514,12 +514,12 @@ def main():
         out_dir = repo / records_name / "2026-08-29-design"
         out_dir.mkdir(parents=True)
         earlier_scratch = (repo / records_name / "2026-08-28-design"
-                           / "scratch" / "cut-claude")
+                           / "scratch" / "cut-adversarial-prompt-claude")
         earlier_scratch.mkdir(parents=True)
         (earlier_scratch / "leftover.md").write_text("an earlier run's notes\n",
                                                      encoding="utf-8")
         baseline = snapshot(repo)
-        cell_scratch = runner.cell_scratch_dir(out_dir, "cut-claude")
+        cell_scratch = runner.cell_scratch_dir(out_dir, "cut-adversarial-prompt-claude")
         (cell_scratch / "working-notes.md").write_text(
             "the notes this cell took\n", encoding="utf-8")
         found = runner.stray_paths_since(baseline, repo, out_dir)
@@ -529,7 +529,7 @@ def main():
         # Every cell's directory, not just the one that happens to ask:
         # stray_paths_since is per run and cannot tell which cell is
         # calling it, so the exemption is of the whole subtree.
-        other_scratch = runner.cell_scratch_dir(out_dir, "fresh-eyes-codex")
+        other_scratch = runner.cell_scratch_dir(out_dir, "fresh-eyes-adversarial-prompt-codex")
         (other_scratch / "sketch-draft.md").write_text(
             "another cell's draft\n", encoding="utf-8")
         found = runner.stray_paths_since(baseline, repo, out_dir)
@@ -550,7 +550,7 @@ def main():
             "a cell wrote over this\n", encoding="utf-8")
         found = runner.stray_paths_since(baseline, repo, out_dir)
         check("an earlier run's scratch is not exempt",
-              f"{records_name}/2026-08-28-design/scratch/cut-claude/leftover.md"
+              f"{records_name}/2026-08-28-design/scratch/cut-adversarial-prompt-claude/leftover.md"
               in found, f"stray list was {found}")
 
     # Scratch is permitted regardless of git status, including staged files.
@@ -562,7 +562,7 @@ def main():
         out_dir = repo / records_name / "2026-08-29-design"
         out_dir.mkdir(parents=True)
         baseline = snapshot(repo)
-        note = runner.cell_scratch_dir(out_dir, "cut-claude") / "working-notes.md"
+        note = runner.cell_scratch_dir(out_dir, "cut-adversarial-prompt-claude") / "working-notes.md"
         note.write_text("the notes this cell took\n", encoding="utf-8")
         git(repo, "add", "-f", str(note))
         found = runner.stray_paths_since(baseline, repo, out_dir)
@@ -575,7 +575,7 @@ def main():
     # runner, which substitutes it for the MD's placeholder token. A cell that
     # received the token instead of a path would have nowhere to write.
     runner_substitution = load_runner()
-    cell_scratch_path = "/tmp/records/2026-08-29-design/scratch/cut-claude"
+    cell_scratch_path = "/tmp/records/2026-08-29-design/scratch/cut-adversarial-prompt-claude"
     assembled = runner_substitution.assemble_prompt(
         "cut", "docs/x.md", [], pathlib.Path("unused-problem-statement.md"),
         cell_scratch_path)
@@ -620,21 +620,21 @@ def main():
                         "cut", runtime, "docs/x.md", [],
                         pathlib.Path("unused-problem-statement.md"), out_dir,
                         {}, ())
-                report_written = (out_dir / f"cut-{runtime}.md").is_file()
+                report_written = (out_dir / f"cut-adversarial-prompt-{runtime}.md").is_file()
             output = buffer.getvalue()
             if is_report:
                 check(f"a {runtime} text carrying the cut sections is saved",
                       cell_ok and report_written and "saved:" in output
                       and "FAILED:" not in output, f"output was {output!r}")
             else:
-                failed_line = (f"FAILED: cut-{runtime} — not-a-report — the text it "
+                failed_line = (f"FAILED: cut-adversarial-prompt-{runtime} — not-a-report — the text it "
                                f"returned lacks questions, leanness (relaunched once)\n")
                 check(f"a {runtime} text that is not a report prints the FAILED line",
                       failed_line in output
                       and "saved:" not in output, f"output was {output!r}")
                 check(f"a {runtime} text that is not a report is launched once more, "
                       f"and both refused texts are printed",
-                      output.count(f"RETRYING: cut-{runtime} — not-a-report — ") == 1
+                      output.count(f"RETRYING: cut-adversarial-prompt-{runtime} — not-a-report — ") == 1
                       and output.count(non_report) == 2, f"output was {output!r}")
                 check(f"a {runtime} text that is not a report is printed before "
                       f"the FAILED line",
@@ -685,8 +685,8 @@ def main():
                 sys.argv = real_argv
             saved = sorted(path.name for path
                            in runner_exit.RECORDS_ROOT.glob("*/*.md"))
-        expected_saved = (["cut-codex.md"] if expected_exit
-                          else ["cut-claude.md", "cut-codex.md"])
+        expected_saved = (["cut-adversarial-prompt-codex.md"] if expected_exit
+                          else ["cut-adversarial-prompt-claude.md", "cut-adversarial-prompt-codex.md"])
         check(f"a run whose claude cell {'is refused' if expected_exit else 'reports'} "
               f"exits {expected_exit}, saving {', '.join(expected_saved)}",
               exit_code == expected_exit and saved == expected_saved,
@@ -722,7 +722,7 @@ def main():
 
             runner_timeout.run_claude = timing_out
             runner_timeout.run_codex = timing_out
-            timeout_line = (f"FAILED: cut-{runtime} — timeout — after "
+            timeout_line = (f"FAILED: cut-adversarial-prompt-{runtime} — timeout — after "
                             f"{runner_timeout.CELL_TIMEOUT_SECONDS}s\n")
             buffer = io.StringIO()
             cell_ok, raised = None, None
@@ -792,7 +792,7 @@ def main():
     finally:
         runner_chain_timeout.run_agent_binary_unless_run_stopped = real_chain_timeout_run
     output = buffer.getvalue()
-    timeout_line = (f"FAILED: cut-claude — timeout — after "
+    timeout_line = (f"FAILED: cut-adversarial-prompt-claude — timeout — after "
                     f"{runner_chain_timeout.CELL_TIMEOUT_SECONDS}s\n")
     check("a claude cell timing out after a failed attempt prints the timed-out "
           "attempt's words once, after the failed attempt's and before the FAILED line",
@@ -1492,7 +1492,7 @@ def main():
         notes = sorted(record.glob("scratch/*/notes.md")) if record else []
         check("the cells' scratch notes are archived in the record",
               [note.parent.name for note in notes]
-              == ["cut-claude", "fresh-eyes-claude"],
+              == ["cut-adversarial-prompt-claude", "fresh-eyes-adversarial-prompt-claude"],
               f"record {record}, notes {notes}")
         check("and the copy is gone when the run ends",
               not any((base / "review-copies").glob("*/*"))
@@ -1584,11 +1584,34 @@ def main():
             "--runtime", "codex"])
         records = [path.name for path in driven.RECORDS_ROOT.glob("*")]
         check("--runtime codex launches only the codex cell",
-              code == 0 and launched == ["codex"] and "cut-claude" not in out,
+              code == 0 and launched == ["codex"] and "cut-adversarial-prompt-claude" not in out,
               f"exit {code}, launched {launched}, stderr {err!r}")
         check("a skill's record is named for its directory, not SKILL alone",
               len(records) == 1 and records[0].endswith("-widget-SKILL"),
               f"records {records}")
+
+    # Case 61: fresh-eyes without --problem-statement launches no cell and
+    # prints one SKIPPED line per runtime, naming the cell in full, while the
+    # other adversarial prompt still runs.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch)
+        repo = scratch_repository_with_design(base)
+        driven = runner_over(repo, base)
+        launched = []
+        driven.run_claude = lambda prompt, checkout=None: (
+            launched.append("claude") or (0, any_adversarial_prompt_report, "a-test-model", ""))
+        driven.run_codex = lambda prompt, checkout=None: (
+            launched.append("codex") or (0, any_adversarial_prompt_report, "a-test-model", ""))
+        code, out, err = drive_main(driven, [
+            "--target", "docs/design.md", "--adversarial-prompt", "fresh-eyes",
+            "--adversarial-prompt", "cut"])
+        skipped = [line for line in out.splitlines() if line.startswith("SKIPPED:")]
+        check("fresh-eyes without --problem-statement prints one SKIPPED line per "
+              "runtime, naming each cell in full, and launches only the cut cells",
+              skipped == ["SKIPPED: fresh-eyes-adversarial-prompt-claude (no --problem-statement)",
+                          "SKIPPED: fresh-eyes-adversarial-prompt-codex (no --problem-statement)"]
+              and sorted(launched) == ["claude", "codex"],
+              f"exit {code}, skipped {skipped}, launched {launched}, stderr {err!r}")
 
     # Case 35: the cells are given each document by its repository-relative
     # path, whatever form it was passed in. An absolute path inside the
@@ -1641,8 +1664,8 @@ def main():
             "--target", absolute_target, "--context", absolute_context,
             "--adversarial-prompt", "cut", "--runtime", "claude"])
         records = sorted(driven.RECORDS_ROOT.glob("*"))
-        report = (records[0] / "cut-claude.md").read_text(encoding="utf-8") \
-            if len(records) == 1 and (records[0] / "cut-claude.md").is_file() else ""
+        report = (records[0] / "cut-adversarial-prompt-claude.md").read_text(encoding="utf-8") \
+            if len(records) == 1 and (records[0] / "cut-adversarial-prompt-claude.md").is_file() else ""
         check("a run given absolute paths hands the cell the repository-relative "
               "names and never the live checkout's path",
               code == 0 and len(prompts) == 1
@@ -1757,7 +1780,7 @@ def main():
                         out_dir, {}, ())
             except Exception as error:
                 raised = error
-            report_path = out_dir / f"cut-{runtime}.md"
+            report_path = out_dir / f"cut-adversarial-prompt-{runtime}.md"
             if report_path.is_file():
                 report = report_path.read_text(encoding="utf-8")
         return cell_ok, buffer.getvalue(), raised, report
@@ -1790,7 +1813,7 @@ def main():
 
     def triage_lines(runtime):
         other = "codex" if runtime == "claude" else "claude"
-        return (f"When a run of this sanity-check saved cut-{other}'s report, "
+        return (f"When a run of this sanity-check saved cut-adversarial-prompt-{other}'s report, "
                 f"triage the cut-adversarial-prompt from that report.\n"
                 f"When no run of this sanity-check saved a report of the "
                 f"cut-adversarial-prompt, write in finding-dispositions.md that the "
@@ -1811,7 +1834,7 @@ def main():
             (1, "", "a-test-model", "", ("exit-1", capacity)),
             (0, cut_report, "a-test-model", "", None)]))
         cell_ok, output, raised, report = run_cell_capturing(runner_relaunch, runtime)
-        retrying_line = f"RETRYING: cut-{runtime} — exit-1 — {capacity}\n"
+        retrying_line = f"RETRYING: cut-adversarial-prompt-{runtime} — exit-1 — {capacity}\n"
         check(f"a {runtime} cell whose first launch fails is launched once more "
               f"and saves its report",
               raised is None and cell_ok is True and len(launcher.launches) == 2
@@ -1858,7 +1881,7 @@ def main():
             (1, "", "", attempts, ("exit-1", capacity))]))
         cell_ok, output, raised, report = run_cell_capturing(runner_relaunch, runtime)
         tried = f" (models tried: {attempts})" if attempts else ""
-        failed_block = (f"FAILED: cut-{runtime} — exit-1 — {capacity} "
+        failed_block = (f"FAILED: cut-adversarial-prompt-{runtime} — exit-1 — {capacity} "
                         f"(relaunched once){tried}\n" + triage_lines(runtime))
         check(f"a {runtime} cell whose relaunch fails too is launched twice and fails",
               raised is None and cell_ok is False and len(launcher.launches) == 2
@@ -1869,15 +1892,15 @@ def main():
               f"instructions follow it directly ({runtime})",
               raised is None and output.endswith(failed_block)
               and output.count("FAILED:") == 1
-              and output.count(f"RETRYING: cut-{runtime} — exit-1 — "
+              and output.count(f"RETRYING: cut-adversarial-prompt-{runtime} — exit-1 — "
                                f"first launch: overloaded\n") == 1,
               f"raised={raised!r}, output was {output!r}")
     launcher = with_launcher(runner_relaunch, answering_in_turn([(3, "", "a-test-model", "")]))
     cell_ok, output, raised, report = run_cell_capturing(runner_relaunch, "codex")
     check("a launcher that names no cause is reported by its exit code",
           raised is None and cell_ok is False
-          and "RETRYING: cut-codex — exit-3 — no output\n" in output
-          and "FAILED: cut-codex — exit-3 — no output (relaunched once)\n" in output,
+          and "RETRYING: cut-adversarial-prompt-codex — exit-3 — no output\n" in output
+          and "FAILED: cut-adversarial-prompt-codex — exit-3 — no output (relaunched once)\n" in output,
           f"raised={raised!r}, output was {output!r}")
 
     # The FAILED line and its instructions are one write: the cells print from
@@ -1902,11 +1925,11 @@ def main():
     failed_writes = [text for text in recording.writes if "FAILED:" in text]
     check("a cell that ends on its FAILED lines is counted as finished, so a stop "
           "after it does not make the run a stopped run",
-          "cut-codex" in runner_relaunch.CELLS_FINISHED,
+          "cut-adversarial-prompt-codex" in runner_relaunch.CELLS_FINISHED,
           f"finished {runner_relaunch.CELLS_FINISHED!r}")
     check("a failed cell's FAILED line and its instructions are printed as one write",
           len(failed_writes) == 1 and failed_writes[0].count("\n") == 4
-          and failed_writes[0].startswith("FAILED: cut-codex — logged-out — ")
+          and failed_writes[0].startswith("FAILED: cut-adversarial-prompt-codex — logged-out — ")
           and failed_writes[0].endswith("--adversarial-prompt cut --runtime codex\n"),
           f"writes were {recording.writes!r}")
 
@@ -1937,7 +1960,7 @@ def main():
             check(f"and its FAILED line is followed by the two instructions and "
                   f"the command ({cause_class}, {runtime})",
                   lines[-4:-1] == [
-                      f"FAILED: cut-{runtime} — {cause_class} — the CLI's own line",
+                      f"FAILED: cut-adversarial-prompt-{runtime} — {cause_class} — the CLI's own line",
                       "Tell the user what the FAILED line above says.",
                       "After the user has cleared the cause, run the command on "
                       "the next line."],
@@ -2028,7 +2051,7 @@ def main():
                   f"and {'relaunched once' if relaunched else 'not relaunched'}",
                   raised is None and cell_ok is False and len(failed) == 1
                   and failed[0].startswith(
-                      f"FAILED: cut-{runtime} — {expected_class} — ")
+                      f"FAILED: cut-adversarial-prompt-{runtime} — {expected_class} — ")
                   and expected_detail in failed[0]
                   and ("(relaunched once)" in failed[0]) == relaunched
                   and (output.count("RETRYING:") == 1) == relaunched
@@ -2062,14 +2085,14 @@ def main():
         check(f"a {runtime} cell that times out is launched once, and its FAILED "
               f"line is followed by the triage instructions",
               raised is None and cell_ok is False and len(launcher.launches) == 1
-              and output == f"FAILED: cut-{runtime} — {timeout_text}\n" + triage_lines(runtime),
+              and output == f"FAILED: cut-adversarial-prompt-{runtime} — {timeout_text}\n" + triage_lines(runtime),
               f"raised={raised!r}, launches={len(launcher.launches)}, output was {output!r}")
     launcher = with_launcher(runner_relaunch, answering_in_turn([
         (1, "", "a-test-model", "", ("exit-1", capacity)), timed_out()]))
     cell_ok, output, raised, report = run_cell_capturing(runner_relaunch, "codex")
     check("a relaunch that times out is reported as a timeout that was relaunched",
           raised is None and cell_ok is False and len(launcher.launches) == 2
-          and f"FAILED: cut-codex — {timeout_text} (relaunched once)\n" in output,
+          and f"FAILED: cut-adversarial-prompt-codex — {timeout_text} (relaunched once)\n" in output,
           f"raised={raised!r}, output was {output!r}")
     with_launcher(runner_relaunch, answering_in_turn([
         timed_out(stderr=codex_session.encode("utf-8") + b"cut off mid-sente")]))
@@ -2112,7 +2135,7 @@ def main():
           f"raised={raised!r}, cell_ok={cell_ok}, calls={chain_calls}, "
           f"output was {output!r}")
     check("its RETRYING line carries the cause of the chain's last attempt",
-          output.count(f"RETRYING: cut-claude — exit-1 — {opus}: overloaded, "
+          output.count(f"RETRYING: cut-adversarial-prompt-claude — exit-1 — {opus}: overloaded, "
                        f"call 2\n") == 1,
           f"output was {output!r}")
     check("and the saved report names its model, the fallback of the launch "
@@ -2153,7 +2176,7 @@ def main():
         driven.run_claude = claude_never
         code, out, err = drive_main(driven, [
             "--target", "docs/design.md", "--adversarial-prompt", "cut", "--runtime", "codex"])
-        failed_block = (f"FAILED: cut-codex — exit-1 — {capacity} (relaunched once)\n"
+        failed_block = (f"FAILED: cut-adversarial-prompt-codex — exit-1 — {capacity} (relaunched once)\n"
                         + triage_lines("codex"))
         check("a run limited to codex whose cell fails twice exits 1 with the "
               "triage instructions and no report",
@@ -2165,7 +2188,7 @@ def main():
         log_text = logs[0].read_text(encoding="utf-8") if len(logs) == 1 else ""
         check("the RETRYING line, the FAILED line and its instructions are in "
               "the record's log",
-              f"RETRYING: cut-codex — exit-1 — {capacity}\n" in log_text
+              f"RETRYING: cut-adversarial-prompt-codex — exit-1 — {capacity}\n" in log_text
               and failed_block in log_text,
               f"logs {logs}, log was {log_text!r}")
 
@@ -2184,7 +2207,7 @@ def main():
         def codex_logged_out_then_in(prompt, checkout=None):
             # The cell is told apart by the scratch directory its prompt names.
             launched.append("codex")
-            if "scratch/mechanization-codex" in prompt and mechanization_codex_logged_out[0]:
+            if "scratch/mechanization-adversarial-prompt-codex" in prompt and mechanization_codex_logged_out[0]:
                 return 1, "", "a-test-model", "", ("logged-out", "401 Unauthorized")
             return 0, any_adversarial_prompt_report, "a-test-model", "", None
 
@@ -2201,7 +2224,7 @@ def main():
             "--runtime", "codex"])
         out_lines = out.splitlines()
         failed_at = [index for index, line in enumerate(out_lines)
-                     if line.startswith("FAILED: mechanization-codex — logged-out — ")]
+                     if line.startswith("FAILED: mechanization-adversarial-prompt-codex — logged-out — ")]
         printed = out_lines[failed_at[0] + 3] if len(failed_at) == 1 else ""
         command = words_of_command(printed)
         check("a logged-out codex cell in a full run is launched once and prints "
@@ -2223,7 +2246,7 @@ def main():
               "report in a record directory of its own",
               code == 0 and launched == ["codex"] and out.count("saved: ") == 1
               and len(records) == 2 and records[1] == records[0] + "-2"
-              and (driven.RECORDS_ROOT / records[1] / "mechanization-codex.md").is_file(),
+              and (driven.RECORDS_ROOT / records[1] / "mechanization-adversarial-prompt-codex.md").is_file(),
               f"exit {code}, launched {launched}, records {records}, "
               f"stdout {out!r}, stderr {err!r}")
 
@@ -2315,6 +2338,10 @@ time.sleep(300)
         DRIVER_HELD_CELL_SENDS_SIGTERM_TO_ITS_OWN_THREAD also set, that cell's thread waits
         for the other cell to finish and then sends SIGTERM to itself, as Linux
         may hand a signal sent to the process to any of its threads.
+        DRIVER_HOLD_MAIN_THREAD_ONCE_EVERY_CELL_ENDED holds the main thread
+        in its wait for the cells once no cell is left to wait for, before the
+        run counts the saved reports, until that file exists (`<file>.held`
+        again).
         DRIVER_PROBE_VERSIONS, set to any
         value, leaves the CLI version cache empty, so a cell probes the
         stand-in's `--version` as a real run does."""
@@ -2376,6 +2403,15 @@ if report_check_hold:
             held_until(report_check_hold)
         return check_report(*arguments, **keywords)
     module.missing_report_phrases = last_report_check_held
+cells_ended_hold = os.environ.get("DRIVER_HOLD_MAIN_THREAD_ONCE_EVERY_CELL_ENDED")
+if cells_ended_hold:
+    wait_for_cells = module.concurrent.futures.wait
+    def main_thread_held_once_every_cell_ended(*arguments, **keywords):
+        finished, waiting = wait_for_cells(*arguments, **keywords)
+        if not waiting:
+            held_until(cells_ended_hold)
+        return finished, waiting
+    module.concurrent.futures.wait = main_thread_held_once_every_cell_ended
 ship_hold = os.environ.get("DRIVER_HOLD_FIRST_SHIP")
 if ship_hold:
     ship = module.ship_record
@@ -2460,7 +2496,7 @@ sys.exit(module.main())
                 records_root = repo / "sanity-check-records"
                 started = wait_until(
                     lambda: len(recorded_process_ids(recorded, "claude")) == 1
-                    and any(records_root.glob("*/cut-codex.md")))
+                    and any(records_root.glob("*/cut-adversarial-prompt-codex.md")))
                 copies_mid_run = left_in_copies_root(base)
                 process.send_signal(stop_signal)
                 try:
@@ -2492,8 +2528,8 @@ sys.exit(module.main())
                       f"copies root holds {left_in_copies_root(base)}")
                 check(f"the report saved before {signal_name}, the scratch directories "
                       f"and the log are in the record",
-                      record is not None and (record / "cut-codex.md").is_file()
-                      and (record / "scratch" / "cut-claude").is_dir()
+                      record is not None and (record / "cut-adversarial-prompt-codex.md").is_file()
+                      and (record / "scratch" / "cut-adversarial-prompt-claude").is_dir()
                       and "saved: " in log_text,
                       f"record {record}, holds "
                       f"{sorted(p.name for p in record.iterdir()) if record else None}, "
@@ -2690,7 +2726,7 @@ sys.exit(module.main())
               f"exit {code}, records {records}, stdout {out!r}, stderr {err!r}")
         check("and its record, the log with the FAILED line in it, is in the store",
               shipped_log is not None and shipped_log.is_file()
-              and "FAILED: cut-codex — logged-out — 401 Unauthorized"
+              and "FAILED: cut-adversarial-prompt-codex — logged-out — 401 Unauthorized"
               in shipped_log.read_text(encoding="utf-8")
               and "record: " not in shipped_log.read_text(encoding="utf-8"),
               f"looked for {shipped_log}")
@@ -2736,7 +2772,7 @@ sys.exit(module.main())
             started_after_stop = recorded_process_ids(recorded, "codex")
             check("a stop that lands while a relaunch is prepared: the first launch "
                   "had failed and the relaunch was under way when the signal came",
-                  held and walked and "RETRYING: cut-codex — exit-1 — " in out,
+                  held and walked and "RETRYING: cut-adversarial-prompt-codex — exit-1 — " in out,
                   f"held {held}, walked {walked}, stdout {out!r}")
             check("and no agent-binary starts after the signal, and the run ends by "
                   "it with its copy removed",
@@ -2945,12 +2981,57 @@ sys.exit(module.main())
             check("a stop that lands after every cell saved its report prints what a "
                   "finished run prints, and no STOPPED line",
                   held and record is not None
-                  and (record / "cut-codex.md").is_file() and (record / "cut-claude.md").is_file()
+                  and (record / "cut-adversarial-prompt-codex.md").is_file() and (record / "cut-adversarial-prompt-claude.md").is_file()
                   and "STOPPED:" not in out
                   and f"sanity-check complete: reports in {record}." in out
                   and sum(line.startswith("record: shipped: ") for line in out.splitlines()) == 1,
                   f"held {held}, record {record}, stdout {out!r}, stderr {err!r}")
             check("and the run still ends by the signal, its copy removed",
+                  process.returncode == -signal.SIGTERM and left_in_copies_root(base) == [],
+                  f"exit {process.returncode}, copies root {left_in_copies_root(base)}")
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+            end_stand_ins(recorded)
+
+    # Case 62: a stop signal that lands after every cell has finished, while
+    # the main thread is still in its wait for the cells. No cell was running
+    # when it came, so the run prints what a finished run prints and no
+    # STOPPED line, and still ends by the signal.
+    with tempfile.TemporaryDirectory() as scratch:
+        base = pathlib.Path(scratch).resolve()
+        target = "docs/stopped-once-every-cell-ended.md"
+        repo = scratch_repository_with_design(base, target)
+        programs, recorded = stand_in_agent_binaries(base)
+        cells_ended_hold = base / "cells-ended-hold"
+        environment = runner_process_environment(
+            programs, recorded, codex="report", claude="report")
+        environment["DRIVER_HOLD_MAIN_THREAD_ONCE_EVERY_CELL_ENDED"] = str(cells_ended_hold)
+        process = subprocess.Popen(
+            [sys.executable, "-B", str(runner_driver(base, repo)),
+             "--target", target, "--adversarial-prompt", "cut"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            held = wait_until(lambda: pathlib.Path(str(cells_ended_hold) + ".held").exists())
+            process.send_signal(signal.SIGTERM)
+            try:
+                out, err = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                out, err = process.communicate()
+            records = sorted((repo / "sanity-check-records").glob("*"))
+            record = records[0] if len(records) == 1 else None
+            check("a stop that lands once every cell has finished, while the main thread "
+                  "still waits for the cells, prints what a finished run prints, and no "
+                  "STOPPED line",
+                  held and record is not None
+                  and (record / "cut-adversarial-prompt-codex.md").is_file()
+                  and (record / "cut-adversarial-prompt-claude.md").is_file()
+                  and "STOPPED:" not in out
+                  and f"sanity-check complete: reports in {record}." in out,
+                  f"held {held}, record {record}, stdout {out!r}, stderr {err!r}")
+            check("and that run still ends by the signal, its copy removed",
                   process.returncode == -signal.SIGTERM and left_in_copies_root(base) == [],
                   f"exit {process.returncode}, copies root {left_in_copies_root(base)}")
         finally:
@@ -3059,7 +3140,7 @@ sys.exit(module.main())
             check("a stop that lands while the last cell saves its report ends the run "
                   "with its STOPPED line, and the report is kept",
                   held and walked and record is not None
-                  and (record / "cut-codex.md").is_file() and (record / "cut-claude.md").is_file()
+                  and (record / "cut-adversarial-prompt-codex.md").is_file() and (record / "cut-adversarial-prompt-claude.md").is_file()
                   and "STOPPED: SIGTERM ended this run" in out
                   and "sanity-check complete" not in out
                   and sum(line.startswith("record: shipped: ") for line in out.splitlines()) == 1,
@@ -3243,7 +3324,7 @@ sys.exit(module.main())
                 out, err = process.communicate()
             records = sorted((repo / "sanity-check-records").glob("*"))
             record = records[0] if len(records) == 1 else None
-            report = record / "cut-codex.md" if record is not None else None
+            report = record / "cut-adversarial-prompt-codex.md" if record is not None else None
             report_text = (report.read_text(encoding="utf-8")
                            if report is not None and report.is_file() else "")
             check("a stop that ends the git call a cell makes to save its report ends "

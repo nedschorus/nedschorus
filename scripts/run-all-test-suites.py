@@ -227,6 +227,11 @@ Every such line in a suite's output is counted and printed. resupervise-seat
 prints its skips and then "all cases passed", which is how a run that
 dropped its end-to-end cases used to read as a full pass. A skip never
 changes a verdict; it is reported beside it.
+A suite marks a skip whose cause is the machine itself, its platform or what
+is installed on it, by putting SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER,
+`[this machine cannot run it]`, right after `SKIP` and its spaces:
+`SKIP  [this machine cannot run it] <case>: <reason>`. A marked skip is
+counted and printed like any other; it only changes selection, below.
 
 RUNS THAT OVERLAP, AND ONE RUN AT A TIME WITHOUT TEST SANDBOXES. Measured
 2026-09-21: two overlapping runs of scripts/resupervise-seat-test.py both exit
@@ -336,8 +341,8 @@ finishes: `PASS <path> (<seconds>s)` or `FAIL <path> exit <code>
 failed suites again, each with its log, and every SKIP line, each with its
 suite, so the end of the output holds everything needed. The last line
 opens `SUMMARY:` and carries the counts. The whole report is also written to
-report.txt in the log directory, so a run in the background needs no pipe to
-keep it.
+test-run-report.txt in the log directory, so a run in the background needs no
+pipe to keep it.
 
 RECORDED INPUTS (user-ruled 2026-09-30, walk
 open-questions-concerns-and-recommendations-2026-09-30, item 5, "y both").
@@ -479,8 +484,10 @@ suite runs when one of them is this program (it holds the recorder), under
 has no recording on this machine, or one made by an older version of this
 program; its recorded run did not exit 0, since a run that failed or was
 killed recorded only what it read before it stopped; its recorded run
-skipped cases, since the cases skipped recorded nothing, and a skip can be
-a run disturbed by another; the suite file itself
+skipped a case without the mark `[this machine cannot run it]`, since the
+cases skipped recorded nothing, and a skip can be a run disturbed by
+another (a marked case never runs on this machine, so what it would read
+does not matter here); the suite file itself
 differs; a file it read differs; a path it looked for was added or deleted;
 an entry was added to or deleted from a directory it listed, a new
 subdirectory's name included; a file was added or deleted and it ran git on
@@ -569,6 +576,9 @@ TEST_SUITE_PATHSPEC = "*-test.py"
 # would miss inputs. Leave shell suites unrecorded so selection always runs them.
 SHELL_TEST_SUITE_PATHSPEC = "*-test.sh"
 SKIPPED_CASE_LINE = re.compile(r"^SKIP\s")
+SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER = "[this machine cannot run it]"
+SKIPPED_CASE_LINE_THIS_MACHINE_CANNOT_RUN = re.compile(
+    r"^SKIP\s+" + re.escape(SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER))
 
 # Git redirection variables can send scratch-repository writes into a live repository.
 # The list is the shared module's; programs that load this runner read it here too.
@@ -781,7 +791,7 @@ RUN_RECORDS_DIRECTORY_SUFFIX = ".runs"
 # Long enough for whoever reads a run's report and failed-suite logs to read them.
 FINISHED_RUN_LOG_RETENTION_SECONDS = 2 * 24 * 3600
 LOG_DIRECTORY_LOCK_FILE_NAME = ".run-all-test-suites-log-directory.lock"
-REPORT_FILE_NAME = "report.txt"
+REPORT_FILE_NAME = "test-run-report.txt"
 SUITES_RUN_AT_ONCE_WHEN_CORE_COUNT_UNKNOWN = 4
 
 DEFAULT_RECORDED_INPUTS_DIRECTORY = (
@@ -1739,7 +1749,8 @@ class MachineWideTestSuiteAdmission:
             reasons = sorted(set(self.waiting.values()))
             count = len(self.waiting)
         self.say(f"{count} suite{'s' if count != 1 else ''} of this run "
-                 f"{'wait' if count != 1 else 'waits'} to start: " + "; ".join(reasons))
+                 f"{'wait' if count != 1 else 'waits'} to start: " + "; ".join(reasons)
+                 + ". Each suite starts by itself once the reason it waits for clears.")
 
     def cancel(self):
         """Stop admitting: every suite still waiting raises MachineWideTestSuiteAdmissionCancelled."""
@@ -2931,6 +2942,8 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
         "exit": result["exit"],
         "seconds": result["seconds"],
         "skipped_cases": len(result["skips"]),
+        "skipped_cases_this_machine_cannot_run": sum(
+            1 for line in result["skips"] if SKIPPED_CASE_LINE_THIS_MACHINE_CANNOT_RUN.match(line)),
         "recorded_by": [PYTHON_INPUT_RECORDER_METHOD]
                        + ([STRACE_INPUT_RECORDER_METHOD] if strace_used else []),
         "reads": blob_hashes(top, sorted(touched & files)),
@@ -3121,10 +3134,16 @@ def selection_reason(suite, recording, checkout, commit):
                          else "no exit code recorded"))
     skipped = recording.get("skipped_cases")
     counted = isinstance(skipped, int) and not isinstance(skipped, bool)
-    if not counted or skipped != 0:
+    marked = recording.get("skipped_cases_this_machine_cannot_run")
+    if not isinstance(marked, int) or isinstance(marked, bool):
+        marked = 0
+    if not counted or skipped != marked:
         # A skipped case's reads were never recorded, and a skip can hide a run disturbed by another.
+        # A machine change that lets a marked case run does not select the suite by itself.
         return True, ("its last recorded run skipped "
-                      + (f"{skipped} case(s)" if counted else "an unrecorded number of cases")
+                      + (f"{skipped - marked} case(s) without the mark "
+                         f"{SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER}" if counted
+                         else "an unrecorded number of cases")
                       + ", so it recorded only what the cases that ran read")
     if suite in differ:
         return True, "the suite itself differs"
@@ -3257,7 +3276,7 @@ def suite_line(result):
 
 
 class Report:
-    """Every line goes to stdout at once and to report.txt in the log directory."""
+    """Every line goes to stdout at once and to test-run-report.txt in the log directory."""
 
     def __init__(self, report_file):
         self.lock = threading.Lock()

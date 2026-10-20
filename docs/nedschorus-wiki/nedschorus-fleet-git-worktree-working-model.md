@@ -65,10 +65,7 @@ passing review.
   onto a fresh branch later — was retired 2026-08-28 after a three-commit
   topic written on a Tuesday took until Friday to reach main, every
   cherry-pick re-resolving conflicts against a head that had moved.
-- **The override markers** — `.walk-approved` (instruction-file guard) and
-  `.location-write-approved` (session-location guard), both gitignored,
-  each by convention holding the user's quoted approval words, consumed by
-  the one guarded call it approves (see Marker honesty).
+- **The override markers** — `.walk-approved` (instruction-file guard) and `.location-write-approved` (session-location guard), both gitignored, each by convention holding the user's quoted approval words, consumed by the one guarded call it approves (see Marker honesty); `.walk-approved` holds instead `#pre_approved_change` and the reason for a change that `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` does not require his approval for.
 - **The launchers** — `scripts/launch-claude-mac` and
   `scripts/launch-claude-ubuntu`.
 - **#N** — nedschorus's GitHub tracker; issue or pull request is labeled
@@ -245,7 +242,7 @@ correctly refuses, and `--claim` is the sanctioned path.
 built-live (root-resolution fixed by PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86)).**
 `.claude/hooks/instruction-file-guard.py`: CLAUDE.md, per-seat
 `CLAUDE.local.md`, `.claude/` (minus `worktrees/`, `jobs/` and `handoffs/`),
-reusable prompts, and the files the user reviews block on write; approval quoted into `.walk-approved`. **The shell-write gap is
+reusable prompts, and the files the user reviews block on write; approval quoted into `.walk-approved`, or, for a change `docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md` does not require his approval for, `#pre_approved_change` and the reason. **The shell-write gap is
 named and ruled unguarded** (2026-08-17): every recorded bypass was
 accidental, not adversarial. Build trigger: an actually observed
 shell-route bypass. A periodic drift sweep was rejected: it

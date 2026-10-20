@@ -1,27 +1,46 @@
 #!/usr/bin/env python3
-"""Delete the copies the guarded-file hook keeps for checkouts that no longer exist, except the
-versions the user never approved.
+"""Delete the guarded-file hook's copies of versions a commit now holds, and its approved copies
+of files in checkouts that no longer exist.
 
 The hook, .claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py, keeps
 this machine's directory of the log-store kind guarded-file-versions-and-approvals/. For every
 guarded file it has seen, the directory mirrors the file's absolute path and holds `approved`,
-`log` and one copy per version, named by the version's hash. Every copy is kept forever, so each
-new worktree adds about a megabyte that outlives the worktree. This program runs once a day on
-each machine, for that machine's own directory, since only that machine can tell whether one
-of its paths still exists.
+`log` and one copy per version git did not hold when the hook saw it, named by the version's
+git blob id. This program runs once a day on each machine, for that machine's own directory,
+since only that machine has the checkouts its paths name and can tell whether one still exists.
 
     python3 <this file> [--dry-run]
 
 A real run prints `deleting <copy path>`, flushed, before it deletes each copy, so the log
-names every copy a run stopped part way may have deleted; then a line for each checkout it
-pruned, with its size, and a summary. --dry-run prints the checkouts whose copies would be
-deleted, and deletes nothing.
+names every copy a run stopped part way may have deleted; then a line for each removed checkout
+whose approved copies it deleted, with the total size of those copy files in bytes, and a
+summary line. --dry-run prints the same lines,
+with "would delete" for "deleted", and deletes nothing.
+
+WHEN A COMMIT HOLDS A COPY'S VERSION. A copy whose blob a commit reachable from a durable ref
+of the path's repository holds is deleted, approved or not, in live and removed checkouts
+alike, since the hook's --restore and its diffs read such a version back from git. The durable
+refs are the branches, tags and remote-tracking branches, as blobs_durable_refs_hold in the
+hook lists them. A worktree's detached HEAD is not durable, since removing the worktree drops it
+and gc then drops its commits, and neither are refs/work-snapshots/* and refs/stash, deleted
+within hours, so a version only they hold, like a blob only staged, keeps its copy. The path's
+repository is found by looking up from the path's directory, or, when that directory is gone,
+from its nearest directory that still exists, for the first directory holding a .git file or
+directory. So the repository of a removed worktree under the main clone's .claude/worktrees/ is
+the main clone, which shares its commits. When no repository is found that way, as for a path
+under a removed ~/agents/<seat>, whose nearest existing directory ~/agents is in no repository,
+the program treats no commit as holding the path's versions, although that seat was a worktree
+of the main clone whose commits may hold them, and only the rules below apply to the path.
+A copy deleted because a commit holds its version, whether its checkout still exists or not, is
+named only on its `deleting` line and counted in the summary line's first number; the lines for
+removed checkouts count only the approved copies the rules below delete.
 
 WHEN A CHECKOUT NO LONGER EXISTS. The store records neither a file's checkout nor its git
 directory, so the checkout is found from the path. A file whose directory still exists belongs
-to a checkout that still exists, or to no checkout; its copies are kept, since --restore may
-need them to put back a file deleted on a branch. Otherwise the first missing directory on the
-file's path stands for its checkout, and that checkout no longer exists when either
+to a checkout that still exists, or to no checkout; its copies that no commit holds are kept,
+since the hook's --restore may need them to put back a file deleted on a branch. Otherwise the
+first missing directory on the file's path stands for its checkout, and that checkout no longer
+exists when either
 - no checkout encloses the nearest directory that still exists, as for ~/agents/<seat>; or
 - that enclosing checkout's git ignores the missing directory, as the main clone ignores
   .claude/worktrees/, so the missing directory was a checkout of its own.
@@ -34,16 +53,18 @@ missing or empty. A removed checkout that was the only content of its volume is 
 reported. The hook's files outside any
 checkout, ~/.claude/CLAUDE.md and ~/.claude/settings.json, are never pruned.
 
-WHAT IS KEPT. A copy whose version is in the path's approved set is deleted. Every copy of a
-path that has a version the user never approved, or a copy whose version the approved set does
-not hold, is kept, the approved copies too, so the change can still be shown against the
-approved version. `approved` and `log` are never deleted: they are small, and a kept copy
-means nothing without them.
+WHAT IS KEPT OF A REMOVED CHECKOUT. Of the copies no commit holds, a copy whose version is in
+the path's approved set, the blob ids its `approved` file lists, is deleted. When the path's
+`log` names a version not in that set, or a copy's version is not in it, every copy of the
+path that no commit holds is kept, the approved ones too, so the change can still be shown
+against the approved version. `approved` and `log` are never deleted: they are small, and a
+kept copy means nothing without them.
 
 CONCURRENCY. The hook takes no lock on the store, and none is needed: the hook writes a copy only
-of a file that exists, in its own live checkout or in ~/.claude, and this program deletes only
-copies, only under directories that are gone, rechecked just before each path's copies go. Each
-unlink is atomic. A checkout re-created at the same path between that check and the unlinks loses
+of a version its checkout's branch HEAD does not hold, of a file that exists, in its own live checkout
+or in ~/.claude, and this program deletes only copies a commit on a durable ref holds, which
+loses nothing even when the hook has just written one, or copies under directories that are
+gone, rechecked just before each path's copies go. Each unlink is atomic. A checkout re-created at the same path between that check and the unlinks loses
 every approved copy of that path, and the hook's next run there copies only the version then on
 disk.
 
@@ -59,7 +80,8 @@ beside it, scheduled-jobs-on-each-machine.json, where a change to the schedule i
   wake.
 
 Exit status: 0 when done; 1 when the store cannot be reached, a directory cannot be read, it
-cannot be told whether a directory exists, git cannot say whether a directory is ignored, a copy
+cannot be told whether a directory exists, git cannot say whether a directory is ignored or
+which blobs its commits hold, a copy
 cannot be deleted, or the run is stopped part way; the lines on stderr say what failed. A failure
 in one path keeps that path's copies and the run goes on to the others.
 """
@@ -146,6 +168,26 @@ def git_ignores_directory(root: Path, relative: str):
                        f"{result.stderr.strip()}")
 
 
+class BlobsCommitsHold:
+    """The blob ids the commits of each repository's durable refs hold, listed once per
+    repository, which all its worktrees share."""
+
+    def __init__(self):
+        self.common_directories, self.listed = {}, {}
+
+    def of(self, path: str):
+        root = hook.guard().enclosing_repository_root(Path(path).parent)
+        if root is None:
+            return set()
+        if root not in self.common_directories:
+            self.common_directories[root] = hook.git_text(
+                root, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()
+        common = self.common_directories[root]
+        if common not in self.listed:
+            self.listed[common] = hook.blobs_durable_refs_hold(root)
+        return self.listed[common]
+
+
 def copies_to_delete(path_directory: Path, names):
     """(the copies in one path's directory that may be deleted, the number kept of versions not
     approved, the number of approved copies kept beside them)."""
@@ -169,8 +211,21 @@ def prune(store_directory: Path, dry_run: bool, check_ignore=git_ignores_directo
     "failures", its copies are kept, and the walk goes on. A real run prints each copy's path
     before deleting it, so a run killed part way has named every copy it may have deleted."""
     result = {"checkouts": {}, "bytes": 0, "kept_not_approved": 0, "kept_approved": 0,
-              "failures": []}
+              "failures": [], "held_by_commits": 0, "held_by_commits_bytes": 0}
     outside_files = set(hook.outside_files())
+    held_by_commits = BlobsCommitsHold()
+
+    def delete(copy):
+        """The copy's size once deleted, or None when it failed."""
+        try:
+            size = copy.stat().st_size
+            if not dry_run:
+                print(f"deleting {copy}", flush=True)
+                copy.unlink()
+        except OSError as error:
+            result["failures"].append(f"{copy} could not be deleted: {error.strerror}")
+            return None
+        return size
 
     def walk_failed(error):
         result["failures"].append(f"{error.filename} could not be read: {error.strerror}")
@@ -182,6 +237,19 @@ def prune(store_directory: Path, dry_run: bool, check_ignore=git_ignores_directo
         path_directory = Path(directory)
         path = "/" + str(path_directory.relative_to(store_directory))
         if path in outside_files:
+            continue
+        try:
+            held = held_by_commits.of(path)
+        except (RuntimeError, subprocess.SubprocessError) as error:
+            result["failures"].append(f"{path}'s copies were kept: {error}")
+            continue
+        for name in sorted(name for name in names if name in held):
+            size = delete(path_directory / name)
+            if size is not None:
+                result["held_by_commits"] += 1
+                result["held_by_commits_bytes"] += size
+        names = [name for name in names if name not in held]
+        if not any(COPY_NAME.fullmatch(name) for name in names):
             continue
         try:
             checkout = removed_checkout(path, check_ignore, mount_parents)
@@ -214,14 +282,8 @@ def prune(store_directory: Path, dry_run: bool, check_ignore=git_ignores_directo
                 continue
         deleted, deleted_bytes = 0, 0
         for name in deletable:
-            copy = path_directory / name
-            try:
-                size = copy.stat().st_size
-                if not dry_run:
-                    print(f"deleting {copy}", flush=True)
-                    copy.unlink()
-            except OSError as error:
-                result["failures"].append(f"{copy} could not be deleted: {error.strerror}")
+            size = delete(path_directory / name)
+            if size is None:
                 continue
             deleted += 1
             deleted_bytes += size
@@ -258,16 +320,23 @@ def main(arguments=None):
               f"may have deleted is named above on a line that starts with 'deleting', printed "
               f"before the copy was deleted; with no such line, it deleted nothing.", file=sys.stderr)
         return EXIT_FAILED
-    verb = "would prune" if options.dry_run else "pruned"
+    verb = "would delete" if options.dry_run else "deleted"
     for checkout, size in sorted(result["checkouts"].items()):
-        print(f"{verb} {checkout}: {size} bytes")
+        print(f"removed checkout {checkout}: {verb} {size} bytes of approved copies")
     sys.stdout.flush()
     for failure in result["failures"]:
         print(failure, file=sys.stderr)
-    print(f"{verb} the copies of {len(result['checkouts'])} removed checkouts, "
-          f"{result['bytes']} bytes; kept {result['kept_not_approved']} copies of versions not "
-          f"approved and {result['kept_approved']} approved copies of the same files; "
-          f"{len(result['failures'])} failures")
+    failures = (f"{len(result['failures'])} failures, each named on stderr above"
+                if result["failures"] else "no failures")
+    print(f"{verb} {result['held_by_commits']} copies whose version a commit on a branch, a tag "
+          f"or a remote-tracking branch holds, whether the file's checkout still exists or not, "
+          f"{result['held_by_commits_bytes']} bytes of copy files; {verb} the approved copies of "
+          f"each file of a removed checkout whose every version was approved, in "
+          f"{len(result['checkouts'])} removed checkouts, {result['bytes']} bytes of copy files; "
+          f"kept, for each file of a removed checkout that has a version not approved, all of "
+          f"that file's copies that no commit on a branch, a tag or a remote-tracking branch "
+          f"holds, so the change can still be shown against its approved version: {result['kept_not_approved']} copies of versions not approved and "
+          f"{result['kept_approved']} approved copies of the same files; {failures}")
     return EXIT_FAILED if result["failures"] else EXIT_DONE
 
 

@@ -1,12 +1,12 @@
 ---
-issue: "[Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, docs/drafts and the draft-label issue queue](https://github.com/nedschorus/nedschorus/issues/24)"
+issue: "[Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, the drafts directory and the queue-drain-candidate-label issue queue](https://github.com/nedschorus/nedschorus/issues/24)"
 ---
 
-# Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, docs/drafts and the draft-label issue queue
+# Queue drain procedure — the review process that empties the wiki queue, the pair queue, nc-queue, the drafts directory and the queue-drain-candidate-label issue queue
 
 ## Why this exists (boss-directed, 2026-07-24)
 
-The artifact-lifecycle design gives every non-final artifact a named queue (`docs/nedschorus-wiki/queue/` for doctrine candidates, `docs/issues/queue/` for pair candidates, the `draft`-labeled issue queue). The boss's ruling at capture, near-verbatim: the missing piece is the maintenance/draining procedure — that is what turns these nice docs into something that is part of the system, not just notes. A queue without a drain is a pile with extra steps; this GHI tracks the drain until it is built into the system.
+The artifact-lifecycle design gives every non-final artifact a named queue (`docs/nedschorus-wiki/queue/` for doctrine candidates, `docs/issues/queue/` for pair candidates, the `queue-drain-candidate`-labeled issue queue). The boss's ruling at capture, near-verbatim: the missing piece is the maintenance/draining procedure — that is what turns these nice docs into something that is part of the system, not just notes. A queue without a drain is a pile with extra steps; this GHI tracks the drain until it is built into the system.
 
 ## The drain (boss-approved 2026-07-24 with the parent ruling)
 
@@ -16,7 +16,7 @@ The artifact-lifecycle design gives every non-final artifact a named queue (`doc
   - **edit** — revise in place; stays queued.
   - **demote** — down to evidence/transient, attached to its pair or session.
   - **drop** — deleted, with the reason in the commit message; explicit, never silent rot.
-- **Starvation visibility is the system half:** the handoff scrub step reports every queue's depth and oldest-item age (it already does this for the `draft` issue queue), so an unwalked queue surfaces at every handoff without anyone remembering to look.
+- **Starvation visibility is the system half:** the handoff scrub step reports every queue's depth and oldest-item age (it already does this for the `queue-drain-candidate` issue queue), so an unwalked queue surfaces at every handoff without anyone remembering to look.
 
 ## Build surfaces (when NC builds them)
 
@@ -53,7 +53,7 @@ Measured against main at `5f0fd4c` on 2026-09-22 — **58 items**:
 | `docs/nedschorus-wiki/queue/` | 8 |
 | `docs/drafts/` | 9 |
 | `nc-queue/`, live | 4 |
-| issues labelled `draft` | 3 |
+| issues labelled `queue-drain-candidate` | 3 |
 | `docs/agents/queue/` | 12 |
 
 `nc-queue/archived/` holds 6 more, already disposed of and not counted.
