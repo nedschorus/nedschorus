@@ -212,12 +212,19 @@ def main():
             lines = stdout.splitlines()
             rerun_lines = [line for line in lines if line.startswith(
                 "When you need the lost stderr, run the head test run for PR 9 again")]
+            before_lines = [line for line in lines if line.startswith("Before you run it")]
             check("when both copies of the run's stderr fail, each copy-failure message gives "
-                  "the command that runs it again, not the failed <outputs>/stderr, and the "
-                  "program exits 2 although the run exited 1",
+                  "the command that runs it again, not the failed <outputs>/stderr, names that "
+                  "file's own error as the one to fix first, and the program exits 2 although "
+                  "the run exited 1",
                   both.returncode == 2 and len(rerun_lines) == 2
                   and "which holds all of it" not in stdout
                   and "writing its stderr to stderr failed (BrokenPipeError" in stdout
+                  and len(before_lines) == 2
+                  and all(f"{helpers}/hr/pr9/stderr is the copy that failed, fix what OSError: "
+                          "[Errno 28] No space left on device; closing it then failed too "
+                          "(OSError: [Errno 28] No space left on device) names first."
+                          in line for line in before_lines)
                   and lines and lines[-1]
                   == "PR 9 head test run: exit 1; SUMMARY: fake summary for pr9-merged",
                   f"exit {both.returncode}\n{stdout}")
@@ -252,8 +259,8 @@ def main():
               and "that copy lacks the run's stderr from the first line that could not be "
                   "written to it onward" in lines[0]
               and "The run's verdict still stands" in lines[1]
-              and f"{PROGRAM.name} exits 2 for the failed copy, even when this run exited "
-                  "nonzero, unless an earlier pull request's run or failed copy already set a "
+              and f"{PROGRAM.name} exits 2 for the failed copy, even when the head test "
+                  "run itself exited nonzero, unless an earlier pull request's run or failed copy already set a "
                   "nonzero exit code; that 2 says nothing about the tests" in lines[1]
               and lines[2] == (f"When you need the lost stderr, read {helpers}/hr/pr7/stderr, "
                                "which holds all of it.")

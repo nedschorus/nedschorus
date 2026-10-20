@@ -131,16 +131,16 @@ def main(argv=None):
                     f"Before you run it, give it a stderr that takes every write: do not "
                     f"close its stderr, pipe it to a program that exits before the run ends, "
                     f"or redirect it to a read-only file or a file on a full disk; and when "
-                    f"{outputs}/stderr is the copy that failed, fix what {failure} names "
-                    f"first.")
+                    f"{outputs}/stderr is the copy that failed, fix what "
+                    f"{copy_failures[f'{outputs}/stderr']} names first.")
             print(f"PR {number} head test run, process {run.pid}: writing its stderr to "
                   f"{name} failed ({failure}); the run went on to its end, and that copy "
                   f"lacks the run's stderr from the first line that could not be written to "
                   f"it onward.\n"
                   f"The run's verdict still stands: the line below gives the run's exit code and "
                   f"SUMMARY line, from the run's stdout, not from this copy. "
-                  f"{Path(__file__).name} exits 2 for the failed copy, even when this run "
-                  f"exited nonzero, unless an earlier pull request's run or failed copy "
+                  f"{Path(__file__).name} exits 2 for the failed copy, even when the head "
+                  f"test run itself exited nonzero, unless an earlier pull request's run or failed copy "
                   f"already set a nonzero exit code; that 2 says nothing about the tests.\n"
                   f"{where_to_find_it}",
                   flush=True)
