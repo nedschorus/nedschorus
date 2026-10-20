@@ -2599,6 +2599,16 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
     except RuntimeError:
         helper_raised = True
     check("a fixture git step that fails stops the suite at that step", helper_raised)
+    # A session whose working directory was deleted is in no checkout: silence,
+    # not a git failure at every turn.
+    deleted_directory = failing_tmp / "deleted-working-directory"
+    deleted_directory.mkdir()
+    deleted_directory.rmdir()
+    for mode in ([], ["--deliver-pending-agent-notes"]):
+        run = run_catch_up_once([*mode, "--cwd", str(deleted_directory)])
+        check(f"a deleted working directory is silent ({' '.join(mode) or 'Stop hook'})",
+              run.returncode == 0 and run.stdout.strip() == "" and run.stderr.strip() == "",
+              f"rc={run.returncode} {run.stdout} {run.stderr}")
     git_dir_fails = failing_git_shim("git-dir-fails-in-modes", '*" --absolute-git-dir "*')
     run = run_catch_up_once(["--deliver-pending-agent-notes", "--cwd", str(level_seat)],
                             git_dir_fails)

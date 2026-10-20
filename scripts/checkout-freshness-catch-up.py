@@ -255,12 +255,28 @@ DETACHED_FAST_FORWARD_REFUSED_LINES = (
 # refusal the agent can clear, so the one not sent to the user.
 GIT_UNTRACKED_FILE_WOULD_BE_OVERWRITTEN_TEXT = "untracked working tree files would be overwritten"
 # A git command failed where this script needed its answer: the run stops
-# there, having moved nothing past what it already reported.
-GIT_FAILED_LINE = (
+# there, having moved nothing past what it already reported. The last four
+# lines are the wording every program in this project gives after a git failure.
+GIT_FAILED_LINES = (
     "{prefix}: {what}, because a git command failed: {error}\n"
-    "If the same failure is reported again, run `git status` in that checkout and fix "
-    "what it names."
+    "If git's error names a lock file, such as .git/index.lock, wait one minute, then "
+    "run {rerun}; do not delete the lock file yourself.\n"
+    "If git's error names a branch, commit or path that does not exist, check that the "
+    "command you ran names the right one, correct it if not, then run it again.\n"
+    "In any other case, run {rerun} once more.\n"
+    "If {rerun} fails a second time, stop and tell the user what {program} printed, "
+    "git's error included; a subagent tells the agent that dispatched it instead."
 )
+# The hook modes run at a turn's end or with a prompt, never by the agent's hand.
+HOOK_RERUN = "your last command"
+
+
+def git_failed_text(prefix: str, what: str, error, rerun: str = HOOK_RERUN) -> str:
+    """GIT_FAILED_LINES for a GitCommandFailed."""
+    return GIT_FAILED_LINES.format(prefix=prefix, what=what, error=error, rerun=rerun,
+                                   program=Path(__file__).name)
+
+
 UNKNOWN_ADVICE = ("Your head state could not be determined (a git command failed); nothing "
                   "was changed. Check `git status` before working.")
 AFTER_REBASE_ADVICE = f"Run `{SELECTIVE_TEST_RUN_COMMAND}`: your work now sits on newer code."
@@ -680,8 +696,10 @@ def run_git_or_raise(arguments, directory: Path, timeout: int = 60, accepted_exi
 
 
 def path_unless_outside_a_repository(arguments, directory: Path):
-    """The path git prints, or None when directory is in no git repository;
-    GitCommandFailed for any other failure."""
+    """The path git prints, or None when directory does not exist or is in no
+    git repository; GitCommandFailed for any other failure."""
+    if not directory.is_dir():
+        return None
     result = run_git(arguments, directory, timeout=15)
     if result.returncode == 0:
         return Path(result.stdout.strip())
@@ -914,7 +932,7 @@ def head_state(checkout: Path, branch: str):
 
 def merge_blockers(checkout: Path, git_dir: Path):
     """Why the reference fast-forward must not run here right now; empty
-    list means safe."""
+    list means safe. Raises GitCommandFailed when git cannot read the branch."""
     blockers = []
     branch = current_branch(checkout)
     if branch == "HEAD":
@@ -1111,7 +1129,8 @@ def merges_from_main(checkout: Path):
     origin/main AND whose two parents merge cleanly, with rename detection and
     without it — the catch-up merge CLAUDE.md bans, because such merges moved
     frozen heads under running reviews. None when git could not list the
-    branch's merges.
+    branch's merges. Raises GitCommandFailed when git cannot read a merge's
+    second parent or cannot say whether that parent is on origin/main.
 
     A merge of another topic branch is not the banned thing, so the second
     parent is tested for being on main rather than every merge being flagged.
@@ -1507,7 +1526,8 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
 
 
 def reference_checkout_of(checkout: Path):
-    """The main worktree of the same repository — the machine's reference copy."""
+    """The main worktree of the same repository — the machine's reference copy.
+    Raises GitCommandFailed when git cannot list the worktrees."""
     listing = run_git_or_raise(["worktree", "list", "--porcelain", "-z"], checkout, timeout=15)
     records = git_output.worktree_records(listing.stdout)
     return Path(records[0].path) if records else None
@@ -1667,8 +1687,10 @@ def main(argv=None) -> int:
         try:
             print(report_line(repository, arguments.interval_seconds))
         except git_output.GitCommandFailed as error:
-            print(GIT_FAILED_LINE.format(prefix="freshness", what=f"{repository} was not "
-                                         "compared with origin/main", error=error))
+            print(git_failed_text("freshness", f"{repository} was not compared with "
+                                  "origin/main", error,
+                                  rerun=f"`python3 {Path(__file__).resolve()} --report "
+                                        f"--repo {repository}`"))
         return 0
 
     if arguments.reference_pull:
@@ -1680,8 +1702,10 @@ def main(argv=None) -> int:
                 if reference is not None:
                     fast_forward_reference_checkout(reference, arguments.interval_seconds)
         except git_output.GitCommandFailed as error:
-            report(GIT_FAILED_LINE.format(prefix="catch-up", what="the reference checkout of "
-                                          f"{repository} was not updated", error=error))
+            report(git_failed_text("catch-up", f"the reference checkout of {repository} "
+                                   "was not updated", error,
+                                   rerun=f"`python3 {Path(__file__).resolve()} "
+                                         f"--reference-pull --repo {repository}`"))
         flush_report()
         return 0
 
@@ -1704,9 +1728,8 @@ def main(argv=None) -> int:
             root = checkout_root(session_cwd)
             text = deliver_pending_agent_notes(root) if root is not None else ""
         except git_output.GitCommandFailed as error:
-            text = GIT_FAILED_LINE.format(prefix="checkout-freshness", what="the notes queued "
-                                          f"for you in {session_cwd} were not delivered",
-                                          error=error)
+            text = git_failed_text("checkout-freshness", "the notes queued for you in "
+                                   f"{session_cwd} were not delivered", error)
         if text:
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
                                                      "additionalContext": text}},
@@ -1731,8 +1754,8 @@ def main(argv=None) -> int:
                     fast_forward_reference_checkout(reference, arguments.interval_seconds,
                                                     operator_facing=False)
     except git_output.GitCommandFailed as error:
-        report(GIT_FAILED_LINE.format(prefix="checkout-freshness", what="the freshness check "
-                                      f"of {session_cwd} stopped", error=error))
+        report(git_failed_text("checkout-freshness", f"the freshness check of {session_cwd} "
+                               "stopped", error))
     flush_hook_output()
     return 0
 
