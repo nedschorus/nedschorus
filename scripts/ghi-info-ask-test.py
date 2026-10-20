@@ -581,8 +581,7 @@ APPROVED_RULING_QUESTION_MESSAGE = (
 EXPECTED_OPEN_ISSUES_ONLY_HINT = (
     "ghi-info-ask: this answer covers open issues only.\n"
     "To search closed issues as well, such as for precedent or before saying no issue "
-    'covers a subject, ask again with --include-closed: scripts/ghi-info-ask.py '
-    'q --repo x/y --include-closed\n')
+    "covers a subject, rerun the same command with --include-closed added.\n")
 
 
 def main_with_reply(seat, reply_text, extra_arguments=()):
@@ -661,15 +660,6 @@ try:
               "the hint naming the flag, and leaves stdout the reading list alone",
               exit_code == 0 and out == "read #1\n"
               and err.endswith(EXPECTED_OPEN_ISSUES_ONLY_HINT), (exit_code, out, err))
-
-        check("the hint's command quotes a question with spaces and quotes for the shell, "
-              "and leaves out --repo when the repository is the default",
-              ghi_ask.open_issues_only_include_closed_hint_message(
-                  "Which issues cover Bob's hook?", ghi_ask.DEFAULT_REPO).endswith(
-                  "scripts/ghi-info-ask.py 'Which issues cover Bob'\"'\"'s hook?' "
-                  "--include-closed"),
-              ghi_ask.open_issues_only_include_closed_hint_message(
-                  "Which issues cover Bob's hook?", ghi_ask.DEFAULT_REPO))
 
         seat_closed = root / "seat-reading-list-with-flag"
         seat_closed.mkdir()
@@ -1063,21 +1053,25 @@ with tempfile.TemporaryDirectory() as temporary:
               exit_code == 0 and asked.get("question") == question_text,
               (exit_code, len(asked.get("question") or "")))
         hint = question_file_error.getvalue()
-        check("a question over 128 KiB from --question-file, asked without "
-              "--include-closed, gets a hint that names the file and does not "
-              "repeat the question as one argument",
-              "y" * 1000 not in hint
-              and ("scripts/ghi-info-ask.py --question-file "
-                   + shlex.quote(str(question_path)) + " --include-closed\n")
-              in hint,
+        check("a question from --question-file, asked without --include-closed, "
+              "gets a hint naming neither the question nor the file, saying to "
+              "rerun with --include-closed",
+              hint == EXPECTED_OPEN_ISSUES_ONLY_HINT
+              and "Draft GHI-MD" not in hint and "--question-file" not in hint
+              and str(question_path) not in hint,
               hint[-500:])
-        check("the hint for a question from a file keeps --repo when it is given",
-              ghi_ask.open_issues_only_include_closed_hint_message(
-                  question_text, "x/y", "my question.txt").endswith(
-                  "scripts/ghi-info-ask.py --question-file 'my question.txt' "
-                  "--repo x/y --include-closed"),
-              ghi_ask.open_issues_only_include_closed_hint_message(
-                  question_text, "x/y", "my question.txt")[-300:])
+
+        argument_question = "Which issues cover Bob's hook?"
+        argument_error = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(argument_error):
+            exit_code = ghi_ask.main([argument_question, "--repo", "x/y",
+                                      "--seat-dir", str(seat_flag)])
+        hint = argument_error.getvalue()
+        check("a question given as an argument, asked without --include-closed, "
+              "gets the same hint, which does not repeat the question",
+              exit_code == 0 and hint == EXPECTED_OPEN_ISSUES_ONLY_HINT
+              and "Bob" not in hint, hint)
 
         unreadable_error = io.StringIO()
         with contextlib.redirect_stdout(io.StringIO()), \
@@ -1130,6 +1124,46 @@ with tempfile.TemporaryDirectory() as temporary:
               and "--question-file /dev/stdin" in remote_command
               and question_text not in remote_command,
               (exit_code, remote_command[-300:]))
+
+        # Off the box, the caller sees the box-side run's stderr unchanged,
+        # hint included. The fake ssh runs the remote command's own
+        # invocation of main(), with ssh's stdin standing in a file for
+        # /dev/stdin and the seat directory for "$PWD".
+        def box_running_ssh(command, **keywords):
+            arguments = shlex.split(command[-1].splitlines()[-1])[2:]
+            stdin_path = root / "box-stdin.txt"
+            stdin_path.write_text(keywords.get("input") or "", encoding="utf-8")
+            arguments = [str(stdin_path) if argument == "/dev/stdin"
+                         else str(seat_flag) if argument == "$PWD" else argument
+                         for argument in arguments]
+            box_out, box_error = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(box_out), \
+                    contextlib.redirect_stderr(box_error):
+                box_exit_code = ghi_ask.main(arguments)
+            return FakeCompletedProcess(box_exit_code, box_out.getvalue(),
+                                        box_error.getvalue())
+
+        patch_module_function(ghi_ask.subprocess, "run", box_running_ssh)
+        patch("DEFAULT_SEAT_DIR", root / "no-seat-on-this-machine")
+        try:
+            for name, arguments in (
+                    ("--question-file", ["--question-file", str(question_path)]),
+                    ("a question argument", [argument_question])):
+                caller_error = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), \
+                        contextlib.redirect_stderr(caller_error):
+                    exit_code = ghi_ask.main(arguments)
+                hint = caller_error.getvalue()
+                check(f"off the box, asked with {name}, the box's hint reaches "
+                      "the caller naming neither the question nor any "
+                      "--question-file path, saying to rerun with --include-closed",
+                      exit_code == 0 and hint == EXPECTED_OPEN_ISSUES_ONLY_HINT
+                      and "Draft GHI-MD" not in hint and "Bob" not in hint
+                      and "--question-file" not in hint and "/dev/stdin" not in hint
+                      and str(question_path) not in hint,
+                      (exit_code, hint[-500:]))
+        finally:
+            patch("DEFAULT_SEAT_DIR", seat_orig)
     finally:
         patch("ask", ask_orig)
 

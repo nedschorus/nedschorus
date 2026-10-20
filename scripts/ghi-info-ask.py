@@ -10,9 +10,8 @@ Usage:
 
 Exit codes:
   0  the reading list ghi-info returns, printed to stdout; without
-     --include-closed, OPEN_ISSUES_ONLY_INCLUDE_CLOSED_HINT_MESSAGE_TEMPLATE follows
-     on stderr, so the caller learns the flag when the answer omits closed
-     issues
+     --include-closed, OPEN_ISSUES_ONLY_INCLUDE_CLOSED_HINT_MESSAGE follows on
+     stderr, so the caller learns the flag when the answer omits closed issues
   1  a failed ask — gh unreachable, the box unreachable, ghi-info's own run
      erroring or timing out: one line on stderr. A failed ask never blocks a
      write (design's own words): the caller's job is to fall down the
@@ -339,23 +338,14 @@ RULING_QUESTION_MESSAGE_TEMPLATE = (
 RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE = " (held in GHI {number})"
 # Printed on stderr after an answer asked without --include-closed. stderr,
 # because stdout is the answer that callers such as ghi-issue-write.py parse.
-# The command names the question asked, shell-quoted, so it runs as printed;
-# a question read from --question-file is named by that file instead, since
-# the question may be too long for one argument.
-OPEN_ISSUES_ONLY_INCLUDE_CLOSED_HINT_MESSAGE_TEMPLATE = (
+# It names neither the question nor a --question-file path: an ask from off
+# the box runs box-side with --question-file /dev/stdin, and that run's stderr
+# reaches the caller unchanged, so any command it spelled out would not be
+# the caller's.
+OPEN_ISSUES_ONLY_INCLUDE_CLOSED_HINT_MESSAGE = (
     "ghi-info-ask: this answer covers open issues only.\n"
     "To search closed issues as well, such as for precedent or before saying no issue "
-    'covers a subject, ask again with --include-closed: scripts/ghi-info-ask.py '
-    '{question_argument}{repo_option} --include-closed')
-
-
-def open_issues_only_include_closed_hint_message(question: str, repo: str,
-                                                 question_file=None) -> str:
-    repo_option = "" if repo == DEFAULT_REPO else " --repo " + shlex.quote(repo)
-    question_argument = (shlex.quote(question) if question_file is None
-                         else "--question-file " + shlex.quote(question_file))
-    return OPEN_ISSUES_ONLY_INCLUDE_CLOSED_HINT_MESSAGE_TEMPLATE.format(
-        question_argument=question_argument, repo_option=repo_option)
+    "covers a subject, rerun the same command with --include-closed added.")
 
 
 def caller_message_for_passthrough_reply(text: str):
@@ -986,8 +976,7 @@ def main(argv=None) -> int:
         return exit_code
     print(answer)
     if not arguments.include_closed:
-        print(open_issues_only_include_closed_hint_message(
-            question, arguments.repo, arguments.question_file), file=sys.stderr)
+        print(OPEN_ISSUES_ONLY_INCLUDE_CLOSED_HINT_MESSAGE, file=sys.stderr)
     return 0
 
 
