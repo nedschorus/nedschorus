@@ -161,20 +161,26 @@ def run_git_in_repository(repository, *arguments):
             "If git is unavailable or timed out: fix the cause, then run this again.") from failure
 
 
-def required_git_output(repository, *arguments):
+def git_result_or_refuse(repository, *arguments, accepted_exit_codes=(0,)):
     result = run_git_in_repository(repository, *arguments)
-    if result.returncode:
+    if result.returncode not in accepted_exit_codes:
         raise ReviewPlanRefusal(
             f"`{shlex.join(['git', '-C', str(repository), *arguments])}` failed, "
             f"so no plan was computed: {first_output_line(result.stderr)}.\n"
             "If git says it cannot find a revision: run "
             f"`{shlex.join(['git', '-C', str(repository), 'fetch', 'origin'])}`, then run this again.\n"
             "Otherwise: tell the user what git said.")
-    return result.stdout.strip()
+    return result
+
+
+def required_git_output(repository, *arguments):
+    return git_result_or_refuse(repository, *arguments).stdout.strip()
 
 
 def commit_is_in_repository(repository, revision):
-    return run_git_in_repository(repository, "cat-file", "-e", f"{revision}^{{commit}}").returncode == 0
+    # With --quiet, git exits 1 when there is no such commit.
+    return git_result_or_refuse(repository, "rev-parse", "--verify", "--quiet", f"{revision}^{{commit}}",
+                                accepted_exit_codes=(0, 1)).returncode == 0
 
 
 def commit_is_ancestor_of(repository, earlier, later):
@@ -189,9 +195,19 @@ def commit_is_ancestor_of(repository, earlier, later):
     return result.returncode == 0
 
 
+def paths_present_at_revision(repository, revision, paths):
+    # git show and git cat-file -e exit 128 both for a missing path and for a
+    # failure; ls-tree prints nothing for a missing path and fails only on a failure.
+    if not paths:
+        return set()
+    listed = git_result_or_refuse(repository, "ls-tree", "-z", "--name-only", revision, "--", *paths).stdout
+    return set(listed.split("\0")) - {""}
+
+
 def read_revision_blob_or_none(repository, revision, path):
-    result = run_git_in_repository(repository, "show", f"{revision}:{path}")
-    return result.stdout if result.returncode == 0 else None
+    if path not in paths_present_at_revision(repository, revision, [path]):
+        return None
+    return git_result_or_refuse(repository, "show", f"{revision}:{path}").stdout
 
 
 def read_github_json_or_refuse(arguments, expected_shape):
@@ -583,8 +599,7 @@ def test_files_to_run_for_changed_files(repository, head, changed_files):
                     candidate_paths.add(normalized)
                     candidate_paths.update(suites_split_from_a_program_test_at_revision(
                         repository, head, normalized, path.stem))
-    return sorted(path for path in candidate_paths
-                  if run_git_in_repository(repository, "cat-file", "-e", f"{head}:{path}").returncode == 0)
+    return sorted(paths_present_at_revision(repository, head, sorted(candidate_paths)))
 
 
 def posting_rule_and_reason_for_author(author):
