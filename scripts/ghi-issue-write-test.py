@@ -5005,7 +5005,6 @@ def run_adjudication_question_file_cases(scratch: Path):
                   for line in unwritable_lines), unwritable_lines)
 
 def main():
-    import tempfile
     # Every tempfile name the tool picks, mkstemp's question files included,
     # lands in this run's own directory: a check for leftovers sees only this
     # run's, and a mutant that skips a cleanup leaves nothing in /tmp.

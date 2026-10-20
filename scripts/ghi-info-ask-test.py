@@ -1054,13 +1054,30 @@ with tempfile.TemporaryDirectory() as temporary:
     ask_orig = ghi_ask.ask
     patch("ask", recording_ask)
     try:
+        question_file_error = io.StringIO()
         with contextlib.redirect_stdout(io.StringIO()), \
-                contextlib.redirect_stderr(io.StringIO()):
+                contextlib.redirect_stderr(question_file_error):
             exit_code = ghi_ask.main(["--question-file", str(question_path),
                                       "--seat-dir", str(seat_flag)])
         check("--question-file asks the file's text, verbatim",
               exit_code == 0 and asked.get("question") == question_text,
               (exit_code, len(asked.get("question") or "")))
+        hint = question_file_error.getvalue()
+        check("a question over 128 KiB from --question-file, asked without "
+              "--include-closed, gets a hint that names the file and does not "
+              "repeat the question as one argument",
+              "y" * 1000 not in hint
+              and ("scripts/ghi-info-ask.py --question-file "
+                   + shlex.quote(str(question_path)) + " --include-closed\n")
+              in hint,
+              hint[-500:])
+        check("the hint for a question from a file keeps --repo when it is given",
+              ghi_ask.open_issues_only_include_closed_hint_message(
+                  question_text, "x/y", "my question.txt").endswith(
+                  "scripts/ghi-info-ask.py --question-file 'my question.txt' "
+                  "--repo x/y --include-closed"),
+              ghi_ask.open_issues_only_include_closed_hint_message(
+                  question_text, "x/y", "my question.txt")[-300:])
 
         unreadable_error = io.StringIO()
         with contextlib.redirect_stdout(io.StringIO()), \

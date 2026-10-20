@@ -339,18 +339,23 @@ RULING_QUESTION_MESSAGE_TEMPLATE = (
 RULING_QUESTION_RULING_GHI_NUMBER_SUFFIX_TEMPLATE = " (held in GHI {number})"
 # Printed on stderr after an answer asked without --include-closed. stderr,
 # because stdout is the answer that callers such as ghi-issue-write.py parse.
-# The command names the question asked, shell-quoted, so it runs as printed.
+# The command names the question asked, shell-quoted, so it runs as printed;
+# a question read from --question-file is named by that file instead, since
+# the question may be too long for one argument.
 OPEN_ISSUES_ONLY_INCLUDE_CLOSED_HINT_MESSAGE_TEMPLATE = (
     "ghi-info-ask: this answer covers open issues only.\n"
     "To search closed issues as well, such as for precedent or before saying no issue "
     'covers a subject, ask again with --include-closed: scripts/ghi-info-ask.py '
-    '{question}{repo_option} --include-closed')
+    '{question_argument}{repo_option} --include-closed')
 
 
-def open_issues_only_include_closed_hint_message(question: str, repo: str) -> str:
+def open_issues_only_include_closed_hint_message(question: str, repo: str,
+                                                 question_file=None) -> str:
     repo_option = "" if repo == DEFAULT_REPO else " --repo " + shlex.quote(repo)
+    question_argument = (shlex.quote(question) if question_file is None
+                         else "--question-file " + shlex.quote(question_file))
     return OPEN_ISSUES_ONLY_INCLUDE_CLOSED_HINT_MESSAGE_TEMPLATE.format(
-        question=shlex.quote(question), repo_option=repo_option)
+        question_argument=question_argument, repo_option=repo_option)
 
 
 def caller_message_for_passthrough_reply(text: str):
@@ -982,7 +987,7 @@ def main(argv=None) -> int:
     print(answer)
     if not arguments.include_closed:
         print(open_issues_only_include_closed_hint_message(
-            question, arguments.repo), file=sys.stderr)
+            question, arguments.repo, arguments.question_file), file=sys.stderr)
     return 0
 
 
