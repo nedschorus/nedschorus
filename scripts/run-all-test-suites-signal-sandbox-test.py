@@ -428,10 +428,11 @@ if linux_only_cases_run_here("the report's sandbox lines"):
             completed, report = run_runner(
                 case_scratch, repository, f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
             check(f"when the checkout's scripts/run-all-test-suites.py {how}, the run refuses "
-                  f"with exit 2, names the file, and runs no suite",
+                  f"with exit 2, names the file, says to rerun the command, and runs no suite",
                   completed.returncode == runner.EXIT_COULD_NOT_RUN
                   and f"not run — {lists_file} " in completed.stderr
                   and refusal in completed.stderr
+                  and "rerun the command you ran." in completed.stderr
                   and not (case_scratch / "logs" / "a-test.py.log").exists(),
                   (completed.returncode, completed.stderr[-600:]))
 

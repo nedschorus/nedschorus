@@ -136,12 +136,15 @@ inside the sandbox, such as one a suite of this program starts, does not
 start another: bwrap cannot start inside bwrap, and its suites are already
 confined. The suites listed in SUITES_RUN_WITHOUT_ANY_SANDBOX cannot
 work inside it and run unconfined, each named in the report with the reason.
-That list, SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY
-and SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK are read from the
-checkout under test's own scripts/run-all-test-suites.py, parsed and never
-run, and from this file only when the checkout has none; the report names
-the file. A run refuses, exit 2, when that file does not assign each of them
-a literal dict.
+Three lists say which sandbox a suite gets: SUITES_RUN_WITHOUT_ANY_SANDBOX,
+SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY (suites
+whose sandbox gets a writable copy-on-write overlay of the repository's git
+directory) and SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK (suites
+whose sandbox keeps the machine's network). The three are read from the
+scripts/run-all-test-suites.py of the checkout whose suites the run tests,
+parsed and never run, and from this file only when that checkout has none;
+the report names the file. A run refuses, exit 2, when that file does not
+assign each of the three a literal dict.
 A suite bwrap reports as exiting 128+N is reported as killed by signal N;
 sandbox-exec replaces itself with the suite, so a suite's exit passes through.
 
@@ -1168,14 +1171,17 @@ def suite_sandbox_lists_read_from_checkout_under_test(top):
         raise CouldNotRun(
             f"{PROGRAM}: not run — {source_file} could not be read "
             f"({type(error).__name__}: {error}), so which sandbox each suite runs in is unknown.\n"
-            f"Fix what the error names, then run this again.")
+            f"If the file is missing or unreadable, check that it exists and that you can read it; "
+            f"if it is not UTF-8, save it as UTF-8.\n"
+            f"Then rerun the command you ran.")
     try:
         tree = ast.parse(source, filename=str(source_file))
     except (SyntaxError, ValueError) as error:
         raise CouldNotRun(
             f"{PROGRAM}: not run — {source_file} is not valid Python ({error}), so which "
             f"sandbox each suite runs in is unknown.\n"
-            f"Fix that file in the checkout under test, then run this again.")
+            f"Correct the syntax error in {source_file}, which belongs to the checkout whose suites "
+            f"this run tests, then rerun the command you ran.")
     found = {}
     for node in tree.body:
         if (isinstance(node, ast.Assign) and len(node.targets) == 1
@@ -1192,8 +1198,8 @@ def suite_sandbox_lists_read_from_checkout_under_test(top):
             f"{PROGRAM}: not run — {source_file} does not assign "
             f"{', '.join(unreadable)} a literal dict of suite path to reason at its top "
             f"level, so which sandbox each suite runs in is unknown.\n"
-            f"Make each of them one such assignment in the checkout under test, then run "
-            f"this again.")
+            f"In {source_file}, assign each of {', '.join(unreadable)} once, at the top level, "
+            f"a dict written out literally, then rerun the command you ran.")
     return found, str(source_file)
 
 
