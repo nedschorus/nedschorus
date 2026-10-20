@@ -1175,9 +1175,9 @@ def remove_finished_worktrees_at_handoff(
         return (f"worktree cleanup: clean-worktrees.py could not be run: "
                 f"{type(error).__name__}: {error}")
     report = summarize_worktree_cleanup_output(stdout.splitlines())
-    if (cleaner.returncode != 0 and "FAILED" not in stdout
-            and "work-snapshot failure(s)" not in report
-            and KEPT_FOR_RECORDS_MARKER not in stdout):
+    # Only a run that finished prints this line; any other nonzero exit aborted or was refused.
+    finished = CLEANER_FINISHED_WITH_FAILURES_LINE in stdout.splitlines()
+    if cleaner.returncode != 0 and not finished:
         detail = stderr.strip().splitlines()[-1:] or ["no detail"]
         report += f"; clean-worktrees.py exited {cleaner.returncode}: {detail[0]}"
     return report
@@ -1202,6 +1202,7 @@ def stop_worktree_cleaner_process_group(cleaner) -> str:
 
 
 # clean-worktrees.py prints this when a record did not ship; the line ends with the shipper's own line.
+CLEANER_FINISHED_WITH_FAILURES_LINE = "clean-worktrees: finished; each failure is named above"
 KEPT_FOR_RECORDS_MARKER = ": kept — removing it would delete record(s) the log-store does not hold: "
 
 

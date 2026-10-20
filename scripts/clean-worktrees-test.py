@@ -591,6 +591,10 @@ with tempfile.TemporaryDirectory() as scratch:
               "file(s): locked-untracked.txt" in removal.stdout, removal.stdout)
         check("--remove exits 1 when a removal failed", removal.returncode == 1,
               str(removal.returncode))
+        check("--remove ends a run with failures on the line saying it finished",
+              removal.stdout.splitlines()[-1:] == [
+                  "clean-worktrees: finished; each failure is named above"],
+              removal.stdout)
         git(checkout, "worktree", "unlock", str(locked_wt))
         check("--remove reports the dead registration too",
               "dead-registration-wt" in removal.stdout
@@ -685,6 +689,8 @@ with tempfile.TemporaryDirectory() as scratch:
               orphan_removal.stdout)
         check("--remove exits 0 when every named ref was deletable",
               orphan_removal.returncode == 0, str(orphan_removal.returncode))
+        check("a run with no failure prints no line saying it finished with failures",
+              "clean-worktrees: finished" not in orphan_removal.stdout, orphan_removal.stdout)
 
         # A local main behind origin/main is the ordinary state of a checkout
         # after somebody else's work lands, and in it git branch -d refuses a

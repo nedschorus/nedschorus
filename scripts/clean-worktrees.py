@@ -168,6 +168,9 @@ def run_git(repo, *arguments):
     )
 
 
+FINISHED_WITH_FAILURES_LINE = "clean-worktrees: finished; each failure is named above"
+
+
 def main_checkout_of(repo):
     """Return the primary checkout from the common git directory."""
     common = run_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -482,6 +485,9 @@ def main(argv=None):
         repo, remove=remove, only_due=only_done,
         handoff_directory=Path.home() / ".claude" / "handoffs")
 
+    # Printed only by a run that got this far, so a reader can tell a finished run from one that aborted.
+    if failures:
+        print(FINISHED_WITH_FAILURES_LINE)
     return 1 if failures else 0
 
 

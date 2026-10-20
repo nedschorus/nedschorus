@@ -697,6 +697,35 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           "not as nothing removed",
           "exited 1" in report and "the cleaner broke" in report, report)
 
+    # A printed failure explains a nonzero exit only when the cleaner went on to finish.
+    for kind, printed in (
+            ("worktree kept for an unshipped record",
+             "print('rec-wt: kept — removing it would delete record(s) the log-store does "
+             "not hold: cold-read-records/r (FAILED: ned-box unreachable)')\n"),
+            ("failed removal", "print('locked-wt: removal FAILED — locked')\n")):
+        aborting = root / "aborting-after-printed-failure-cleaner.py"
+        aborting.write_text(printed + "raise OSError('listing the next worktree broke')\n",
+                            encoding="utf-8")
+        with supervisor_names_replaced(CLEAN_WORKTREES_PATH=aborting):
+            report = supervisor.remove_finished_worktrees_at_handoff(home)
+        check(f"WORKTREE CLEANUP: a cleaner that aborts after a {kind} is reported "
+              f"with its error, not hidden behind the printed failure",
+              "exited 1" in report and "listing the next worktree broke" in report, report)
+
+    finishing = root / "finishing-with-failure-cleaner.py"
+    finishing.write_text(
+        "import sys\n"
+        "print('locked-wt: removal FAILED — locked')\n"
+        "print('clean-worktrees: finished; each failure is named above')\n"
+        "print('stderr noise', file=sys.stderr)\n"
+        "sys.exit(1)\n", encoding="utf-8")
+    with supervisor_names_replaced(CLEAN_WORKTREES_PATH=finishing):
+        report = supervisor.remove_finished_worktrees_at_handoff(home)
+    check("WORKTREE CLEANUP: a cleaner that finished and named its failure adds no "
+          "exit line, since the failure line explains the exit",
+          "1 failed: locked-wt: removal FAILED" in report
+          and "exited 1" not in report and "stderr noise" not in report, report)
+
     unusable = root / "unusable-vacancy-cleaner.py"
     unusable.write_text(
         "print('agent-x: kept — the vacancy check (lsof) could not be run')\n"
