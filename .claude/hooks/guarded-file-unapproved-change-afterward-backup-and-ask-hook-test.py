@@ -874,12 +874,21 @@ def cases(scratch):
     claude.write_text("project v2\n")
     message = world.run()
     reminder = world.run()
-    check("the ask tells a subagent to stop editing before any step that asks the user",
-          0 <= message.find("If you are a subagent, stop: make no further edit")
+    check("the ask tells a subagent with an obvious-fix marker to run --approve and tell its "
+          "dispatcher, before any step that asks the user",
+          0 <= message.find("If you are a subagent and you wrote an obvious-fix marker")
+          < message.find("Show the user each change")
+          and "--approve" in message[:message.find("Show the user each change")]
+          and "tell the agent that dispatched you what you fixed" in message, message)
+    check("the ask tells any other subagent to stop editing before any step that asks the user",
+          0 <= message.find("If you are any other subagent, stop: make no further edit")
           < message.find("Show the user each change"), message)
-    check("the reminder tells a subagent to stop editing and report, and names the approval "
-          "marker", "If you are a subagent, stop: make no further edit" in reminder
-          and ".walk-approved" in reminder, reminder)
+    check("the reminder gives a subagent with an obvious-fix marker the --approve command",
+          "If you are a subagent and you wrote an obvious-fix marker" in reminder
+          and f"--approve {claude}" in reminder, reminder)
+    check("the reminder tells any other subagent to stop editing and report, and names the "
+          "approval marker", "If you are any other subagent, stop: make no further edit"
+          in reminder and ".walk-approved" in reminder, reminder)
 
     # -- an Edit or Write approves its result only when the version it was made on is approved
     world = fresh(scratch, "edit-on-unapproved-shell-edit")

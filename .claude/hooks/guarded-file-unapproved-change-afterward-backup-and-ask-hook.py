@@ -112,8 +112,11 @@ EDIT_ON_UNAPPROVED_VERSION = (
     "had not approved: the instruction-file guard's approval covers only that call's change, not "
     "the unapproved text already in the file.")
 ASK_INSTRUCTIONS = (
-    "If you are a subagent, stop: make no further edit, report the change to the agent that "
-    "dispatched you instead of asking the user, and do none of the steps below.\n"
+    "If you are a subagent and you wrote an obvious-fix marker before you made the change, run "
+    "once: python3 {program} --approve {pairs}, then tell the agent that dispatched you what you "
+    "fixed, and do none of the steps below.\n"
+    "If you are any other subagent, stop: make no further edit, report the change to the agent "
+    "that dispatched you instead of asking the user, and do none of the steps below.\n"
     "Show the user each change above and ask him whether he approves it.\n"
     "If he approves, write his words into {marker} at the top of your session's checkout, then "
     "run once: python3 {program} --approve {pairs}\n"
@@ -124,9 +127,12 @@ ASK_INSTRUCTIONS = (
     "git commit --only -m \"Put back the approved <file name>\" -- <path>")
 REMINDER = (
     "Reminder: {path} still holds version {key}, which the user has not approved.\n"
-    "If you are a subagent, stop: make no further edit, and report the change to the agent "
-    "that dispatched you instead of asking the user.\n"
-    "Otherwise show him the change and ask him, as this hook's earlier message said.\n"
+    "If you are a subagent and you wrote an obvious-fix marker before you made the change, run "
+    "once: python3 {program} --approve {path} {key}, then tell the agent that dispatched you what "
+    "you fixed.\n"
+    "If you are any other subagent, stop: make no further edit, and report the change to the "
+    "agent that dispatched you instead of asking the user.\n"
+    "Otherwise show the user the change and ask him, as this hook's earlier message said.\n"
     "If he approves, write his words into {marker} at the top of your session's checkout, then "
     "run: python3 {program} --approve {path} {key}\n"
     "If he declines, run: python3 {program} --restore {path} {key}")
