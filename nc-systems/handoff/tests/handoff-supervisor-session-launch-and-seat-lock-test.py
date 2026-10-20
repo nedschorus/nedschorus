@@ -556,7 +556,7 @@ def run_appended_system_prompt_cases(workspace: Path):
     recovered seat silently running without the appended text.
     """
     def boot_once(name: str, extra_arguments: list):
-        """Boot-ignite once with an argument-recording stub; return its argv,
+        """Start a fresh agent-session at boot once with an argument-recording stub; return its argv,
         one argument per line, and the supervisor's stderr."""
         handoff_directory = workspace / name
         handoff_directory.mkdir(parents=True, exist_ok=True)

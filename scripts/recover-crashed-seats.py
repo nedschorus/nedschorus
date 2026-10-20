@@ -4,7 +4,7 @@
 The gap this fills (nedschorus#120, from the 2026-08-21 incident): the Mac's
 single tmux server died and took every Mac seat down mid-flight. No handoff
 existed, so `resupervise-seat.py` refused (its precondition is a genuinely
-waiting handoff), and a plain relaunch fell through to the supervisor's
+waiting handoff), and a relaunch without resuming fell through to the supervisor's
 first-prompt path — three near-empty successor sessions born while the full
 pre-crash transcripts sat intact on disk. The operator recovered by hand:
 dig the session id out of ~/.claude/projects/<seat-dir>/ by mtime, then
@@ -43,7 +43,7 @@ What it does, per seat:
      no question, attended or not. A dry run asks nobody; for a seat it would
      ask about, its line quotes the REFUSED line a no or nobody to ask gives,
      so a practice run counts that seat as not recovered (ruled 2026-09-18).
-  2. Defer when an unconsumed handoff IS waiting: relaunching plain is
+  2. Defer when an unconsumed handoff IS waiting: relaunching without resuming is
      correct there — the supervisor's boot-ignition consumes it (that path
      landed with PR #106) — so this script hands over to the launcher
      rather than duplicating that logic. Unless that handoff asks to be
@@ -80,7 +80,7 @@ What it does, per seat:
      successor wakes holding the crashed session's full context,
      supervised, on the seat's own per-seat tmux server.
 
-Degraded mode (user-directed 2026-08-21, recorded on #120): --ignite-fallback
+Degraded mode (user-directed 2026-08-21, recorded on #120): --fresh-session-from-dialog-extract
 skips the resume and launches fresh with a first prompt pointing at the
 newest dialog extract in the handoff directory, passing the supervisor
 --first-prompt-file-wins-over-crashed-transcript so it does not resume anyway — the same read-and-continue
@@ -136,9 +136,9 @@ on the Mac, the supervisor elsewhere — the seat is refused and nothing is
 launched, never launched from this tool's own checkout instead.
 
 Usage:
-  recover-crashed-seats.py <seat-name>... [--dry-run] [--ignite-fallback]
+  recover-crashed-seats.py <seat-name>... [--dry-run] [--fresh-session-from-dialog-extract]
                            [--open-iterm-window-per-seat] [--checkout DIR]
-  recover-crashed-seats.py --all [--dry-run] [--ignite-fallback]
+  recover-crashed-seats.py --all [--dry-run] [--fresh-session-from-dialog-extract]
                            [--open-iterm-window-per-seat] [--checkout DIR]
 
 --all assesses every seat with a home under the agents root. --dry-run
@@ -403,7 +403,7 @@ def tmux_session_is_a_leftover_idle_shell(name: str, seat_directory: Path):
 
 
 LEFTOVER_IDLE_SHELL_REASSESSMENT_VERDICTS_THAT_LAUNCH = (
-    "defer-to-boot-ignition", "resume", "ignite",
+    "defer-to-boot-ignition", "resume", "fresh-session-from-dialog-extract",
 )
 LEFTOVER_IDLE_SHELL_REASSESSMENT_VERDICTS_RESTARTED_ONLY_ON_THE_OPERATORS_WORD = (
     "offer-after-recorded-exit", "seat-asked-to-be-consulted",
@@ -533,7 +533,7 @@ def write_first_prompt_after_recorded_exit(handoff_directory: Path, name: str,
 
 
 def newest_dialog_extract(handoff_directory: Path, name: str):
-    """Return the newest <name>-dialog-NNNN.md for the ignite fallback."""
+    """Return the newest <name>-dialog-NNNN.md for the --fresh-session-from-dialog-extract fallback."""
     extracts = sorted(handoff_directory.glob(f"{name}-dialog-*.md"))
     return extracts[-1] if extracts else None
 
@@ -866,7 +866,7 @@ def assess_seat(name: str, agents_root: Path, handoff_directory: Path,
         return "offer-after-recorded-exit", (exit_code, recorded_at, session_id)
 
     if session_id is None:
-        return "ignite", str(found)
+        return "fresh-session-from-dialog-extract", str(found)
     return "resume", (session_id, found)
 
 
@@ -926,14 +926,14 @@ def wait_for_the_seat_to_come_up(name: str, handoff_directory: Path,
 
 
 def came_up_or_failure_report(name: str, handoff_directory: Path,
-                              offer_ignite_fallback: bool):
+                              offer_fresh_session_from_dialog_extract: bool):
     """Return None if the seat came up, otherwise a failure report."""
     # Automatic fallback could spend a session on the wrong recovery; offer it instead.
     came_up, why = wait_for_the_seat_to_come_up(name, handoff_directory)
     if came_up:
         return None
-    offer = ("; the degraded restart is --ignite-fallback, which starts a fresh session "
-             "from the newest dialog extract" if offer_ignite_fallback else "")
+    offer = ("; the degraded restart is --fresh-session-from-dialog-extract, which starts a fresh agent-session "
+             "from the newest dialog extract" if offer_fresh_session_from_dialog_extract else "")
     return f"{name}: LAUNCHED BUT DID NOT COME UP — {why}{offer}"
 
 
@@ -961,7 +961,7 @@ LEFTOVER_IDLE_SHELL_NOT_PROVEN_AGAIN_REPORT = (
 
 
 def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
-                 projects_root: Path, dry_run: bool, ignite_fallback: bool,
+                 projects_root: Path, dry_run: bool, fresh_session_from_dialog_extract: bool,
                  open_iterm_window: bool = False,
                  retired_pane_process_ids=None,
                  restart_at_the_operators_word: bool = False) -> str:
@@ -1066,7 +1066,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         print(f"recover-crashed-seats: {name}: {closed}")
         # Reassess after retirement: state may have changed while the operator answered.
         rest = recover_seat(name, agents_root, handoff_directory, projects_root,
-                            dry_run, ignite_fallback, open_iterm_window,
+                            dry_run, fresh_session_from_dialog_extract, open_iterm_window,
                             retired_pane_process_ids=pane_process_ids,
                             restart_at_the_operators_word=True)
         # The reach clause stays last, so the operator finds it at the end of every line that left a seat running.
@@ -1086,7 +1086,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
         counter, reason = detail
         if restart_at_the_operators_word:
             # A plain launch preserves dont-restart for the supervisor’s own question, even when detached.
-            # Do not offer ignite fallback: it would bypass that request.
+            # Do not offer the --fresh-session-from-dialog-extract fallback: it would bypass that request.
             launch_exit_code = launch(name, seat_directory, handoff_directory, "")
             if launch_exit_code != 0:
                 return (f"{name}: LAUNCH FAILED (exit {launch_exit_code}) — the seat is "
@@ -1094,7 +1094,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
             did_not_come_up = came_up_or_failure_report(name, handoff_directory, False)
             if did_not_come_up is not None:
                 return did_not_come_up
-            return (f"{name}: relaunched plain{in_window}, although an unconsumed handoff "
+            return (f"{name}: relaunched without resuming{in_window}, although an unconsumed handoff "
                     f"(counter {counter}) asks to be consulted before a relaunch: {reason}. Its "
                     "supervisor asks its own restart question before it starts a session: "
                     f"answer it in the seat's tmux session{reach_clause_for_a_running_seat(name)}")
@@ -1114,7 +1114,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
                                       and ask_operator_yes_or_no(question))
         on_whose_word = " (the operator said to restart it)" if the_operator_said_yes_here else ""
         if restart_at_the_operators_word or the_operator_said_yes_here:
-            # Ignite fallback would describe a crash despite the recorded exit; restart by resume or fresh launch only.
+            # The --fresh-session-from-dialog-extract fallback would describe a crash despite the recorded exit; restart by resume or fresh launch only.
             if session_id is None:
                 launch_exit_code = launch(
                     name, seat_directory, handoff_directory, "",
@@ -1167,18 +1167,18 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
 
     if verdict == "defer-to-boot-ignition":
         if dry_run:
-            return f"{name}: would relaunch plain ({detail}){would_open('')}"
+            return f"{name}: would relaunch without resuming ({detail}){would_open('')}"
         exit_code = launch(name, seat_directory, handoff_directory, "")
         if exit_code != 0:
             return f"{name}: LAUNCH FAILED (exit {exit_code}) — the seat is still down"
-        # Do not offer ignite fallback after that same fallback has failed.
+        # Do not offer the --fresh-session-from-dialog-extract fallback after that same fallback has failed.
         did_not_come_up = came_up_or_failure_report(name, handoff_directory,
-                                                    not ignite_fallback)
+                                                    not fresh_session_from_dialog_extract)
         if did_not_come_up is not None:
             return did_not_come_up
-        return f"{name}: relaunched plain{in_window} — {detail}{reach_clause_for_a_running_seat(name)}"
+        return f"{name}: relaunched without resuming{in_window} — {detail}{reach_clause_for_a_running_seat(name)}"
 
-    if verdict == "resume" and not ignite_fallback:
+    if verdict == "resume" and not fresh_session_from_dialog_extract:
         session_id, transcript = detail
         size_kb = transcript.stat().st_size // 1024
         unreplied_successor = is_unreplied_reincarnation_successor(transcript)
@@ -1223,7 +1223,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     )
     prompt_path = handoff_directory / f"{name}-recovery-ignition-prompt.md"
     if dry_run:
-        return (f"{name}: would launch fresh igniting from {extract.name}"
+        return (f"{name}: would launch and start a fresh agent-session from the dialog extract {extract.name}"
                 f"{would_open(IGNITION_FROM_DIALOG_EXTRACT_SUPERVISOR_ARGUMENTS, prompt_path)}")
     prompt_path.write_text(prompt, encoding="utf-8")
     exit_code = launch(name, seat_directory, handoff_directory,
@@ -1234,7 +1234,7 @@ def recover_seat(name: str, agents_root: Path, handoff_directory: Path,
     did_not_come_up = came_up_or_failure_report(name, handoff_directory, False)
     if did_not_come_up is not None:
         return did_not_come_up
-    return (f"{name}: relaunched fresh{in_window} igniting from {extract.name}"
+    return (f"{name}: relaunched{in_window} and started a fresh agent-session from the dialog extract {extract.name}"
             f"{reach_clause_for_a_running_seat(name)}")
 
 
@@ -1277,7 +1277,7 @@ def main(argv=None) -> int:
                         help="every seat with a home under the agents root")
     parser.add_argument("--dry-run", action="store_true",
                         help="report decisions; launch nothing")
-    parser.add_argument("--ignite-fallback", action="store_true",
+    parser.add_argument("--fresh-session-from-dialog-extract", action="store_true",
                         help="skip the transcript resume; launch fresh reading the "
                              "newest dialog extract (degraded mode, #120)")
     parser.add_argument("--agents-root", default="",
@@ -1341,7 +1341,7 @@ def main(argv=None) -> int:
     not_recovered = windows_not_opened = 0
     for name in names:
         report = recover_seat(name, agents_root, handoff_directory, projects_root,
-                              arguments.dry_run, arguments.ignite_fallback,
+                              arguments.dry_run, arguments.fresh_session_from_dialog_extract,
                               open_iterm_window=open_iterm_window)
         # A dry run's lines never end with the reach clause, so it asks for no window.
         if (launcher_path() is None

@@ -33,7 +33,7 @@ WHAT IT DOES -- it retires the unsupervised session rather than adopting it:
      retire_seat_tmux_session below, which recover-crashed-seats.py runs too
      when an operator says to restart a seat behind a leftover idle shell.
   5. Run the seat's launcher. The supervisor boots, finds the unconsumed handoff,
-     and ignites the successor from it (handoff-supervisor.py's boot-ignition
+     and starts the successor as a fresh agent-session from it (handoff-supervisor.py's boot-ignition
      path, live since 2026-08-14).
 
 The successor is a fresh session carrying the retiring one's handoff and dialog
@@ -137,7 +137,7 @@ def handoff_is_waiting(handoff_path: Path, state_path: Path):
     if counter is None:
         return False, None, (
             f"{handoff_path} carries no readable restart-counter, so the supervisor would "
-            "not ignite from it. Leaving the seat alone."
+            "not start a fresh agent-session from it. Leaving the seat alone."
         )
 
     state = supervisor.read_supervisor_state(state_path)
@@ -490,7 +490,7 @@ def main(argv=None) -> int:
         return 0
 
     print(f"resupervise-seat: running {launcher.name} {arguments.name} -- the supervisor "
-          "will ignite from the waiting handoff")
+          "will start a fresh agent-session from the waiting handoff")
     # exec hands this terminal to the successor; a supervisor without a terminal cannot reincarnate.
     # Flush first because exec discards Python's buffered output.
     sys.stdout.flush()
