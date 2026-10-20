@@ -408,7 +408,9 @@ def run_agent_exit_record_cases(workspace: Path):
 def run_failed_extraction_at_a_handoff_case(workspace: Path):
     """A handoff arrives, the retiring session's dialog cannot be extracted: no
     successor starts, the handoff stays unconsumed, the exit is recorded, and
-    the console says so and names the session whose extraction failed."""
+    the console says so and names the session whose extraction failed. The
+    handoff names another session as its writer, so the extraction must be
+    tried on the writer, not on the session the supervisor launched."""
     handoff_directory = workspace / "failedextraction"
     handoff_directory.mkdir(parents=True)
     settings = supervisor.SupervisorSettings(
@@ -416,11 +418,13 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
         handoff_directory=handoff_directory, agent_command="unused-stub-agent",
         first_prompt="")
     launched_session_ids, extracted_from = [], []
+    writer_session_id = "11111111-2222-3333-4444-555555555555"
 
     def launch(agent_command, session_id, working_directory, prompt, **_):
         launched_session_ids.append(session_id)
         settings.handoff_path.write_text(
-            "restart-counter: 1\nnext-step: carry on\n", encoding="utf-8")
+            f"restart-counter: 1\nwritten-by-session: {writer_session_id}\n"
+            "next-step: carry on\n", encoding="utf-8")
         return StubLaunchedSession(-15, ended=False)
 
     def failing_extract_dialog(session_id, working_directory, output_path):
@@ -438,13 +442,14 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
         exit_code = supervisor.supervise_sessions(settings)
     state = supervisor.read_supervisor_state(settings.state_path)
     check("FAILED EXTRACTION: a handoff whose dialog cannot be extracted starts no successor",
-          exit_code == 0 and len(launched_session_ids) == 1
-          and extracted_from == launched_session_ids,
+          exit_code == 0 and len(launched_session_ids) == 1,
           f"{exit_code!r} {launched_session_ids!r} {extracted_from!r}")
+    check("FAILED EXTRACTION: the extraction is tried on the handoff's writer, "
+          "not on the launched session",
+          extracted_from == [writer_session_id], f"{extracted_from!r} {launched_session_ids!r}")
     check("FAILED EXTRACTION: the console names the session whose extraction failed "
           "and says it is not relaunching",
-          launched_session_ids
-          and f"extracting session {launched_session_ids[0]}'s dialog failed" in errors.getvalue()
+          f"extracting session {writer_session_id}'s dialog failed" in errors.getvalue()
           and "not relaunching (the transcript is intact — recover by hand)" in errors.getvalue(),
           errors.getvalue()[-400:])
     check("FAILED EXTRACTION: the handoff stays unconsumed and the exit is recorded",
