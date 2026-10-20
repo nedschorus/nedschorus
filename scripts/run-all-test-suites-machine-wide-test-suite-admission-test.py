@@ -1073,9 +1073,11 @@ with tempfile.TemporaryDirectory() as scratch_name:
             # The line is said at most once per interval, so each report comes after one.
             clock.sleep(runner.TEST_SUITE_ADMISSION_WAIT_REPORT_INTERVAL_SECONDS)
             admission.report_waiting(suite, "the machine is busy")
-        check(f"with {len(suites)} suite(s) waiting, the waiting line says \"{verb}\"",
+        check(f"with {len(suites)} suite(s) waiting, the waiting line says \"{verb}\", and that "
+              f"the wait ends by itself",
               said[-1:] == [f"{len(suites)} suite{'s' if len(suites) != 1 else ''} of this run "
-                            f"{verb} to start: the machine is busy"], said)
+                            f"{verb} to start: the machine is busy. Each suite starts by itself "
+                            f"once the reason it waits for clears."], said)
 
 print(f"{len(failures)} failed" if failures else "all cases passed")
 sys.exit(1 if failures else 0)
