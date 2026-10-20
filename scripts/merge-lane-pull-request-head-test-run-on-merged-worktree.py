@@ -20,9 +20,12 @@ pull-request-head-test-run.py waits for the machine's test lock itself, so
 nothing here retries.
 
 Prints one line per pull request with the run's exit code and SUMMARY line.
-Exit codes: 0 every run exited 0; otherwise the first nonzero exit code; 2
-also when tripwire-bin/ or --review-tools-worktree-at-main's
-scripts/pull-request-head-test-run.py is missing, before any run.
+Exit codes: 0 every run exited 0 and every copy of its stderr was written;
+otherwise the code set by the first pull request that failed: 2 when a copy
+of its run's stderr could not be written, even when the run exited nonzero,
+else its run's exit code; 2 also when tripwire-bin/ or
+--review-tools-worktree-at-main's scripts/pull-request-head-test-run.py is
+missing, before any run.
 """
 
 import argparse
@@ -117,21 +120,29 @@ def main(argv=None):
             "--merge-lane-worktrees-and-outputs-directory", str(helpers),
             "--review-tools-worktree-at-main", str(review_tools_worktree)])
         for name, failure in copy_failures.items():
+            # Only the copy to this program's own stderr failed, so the file has every line.
+            if f"{outputs}/stderr" not in copy_failures:
+                where_to_find_it = (f"When you need the lost stderr, read {outputs}/stderr, "
+                                    f"which holds all of it.")
+            else:
+                where_to_find_it = (
+                    f"When you need the lost stderr, run the head test run for PR {number} "
+                    f"again with this command, from any directory: {rerun}\n"
+                    f"Before you run it, give it a stderr that takes every write: do not "
+                    f"close its stderr, pipe it to a program that exits before the run ends, "
+                    f"or redirect it to a read-only file or a file on a full disk; and when "
+                    f"{outputs}/stderr is the copy that failed, fix what {failure} names "
+                    f"first.")
             print(f"PR {number} head test run, process {run.pid}: writing its stderr to "
                   f"{name} failed ({failure}); the run went on to its end, and that copy "
                   f"lacks the run's stderr from the first line that could not be written to "
                   f"it onward.\n"
                   f"The run's verdict still stands: the line below gives the run's exit code and "
                   f"SUMMARY line, from the run's stdout, not from this copy. "
-                  f"{Path(__file__).name} exits 2 for the failed copy unless an earlier pull "
-                  f"request's run already set a nonzero exit code; that 2 says nothing about "
-                  f"the tests.\n"
-                  f"When you need the lost stderr, run the head test run for PR {number} again "
-                  f"with this command, from any directory: {rerun}\n"
-                  f"Before you run it, give it a stderr that takes every write: do not close "
-                  f"its stderr, pipe it to a program that exits before the run ends, or "
-                  f"redirect it to a read-only file or a file on a full disk; and when "
-                  f"{outputs}/stderr is the copy that failed, fix what {failure} names first.",
+                  f"{Path(__file__).name} exits 2 for the failed copy, even when this run "
+                  f"exited nonzero, unless an earlier pull request's run or failed copy "
+                  f"already set a nonzero exit code; that 2 says nothing about the tests.\n"
+                  f"{where_to_find_it}",
                   flush=True)
             if first_failure == 0:
                 first_failure = 2

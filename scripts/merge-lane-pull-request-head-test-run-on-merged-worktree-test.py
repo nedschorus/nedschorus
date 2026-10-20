@@ -173,6 +173,54 @@ def main():
                   and lines[-1]
                   == "PR 9 head test run: exit 0; SUMMARY: fake summary for pr9-merged",
                   f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+            check("when writing the run's stderr to <outputs>/stderr fails, the program gives "
+                  "the command that runs it again, not that file",
+                  ("When you need the lost stderr, run the head test run for PR 9 again with "
+                   "this command, from any directory: " + shlex.join([
+                       sys.executable, str(PROGRAM.resolve()), "9",
+                       "--merge-lane-worktrees-and-outputs-directory", str(helpers.resolve()),
+                       "--review-tools-worktree-at-main",
+                       str((scratch / "main-checkout").resolve())])) in lines
+                  and any(line.startswith("Before you run it, give it a stderr that takes "
+                                          "every write: do not close its stderr")
+                          for line in lines)
+                  and "which holds all of it" not in completed.stdout,
+                  f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+
+            completed, calls = run_program(scratch, helpers, {"pr7-merged": 3}, "7", "9")
+            check("a failed copy of a later pull request's run leaves an earlier run's "
+                  "nonzero exit code as the program's",
+                  completed.returncode == 3, f"exit {completed.returncode}\n{completed.stdout}")
+
+            # Both copies fail: <outputs>/stderr is /dev/full and the program's stderr is a
+            # pipe whose reading end is closed. The run itself exits 1.
+            both = subprocess.Popen(
+                [sys.executable, str(PROGRAM), "9",
+                 "--merge-lane-worktrees-and-outputs-directory", str(helpers),
+                 "--review-tools-worktree-at-main", str(scratch / "main-checkout")],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                env={**os.environ, "MERGE_LANE_HEAD_TEST_RUN_TEST_LOG": str(scratch / "both.log"),
+                     "MERGE_LANE_HEAD_TEST_RUN_TEST_EXITS": json.dumps({"pr9-merged": 1}),
+                     "MERGE_LANE_HEAD_TEST_RUN_TEST_EXTRA_STDERR_LINES": "2001"})
+            both.stderr.close()
+            try:
+                stdout = both.stdout.read()
+                both.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                both.kill()
+                stdout = "still running after 60 s"
+            lines = stdout.splitlines()
+            rerun_lines = [line for line in lines if line.startswith(
+                "When you need the lost stderr, run the head test run for PR 9 again")]
+            check("when both copies of the run's stderr fail, each copy-failure message gives "
+                  "the command that runs it again, not the failed <outputs>/stderr, and the "
+                  "program exits 2 although the run exited 1",
+                  both.returncode == 2 and len(rerun_lines) == 2
+                  and "which holds all of it" not in stdout
+                  and "writing its stderr to stderr failed (BrokenPipeError" in stdout
+                  and lines and lines[-1]
+                  == "PR 9 head test run: exit 1; SUMMARY: fake summary for pr9-merged",
+                  f"exit {both.returncode}\n{stdout}")
         else:
             print("SKIP  a failing write to <outputs>/stderr: /dev/full does not exist here")
 
@@ -196,26 +244,20 @@ def main():
         lines = stdout.splitlines()
         check("when writing the run's stderr to the program's stderr fails, the run still "
               "goes to its end, its stderr file is whole, and the program says so with the "
-              "run's process id, keeps the summary line unchanged, and exits 2",
-              unread.returncode == 2 and len(lines) == 5
+              "run's process id, points at that file instead of a rerun, keeps the summary "
+              "line unchanged, and exits 2",
+              unread.returncode == 2 and len(lines) == 4
               and lines[0].startswith("PR 7 head test run, process ")
               and "writing its stderr to stderr failed (BrokenPipeError" in lines[0]
               and "that copy lacks the run's stderr from the first line that could not be "
                   "written to it onward" in lines[0]
               and "The run's verdict still stands" in lines[1]
-              and f"{PROGRAM.name} exits 2 for the failed copy unless an earlier pull "
-                  "request's run already set a nonzero exit code; that 2 says nothing about "
-                  "the tests" in lines[1]
-              and lines[2] == (
-                  "When you need the lost stderr, run the head test run for PR 7 again with "
-                  "this command, from any directory: " + shlex.join([
-                      sys.executable, str(PROGRAM.resolve()), "7",
-                      "--merge-lane-worktrees-and-outputs-directory", str(helpers.resolve()),
-                      "--review-tools-worktree-at-main",
-                      str((scratch / "main-checkout").resolve())]))
-              and lines[3].startswith("Before you run it, give it a stderr that takes every "
-                                      "write: do not close its stderr")
-              and lines[4] == "PR 7 head test run: exit 0; SUMMARY: fake summary for pr7-merged"
+              and f"{PROGRAM.name} exits 2 for the failed copy, even when this run exited "
+                  "nonzero, unless an earlier pull request's run or failed copy already set a "
+                  "nonzero exit code; that 2 says nothing about the tests" in lines[1]
+              and lines[2] == (f"When you need the lost stderr, read {helpers}/hr/pr7/stderr, "
+                               "which holds all of it.")
+              and lines[3] == "PR 7 head test run: exit 0; SUMMARY: fake summary for pr7-merged"
               and len((helpers / "hr" / "pr7" / "stderr").read_text().splitlines()) == 2002,
               f"exit {unread.returncode}\n{stdout}")
 
