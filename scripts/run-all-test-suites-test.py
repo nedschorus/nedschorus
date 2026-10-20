@@ -1295,6 +1295,14 @@ def start_writer(root, checkout, name, store, shadow, markers, shared_temporary=
                             text=True, env=environment, stdin=subprocess.DEVNULL)
 
 
+def release_barrier(markers, name, word):
+    """Release the run held as `name` with `word`, "go" or "fail"."""
+    # Renamed into place, since the barrier reads the word as soon as the file exists.
+    temporary = markers / f".go-{name}.tmp"
+    temporary.write_text(word)
+    os.replace(temporary, markers / f"go-{name}")
+
+
 def wait_for(path, seconds=60):
     deadline = time.monotonic() + seconds
     while not path.exists():
@@ -1401,10 +1409,10 @@ def overlap_publishing_in_turn(shared_temporary, prefill):
         # Released only once the reader is polling, and the reader polls once more after
         # the stop, so its reads span both publications however slowly it started.
         seen["reader polling before release"] = wait_for(reader_polling, 60)
-        (markers / "go-first").write_text("go")
+        release_barrier(markers, "first", "go")
         wait_for(markers / "renamed-first", 30)
         seen["after first"] = published(store)
-        (markers / "go-second").write_text("go")
+        release_barrier(markers, "second", "go")
         wait_for(markers / "renamed-second", 30)
         seen["after second"] = published(store)
         seen["exits"] = {name: writer.wait(timeout=120) for name, writer in writers.items()}
@@ -1436,9 +1444,9 @@ def overlap_second_fails_after_first_publishes(prefill):
         writers = {name: start_writer(root, checkout, name, store, shadow, markers)
                    for name, checkout in (("first", repo), ("second", other))}
         held = all(wait_for(markers / f"written-{name}") for name in writers)
-        (markers / "go-first").write_text("go")
+        release_barrier(markers, "first", "go")
         wait_for(markers / "renamed-first", 30)
-        (markers / "go-second").write_text("fail")
+        release_barrier(markers, "second", "fail")
         failed_at = time.monotonic()
         exits = {name: writer.wait(timeout=120) for name, writer in writers.items()}
         after_failure = time.monotonic() - failed_at
@@ -1468,9 +1476,9 @@ def overlap_first_publishes_while_second_checks():
                                       hold_check=(name == "second"))
                    for name, checkout in (("first", repo), ("second", other))}
         held = all(wait_for(markers / f"written-{name}") for name in writers)
-        (markers / "go-second").write_text("fail")
+        release_barrier(markers, "second", "fail")
         checking = wait_for(markers / "checking-second", 30)
-        (markers / "go-first").write_text("go")
+        release_barrier(markers, "first", "go")
         published_during_check = wait_for(markers / "renamed-first", 3)
         (markers / "go-check-second").touch()
         exits = {name: writer.wait(timeout=120) for name, writer in writers.items()}
@@ -1552,7 +1560,7 @@ with tempfile.TemporaryDirectory() as scratch:
     run(root)
     stored = next((root / "recordings").glob("*/a-test.py.json"))
     shadow, markers = publication_barrier(root)
-    (markers / "go-alone").write_text("fail")
+    release_barrier(markers, "alone", "fail")
     started = time.monotonic()
     result = run(root, environment_extra={
         "PYTHONPATH": str(shadow), BARRIER_VARIABLE: str(markers),
@@ -1577,7 +1585,7 @@ with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
     repo = make_repo(root, {"a-test.py": PASSES})
     shadow, markers = publication_barrier(root)
-    (markers / "go-alone").write_text("fail")
+    release_barrier(markers, "alone", "fail")
     started = time.monotonic()
     result = run(root, environment_extra={
         "PYTHONPATH": str(shadow), BARRIER_VARIABLE: str(markers),
