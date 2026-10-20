@@ -593,7 +593,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           holding_record.exists()
           and "1 worktree(s) kept because a record did not reach the log-store: "
           "record-holding-worktree: record shipment FAILED, worktree kept — removing it would "
-          "delete record(s) the log-store does not hold: cold-read-records/foo-2026-10-19 "
+          "delete a record the log-store does not hold: cold-read-records/foo-2026-10-19 "
           "(REFUSED:" in refused_report
           and refused_report.count("record-holding-worktree") == 1
           and "exited 1" not in refused_report and "failed:" not in refused_report,

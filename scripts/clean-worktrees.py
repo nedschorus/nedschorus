@@ -346,7 +346,7 @@ def ship_log_store_records(worktree):
             # Printed now, not after the loop: a later shipment can hang until the handoff's timeout kills this run.
             # The shipper's line appears only inside this FAILED line, so a reader counts it once.
             print(f"{worktree.name}: record shipment FAILED, worktree kept — removing it would delete "
-                  f"record(s) the log-store does not hold: {record.relative_to(worktree)} ({line})")
+                  f"a record the log-store does not hold: {record.relative_to(worktree)} ({line})")
             unshipped.append(line)
         else:
             print(f"{worktree.name}: {line}")

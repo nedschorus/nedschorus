@@ -1027,7 +1027,7 @@ with tempfile.TemporaryDirectory() as scratch:
           unreachable_wt.exists()
           and (unreachable_wt / "cold-read-records" / cold_read_record_name / "fast-read.md").is_file()
           and "unreachable-wt: record shipment FAILED, worktree kept — removing it would delete "
-          "record(s) the log-store does not hold" in unreachable.stdout
+          "a record the log-store does not hold" in unreachable.stdout
           and "FAILED:" in unreachable.stdout and unreachable.returncode == 1
           and "unreachable-wt: removed" not in unreachable.stdout,
           unreachable.stdout + unreachable.stderr)

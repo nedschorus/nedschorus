@@ -1204,7 +1204,7 @@ def stop_worktree_cleaner_process_group(cleaner) -> str:
 CLEANER_FINISHED_WITH_FAILURES_LINE = "clean-worktrees: finished; each failure is named above"
 # clean-worktrees.py prints this for each record that did not ship; the line ends with the shipper's own line.
 KEPT_FOR_RECORDS_MARKER = (": record shipment FAILED, worktree kept — removing it would delete "
-                           "record(s) the log-store does not hold: ")
+                           "a record the log-store does not hold: ")
 
 
 def summarize_worktree_cleanup_output(lines) -> str:
