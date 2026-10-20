@@ -152,13 +152,23 @@ MEMORY_WRITE_DENY_MESSAGE = (
 )
 
 
+def is_pre_approved_change_marker(marker_words) -> bool:
+    """Whether the marker words' first line begins with the pre-approved-change marker's word."""
+    if not marker_words:
+        return False
+    first_line_words = marker_words.splitlines()[0].split()
+    return bool(first_line_words) and first_line_words[0] == PRE_APPROVED_CHANGE_MARKER_FIRST_LINE
+
+
 def pre_approved_change_marker_gives_no_reason(marker_words) -> bool:
-    """Whether the marker words take the pre-approved-change form but leave its second line empty."""
-    if marker_words is None:
+    """Whether the marker words take the pre-approved-change form without the exception alone on
+    their second line."""
+    if not is_pre_approved_change_marker(marker_words):
         return False
     lines = marker_words.splitlines()
-    if lines[0].rstrip() != PRE_APPROVED_CHANGE_MARKER_FIRST_LINE:
-        return False
+    # A reason on the first line would make the marker pass as the user's quoted words elsewhere.
+    if lines[0].strip() != PRE_APPROVED_CHANGE_MARKER_FIRST_LINE:
+        return True
     return len(lines) < 2 or not lines[1].strip()
 
 

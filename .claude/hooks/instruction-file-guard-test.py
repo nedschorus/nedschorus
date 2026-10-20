@@ -395,8 +395,16 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         result = run_hook(decoy, workspace, str(workspace / "CLAUDE.md"))
         check(f"the write after a spent #pre_approved_change marker {label} is refused",
               result.returncode == 2, str(result.returncode))
+    # '"' sorts before '#': quoted words must not be taken for the pre-approved-change form.
+    marker.write_text("\"approved.\" the user, 2026-10-20\n", encoding="utf-8")
+    result = run_hook(decoy, workspace, str(workspace / "CLAUDE.md"))
+    check("the user's quoted words opening with a double quote pass as his words",
+          result.returncode == 0, result.stderr)
     for label, marker_text in (
             ("with no second line", "#pre_approved_change\n"),
+            ("with the exception on its first line", "#pre_approved_change cosmetic-change\n"),
+            ("with the exception on its first line and on its second",
+             "#pre_approved_change cosmetic-change\ncosmetic-change\n"),
             ("with an empty second line and words on its third", "#pre_approved_change\n\ncosmetic-change\n"),
             ("with only whitespace on its second line", "#pre_approved_change\n \t\n"),
             ("with trailing whitespace, Windows line ends and words on its third line",

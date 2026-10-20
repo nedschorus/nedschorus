@@ -1180,8 +1180,8 @@ def approve(pairs, cwd: Path):
         raise Refused(f"there is no approval in {marker}. Show the user each change and ask him; "
                       f"if he approves, write his words into {marker} and run this command again")
     first_line = guard().PRE_APPROVED_CHANGE_MARKER_FIRST_LINE
-    pre_approved = words.splitlines()[0].rstrip() == first_line
-    if pre_approved and guard().pre_approved_change_marker_gives_no_reason(words):
+    pre_approved = guard().is_pre_approved_change_marker(words)
+    if guard().pre_approved_change_marker_gives_no_reason(words):
         raise Refused(f"{marker} has `{first_line}` as its first line but no second line naming "
                       "the exception on the approval page the change falls under, or `on neither "
                       "list`, so it approves nothing. Put that on its second line and run this "

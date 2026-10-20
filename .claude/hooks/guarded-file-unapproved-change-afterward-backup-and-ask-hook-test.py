@@ -330,6 +330,21 @@ def cases(scratch):
     check("the version stays unapproved", key not in world.store_file(claude, "approved"),
           world.store_file(claude, "approved"))
 
+    world = fresh(scratch, "pre-approved-reason-on-first-line")
+    claude = world.repo / "CLAUDE.md"
+    marker = world.marker("#pre_approved_change cosmetic-change\n",
+                          before=time.time_ns() - 10_000_000_000)
+    claude.write_text("project v1, reason on the marker's first line\n")
+    key = world.key(claude)
+    world.run()
+    result = world.command("--approve", claude, key)
+    check("--approve refuses a one-line #pre_approved_change marker instead of logging it as "
+          "the user's words",
+          result.returncode == 1 and "no second line naming the exception" in result.stderr,
+          result.stderr)
+    check("the one-line #pre_approved_change marker leaves the version unapproved",
+          key not in world.store_file(claude, "approved"), world.store_file(claude, "approved"))
+
     world = fresh(scratch, "pre-approved-after")
     claude = world.repo / "CLAUDE.md"
     claude.write_text("project v1, changed first\n")
