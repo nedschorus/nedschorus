@@ -41,8 +41,9 @@ Options that widen what Codex may do, each off by default:
                           and --cache, each with its value as the next word
                           or after =, and --include/-i,
                           --paginate and --slurp; `api` has no -R. Any other
-                          `api` option is refused, so `api graphql` cannot
-                          send a query, since that needs -f, -F or --input. Codex
+                          `api` option is refused. The endpoint `graphql` is
+                          accepted, but it cannot send a query, because a
+                          query needs -f, -F or --input. Codex
                           cannot run `gh` itself, because its permission
                           profile denies the folder holding
                           gh's login. The files go in
