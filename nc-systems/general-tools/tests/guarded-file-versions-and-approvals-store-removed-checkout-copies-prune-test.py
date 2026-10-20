@@ -165,7 +165,7 @@ def test_removed_checkouts_pruned_and_others_kept():
               f"deleting {removed}\n" in result.stdout and f"deleting {nested}\n" in result.stdout
               and "deleting " + str(live) not in result.stdout, result.stdout)
         check("the summary counts two checkouts, one copy not approved and one approved copy kept",
-              "approved copies in 2 removed checkouts" in result.stdout
+              "whose every version was approved, in 2 removed checkouts" in result.stdout
               and "1 copies of versions not approved and 1 approved copies of the same files" in result.stdout,
               result.stdout)
 

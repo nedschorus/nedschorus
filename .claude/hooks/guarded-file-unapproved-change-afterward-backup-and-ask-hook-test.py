@@ -450,6 +450,16 @@ def cases(scratch):
     message = world.run()
     check("the next run checks the file", str(claude) in message, message)
 
+    world = fresh(scratch, "hook-run-branch-unreadable")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2\n")
+    world.failing_git("symbolic-ref -q HEAD")
+    message = world.run()
+    world.failing_git(None)
+    check("a hook run whose git symbolic-ref exits 128 exits 0 and tells the agent, with git's stderr",
+          "symbolic-ref -q HEAD" in message and "exited 128" in message
+          and "injected failure" in message, message)
+
     world = fresh(scratch, "git-read-back-fails")
     claude = world.repo / "CLAUDE.md"
     claude.write_text("project v2\n")

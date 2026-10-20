@@ -330,11 +330,12 @@ def main(arguments=None):
                 if result["failures"] else "no failures")
     print(f"{verb} {result['held_by_commits']} copies whose version a commit on a branch, a tag "
           f"or a remote-tracking branch holds, whether the file's checkout still exists or not, "
-          f"{result['held_by_commits_bytes']} bytes of copy files; and the approved copies in "
+          f"{result['held_by_commits_bytes']} bytes of copy files; {verb} the approved copies of "
+          f"each file of a removed checkout whose every version was approved, in "
           f"{len(result['checkouts'])} removed checkouts, {result['bytes']} bytes of copy files; "
           f"kept, for each file of a removed checkout that has a version not approved, all of "
-          f"that file's copies no such commit holds, so the change can still be shown against its "
-          f"approved version: {result['kept_not_approved']} copies of versions not approved and "
+          f"that file's copies that no commit on a branch, a tag or a remote-tracking branch "
+          f"holds, so the change can still be shown against its approved version: {result['kept_not_approved']} copies of versions not approved and "
           f"{result['kept_approved']} approved copies of the same files; {failures}")
     return EXIT_FAILED if result["failures"] else EXIT_DONE
 

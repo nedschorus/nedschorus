@@ -425,7 +425,8 @@ def versions_head_holds(checkout, versions):
     that blob, when HEAD is on a branch; none when HEAD is detached, since a detached HEAD is
     not a durable ref. A branch's HEAD is the one durable ref the hook can ask cheaply on every
     tool call; a version only another durable ref holds is copied, and the daily prune deletes
-    the copy."""
+    the copy. Raises BranchUnreadable, a RuntimeError carrying git's stderr, when git
+    symbolic-ref fails with any exit other than 1."""
     relative = {}
     for path, blob_id in versions:
         if blob_id == DELETED:
