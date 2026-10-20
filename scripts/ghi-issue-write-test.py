@@ -2124,6 +2124,50 @@ def run_old_ghi_info_files_on_main_cases(scratch: Path):
           and sum("copying it into the log-store failed" in line
                   and "Permission denied" in line
                   for line in unread_lines) == 2, unread_lines)
+
+    settled_answers = dict(answers)
+    settled_answers[f"git show {MAIN_COMMIT}:{old_file}"] = Completed(
+        ghi_info_file("does ruling two still hold?",
+                      "State: settled, not worth doing"))
+    settled_answers[f"git show {MAIN_COMMIT}:{old_file_2}"] = Completed(
+        ghi_info_file("does ruling three still hold?",
+                      "State: settled, done"))
+    settled_unwritable = log_store_at(scratch / "settled-unwritable")
+    settled_unwritable.mkdir()
+    settled_unwritable.chmod(0o500)
+    settled_lines = []
+    try:
+        tool.edit(source, REPO, scratch, Recorder(settled_answers),
+                  settled_lines.append)
+    finally:
+        settled_unwritable.chmod(0o700)
+    not_copied = [line for line in settled_lines
+                  if "was not copied into the log-store" in line]
+    check("a settled file on main that cannot be copied is reported by "
+          "name with what failed, not passed over in silence",
+          len(not_copied) == 2
+          and any(old_file in line for line in not_copied)
+          and any(old_file_2 in line for line in not_copied)
+          and all("Permission denied" in line for line in not_copied)
+          and not any("copying it into the log-store failed" in line
+                      for line in settled_lines), settled_lines)
+
+    check("a file from ghi-info named for an issue is not a filed GHI-MD "
+          "on main",
+          tool.ghi_md_paths_on_main(MAIN_COMMIT, scratch, Recorder(
+              {"git ls-tree": listing})) == [EDIT_RELATIVE],
+          str(tool.ghi_md_paths_on_main(MAIN_COMMIT, scratch, Recorder(
+              {"git ls-tree": listing}))))
+
+    left = []
+    tool.report_ghi_info_files_left_at_moved_from(
+        MOVED_RELATIVE, EDIT_RELATIVE, MAIN_COMMIT, scratch,
+        Recorder({"git ls-tree": listing}), left.append)
+    check("files from ghi-info left beside the path a GHI-MD moved from "
+          "are each reported, with where to copy them",
+          len(left) == 2 and old_file in left[0] and old_file_2 in left[1]
+          and all(EDIT_RELATIVE in line and GHI_INFO_HEAD in line
+                  for line in left), left)
     log_store_at(scratch / "default-log-store")
 
 

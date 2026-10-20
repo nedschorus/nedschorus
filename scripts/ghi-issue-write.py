@@ -1434,7 +1434,7 @@ def migrate_ghi_info_files_on_main(relative: str, revision: str,
         text = runner(["git", "show", f"{revision}:{item}"],
                       cwd=str(repository_root)).stdout or ""
         question = ruling_question_lines(text)[1]
-        if unread is None and question in asked:
+        if question in asked:
             continue
         failure = unread
         if failure is None:
@@ -1460,6 +1460,34 @@ def migrate_ghi_info_files_on_main(relative: str, revision: str,
                 "there by rules 3 to 7 of § The design in "
                 f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD}; "
                 "do not wait for the user's answer.")
+        else:
+            report(
+                f"{item} on main was not copied into the log-store: "
+                f"{failure}\n"
+                "It holds no open entry and stays on main, so the next "
+                "edit of this GHI-MD tries the copy again; nothing needs "
+                "doing now.")
+
+
+def report_ghi_info_files_left_at_moved_from(relative: str, moved_from: str,
+                                             revision: str,
+                                             repository_root: Path, runner,
+                                             report):
+    """Files from ghi-info that main holds beside the path this GHI-MD
+    moved from are not copied, because the log-store names them by the old
+    file name and the run looks for questions under the new one."""
+    for item in ghi_info_files_beside_on_main(moved_from, revision,
+                                              repository_root, runner):
+        report(
+            f"{item} on main is a file from ghi-info beside {moved_from}, "
+            f"the path this GHI-MD moved from, and was not copied into the "
+            "log-store.\n"
+            "Dispatch a forked subagent to copy it into "
+            f"{ghi_info_log_store_citation('')} under the name "
+            f"{ghi_info_file_name_head(Path(relative).name[:-len('.md')])}"
+            "<date>.md, and to settle its entry there if it is open, by "
+            "rules 3 to 7 of § The design in "
+            f"{PROPOSED_IMPROVEMENTS_OR_CHANGES_SETTLING_RULES_GHI_MD}.")
 
 
 def file_issue(repo: str, title: str, key: str, runner, report) -> int:
@@ -2768,6 +2796,10 @@ def edit(path: Path, repo: str, repository_root: Path, runner, report):
         report_no_moved_from_match(number, relative, paths, report)
     migrate_ghi_info_files_on_main(relative, main_commit, repository_root,
                                    runner, report)
+    if moved_from:
+        report_ghi_info_files_left_at_moved_from(
+            relative, moved_from, main_commit, repository_root, runner,
+            report)
 
     # The document as main holds it before this edit, which is the author's
     # path where main has one and the path the file moved from where it
