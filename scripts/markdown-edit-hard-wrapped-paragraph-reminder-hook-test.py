@@ -517,8 +517,13 @@ check("a span within LINE_DIFF_MAXIMUM_LINE_PAIRS is line-diffed, so only its ch
 
 
 def git(arguments, cwd):
-    return subprocess.run(["git", *arguments], cwd=str(cwd), capture_output=True,
-                          text=True, check=False, env=CLEAN_ENVIRONMENT)
+    """Run a fixture's git step; a step that fails stops the suite, with git's error."""
+    result = subprocess.run(["git", *arguments], cwd=str(cwd), capture_output=True,
+                            text=True, check=False, env=CLEAN_ENVIRONMENT)
+    if result.returncode != 0:
+        raise SystemExit(f"ABORT: fixture step git {' '.join(arguments)} in {cwd} "
+                         f"exited {result.returncode}: {result.stderr.strip()}")
+    return result
 
 
 def run_hook(payload):
