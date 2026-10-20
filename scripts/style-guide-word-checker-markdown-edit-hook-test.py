@@ -346,8 +346,13 @@ check("the report's own wording uses no listed word", forms == [], forms)
 # ---------------------------------------------------------------------------
 
 def git(arguments, cwd):
-    return subprocess.run(["git", *arguments], cwd=str(cwd), capture_output=True,
-                          text=True, check=False, env=CLEAN_ENVIRONMENT)
+    """Run a fixture's git step; a step that fails stops the suite, with git's error."""
+    result = subprocess.run(["git", *arguments], cwd=str(cwd), capture_output=True,
+                            text=True, check=False, env=CLEAN_ENVIRONMENT)
+    if result.returncode != 0:
+        raise SystemExit(f"ABORT: fixture step git {' '.join(arguments)} in {cwd} "
+                         f"exited {result.returncode}: {result.stderr.strip()}")
+    return result
 
 
 def run_hook(payload, hook_path=FIXTURE_HOOK_PATH):
@@ -470,10 +475,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     (checkout / "docs" / "committed.md").write_text(COMMITTED_TEXT, encoding="utf-8")
     (checkout / ".gitignore").write_text("ignored-notes/\n", encoding="utf-8")
     git(["add", "-A"], checkout)
-    committed = git(["commit", "-q", "-m", "a committed markdown file"], checkout)
-    if committed.returncode != 0:
-        print(f"ABORT: the scratch commit failed: {committed.stderr}")
-        sys.exit(1)
+    git(["commit", "-q", "-m", "a committed markdown file"], checkout)
     committed_file = checkout / "docs" / "committed.md"
 
     def reset_committed_file():
