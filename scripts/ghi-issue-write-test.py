@@ -4951,115 +4951,13 @@ def run_whole_file_set_cases(scratch: Path):
               "refused", False, str(refusal))
 
 
-class RulingAskingGhiInfo(StagedReader):
-    """A fake ghi-info that asks the ruling question about the GHI-MD's
-    `questioned` line whenever it is sent the whole draft alone, and, when
-    it is sent the edit's diff, only if the diff removes or adds that
-    line."""
-
-    DIFF_OPENING = "This edit's changes to the GHI-MD, as a diff against "
-
-    def __init__(self, answers, questioned):
-        super().__init__(answers)
-        self.questioned = questioned
-        self.questions = []
-
-    def __call__(self, arguments, timeout=None, cwd=None, check=True):
-        if ASK in " ".join(arguments):
-            self.calls.append(with_question_read(arguments))
-            self.timeouts.append(timeout)
-            question = self.calls[-1][-1]
-            self.questions.append(question)
-            if self.DIFF_OPENING in question:
-                diff = question[question.index(self.DIFF_OPENING):]
-                if not any(f"\n{sign}{self.questioned}" in diff
-                           for sign in "-+"):
-                    return Completed("verdict: unrelated\n")
-            return Completed("", returncode=3, stderr=ruling_stderr(
-                "#46 closed issues are frozen"))
-        return super().__call__(arguments, timeout, cwd, check)
-
-
-def run_edit_adjudication_context_cases(scratch: Path):
-    """On an edit, ghi-info is sent the edit's diff against main's copy of
-    the GHI-MD, so an edit that leaves the questioned text alone does not
-    raise its ruling question again."""
+def run_adjudication_question_file_cases(scratch: Path):
+    """ghi-info's question travels in a file, not as one command-line
+    argument, so a question over Linux's 128 KiB limit for one argument
+    still reaches ghi-info."""
     ask = scratch / "scripts" / "ghi-info-ask.py"
     ask.parent.mkdir(parents=True, exist_ok=True)
     ask.write_text("# stands in for the real one; never executed\n")
-    original_date = tool.proposed_improvements_or_changes_file_date
-    tool.proposed_improvements_or_changes_file_date = lambda: "2026-10-03"
-    prefix = EDIT_NAME[:-len(".md")]
-    entry_on_disk = (scratch / "docs" / "issues" /
-                     f"{prefix}-proposed-improvements-or-changes-ghi-info-"
-                     "2026-10-03.md")
-    questioned = "Reopen closed issue 12 to add its last finding."
-    body_text = (f"# {EDIT_TITLE}\n\nUnchanged line one.\n{questioned}\n"
-                 "A citation, PR 10.\n")
-    on_main_text = staged_form(text=body_text)
-    answers = {
-        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(on_main_text),
-        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(on_main_text),
-        "git show": Completed("", returncode=128),
-        "git merge-base": Completed(BASE_REVISION + "\n"),
-        "git ls-remote": Completed(""),
-        "gh pr create": Completed("https://github.com/x/y/pull/11\n"),
-        "gh issue view 46": Completed("Closed issues are frozen\n"),
-        "gh issue view": issue_json(EDIT_TITLE, tool.links_body(
-            REPO, [EDIT_RELATIVE])),
-        "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
-    }
-    try:
-        # A one-citation edit to a GHI-MD whose unchanged text once raised
-        # the question.
-        source = filed_ghi_md(scratch, text=body_text.replace(
-            "A citation, PR 10.", "A citation, PR 11."))
-        citation = RulingAskingGhiInfo(answers, questioned)
-        citation_lines = []
-        tool.edit(source, REPO, scratch, citation, citation_lines.append)
-        question = citation.questions[0] if citation.questions else ""
-        check("an edit that leaves the questioned text alone does not raise "
-              "the ruling question again: no file is written or landed",
-              not entry_on_disk.exists()
-              and not any("-proposed-improvements-or-changes-" in item
-                          for item in citation.staged)
-              and not any("Do not settle" in line for line in citation_lines),
-              (sorted(citation.staged), citation_lines[-1:]))
-        check("ghi-info is sent the edit's diff against main's copy, holding "
-              "the changed line and not the unchanged ones as changes",
-              "-A citation, PR 10.\n+A citation, PR 11.\n" in question
-              and f"--- main:{EDIT_RELATIVE}\n+++ {EDIT_RELATIVE}\n" in question
-              and "-Unchanged line one." not in question
-              and "+Unchanged line one." not in question
-              and "raise a ruling question only about what this edit "
-                  "changes" in question, question[-1500:])
-
-        # The twin: an edit of the questioned line itself still raises it,
-        # so the case above passes on what ghi-info was sent.
-        source = filed_ghi_md(scratch, text=body_text.replace(
-            questioned, questioned + " And its comments."))
-        reworded = RulingAskingGhiInfo(answers, questioned)
-        tool.edit(source, REPO, scratch, reworded, quiet)
-        check("an edit that changes the questioned text still writes "
-              "ghi-info's question",
-              entry_on_disk.is_file(),
-              (sorted(reworded.staged), (reworded.questions or [""])[0][-600:]))
-    finally:
-        tool.proposed_improvements_or_changes_file_date = original_date
-        entry_on_disk.unlink(missing_ok=True)
-
-    plain = Recorder({ASK: Completed("verdict: unrelated\n")})
-    tool.adjudicate(REPO, "t", FILE_TEXT, scratch, plain, quiet)
-    plain_question = plain.calls[-1][-1] if plain.calls else ""
-    check("a create's question carries no diff",
-          "diff against main's copy" not in plain_question,
-          plain_question[-400:])
-    check("an edit that leaves the GHI-MD's text as main holds it has an "
-          "empty diff, and one main holds no copy of has none",
-          tool.ghi_md_unified_diff_from_main_copy_to_edit_ghi_copy(
-              FILE_TEXT, FILE_TEXT, EDIT_RELATIVE) == ""
-          and tool.ghi_md_unified_diff_from_main_copy_to_edit_ghi_copy(
-              None, FILE_TEXT, EDIT_RELATIVE) is None)
     # A request over Linux's 128 KiB limit for one argument, run for real
     # against a stand-in ghi-info-ask.py that records what it was asked.
     oversized_root = scratch / "oversized"
@@ -5073,17 +4971,14 @@ def run_edit_adjudication_context_cases(scratch: Path):
         f"Path({str(received)!r}).write_text(Path(path).read_text())\n"
         "print('verdict: unrelated')\n", encoding="utf-8")
     oversized_text = f"# {EDIT_TITLE}\n\n" + "A long line of the GHI-MD.\n" * 6000
-    oversized_diff = "".join(f"+{line}\n" for line in ["changed"] * 6000)
     oversized_lines = []
     tool.adjudicate(REPO, EDIT_TITLE, oversized_text, oversized_root,
-                    tool.run, oversized_lines.append, exclude_issue=570,
-                    edit_diff=oversized_diff)
+                    tool.run, oversized_lines.append, exclude_issue=570)
     received_text = received.read_text() if received.is_file() else ""
-    check("a request over 128 KiB reaches ghi-info whole, with the diff, "
-          "and its verdict is read",
+    check("a request over 128 KiB reaches ghi-info whole, and its verdict "
+          "is read",
           len(received_text.encode()) > 128 * 1024
           and oversized_text in received_text
-          and oversized_diff in received_text
           and "ghi-info: verdict: unrelated" in oversized_lines
           and not list(Path(tempfile.gettempdir()).glob(
               "ghi-issue-write-question-*")),
@@ -5108,12 +5003,6 @@ def run_edit_adjudication_context_cases(scratch: Path):
           and any(line.startswith("adjudication skipped: ghi-info did not "
                                   "answer") and "No space left" in line
                   for line in unwritable_lines), unwritable_lines)
-    unchanged = Recorder({ASK: Completed("verdict: unrelated\n")})
-    tool.adjudicate(REPO, "t", FILE_TEXT, scratch, unchanged, quiet,
-                    exclude_issue=570, edit_diff="")
-    check("an empty diff is sent as no change, not left out",
-          "as a diff against main's copy:\n\n(no change)\n"
-          in unchanged.calls[-1][-1], unchanged.calls[-1][-1][-400:])
 
 def main():
     import tempfile
@@ -5151,7 +5040,7 @@ def main():
             with tempfile.TemporaryDirectory(prefix="ghi-issue-edit-test-") as name:
                 run_edit_cases(Path(name))
             with tempfile.TemporaryDirectory(prefix="ghi-issue-adjudication-test-") as name:
-                run_edit_adjudication_context_cases(Path(name))
+                run_adjudication_question_file_cases(Path(name))
             print()
             if failures:
                 print(f"{len(failures)} case(s) failed")
