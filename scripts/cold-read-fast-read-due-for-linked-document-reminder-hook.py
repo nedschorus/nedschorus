@@ -55,10 +55,8 @@ and does not count. The record-name, frozen-path and finished-report rules
 are all taken from that module. A record holding a frozen copy under target/
 belongs to the document only when the copy sits at the document's path,
 relative to its checkout or absolute without the leading slash, the form a
-fast read run from another checkout writes, a path under /Volumes/nedhome/
-matching the same path under /home/nedlern/ too, because a read the Mac runs
-on ned-box over ssh freezes the copy under the ned-box path; a record
-without target/ is matched by name alone. The document is not due when a record's frozen copy
+fast read run from another checkout writes; a record without target/ is
+matched by name alone. The document is not due when a record's frozen copy
 has the document's bytes, whatever the file times say: a checkout or a pull
 stamps a file with the time of the checkout, so file times alone would call
 every document in a new worktree due. Otherwise the document is due when its
@@ -75,9 +73,7 @@ otherwise make it due again every time the agent linked it. A read is this
 agent-session's own when the file a finished fast read writes beside its
 report (nc-systems/cold-read/cold-read-record-names.py,
 cold_read_fast_read_report_agent_session_id_file_path) names the payload's session_id and the
-document's resolved path, a path under /Volumes/nedhome/ matching the same
-path under /home/nedlern/, because a read the Mac runs on ned-box over ssh
-records the ned-box path. The fast read takes the ID from
+document's resolved path. The fast read takes the ID from
 CLAUDE_CODE_SESSION_ID, which a subagent's Bash shares with its parent, so a
 fast read a subagent runs counts as its parent agent-session's own. A record
 without that file, as older reads and reads run without the variable leave,
@@ -392,19 +388,8 @@ def walk_draft_suggestions_path(document):
     return None
 
 
-def ned_box_form_of_path(path):
-    """`path` with the Mac's mount of ned-box's home written as ned-box's home."""
-    text = str(path)
-    if text.startswith(MAC_MOUNT_OF_NED_BOX_HOME):
-        return NED_BOX_HOME + text[len(MAC_MOUNT_OF_NED_BOX_HOME):]
-    return text
-
-
 def read_by_agent_session(report, document, session_id, record_names):
-    # A read the Mac hands to ned-box over ssh records the ned-box path of a
-    # document the Mac knows by its mount path.
-    target = record_names.cold_read_fast_read_target_path_if_run_by_given_agent_session(report, session_id)
-    return target is not None and ned_box_form_of_path(target) == ned_box_form_of_path(document)
+    return record_names.cold_read_fast_read_target_path_if_run_by_given_agent_session(report, session_id) == document
 
 
 def document_is_due(document, record_directories, document_top, record_names,
@@ -433,11 +418,9 @@ def document_is_due(document, record_directories, document_top, record_names,
                    if record_names.COMPLETED_REPORT_NAME_PATTERN.match(report.name)):
                 return False
             if (record / record_names.FROZEN_TARGET_DIRECTORY_NAME).is_dir():
-                # A read the Mac hands to ned-box over ssh freezes the
-                # document under its ned-box path.
-                frozen = next((candidate for form in (document, Path(ned_box_form_of_path(document)))
-                               for candidate in record_names.frozen_target_candidate_paths(
-                                   form, record, document_top)
+                frozen = next((candidate for candidate in
+                               record_names.frozen_target_candidate_paths(
+                                   document, record, document_top)
                                if candidate.is_file()), None)
                 if frozen is None:
                     continue

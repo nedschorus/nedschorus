@@ -658,51 +658,6 @@ def main():
     check("a file:///Volumes/nedhome-other link is not mapped under ned-box's home",
           found == [], f"found {found!r}")
 
-    # On the Mac, a walk-document in a ned-box worktree is fast-read on ned-box
-    # over ssh, which records the document's ned-box path.
-    fake_mount = SUITE_ROOT / "fake-mac-mount"
-    hook.MAC_MOUNT_OF_NED_BOX_HOME = str(fake_mount) + "/"
-    mac_draft = fake_mount / "agents" / "seat" / "docs" / "walk" / "naming-rules-draft.md"
-    mac_suggestions = mac_draft.with_name("naming-rules-suggestions.md")
-    mac_draft.parent.mkdir(parents=True)
-    mac_draft.write_text("x\n")
-    mac_suggestions.write_text("report\n")
-    os.utime(mac_suggestions, (4_000_000, 4_000_000))
-    os.utime(mac_draft, (5_000_000, 5_000_000))
-    (mac_suggestions.parent / (mac_suggestions.name + ".agent-session.json")).write_text(
-        json.dumps({"agent_session_id": "s1",
-                    "target": str(fake_home / "agents" / "seat" / "docs" / "walk"
-                                  / "naming-rules-draft.md")}))
-    record_names = hook.load_cold_read_record_names()
-    check("on the Mac, a walk-document this agent-session fast-read on ned-box over ssh, "
-          "then changed, is not due again",
-          hook.document_is_due(mac_draft, [], None, record_names, "s1") is False)
-    check("on the Mac, another agent-session's read on ned-box over ssh does not count as this one's",
-          hook.document_is_due(mac_draft, [], None, record_names, "s2") is True)
-
-    # On the Mac, a read run on ned-box over ssh from another checkout freezes
-    # the document under its ned-box path.
-    mac_plan = fake_mount / "agents" / "seat" / "docs" / "plan-of-record.md"
-    mac_plan.parent.mkdir(parents=True, exist_ok=True)
-    mac_plan.write_text("same\n")
-    os.utime(mac_plan, (5_000_000, 5_000_000))
-    mac_records = SUITE_ROOT / "mac-cold-read-records"
-    ned_box_record = mac_records / "plan-of-record-2026-10-20"
-    frozen = (ned_box_record / record_names.FROZEN_TARGET_DIRECTORY_NAME
-              / Path(*(fake_home / "agents" / "seat" / "docs" / "plan-of-record.md").parts[1:]))
-    frozen.parent.mkdir(parents=True)
-    frozen.write_text("same\n")
-    (ned_box_record / "fast-read.md").write_text("report\n")
-    for path in (frozen, ned_box_record / "fast-read.md"):
-        os.utime(path, (4_000_000, 4_000_000))
-    check("on the Mac, a document whose frozen copy from a read on ned-box over ssh has its "
-          "bytes is not due, though the document is newer",
-          hook.document_is_due(mac_plan, [mac_records], None, record_names) is False)
-    mac_plan.write_text("changed\n")
-    os.utime(mac_plan, (5_000_000, 5_000_000))
-    check("on the Mac, a document changed since that frozen copy is due",
-          hook.document_is_due(mac_plan, [mac_records], None, record_names) is True)
-
     # A shared module that will not load is a fault like any other, not a traceback.
     scratch_root = SUITE_ROOT / "hook-without-its-home-module"
     (scratch_root / "scripts").mkdir(parents=True)

@@ -1578,13 +1578,18 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
         check("when ned-box cannot be reached, the read gives the agent a sentence for the "
               "user holding ssh's words and the remedy",
-              "most often for one of two causes: ned-box could not be reached" in stderr
-              and "dispatched you; otherwise tell the user, in these words: \"The cold-read-fast-read could not run "
+              "most often for one of two causes: ned-box could not be reached, or ned-box "
+              "refused this Mac's key. ssh said: 'ssh: connect to host ned-box port 22: "
+              "No route to host'.\n" in stderr
+              and "The next line is a message for the user; do not run its command yourself. "
+                  "If you are a subagent, pass it word for word to the agent that dispatched you, "
+                  "for the user; otherwise tell it to the user word for word:\n"
+                  "The cold-read-fast-read could not run "
                   "on ned-box from this Mac: ssh exited 255 and said: 'ssh: connect to host "
                   "ned-box port 22: No route to host'. Run `ssh nedlern@ned-box true` from "
                   "a Terminal on your Mac. If that command fails with 'Permission denied', ned-box "
                   "refused this Mac's key; if it fails another way, check that ned-box is on and on the "
-                  "LAN.\"" in stderr,
+                  "LAN.\n" in stderr,
               repr(stderr))
 
         exit_code, stdout, stderr = read_from_mac(mac_draft, ssh_mode="killed")

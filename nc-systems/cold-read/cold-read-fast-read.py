@@ -413,15 +413,16 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
         ssh_words = completed.stderr.strip() or "nothing"
         print(f"{PROGRAM}: no cold-read-fast-read ran: ssh exited "
               f"{SSH_EXIT_CONNECTION_FAILED}, most often for one of two causes: ned-box "
-              f"could not be reached, or ned-box refused this machine's key. ssh said: "
-              f"{ssh_words}\n"
-              f"If you are a subagent, pass the quoted text that follows to the agent that "
-              f"dispatched you; otherwise tell the user, in these words: \"The "
-              f"cold-read-fast-read could not run on ned-box from this Mac: ssh "
+              f"could not be reached, or ned-box refused this Mac's key. ssh said: "
+              f"'{ssh_words}'.\n"
+              f"The next line is a message for the user; do not run its command yourself. "
+              f"If you are a subagent, pass it word for word to the agent that dispatched "
+              f"you, for the user; otherwise tell it to the user word for word:\n"
+              f"The cold-read-fast-read could not run on ned-box from this Mac: ssh "
               f"exited {SSH_EXIT_CONNECTION_FAILED} and said: '{ssh_words}'. Run "
               f"`ssh {NED_BOX_SSH_TARGET} true` from a Terminal on your Mac. If that "
               f"command fails with 'Permission denied', ned-box refused this Mac's key; if "
-              f"it fails another way, check that ned-box is on and on the LAN.\"",
+              f"it fails another way, check that ned-box is on and on the LAN.",
               file=sys.stderr)
         print("FAILED (no fast read ran: ned-box could not be reached)")
         return 1
