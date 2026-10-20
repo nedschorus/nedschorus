@@ -1038,7 +1038,8 @@ with tempfile.TemporaryDirectory() as scratch:
     check("--remove tells a worktree whose records failed to ship that the next --remove retries, "
           "and gives no rename step when no record was refused",
           "unreachable-wt: for each record whose line does not start REFUSED:, do nothing now: "
-          "the next scripts/clean-worktrees.py --remove, daily or at a handoff, ships it again"
+          "the next scripts/clean-worktrees.py --remove, daily or at a handoff, ships the record again; "
+          "if the record fails the same way there, fix the cause its line names"
           in unreachable.stdout
           and "whose line starts REFUSED:" not in unreachable.stdout,
           unreachable.stdout)

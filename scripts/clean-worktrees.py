@@ -402,8 +402,8 @@ def remove_worktree(worktree, branch, repo, discarded):
         if not all(line.startswith("REFUSED:") for _, line in unshipped):
             print(f"{worktree.name}: for each record whose line does not start REFUSED:, do nothing "
                   f"now: the next scripts/clean-worktrees.py --remove, daily or at a handoff, "
-                  f"ships it again; "
-                  f"if it fails the same way there, fix the cause its line names")
+                  f"ships the record again; "
+                  f"if the record fails the same way there, fix the cause its line names")
         return False
     # Named before the removal too: a removal that fails or is killed partway may already have deleted some.
     if discarded:
