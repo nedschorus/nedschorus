@@ -595,6 +595,9 @@ with tempfile.TemporaryDirectory() as scratch:
               removal.stdout.splitlines()[-1:] == [
                   "clean-worktrees: finished; each failure is named above"],
               removal.stdout)
+        check("--remove prints the finished line once, after every failure line",
+              removal.stdout.count("clean-worktrees: finished; each failure is named above") == 1,
+              removal.stdout)
         git(checkout, "worktree", "unlock", str(locked_wt))
         check("--remove reports the dead registration too",
               "dead-registration-wt" in removal.stdout
@@ -1023,14 +1026,29 @@ with tempfile.TemporaryDirectory() as scratch:
     check("--remove keeps a worktree whose record fails to ship, exits 1, and says why",
           unreachable_wt.exists()
           and (unreachable_wt / "cold-read-records" / cold_read_record_name / "fast-read.md").is_file()
-          and "unreachable-wt: kept — removing it would delete record(s) the log-store does not hold"
-          in unreachable.stdout
+          and "unreachable-wt: record shipment FAILED, worktree kept — removing it would delete "
+          "record(s) the log-store does not hold" in unreachable.stdout
           and "FAILED:" in unreachable.stdout and unreachable.returncode == 1
           and "unreachable-wt: removed" not in unreachable.stdout,
           unreachable.stdout + unreachable.stderr)
-    check("--remove prints each failed shipment's line once, inside the kept line",
-          unreachable.stdout.count("FAILED:") == 2  # one per record, both on the kept line
+    check("--remove prints each failed shipment's line once, inside the record shipment FAILED line",
+          unreachable.stdout.count("FAILED:") == 2  # one per record, both on the FAILED line
           and "unreachable-wt: FAILED" not in unreachable.stdout,
+          unreachable.stdout)
+    check("--remove tells a worktree whose records failed to ship that the next --remove retries, "
+          "and gives no rename step when no record was refused",
+          "unreachable-wt: for each other record, do nothing now: the next "
+          "scripts/clean-worktrees.py --remove, daily or at a handoff, ships it again" in unreachable.stdout
+          and "REFUSED:" not in unreachable.stdout,
+          unreachable.stdout)
+    unreachable_lines = unreachable.stdout.splitlines()
+    finished_line = "clean-worktrees: finished; each failure is named above"
+    check("--remove names the unshipped record on a FAILED line before the finished line, "
+          "and that line is the run's only FAILED line outside the shippers' own",
+          finished_line in unreachable_lines
+          and [line for line in unreachable_lines if "FAILED" in line]
+          == [line for line in unreachable_lines[:unreachable_lines.index(finished_line)]
+              if line.startswith("unreachable-wt: record shipment FAILED")],
           unreachable.stdout)
     remove_worktree_for_next_case(unreachable_wt)
 
@@ -1043,8 +1061,16 @@ with tempfile.TemporaryDirectory() as scratch:
     refused = run_clean_shipping_to(str(refused_store / "cold-read-records"), None, "--remove")
     check("--remove keeps a worktree whose record the log-store refuses, and exits 1",
           refused_wt.exists() and "REFUSED:" in refused.stdout
-          and "refused-wt: kept — " in refused.stdout and refused.returncode == 1,
+          and "refused-wt: record shipment FAILED, worktree kept — " in refused.stdout
+          and refused.returncode == 1,
           refused.stdout + refused.stderr)
+    check("--remove tells a worktree whose record was refused to rename it, and gives no retry "
+          "step when every unshipped record was refused",
+          "refused-wt: for each record whose line starts REFUSED:, rename its directory as that "
+          "line says; the next scripts/clean-worktrees.py --remove then ships it and removes "
+          "the worktree" in refused.stdout
+          and "for each other record" not in refused.stdout,
+          refused.stdout)
     remove_worktree_for_next_case(refused_wt)
 
     # A shipper that dies before printing its line: a store path under a regular file cannot be made.
@@ -1054,7 +1080,8 @@ with tempfile.TemporaryDirectory() as scratch:
     silent = run_clean_shipping_to(str(not_a_directory / "cold-read-records"), None, "--remove")
     check("--remove keeps a worktree whose shipper printed nothing, and says so",
           silent_wt.exists() and "the shipper printed nothing (exit 1)" in silent.stdout
-          and "silent-wt: kept — " in silent.stdout and silent.returncode == 1,
+          and "silent-wt: record shipment FAILED, worktree kept — " in silent.stdout
+          and silent.returncode == 1,
           silent.stdout + silent.stderr)
     check("--remove carries a silent shipper's last error line into the kept line",
           "the shipper printed nothing (exit 1): " in silent.stdout

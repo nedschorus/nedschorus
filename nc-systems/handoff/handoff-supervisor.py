@@ -1201,9 +1201,10 @@ def stop_worktree_cleaner_process_group(cleaner) -> str:
     return partial
 
 
-# clean-worktrees.py prints this when a record did not ship; the line ends with the shipper's own line.
 CLEANER_FINISHED_WITH_FAILURES_LINE = "clean-worktrees: finished; each failure is named above"
-KEPT_FOR_RECORDS_MARKER = ": kept — removing it would delete record(s) the log-store does not hold: "
+# clean-worktrees.py prints this when a record did not ship; the line ends with the shipper's own line.
+KEPT_FOR_RECORDS_MARKER = (": record shipment FAILED, worktree kept — removing it would delete "
+                           "record(s) the log-store does not hold: ")
 
 
 def summarize_worktree_cleanup_output(lines) -> str:
@@ -1213,7 +1214,7 @@ def summarize_worktree_cleanup_output(lines) -> str:
                   if (line.startswith("branch ") and ": deleted" in line)
                   or (": removed" in line and line.endswith(" deleted")))
     kept_for_records = [line for line in lines if KEPT_FOR_RECORDS_MARKER in line]
-    # A kept line quotes the shipper's FAILED, so it is counted here and not again among the failures.
+    # A kept-for-records line holds FAILED, so it is counted here and not again among the failures.
     failed = [line for line in lines if "FAILED" in line and KEPT_FOR_RECORDS_MARKER not in line]
     refused = [line for line in lines if "left in place" in line]
     unchecked = [line for line in lines

@@ -592,15 +592,15 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           "named once in the report, with the record and the shipper's REFUSED line",
           holding_record.exists()
           and "1 worktree(s) kept because a record did not reach the log-store: "
-          "record-holding-worktree: kept — removing it would delete record(s) the log-store "
-          "does not hold: cold-read-records/foo-2026-10-19 (REFUSED:" in refused_report
+          "record-holding-worktree: record shipment FAILED, worktree kept — removing it would "
+          "delete record(s) the log-store does not hold: cold-read-records/foo-2026-10-19 "
+          "(REFUSED:" in refused_report
           and refused_report.count("record-holding-worktree") == 1
           and "exited 1" not in refused_report and "failed:" not in refused_report,
           refused_report)
     git_in(["worktree", "remove", "--force", str(holding_record)], home)
 
-    kept_marker = (": kept — removing it would delete record(s) the log-store does not hold: "
-                   "cold-read-records/r-2026-10-19 ")
+    kept_marker = supervisor.KEPT_FOR_RECORDS_MARKER + "cold-read-records/r-2026-10-19 "
     kept_summary = supervisor.summarize_worktree_cleanup_output([
         "failed-ship-wt" + kept_marker + "(FAILED: r-2026-10-19 — ned-box unreachable)",
         "silent-ship-wt" + kept_marker
@@ -698,10 +698,10 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
           "exited 1" in report and "the cleaner broke" in report, report)
 
     # A printed failure explains a nonzero exit only when the cleaner went on to finish.
+    kept_for_record_line = ("rec-wt" + supervisor.KEPT_FOR_RECORDS_MARKER
+                            + "cold-read-records/r (FAILED: ned-box unreachable)")
     for kind, printed in (
-            ("worktree kept for an unshipped record",
-             "print('rec-wt: kept — removing it would delete record(s) the log-store does "
-             "not hold: cold-read-records/r (FAILED: ned-box unreachable)')\n"),
+            ("worktree kept for an unshipped record", f"print({kept_for_record_line!r})\n"),
             ("failed removal", "print('locked-wt: removal FAILED — locked')\n")):
         aborting = root / "aborting-after-printed-failure-cleaner.py"
         aborting.write_text(printed + "raise OSError('listing the next worktree broke')\n",
