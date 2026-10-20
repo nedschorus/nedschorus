@@ -1037,9 +1037,10 @@ with tempfile.TemporaryDirectory() as scratch:
           unreachable.stdout)
     check("--remove tells a worktree whose records failed to ship that the next --remove retries, "
           "and gives no rename step when no record was refused",
-          "unreachable-wt: for each other record, do nothing now: the next "
-          "scripts/clean-worktrees.py --remove, daily or at a handoff, ships it again" in unreachable.stdout
-          and "REFUSED:" not in unreachable.stdout,
+          "unreachable-wt: for each record whose line does not start REFUSED:, do nothing now: "
+          "the next scripts/clean-worktrees.py --remove, daily or at a handoff, ships it again"
+          in unreachable.stdout
+          and "whose line starts REFUSED:" not in unreachable.stdout,
           unreachable.stdout)
     unreachable_lines = unreachable.stdout.splitlines()
     finished_line = "clean-worktrees: finished; each failure is named above"
@@ -1069,7 +1070,7 @@ with tempfile.TemporaryDirectory() as scratch:
           "refused-wt: for each record whose line starts REFUSED:, rename its directory as that "
           "line says; the next scripts/clean-worktrees.py --remove then ships it and removes "
           "the worktree" in refused.stdout
-          and "for each other record" not in refused.stdout,
+          and "whose line does not start REFUSED:" not in refused.stdout,
           refused.stdout)
     remove_worktree_for_next_case(refused_wt)
 
