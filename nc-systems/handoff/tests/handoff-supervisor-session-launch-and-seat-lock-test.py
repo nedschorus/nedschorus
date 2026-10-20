@@ -221,6 +221,25 @@ def run_process_identity_cases(workspace: Path):
           supervisor.PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS == 15,
           supervisor.PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS)
 
+    # A ps that runs and fails exits 1 with an error, which is not the empty
+    # exit 1 ps gives for a process that is not there.
+    failing_ps_directory = workspace / "failing-ps"
+    failing_ps_directory.mkdir()
+    failing_ps = failing_ps_directory / "ps"
+    failing_ps.write_text("#!/bin/sh\necho 'ps: stub failure' >&2\nexit 1\n", encoding="utf-8")
+    failing_ps.chmod(0o755)
+    complaint = io.StringIO()
+    try:
+        os.environ["PATH"] = f"{failing_ps_directory}:{real_search_path}"
+        with contextlib.redirect_stderr(complaint):
+            line, answered = supervisor.read_process_command_line(os.getpid())
+    finally:
+        os.environ["PATH"] = real_search_path
+    check("a ps that fails with an error is reported as not having answered, not as "
+          "'no such process'", not answered and line is None, (answered, line))
+    check("and the reader prints ps's error",
+          "ps: stub failure" in complaint.getvalue(), complaint.getvalue())
+
     alive, detail = supervisor.process_is_supervisor_for_agent(
         99999999, "x", read_command_line=ps_says_no_such_process)
     check("ps answering 'no such process' means not a supervisor",

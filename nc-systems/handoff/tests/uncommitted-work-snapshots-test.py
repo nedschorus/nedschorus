@@ -1025,6 +1025,53 @@ def test_unreadable_head_is_reported():
           "an unborn HEAD is no commit, not a failure")
 
 
+def test_git_failures_are_not_read_as_answers():
+    """A git call whose exit 1 is an answer (unborn, detached, absent), failing
+    with 128 instead, raises with git's error."""
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "failing-git", "failing-git")
+    (worktree / "work.txt").write_text("work\n")
+    stub_directory = SCRATCH / "git-failing-on-one-call-bin"
+    stub_directory.mkdir(exist_ok=True)
+    stub = stub_directory / "git"
+    stub.write_text("#!/bin/sh\n"
+                    'case "$*" in\n'
+                    '  *"$FAIL_GIT_CALL_CONTAINING"*)\n'
+                    "    echo 'fatal: stub failure' >&2; exit 128 ;;\n"
+                    "esac\n"
+                    f'exec {shutil.which("git")} "$@"\n')
+    stub.chmod(0o755)
+    ref = snapshots.work_snapshot_ref("46-1", worktree)
+    check(snapshots.current_ref_value(worktree, ref) is None,
+          "a work-snapshot ref that does not exist reads as absent")
+
+    def raised_with(call, action):
+        path_before = os.environ["PATH"]
+        os.environ["PATH"] = f"{stub_directory}{os.pathsep}{path_before}"
+        os.environ["FAIL_GIT_CALL_CONTAINING"] = call
+        try:
+            action()
+        except snapshots.WorkSnapshotError as error:
+            return str(error)
+        finally:
+            os.environ["PATH"] = path_before
+            del os.environ["FAIL_GIT_CALL_CONTAINING"]
+        return None
+
+    for call, action in (
+            ("rev-parse --verify -q HEAD",
+             lambda: snapshots.build_work_snapshot_commit(worktree, "seat-x", "")),
+            ("symbolic-ref -q --short HEAD",
+             lambda: snapshots.build_work_snapshot_commit(worktree, "seat-x", "")),
+            (f"rev-parse --verify -q {ref}",
+             lambda: snapshots.current_ref_value(worktree, ref))):
+        raised = raised_with(call, action)
+        check(raised is not None and "fatal: stub failure" in raised,
+              f"a failed `git {call}` raises with git's error, not an answer", raised)
+    check(refs_of(main) == [], "no work-snapshot was written from a failed git call",
+          refs_of(main))
+
+
 def test_branch_ref_naming_a_missing_object_is_reported():
     main = new_clone()
     worktree = add_worktree(main, main / ".claude" / "worktrees" / "bad-branch", "bad-branch")
@@ -1285,6 +1332,7 @@ def main():
                      test_in_place_and_duplicate_leftovers,
                      test_same_tree_on_another_head_is_not_a_duplicate,
                      test_unreadable_head_is_reported,
+                     test_git_failures_are_not_read_as_answers,
                      test_branch_ref_naming_a_missing_object_is_reported,
                      test_unborn_head_snapshot_stays_in_place,
                      test_duplicates_count_only_within_one_agent_seat,

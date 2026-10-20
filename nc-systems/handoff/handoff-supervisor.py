@@ -568,7 +568,13 @@ def read_process_command_line(process_id: int):
                                   timeout=PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS)
     except (OSError, subprocess.SubprocessError):
         return None, False
-    # ps uses nonzero for absence without distinguishing its own errors; only failure to run is treated as unanswered.
+    # ps exits 1 with no output for a process that is not there; any other failure leaves the question unanswered.
+    if finished.returncode == 1 and not finished.stdout.strip() and not finished.stderr.strip():
+        return None, True
+    if finished.returncode != 0:
+        print(f"handoff-supervisor: ps -p {process_id} exited {finished.returncode}: "
+              f"{finished.stderr.strip() or 'no error text'}", file=sys.stderr)
+        return None, False
     command_line = finished.stdout.strip()
     return (command_line or None), True
 
@@ -599,15 +605,15 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
     command_line, ps_answered = read_command_line(process_id)
     if not ps_answered:
         if not process_exists_by_signal(process_id):
-            return False, (f"process {process_id} is not running — ps could not be run, "
+            return False, (f"process {process_id} is not running — ps could not be run or failed, "
                            "but os.kill reports no such process")
         print(f"handoff-supervisor: could not identify process {process_id} — ps could "
-              f"not be run. A process with that id exists, so it is treated as a live "
+              f"not be run or failed. A process with that id exists, so it is treated as a live "
               f"supervisor of {agent_name}; if none is in fact running, whatever asked "
               "is acting on that assumption until ps works or the lock is removed by hand.",
               file=sys.stderr)
         return True, (f"cannot tell whether process {process_id} is the supervisor of "
-                      f"{agent_name} — ps could not be run and a process with that id "
+                      f"{agent_name} — ps could not be run or failed, and a process with that id "
                       "exists, so a supervisor is assumed present rather than risk "
                       "starting a second one")
     if command_line is None:
@@ -868,61 +874,82 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
     overwrite one, and names it."""
     # Only call between sessions: syncing under a live agent invalidates its view of the tree.
     # Fast-forward only; resolving a conflict requires the agent's judgment.
-    toplevel = run_git_here(["rev-parse", "--show-toplevel"], working_directory, timeout=15)
-    if toplevel.returncode != 0:
+    git = git_machine_readable_output
+    try:
+        toplevel = git.run_git_unless_outside_a_repository(
+            working_directory, ["rev-parse", "--show-toplevel"], timeout_seconds=15)
+    except git.GitCommandFailed as error:
+        return f"branch sync: could not tell whether this is a git checkout, left as is — {error}"
+    if toplevel is None:
         return "branch sync: not a git checkout, nothing to sync"
 
     fetched = run_git_here(["fetch", "--quiet", "origin"], working_directory)
     fetch_note = "" if fetched.returncode == 0 else " (fetch failed, comparing against what is on disk)"
 
-    if run_git_here(["rev-parse", "--verify", "--quiet", "origin/main"],
-                    working_directory, timeout=15).returncode != 0:
-        return f"branch sync: no origin/main to sync with{fetch_note}"
+    def answer(arguments, timeout, accepted_exit_codes=(0,)):
+        return git.run_git(working_directory, arguments, timeout_seconds=timeout,
+                           accepted_exit_codes=accepted_exit_codes).decode().strip()
 
-    branch = run_git_here(["rev-parse", "--abbrev-ref", "HEAD"],
-                          working_directory, timeout=15).stdout.strip() or "HEAD"
+    def is_ancestor(ancestor, descendant):
+        # --is-ancestor exits 1 for "no"; run_git raises for every other code.
+        try:
+            answer(["merge-base", "--is-ancestor", ancestor, descendant], 15)
+        except git.GitCommandFailed as error:
+            if error.returncode == 1:
+                return False
+            raise
+        return True
 
-    reasons = []
-    tracked_changes = checkout_freshness_catch_up.uncommitted_tracked_change_count(
-        working_directory)
-    if tracked_changes is None:
-        reasons.append("git status unreadable")
-    elif tracked_changes:
-        reasons.append(f"{tracked_changes} uncommitted tracked change(s)")
-    git_dir = checkout_freshness_catch_up.git_directory(working_directory)
-    marker = (checkout_freshness_catch_up.in_progress_marker(git_dir)
-              if git_dir is not None else None)
-    if marker is not None:
-        operation = checkout_freshness_catch_up.in_progress_operation(git_dir, marker)
-        reasons.append(f"a {operation} in progress")
-    if reasons:
-        return f"branch sync: {branch} left as is — {'; '.join(reasons)}{fetch_note}"
+    branch = "the checkout"
+    try:
+        # --verify --quiet exits 1 for a name that does not exist.
+        if not answer(["rev-parse", "--verify", "--quiet", "origin/main"], 15,
+                      accepted_exit_codes=(0, 1)):
+            return f"branch sync: no origin/main to sync with{fetch_note}"
 
-    if run_git_here(["merge-base", "--is-ancestor", "origin/main", "HEAD"],
-                    working_directory, timeout=15).returncode == 0:
-        ahead = run_git_here(["rev-list", "--count", "origin/main..HEAD"],
-                             working_directory, timeout=30).stdout.strip() or "?"
-        if ahead == "0":
-            return f"branch sync: {branch} is current with main{fetch_note}"
-        return (f"branch sync: {branch} is {ahead} commit(s) ahead of main and has all of "
-                f"it — nothing to pull{fetch_note}")
+        branch = answer(["rev-parse", "--abbrev-ref", "HEAD"], 15)
 
-    if run_git_here(["merge-base", "--is-ancestor", "HEAD", "origin/main"],
-                    working_directory, timeout=15).returncode == 0:
-        merged = run_git_here(["merge", "--ff-only", "origin/main"], working_directory)
-        if merged.returncode != 0:
-            error = "; ".join(line.strip() for line in merged.stderr.splitlines()
-                              if line.strip())
-            return f"branch sync: {branch} left as is — {error or 'no detail'}{fetch_note}"
-        tip = run_git_here(["rev-parse", "--short", "HEAD"],
-                           working_directory, timeout=15).stdout.strip()
-        return f"branch sync: {branch} fast-forwarded to main ({tip}){fetch_note}"
+        reasons = []
+        tracked_changes = checkout_freshness_catch_up.uncommitted_tracked_change_count(
+            working_directory)
+        if tracked_changes is None:
+            reasons.append("git status unreadable")
+        elif tracked_changes:
+            reasons.append(f"{tracked_changes} uncommitted tracked change(s)")
+        git_dir = checkout_freshness_catch_up.git_directory(working_directory)
+        marker = (checkout_freshness_catch_up.in_progress_marker(git_dir)
+                  if git_dir is not None else None)
+        if marker is not None:
+            operation = checkout_freshness_catch_up.in_progress_operation(git_dir, marker)
+            reasons.append(f"a {operation} in progress")
+        if reasons:
+            return f"branch sync: {branch} left as is — {'; '.join(reasons)}{fetch_note}"
 
-    ahead = run_git_here(["rev-list", "--count", "origin/main..HEAD"],
-                         working_directory, timeout=30).stdout.strip() or "?"
-    behind = run_git_here(["rev-list", "--count", "HEAD..origin/main"],
-                          working_directory, timeout=30).stdout.strip() or "?"
-    return f"branch sync: {branch} is {ahead} ahead of main and {behind} behind{fetch_note}"
+        if is_ancestor("origin/main", "HEAD"):
+            ahead = answer(["rev-list", "--count", "origin/main..HEAD"], 30)
+            if ahead == "0":
+                return f"branch sync: {branch} is current with main{fetch_note}"
+            return (f"branch sync: {branch} is {ahead} commit(s) ahead of main and has all of "
+                    f"it — nothing to pull{fetch_note}")
+
+        if not is_ancestor("HEAD", "origin/main"):
+            ahead = answer(["rev-list", "--count", "origin/main..HEAD"], 30)
+            behind = answer(["rev-list", "--count", "HEAD..origin/main"], 30)
+            return (f"branch sync: {branch} is {ahead} ahead of main and {behind} "
+                    f"behind{fetch_note}")
+    except git.GitCommandFailed as error:
+        return f"branch sync: {branch} left as is — {error}{fetch_note}"
+
+    merged = run_git_here(["merge", "--ff-only", "origin/main"], working_directory)
+    if merged.returncode != 0:
+        error = "; ".join(line.strip() for line in merged.stderr.splitlines()
+                          if line.strip())
+        return f"branch sync: {branch} left as is — {error or 'no detail'}{fetch_note}"
+    try:
+        tip = answer(["rev-parse", "--short", "HEAD"], 15)
+    except git.GitCommandFailed as error:
+        tip = f"its new commit could not be read: {error}"
+    return f"branch sync: {branch} fast-forwarded to main ({tip}){fetch_note}"
 
 
 class OverviewCheckGitFailure(Exception):
@@ -975,12 +1002,19 @@ def overview_refresh_due_lines(working_directory: Path,
             continue
         try:
             overview_path = SYSTEM_OVERVIEW_PATH_TEMPLATE.format(system=system)
+            # git show exits 128 both for an absent path and for a failure; ls-tree prints nothing for an absent one.
+            if not overview_check_git_output(
+                    ["ls-tree", "--full-tree", "--name-only", main_commit_full, "--",
+                     overview_path], working_directory, timeout=timeout):
+                continue
             shown = subprocess.run(
                 ["git", "show", f"{main_commit_full}:{overview_path}"],
                 cwd=str(working_directory), capture_output=True, check=False,
                 timeout=timeout)
             if shown.returncode != 0:
-                continue
+                raise OverviewCheckGitFailure(
+                    f"git show {main_commit_full}:{overview_path} failed: "
+                    f"{shown.stderr.decode('utf-8', errors='replace').strip() or 'no detail'}")
             checked_commit = architecture_overview_path_template_and_checked_against_commit_reader.checked_against_commit(
                 shown.stdout.decode("utf-8", errors="replace"))
             if checked_commit is None:
