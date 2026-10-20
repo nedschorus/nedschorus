@@ -22,12 +22,12 @@ If that wiki page names a place, propose to the user the exact change, with its 
 If no place on that wiki page fits, tell the user in one sentence what you meant to remember and which places you ruled out, and ask him where it should go.
 No {marker} marker lets a write into a memory directory through, so do not write one, and do not retry this write.
 
-## DENY_MESSAGE (one sentence added after the first)
+## DENY_MESSAGE (one sentence added, for instruction files only)
 
-Current first sentence:
+`DENY_MESSAGE` is built by `guarded_write_deny_message()`, which also builds the refusals for reusable prompts and reviewed documents. Its text begins:
 
-Before modifying {path}, get the user's approval on your change: instruction files (CLAUDE.md, CLAUDE.local.md identity files, and .claude/ machinery) change only through the user's walk, however clearly the edit would help.
+Before you change {path}, check whether the change needs the user's approval: it does only when the approval page lists it and it is none of the page's exceptions.
 
-Added after it:
+Added to `DENY_MESSAGE` only, passed as its extra lines:
 
 If your change adds a rule for agents, first read docs/nedschorus-wiki/nedschorus-techniques-that-shape-what-agents-do-and-say-with-hooks-prompts-and-code.md: a program, a hook, a skill step or a program's message usually delivers a rule at the moment it applies, where another line of standing text is easily ignored. If one of those fits, propose it to the user instead of this edit.
