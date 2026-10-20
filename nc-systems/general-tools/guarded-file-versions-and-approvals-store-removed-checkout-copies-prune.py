@@ -13,7 +13,8 @@ since only that machine has the checkouts its paths name and can tell whether on
 
 A real run prints `deleting <copy path>`, flushed, before it deletes each copy, so the log
 names every copy a run stopped part way may have deleted; then a line for each removed checkout
-whose copies it deleted, with their bytes, and a summary line. --dry-run prints the same lines,
+whose approved copies it deleted, with the total size of those copy files in bytes, and a
+summary line. --dry-run prints the same lines,
 with "would delete" for "deleted", and deletes nothing.
 
 WHEN A COMMIT HOLDS A COPY'S VERSION. A copy whose blob a commit reachable from a durable ref
@@ -22,11 +23,17 @@ alike, since the hook's --restore and its diffs read such a version back from gi
 refs are the branches, tags and remote-tracking branches, as blobs_durable_refs_hold in the
 hook lists them. A worktree's detached HEAD is not durable, since removing the worktree drops it
 and gc then drops its commits, and neither are refs/work-snapshots/* and refs/stash, deleted
-within hours, so a version only they hold, like a blob only staged, keeps its copy. The path's repository is the git repository enclosing the path, or,
-when the path's directory is gone, its nearest directory that still exists: so the
-repository of a removed worktree under the main clone's .claude/worktrees/ is the main clone,
-which shares its commits. A path that no repository encloses, such as one under a removed
-~/agents/<seat>, has no commit that holds its versions, and only the rules below apply to it.
+within hours, so a version only they hold, like a blob only staged, keeps its copy. The path's
+repository is found by looking up from the path's directory, or, when that directory is gone,
+from its nearest directory that still exists, for the first directory holding a .git file or
+directory. So the repository of a removed worktree under the main clone's .claude/worktrees/ is
+the main clone, which shares its commits. When no repository is found that way, as for a path
+under a removed ~/agents/<seat>, whose nearest existing directory ~/agents is in no repository,
+the program treats no commit as holding the path's versions, although that seat was a worktree
+of the main clone whose commits may hold them, and only the rules below apply to the path.
+A copy deleted because a commit holds its version, whether its checkout still exists or not, is
+named only on its `deleting` line and counted in the summary line's first number; the lines for
+removed checkouts count only the approved copies the rules below delete.
 
 WHEN A CHECKOUT NO LONGER EXISTS. The store records neither a file's checkout nor its git
 directory, so the checkout is found from the path. A file whose directory still exists belongs
@@ -319,14 +326,16 @@ def main(arguments=None):
     sys.stdout.flush()
     for failure in result["failures"]:
         print(failure, file=sys.stderr)
-    print(f"{verb} {result['held_by_commits']} copies of versions a commit on a durable ref "
-          f"holds ({result['held_by_commits_bytes']} bytes), and approved copies in "
-          f"{len(result['checkouts'])} removed checkouts ({result['bytes']} bytes); kept, for "
-          f"each file of a removed checkout that has a version not approved, all of that file's "
-          f"copies no commit holds, so the change can still be shown against its approved "
-          f"version: {result['kept_not_approved']} copies of versions not approved and "
-          f"{result['kept_approved']} approved copies of the same files; "
-          f"{len(result['failures'])} failures, each named on stderr above")
+    failures = (f"{len(result['failures'])} failures, each named on stderr above"
+                if result["failures"] else "no failures")
+    print(f"{verb} {result['held_by_commits']} copies whose version a commit on a branch, a tag "
+          f"or a remote-tracking branch holds, whether the file's checkout still exists or not, "
+          f"{result['held_by_commits_bytes']} bytes of copy files; and the approved copies in "
+          f"{len(result['checkouts'])} removed checkouts, {result['bytes']} bytes of copy files; "
+          f"kept, for each file of a removed checkout that has a version not approved, all of "
+          f"that file's copies no such commit holds, so the change can still be shown against its "
+          f"approved version: {result['kept_not_approved']} copies of versions not approved and "
+          f"{result['kept_approved']} approved copies of the same files; {failures}")
     return EXIT_FAILED if result["failures"] else EXIT_DONE
 
 

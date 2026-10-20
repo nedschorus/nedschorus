@@ -37,6 +37,8 @@ hook = importlib.util.module_from_spec(_specification)
 _specification.loader.exec_module(hook)
 
 failures = []
+HELD_SUMMARY = ("{verb} {count} copies whose version a commit on a branch, a tag or a "
+                "remote-tracking branch holds")
 
 
 def check(case_name, condition, detail=""):
@@ -408,7 +410,7 @@ def test_failing_delete_fails():
               result.stderr)
         check("a delete of a copy a commit holds that fails is named and not counted",
               f"{held_stuck} could not be deleted" in result.stderr
-              and "deleted 0 copies of versions a commit on a durable ref holds" in result.stdout,
+              and HELD_SUMMARY.format(verb="deleted", count=0) in result.stdout,
               (result.stdout, result.stderr))
         check("the other checkout is still pruned", not other.exists())
 
@@ -478,8 +480,8 @@ def test_copies_a_commit_holds_deleted():
         dry = run(store, "--dry-run")
         check("--dry-run deletes no copy a commit holds",
               committed.exists() and on_branch.exists(), dry.stdout)
-        check("--dry-run counts them", "would delete 5 copies of versions a commit on a durable ref holds" in dry.stdout,
-              dry.stdout)
+        check("--dry-run counts them",
+              HELD_SUMMARY.format(verb="would delete", count=5) in dry.stdout, dry.stdout)
         result = run(store)
         check("a run that deletes copies a commit holds exits 0", result.returncode == 0,
               result.stderr)
@@ -496,8 +498,11 @@ def test_copies_a_commit_holds_deleted():
         check("a copy git holds only as a staged blob is kept", staged.exists())
         check("the run names each copy it deletes", f"deleting {committed}\n" in result.stdout,
               result.stdout)
-        check("the summary counts them", "deleted 5 copies of versions a commit on a durable ref holds" in result.stdout,
-              result.stdout)
+        check("the summary counts them",
+              HELD_SUMMARY.format(verb="deleted", count=5) in result.stdout, result.stdout)
+        check("a run with no failures says so, and does not point at stderr",
+              result.stdout.rstrip().endswith("; no failures")
+              and "failures, each named" not in result.stdout, result.stdout)
 
 
 def test_copies_only_refs_that_are_not_durable_hold_kept():
