@@ -506,6 +506,13 @@ with tempfile.TemporaryDirectory() as scratch:
               and ": removed" not in no_main_removal.stdout
               and "dirty-wt: kept — cannot compare against origin/main"
               in no_main_removal.stdout, no_main_removal.stdout)
+        check("--remove with origin/main missing stops at the branch-ref listing with exit 2, "
+              "naming git's error, and reports no finished run",
+              no_main_removal.returncode == 2
+              and "clean-worktrees: stopped, because git for-each-ref" in no_main_removal.stderr
+              and "origin/main" in no_main_removal.stderr
+              and "clean-worktrees: finished" not in no_main_removal.stdout,
+              (no_main_removal.returncode, no_main_removal.stdout, no_main_removal.stderr))
 
         # --- Dead registrations are named, with the prune command ------------
         # A worktree registered under a temp directory leaves a dead entry
@@ -922,6 +929,63 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a prunable registration is reported with git's reason",
           [path for path, reason in dead] == [str(gone_path)] and dead[0][1] != "no reason given",
           str(dead))
+
+# A git that cannot list the worktrees must stop the run with exit 2 and git's error,
+# not read as a repository with nothing to clean.
+LISTING_FAILURE_TEXT = "fatal: stand-in worktree listing failure"
+with tempfile.TemporaryDirectory() as scratch:
+    scratch = Path(scratch).resolve()
+    checkout = scratch / "checkout"
+    checkout.mkdir()
+    git(checkout, "init", "-b", "main")
+    git(checkout, "config", "user.email", "test@test.invalid")
+    git(checkout, "config", "user.name", "clean-worktrees test")
+    (checkout / "README.md").write_text("# scratch\n", encoding="utf-8")
+    git(checkout, "add", "-A")
+    git(checkout, "commit", "-m", "seed")
+    git(checkout, "update-ref", "refs/remotes/origin/main", "HEAD")
+    git(checkout, "branch", "unattached-landed")
+    failing_listing_stubs = scratch / "failing-worktree-list-git"
+    failing_listing_stubs.mkdir()
+    (failing_listing_stubs / "git").write_text(
+        "#!/bin/sh\n"
+        f'case " $* " in *" worktree list "*) echo "{LISTING_FAILURE_TEXT}" >&2; exit 128 ;; esac\n'
+        f'exec {shutil.which("git")} "$@"\n', encoding="utf-8")
+    (failing_listing_stubs / "git").chmod(0o755)
+    environment = dict(os.environ)
+    environment["PATH"] = f"{failing_listing_stubs}{os.pathsep}{environment.get('PATH', '')}"
+    for flags in ([], ["--only-done"], ["--remove"]):
+        failed_listing = subprocess.run(
+            [sys.executable, str(CLEAN_SCRIPT), "--repo", str(checkout), *flags],
+            capture_output=True, text=True, check=False, env=environment)
+        check(f"a failed worktree listing{' under ' + flags[0] if flags else ''} exits 2 "
+              "with git's error on one stderr line, and prints nothing as found",
+              failed_listing.returncode == 2
+              and failed_listing.stdout == ""
+              and "clean-worktrees: stopped, because git worktree list" in failed_listing.stderr
+              and LISTING_FAILURE_TEXT in failed_listing.stderr
+              and len(failed_listing.stderr.strip().splitlines()) == 1,
+              (failed_listing.returncode, failed_listing.stdout, failed_listing.stderr))
+
+    module = load_clean_worktrees_module()
+    saved_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = environment["PATH"]
+    try:
+        for name, call in (
+                ("list_worktrees", lambda: module.list_worktrees(checkout, checkout)),
+                ("branch_refs_with_no_worktree_fully_on_main",
+                 lambda: module.branch_refs_with_no_worktree_fully_on_main(checkout)),
+                ("dead_worktree_registrations",
+                 lambda: module.dead_worktree_registrations(checkout))):
+            try:
+                answer = call()
+            except module.git_output.GitCommandFailed as error:
+                answer = error
+            check(f"{name} raises git's error when git cannot list the worktrees",
+                  isinstance(answer, module.git_output.GitCommandFailed)
+                  and LISTING_FAILURE_TEXT in str(answer), repr(answer))
+    finally:
+        os.environ["PATH"] = saved_path
 
 # --- Records whose home is the log-store are shipped before the removal ---
 with tempfile.TemporaryDirectory() as scratch:

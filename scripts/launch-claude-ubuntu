@@ -359,13 +359,15 @@ fi"
 # Boot-time worktree report on the box — the twin of the same step in
 # launch-claude-mac: names any finished session worktree and the command
 # that removes it. Report only, and never blocks the launch.
-PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/scripts/clean-worktrees.py --only-done || true; }"
+PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/scripts/clean-worktrees.py --only-done \
+|| echo \"launch-claude-ubuntu: the boot-time worktree report on the box (scripts/clean-worktrees.py --only-done) failed with exit \$?, as its error above says; the launch continued\" >&2; }"
 
 # Boot-time freshness on the box — the twin of the same step in
 # launch-claude-mac: fast-forward the reference checkout to origin/main
 # (ff-only, never a merge). A stale copy of this script freshens the
 # checkout that carries its replacement, so the next launch runs current.
-PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/scripts/checkout-freshness-catch-up.py --reference-pull --repo \$HOME/Projects/nedschorus 2>/dev/null || true; }"
+PREPARE_COMMAND="$PREPARE_COMMAND && { python3 \$HOME/Projects/nedschorus/scripts/checkout-freshness-catch-up.py --reference-pull --repo \$HOME/Projects/nedschorus \
+|| echo \"launch-claude-ubuntu: the boot-time fast-forward of the reference checkout on the box (scripts/checkout-freshness-catch-up.py --reference-pull) failed with exit \$?, as its error above says; the launch continued\" >&2; }"
 
 # Pre-answer, on the box, the screens that would stop the session at start:
 # Claude's one-time folder-trust dialog for the agent directory, and its

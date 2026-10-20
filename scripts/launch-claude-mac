@@ -290,14 +290,16 @@ fi
 # so each launch names any that are done (landed and vacant) and the
 # command that removes them. Report only — removal stays a deliberate,
 # separate call — and a report problem never blocks a launch.
-python3 "$SCRIPT_DIRECTORY/clean-worktrees.py" --only-done || true
+python3 "$SCRIPT_DIRECTORY/clean-worktrees.py" --only-done \
+    || echo "launch-claude-mac: the boot-time worktree report (scripts/clean-worktrees.py --only-done) failed with exit $?, as its error above says; the launch continued" >&2
 
 # Boot-time freshness: fast-forward the machine's reference checkout to
 # origin/main (ff-only, never a merge — it carries no work of its own by
 # construction). The mid-session half runs as a Stop hook
 # (scripts/checkout-freshness-catch-up.py); this covers machines between
 # sessions, and never blocks a launch.
-python3 "$SCRIPT_DIRECTORY/checkout-freshness-catch-up.py" --reference-pull --repo "$REPOSITORY" 2>/dev/null || true
+python3 "$SCRIPT_DIRECTORY/checkout-freshness-catch-up.py" --reference-pull --repo "$REPOSITORY" \
+    || echo "launch-claude-mac: the boot-time fast-forward of the reference checkout (scripts/checkout-freshness-catch-up.py --reference-pull) failed with exit $?, as its error above says; the launch continued" >&2
 
 # Per-seat tmux servers: every seat runs on its OWN tmux server, socket
 # `-L <name>`, because one server crash must not kill the whole per-machine
