@@ -5,10 +5,12 @@ every version, and tell the agent to ask him.
 Registered under PostToolUse and PostToolUseFailure for every tool. A guarded file is a file
 instruction-file-guard.py protects, plus ~/.claude/CLAUDE.md and ~/.claude/settings.json. At
 each run the hook compares each checked file's stat data with what it stored at its previous
-run, hashes only a file whose stat data differs, copies each new version into this machine's
-directory of the log-store kind guarded-file-versions-and-approvals/, and, when the version is
-not in its path's approved set, tells the agent to show the user the change and run this
-program with --approve or --restore. The change stays in place while he is asked.
+run, hashes only a file whose stat data differs, logs each new version in this machine's
+directory of the log-store kind guarded-file-versions-and-approvals/, copies it there unless
+the file's checkout is on a branch whose HEAD commit holds it, and, when the version is not in its path's
+approved set, tells the agent to show the user the change and run this program with --approve
+or --restore. The change stays in place while he is asked. A version with no copy is read
+back from git; a file outside every checkout, such as ~/.claude/CLAUDE.md, is always copied.
 
     python3 <this file> --approve <path> <hash> [<path> <hash> ...]
     python3 <this file> --restore <path> <hash> [<path> <hash> ...]
@@ -17,7 +19,7 @@ Design and tests: docs/issues/1268-catch-a-guarded-file-changed-without-the-user
 
 Exit status: the hook always exits 0, since the tool call has already happened. --approve and
 --restore exit 0 when done, 1 when they refuse, when the store cannot be reached, when a
-file operation fails, or when --restore changes some files and fails on others, and 64 on a bad
+file operation or git fails, or when --restore changes some files and fails on others, and 64 on a bad
 command line.
 """
 
@@ -387,6 +389,89 @@ class Store:
         data = self.read(path, copy_hash)
         return data if blob_hash(data) == copy_hash else None
 
+    def kept_version(self, path: str, copy_hash: str):
+        """The version's bytes from its copy, else from the git repository of path's checkout;
+        None when neither holds it."""
+        data = self.copied_version(path, copy_hash)
+        if data is None:
+            data = version_from_git(path, copy_hash)
+        return data
+
+
+# ---------------------------------------------------------------- versions git holds
+
+# Git holds a version when a commit that a durable ref reaches holds its blob: a branch, a tag
+# or a remote-tracking branch. A worktree's detached HEAD is not durable, since removing the
+# worktree drops it and gc then drops its commits, and neither are refs/work-snapshots/* and
+# refs/stash, deleted within hours, or a blob only staged or only in the object store; a version
+# held only there keeps its copy.
+DURABLE_REF_OPTIONS = ("--branches", "--tags", "--remotes")
+
+
+def blobs_durable_refs_hold(checkout):
+    """Every blob id a commit reachable from a durable ref of the checkout's repository holds:
+    the whole history, so it is for the daily prune, not for the hook's run on every tool call."""
+    output = git_text(checkout, "rev-list", "--objects", *DURABLE_REF_OPTIONS, timeout=600)
+    # Commits and trees are listed too; only a blob's id can name a copy.
+    return {line.split(" ", 1)[0] for line in output.splitlines()}
+
+
+def versions_head_holds(checkout, versions):
+    """The (path, blob id) pairs among versions whose path, in the checkout's HEAD commit, is
+    that blob, when HEAD is on a branch; none when HEAD is detached, since a detached HEAD is
+    not a durable ref. A branch's HEAD is the one durable ref the hook can ask cheaply on every
+    tool call; a version only another durable ref holds is copied, and the daily prune deletes
+    the copy."""
+    relative = {}
+    for path, blob_id in versions:
+        if blob_id == DELETED:
+            continue
+        relative[os.path.relpath(Path(path).parent.resolve() / Path(path).name, checkout)] = (
+            path, blob_id)
+    if not relative:
+        return set()
+    if subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify", "HEAD^{commit}"],
+                      capture_output=True, timeout=60, check=False).returncode == 1:
+        # A repository with no commit yet holds nothing.
+        return set()
+    # git symbolic-ref -q exits 1 when HEAD is detached. Any failure counts as detached, which
+    # costs only a copy the daily prune deletes later.
+    if subprocess.run(["git", "-C", str(checkout), "symbolic-ref", "-q", "HEAD"],
+                      capture_output=True, timeout=60, check=False).returncode != 0:
+        return set()
+    output = git_text(checkout, "--literal-pathspecs", "ls-tree", "-r", "-z", "--full-tree",
+                      "HEAD", "--", *sorted(relative))
+    held = set()
+    for entry in output.split("\0"):
+        header, _, name = entry.partition("\t")
+        fields = header.split()
+        if len(fields) == 3 and fields[1] == "blob" and name in relative \
+                and relative[name][1] == fields[2]:
+            held.add(relative[name])
+    return held
+
+
+def version_from_git(path: str, blob_id: str):
+    """The blob's bytes from the repository of path's checkout, or None when path is in no
+    checkout or the repository does not hold the blob. A git that fails otherwise raises."""
+    checkout = guard().enclosing_repository_root(Path(path).parent)
+    if checkout is None:
+        return None
+    exists = subprocess.run(["git", "-C", str(checkout), "cat-file", "-e", blob_id],
+                            capture_output=True, timeout=60, check=False)
+    # git cat-file -e exits 1, silently, for an object the repository does not hold.
+    if exists.returncode == 1 and not exists.stderr:
+        return None
+    if exists.returncode != 0:
+        raise RuntimeError(f"git cat-file -e {blob_id} in {checkout} exited {exists.returncode}: "
+                           f"{exists.stderr.decode(errors='replace').strip()}")
+    data = subprocess.run(["git", "-C", str(checkout), "cat-file", "blob", blob_id],
+                          capture_output=True, timeout=60, check=False)
+    if data.returncode != 0 or blob_hash(data.stdout) != blob_id:
+        raise RuntimeError(f"git cat-file blob {blob_id} in {checkout} exited {data.returncode}: "
+                           f"{data.stderr.decode(errors='replace').strip()}")
+    return data.stdout
+
 
 # ---------------------------------------------------------------- the log
 
@@ -489,10 +574,10 @@ def is_settings_file(path: str):
     return path == str(home_directory() / ".claude" / "settings.json")
 
 
-def git_text(checkout, *arguments, input_text=None):
+def git_text(checkout, *arguments, input_text=None, timeout=60):
     result = subprocess.run(["git", "-C", str(checkout), *arguments], capture_output=True,
                             input=None if input_text is None else input_text.encode(),
-                            timeout=60, check=False)
+                            timeout=timeout, check=False)
     if result.returncode != 0:
         raise RuntimeError(f"git {' '.join(arguments)} in {checkout} exited {result.returncode}: "
                            f"{result.stderr.decode(errors='replace').strip()}")
@@ -665,17 +750,19 @@ def diff_text(before: bytes, after: bytes, path: str):
 class Check:
     """What one run found about one checked file, to be settled in the store."""
 
-    def __init__(self, path, data, key, copy_hash, how=""):
+    def __init__(self, path, data, key, copy_hash, how="", in_git=False):
         self.path, self.data, self.key, self.copy_hash, self.how = path, data, key, copy_hash, how
+        self.in_git = in_git
 
 
 def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, quiet):
     """Everything that touches the store. Returns (asks, reminders, settled paths).
 
     approvals: [(path, key, how, rule)] git's own work and renames, recorded before the checks.
-    checks: the files whose content changed. unsettled_unchanged: [(path, key)] files left
-    unsettled by an earlier run. quiet: a rebase, merge, cherry-pick or revert is stopped, so
-    every version is copied and nothing is asked."""
+    checks: the files whose content changed, each copied unless its checkout's branch HEAD
+    holds it.
+    unsettled_unchanged: [(path, key)] files left unsettled by an earlier run. quiet: a rebase,
+    merge, cherry-pick or revert is stopped, so every version is copied and nothing is asked."""
     for path, key, how, rule in approvals:
         approved = store.approved(path)
         if key in approved:
@@ -687,7 +774,7 @@ def store_phase(store, session, owner, checks, unsettled_unchanged, approvals, q
         log_line(store, path, "approved", session, owner, key, how)
     asks, reminders, settled = [], [], {}
     for check in checks:
-        if check.key != DELETED:
+        if check.key != DELETED and not check.in_git:
             store.copy(check.path, check.copy_hash, check.data)
         log = store.log(check.path)
         approved = store.approved(check.path)
@@ -744,7 +831,7 @@ def ask_entry(store, check, log):
     if newest is None or newest[1] == DELETED:
         before = b""
     else:
-        before = store.copied_version(check.path, newest[1]) or b""
+        before = store.kept_version(check.path, newest[1]) or b""
     after = b"" if check.key == DELETED else check.data
     return check.path, check.key, diff_text(before, after, check.path)
 
@@ -891,9 +978,11 @@ def run_hook(payload):
                          if repository else (lambda paths: {}))
         listed_before = set(state["files"])
         changed, unsettled = scan(files, state["files"], hash_function)
-        approvals, quiet, new_position = [], False, None
+        approvals, quiet, new_position, held = [], False, None, set()
         if repository is not None:
             checkout, git_directory = repository
+            held = versions_head_holds(checkout, [(path, value[3])
+                                                  for path, value in changed.items()])
             entries = reflog_entries(git_directory)
             new_position = entries[-1][:2] if entries else None
             window = [] if stocking else entries_after(entries, state.get("reflog"))
@@ -906,7 +995,7 @@ def run_hook(payload):
             elif window:
                 approvals = git_own_work(checkout, window, state, changed)
         plans.append([kind, state_path, state, files, changed, unsettled, approvals, quiet,
-                      new_position, stocking, set(state["files"]) != listed_before])
+                      new_position, stocking, set(state["files"]) != listed_before, held])
 
     stocking_machine = outside_stocking
     nothing_to_do = all(not plan[4] and not plan[5] and not plan[6] and not plan[9]
@@ -932,7 +1021,8 @@ def run_hook(payload):
                     store.approve(path, key)
                     log_seen(store, path, session, owner(), key, key, HOW_STOCK)
         for plan in plans:
-            kind, state_path, state, files, changed, unsettled, approvals, quiet, _, stocking, _ = plan
+            (kind, state_path, state, files, changed, unsettled, approvals, quiet, _, stocking, _,
+             held) = plan
             checks = []
             for path, (now, data, key, copy_hash) in changed.items():
                 how = ""
@@ -942,7 +1032,7 @@ def run_hook(payload):
                         how = HOW_STOCK
                 elif edit_succeeded and written == path:
                     how = HOW_EDIT
-                checks.append(Check(path, data, key, copy_hash, how))
+                checks.append(Check(path, data, key, copy_hash, how, (path, copy_hash) in held))
             approvals = approvals + renames(store, changed, state["files"])
             results.append(store_phase(store, session, owner(), checks, unsettled, approvals,
                                        quiet))
@@ -1117,7 +1207,7 @@ def approve(pairs, cwd: Path):
 
 def restore(pairs):
     """Put back the newest approved version of each declined (path, hash)."""
-    current = {}
+    current, held = {}, set()
     for path, key in pairs:
         now = current_version(path)
         if now[0] != key:
@@ -1125,21 +1215,25 @@ def restore(pairs):
                           "changed after the user was shown it. Show him the change the hook's "
                           "latest message gives, and ask him again")
         current[path] = now
+        checkout = guard().enclosing_repository_root(Path(path).parent)
+        if checkout is not None and versions_head_holds(checkout, [(path, now[1])]):
+            held.add(path)
 
     def work(store, end):
         plan = []
         for path, key in pairs:
             _, copy_hash, data = current[path]
-            if key != DELETED:
+            if key != DELETED and path not in held:
                 store.copy(path, copy_hash, data)
             log = store.log(path)
             newest = newest_approved(store, path, log, key)
             content = None
             if newest is not None and newest[0] != DELETED:
-                content = store.copied_version(path, newest[1])
+                content = store.kept_version(path, newest[1])
                 if content is None:
-                    raise StoreUnreachable(f"the approved copy {newest[1]} of {path} is missing "
-                                           "or does not match its hash")
+                    raise StoreUnreachable(f"the approved version {newest[1]} of {path} is in "
+                                           "neither the guarded-file store's copies of that "
+                                           "file nor the git repository of its checkout")
             plan.append((path, key, newest, content))
         if time.monotonic() > end:
             raise StoreUnreachable("the deadline passed before any version was put back")
@@ -1225,7 +1319,7 @@ def main(arguments=None):
             print(REFUSED.format(program_name=HOOK_PATH.name, mode=mode, reason=error),
                   file=sys.stderr)
             return EXIT_REFUSED
-        except OSError as error:
+        except (OSError, RuntimeError) as error:
             print(COMMAND_FAILED.format(program_name=HOOK_PATH.name, mode=mode, reason=error),
                   file=sys.stderr)
             return EXIT_REFUSED
