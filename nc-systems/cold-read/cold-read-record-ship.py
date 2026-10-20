@@ -289,6 +289,9 @@ in the nedschorus repository, which this machine also clones:
   machine's weekly check that the work-snapshot hook finds a real claude
   session, written by
   `nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py`
+- `ghi-info-proposed-improvements-or-changes/` -- ghi-info's ruling questions
+  about GHI-MDs, each a proposed-improvements-or-changes-file settled in
+  place, written by `scripts/ghi-issue-write.py`
 - `guarded-file-versions-and-approvals/` -- each machine's copies of every
   version of a guarded file and the record of which versions the user
   approved, written by
