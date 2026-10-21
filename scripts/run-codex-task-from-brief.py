@@ -85,6 +85,11 @@ SANDBOX_TO_PROFILE_BASE = {"read-only": ":read-only", "workspace-write": ":works
 DEFAULT_DEADLINE_MINUTES = 60
 # Codex gets this long to exit after SIGTERM before its process group is killed.
 STOP_GRACE_SECONDS = 10
+# macOS refuses a signal with EPERM while every process left in the group is a zombie,
+# Codex itself included until it is reaped; the group is gone within about 0.2 s of
+# Codex being reaped.
+EXITING_GROUP_SIGNAL_ATTEMPTS = 50
+EXITING_GROUP_SIGNAL_RETRY_SECONDS = 0.1
 # The gh commands --prefetch-github runs: each only reads from GitHub.
 PREFETCH_READING_SUBCOMMANDS = {("pr", "list"), ("pr", "view"), ("issue", "list"),
                                 ("issue", "view")}
@@ -260,20 +265,34 @@ def codex_command(checkout: pathlib.Path, report: pathlib.Path, sandbox: str,
     return command + ["--", prompt]
 
 
+def signal_process_group(process: subprocess.Popen, signal_number: int) -> bool:
+    """Send the signal to Codex's group; return False when the group is already gone."""
+    attempts_left = EXITING_GROUP_SIGNAL_ATTEMPTS
+    while True:
+        try:
+            os.killpg(process.pid, signal_number)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            attempts_left -= 1
+            if attempts_left == 0:
+                raise
+            # Only this program can reap Codex, so a group whose last member is Codex's
+            # zombie would refuse every attempt.
+            process.poll()
+            time.sleep(EXITING_GROUP_SIGNAL_RETRY_SECONDS)
+
+
 def stop_process_group(process: subprocess.Popen) -> None:
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
+    if not signal_process_group(process, signal.SIGTERM):
         return
     try:
         process.wait(timeout=STOP_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
         pass
     # Codex exiting is not enough: a process it started may outlive SIGTERM in the same group.
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    signal_process_group(process, signal.SIGKILL)
     process.wait()
 
 
@@ -349,19 +368,19 @@ def main(argv=None) -> int:
             process = subprocess.Popen(
                 command, stdin=subprocess.DEVNULL, stdout=log,
                 stderr=subprocess.STDOUT, start_new_session=True)
-            try:
-                exit_code = process.wait(timeout=seconds_left)
-            except subprocess.TimeoutExpired:
-                stop_process_group(process)
-                shared = ("The deadline covers every --prefetch-github command and Codex "
-                          "together. " if args.prefetch_github else "")
-                return fail(
-                    f"Codex was still running when the run's {args.deadline_minutes:g}-minute "
-                    f"deadline passed, and was stopped; its output so far is in {run_log}.\n"
-                    f"{shared}If the run needs longer, run it again with a larger "
-                    f"--deadline-minutes.")
     except OSError as error:
         return fail(f"could not start Codex: {error}")
+    try:
+        exit_code = process.wait(timeout=seconds_left)
+    except subprocess.TimeoutExpired:
+        stop_process_group(process)
+        shared = ("The deadline covers every --prefetch-github command and Codex "
+                  "together. " if args.prefetch_github else "")
+        return fail(
+            f"Codex was still running when the run's {args.deadline_minutes:g}-minute "
+            f"deadline passed, and was stopped; its output so far is in {run_log}.\n"
+            f"{shared}If the run needs longer, run it again with a larger "
+            f"--deadline-minutes.")
     if exit_code != 0:
         return fail(f"Codex exited {exit_code}; its output is in {run_log}.")
     if not report.is_file() or not report.read_text(encoding="utf-8").strip():

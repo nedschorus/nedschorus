@@ -71,7 +71,8 @@ the reading of them. One run failing does not throw the other away: the
 combined result is written from the run that landed, with a marker line at
 the top naming what is missing, and this program exits 1. Both failing leaves
 no combined result at all, because there is nothing to read. A run whose
-report cannot be parsed -- no `## CASE` heading in it naming one of the cases
+cell exited nonzero is a failed run even when a report is at its path. A run
+whose report cannot be parsed -- no `## CASE` heading in it naming one of the cases
 this run was given -- is a failed run, not a restater that caught nothing:
 zero and unreadable are different answers and this program never prints one
 as the other.
@@ -157,7 +158,7 @@ def build_runner_argument_parser():
     parser.add_argument(
         "--restater", required=True, metavar="CLASS",
         help="the restater class under judgment, named as the roster names "
-             "its models (gemini-3.8-flash-low, gpt-6-sol, claude-opus-5)")
+             "its models (gemini-3.8-flash-low, gpt-6.1-sol, claude-opus-5)")
     parser.add_argument(
         "--case", required=True, action="append", nargs=4,
         metavar=("DRAFT", "PERFECT", "DEFECT_LIST", "RESTATEMENT"),
@@ -390,6 +391,14 @@ def read_run(report_path: pathlib.Path, exit_code: int, case_count: int) -> dict
     }
     report_text = (
         report_path.read_text(encoding="utf-8") if report_path.is_file() else "")
+    if exit_code != 0 and report_text.strip():
+        # The cell removes its report on a failure it handles, so a report
+        # beside a nonzero exit is a killed cell's unstamped text or an
+        # earlier judging's, left in a reused --record-dir.
+        run["why_unusable"] = (
+            f"the cell exited {exit_code}, so the report at {report_path} "
+            "is not this run's finished judgment")
+        return run
     if not report_text.strip():
         run["why_unusable"] = (
             f"no report at {report_path} (the cell exited {exit_code}); a run "

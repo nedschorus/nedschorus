@@ -186,8 +186,8 @@ try:
 
     # The search alone would run in another folder without its cd, or print more without its
     # pipe, so with other commands around the search the refusal gives no command at all.
-    without_command_ending = ("Put -- after the last option and before the file names, "
-                              "then run the command again.")
+    without_command_ending = ("so that every name begins with ./ instead of -.\n"
+                              "Then run the command again.")
     guard.command_with_double_dash_before_word = lambda *arguments: None
     try:
         for command, cwd in [
@@ -370,10 +370,13 @@ try:
     check("an option after the glob gets the instruction without a rebuilt command",
           refusal == (
               "Refused: */*.jsonl expands to names beginning with -, such as "
-              f"{DASH_FILE}, which grep reads as options, not as files. Put -- "
-              "after the last option and before the file names, then run the "
-              "command again."),
+              f"{DASH_FILE}, which grep reads as options, not as files.\n"
+              "Write ./ in front of */*.jsonl, as in ./*/*.jsonl, so that every name "
+              "begins with ./ instead of -.\n"
+              "Then run the command again."),
           repr(refusal))
+    check("passes: the ./ form that refusal tells the agent to write",
+          run_main("grep -l needle ./*/*.jsonl -n", scratch) is None)
 
     refusal = run_main("grep -l needle 'my dir'/*.jsonl */*.jsonl", scratch)
     check("a quoted literal part is kept as the agent quoted it",

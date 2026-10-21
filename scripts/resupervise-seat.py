@@ -33,11 +33,11 @@ WHAT IT DOES -- it retires the unsupervised session rather than adopting it:
      retire_seat_tmux_session below, which recover-crashed-seats.py runs too
      when an operator says to restart a seat behind a leftover idle shell.
   5. Run the seat's launcher. The supervisor boots, finds the unconsumed handoff,
-     and ignites the successor from it (handoff-supervisor.py's boot-ignition
+     and starts the successor as a fresh agent-session from it (handoff-supervisor.py's boot-ignition
      path, live since 2026-08-14).
 
-The successor is a fresh session carrying the retiring one's handoff and dialog
-extract -- the ordinary reincarnation, not a continuation of the running process.
+The successor is a fresh session carrying the retiring one's handoff and
+conversation-tail -- the ordinary reincarnation, not a continuation of the running process.
 Step 4 ends the running session if it is still alive, which is the point: its
 work is in the handoff. What it does cost is anything the agent did AFTER
 writing that handoff, since the writer tells an unsupervised agent to keep
@@ -137,7 +137,7 @@ def handoff_is_waiting(handoff_path: Path, state_path: Path):
     if counter is None:
         return False, None, (
             f"{handoff_path} carries no readable restart-counter, so the supervisor would "
-            "not ignite from it. Leaving the seat alone."
+            "not start a fresh agent-session from it. Leaving the seat alone."
         )
 
     state = supervisor.read_supervisor_state(state_path)
@@ -328,10 +328,27 @@ def resupervise_box_seat(arguments) -> int:
             ["ssh", "-o", "ConnectTimeout=10", arguments.agent_box, f"test -f {BOX_SCRIPT_PATH}"],
             capture_output=True, text=True, check=False,
         )
-        if missing.returncode != 0:
+        # test exits 1 for an absent file; ssh exits 255 when it could not reach the box.
+        if missing.returncode == 1:
             return refuse(
                 f"{BOX_SCRIPT_PATH} is not on {arguments.agent_box}. The box checkout is pulled "
                 "by hand (nedschorus#45) -- pull it there, then re-run. Nothing was changed."
+            )
+        ssh_error = " ".join(missing.stderr.split()) or "nothing on stderr"
+        if missing.returncode == 255:
+            return refuse(
+                f"the box-side checks exited {remote.returncode}, and ssh could not reach "
+                f"{arguments.agent_box} to ask why (exit 255: {ssh_error}); nothing was "
+                f"launched. Check that `ssh {arguments.agent_box} true` succeeds from this "
+                "machine, then re-run."
+            )
+        if missing.returncode != 0:
+            return refuse(
+                f"the box-side checks exited {remote.returncode}, and `ssh {arguments.agent_box} "
+                f"{shlex.quote(f'test -f {BOX_SCRIPT_PATH}')}` exited {missing.returncode} "
+                f"({ssh_error}), so "
+                "whether the script is on the box is unknown; nothing was launched. Run that "
+                "command, read what it prints, and re-run after that cause is removed."
             )
         return refuse(
             f"the box-side checks refused (exit {remote.returncode}); nothing was launched. "
@@ -452,8 +469,18 @@ def main(argv=None) -> int:
     # Omit -L so tmux resolves the surrounding server through $TMUX.
     if os.environ.get("TMUX"):
         current_session = run_tmux("display-message", "-p", "#{session_name}")
-        if (current_session is not None and current_session.returncode == 0
-                and current_session.stdout.strip() == arguments.name):
+        if current_session is None or current_session.returncode != 0:
+            reason = TMUX_GAVE_NO_ANSWER if current_session is None else (
+                f"`tmux display-message -p '#{{session_name}}'` exited "
+                f"{current_session.returncode}: "
+                f"{' '.join(current_session.stderr.split()) or 'with no output'}")
+            return refuse(
+                f"$TMUX is set, so this may be running inside the {arguments.name} tmux session, "
+                f"which clearing would kill, and asking tmux which session this is failed: "
+                f"{reason}. Nothing was killed or started. Run it from another window, or from "
+                "outside tmux."
+            )
+        if current_session.stdout.strip() == arguments.name:
             return refuse(
                 f"this command is running inside the {arguments.name} tmux session, and clearing "
                 "that session would kill the terminal doing the clearing. Run it from another "
@@ -490,7 +517,7 @@ def main(argv=None) -> int:
         return 0
 
     print(f"resupervise-seat: running {launcher.name} {arguments.name} -- the supervisor "
-          "will ignite from the waiting handoff")
+          "will start a fresh agent-session from the waiting handoff")
     # exec hands this terminal to the successor; a supervisor without a terminal cannot reincarnate.
     # Flush first because exec discards Python's buffered output.
     sys.stdout.flush()

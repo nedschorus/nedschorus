@@ -1,6 +1,6 @@
 ---
 name: cold-read
-description: 'Give a finished document a /cold-read: a cold-read-fast-read by one fresh reviewer, your revision, and, for a document of lasting value — a skill, a wiki page, a design — the cold-read-full-run of six fresh reviewers before it lands on main. Ask for a fast or quick cold read to get the cold-read-fast-read only. Drafts still in progress are not ready for one, except an approval-walk''s draft under `docs/walk/`, which step 3 handles.'
+description: 'Use before you open or update a pull request that changes a Markdown file of lasting value, such as a skill, a wiki page or a design, and when the user asks for a cold read. One cold-read-cell gives the file a cold-read-fast-read and you revise it; for the files step 2 names, six cold-read-cells then give it a cold-read-full-run. A small change of the kinds step 2 lists, an approval-walk''s draft under `docs/walk/`, and a fast or quick cold read the user asks for get the cold-read-fast-read only.'
 ---
 
 # cold-read

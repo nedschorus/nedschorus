@@ -2,7 +2,8 @@
 """Run a cold-read-full-run against a cold-read-target.
 
 One invocation = one review: six cold-read-cells launched in parallel -- the
-defect-hunt pass in four ({deep, second} x {claude, codex}) and the
+defect-hunt pass in four ({deep, second-strongest-model} x {claude, codex}, where
+second-strongest-model is the agent-binary's second-strongest model) and the
 terminology pass in two (deep x {claude, codex}) -- every report saved
 into a cold-read-record named
 `cold-read-records/<file stem>-<YYYY-MM-DD>/`, or `SKILL-<skill name>-<YYYY-MM-DD>/` for a skill
@@ -173,12 +174,18 @@ _ned_box_home_spec = importlib.util.spec_from_file_location(
     / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 ned_box_home_path_constants = importlib.util.module_from_spec(_ned_box_home_spec)
 _ned_box_home_spec.loader.exec_module(ned_box_home_path_constants)
+_git_machine_readable_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
+_git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
 # The log also contains runtime and model text; only program-prefixed lines are cell status.
 CELL_PROGRAM_NAMES = tuple(path.stem for path in CELL_LAUNCHERS.values())
 # Pin terminology effort explicitly so launcher tier-map changes cannot change the pass.
 GRID_CELL_ROSTER = (
     ("defect-hunt", "deep", None),
-    ("defect-hunt", "second", None),
+    ("defect-hunt", "second-strongest-model", None),
     ("terminology", "deep", "max"),
 )
 
@@ -199,7 +206,7 @@ STOPPED_CELL_WRITE_CHECK_LINE = (
     "report, so no such check ran; that is a failure to look, not a clean result. Before "
     "you do anything else, read `git status` against the edits you know are your own. "
     "Undo a change git status lists, by deleting the file or directory if it is untracked or running "
-    "`git restore <path>` if it is tracked, only when its content shows a reviewer wrote "
+    "`git restore --staged --worktree <path>` if it is tracked, only when its content shows a reviewer wrote "
     "it, such as notes about the document under review. Ask the user about any other "
     "change you did not make, and whenever you are unsure.")
 
@@ -294,18 +301,23 @@ def frozen_paths_and_landing_time(target: pathlib.Path) -> tuple:
     """The paths a record freezes this document under -- its present one and
     every earlier one git shows -- and when main last took a change to it, so
     that only the runs reviewing the change in hand count. A document outside
-    any git repository has one path and no landing time."""
+    any git repository has one path and no landing time; a git that fails
+    raises FullRunCountUnavailable."""
     resolved = target.resolve()
-    top = subprocess.run(["git", "-C", str(target.parent), "rev-parse", "--show-toplevel"],
-                         capture_output=True, text=True, check=False)
-    if top.returncode != 0:
-        return {str(pathlib.Path(*resolved.parts[1:]))}, None
-    relative = str(resolved.relative_to(pathlib.Path(top.stdout.strip()).resolve()))
+    try:
+        top = git_machine_readable_output.run_git_unless_outside_a_repository(
+            target.parent, ["rev-parse", "--show-toplevel"])
+        if top is None:
+            return {str(pathlib.Path(*resolved.parts[1:]))}, None
+        # --verify --quiet exits 1, printing nothing, when there is no origin/main.
+        has_main = bool(git_machine_readable_output.run_git(
+            target.parent, ["rev-parse", "--verify", "--quiet", "origin/main"],
+            accepted_exit_codes=(0, 1)).strip())
+    except git_machine_readable_output.GitCommandFailed as failure:
+        raise FullRunCountUnavailable(str(failure)) from None
+    relative = str(resolved.relative_to(pathlib.Path(os.fsdecode(top).strip()).resolve()))
     history = git_output(target, "log", "--follow", "--name-only", "--format=", "--", target.name)
     paths = {relative} | {line for line in history.splitlines() if line.strip()}
-    has_main = subprocess.run(
-        ["git", "-C", str(target.parent), "rev-parse", "--verify", "--quiet", "origin/main"],
-        capture_output=True, text=True, check=False).returncode == 0
     # --first-parent: a merge commit is TREESAME to its topic parent, so plain
     # `git log` simplifies it away and reports the topic commit's older time.
     # Every path is given, so a document renamed on a branch not yet merged is

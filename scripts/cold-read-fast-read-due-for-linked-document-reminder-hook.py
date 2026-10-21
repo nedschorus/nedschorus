@@ -73,9 +73,7 @@ otherwise make it due again every time the agent linked it. A read is this
 agent-session's own when the file a finished fast read writes beside its
 report (nc-systems/cold-read/cold-read-record-names.py,
 cold_read_fast_read_report_agent_session_id_file_path) names the payload's session_id and the
-document's resolved path, a path under /Volumes/nedhome/ matching the same
-path under /home/nedlern/, because a read the Mac runs on ned-box over ssh
-records the ned-box path. The fast read takes the ID from
+document's resolved path. The fast read takes the ID from
 CLAUDE_CODE_SESSION_ID, which a subagent's Bash shares with its parent, so a
 fast read a subagent runs counts as its parent agent-session's own. A record
 without that file, as older reads and reads run without the variable leave,
@@ -140,9 +138,14 @@ def load_module(name, path):
     return module
 
 
+# Not resolved, so a fault names a module under the directory the hook was run
+# from, as the agent and the user know it, not under a symlink's target.
+REPOSITORY_TOP = Path(__file__).absolute().parent.parent
+
+
 def _load_general_tools_module(file_name):
     return load_module(file_name.removesuffix(".py").replace("-", "_"),
-                       Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools" / file_name)
+                       REPOSITORY_TOP / "nc-systems" / "general-tools" / file_name)
 
 
 # Constants below are built from these modules, so a load that fails ends the
@@ -179,7 +182,6 @@ TRANSCRIPT_UNREADABLE_LINES = (
 
 TRANSCRIPT_READER_FILE = Path(__file__).with_name("absence-claim-locator-reminder-hook.py")
 SUITE_RUNNER_FILE = Path(__file__).with_name("run-all-test-suites.py")
-REPOSITORY_TOP = Path(__file__).resolve().parent.parent
 
 PATH_END = r"[^\s)\]>\"'`<|*]*?\.md(?![\w-])"
 FILE_URL_PATTERN = re.compile(r"file://(/" + PATH_END + ")")
@@ -390,19 +392,8 @@ def walk_draft_suggestions_path(document):
     return None
 
 
-def ned_box_form_of_path(path):
-    """`path` with the Mac's mount of ned-box's home written as ned-box's home."""
-    text = str(path)
-    if text.startswith(MAC_MOUNT_OF_NED_BOX_HOME):
-        return NED_BOX_HOME + text[len(MAC_MOUNT_OF_NED_BOX_HOME):]
-    return text
-
-
 def read_by_agent_session(report, document, session_id, record_names):
-    # A read the Mac hands to ned-box over ssh records the ned-box path of a
-    # document the Mac knows by its mount path.
-    target = record_names.cold_read_fast_read_target_path_if_run_by_given_agent_session(report, session_id)
-    return target is not None and ned_box_form_of_path(target) == ned_box_form_of_path(document)
+    return record_names.cold_read_fast_read_target_path_if_run_by_given_agent_session(report, session_id) == document
 
 
 def document_is_due(document, record_directories, document_top, record_names,

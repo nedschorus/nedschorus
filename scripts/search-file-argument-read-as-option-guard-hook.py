@@ -84,8 +84,10 @@ REFUSAL_OF_OPTION_VALUE_TEMPLATE = (
 )
 REFUSAL_WITHOUT_COMMAND_TEMPLATE = (
     "Refused: {glob_word} expands to names beginning with -, such as {name}, "
-    "which {program} reads as options, not as files. Put -- after the last "
-    "option and before the file names, then run the command again."
+    "which {program} reads as options, not as files.\n"
+    "Write ./ in front of {glob_word}, as in ./{glob_word}, so that every name begins "
+    "with ./ instead of -.\n"
+    "Then run the command again."
 )
 
 

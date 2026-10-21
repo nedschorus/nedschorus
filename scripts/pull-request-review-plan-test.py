@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -65,6 +66,21 @@ response = json.loads((control_directory / control_name).read_text(encoding="utf
 sys.stdout.write(response["stdout"])
 sys.stderr.write(response.get("stderr", ""))
 sys.exit(response.get("exit_code", 0))
+'''
+
+FAILING_GIT_ARGUMENTS_VARIABLE = "PULL_REQUEST_REVIEW_PLAN_TEST_FAILING_GIT_ARGUMENTS"
+REAL_GIT_VARIABLE = "PULL_REQUEST_REVIEW_PLAN_TEST_REAL_GIT"
+# Fails as a broken repository does when the git arguments after -C begin with
+# the listed ones, and runs the real git for every other call.
+STAND_IN_FAILING_GIT_SOURCE = f'''#!/usr/bin/env python3
+import json
+import os
+import sys
+failing = json.loads(os.environ[{FAILING_GIT_ARGUMENTS_VARIABLE!r}])
+if sys.argv[1] == "-C" and sys.argv[3:3 + len(failing)] == failing:
+    sys.stderr.write("fatal: injected repository failure\\n")
+    sys.exit(128)
+os.execv(os.environ[{REAL_GIT_VARIABLE!r}], ["git", *sys.argv[1:]])
 '''
 
 BASELINE_FILE_CONTENTS = {
@@ -168,12 +184,23 @@ class ReviewPlanTemporaryRepositoryFixture:
         self.set_github_response("comments.json", comments if comments is not None else [[]])
         self.set_github_response("branch.json", {"commit": {"sha": live_base or self.base_head}})
 
-    def run_review_plan(self, *extra_arguments, json_output=True):
+    def run_review_plan(self, *extra_arguments, json_output=True, environment=None):
         return subprocess.run(
             [sys.executable, str(REVIEW_PLAN_SCRIPT), "--pull-request", str(FIXTURE_PULL_REQUEST_NUMBER),
              "--repository", str(self.repository), "--github-repository", FIXTURE_GITHUB_REPOSITORY,
              *(["--json"] if json_output else []), *extra_arguments],
-            env=self.environment, capture_output=True, text=True, timeout=10)
+            env=environment or self.environment, capture_output=True, text=True, timeout=10)
+
+    def run_review_plan_with_git_failing_on(self, *failing_arguments):
+        stand_in_directory = self.repository.parent / "failing-git-bin"
+        stand_in_directory.mkdir(exist_ok=True)
+        stand_in_path = stand_in_directory / "git"
+        stand_in_path.write_text(STAND_IN_FAILING_GIT_SOURCE, encoding="utf-8")
+        stand_in_path.chmod(0o755)
+        return self.run_review_plan(environment={
+            **self.environment, "PATH": str(stand_in_directory) + os.pathsep + self.environment["PATH"],
+            FAILING_GIT_ARGUMENTS_VARIABLE: json.dumps(list(failing_arguments)),
+            REAL_GIT_VARIABLE: shutil.which("git", path=self.environment["PATH"])})
 
     def read_review_plan(self):
         result = self.run_review_plan()
@@ -856,6 +883,35 @@ def run_refusal_and_call_shape_cases(fixture):
     check("every gh call is one of the four read-only shapes with the requested repository", bool(calls) and all(call in accepted_calls for call in calls) and all(shape in calls for shape in accepted_calls[:4]), calls)
 
 
+def run_git_failure_cases(fixture):
+    """A git failure stops the plan with git's words instead of reading as an absent commit or file."""
+    def refused_with_git_failure(result):
+        return refusal_has_expected_prefix(result) and "fatal: injected repository failure" in result.stderr
+
+    fixture.reset_fixture_to_base()
+    fixture.write_fixture_file("docs/review-note.md", "Changed prose.\n\n```python\nprint('new')\n```\n")
+    fixture.write_fixture_file("scripts/example-program.py", BASELINE_FILE_CONTENTS["scripts/example-program.py"] + "VALUE = 2\n")
+    fixture.write_fixture_file("scripts/example-program-test.py", "print('test')\n")
+    head = fixture.commit_fixture_changes("change prose, a program and its test")
+    fixture.configure_github_answers(head)
+    plan = fixture.read_review_plan()
+    check("the git failure cases' control plan runs the changed program's test",
+          plan["test_files_to_run"] == ["scripts/example-program-test.py"], plan)
+
+    result = fixture.run_review_plan_with_git_failing_on("rev-parse", "--verify", "--quiet", f"{head}^{{commit}}")
+    check("git failing while looking up the head is refused with git's error, not as a head missing from the repository",
+          refused_with_git_failure(result) and "is not in the repository" not in result.stderr, result.stderr)
+    result = fixture.run_review_plan_with_git_failing_on("ls-tree", "-z", "--name-only", head, "--", "docs/review-note.md")
+    check("git failing while looking for a changed file is refused, not read as the file being absent",
+          refused_with_git_failure(result) and not result.stdout, result.stderr + result.stdout)
+    result = fixture.run_review_plan_with_git_failing_on("show", f"{head}:docs/review-note.md")
+    check("git failing while reading a changed file that is there is refused",
+          refused_with_git_failure(result) and not result.stdout, result.stderr + result.stdout)
+    result = fixture.run_review_plan_with_git_failing_on("ls-tree", "-z", "--name-only", head, "--", "scripts/example-program-test.py")
+    check("git failing while looking for test files is refused, not a plan that leaves the test out",
+          refused_with_git_failure(result) and not result.stdout, result.stderr + result.stdout)
+
+
 def main():
     start_time = time.monotonic()
     run_unit_cases()
@@ -868,6 +924,7 @@ def main():
         run_fast_read_command_cases(fixture)
         run_repository_and_output_cases(fixture)
         run_refusal_and_call_shape_cases(fixture)
+        run_git_failure_cases(fixture)
     print(f"{len(CHECK_FAILURE_NAMES)} failed; elapsed {time.monotonic() - start_time:.2f}s")
     return 1 if CHECK_FAILURE_NAMES else 0
 

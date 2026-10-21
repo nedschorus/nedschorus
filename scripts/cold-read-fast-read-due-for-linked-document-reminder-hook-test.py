@@ -32,7 +32,13 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 HOOK_SCRIPT = Path(__file__).with_name("cold-read-fast-read-due-for-linked-document-reminder-hook.py")
 STORE_VARIABLE = "NEDSCHORUS_LOG_STORE_COLD_READ_RECORDS_DIRECTORY"
-SUITE_ROOT = Path(tempfile.mkdtemp(prefix="cold-read-fast-read-due-for-linked-document-test-"))
+SUITE_TOP = Path(tempfile.mkdtemp(prefix="cold-read-fast-read-due-for-linked-document-test-"))
+(SUITE_TOP / "real").mkdir()
+# Every case runs through a symlink, as on the Mac, whose temporary directory is
+# under /var, a symlink to /private/var; a path the hook resolves and the suite
+# does not then fails on every machine, not only there.
+(SUITE_TOP / "through-symlink").symlink_to("real")
+SUITE_ROOT = SUITE_TOP / "through-symlink"
 failures = []
 
 
@@ -463,7 +469,7 @@ def main():
     completed = case.run("The walk-document is docs/walk/naming-rules-draft.md.")
     check("a malformed agent-session file beside suggestions newer than the walk-document is a fault naming the file",
           completed.returncode == 1 and completed.stdout == ""
-          and str(malformed) in completed.stderr,
+          and str(malformed.resolve()) in completed.stderr,
           f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
 
     case = Case()
@@ -658,28 +664,6 @@ def main():
     check("a file:///Volumes/nedhome-other link is not mapped under ned-box's home",
           found == [], f"found {found!r}")
 
-    # On the Mac, a walk-document in a ned-box worktree is fast-read on ned-box
-    # over ssh, which records the document's ned-box path.
-    fake_mount = SUITE_ROOT / "fake-mac-mount"
-    hook.MAC_MOUNT_OF_NED_BOX_HOME = str(fake_mount) + "/"
-    mac_draft = fake_mount / "agents" / "seat" / "docs" / "walk" / "naming-rules-draft.md"
-    mac_suggestions = mac_draft.with_name("naming-rules-suggestions.md")
-    mac_draft.parent.mkdir(parents=True)
-    mac_draft.write_text("x\n")
-    mac_suggestions.write_text("report\n")
-    os.utime(mac_suggestions, (4_000_000, 4_000_000))
-    os.utime(mac_draft, (5_000_000, 5_000_000))
-    (mac_suggestions.parent / (mac_suggestions.name + ".agent-session.json")).write_text(
-        json.dumps({"agent_session_id": "s1",
-                    "target": str(fake_home / "agents" / "seat" / "docs" / "walk"
-                                  / "naming-rules-draft.md")}))
-    record_names = hook.load_cold_read_record_names()
-    check("on the Mac, a walk-document this agent-session fast-read on ned-box over ssh, "
-          "then changed, is not due again",
-          hook.document_is_due(mac_draft, [], None, record_names, "s1") is False)
-    check("on the Mac, another agent-session's read on ned-box over ssh does not count as this one's",
-          hook.document_is_due(mac_draft, [], None, record_names, "s2") is True)
-
     # A shared module that will not load is a fault like any other, not a traceback.
     scratch_root = SUITE_ROOT / "hook-without-its-home-module"
     (scratch_root / "scripts").mkdir(parents=True)
@@ -772,7 +756,7 @@ def main():
           context.startswith("cold-read-fast-read due check incomplete") and "did not finish within" in context,
           f"exit {completed.returncode}, context {context!r}, stderr {completed.stderr!r}")
 
-    shutil.rmtree(SUITE_ROOT, ignore_errors=True)
+    shutil.rmtree(SUITE_TOP, ignore_errors=True)
     if failures:
         print(f"{len(failures)} case(s) failed")
         return 1

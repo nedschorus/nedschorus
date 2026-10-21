@@ -236,6 +236,9 @@ if "report" in step:
     report_path.write_text(step["report"], encoding="utf-8")
 if "stdout" in step:
     sys.stdout.write(step["stdout"])
+if step.get("kill_cell"):
+    import signal
+    os.kill(os.getppid(), signal.SIGKILL)
 sys.exit(step.get("exit", 0))
 """
 
@@ -438,6 +441,25 @@ with tempfile.TemporaryDirectory() as scratch:
     check("with one run there is nothing to compare, and it says so",
           "Only one run was scored, so there is nothing to compare." in combined,
           repr(combined))
+
+    # --- A report beside a nonzero cell exit is not scored -----------------
+    # The judge writes its report and the cell is killed before it can check
+    # and stamp it: the text is there, but the run did not finish.
+    repository = build_scratch_repository(scratch)
+    result = run_runner(
+        repository, stubs,
+        {"run1": {"*": {"report": RUN_REPORT_BASE, "kill_cell": True}},
+         "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
+    )
+    record_dir = expected_record_directory(repository)
+    combined = (record_dir / f"{record_dir.name}--restater-judge-combined.md"
+                ).read_text(encoding="utf-8")
+    check("a run whose cell was killed after its report landed is not scored, and the pair exits 1",
+          result.returncode == 1
+          and combined.startswith("<!-- PARTIAL RESULT: run 1 was not scored — the cell exited -9")
+          and "| 1 | 1 | 3 | 2 | 2.00 |" not in combined
+          and "| 1 | 2 | 3 | 2 | 2.00 |" in combined,
+          f"exit {result.returncode}; combined={combined[:600]!r}")
 
     # --- A report with no case heading is a failed run, not a zero ---------
     repository = build_scratch_repository(scratch)

@@ -117,12 +117,12 @@ def parse_arguments(argv):
     return common.resolve_path_options(parser.parse_args(argv))
 
 
-def git(directory, *arguments):
+def git(directory, *arguments, accepted_exit_codes=(0,)):
     completed = subprocess.run(
         ["git", "-C", str(directory), *arguments], capture_output=True, text=True,
         stdin=subprocess.DEVNULL,
         env=run_all_test_suites.environment_without_git_redirecting_variables())
-    if completed.returncode != 0:
+    if completed.returncode not in accepted_exit_codes:
         raise RefusedBeforeAnyStep(
             f"git {' '.join(arguments)} in {directory} exited {completed.returncode}: "
             f"{completed.stderr.strip()}")
@@ -137,10 +137,9 @@ def fetched_commit(checkout, reference):
 
 def resolved_commit(checkout, commit):
     """Return commit's full name, or None when the checkout has no such commit."""
-    try:
-        return git(checkout, "rev-parse", "--verify", f"{commit}^{{commit}}")
-    except RefusedBeforeAnyStep:
-        return None
+    # With --quiet, git exits 1 and prints nothing when there is no such commit.
+    return git(checkout, "rev-parse", "--verify", "--quiet", f"{commit}^{{commit}}",
+               accepted_exit_codes=(0, 1)) or None
 
 
 def brief_specification_disagreement(checkout, specifications, number, head, main,

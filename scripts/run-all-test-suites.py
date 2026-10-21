@@ -136,6 +136,16 @@ inside the sandbox, such as one a suite of this program starts, does not
 start another: bwrap cannot start inside bwrap, and its suites are already
 confined. The suites listed in SUITES_RUN_WITHOUT_ANY_SANDBOX cannot
 work inside it and run unconfined, each named in the report with the reason.
+Three dicts say which sandbox a suite gets, each mapping a suite's path to the
+reason it gets that sandbox: SUITES_RUN_WITHOUT_ANY_SANDBOX,
+SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY (suites
+whose sandbox gets a writable copy-on-write overlay of the repository's git
+directory) and SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK (suites
+whose sandbox keeps the machine's network). The three are read from the
+scripts/run-all-test-suites.py of the checkout whose suites the run tests,
+parsed and never run, and from this file only when that checkout has none;
+the report names the file. A run refuses, exit 2, when that file does not
+assign each of the three a literal dict.
 A suite bwrap reports as exiting 128+N is reported as killed by signal N;
 sandbox-exec replaces itself with the suite, so a suite's exit passes through.
 
@@ -227,6 +237,11 @@ Every such line in a suite's output is counted and printed. resupervise-seat
 prints its skips and then "all cases passed", which is how a run that
 dropped its end-to-end cases used to read as a full pass. A skip never
 changes a verdict; it is reported beside it.
+A suite marks a skip whose cause is the machine itself, its platform or what
+is installed on it, by putting SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER,
+`[this machine cannot run it]`, right after `SKIP` and its spaces:
+`SKIP  [this machine cannot run it] <case>: <reason>`. A marked skip is
+counted and printed like any other; it only changes selection, below.
 
 RUNS THAT OVERLAP, AND ONE RUN AT A TIME WITHOUT TEST SANDBOXES. Measured
 2026-09-21: two overlapping runs of scripts/resupervise-seat-test.py both exit
@@ -479,8 +494,10 @@ suite runs when one of them is this program (it holds the recorder), under
 has no recording on this machine, or one made by an older version of this
 program; its recorded run did not exit 0, since a run that failed or was
 killed recorded only what it read before it stopped; its recorded run
-skipped cases, since the cases skipped recorded nothing, and a skip can be
-a run disturbed by another; the suite file itself
+skipped a case without the mark `[this machine cannot run it]`, since the
+cases skipped recorded nothing, and a skip can be a run disturbed by
+another (a marked case never runs on this machine, so what it would read
+does not matter here); the suite file itself
 differs; a file it read differs; a path it looked for was added or deleted;
 an entry was added to or deleted from a directory it listed, a new
 subdirectory's name included; a file was added or deleted and it ran git on
@@ -538,6 +555,7 @@ holds the lock, where a lock is taken.
 """
 
 import argparse
+import ast
 import codecs
 import collections
 import concurrent.futures
@@ -569,6 +587,9 @@ TEST_SUITE_PATHSPEC = "*-test.py"
 # would miss inputs. Leave shell suites unrecorded so selection always runs them.
 SHELL_TEST_SUITE_PATHSPEC = "*-test.sh"
 SKIPPED_CASE_LINE = re.compile(r"^SKIP\s")
+SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER = "[this machine cannot run it]"
+SKIPPED_CASE_LINE_THIS_MACHINE_CANNOT_RUN = re.compile(
+    r"^SKIP\s+" + re.escape(SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER))
 
 # Git redirection variables can send scratch-repository writes into a live repository.
 # The list is the shared module's; programs that load this runner read it here too.
@@ -579,6 +600,13 @@ _git_redirecting_removal_spec = importlib.util.spec_from_file_location(
 git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_removal_spec)
 _git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
 GIT_REDIRECTING_ENVIRONMENT_VARIABLES = git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
+
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
 
 # Whether a user attends the agent-session changes what some messages under test say, so a suite
 # is launched without them and each test sets them itself.
@@ -720,6 +748,16 @@ SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY = {
 # other suite's test sandbox has a network of its own with only loopback, so no
 # suite reaches a port or an abstract Unix socket (such as the X server's) outside it.
 SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK = {}
+
+# A run uses the checkout under test's own copies of these lists, not the ones above,
+# whenever the checkout has a scripts/run-all-test-suites.py.
+SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST = (
+    "SUITES_RUN_WITHOUT_ANY_SANDBOX",
+    "SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY",
+    "SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK")
+SUITE_SANDBOX_LISTS_SOURCE_LINE_PREFIX = "which sandbox each suite runs in, from the lists in "
+SUITE_SANDBOX_LISTS_OF_THIS_PROGRAM = {
+    name: dict(globals()[name]) for name in SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST}
 
 # Admission, shared by every run on this machine: a suite starts only while the
 # machine has room for it. The run records the machine's readings every second
@@ -1132,6 +1170,76 @@ def checkout_top_directory(given):
     return top
 
 
+def suite_sandbox_lists_read_from_checkout_under_test(top):
+    """Return ({list name: {suite: reason}}, the file they came from) for the checkout under test.
+
+    The lists name the checkout's suites by path, so they come from the checkout's own copy
+    of this program: a pull request head test run runs main's runner on the merged tree, and
+    a pull request that renames a listed suite renames its entry too. That copy is parsed,
+    never run, so none of the checkout's code runs in this program. A checkout without the
+    file, such as a test's scratch checkout, gets this program's own lists."""
+    source_file = top / "scripts" / "run-all-test-suites.py"
+    try:
+        source = source_file.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        own = {name: dict(entries) for name, entries in SUITE_SANDBOX_LISTS_OF_THIS_PROGRAM.items()}
+        return own, (f"{Path(__file__).resolve()}, since the checkout has no "
+                     f"{source_file.relative_to(top)}")
+    except (OSError, UnicodeDecodeError) as error:
+        restore = f"git -C {top} checkout -- {source_file.relative_to(top)}"
+        rerun = "Once the step for your case succeeds, rerun the command you ran.\n"
+        tell_the_user = ("this same error appears again after you rerun, stop and tell the user, "
+                         "quoting this message; a subagent tells the agent that dispatched it "
+                         "instead.")
+        if isinstance(error, UnicodeDecodeError):
+            raise CouldNotRun(
+                f"{PROGRAM}: not run — {source_file} is not UTF-8 text "
+                f"({type(error).__name__}: {error}), so which sandbox each suite runs in is "
+                f"unknown.\n"
+                f"If the file holds no uncommitted change you need, restore it with: {restore}\n"
+                f"If it holds an uncommitted change you need, re-save it as UTF-8, keeping "
+                f"that change.\n"
+                f"{rerun}"
+                f"If a step fails, or {tell_the_user}")
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — {source_file} could not be read "
+            f"({type(error).__name__}: {error}), so which sandbox each suite runs in is unknown.\n"
+            f"If you lack permission to read the file, grant yourself read permission, such as "
+            f"with: chmod u+r {source_file}\n"
+            f"If a directory or anything else that is not a regular file stands at that path, "
+            f"move it aside and restore the file with: "
+            f"mv {source_file} {source_file}.moved-aside && {restore}\n"
+            f"{rerun}"
+            f"If neither case fits, a step fails, or {tell_the_user}")
+    try:
+        tree = ast.parse(source, filename=str(source_file))
+    except (SyntaxError, ValueError) as error:
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — {source_file} is not valid Python ({error}), so which "
+            f"sandbox each suite runs in is unknown.\n"
+            f"Correct the syntax error in {source_file}, which belongs to the checkout whose suites "
+            f"this run tests, then rerun the command you ran.")
+    found = {}
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id in SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST):
+            try:
+                found[node.targets[0].id] = ast.literal_eval(node.value)
+            except (ValueError, TypeError, SyntaxError, RecursionError):
+                found[node.targets[0].id] = None
+    unreadable = [name for name in SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST
+                  if not isinstance(found.get(name), dict)]
+    if unreadable:
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — {source_file} does not assign "
+            f"{', '.join(unreadable)} a literal dict of suite path to reason at its top "
+            f"level, so which sandbox each suite runs in is unknown.\n"
+            f"In {source_file}, assign each of {', '.join(unreadable)} once, at the top level, "
+            f"a dict written out literally, then rerun the command you ran.")
+    return found, str(source_file)
+
+
 def suites_listed_by_git(top):
     listed = git(top, "ls-files", "-z", "--", TEST_SUITE_PATHSPEC, SHELL_TEST_SUITE_PATHSPEC)
     if listed.returncode != 0:
@@ -1168,9 +1276,27 @@ def interpreter_and_version(given):
     return found, version[0]
 
 
+def git_failure_next_step_lines(program_file):
+    """The lines that end a refusal after a git failure, for a run of program_file."""
+    return next_step_lines.git_failure_next_step_lines(
+        f"the same {program_file} command", program_file,
+        text_the_failure_line_contains="not run — git", include_the_misspelt_branch_commit_or_path_line=True)
+
+
+def first_line_of_error(completed):
+    return ((completed.stderr or "").strip().splitlines() or [""])[0]
+
+
 def commit_and_state(top):
-    head = git(top, "rev-parse", "HEAD")
-    commit = head.stdout.strip() if head.returncode == 0 else "no commit"
+    # --verify --quiet exits 1 for a branch with no commit yet.
+    head = git(top, "rev-parse", "--verify", "--quiet", "HEAD")
+    if head.returncode == 0:
+        commit = head.stdout.strip()
+    elif head.returncode == 1:
+        commit = "no commit"
+    else:
+        commit = (f"commit unknown (git rev-parse HEAD exited {head.returncode}: "
+                  f"{first_line_of_error(head)})")
     changed = git(top, "status", "--porcelain", "--untracked-files=no")
     if changed.returncode != 0:
         state = "tracked-file state unknown"
@@ -1739,7 +1865,8 @@ class MachineWideTestSuiteAdmission:
             reasons = sorted(set(self.waiting.values()))
             count = len(self.waiting)
         self.say(f"{count} suite{'s' if count != 1 else ''} of this run "
-                 f"{'wait' if count != 1 else 'waits'} to start: " + "; ".join(reasons))
+                 f"{'wait' if count != 1 else 'waits'} to start: " + "; ".join(reasons)
+                 + ". Each suite starts by itself once the reason it waits for clears.")
 
     def cancel(self):
         """Stop admitting: every suite still waiting raises MachineWideTestSuiteAdmissionCancelled."""
@@ -1984,8 +2111,15 @@ def lock_held_while_cleaning_up_after_earlier_runs(lock_file):
 
 
 def branch_of_checkout(top):
-    named = git(top, "rev-parse", "--abbrev-ref", "HEAD")
-    return named.stdout.strip() if named.returncode == 0 else None
+    # symbolic-ref -q exits 1 for a detached HEAD, recorded as "HEAD" as rev-parse
+    # --abbrev-ref names it.
+    named = git(top, "symbolic-ref", "-q", "--short", "HEAD")
+    if named.returncode == 0:
+        return named.stdout.strip()
+    if named.returncode == 1:
+        return "HEAD"
+    return (f"branch unknown (git symbolic-ref HEAD exited {named.returncode}: "
+            f"{first_line_of_error(named)})")
 
 
 def lock_explicit_log_directory(log_dir):
@@ -2931,6 +3065,8 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
         "exit": result["exit"],
         "seconds": result["seconds"],
         "skipped_cases": len(result["skips"]),
+        "skipped_cases_this_machine_cannot_run": sum(
+            1 for line in result["skips"] if SKIPPED_CASE_LINE_THIS_MACHINE_CANNOT_RUN.match(line)),
         "recorded_by": [PYTHON_INPUT_RECORDER_METHOD]
                        + ([STRACE_INPUT_RECORDER_METHOD] if strace_used else []),
         "reads": blob_hashes(top, sorted(touched & files)),
@@ -2944,8 +3080,18 @@ def recording_of(top, suite, result, recording_dir, files, commit, strace_used):
 
 def recordings_directory_for(given, top):
     # Key by root commit so clones and worktrees share recordings.
-    roots = git(top, "rev-list", "--max-parents=0", "HEAD").stdout.split()
-    return Path(given).expanduser() / (min(roots)[:16] if roots else "no-commit")
+    head = git(top, "rev-parse", "--verify", "--quiet", "HEAD")
+    if head.returncode == 1:
+        return Path(given).expanduser() / "no-commit"
+    roots = git(top, "rev-list", "--max-parents=0", "HEAD") if head.returncode == 0 else head
+    if roots.returncode != 0 or not roots.stdout.split():
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — git could not list the root commits of HEAD in {top}, so "
+            f"this run cannot find its directory of recorded suite inputs, which is named "
+            f"after a root commit of HEAD: "
+            f"{first_line_of_error(roots) or 'git printed no error'}\n"
+            + git_failure_next_step_lines(Path(__file__).name))
+    return Path(given).expanduser() / min(roots.stdout.split())[:16]
 
 
 def recording_file_for(recordings_dir, suite):
@@ -3069,6 +3215,11 @@ def files_that_differ_since(top, commit):
     for status, path in zip(fields[0::2], fields[1::2]):
         differ[path] = "A" if status.startswith("A") else "D" if status.startswith("D") else "M"
     untracked = git(top, "ls-files", "--others", "--exclude-standard", "-z")
+    if untracked.returncode != 0:
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — git ls-files --others failed in {top}: "
+            f"{untracked.stderr.strip()}\n"
+            + git_failure_next_step_lines(Path(__file__).name))
     for path in untracked.stdout.split("\0"):
         if path:
             differ.setdefault(path, "A")
@@ -3121,10 +3272,16 @@ def selection_reason(suite, recording, checkout, commit):
                          else "no exit code recorded"))
     skipped = recording.get("skipped_cases")
     counted = isinstance(skipped, int) and not isinstance(skipped, bool)
-    if not counted or skipped != 0:
+    marked = recording.get("skipped_cases_this_machine_cannot_run")
+    if not isinstance(marked, int) or isinstance(marked, bool):
+        marked = 0
+    if not counted or skipped != marked:
         # A skipped case's reads were never recorded, and a skip can hide a run disturbed by another.
+        # A machine change that lets a marked case run does not select the suite by itself.
         return True, ("its last recorded run skipped "
-                      + (f"{skipped} case(s)" if counted else "an unrecorded number of cases")
+                      + (f"{skipped - marked} case(s) without the mark "
+                         f"{SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER}" if counted
+                         else "an unrecorded number of cases")
                       + ", so it recorded only what the cases that ran read")
     if suite in differ:
         return True, "the suite itself differs"
@@ -3382,9 +3539,12 @@ def main(argv=None, platform=None):
         # and the commit this run reports is read under the lock too.
         try:
             suites = suites_listed_by_git(top)
+            sandbox_lists, sandbox_lists_source = (
+                suite_sandbox_lists_read_from_checkout_under_test(top))
         except CouldNotRun as refusal:
             print(refusal, file=sys.stderr)
             return EXIT_COULD_NOT_RUN
+        globals().update(sandbox_lists)
         if arguments.log_dir:
             log_dir = Path(arguments.log_dir).resolve()
             log_dir.mkdir(parents=True, exist_ok=True)
@@ -3409,7 +3569,11 @@ def main(argv=None, platform=None):
                 clean_up_lines = clean_up_after_earlier_runs(Path(arguments.lock_file),
                                                              previous_holder, platform)
         commit, state = commit_and_state(top)
-        recordings_dir = recordings_directory_for(arguments.recorded_inputs_directory, top)
+        try:
+            recordings_dir = recordings_directory_for(arguments.recorded_inputs_directory, top)
+        except CouldNotRun as refusal:
+            print(refusal, file=sys.stderr)
+            return EXIT_COULD_NOT_RUN
         # Each recording is read once, so selection and starting order see the same one
         # even while runs in other checkouts save it.
         recordings, identities_read = {}, {}
@@ -3445,6 +3609,7 @@ def main(argv=None, platform=None):
                     + (f" and {STRACE_INPUT_RECORDER_METHOD} ({strace})" if strace else "")
                     + f", kept in {recordings_dir}")
         report.line(signal_sandbox_line(sandbox_prefix, unconfined_because))
+        report.line(f"{SUITE_SANDBOX_LISTS_SOURCE_LINE_PREFIX}{sandbox_lists_source}")
         if lock_handle is not None and arguments.wait_for_lock_seconds > 0:
             report.line(f"{MACHINE_LOCK_WAITED_LINE_PREFIX}{seconds_waiting_for_lock:.0f}")
         if sandbox_prefix:

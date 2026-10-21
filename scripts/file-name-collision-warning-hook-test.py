@@ -26,10 +26,11 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path, PurePath
 
 # Before anything runs git: a run started with GIT_DIR set, or with another
@@ -70,8 +71,12 @@ def check(case_name, condition, detail=""):
 
 
 def git(arguments, cwd: Path):
-    return subprocess.run(["git", *arguments], cwd=str(cwd),
-                          capture_output=True, text=True, check=False)
+    finished = subprocess.run(["git", *arguments], cwd=str(cwd),
+                              capture_output=True, text=True, check=False)
+    if finished.returncode != 0:
+        raise RuntimeError(f"fixture git {' '.join(arguments)} in {cwd} exited "
+                           f"{finished.returncode}: {finished.stderr.strip()}")
+    return finished
 
 
 def commit_file(repository: Path, name: str, content: str = "x\n"):
@@ -105,11 +110,33 @@ def hook_payload(cwd, file_path, tool_name="Write") -> dict:
     }
 
 
-def run_hook(payload):
+def run_hook(payload, environment=None):
     text = payload if isinstance(payload, str) else json.dumps(payload)
     return subprocess.run([sys.executable, str(SCRIPT_PATH)], input=text,
                           capture_output=True, text=True, check=False,
-                          env=dict(os.environ))
+                          env=environment or dict(os.environ))
+
+
+REAL_GIT = shutil.which("git")
+# Fails the one git subcommand named in PLANTED_GIT_FAILURE, after any -C <dir>; runs the real git otherwise.
+STAND_IN_GIT = f"""#!/bin/sh
+if [ "$1" = "-C" ]; then subcommand="$3"; else subcommand="$1"; fi
+if [ "$subcommand" = "$PLANTED_GIT_FAILURE" ]; then
+  echo "fatal: planted $subcommand failure" >&2
+  echo "second line of the planted error" >&2
+  exit 128
+fi
+exec {REAL_GIT} "$@"
+"""
+
+
+def environment_with_failing_git(stand_in_directory: Path, subcommand: str) -> dict:
+    stand_in_directory.mkdir(parents=True, exist_ok=True)
+    stand_in = stand_in_directory / "git"
+    stand_in.write_text(STAND_IN_GIT, encoding="utf-8")
+    stand_in.chmod(0o755)
+    return dict(os.environ, PATH=f"{stand_in_directory}{os.pathsep}{os.environ['PATH']}",
+                PLANTED_GIT_FAILURE=subcommand)
 
 
 def agent_text(result) -> str:
@@ -240,6 +267,13 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a session seated outside any checkout is silent",
           silent(run_hook(hook_payload(not_a_repository, loose_file))))
 
+    unborn = tmp / "no-commit-yet"
+    unborn.mkdir()
+    git(["init", "-q", "-b", "main"], unborn)
+    unborn_file = write_file(unborn, "scripts/cold-read-grid.py")
+    check("a write in a repository with no commit yet is silent",
+          silent(run_hook(hook_payload(unborn, unborn_file))))
+
     # --- letter case: two files, or one file spelled two ways ------------
     # The positive pair comes first: both sides of the comparison are folded,
     # so each side gets a case whose tracked fixture carries the uppercase.
@@ -322,14 +356,15 @@ with tempfile.TemporaryDirectory() as temporary_directory:
 
     original_stdin = sys.stdin
     recorded_stdout = io.StringIO()
-    HOOK_MODULE.subprocess.run = recording_subprocess_run
+    hook_subprocess = HOOK_MODULE.git_machine_readable_output.subprocess
+    hook_subprocess.run = recording_subprocess_run
     try:
         sys.stdin = io.StringIO(
             json.dumps(hook_payload(repository, colliding)))
         with redirect_stdout(recorded_stdout):
             in_process_exit_code = HOOK_MODULE.main()
     finally:
-        HOOK_MODULE.subprocess.run = real_subprocess_run
+        hook_subprocess.run = real_subprocess_run
         sys.stdin = original_stdin
 
     # THE POSITIVE HALF: the recorder saw the git calls. Without it the next
@@ -342,49 +377,92 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           "file-name-collision-warning" in recorded_stdout.getvalue()
           and in_process_exit_code == 0,
           repr(recorded_stdout.getvalue()))
-    check("every git call the hook makes carries a positive timeout",
+    check("every git call the hook makes carries a timeout of at most 10 s",
           bool(recorded_git_calls) and all(
               isinstance(call.get("timeout"), (int, float))
               and not isinstance(call.get("timeout"), bool)
-              and call["timeout"] > 0 for call in recorded_git_calls),
+              and 0 < call["timeout"] <= 10 for call in recorded_git_calls),
           repr([call.get("timeout") for call in recorded_git_calls]))
 
-    # A timeout raises subprocess.TimeoutExpired, which is a SubprocessError
-    # and NOT an OSError, so passing timeout= without naming it in the except
-    # clauses would turn a slow git into a traceback.
     answered_listing = HOOK_MODULE.git_output(["ls-files", "-z"], repository)
     check("git_output returns git's answer when git answers",
-          answered_listing is not None
-          and "scripts/cold-read-grid.py" in answered_listing,
-          repr(answered_listing))
+          "scripts/cold-read-grid.py" in answered_listing, repr(answered_listing))
     check("is_ignored answers True for a path .gitignore covers",
           HOOK_MODULE.is_ignored(PurePath("docs/walk/cold-read-grid.py"),
                                  repository))
+    check("is_ignored answers False for a path .gitignore does not cover",
+          HOOK_MODULE.is_ignored(PurePath("scripts/cold-read-grid.py"),
+                                 repository) is False)
 
     def timing_out_subprocess_run(*arguments, **keywords):
         raise subprocess.TimeoutExpired(cmd=["git"], timeout=1)
 
-    def answer_or_the_escape(call):
-        """What the call returned, or the exception it let past. A timeout
-        that escapes is this suite's finding to report, not its own crash."""
-        try:
-            return call()
-        except subprocess.TimeoutExpired:
-            return "subprocess.TimeoutExpired escaped the hook"
-
-    HOOK_MODULE.subprocess.run = timing_out_subprocess_run
+    hook_subprocess.run = timing_out_subprocess_run
+    sys.stdin = io.StringIO(json.dumps(hook_payload(repository, colliding)))
+    timed_out_stderr = io.StringIO()
     try:
-        timed_out_listing = answer_or_the_escape(
-            lambda: HOOK_MODULE.git_output(["ls-files", "-z"], repository))
-        timed_out_ignore = answer_or_the_escape(
-            lambda: HOOK_MODULE.is_ignored(
-                PurePath("docs/walk/cold-read-grid.py"), repository))
+        with redirect_stdout(io.StringIO()) as timed_out_stdout, redirect_stderr(timed_out_stderr):
+            timed_out_exit_code = HOOK_MODULE.main()
     finally:
-        HOOK_MODULE.subprocess.run = real_subprocess_run
-    check("a git call that times out is git failing, not git saying nothing",
-          timed_out_listing is None, repr(timed_out_listing))
-    check("a check-ignore that times out is caught, not raised at the agent",
-          timed_out_ignore is False, repr(timed_out_ignore))
+        hook_subprocess.run = real_subprocess_run
+        sys.stdin = original_stdin
+    timed_out_result = subprocess.CompletedProcess([], timed_out_exit_code, timed_out_stdout.getvalue(),
+                                                   timed_out_stderr.getvalue())
+    check("a git call that times out exits 0 and tells the agent so in additionalContext, not silence",
+          timed_out_exit_code == 0 and timed_out_stderr.getvalue() == ""
+          and "did not finish within 10 s" in agent_text(timed_out_result),
+          f"exit {timed_out_exit_code}: {timed_out_stdout.getvalue()!r} {timed_out_stderr.getvalue()!r}")
+
+    # --- a failing git is reported, never read as an answer --------------
+    for failing_subcommand, written in (("rev-parse", colliding), ("check-ignore", colliding),
+                                        ("ls-files", fresh)):
+        failed = run_hook(hook_payload(repository, written), environment_with_failing_git(
+            tmp / f"stand-in-git-{failing_subcommand}", failing_subcommand))
+        failure_lines = agent_text(failed).splitlines()
+        # Claude Code never passes a PostToolUse exit 1's stderr to the model; additionalContext reaches it.
+        check(f"a failing git {failing_subcommand} exits 0 with its report in additionalContext and nothing on stderr",
+              failed.returncode == 0 and failed.stderr == "" and bool(failure_lines),
+              f"exit {failed.returncode}, stdout {failed.stdout!r}, stderr {failed.stderr!r}")
+        check(f"a failing git {failing_subcommand}'s first additionalContext line names the command, "
+              "git's whole error and what was not checked",
+              bool(failure_lines) and f"git {failing_subcommand} " in failure_lines[0]
+              and f"exit 128: fatal: planted {failing_subcommand} failure second line of the "
+              "planted error" in failure_lines[0]
+              and f"so {written} was not checked" in failure_lines[0], repr(failure_lines))
+        check(f"a failing git {failing_subcommand} gives a line naming {written.name}, a line with a command "
+              "that reruns the hook on it, then the line saying what to do if that rerun fails too",
+              len(failure_lines) == 4
+              and failure_lines[1] == (f"A later run of this hook checks only the file that run's Write or Edit "
+                                       f"touched, so check {written} by running the next line's command: if git's "
+                                       "error above names a lock file, first wait one minute, and do not delete the "
+                                       "lock file; otherwise run the command now. The command prints nothing if the "
+                                       "name is free. Otherwise it prints JSON whose hookSpecificOutput."
+                                       "additionalContext field holds one of two texts: when another tracked file has "
+                                       "the name, this hook's warning, whose instructions you follow; or, when git "
+                                       "fails again, a git-failure message like this one, and the line here that "
+                                       "begins \"If a line starting\" says what to do then.")
+              and failure_lines[3] == ('If a line starting "file-name-collision-warning:" reports a git failure again '
+                                       "when you run that command, whether this error or another, tell the user, or, "
+                                       "if you are a subagent, the agent that dispatched you, word for word, every line "
+                                       "of this message and of the new one, before you go on. If the check finds no git "
+                                       "failure then, this failure needs no report."), repr(failure_lines))
+        rerun_line = failure_lines[1] if len(failure_lines) > 1 else ""
+        check(f"a failing git {failing_subcommand}'s rerun line gives the lock-file wait before the run-now instruction",
+              "names a lock file, first wait one minute" in rerun_line
+              and rerun_line.find("lock file") < rerun_line.find("run the command now"), repr(rerun_line))
+        check(f"a failing git {failing_subcommand}'s rerun line says what the command prints when git fails again "
+              "and points to the closing line",
+              "or, when git fails again, a git-failure message like this one, and the line here that begins "
+              "\"If a line starting\" says what to do then." in rerun_line, repr(rerun_line))
+        # The rerun runs with git working, so the file the failed run skipped is now checked.
+        rerun = subprocess.run(failure_lines[2] if len(failure_lines) == 4 else "false",
+                               shell=True, capture_output=True, text=True, check=False, cwd=str(tmp))
+        if written == colliding:
+            check(f"after a failing git {failing_subcommand}, the named rerun command warns that {written.name} collides",
+                  rerun.returncode == 0 and "is already" in agent_text(rerun), repr(rerun))
+        else:
+            check(f"after a failing git {failing_subcommand}, the named rerun command checks {written.name} and finds it free",
+                  silent(rerun) and rerun.stderr == "", repr(rerun))
 
     # --- malformed payloads cost nothing and say nothing ------------------
     check("a payload that is not JSON exits 0 and prints nothing",
@@ -413,8 +491,8 @@ def tracked_name_collisions(repository_root: Path):
     """(every tracked name, the names belonging to more than one file).
 
     Raises when git does not answer and when it lists nothing: the hook
-    draws that same line in git_output(), where None is "git failed" and
-    never "git found nothing", and this case is worth nothing without it.
+    draws that same line, reporting a failing git rather than reading it as
+    "git found nothing", and this case is worth nothing without it.
     """
     listed = subprocess.run(["git", "ls-files", "-z"],
                             cwd=str(repository_root), capture_output=True,

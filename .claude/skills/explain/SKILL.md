@@ -1,6 +1,6 @@
 ---
 name: explain
-description: Re-explain a message the user could not follow, so he can understand it without this agent-session's context. Use when the user types /explain; says he is confused, lost, or does not understand or follow; asks what a word, name or number means; asks you to explain a message again, go slower, or say the message in plain English; asks what you are proposing; or checks his reading with "I think you are saying…".
+description: Use when the user types /explain; says he is confused, lost, or does not understand or follow; asks what a word, name or number means; asks you to explain a message again, go slower, or say the message in plain English; asks what you are proposing; or checks his reading with "I think you are saying…". Re-explains what he could not follow in words that need none of this agent-session's context.
 ---
 
 # Explain

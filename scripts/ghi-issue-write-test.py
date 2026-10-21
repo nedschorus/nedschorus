@@ -92,12 +92,25 @@ hash and exiting 0.
 """
 
 import contextlib
+import importlib.util
 import io
 import json
 import os
+import shlex
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+# On macOS the temporary directory is reached through a link (/var is /private/var),
+# and the programs under test print resolved paths, so every scratch path is built resolved.
+tempfile.tempdir = os.path.realpath(tempfile.gettempdir())
+
+_defect_line_reader_spec = importlib.util.spec_from_file_location(
+    "pull_request_description_defect_line_root_cause_status_and_follow_up_link_reader",
+    Path(__file__).resolve().with_name("pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py"))
+defect_line_reader = importlib.util.module_from_spec(_defect_line_reader_spec)
+_defect_line_reader_spec.loader.exec_module(defect_line_reader)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 TOOL = __import__("importlib").import_module("importlib.util")
@@ -139,6 +152,15 @@ class Completed:
         self.returncode = returncode
 
 
+def with_question_read(arguments):
+    """The command, with the text of a `--question-file` appended."""
+    arguments = list(arguments)
+    if "--question-file" in arguments:
+        question_path = arguments[arguments.index("--question-file") + 1]
+        arguments.append(Path(question_path).read_text(encoding="utf-8"))
+    return arguments
+
+
 class Recorder:
     """Stands in for every subprocess the tool makes.
 
@@ -162,7 +184,11 @@ class Recorder:
     Resolving origin/main is answered for every case, because every create
     does it before reading main and a case that has nothing filed there
     still makes the call. A case that wants that resolution to fail passes
-    its own answer under the same key."""
+    its own answer under the same key.
+
+    The tool sends ghi-info its question in a file it deletes after the
+    call, so the recorder reads the file during the call and records its
+    text as the call's last word, where a case looks for it."""
 
     def __init__(self, answers=None):
         self.calls = []
@@ -171,7 +197,7 @@ class Recorder:
                         **(answers or {})}
 
     def __call__(self, arguments, timeout=None, cwd=None, check=True):
-        self.calls.append(list(arguments))
+        self.calls.append(with_question_read(arguments))
         self.timeouts.append(timeout)
         for prefix, answer in self.answers.items():
             if prefix in " ".join(arguments):
@@ -730,6 +756,9 @@ def run_cases(scratch: Path):
           str(first.timeout_of("git push")))
     check("the worktree is removed even though the run succeeded",
           first.ran("git worktree remove"), str(first.commands()))
+    check_failed_worktree_removal_is_printed(
+        "a filing", lambda runner: tool.create(source, REPO, scratch, runner,
+                                               quiet), first.answers)
 
     second = Recorder({
         "gh issue list": Completed(PLACEHOLDER),
@@ -1356,6 +1385,21 @@ def run_cases(scratch: Path):
         except tool.Refused as refusal:
             check(case_name, False, f"refused: {refusal}")
 
+    # Any other failing exit carries the ask's last stderr line, which says
+    # why, and the bare report stands when the ask printed nothing.
+    for case_name, stderr, expected in [
+            ("a failing ask's last stderr line is carried into the report",
+             "ghi-info-ask: a progress line\nghi-info-ask: ned-box cannot "
+             "be reached\n",
+             "adjudication skipped: ghi-info did not answer: ghi-info-ask: "
+             "ned-box cannot be reached"),
+            ("a failing ask that printed nothing gets the bare report", "",
+             "adjudication skipped: ghi-info did not answer")]:
+        lines = []
+        tool.adjudicate(REPO, "t", FILE_TEXT, scratch, Recorder({ASK: Completed(
+            "", returncode=1, stderr=stderr)}), lines.append)
+        check(case_name, lines == [expected], lines)
+
     # On the locked path ghi-info-ask.py writes its seat-checkout refresh line
     # or its reincarnation line to stderr before the message, and the Mac
     # relay copies them through; the report still carries the message.
@@ -1976,6 +2020,304 @@ EARLIER_EDIT_TITLE = f"GHI-MD edit for issue 570: {EDIT_TITLE}"
 EARLIER_EDIT_URL = "https://github.com/nedschorus/nedschorus/pull/21"
 
 
+WORKTREE_REMOVAL_STDERR = "fatal: cannot remove a locked working tree"
+
+
+def check_failed_worktree_removal_is_printed(operation, land, answers):
+    """Lands once with `git worktree remove` failing and once with `git
+    worktree add` failing: the first prints the left-behind record and
+    the command that clears it, the second, which registered nothing, does
+    not."""
+    for removal_fails in (True, False):
+        failing = ({"git worktree remove": Completed(
+                        "", 128, WORKTREE_REMOVAL_STDERR)}
+                   if removal_fails else
+                   {"git worktree add": Completed("", 128, "fatal: no space"),
+                    "git worktree remove": Completed(
+                        "", 128, "fatal: is not a working tree")})
+        recorder = Recorder({**failing, **answers})
+        complaint = io.StringIO()
+        with contextlib.redirect_stderr(complaint):
+            try:
+                land(recorder)
+            except tool.Refused:
+                pass
+        said = complaint.getvalue()
+        if removal_fails:
+            check(f"{operation} whose worktree cannot be removed says the "
+                  "record was left behind, that the pull request was "
+                  "opened, and how to clear it",
+                  WORKTREE_REMOVAL_STDERR in said
+                  and "record of the temporary worktree" in said
+                  and "worktree prune" in said
+                  and "already pushed its branch" in said,
+                  said)
+        else:
+            check(f"{operation} whose worktree was never added says nothing "
+                  "about removing it",
+                  "record of the temporary worktree" not in said
+                  and not recorder.ran(
+                      "git worktree remove"), (said, recorder.commands()))
+
+
+def run_git_failure_cases(scratch: Path):
+    """Each git command whose exit code the tool reads: an answer git gives
+    with a code is told apart from git failing."""
+    revision, relative = "abc123", "docs/issues/5-x.md"
+    show = f"git show {revision}:{relative}"
+    listing = f"git ls-tree --name-only -z {revision} -- {relative}"
+    for case_name, answers, expected in [
+            ("blob_at returns what git show prints",
+             {show: Completed("text\n")}, "text\n"),
+            ("blob_at reads a path the listing leaves out as absent",
+             {show: Completed("", 128, "fatal: path does not exist"),
+              listing: Completed("")}, None),
+            ("blob_at raises when the listing fails",
+             {show: Completed("", 128, "fatal: bad object"),
+              listing: Completed("", 128, "fatal: Not a valid object name")},
+             "fatal: Not a valid object name"),
+            ("blob_at raises when the listing holds a path git show could "
+             "not read",
+             {show: Completed("", 128, "fatal: unable to read blob"),
+              listing: Completed(relative + "\0")},
+             "fatal: unable to read blob")]:
+        try:
+            outcome = tool.blob_at(revision, relative, scratch,
+                                   Recorder(answers))
+        except tool.Refused as refusal:
+            outcome = refusal
+        if isinstance(expected, str) and expected.startswith("fatal"):
+            check(case_name,
+                  isinstance(outcome, tool.Refused) and outcome.code == 1
+                  and expected in str(outcome)
+                  and "wait one minute" in str(outcome), repr(outcome))
+        else:
+            check(case_name, outcome == expected, repr(outcome))
+
+    merge_base = f"git merge-base HEAD {MAIN_COMMIT}"
+    for case_name, answer, expected in [
+            ("merge_base_with_main returns the merge base",
+             Completed("base\n"), "base"),
+            ("merge_base_with_main reads exit 1 as no merge base",
+             Completed("", 1), ""),
+            ("merge_base_with_main raises when git fails",
+             Completed("", 128, "fatal: not a git repository"), None)]:
+        try:
+            outcome = tool.merge_base_with_main(
+                MAIN_COMMIT, scratch, Recorder({merge_base: answer}))
+        except tool.Refused as refusal:
+            outcome = refusal
+        if expected is None:
+            check(case_name,
+                  isinstance(outcome, tool.Refused) and outcome.code == 1
+                  and "fatal: not a git repository" in str(outcome),
+                  repr(outcome))
+        else:
+            check(case_name, outcome == expected, repr(outcome))
+    reported = []
+    try:
+        tool.refuse_on_conflict(
+            relative, None, None, None, MAIN_COMMIT, scratch,
+            Recorder({merge_base: Completed("", 128, "fatal: bad object")}),
+            reported.append)
+        outcome = "no refusal"
+    except tool.Refused as refusal:
+        outcome = refusal.code
+    check("a merge base git could not find is not reported as no merge base",
+          outcome == 1 and not reported, (outcome, reported))
+
+    difference = f"git diff {revision} {MAIN_COMMIT} -- {relative}"
+    for case_name, answer, expected in [
+            ("a conflict refusal shows the change it would discard",
+             Completed("+a line\n"), "+a line"),
+            ("a conflict refusal whose diff fails says it could not be "
+             "shown and why",
+             Completed("", 128, "fatal: bad revision"),
+             "fatal: bad revision")]:
+        refusal = tool.conflict_refusal(
+            "Refused: conflict.", "Fold it.", relative, revision,
+            MAIN_COMMIT, scratch, Recorder({difference: answer}))
+        shown = str(refusal).split("The change you would have discarded:\n")[1]
+        check(case_name,
+              refusal.code == 66 and expected in shown
+              and (answer.returncode == 0) == ("not shown" not in shown),
+              shown)
+
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        tracked = tool.tracked_paths_at_head(scratch, Recorder({
+            "git ls-tree -r --name-only -z HEAD":
+                Completed("", 128, "fatal: Not a valid object name HEAD")}))
+    check("a tracked-tree listing that fails is printed before the heading "
+          "is let through",
+          tracked == [] and "fatal: Not a valid object name HEAD"
+          in complaint.getvalue() and "not checked for a file path"
+          in complaint.getvalue(), complaint.getvalue())
+
+    # A checkout with no commit yet, where git exits 128 for HEAD as it does
+    # for a failure, and the stand-in for one whose HEAD git cannot read.
+    unborn = scratch / "unborn"
+    subprocess.run(["git", "init", "-q", str(unborn)], check=True,
+                   capture_output=True)
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        tracked = tool.tracked_paths_at_head(unborn, tool.run)
+        located = tool.merge_base_with_main(
+            "4b825dc642cb6eb9a060e54bf8d69288fbee4904", unborn, tool.run)
+    check("a checkout with no commit yet tracks nothing, and says nothing "
+          "about it", tracked == [] and not complaint.getvalue(),
+          (tracked, complaint.getvalue()))
+    check("a checkout with no commit yet has no merge base with main",
+          located == "", repr(located))
+    try:
+        tool.head_is_unborn(scratch, Recorder({
+            "git rev-parse --verify --quiet HEAD": Completed(
+                "", 128, "fatal: not a git repository")}))
+        outcome = "no refusal"
+    except tool.Refused as refusal:
+        outcome = str(refusal)
+    check("a HEAD git cannot read is raised, not taken for no commit yet",
+          "fatal: not a git repository" in outcome, outcome)
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        tracked = tool.tracked_paths_at_head(scratch, Recorder({
+            "git ls-tree -r --name-only -z HEAD": Completed(
+                "", 128, "fatal: not a git repository"),
+            "git rev-parse --verify --quiet HEAD": Completed(
+                "", 128, "fatal: not a git repository")}))
+    check("and the heading check still lets the heading through, saying so",
+          tracked == [] and "not checked for a file path"
+          in complaint.getvalue(), complaint.getvalue())
+
+    def unborn_probe_times_out(arguments, **options):
+        if arguments[:2] == ["git", "rev-parse"]:
+            raise subprocess.TimeoutExpired(arguments, 30)
+        return Completed("", 128, "fatal: unable to read tree")
+    complaint = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(complaint):
+            tracked = tool.tracked_paths_at_head(scratch,
+                                                 unborn_probe_times_out)
+    except subprocess.TimeoutExpired as expiry:
+        tracked = expiry
+    check("a failed listing whose no-commit-yet probe times out still lets "
+          "the heading through, saying so",
+          tracked == [] and "not checked for a file path"
+          in complaint.getvalue(), (tracked, complaint.getvalue()))
+
+    worktree_parent = scratch / "removal"
+    worktree = worktree_parent / "worktree"
+    worktree.mkdir(parents=True)
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        tool.remove_landing_worktree(worktree, worktree_parent, scratch,
+                                     Recorder({"git worktree remove": Completed(
+                                         "", 128, WORKTREE_REMOVAL_STDERR)}),
+                                     False)
+    printed_lines = complaint.getvalue().splitlines()
+    check("a worktree whose removal failed after a landing that stopped "
+          "early has its directory deleted, says only git's record was left "
+          "behind, says no pull request was "
+          "opened, and names prune, not the removal that failed, to clear "
+          "git's record",
+          not worktree_parent.exists()
+          and "was left behind; its directory on disk is gone" in complaint.getvalue()
+          and "stopped before it opened a pull request" in complaint.getvalue()
+          and f"so run `git -C {scratch} worktree prune`, which drops the record"
+          in complaint.getvalue()
+          and not any("worktree remove" in line for line in printed_lines[1:]),
+          complaint.getvalue())
+    kept_parent = scratch / "removal-kept"
+    kept = kept_parent / "worktree"
+    kept.mkdir(parents=True)
+    complaint = io.StringIO()
+    real_rmtree = tool.shutil.rmtree
+    tool.shutil.rmtree = lambda *arguments, **options: None
+    try:
+        with contextlib.redirect_stderr(complaint):
+            tool.remove_landing_worktree(kept, kept_parent, scratch,
+                                         Recorder({"git worktree remove": Completed(
+                                             "", 128, WORKTREE_REMOVAL_STDERR)}),
+                                         True)
+    finally:
+        tool.shutil.rmtree = real_rmtree
+    check("a worktree whose directory could not be deleted either says its "
+          "directory and git's record were both left behind, names no "
+          "cleanup command and says to report the lines",
+          f"This run could not delete {kept} either" in complaint.getvalue()
+          and "its directory on disk, and git's record of it" in complaint.getvalue()
+          and "worktree prune" not in complaint.getvalue(),
+          complaint.getvalue())
+    # A real repository: the tool's removal is made to fail, its directory
+    # is deleted, and the prune it prints must clear the record git keeps.
+    pruned_repository = scratch / "pruned-repository"
+    subprocess.run(["git", "init", "-q", str(pruned_repository)], check=True,
+                   capture_output=True)
+    subprocess.run(["git", "-C", str(pruned_repository), "-c",
+                    "user.email=test@example.com", "-c", "user.name=test",
+                    "commit", "-q", "--allow-empty", "-m", "one"],
+                   check=True, capture_output=True)
+    pruned_parent = scratch / "pruned-parent"
+    pruned = pruned_parent / "worktree"
+    subprocess.run(["git", "-C", str(pruned_repository), "worktree", "add",
+                    "-q", "--detach", str(pruned)], check=True,
+                   capture_output=True)
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        tool.remove_landing_worktree(pruned, pruned_parent, pruned_repository,
+                                     Recorder({"git worktree remove": Completed(
+                                         "", 128, WORKTREE_REMOVAL_STDERR)}),
+                                     True)
+    prune_command = shlex.join(["git", "-C", str(pruned_repository),
+                                "worktree", "prune"])
+    cleared = (subprocess.run(prune_command, shell=True, capture_output=True,
+                              text=True)
+               if f"`{prune_command}`" in complaint.getvalue() else None)
+    listed = subprocess.run(
+        ["git", "-C", str(pruned_repository), "worktree", "list",
+         "--porcelain"], capture_output=True, text=True, check=True).stdout
+    check("the prune printed after a failed removal clears git's record of "
+          "the worktree",
+          cleared is not None and cleared.returncode == 0
+          and str(pruned) not in listed,
+          (complaint.getvalue(), cleared and cleared.stderr, listed))
+    # A locked worktree in a real repository: the tool's own removal,
+    # forced twice, clears it, where a single --force would refuse.
+    locked_repository = scratch / "locked-repository"
+    subprocess.run(["git", "init", "-q", str(locked_repository)], check=True,
+                   capture_output=True)
+    subprocess.run(["git", "-C", str(locked_repository), "-c",
+                    "user.email=test@example.com", "-c", "user.name=test",
+                    "commit", "-q", "--allow-empty", "-m", "one"],
+                   check=True, capture_output=True)
+    locked_parent = scratch / "locked-parent"
+    locked = locked_parent / "worktree"
+    for arguments in (["worktree", "add", "-q", "--detach", str(locked)],
+                      ["worktree", "lock", str(locked)]):
+        subprocess.run(["git", "-C", str(locked_repository), *arguments],
+                       check=True, capture_output=True)
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        tool.remove_landing_worktree(locked, locked_parent, locked_repository,
+                                     tool.run, True)
+    listed = subprocess.run(
+        ["git", "-C", str(locked_repository), "worktree", "list",
+         "--porcelain"], capture_output=True, text=True, check=True).stdout
+    check("the tool's own removal clears a locked worktree and its record, "
+          "and prints nothing",
+          not complaint.getvalue() and str(locked) not in listed,
+          (complaint.getvalue(), listed))
+
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        worktree.mkdir(parents=True)
+        tool.remove_landing_worktree(worktree, worktree_parent, scratch,
+                                     Recorder(), True)
+    check("a worktree removed cleanly prints nothing",
+          not complaint.getvalue() and not worktree_parent.exists(),
+          complaint.getvalue())
+
+
 def earlier_edit_pull_request(*paths):
     """What `gh pr list --head <that branch> --json ...,files` answers with
     when an earlier edit of those paths is open on it."""
@@ -2514,6 +2856,9 @@ def run_edit_cases(scratch: Path):
         "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     edited_number, finished = tool.edit(source, REPO, scratch, landing, quiet)
+    check_failed_worktree_removal_is_printed(
+        "an edit", lambda runner: tool.edit(source, REPO, scratch, runner,
+                                            quiet), landing.answers)
     check("the edit lands the file on a pull request of its own",
           edited_number == 570 and landing.ran("git worktree add")
           and landing.ran("gh pr create"), str(landing.commands()))
@@ -2797,7 +3142,7 @@ def run_edit_cases(scratch: Path):
 
     # 128 is what git answers for a path that is not in the tree asked of,
     # measured; the older cases above say 1, which blob_at reads the same
-    # way — it asks only whether the call succeeded.
+    # way, because the listing it then asks for leaves the path out.
     moved_source = filed_ghi_md(scratch, directory="nc-systems/statusline")
     moved = Recorder({
         f"git show {MAIN_COMMIT}:{MOVED_RELATIVE}": Completed("",
@@ -4468,11 +4813,6 @@ def run_push_time_limit_cases(scratch: Path):
 def run_pull_request_description_cases(directory):
     """Both pull requests this tool opens carry a line scripts/merge-gate.sh
     accepts, so the gate does not refuse every GHI-MD pull request."""
-    import re
-    # The gate's jq test, line for line, applied to each line of the body.
-    gate_line = re.compile(
-        r"^\s*(?:[-*+]\s+)?(?:\*\*|__)?(?:Root cause(?: not fixed)?(?:\*\*|__)?:"
-        r"|No defect fixed(?:\*\*|__)?\.)")
     for name, function in (
             ("create", tool.create_pull_request_for_branch),
             ("edit", tool.create_pull_request_for_edit_branch)):
@@ -4485,7 +4825,9 @@ def run_pull_request_description_cases(directory):
         function("x/y", "branch", 7, "Title", directory, runner, lambda line: None)
         body = calls[0][calls[0].index("--body") + 1] if calls else ""
         check(f"the {name} pull request's description carries a line the merge gate accepts",
-              any(gate_line.match(line) for line in body.splitlines()), repr(body))
+              bool(defect_line_reader.pull_request_description_defect_lines(body)), repr(body))
+        check(f"the {name} pull request's description says it fixes no defect in the hashtag form",
+              "#no_defect_fixed" in body.splitlines(), repr(body))
 
 
 def run_whole_file_set_cases(scratch: Path):
@@ -4564,45 +4906,108 @@ def run_whole_file_set_cases(scratch: Path):
         tool.proposed_improvements_or_changes_file_date = original_date
 
 
+def run_adjudication_question_file_cases(scratch: Path):
+    """ghi-info's question travels in a file, not as one command-line
+    argument, so a question over Linux's 128 KiB limit for one argument
+    still reaches ghi-info."""
+    ask = scratch / "scripts" / "ghi-info-ask.py"
+    ask.parent.mkdir(parents=True, exist_ok=True)
+    ask.write_text("# stands in for the real one; never executed\n")
+    # A request over Linux's 128 KiB limit for one argument, run for real
+    # against a stand-in ghi-info-ask.py that records what it was asked.
+    oversized_root = scratch / "oversized"
+    (oversized_root / "scripts").mkdir(parents=True)
+    received = oversized_root / "received.txt"
+    (oversized_root / "scripts" / "ghi-info-ask.py").write_text(
+        "import sys\n"
+        "from pathlib import Path\n"
+        "arguments = sys.argv[1:]\n"
+        "path = arguments[arguments.index('--question-file') + 1]\n"
+        f"Path({str(received)!r}).write_text(Path(path).read_text())\n"
+        "print('verdict: unrelated')\n", encoding="utf-8")
+    oversized_text = f"# {EDIT_TITLE}\n\n" + "A long line of the GHI-MD.\n" * 6000
+    oversized_lines = []
+    tool.adjudicate(REPO, EDIT_TITLE, oversized_text, oversized_root,
+                    tool.run, oversized_lines.append, exclude_issue=570)
+    received_text = received.read_text() if received.is_file() else ""
+    check("a request over 128 KiB reaches ghi-info whole, and its verdict "
+          "is read",
+          len(received_text.encode()) > 128 * 1024
+          and oversized_text in received_text
+          and "ghi-info: verdict: unrelated" in oversized_lines
+          and not list(Path(tempfile.gettempdir()).glob(
+              "ghi-issue-write-question-*")),
+          (len(received_text), oversized_lines))
+
+    mkstemp_orig = tool.tempfile.mkstemp
+
+    def failing_mkstemp(*arguments, **keywords):
+        raise OSError(28, "No space left on device")
+
+    tool.tempfile.mkstemp = failing_mkstemp
+    unwritable = Recorder({ASK: Completed("verdict: too-similar #13\n")})
+    unwritable_lines = []
+    try:
+        unwritable_result = tool.adjudicate(
+            REPO, "t", FILE_TEXT, scratch, unwritable, unwritable_lines.append)
+    finally:
+        tool.tempfile.mkstemp = mkstemp_orig
+    check("a question file that cannot be written fails open and says so, "
+          "without asking ghi-info",
+          unwritable_result is None and not unwritable.ran(ASK)
+          and any(line.startswith("adjudication skipped: ghi-info did not "
+                                  "answer") and "No space left" in line
+                  for line in unwritable_lines), unwritable_lines)
+
 def main():
-    import tempfile
-    default_store = tempfile.TemporaryDirectory(
-        prefix="ghi-issue-write-test-store-")
-    log_store_at(Path(default_store.name) / "store")
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-pull-request-description-test-") as name:
-        run_pull_request_description_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-write-test-") as name:
-        run_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-real-git-test-") as name:
-        run_real_git_listing_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-landing-test-") as name:
-        run_edit_landing_real_git_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-landed-test-") as name:
-        run_landed_design_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-push-test-") as name:
-        run_push_time_limit_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-main-test-") as name:
-        run_main_dispatch_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-file-set-test-") as name:
-        run_whole_file_set_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-old-files-test-") as name:
-        run_old_ghi_info_files_on_main_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-resume-test-") as name:
-        run_saved_question_on_resume_cases(Path(name))
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-remote-read-test-") as name:
-        run_remote_read_failure_cases(Path(name))
-    # A checkout of its own: the reconsidered marker lives at the root of
-    # one and is consumed by the write it passes, so two groups sharing a
-    # directory would share that.
-    with tempfile.TemporaryDirectory(prefix="ghi-issue-edit-test-") as name:
-        run_edit_cases(Path(name))
-    default_store.cleanup()
-    print()
-    if failures:
-        print(f"{len(failures)} case(s) failed")
-        return 1
-    print("all cases passed")
-    return 0
+    # Every tempfile name the tool picks, mkstemp's question files included,
+    # lands in this run's own directory: a check for leftovers sees only this
+    # run's, and a mutant that skips a cleanup leaves nothing in /tmp.
+    with tempfile.TemporaryDirectory(prefix="ghi-issue-write-test-run-") as run_directory:
+        default_tempdir = tempfile.tempdir
+        tempfile.tempdir = run_directory
+        try:
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-write-test-store-") as store:
+                log_store_at(Path(store) / "store")
+                with tempfile.TemporaryDirectory(prefix="ghi-issue-pull-request-description-test-") as name:
+                    run_pull_request_description_cases(Path(name))
+                with tempfile.TemporaryDirectory(prefix="ghi-issue-write-test-") as name:
+                    run_cases(Path(name))
+                with tempfile.TemporaryDirectory(prefix="ghi-issue-real-git-test-") as name:
+                    run_real_git_listing_cases(Path(name))
+                with tempfile.TemporaryDirectory(prefix="ghi-issue-landing-test-") as name:
+                    run_edit_landing_real_git_cases(Path(name))
+                with tempfile.TemporaryDirectory(prefix="ghi-issue-landed-test-") as name:
+                    run_landed_design_cases(Path(name))
+                with tempfile.TemporaryDirectory(prefix="ghi-issue-push-test-") as name:
+                    run_push_time_limit_cases(Path(name))
+                with tempfile.TemporaryDirectory(prefix="ghi-issue-main-test-") as name:
+                    run_main_dispatch_cases(Path(name))
+                with tempfile.TemporaryDirectory(prefix="ghi-issue-file-set-test-") as name:
+                    run_whole_file_set_cases(Path(name))
+                with tempfile.TemporaryDirectory(prefix="ghi-issue-old-files-test-") as name:
+                    run_old_ghi_info_files_on_main_cases(Path(name))
+                with tempfile.TemporaryDirectory(prefix="ghi-issue-resume-test-") as name:
+                    run_saved_question_on_resume_cases(Path(name))
+                with tempfile.TemporaryDirectory(prefix="ghi-issue-remote-read-test-") as name:
+                    run_remote_read_failure_cases(Path(name))
+                # A checkout of its own: the reconsidered marker lives at the root of
+                # one and is consumed by the write it passes, so two groups sharing a
+                # directory would share that.
+                with tempfile.TemporaryDirectory(prefix="ghi-issue-edit-test-") as name:
+                    run_edit_cases(Path(name))
+                with tempfile.TemporaryDirectory(prefix="ghi-issue-adjudication-test-") as name:
+                    run_adjudication_question_file_cases(Path(name))
+                with tempfile.TemporaryDirectory(prefix="ghi-issue-git-failure-test-") as name:
+                    run_git_failure_cases(Path(name))
+            print()
+            if failures:
+                print(f"{len(failures)} case(s) failed")
+                return 1
+            print("all cases passed")
+            return 0
+        finally:
+            tempfile.tempdir = default_tempdir
 
 
 if __name__ == "__main__":

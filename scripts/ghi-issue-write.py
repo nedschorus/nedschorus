@@ -372,6 +372,13 @@ _git_output_spec = importlib.util.spec_from_file_location(
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 
 def _load_sibling_script(module_name, file_name):
     spec = importlib.util.spec_from_file_location(
@@ -518,6 +525,100 @@ def run(arguments, timeout=GH_TIMEOUT_SECONDS, cwd=None, check=True):
     return completed
 
 
+def git_failure_next_steps(rerun: str, program: str) -> str:
+    """What an agent does after a git command this program ran failed."""
+    return next_step_lines.git_failure_next_step_lines(
+        rerun, program, include_the_misspelt_branch_commit_or_path_line=True,
+        rerun_fails_when="stops again on a line naming a git command and its exit code",
+        which_lines_to_quote_in_the_report='that line and the "So" line after it, from each run')
+
+
+def git_failure_refusal(arguments, completed, not_done: str) -> Refused:
+    """The refusal for a git command that failed where its exit code was
+    read: the command, git's error, what was not done, and the next steps,
+    whose rerun is this program's own command line."""
+    # The rerun must start where this run did: the path argument may be
+    # relative to it.
+    rerun = (f"cd {shlex.quote(os.getcwd())} && "
+             + shlex.join(["python3", str(Path(__file__).resolve()),
+                           *sys.argv[1:]]))
+    said = (completed.stderr or completed.stdout or "").strip() or "no detail"
+    return Refused(
+        f"{shlex.join(arguments)} exited {completed.returncode}: {said}\n"
+        f"So {not_done}.\n"
+        + git_failure_next_steps(rerun, "scripts/ghi-issue-write.py"), 1)
+
+
+def head_is_unborn(repository_root: Path, runner) -> bool:
+    """Whether the checkout has no commit yet, which makes every git command
+    that names HEAD exit 128 as a real failure does. `rev-parse --verify
+    --quiet` says so with exit 1; any other failure is raised."""
+    arguments = ["git", "rev-parse", "--verify", "--quiet", "HEAD^{commit}"]
+    resolved = runner(arguments, cwd=str(repository_root), check=False)
+    if resolved.returncode not in (0, 1):
+        raise git_failure_refusal(
+            arguments, resolved,
+            "this run could not tell whether the checkout has a commit, and "
+            "stopped before landing anything")
+    return resolved.returncode == 1
+
+
+def remove_landing_worktree(worktree: Path, worktree_parent: Path,
+                            repository_root: Path, runner,
+                            pull_request_opened: bool):
+    """Removes the throwaway worktree a landing staged its commit in. A
+    failed removal is printed, not raised: this runs in a `finally`, where
+    raising would replace the landing's own error, and after a landing that
+    succeeded the issue and its pull request are already made.
+    `pull_request_opened` says which of the two the message reports."""
+    # Forced twice, because a single --force refuses a locked worktree.
+    arguments = ["git", "worktree", "remove", "-f", "-f", str(worktree)]
+    removed = runner(arguments, cwd=str(repository_root), check=False)
+    shutil.rmtree(worktree_parent, ignore_errors=True)
+    if removed.returncode == 0:
+        return
+    listed = shlex.join(["git", "-C", str(repository_root), "worktree", "list"])
+    if worktree.exists():
+        left_behind = (
+            f"So both parts of the temporary worktree {worktree} were left "
+            f"behind: its directory on disk, and git's record of it, which "
+            f"`{listed}` still shows.")
+        cleanup = (
+            f"This run could not delete {worktree} either, so no command it "
+            f"knows clears the record; tell "
+            f"{next_step_lines.REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT} "
+            "word for word, the lines this run printed from the one that says the "
+            "removal exited.")
+    else:
+        # The removal that failed is not repeated: prune is a different
+        # command, and drops the record of a worktree whose directory is gone.
+        prune = shlex.join(["git", "-C", str(repository_root), "worktree",
+                            "prune"])
+        left_behind = (
+            f"So git's record of the temporary worktree {worktree}, which "
+            f"`{listed}` still shows, was left behind; its directory on disk "
+            "is gone.")
+        cleanup = (
+            f"This run deleted the worktree's directory, so run `{prune}`, "
+            "which drops the record of a worktree whose directory is gone.\n"
+            f"If `{listed}` still shows {worktree} after that, tell "
+            f"{next_step_lines.REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT} "
+            "word for word, the lines this run printed from the one that says the "
+            "removal exited, and what the prune printed.")
+    said = (removed.stderr or removed.stdout or "").strip() or "no detail"
+    outcome = (
+        "This run had already pushed its branch and opened its pull "
+        "request; the record left behind does not change either."
+        if pull_request_opened else
+        "This run stopped before it opened a pull request, on the error "
+        "printed after this message; once the record is removed, do what "
+        "that error's message says.")
+    print(f"{shlex.join(arguments)} exited {removed.returncode}: {said}\n"
+          f"{left_behind}\n"
+          f"{outcome}\n"
+          f"{cleanup}", file=sys.stderr)
+
+
 def push_time_limit_seconds(environment):
     """How long a push may take: the pre-push hook's conflict check and
     selective test run, each with its budget as the hook reads it from the
@@ -616,13 +717,48 @@ def tracked_paths_at_head(repository_root: Path, runner) -> list:
     decides whether to refuse, and the reviews of PR [GHI heading check runs
     after the duplicate refusals](https://github.com/nedschorus/nedschorus/pull/838)
     found this docstring promising "let through" while a timeout stopped
-    the run."""
+    the run. A checkout with no commit yet tracks nothing, so its listing's
+    128 is that answer; any other failed listing is printed on stderr before
+    it is let through, so the agent checks the heading itself."""
+    arguments = ["git", "ls-tree", "-r", "--name-only", "-z", "HEAD"]
     try:
-        completed = runner(["git", "ls-tree", "-r", "--name-only", "-z", "HEAD"],
-                           timeout=30, cwd=str(repository_root), check=False)
+        completed = runner(arguments, timeout=30, cwd=str(repository_root),
+                           check=False)
     except subprocess.TimeoutExpired:
         return []
     if completed.returncode != 0:
+        try:
+            unborn = head_is_unborn(repository_root, runner)
+        except (Refused, subprocess.TimeoutExpired):
+            unborn = False
+        if unborn:
+            return []
+        said = ((completed.stderr or completed.stdout or "").strip()
+                or "no detail")
+        print(f"{shlex.join(arguments)} exited {completed.returncode}: "
+              f"{said}\n"
+              "So the file's first heading was not checked for a file path, "
+              "and this run went on without that check.\n"
+              "Check that heading yourself: it becomes the issue's title, "
+              "which carries no file path (step 4 of "
+              ".claude/skills/ghi-write/SKILL.md).\n"
+              "If it names none, nothing more is needed.\n"
+              "If it names one and this run created the issue on GitHub, "
+              "or edited an issue created earlier, wait until the pull "
+              "request this run opened has merged, then pull main.\n"
+              "Next rerun the command the run's last line gives, which "
+              "finishes the filing or the edit.\n"
+              "Then move the path into the text below the heading in the "
+              "issue's GHI-MD as main holds it, and run this program's edit "
+              "operation on that file, which renames the issue after the "
+              "corrected heading unless other files are named with the "
+              "issue's number (the edit line of "
+              ".claude/skills/ghi-write/SKILL.md).\n"
+              "If it names one and this run created no issue, because it "
+              "was a dry run or because it stopped before filing, move the "
+              "path into the text below the heading, then run the same "
+              "command again.",
+              file=sys.stderr)
         return []
     return git_output.nul_separated_fields(completed.stdout)
 
@@ -1056,12 +1192,23 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
         "naming the ruling and the doubt>`, where #<issue> is the issue "
         "that holds the ruling.\n\n" + excluded +
         f"Draft title: {title}\n\nDraft GHI-MD, verbatim:\n\n{text}")
+    # Sent in a file: one argument may not exceed 128 KiB on Linux, and a
+    # large GHI-MD is longer.
+    question_path = None
     try:
-        completed = runner([sys.executable, str(ask), question],
+        descriptor, question_path = tempfile.mkstemp(
+            prefix="ghi-issue-write-question-", suffix=".txt")
+        with os.fdopen(descriptor, "w", encoding="utf-8") as question_file:
+            question_file.write(question)
+        completed = runner([sys.executable, str(ask), "--question-file",
+                            question_path],
                            timeout=ADJUDICATION_TIMEOUT_SECONDS, check=False)
     except Exception as failure:                      # noqa: BLE001
         report(f"adjudication skipped: ghi-info did not answer ({failure})")
         return None
+    finally:
+        if question_path is not None:
+            Path(question_path).unlink(missing_ok=True)
     if completed.returncode == GHI_INFO_ASK_RULING_QUESTION_EXIT_CODE:
         conflict = ruling_conflict_from_stderr(completed.stderr)
         if conflict is not None:
@@ -1069,21 +1216,24 @@ def adjudicate(repo: str, title: str, text: str, repository_root: Path,
                    "user's; the write goes ahead and records it in a "
                    "proposed-improvements-or-changes-file in the log-store")
             return conflict
+    stderr_lines = [line.strip() for line in
+                    (completed.stderr or "").splitlines() if line.strip()]
     if completed.returncode in GHI_INFO_ASK_REPLIED_WITHOUT_A_LIST_EXIT_CODES:
         # ghi-info answered, but with no verdict: the question was not about
         # issues, or it found a ruling it may not judge. Fail-open like any
         # other missing verdict, and say which, rather than "did not answer".
         # The ask's own progress lines can come first, so the message is found
         # by its opening, falling back on the last line, where main() puts it.
-        stderr_lines = [line.strip() for line in
-                        (completed.stderr or "").splitlines() if line.strip()]
         said = next((line for line in stderr_lines if line.startswith(
             GHI_INFO_ASK_NO_LIST_MESSAGE_OPENINGS)),
             stderr_lines[-1] if stderr_lines else "no detail")
         report(f"adjudication skipped: ghi-info gave no verdict: {said}")
         return None
     if completed.returncode != 0:
-        report("adjudication skipped: ghi-info did not answer")
+        # The ask prints why it failed, such as ned-box being unreachable,
+        # as its last stderr line.
+        report("adjudication skipped: ghi-info did not answer" +
+               (f": {stderr_lines[-1]}" if stderr_lines else ""))
         return None
     verdict = ""
     for line in (completed.stdout or "").splitlines():
@@ -1507,10 +1657,30 @@ def file_issue(repo: str, title: str, key: str, runner, report) -> int:
 
 
 def blob_at(revision: str, relative: str, repository_root: Path, runner):
-    """The file's content at a revision, or None where it is not there."""
-    completed = runner(["git", "show", f"{revision}:{relative}"],
-                       cwd=str(repository_root), check=False)
-    return completed.stdout if completed.returncode == 0 else None
+    """The file's content at a revision, or None where it is not there.
+    Raises when git fails, since `git show` exits 128 both for a path the
+    revision lacks and for a failure: only then is the revision's tree
+    listed at the path, which exits 0 and leaves the path out only when it
+    is absent. Shown first and listed second, so a file that is there costs
+    one call."""
+    shown = runner(["git", "show", f"{revision}:{relative}"],
+                   cwd=str(repository_root), check=False)
+    if shown.returncode == 0:
+        return shown.stdout
+    listing = ["git", "ls-tree", "--name-only", "-z", revision, "--",
+               relative]
+    listed = runner(listing, cwd=str(repository_root), check=False)
+    if listed.returncode != 0:
+        raise git_failure_refusal(
+            listing, listed,
+            f"this run could not tell whether {revision} holds {relative}, "
+            "and stopped before landing anything")
+    if relative in git_output.nul_separated_fields(listed.stdout or ""):
+        raise git_failure_refusal(
+            ["git", "show", f"{revision}:{relative}"], shown,
+            f"{relative} at {revision} could not be read, and this run "
+            "stopped before landing anything")
+    return None
 
 
 def origin_main_commit_hash(repository_root: Path, runner) -> str:
@@ -1671,7 +1841,7 @@ def create_pull_request_for_branch(repo: str, branch: str, number: int,
             "issue's body is the links to its files, so this file has to "
             "be on main before the body can point at it. Prose under "
             "`docs/`, silent to reviewers by CLAUDE.md's review-scope "
-            "rule.\n\nNo defect fixed.\n")
+            "rule.\n\n#no_defect_fixed\n")
     created = runner(
         ["gh", "pr", "create", "--repo", repo, "--base", "main",
          "--head", branch, "--title", f"GHI-MD for issue {number}: {title}",
@@ -1719,6 +1889,7 @@ def land_file(repo: str, number: int, title: str, source: Path,
 
     worktree_parent = Path(tempfile.mkdtemp(prefix="ghi-issue-write-"))
     worktree = worktree_parent / "worktree"
+    added = pull_request_opened = False
     try:
         # --detach, and the push names the branch as a refspec, so this run
         # creates nothing in the filing checkout: a branch made with -b
@@ -1726,6 +1897,7 @@ def land_file(repo: str, number: int, title: str, source: Path,
         # fails on the name.
         runner(["git", "worktree", "add", "--quiet", "--detach",
                 str(worktree), "origin/main"], cwd=str(repository_root))
+        added = True
         target = worktree / destination
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(staged, encoding="utf-8")
@@ -1748,10 +1920,14 @@ def land_file(repo: str, number: int, title: str, source: Path,
         push_branch(worktree, branch, runner)
         create_pull_request_for_branch(repo, branch, number, title, worktree,
                                        runner, report)
+        pull_request_opened = True
     finally:
-        runner(["git", "worktree", "remove", "--force", str(worktree)],
-               cwd=str(repository_root), check=False)
-        shutil.rmtree(worktree_parent, ignore_errors=True)
+        if added:
+            remove_landing_worktree(worktree, worktree_parent,
+                                    repository_root, runner,
+                                    pull_request_opened)
+        else:
+            shutil.rmtree(worktree_parent, ignore_errors=True)
     return destination
 
 
@@ -2121,9 +2297,15 @@ def conflict_refusal(opening: str, fold: str, relative: str, revision: str,
 
     No reconsider line, on either: see the module docstring's last
     paragraph."""
-    difference = runner(
-        ["git", "diff", revision, main_commit, "--", relative],
-        cwd=str(repository_root), check=False)
+    arguments = ["git", "diff", revision, main_commit, "--", relative]
+    difference = runner(arguments, cwd=str(repository_root), check=False)
+    if difference.returncode == 0:
+        shown = (difference.stdout or "").strip()
+    else:
+        said = ((difference.stderr or difference.stdout or "").strip()
+                or "no detail")
+        shown = (f"(not shown: {shlex.join(arguments)} exited "
+                 f"{difference.returncode}: {said})")
     return Refused(
         f"{opening}\n\n"
         "Bring your checkout up to date with main: fetch, then merge or "
@@ -2131,15 +2313,26 @@ def conflict_refusal(opening: str, fold: str, relative: str, revision: str,
         f"{fold}\n"
         "Run this command again.\n\n"
         "The change you would have discarded:\n"
-        f"{(difference.stdout or '').strip()}", 66)
+        f"{shown}", 66)
 
 
 def merge_base_with_main(main_commit: str, repository_root: Path,
                          runner) -> str:
     """The commit the author's checkout started from: its merge base with
-    main, or "" where git finds none."""
-    located = runner(["git", "merge-base", "HEAD", main_commit],
-                     cwd=str(repository_root), check=False)
+    main, or "" where git finds none, which `git merge-base` says with exit
+    1, and in a checkout with no commit yet, where it exits 128. Any other
+    failure is raised."""
+    arguments = ["git", "merge-base", "HEAD", main_commit]
+    located = runner(arguments, cwd=str(repository_root), check=False)
+    if located.returncode == 1:
+        return ""
+    if located.returncode != 0 and head_is_unborn(repository_root, runner):
+        return ""
+    if located.returncode != 0:
+        raise git_failure_refusal(
+            arguments, located,
+            "the conflict check against main did not run, and this run "
+            "stopped before landing anything")
     return (located.stdout or "").strip()
 
 
@@ -2294,7 +2487,7 @@ def create_pull_request_for_edit_branch(repo: str, branch: str, number: int,
             "issue's title and body are derived from main's copy of its "
             "files, so this has to land before either follows. Prose "
             "under `docs/`, silent to reviewers by CLAUDE.md's "
-            "review-scope rule.\n\nNo defect fixed.\n")
+            "review-scope rule.\n\n#no_defect_fixed\n")
     created = runner(
         ["gh", "pr", "create", "--repo", repo, "--base", "main",
          "--head", branch, "--title",
@@ -2474,6 +2667,7 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
 
     worktree_parent = Path(tempfile.mkdtemp(prefix="ghi-issue-write-"))
     worktree = worktree_parent / "worktree"
+    added = pull_request_opened = False
     try:
         # --detach, and the push names the branch as a refspec, so this run
         # creates nothing in the author's checkout: a branch made with -b
@@ -2482,6 +2676,7 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
         # content walks into the name again.
         runner(["git", "worktree", "add", "--quiet", "--detach",
                 str(worktree), main_commit], cwd=str(repository_root))
+        added = True
         target = worktree / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(staged, encoding="utf-8")
@@ -2506,10 +2701,14 @@ def land_edit(repo: str, number: int, title: str, relative: str, staged: str,
         push_branch(worktree, branch, runner)
         create_pull_request_for_edit_branch(repo, branch, number, title,
                                             worktree, runner, report)
+        pull_request_opened = True
     finally:
-        runner(["git", "worktree", "remove", "--force", str(worktree)],
-               cwd=str(repository_root), check=False)
-        shutil.rmtree(worktree_parent, ignore_errors=True)
+        if added:
+            remove_landing_worktree(worktree, worktree_parent,
+                                    repository_root, runner,
+                                    pull_request_opened)
+        else:
+            shutil.rmtree(worktree_parent, ignore_errors=True)
     return True, True
 
 

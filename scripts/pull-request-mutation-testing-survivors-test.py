@@ -802,6 +802,48 @@ def run_cases():
               free_at_worktree_removal == {"after a run": True, "after a failed step": True},
               free_at_worktree_removal)
 
+    # The runner's refusal to name the recordings directory is this program's refusal, exit 2.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"dump": []})
+        spec = importlib.util.spec_from_file_location(
+            "pull_request_mutation_testing_survivors", str(SCRIPT))
+        survivors_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(survivors_module)
+        load_runner_for_refusal = survivors_module.load_test_suite_runner
+
+        def runner_that_cannot_name_the_recordings_directory():
+            loaded_runner = load_runner_for_refusal()
+
+            def refuse(given, top):
+                raise loaded_runner.CouldNotRun(
+                    f"{loaded_runner.PROGRAM}: not run — injected root-commit failure")
+            loaded_runner.recordings_directory_for = refuse
+            return loaded_runner
+
+        survivors_module.load_test_suite_runner = runner_that_cannot_name_the_recordings_directory
+        os.environ[CONTROL_DIRECTORY_VARIABLE] = str(control)
+        printed = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(printed):
+                status = survivors_module.main([
+                    "--checkout", str(repository),
+                    "--recorded-inputs-directory", str(control / "recordings"),
+                    "--lock-file", str(control / "machine.lock"),
+                    "--head", head, "--base", base, "--cosmic-ray-venv", str(venv)])
+        except Exception as error:  # A crash is this case's failure, not the suite's.
+            status = repr(error)
+        finally:
+            del os.environ[CONTROL_DIRECTORY_VARIABLE]
+        check("when the runner cannot name the recordings directory, the run exits 2 with "
+              "the runner's reason under this program's name",
+              status == survivors_module.EXIT_COULD_NOT_RUN
+              and printed.getvalue() == (
+                  "pull-request-mutation-testing-survivors: not run — injected root-commit "
+                  "failure\n" + survivors_module.load_test_suite_runner()
+                  .git_failure_next_step_lines("pull-request-mutation-testing-survivors.py")
+                  + "\n"), (status, printed.getvalue()))
+
     # ------------------------------------------------------------------
     # The signal sandbox, driven through a fake bwrap on PATH. The variable
     # that marks a run already inside the sandbox is dropped, since this

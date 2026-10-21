@@ -4,8 +4,6 @@ issue: "[Build the design-to-main state machine: the Python machine, its per-sta
 
 # Build the design-to-main state machine: the Python machine, its per-state agent-instructions, and the nine items the design defers to the build
 
-This GHI has proposed improvements or changes: read every file in this folder whose name starts with `282-build-the-design-to-main-state-machine-the-proposed-improvements-or-changes-`.
-
 The design-to-main state machine turns an approved design into code and tests and submits them to the gate that guards `main`. Its design was ruled by the user across six walks (2026-09-03 to 2026-09-08) and lands on `main` with PR [design-to-main state machine: the design as ruled in four walks, its glossary, and the walk files](https://github.com/nedschorus/nedschorus/pull/281): `docs/design-to-main/design-to-main-state-machine-design.md`, with its own glossary beside it. This issue is the build, step 1 of the AI-native architecture's build order, and it carries the design's section 11: what the design deliberately leaves to the build.
 
 **Why.** The design is complete as a specification of states, transitions, counters and who talks to the user. It is not a program. The user ruled 2026-09-07 that the deferred items are captured here so that nothing the design defers is lost between the design landing and the build starting.

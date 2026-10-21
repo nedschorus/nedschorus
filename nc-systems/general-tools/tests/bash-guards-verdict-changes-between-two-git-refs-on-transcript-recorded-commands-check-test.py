@@ -137,9 +137,9 @@ FIXTURE_PAIRS = [
 ]
 
 
-def run_replay(head_ref, scratch, *extra, base_ref="HEAD", scratch_directory=True):
+def run_replay(head_ref, scratch, *extra, base_ref="HEAD", scratch_directory=True, pairs=FIXTURE_PAIRS):
     pairs_file = Path(scratch) / "fixture-pairs.json"
-    pairs_file.write_text(json.dumps(FIXTURE_PAIRS))
+    pairs_file.write_text(json.dumps(pairs))
     arguments = ["--repository", str(TEST_REPOSITORY), "--base-ref", base_ref, "--head-ref", head_ref,
                  "--pairs-file", str(pairs_file), "--jobs", "2"]
     if scratch_directory:
@@ -339,12 +339,38 @@ try:
           and "\nVERDICT CHANGED: a recorded command gets a different verdict" in out,
           f"status {status}\n{out}\n{err}")
     check("a head that adds a refusing guard and changes another guard's verdicts: accepting the refusals does not "
-          "clear the verdict change, and no merge-despite sentence is printed",
+          "clear the verdict change, and the merge waits for both kinds of answer",
           replay.NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING in out
-          and replay.NEW_GUARD_REFUSES_ONLY_ENDING not in out and "merges despite" not in out, out)
+          and replay.NEW_GUARD_REFUSES_ONLY_ENDING not in out
+          and "\"refusal right\" lines do not clear it" in out
+          and "every difference has its \"verdict change intended\" line" in out, out)
+    check("a head that changes a guard's verdicts: the reviewer is told the answer line to write for each difference",
+          replay.VERDICT_CHANGED_MESSAGE in out
+          and "  verdict change intended: <guard> | <working directory> | <command>\n" in out, out)
     check("a head that adds a guard: the guard is read at the head only, and the other guards are compared",
           f"guards the head adds, read at the head only: ['{TMUX_KILL_GUARD}']" in out
           and "in-process: rows whose verdict differs: 0" in out, out)
+
+    # Longer than the 300 characters a printed reading is cut to, and different from its twin only at the end.
+    long_refused = ["tmux kill-server; echo " + "x" * 320 + " first", "/tmp"]
+    long_refused_twin = ["tmux kill-server; echo " + "x" * 320 + " second", "/tmp"]
+    status, out, err = run_replay("HEAD", scratch, "--new-process-pairs", "none", base_ref=before_tmux_kill_guard,
+                                  pairs=[long_refused, long_refused_twin])
+    check("a head that adds a guard refusing two long commands that differ only at the end: each is listed in full",
+          status == 1 and f"would refuse 2 recorded commands" in out
+          and f"command: {long_refused[0]!r}\n" in out and f"command: {long_refused_twin[0]!r}\n" in out,
+          f"status {status}\n{out}\n{err}")
+
+    before_search_file_guard = commit_without_guard(SEARCH_FILE_GUARD)
+    status, out, err = run_replay(main_refusing_all, scratch, "--new-process-pairs", "none",
+                                  base_ref=before_search_file_guard)
+    check("a head that adds the search-file guard, whose main() refuses every command: exit 1, and main()'s "
+          "refusals are the added guard's, not verdict changes",
+          status == 1 and f"guards the head adds, read at the head only: ['{SEARCH_FILE_GUARD}']" in out
+          and f"search-file main(): new guard {SEARCH_FILE_GUARD} would refuse {len(FIXTURE_PAIRS)} recorded "
+          "commands" in out
+          and "NEW GUARD REFUSES RECORDED COMMANDS" in out and "VERDICT CHANGED" not in out
+          and "search-file main(), base" not in out, f"status {status}\n{out}\n{err}")
 
     before_issue_write_guard = commit_without_guard(ISSUE_WRITE_GUARD)
     status, out, err = run_replay("HEAD", scratch, base_ref=before_issue_write_guard)

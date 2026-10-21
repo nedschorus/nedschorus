@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for open-file-in-typora-on-mac-from-ned-box.py.
+"""Tests for open-file-in-typora-on-mac-from-ned-box-nbd.py.
 
 ssh is replaced by a stub (NEDSCHORUS_SSH_PROGRAM) that records its arguments
 and answers as told, so no test connects to the Mac. ned-box's home is a
@@ -8,7 +8,7 @@ play sshd: it runs the Mac's forced command with SSH_ORIGINAL_COMMAND set to
 the request, ned-box's home and the Mac's mount both set to one real mount
 point, and a stub `open` that records what it was asked to open.
 
-Run: python3 scripts/open-file-in-typora-on-mac-from-ned-box-test.py
+Run: python3 scripts/open-file-in-typora-on-mac-from-ned-box-nbd-test.py
 """
 
 import json
@@ -19,7 +19,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-CALLER_PATH = Path(__file__).with_name("open-file-in-typora-on-mac-from-ned-box.py")
+CALLER_PATH = Path(__file__).with_name("open-file-in-typora-on-mac-from-ned-box-nbd.py")
 FORCED_COMMAND_PATH = Path(__file__).with_name("mac-request-from-ned-box-forced-command.py")
 
 failures = []

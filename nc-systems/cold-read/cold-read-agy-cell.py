@@ -33,7 +33,8 @@ at low. The measurements: about 100-110 s per document (single runs on a
 658-word skill and a 1,967-word walk draft); on the ghi-write candidate defect
 list, medium found 42% of the rows against 19% at low, and medium and high hit
 the same rows. It is the one cold-read-tier this launcher pins. The `deep` and
-`second` cold-read-tiers stay on the Claude and Codex launchers, and this
+`second-strongest-model` (the agent-binary's second-strongest model)
+cold-read-tiers stay on the Claude and Codex launchers, and this
 launcher refuses them (exit 64 from argparse) rather than running a Gemini
 model under a stamp that names a cold-read-tier the roster never measured it on.
 
@@ -122,7 +123,9 @@ TIER_TO_REASONING_EFFORT = {
     "fast": "medium",
 }
 
-AGY_PRINT_TIMEOUT = "30m"
+# The fast read on the Mac sizes its ssh time limit from this number.
+COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 30 * 60
+AGY_PRINT_TIMEOUT = f"{COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS // 60}m"
 
 # Exclude brief acknowledgements from stdout report recovery.
 STDOUT_REVIEW_MINIMUM_WORDS = 120
