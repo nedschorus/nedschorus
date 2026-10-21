@@ -136,6 +136,16 @@ inside the sandbox, such as one a suite of this program starts, does not
 start another: bwrap cannot start inside bwrap, and its suites are already
 confined. The suites listed in SUITES_RUN_WITHOUT_ANY_SANDBOX cannot
 work inside it and run unconfined, each named in the report with the reason.
+Three dicts say which sandbox a suite gets, each mapping a suite's path to the
+reason it gets that sandbox: SUITES_RUN_WITHOUT_ANY_SANDBOX,
+SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY (suites
+whose sandbox gets a writable copy-on-write overlay of the repository's git
+directory) and SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK (suites
+whose sandbox keeps the machine's network). The three are read from the
+scripts/run-all-test-suites.py of the checkout whose suites the run tests,
+parsed and never run, and from this file only when that checkout has none;
+the report names the file. A run refuses, exit 2, when that file does not
+assign each of the three a literal dict.
 A suite bwrap reports as exiting 128+N is reported as killed by signal N;
 sandbox-exec replaces itself with the suite, so a suite's exit passes through.
 
@@ -545,6 +555,7 @@ holds the lock, where a lock is taken.
 """
 
 import argparse
+import ast
 import codecs
 import collections
 import concurrent.futures
@@ -730,6 +741,16 @@ SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY = {
 # other suite's test sandbox has a network of its own with only loopback, so no
 # suite reaches a port or an abstract Unix socket (such as the X server's) outside it.
 SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK = {}
+
+# A run uses the checkout under test's own copies of these lists, not the ones above,
+# whenever the checkout has a scripts/run-all-test-suites.py.
+SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST = (
+    "SUITES_RUN_WITHOUT_ANY_SANDBOX",
+    "SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY",
+    "SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK")
+SUITE_SANDBOX_LISTS_SOURCE_LINE_PREFIX = "which sandbox each suite runs in, from the lists in "
+SUITE_SANDBOX_LISTS_OF_THIS_PROGRAM = {
+    name: dict(globals()[name]) for name in SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST}
 
 # Admission, shared by every run on this machine: a suite starts only while the
 # machine has room for it. The run records the machine's readings every second
@@ -1140,6 +1161,55 @@ def checkout_top_directory(given):
             f"{PROGRAM}: not run — {given} is not the top directory of its checkout.\n"
             f"Pass --checkout {top}")
     return top
+
+
+def suite_sandbox_lists_read_from_checkout_under_test(top):
+    """Return ({list name: {suite: reason}}, the file they came from) for the checkout under test.
+
+    The lists name the checkout's suites by path, so they come from the checkout's own copy
+    of this program: a pull request head test run runs main's runner on the merged tree, and
+    a pull request that renames a listed suite renames its entry too. That copy is parsed,
+    never run, so none of the checkout's code runs in this program. A checkout without the
+    file, such as a test's scratch checkout, gets this program's own lists."""
+    source_file = top / "scripts" / "run-all-test-suites.py"
+    try:
+        source = source_file.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        own = {name: dict(entries) for name, entries in SUITE_SANDBOX_LISTS_OF_THIS_PROGRAM.items()}
+        return own, (f"{Path(__file__).resolve()}, since the checkout has no "
+                     f"{source_file.relative_to(top)}")
+    except (OSError, UnicodeDecodeError) as error:
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — {source_file} could not be read "
+            f"({type(error).__name__}: {error}), so which sandbox each suite runs in is unknown.\n"
+            f"Fix what {error} names, then rerun the command you ran.")
+    try:
+        tree = ast.parse(source, filename=str(source_file))
+    except (SyntaxError, ValueError) as error:
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — {source_file} is not valid Python ({error}), so which "
+            f"sandbox each suite runs in is unknown.\n"
+            f"Correct the syntax error in {source_file}, which belongs to the checkout whose suites "
+            f"this run tests, then rerun the command you ran.")
+    found = {}
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id in SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST):
+            try:
+                found[node.targets[0].id] = ast.literal_eval(node.value)
+            except (ValueError, TypeError, SyntaxError, RecursionError):
+                found[node.targets[0].id] = None
+    unreadable = [name for name in SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST
+                  if not isinstance(found.get(name), dict)]
+    if unreadable:
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — {source_file} does not assign "
+            f"{', '.join(unreadable)} a literal dict of suite path to reason at its top "
+            f"level, so which sandbox each suite runs in is unknown.\n"
+            f"In {source_file}, assign each of {', '.join(unreadable)} once, at the top level, "
+            f"a dict written out literally, then rerun the command you ran.")
+    return found, str(source_file)
 
 
 def suites_listed_by_git(top):
@@ -3447,9 +3517,12 @@ def main(argv=None, platform=None):
         # and the commit this run reports is read under the lock too.
         try:
             suites = suites_listed_by_git(top)
+            sandbox_lists, sandbox_lists_source = (
+                suite_sandbox_lists_read_from_checkout_under_test(top))
         except CouldNotRun as refusal:
             print(refusal, file=sys.stderr)
             return EXIT_COULD_NOT_RUN
+        globals().update(sandbox_lists)
         if arguments.log_dir:
             log_dir = Path(arguments.log_dir).resolve()
             log_dir.mkdir(parents=True, exist_ok=True)
@@ -3514,6 +3587,7 @@ def main(argv=None, platform=None):
                     + (f" and {STRACE_INPUT_RECORDER_METHOD} ({strace})" if strace else "")
                     + f", kept in {recordings_dir}")
         report.line(signal_sandbox_line(sandbox_prefix, unconfined_because))
+        report.line(f"{SUITE_SANDBOX_LISTS_SOURCE_LINE_PREFIX}{sandbox_lists_source}")
         if lock_handle is not None and arguments.wait_for_lock_seconds > 0:
             report.line(f"{MACHINE_LOCK_WAITED_LINE_PREFIX}{seconds_waiting_for_lock:.0f}")
         if sandbox_prefix:

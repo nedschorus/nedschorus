@@ -356,6 +356,85 @@ if linux_only_cases_run_here("the report's sandbox lines"):
               f"{OUTSIDE_SUITE} runs WITHOUT the signal sandbox: "
               f"{runner.SUITES_RUN_WITHOUT_ANY_SANDBOX[OUTSIDE_SUITE]}" in report,
               report[-600:])
+        check("a checkout without scripts/run-all-test-suites.py gets the runner's own "
+              "suite sandbox lists, and the report says so",
+              f"{runner.SUITE_SANDBOX_LISTS_SOURCE_LINE_PREFIX}{RUNNER_PATH}, since the "
+              f"checkout has no scripts/run-all-test-suites.py" in report, report[-600:])
+
+        # A pull request renames a suite that runs without any sandbox, and its entry in the
+        # list with it; the runner that tests the merged tree is main's, which lists the old path.
+        renamed = "scripts/renamed-by-the-pull-request-test.py"
+        marking_bin = scratch / "marking-bin"
+        marking_bin.mkdir()
+        (marking_bin / "bwrap").write_text(
+            (fake_bin / "bwrap").read_text().replace(
+                'exec "$@"\n', 'export RAN_UNDER_THE_STAND_IN_BWRAP=1\nexec "$@"\n'))
+        (marking_bin / "bwrap").chmod(0o755)
+        renaming = scratch / "renaming"
+        renaming.mkdir()
+        repository = scratch_checkout(renaming, ["a-test.py", renamed])
+        (repository / renamed).write_text(
+            "import os, sys\n"
+            "sys.exit('ran under bwrap' if os.environ.get('RAN_UNDER_THE_STAND_IN_BWRAP') "
+            "else 0)\n")
+        (repository / "scripts" / "run-all-test-suites.py").write_text(
+            RUNNER_PATH.read_text().replace(OUTSIDE_SUITE, renamed))
+        subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(repository), "-c", "user.name=t", "-c",
+                        "user.email=t@t", "commit", "-qm", "the rename"], check=True)
+        completed, report = run_runner(
+            renaming, repository, f"{marking_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+        check("a suite the checkout's own scripts/run-all-test-suites.py lists to run without "
+              "any sandbox, under a path the runner's own list lacks, runs without it, and "
+              "the report says so and names that file as the lists' source",
+              completed.returncode == 0
+              and f"{renamed} runs WITHOUT the signal sandbox: " in report
+              and (f"{runner.SUITE_SANDBOX_LISTS_SOURCE_LINE_PREFIX}"
+                   f"{repository / 'scripts' / 'run-all-test-suites.py'}\n") in report,
+              (completed.returncode, completed.stderr[-600:], report[-1200:]))
+
+        # Each way the checkout's lists cannot be read refuses the run, exit 2.
+        lists_unreadable_cases = (
+            ("is a directory", None, "could not be read (IsADirectoryError"),
+            ("is not valid Python", "SUITES_RUN_WITHOUT_ANY_SANDBOX = {\n",
+             "is not valid Python"),
+            ("lacks one list", "SUITES_RUN_WITHOUT_ANY_SANDBOX = {}\n"
+             "SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK = {}\n",
+             "does not assign "
+             "SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY a literal"),
+            ("builds a list by a call", "SUITES_RUN_WITHOUT_ANY_SANDBOX = dict(a='b')\n"
+             "SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY = {}\n"
+             "SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK = {}\n",
+             "does not assign SUITES_RUN_WITHOUT_ANY_SANDBOX a literal"),
+            ("assigns a list that is not a dict", "SUITES_RUN_WITHOUT_ANY_SANDBOX = ['a-test.py']\n"
+             "SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY = {}\n"
+             "SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK = {}\n",
+             "does not assign SUITES_RUN_WITHOUT_ANY_SANDBOX a literal"),
+        )
+        for number, (how, source, refusal) in enumerate(lists_unreadable_cases):
+            case_scratch = scratch / f"unreadable-{number}"
+            case_scratch.mkdir()
+            repository = scratch_checkout(case_scratch, ["a-test.py"])
+            lists_file = repository / "scripts" / "run-all-test-suites.py"
+            lists_file.parent.mkdir(exist_ok=True)
+            if source is None:
+                lists_file.mkdir()
+                (lists_file / "kept-test.txt").write_text("so git keeps the directory\n")
+            else:
+                lists_file.write_text(source)
+            subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
+            subprocess.run(["git", "-C", str(repository), "-c", "user.name=t", "-c",
+                            "user.email=t@t", "commit", "-qm", how], check=True)
+            completed, report = run_runner(
+                case_scratch, repository, f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+            check(f"when the checkout's scripts/run-all-test-suites.py {how}, the run refuses "
+                  f"with exit 2, names the file, says to rerun the command, and runs no suite",
+                  completed.returncode == runner.EXIT_COULD_NOT_RUN
+                  and f"not run — {lists_file} " in completed.stderr
+                  and refusal in completed.stderr
+                  and "rerun the command you ran." in completed.stderr
+                  and not (case_scratch / "logs" / "a-test.py.log").exists(),
+                  (completed.returncode, completed.stderr[-600:]))
 
 # --- The mutation script's test command --------------------------------------
 

@@ -84,6 +84,7 @@ PULL_REQUEST_HEAD_TEST_RUN_LOGS_DIRECTORY_NAME = "logs"
 PULL_REQUEST_HEAD_TEST_RUN_RECORD_LOCAL_COPY_FILE_NAME = "pull-request-head-test-run-record.txt"
 
 # Use the runner beside this program so a pull request cannot pass itself by modifying its runner.
+# The runner reads only its suite sandbox lists from the checkout under test.
 PULL_REQUEST_HEAD_TEST_RUN_RUNNER_BESIDE_THIS_FILE = Path(__file__).resolve().with_name(
     "run-all-test-suites.py")
 
