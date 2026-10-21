@@ -104,7 +104,7 @@ THE FIFTH ACCEPTED SHAPE, the Mac's agent-seat task lists, read:
 - The Mac's task store, TASK_STORE_UNDER_HOME under its home, must be a
   directory; a missing store is refused with EXIT_NO_TASK_STORE.
 - tar archives the store to standard output, which carries the archive and
-  nothing else, so ned-box's scripts/seat-task-list-read.py can unpack it as
+  nothing else, so ned-box's scripts/seat-task-list-read-nbd.py can unpack it as
   it unpacks ned-box's own. Every message goes to standard error.
   COPYFILE_DISABLE keeps the Mac's tar from adding `._` extended-attribute
   files, which the reader would take for task files.
@@ -396,7 +396,7 @@ def agent_seat_task_lists_read(request):
         log_error = append_to_request_log("refused", request)
         print(f"{PROGRAM}: the task lists were not sent, because {AGENT_SEAT_TASK_LISTS_READ_VERB} takes no words after it.",
               file=sys.stderr)
-        print(f"Send the request {AGENT_SEAT_TASK_LISTS_READ_VERB} alone; on ned-box, scripts/seat-task-list-read.py sends it.",
+        print(f"Send the request {AGENT_SEAT_TASK_LISTS_READ_VERB} alone; on ned-box, scripts/seat-task-list-read-nbd.py sends it.",
               file=sys.stderr)
         if log_error:
             print(f"The refusal could not be added to the request log {REQUEST_LOG_PATH} either: {log_error}", file=sys.stderr)
