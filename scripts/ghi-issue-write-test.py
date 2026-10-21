@@ -92,6 +92,7 @@ hash and exiting 0.
 """
 
 import contextlib
+import importlib.util
 import io
 import json
 import os
@@ -103,6 +104,12 @@ from pathlib import Path
 # On macOS the temporary directory is reached through a link (/var is /private/var),
 # and the programs under test print resolved paths, so every scratch path is built resolved.
 tempfile.tempdir = os.path.realpath(tempfile.gettempdir())
+
+_defect_line_reader_spec = importlib.util.spec_from_file_location(
+    "pull_request_description_defect_line_hashtags_reader_common",
+    Path(__file__).resolve().with_name("pull-request-description-defect-line-hashtags-reader-common.py"))
+defect_line_reader = importlib.util.module_from_spec(_defect_line_reader_spec)
+_defect_line_reader_spec.loader.exec_module(defect_line_reader)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 TOOL = __import__("importlib").import_module("importlib.util")
@@ -4906,11 +4913,6 @@ def run_push_time_limit_cases(scratch: Path):
 def run_pull_request_description_cases(directory):
     """Both pull requests this tool opens carry a line scripts/merge-gate.sh
     accepts, so the gate does not refuse every GHI-MD pull request."""
-    import re
-    # The gate's jq test, line for line, applied to each line of the body.
-    gate_line = re.compile(
-        r"^\s*(?:[-*+]\s+)?(?:\*\*|__)?(?:#(?:root_cause(?:_not_fixed)?|no_defect_fixed)(?!\w)"
-        r"|Root cause(?: not fixed)?(?:\*\*|__)?:|No defect fixed(?:\*\*|__)?\.)")
     for name, function in (
             ("create", tool.create_pull_request_for_branch),
             ("edit", tool.create_pull_request_for_edit_branch)):
@@ -4923,7 +4925,7 @@ def run_pull_request_description_cases(directory):
         function("x/y", "branch", 7, "Title", directory, runner, lambda line: None)
         body = calls[0][calls[0].index("--body") + 1] if calls else ""
         check(f"the {name} pull request's description carries a line the merge gate accepts",
-              any(gate_line.match(line) for line in body.splitlines()), repr(body))
+              bool(defect_line_reader.pull_request_description_defect_lines(body)), repr(body))
         check(f"the {name} pull request's description says it fixes no defect in the hashtag form",
               "#no_defect_fixed" in body.splitlines(), repr(body))
 

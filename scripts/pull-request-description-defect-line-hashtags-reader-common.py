@@ -79,8 +79,6 @@ def pull_request_description_defect_lines(description):
     kind is ROOT_CAUSE, ROOT_CAUSE_NOT_FIXED or NO_DEFECT_FIXED; line is the whole
     line without its carriage return; link is follow_up_link(line) on a not-fixed
     line and None on the others."""
-    if not isinstance(description, str):
-        raise TypeError(f"a pull request description is text, not {type(description).__name__}")
     found = []
     for line in description.split("\n"):
         line = line.removesuffix("\r")
@@ -100,7 +98,8 @@ def main():
         description = sys.stdin.buffer.read().decode("utf-8")
     except UnicodeDecodeError as error:
         print(f"pull-request-description-defect-line-hashtags-reader-common: the description on "
-              f"stdin is not UTF-8 text: {error}", file=sys.stderr)
+              f"stdin is not UTF-8 text ({error}); reading it again gives the same error, so the "
+              f"pull request's author must rewrite the description.", file=sys.stderr)
         return 2
     print(json.dumps(pull_request_description_defect_lines(description)))
     return 0

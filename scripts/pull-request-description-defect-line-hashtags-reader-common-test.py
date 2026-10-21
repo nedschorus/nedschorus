@@ -73,14 +73,6 @@ def case_follow_up_on_a_root_cause_line_not_read(reader, _path):
                       "link": None}], f"read {found!r}"
 
 
-def case_description_that_is_not_text_refused(reader, _path):
-    try:
-        reader.pull_request_description_defect_lines(None)
-    except TypeError as error:
-        return "not NoneType" in str(error), f"raised {error!r}"
-    return False, "no TypeError was raised for None"
-
-
 def run_command(path, stdin_bytes):
     return subprocess.run([sys.executable, str(path)], input=stdin_bytes, capture_output=True,
                           timeout=60)
@@ -151,7 +143,6 @@ CASES = [
     ("each line kept whole, bullet and bold included, without its carriage return",
      case_line_kept_whole_without_its_carriage_return),
     ("a #follow_up link on a #root_cause line is not read", case_follow_up_on_a_root_cause_line_not_read),
-    ("a description that is not text is refused with TypeError", case_description_that_is_not_text_refused),
     ("the command prints the lines as JSON", case_command_prints_the_lines_as_json),
     ("the command prints [] for a description with no defect line", case_command_prints_an_empty_list_for_no_lines),
     ("the command exits 2 on a description that is not UTF-8", case_command_refuses_a_description_that_is_not_utf8),
@@ -220,9 +211,6 @@ MUTATIONS = [
      [case_no_defect_fixed_label]),
     ("the carriage return kept on the line", [('line = line.removesuffix("\\r")', "line = line")],
      [case_line_kept_whole_without_its_carriage_return]),
-    ("a description that is not text read anyway",
-     [("    if not isinstance(description, str):", "    if False:")],
-     [case_description_that_is_not_text_refused]),
     ("the #follow_up link read on every kind of line",
      [("if kind == ROOT_CAUSE_NOT_FIXED else None", "")], [case_follow_up_on_a_root_cause_line_not_read]),
     ("a link anywhere on the line read as the #follow_up link",

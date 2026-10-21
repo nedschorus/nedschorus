@@ -1445,9 +1445,12 @@ def case_description_reader_fails(gate):
     return could_not_run_after_gh(
         run, BASE_PR,
         f"GATE COULD NOT RUN: could not read the defect lines of pull request {BASE_PR}'s description "
-        f"with {reader}; any error python3 printed is just above this line.\n",
-        "\nRun the gate again once; if it fails the same way, tell the user this message and "
-        "python3's error.\n"), run.summary()
+        f"with {reader}; the reader's error, if it printed one, is just above this line.\n",
+        "\nIf that error says the description is not UTF-8 text, running the gate again on the same "
+        "description cannot help: ask the pull request's author to rewrite the description, then run "
+        "the gate again.\n"
+        "Otherwise run the gate again once; if it stops again with GATE COULD NOT RUN, tell the user "
+        "everything the gate printed.\n"), run.summary()
 
 
 def case_description_unparsable(gate):
@@ -1718,7 +1721,7 @@ MUTATIONS = [
      [case_e2_head_moved]),
     ("without the pin-is-head check", [('[ "$approved_sha" = "$head" ] ||', "true ||")],
      [case_e3_approval_covers_another_commit]),
-    ("without the description check", [('[ "$defect_line_count" -gt 0 ] ||', "true ||")],
+    ("without the description check", [('[ "$defect_lines" != "[]" ] ||', "true ||")],
      [case_description_without_a_label]),
     ("without the description reader's check",
      [('[ $? -eq 0 ] || cannot "could not read the defect lines',
@@ -1763,9 +1766,13 @@ MUTATIONS = [
     ("without the not-fixed lines' parse checks",
      [('|| cannot "$DESCRIPTION_UNPARSABLE"', '|| : "$DESCRIPTION_UNPARSABLE"')],
      [case_not_fixed_line_read_fails]),
+    ("without the not-fixed count check",
+     [('not_fixed_count=$(jq length <<<"$not_fixed")                    || cannot',
+       'not_fixed_count=$(jq length <<<"$not_fixed")                    || true || cannot')],
+     [case_not_fixed_line_read_fails]),
     ("without the description parse check",
-     [('[ $? -eq 0 ] || cannot "could not parse pull request $PR\'s description',
-       ': || cannot "could not parse pull request $PR\'s description')],
+     [('<<<"$body_read")\n[ $? -eq 0 ] || cannot "$DESCRIPTION_UNPARSABLE"',
+       '<<<"$body_read")\n: || cannot "$DESCRIPTION_UNPARSABLE"')],
      [case_description_unparsable]),
 ]
 
