@@ -416,9 +416,9 @@ def deny(reason):
 
 
 PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
-    "Look at the files the command's file patterns match. If one of them names a file whose "
-    "name starts with -, the search read that name as an option, so run the search again with "
-    "-- before the file names; if none does, the search ran as written.")
+    "Look at the files the command's file patterns match. If any file those patterns match has "
+    "a name that starts with -, the search read that name as an option, so run the search again "
+    "with -- before the file names; if none does, the search ran as written.")
 
 
 def main(stdin=sys.stdin, clock=time.monotonic):
