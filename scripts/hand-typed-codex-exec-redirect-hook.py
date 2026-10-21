@@ -190,10 +190,8 @@ def deny(reason):
 
 
 PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
-    "If the command started codex exec, check whether it is still running with: "
-    "pgrep -af 'codex exec'\n"
-    "If it is, stop it, and run the task again with python3 scripts/run-codex-task-from-brief.py, "
-    "which reads the prompt from a brief file; run it with --help for its options.\n"
+    f"If the command started codex exec and it is still running, stop it, and run the task "
+    f"with python3 {RUNNER_PATH} instead; run that with --help for its options.\n"
     "If it has already finished, use its output as it is.")
 
 
