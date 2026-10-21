@@ -29,6 +29,8 @@ from __future__ import annotations
 import codecs
 import os
 import subprocess
+import sys
+import types
 from typing import NamedTuple
 
 GIT_TIMEOUT_SECONDS = 60
@@ -50,6 +52,21 @@ class GitCommandFailed(Exception):
         else:
             outcome = f"exit {returncode}: {stderr.strip() or 'no error text'}"
         super().__init__(f"git {' '.join(self.arguments)} in {self.directory} failed ({outcome})")
+
+
+# Programs load this file by path, each copy a module object of its own, and
+# one program can reach two copies through the modules it loads. Each copy
+# would define its own GitCommandFailed, and an except naming one copy's class
+# misses an error raised through another. The first copy in a process registers
+# its class here, and every later copy uses that class.
+_FIRST_LOADED_COPY_CLASSES_MODULE_NAME = (
+    "git_machine_readable_output_runner_and_parser_common_first_loaded_copy_classes")
+_first_loaded_copy_classes = sys.modules.get(_FIRST_LOADED_COPY_CLASSES_MODULE_NAME)
+if _first_loaded_copy_classes is None:
+    _first_loaded_copy_classes = types.ModuleType(_FIRST_LOADED_COPY_CLASSES_MODULE_NAME)
+    _first_loaded_copy_classes.GitCommandFailed = GitCommandFailed
+    sys.modules[_FIRST_LOADED_COPY_CLASSES_MODULE_NAME] = _first_loaded_copy_classes
+GitCommandFailed = _first_loaded_copy_classes.GitCommandFailed
 
 
 class GitStatusEntry(NamedTuple):
