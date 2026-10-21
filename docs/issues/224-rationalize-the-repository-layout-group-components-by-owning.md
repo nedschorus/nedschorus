@@ -81,7 +81,7 @@ From the walk ghi-224-migration-order-and-open-questions-2026-09-30, minutes at 
 
 From the walk nedschorus-file-naming-and-location-standards-2026-09-30, follow-up on item 4, minutes at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/nedschorus-file-naming-and-location-standards-2026-09-30-minutes.md`. The user asked: "I'm thinking that if these hooks are all guards the directory should be guard-hooks, but only if there are other kinds of hooks. Are there?" There are, and he answered the recommendation with "approved".
 
-- **`.claude/hooks/` is renamed `.claude/guard-hooks/` and holds all six guards**, the hooks that refuse an action before it happens, the ghi-issue redirect among them. Every other hook lives in its own system's directory, or in `nc-systems/general-tools/` when it belongs to no system. The rename is a pull request of its own in this migration, which also rewrites the file-naming page's Hook row (MD-skills task #135). Which hooks are guards is rechecked against `.claude/settings.json` when it is built.
+- **`.claude/hooks/` is renamed `.claude/guard-hooks/` and holds all six guards**, the hooks that refuse an action before it happens, the ghi-issue redirect among them. Every other hook lives in its own system's directory, or in `nc-systems/general-tools/` when it belongs to no system. The rename is a pull request of its own in this migration, which also rewrites the file-naming page's Hook row (MD-skills task #135). Which hooks are guards is rechecked against `.claude/settings.json` when it is built. Its place in item 8's order is not set yet.
 
 ## Next action
 
