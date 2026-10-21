@@ -110,8 +110,8 @@ GIT_MODULE_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
 STOP_HOOKS_STAY_SILENT_RULE_FILE = (
     REPOSITORY_TOP / "nc-systems" / "general-tools"
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
-# The hard-wrap hook already installs the pinned markdown-it-py when it is missing; its parser is reused.
-MARKDOWN_PARSER_MODULE_FILE = REPOSITORY_TOP / "scripts" / "markdown-edit-hard-wrapped-paragraph-reminder-hook.py"
+MARKDOWN_PARSER_MODULE_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
+                               / "markdown-commonmark-parser-install-if-missing-common.py")
 CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 WALK_DIRECTORY = Path("docs") / "walk"
 MINUTES_SUFFIX = "-minutes.md"
@@ -285,7 +285,7 @@ def checkout_top(directory):
 
 
 def markdown_parser():
-    return load_module("markdown_edit_hard_wrapped_paragraph_reminder_hook",
+    return load_module("markdown_commonmark_parser_install_if_missing_common",
                        MARKDOWN_PARSER_MODULE_FILE).markdown_parser()
 
 

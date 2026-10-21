@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Tests for markdown-edit-hard-wrapped-paragraph-reminder-hook.py.
+"""Tests for markdown-edit-hard-wrapped-paragraph-reminder-hook-nbd.py.
 
-Run: python3 scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-test.py
+Run: python3 scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-nbd-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 The detector's cases call markdown_has_hard_wrapped_paragraph directly. The
 detector needs markdown-it-py; without it the suite fails, naming the command that
-installs the pinned file. Cases with a test-double importer and installer check
-that a missing markdown-it-py is installed through the shared install module, and
-one case checks that the hook reports a failed install as a non-blocking error. The hook's
+installs the pinned file. The shared Markdown parser module's own suite checks
+that a missing markdown-it-py is installed; here one case checks that the hook reports a failed install as a non-blocking error. The hook's
 cases run the hook as Claude Code does, as a subprocess reading a PostToolUse
 payload on stdin, against a throwaway repository under a temporary directory
 with a .gitignore that ignores one directory.
@@ -37,7 +36,7 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
-HOOK_PATH = Path(__file__).with_name("markdown-edit-hard-wrapped-paragraph-reminder-hook.py")
+HOOK_PATH = Path(__file__).with_name("markdown-edit-hard-wrapped-paragraph-reminder-hook-nbd.py")
 
 CLEAN_ENVIRONMENT = {name: value for name, value in os.environ.items()
                      if name not in _git_environment_fixture.GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
@@ -54,9 +53,10 @@ def check(case_name, condition, detail=""):
 
 
 specification = importlib.util.spec_from_file_location(
-    "markdown_edit_hard_wrapped_paragraph_reminder_hook", str(HOOK_PATH))
+    "markdown_edit_hard_wrapped_paragraph_reminder_hook_nbd", str(HOOK_PATH))
 hook = importlib.util.module_from_spec(specification)
 specification.loader.exec_module(hook)
+parser_common = hook.markdown_commonmark_parser_install_if_missing_common()
 
 # ---------------------------------------------------------------------------
 # The detector, called directly.
@@ -155,118 +155,27 @@ PARSER_INSTALL_COMMAND = ("python3 -m pip install --user --break-system-packages
 check("markdown-it-py is installed, so the reminder works on this machine",
       PARSER_AVAILABLE, f"install it with: {PARSER_INSTALL_COMMAND}")
 
-# A missing markdown-it-py is installed through the shared install module, in a scratch state
-# directory; the importer and the installer are test doubles, so nothing is installed.
-real_install_state_directory = hook.INSTALL_STATE_DIRECTORY
-with tempfile.TemporaryDirectory() as install_scratch:
-    hook.INSTALL_STATE_DIRECTORY = Path(install_scratch) / "install-state"
-    install_state = {"installs": 0}
+# The hook's message for a failed install of markdown-it-py.
+raised = parser_common.MarkdownParserMissing("pip: network is unreachable")
+message = hook.parser_missing_message(raised, "Neds-MacBook-Pro") if raised else ""
+check("the failed-install message names the machine, the by-hand install of the pinned file "
+      "for this interpreter, and what the install printed",
+      "markdown-it-py is missing on Neds-MacBook-Pro and installing it failed" in message
+      and f"{sys.executable} -m pip install --user --break-system-packages -r " in message
+      and "python-libraries-pinned-requirements.txt" in message
+      and message.endswith("quoted as it is: pip: network is unreachable"), message)
+message = hook.parser_missing_message(parser_common.MarkdownParserMissing("x"), "ned-box")
+check("for ned-box, the by-hand command is the ssh form the user runs from the Mac",
+      "run this command in a Terminal on your Mac:" in message
+      and f"\nssh nedlern@ned-box '{sys.executable} -m pip install" in message, message)
 
-    class FakeMarkdownIt:
-        def __init__(self, preset):
-            self.preset = preset
-
-        def enable(self, rule):
-            return (self.preset, rule)
-
-    def importer_after_install():
-        if not install_state["installs"]:
-            raise ImportError("No module named 'markdown_it'")
-        return FakeMarkdownIt
-
-    def counting_installer():
-        install_state["installs"] += 1
-        return "Successfully installed markdown-it-py-3.0.0"
-    parser_built = hook.markdown_parser(importer_after_install, counting_installer, lambda: 1000.0)
-    check("a missing markdown-it-py is installed once, then the parser is built",
-          install_state["installs"] == 1 and parser_built == ("commonmark", "table"),
-          (install_state, parser_built))
-
-    def importer_never():
-        raise ImportError("No module named 'markdown_it'")
-
-    def failing_installer():
-        raise hook.python_libraries_pinned_requirements_install_if_missing_then_import_common().PythonLibrariesPinnedRequirementsInstallOrImportFailed(
-            "pip: network is unreachable")
-    try:
-        hook.markdown_parser(importer_never, failing_installer, lambda: 2000.0)
-        raised = None
-    except hook.MarkdownParserMissing as error:
-        raised = error
-    check("a failed install raises MarkdownParserMissing with what the install printed",
-          raised is not None and "network is unreachable" in raised.install_output, raised)
-    message = hook.parser_missing_message(raised, "Neds-MacBook-Pro") if raised else ""
-    check("the failed-install message names the machine, the by-hand install of the pinned file "
-          "for this interpreter, and what the install printed",
-          "markdown-it-py is missing on Neds-MacBook-Pro and installing it failed" in message
-          and f"{sys.executable} -m pip install --user --break-system-packages -r " in message
-          and "python-libraries-pinned-requirements.txt" in message
-          and message.endswith("quoted as it is: pip: network is unreachable"), message)
-    message = hook.parser_missing_message(hook.MarkdownParserMissing("x"), "ned-box")
-    check("for ned-box, the by-hand command is the ssh form the user runs from the Mac",
-          "run this command in a Terminal on your Mac:" in message
-          and f"\nssh nedlern@ned-box '{sys.executable} -m pip install" in message, message)
-
-    message = hook.parser_missing_message(hook.MarkdownParserMissing("nothing was installed"),
-                                          "Neds-MacBook-Pro", (3, 9, 6))
-    check("below Python 3.11 the message gives no pip command, and says how to put a newer Python "
-          "first on the PATH",
-          "pip" not in message.split("Then pass on")[0] and "Python 3.9.6" in message
-          and "Homebrew" in message and "next run" in message
-          and message.endswith("quoted as it is: nothing was installed"), message)
-
-    def recording_runner(command, **kwargs):
-        recording_runner.kwargs = kwargs
-        return subprocess.CompletedProcess(command, 0, "", "")
-    hook._install_pinned_python_libraries(recording_runner)
-    check("the install gives pip the hook's install timeout",
-          recording_runner.kwargs.get("timeout") == hook.INSTALL_TIMEOUT_SECONDS,
-          recording_runner.kwargs)
-
-    # A newer markdown-it-py whose dependency is missing fails partway through its import and
-    # leaves its submodules, and the newer mdurl it loaded first, loaded; the pinned copies
-    # installed next must not be mixed with them.
-    newer_site = Path(install_scratch) / "newer-site"
-    pinned_site = Path(install_scratch) / "pinned-site"
-    for site_directory, version, init_source in (
-            (newer_site, "newer", "from markdown_it.helper import version\n"
-                                  "import mdurl\n"
-                                  "import mdurl_missing_for_this_test\n"),
-            (pinned_site, "pinned", "from markdown_it.helper import version\n"
-                                    "import mdurl\n"
-                                    "class MarkdownIt:\n"
-                                    "    def __init__(self, preset):\n"
-                                    "        self.preset = preset\n"
-                                    "    def enable(self, rule):\n"
-                                    "        return version + '/' + mdurl.version\n")):
-        (site_directory / "markdown_it").mkdir(parents=True)
-        (site_directory / "mdurl").mkdir(parents=True)
-        (site_directory / "mdurl" / "__init__.py").write_text(f"version = {version!r}\n",
-                                                              encoding="utf-8")
-        (site_directory / "markdown_it" / "__init__.py").write_text(init_source, encoding="utf-8")
-        (site_directory / "markdown_it" / "helper.py").write_text(f"version = {version!r}\n",
-                                                                  encoding="utf-8")
-    half_import_code = (
-        "import importlib.util, sys\n"
-        "from pathlib import Path\n"
-        "hook_path, newer, pinned, state = sys.argv[1:5]\n"
-        "sys.path.insert(0, newer)\n"
-        "spec = importlib.util.spec_from_file_location('hook', hook_path)\n"
-        "hook = importlib.util.module_from_spec(spec); spec.loader.exec_module(hook)\n"
-        "hook.INSTALL_STATE_DIRECTORY = Path(state)\n"
-        "def installer():\n"
-        "    sys.path.remove(newer); sys.path.insert(0, pinned)\n"
-        "    return 'installed'\n"
-        "print(hook.markdown_parser(installer=installer, clock=lambda: 1000.0))\n")
-    half_import = subprocess.run(
-        [sys.executable, "-I", "-c", half_import_code, specification.origin, str(newer_site),
-         str(pinned_site), str(Path(install_scratch) / "half-import-state")],
-        capture_output=True, text=True, timeout=60)
-    check("after a newer markdown-it-py failed partway through its import, the parser is built "
-          "from the installed markdown-it-py and mdurl alone",
-          half_import.returncode == 0 and half_import.stdout.strip() == "pinned/pinned",
-          (half_import.returncode, half_import.stdout, half_import.stderr[-400:]))
-hook.INSTALL_STATE_DIRECTORY = real_install_state_directory
+message = hook.parser_missing_message(parser_common.MarkdownParserMissing("nothing was installed"),
+                                      "Neds-MacBook-Pro", (3, 9, 6))
+check("below Python 3.11 the message gives no pip command, and says how to put a newer Python "
+      "first on the PATH",
+      "pip" not in message.split("Then pass on")[0] and "Python 3.9.6" in message
+      and "Homebrew" in message and "next run" in message
+      and message.endswith("quoted as it is: nothing was installed"), message)
 
 if PARSER_AVAILABLE:
     for case_name, text in BROKEN_CASES:
@@ -779,9 +688,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # failed install on stderr with exit 1, a non-blocking error Claude Code shows,
     # and give no reminder.
     blocked_home = tmp / "blocked-home"
-    blocked_state = blocked_home / hook.INSTALL_STATE_DIRECTORY.relative_to(Path.home())
+    blocked_state = blocked_home / parser_common.INSTALL_STATE_DIRECTORY.relative_to(Path.home())
     blocked_state.mkdir(parents=True)
-    (blocked_state / hook.python_libraries_pinned_requirements_install_if_missing_then_import_common().INSTALL_FAILURE_FILE_NAME
+    (blocked_state / parser_common.python_libraries_pinned_requirements_install_if_missing_then_import_common().INSTALL_FAILURE_FILE_NAME
      ).write_text("pip: blocked by the test", encoding="utf-8")
     blocked_packages = tmp / "blocked-packages"
     (blocked_packages / "markdown_it").mkdir(parents=True)
