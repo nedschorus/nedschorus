@@ -406,21 +406,24 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     finally:
         hook_subprocess.run = real_subprocess_run
         sys.stdin = original_stdin
-    check("a git call that times out exits 1 and says so on stderr, not silently 0",
-          timed_out_exit_code == 1 and timed_out_stdout.getvalue() == ""
-          and "did not finish within 10 s" in timed_out_stderr.getvalue(),
-          f"exit {timed_out_exit_code}: {timed_out_stderr.getvalue()!r}")
+    timed_out_result = subprocess.CompletedProcess([], timed_out_exit_code, timed_out_stdout.getvalue(),
+                                                   timed_out_stderr.getvalue())
+    check("a git call that times out exits 0 and tells the agent so in additionalContext, not silence",
+          timed_out_exit_code == 0 and timed_out_stderr.getvalue() == ""
+          and "did not finish within 10 s" in agent_text(timed_out_result),
+          f"exit {timed_out_exit_code}: {timed_out_stdout.getvalue()!r} {timed_out_stderr.getvalue()!r}")
 
     # --- a failing git is reported, never read as an answer --------------
     for failing_subcommand, written in (("rev-parse", colliding), ("check-ignore", colliding),
                                         ("ls-files", fresh)):
         failed = run_hook(hook_payload(repository, written), environment_with_failing_git(
             tmp / f"stand-in-git-{failing_subcommand}", failing_subcommand))
-        failure_lines = failed.stderr.splitlines()
-        check(f"a failing git {failing_subcommand} exits 1 with nothing on stdout",
-              failed.returncode == 1 and failed.stdout == "",
+        failure_lines = agent_text(failed).splitlines()
+        # Claude Code never passes a PostToolUse exit 1's stderr to the model; additionalContext reaches it.
+        check(f"a failing git {failing_subcommand} exits 0 with its report in additionalContext and nothing on stderr",
+              failed.returncode == 0 and failed.stderr == "" and bool(failure_lines),
               f"exit {failed.returncode}, stdout {failed.stdout!r}, stderr {failed.stderr!r}")
-        check(f"a failing git {failing_subcommand}'s first stderr line names the command, "
+        check(f"a failing git {failing_subcommand}'s first additionalContext line names the command, "
               "git's whole error and what was not checked",
               bool(failure_lines) and f"git {failing_subcommand} " in failure_lines[0]
               and f"exit 128: fatal: planted {failing_subcommand} failure second line of the "
@@ -433,11 +436,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                                        f"touched, so check {written} by running the next line's command: if git's "
                                        "error above names a lock file, first wait one minute, and do not delete the "
                                        "lock file; otherwise run the command now. The command prints nothing if the "
-                                       "name is free; if another tracked file has the name, it prints JSON whose "
-                                       "hookSpecificOutput.additionalContext field holds this hook's warning, whose "
-                                       "instructions you follow; if git fails again, it prints a git-failure message "
-                                       "like this one, and the line that opens \"Keep this message\" says what to do "
-                                       "then.")
+                                       "name is free. Otherwise it prints JSON whose hookSpecificOutput."
+                                       "additionalContext field holds one of two texts: when another tracked file has "
+                                       "the name, this hook's warning, whose instructions you follow; or, when git "
+                                       "fails again, a git-failure message like this one, and the line here that "
+                                       "begins \"If a line starting\" says what to do then.")
               and failure_lines[3] == ('If a line starting "file-name-collision-warning:" reports a git failure again '
                                        "when you run that command, whether this error or another, tell the user, or, "
                                        "if you are a subagent, the agent that dispatched you, word for word, every line "
@@ -449,8 +452,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               and rerun_line.find("lock file") < rerun_line.find("run the command now"), repr(rerun_line))
         check(f"a failing git {failing_subcommand}'s rerun line says what the command prints when git fails again "
               "and points to the closing line",
-              "if git fails again, it prints a git-failure message like this one, and the line that opens "
-              "\"Keep this message\" says what to do then." in rerun_line, repr(rerun_line))
+              "or, when git fails again, a git-failure message like this one, and the line here that begins "
+              "\"If a line starting\" says what to do then." in rerun_line, repr(rerun_line))
         # The rerun runs with git working, so the file the failed run skipped is now checked.
         rerun = subprocess.run(failure_lines[2] if len(failure_lines) == 4 else "false",
                                shell=True, capture_output=True, text=True, check=False, cwd=str(tmp))

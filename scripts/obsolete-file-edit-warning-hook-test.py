@@ -123,10 +123,10 @@ GIT_FAILURE_RERUN_LINE = (
     "A later run of this hook checks only the file that run's Edit or Write touched, so check "
     "{path} by running the next line's command: if git's error above names a lock file, first wait "
     "one minute, and do not delete the lock file; otherwise run the command now. The command "
-    "prints nothing when there is nothing new to tell you about the file; when there is, it prints "
-    "JSON whose hookSpecificOutput.additionalContext field holds this hook's warning, whose "
-    "instructions you follow; if git fails again, it prints a git-failure message like this one, "
-    "and the line that opens \"Keep this message\" says what to do then.")
+    "prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
+    "whose hookSpecificOutput.additionalContext field holds one of two texts: this hook's warning, "
+    "whose instructions you follow; or, when git fails again, a git-failure message like this one, "
+    "and the line here that begins \"If a line starting\" says what to do then.")
 GIT_FAILURE_RERUN_FAILS_TOO_LINE = (
     'If a line starting "obsolete-file-edit-warning-hook:" reports a git failure again when you '
     "run that command, whether this error or another, tell the user, or, if you are a subagent, "
@@ -136,18 +136,20 @@ GIT_FAILURE_RERUN_FAILS_TOO_LINE = (
 
 def named_rerun_command(result, edited_path) -> str:
     """The command a git-failure report tells the agent to run on edited_path, or "" when the report names none."""
-    lines = result.stderr.splitlines()
+    lines = agent_text(result).splitlines()
     if len(lines) != 4 or lines[1] != GIT_FAILURE_RERUN_LINE.format(path=edited_path):
         return ""
     return lines[2]
 
 
 def reported_git_failure(result, command_words, git_error, edited_path) -> bool:
-    """A git failure: exit 1, no warning on stdout, a stderr cause line naming the git
-    command and quoting git's error, then a line giving the command that reruns the hook
-    on the edited file and the command itself, then the line for when that rerun fails too."""
-    lines = result.stderr.splitlines()
-    return (result.returncode == 1 and result.stdout == "" and len(lines) == 4
+    """A git failure: exit 0 and nothing on stderr, because Claude Code never passes a
+    PostToolUse exit 1's stderr to the model; in additionalContext, a cause line naming
+    the git command and quoting git's error, then a line giving the command that reruns
+    the hook on the edited file and the command itself, then the line for when that
+    rerun fails too."""
+    lines = agent_text(result).splitlines()
+    return (result.returncode == 0 and result.stderr == "" and len(lines) == 4
             and lines[0].startswith("obsolete-file-edit-warning-hook: git " + command_words)
             and git_error in lines[0]
             and lines[0].endswith(", so the edited file was not checked against "
@@ -548,25 +550,25 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           silent(run_hook(vanished)), "")
 
     # -----------------------------------------------------------------------
-    # GIT ITSELF FAILING is the hook failing: exit 1, the cause on stderr and
-    # what to do next, never the silence that reads as "not obsolete".
+    # GIT ITSELF FAILING: exit 0, the cause and what to do next in additionalContext,
+    # never the silence that reads as "not obsolete".
     # -----------------------------------------------------------------------
     result = run_hook(hook_payload(checkout, edited_file), path_prefix=failing_git_directory)
-    check("a git that fails on every call is reported on stderr, exit 1",
+    check("a git that fails on every call is reported in additionalContext, exit 0",
           reported_git_failure(result, "rev-parse", "fatal: shimmed failing-git", edited_file),
           result.stdout + result.stderr)
-    rerun_line = (result.stderr.splitlines() + ["", ""])[1]
+    rerun_line = (agent_text(result).splitlines() + ["", ""])[1]
     check("a git failure's rerun line gives the lock-file wait before the run-now instruction",
           "names a lock file, first wait one minute" in rerun_line
           and rerun_line.find("lock file") < rerun_line.find("run the command now"), rerun_line)
     check("a git failure's rerun line says what the command prints when git fails again "
           "and points to the closing line",
-          "if git fails again, it prints a git-failure message like this one, and the line that "
-          "opens \"Keep this message\" says what to do then." in rerun_line, rerun_line)
+          "or, when git fails again, a git-failure message like this one, and the line here that "
+          "begins \"If a line starting\" says what to do then." in rerun_line, rerun_line)
 
     result = run_hook(hook_payload(checkout, edited_file),
                       path_replacement=no_git_directory)
-    check("no git on PATH at all is reported on stderr, exit 1",
+    check("no git on PATH at all is reported in additionalContext, exit 0",
           reported_git_failure(result, "rev-parse --show-toplevel", "FileNotFoundError", edited_file),
           result.stdout + result.stderr)
 
@@ -577,7 +579,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook(hook_payload(checkout, edited_file),
                       path_prefix=checkout_facts_failing_git_directory)
     check("a failed rev-parse of the checkout's facts, with HEAD and origin/main present, "
-          "is reported on stderr, exit 1",
+          "is reported in additionalContext, exit 0",
           reported_git_failure(result, "rev-parse --show-toplevel --absolute-git-dir HEAD "
                                "origin/main", "fatal: shimmed checkout-facts-failing-git", edited_file),
           result.stdout + result.stderr)
@@ -603,7 +605,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     call_log.unlink()
     result = run_hook(hook_payload(checkout, edited_file),
                       path_prefix=diff_failing_git_directory)
-    check("a git whose diff fails is reported on stderr with git's error, exit 1",
+    check("a git whose diff fails is reported in additionalContext with git's error, exit 0",
           reported_git_failure(result, "diff -z --name-only --no-renames HEAD...origin/main",
                                "shimmed: this diff fails, every other call does not", edited_file),
           result.stdout + result.stderr)
@@ -617,7 +619,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     result = run_hook(hook_payload(checkout, edited_file),
                       path_prefix=diff_failing_git_directory)
     check("and the NEXT call attempts the diff again rather than trusting a cache",
-          recorded_calls("diff") == 1 and result.returncode == 1,
+          recorded_calls("diff") == 1 and reported_git_failure(
+              result, "diff -z --name-only --no-renames HEAD...origin/main",
+              "shimmed: this diff fails, every other call does not", edited_file),
           call_log.read_text(encoding="utf-8") + result.stdout + result.stderr)
 
     # The skipped file is checked by the command the report names, run once git works again.

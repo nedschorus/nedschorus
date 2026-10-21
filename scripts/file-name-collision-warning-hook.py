@@ -35,10 +35,11 @@ GIT_FAILURE_TEMPLATE = (
     "A later run of this hook checks only the file that run's Write or Edit touched, so check "
     "{path} by running the next line's command: if git's error above names a lock file, first wait "
     "one minute, and do not delete the lock file; otherwise run the command now. The command "
-    "prints nothing if the name is free; if another tracked file has the name, it prints JSON "
-    "whose hookSpecificOutput.additionalContext field holds this hook's warning, whose "
-    "instructions you follow; if git fails again, it prints a git-failure message like this one, "
-    "and the line that opens \"Keep this message\" says what to do then.\n"
+    "prints nothing if the name is free. Otherwise it prints JSON whose "
+    "hookSpecificOutput.additionalContext field holds one of two texts: when another tracked file "
+    "has the name, this hook's warning, whose instructions you follow; or, when git fails again, a "
+    "git-failure message like this one, and the line here that begins \"If a line starting\" says "
+    "what to do then.\n"
     "{rerun}\n"
     + next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
         "when you run that command", "file-name-collision-warning:")
@@ -60,7 +61,7 @@ def git_output(arguments, cwd: Path, accepted_exit_codes=(0,)) -> str:
 
 
 def git_failure_text(failure, path, working_directory) -> str:
-    """Return the stderr text for a git failure; its first line, the one Claude Code shows the user, carries the cause."""
+    """Return the agent's text for a git failure; its first line carries the cause."""
     if failure.returncode is None:
         outcome = failure.stderr
     else:
@@ -176,16 +177,25 @@ def main() -> int:
             return 0
         others = tracked_paths_sharing_name(relative_path, checkout)
     except git_machine_readable_output.GitCommandFailed as failure:
-        print(git_failure_text(failure, file_path, working_directory), file=sys.stderr)
-        return 1
+        print_for_agent(git_failure_text(failure, file_path, working_directory))
+        return 0
     if not others:
         return 0
 
+    print_for_agent(collision_warning_line(relative_path, others))
+    return 0
+
+
+def print_for_agent(text) -> None:
+    """Print text as additionalContext, which the agent reads next when the hook exits 0.
+
+    A git failure takes this channel too: Claude Code records the stderr of a
+    PostToolUse exit 1 in the transcript but never passes it to the model.
+    """
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PostToolUse",
-        "additionalContext": collision_warning_line(relative_path, others),
+        "additionalContext": text,
     }}, ensure_ascii=False))
-    return 0
 
 
 if __name__ == "__main__":
