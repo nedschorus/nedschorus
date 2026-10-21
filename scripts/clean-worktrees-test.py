@@ -514,6 +514,11 @@ with tempfile.TemporaryDirectory() as scratch:
               and "origin/main" in no_main_removal.stderr
               and "clean-worktrees: finished" not in no_main_removal.stdout,
               (no_main_removal.returncode, no_main_removal.stdout, no_main_removal.stderr))
+        check("--remove stopped after the worktrees were handled says it removed only what its "
+              "removed and deleted lines name",
+              'clean-worktrees removed only the worktrees and branches named on its lines containing '
+              '": removed" or ": deleted", and checked nothing after the git command that failed.'
+              in no_main_removal.stderr, no_main_removal.stderr)
 
         # --- Dead registrations are named, with the prune command ------------
         # A worktree registered under a temp directory leaves a dead entry
@@ -967,13 +972,25 @@ with tempfile.TemporaryDirectory() as scratch:
               and failed_listing.stdout == ""
               and stderr_lines[:1] != []
               and stderr_lines[0].startswith("clean-worktrees: stopped, because git worktree list")
-              and LISTING_FAILURE_TEXT in stderr_lines[0],
+              and LISTING_FAILURE_TEXT in stderr_lines[0]
+              and stderr_lines[0].endswith(
+                  'clean-worktrees removed only the worktrees and branches named on its lines '
+                  'containing ": removed" or ": deleted", and checked nothing after the git command '
+                  'that failed.'
+                  if flags == ["--remove"] else
+                  "clean-worktrees removed nothing, since it ran without --remove, and checked "
+                  "nothing after the git command that failed."),
               (failed_listing.returncode, failed_listing.stdout, failed_listing.stderr))
         check(f"a failed worktree listing{' under ' + flags[0] if flags else ''} gives the "
               "shared next steps, naming the command that was run",
               stderr_lines[1:] == [
-                  f"If git's error names a lock file, such as .git/index.lock, wait one minute, "
-                  f"then run exactly {rerun}; do not delete the lock file yourself.",
+                  f"If git's error names a lock file, such as .git/index.lock, do not delete the lock "
+                  f"file yourself, because a git command still running may hold it; wait up to one "
+                  f"minute for git to remove it by running `i=0; while [ -e \"<lock file path>\" ] "
+                  f"&& [ $i -lt 30 ]; do sleep 2; i=$((i+1)); done` with <lock file path> replaced by "
+                  f"the path git's error names, without the quotes git puts around it (Claude Code "
+                  f"refuses a plain `sleep 60`), then run "
+                  f"exactly {rerun}, whether or not the lock file is gone.",
                   f"If git's error names no lock file, run exactly {rerun} once more.",
                   'If the rerun prints a line containing "clean-worktrees: stopped, because" again, '
                   "stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line "

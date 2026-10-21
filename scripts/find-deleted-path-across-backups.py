@@ -2536,9 +2536,12 @@ def main(argv=None, runner=run_command):
         wanted, _ = _repo_relative_form(named, args.repo, runner)
     except _GitCommandFailed as failure:
         # The git surfaces report the same failure as UNAVAILABLE; the other surfaces can still search.
-        print("%s: git could not find the top level of the repository at %s. The search runs to the end, matching "
-              "the absolute path %s as that absolute path, not as a path inside the repository; its git and git "
-              "reflog lines will say UNAVAILABLE for this same failure, and its other lines are complete.\n"
+        print("%s: git could not find the top level of the repository at %s, so the git and git reflog surfaces "
+              "cannot search, and their lines will say UNAVAILABLE for this failure. Every other surface searches "
+              "as usual for the absolute path %s as given, since git could not turn it into a path inside the "
+              "repository, and each surface's line reports that surface's own result, which this git failure does "
+              "not affect. Unless a "
+              "surface finds the path, the search exits 3, for an incomplete search.\n"
               "git's failure: %s\n"
               "If --repo names the wrong directory, or was left out and the current directory is not in the "
               "path's checkout, re-run with --repo naming a checkout of the repository the path was deleted from.\n%s"

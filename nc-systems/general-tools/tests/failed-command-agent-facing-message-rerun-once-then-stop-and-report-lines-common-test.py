@@ -10,7 +10,10 @@ Prints one line per case and exits non-zero if any case fails.
 """
 
 import importlib.util
+import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -42,8 +45,12 @@ check("a git failure in a program that takes names on its command line gets four
       "two cases, the unchanged rerun when neither applies, and the stop naming "
       "the text to look for, who is told, and which lines",
       lines == [
-          "If git's error names a lock file, such as .git/index.lock, wait one minute, "
-          "then run exactly `p --x`; do not delete the lock file yourself.",
+          "If git's error names a lock file, such as .git/index.lock, do not delete the lock file "
+          "yourself, because a git command still running may hold it; wait up to one minute for git "
+          "to remove it by running `i=0; while [ -e \"<lock file path>\" ] && [ $i -lt 30 ]; do "
+          "sleep 2; i=$((i+1)); done` with <lock file path> replaced by the path git's error names, "
+          "without the quotes git puts around it (Claude Code refuses a plain `sleep 60`), then run exactly `p --x`, whether or not the "
+          "lock file is gone.",
           "If a branch, commit or path you gave p on its command line is misspelt or does "
           "not exist, correct it in your command, then run the corrected command.",
           "If neither applies, run exactly `p --x` once more.",
@@ -88,6 +95,29 @@ check("a hook's line names the prefix to look for, says any git failure counts, 
               f"this error or another, tell {WHO} word for word, every line of this message and "
               "of the new one, before you go on. If the check finds no git failure then, this "
               "failure needs no report.", line)
+
+
+
+def run_lock_file_wait_command(lock_file, seconds_until_removed=None):
+    """Run the wait command the lock-file line gives, on lock_file; return (exit code, seconds taken)."""
+    command = next_step_lines.WAIT_UP_TO_ONE_MINUTE_FOR_LOCK_FILE_TO_GO_COMMAND.replace(
+        next_step_lines.LOCK_FILE_PATH_PLACEHOLDER, str(lock_file))
+    if seconds_until_removed is not None:
+        command = f'(sleep {seconds_until_removed}; rm -f "{lock_file}") & {command}; wait'
+    started = time.monotonic()
+    completed = subprocess.run(["sh", "-c", command], check=False, timeout=90)
+    return completed.returncode, time.monotonic() - started
+
+
+with tempfile.TemporaryDirectory() as directory:
+    lock_file = Path(directory) / "index.lock"
+    exit_code, seconds = run_lock_file_wait_command(lock_file)
+    check("the lock-file wait command, run by sh, returns at once when the lock file is absent",
+          exit_code == 0 and seconds < 2, (exit_code, seconds))
+    lock_file.write_text("")
+    exit_code, seconds = run_lock_file_wait_command(lock_file, seconds_until_removed=1)
+    check("the lock-file wait command returns within one poll of git removing the lock file",
+          exit_code == 0 and 1 <= seconds < 5 and not lock_file.exists(), (exit_code, seconds))
 
 print(f"{failures} failure(s)" if failures else "all cases pass")
 sys.exit(1 if failures else 0)

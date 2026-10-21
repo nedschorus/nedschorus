@@ -15,6 +15,25 @@ REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT = (
     "the user, or, if you are a subagent, the agent that dispatched you,")
 
 
+# Claude Code refuses a Bash call that starts with a long plain sleep, but runs this bounded poll.
+LOCK_FILE_PATH_PLACEHOLDER = "<lock file path>"
+WAIT_UP_TO_ONE_MINUTE_FOR_LOCK_FILE_TO_GO_COMMAND = (
+    f'i=0; while [ -e "{LOCK_FILE_PATH_PLACEHOLDER}" ] && [ $i -lt 30 ]; do sleep 2; i=$((i+1)); done')
+
+
+def lock_file_named_by_git_error_wait_then_rerun_instruction(then_run):
+    """The instruction, without its condition, for a git error that names a lock file.
+
+    git fails at once on another process's index.lock instead of waiting for it.
+    """
+    return (f"do not delete the lock file yourself, because a git command still running may hold it; "
+            f"wait up to one minute for git to remove it by running "
+            f"`{WAIT_UP_TO_ONE_MINUTE_FOR_LOCK_FILE_TO_GO_COMMAND}` with {LOCK_FILE_PATH_PLACEHOLDER} "
+            f"replaced by the path git's error names, without the quotes git puts around it "
+            f"(Claude Code refuses a plain `sleep 60`), "
+            f"then run {then_run}, whether or not the lock file is gone")
+
+
 def agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
         text_the_failure_line_contains=None, *, rerun_fails_when=None,
         which_lines_to_quote_in_the_report=None,
@@ -59,8 +78,8 @@ def git_failure_next_step_lines(rerun, program, *, include_the_misspelt_branch_c
     commit or path on its command line; elsewhere no name of the agent's can
     be wrong.
     """
-    lines = [f"If git's error names a lock file, such as .git/index.lock, wait one minute, "
-             f"then run exactly {rerun}; do not delete the lock file yourself."]
+    lines = [f"If git's error names a lock file, such as .git/index.lock, "
+             f"{lock_file_named_by_git_error_wait_then_rerun_instruction(f'exactly {rerun}')}."]
     if include_the_misspelt_branch_commit_or_path_line:
         lines += [f"If a branch, commit or path you gave {program} on its command line is "
                   f"misspelt or does not exist, correct it in your command, then run the "

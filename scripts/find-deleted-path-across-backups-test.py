@@ -4213,6 +4213,15 @@ with tempfile.TemporaryDirectory() as tmp:
             [sys.executable, typed] + arguments, cwd=directory, capture_output=True, text=True,
             env=dict(os.environ, PATH="%s%s%s" % (stand_ins, os.pathsep, os.environ["PATH"]),
                      STAND_IN_TABLE=str(table), STAND_IN_CALLS=str(calls)))
+        check("a run %s says only the git surfaces are unavailable, the others search the absolute path, and "
+              "the search exits 3 unless a surface finds the path" % how,
+              ("git could not find the top level of the repository at %s, so the git and git reflog surfaces "
+               "cannot search, and their lines will say UNAVAILABLE for this failure. Every other surface searches "
+               "as usual for the absolute path %s as given, since git could not turn it into a path inside the "
+               "repository, and each surface's line reports that surface's own result, which this git failure "
+               "does not affect. Unless a surface finds the path, the search exits 3, for an incomplete search."
+               % (repo, repo / "a" / "b.md")) in completed.stderr
+              and completed.returncode == 3, (completed.returncode, completed.stderr))
         check("a run %s prints both git-failure messages" % how,
               "git could not find the top level of the repository at %s" % repo in completed.stderr
               and "did not speak its announcement" in completed.stderr, completed.stderr + completed.stdout)

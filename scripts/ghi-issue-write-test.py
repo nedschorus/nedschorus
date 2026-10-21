@@ -2048,7 +2048,7 @@ def run_git_failure_cases(scratch: Path):
             check(case_name,
                   isinstance(outcome, tool.Refused) and outcome.code == 1
                   and expected in str(outcome)
-                  and "wait one minute" in str(outcome), repr(outcome))
+                  and "wait up to one minute for git to remove it" in str(outcome), repr(outcome))
         else:
             check(case_name, outcome == expected, repr(outcome))
 

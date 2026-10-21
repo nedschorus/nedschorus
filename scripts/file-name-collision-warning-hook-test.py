@@ -61,6 +61,14 @@ EXEMPT_FILE_NAMES_IN_TEST = {"skill.md", "readme.md", ".gitkeep"}
 
 failures = []
 
+LOCK_FILE_WAIT_CLAUSE = (
+    "do not delete the lock file yourself, because a git command still running may hold it; "
+    "wait up to one minute for git to remove it by running "
+    "`i=0; while [ -e \"<lock file path>\" ] && [ $i -lt 30 ]; do sleep 2; i=$((i+1)); done` with "
+    "<lock file path> replaced by the path git's error names, without the quotes git puts around it "
+    "(Claude Code refuses a plain `sleep 60`), then run the next line's command, whether or not the "
+    "lock file is gone")
+
 
 def check(case_name, condition, detail=""):
     if condition:
@@ -428,17 +436,19 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               bool(failure_lines) and f"git {failing_subcommand} " in failure_lines[0]
               and f"exit 128: fatal: planted {failing_subcommand} failure second line of the "
               "planted error" in failure_lines[0]
-              and f"so {written} was not checked" in failure_lines[0], repr(failure_lines))
+              and failure_lines[0].endswith(f"so {written} was not checked for another tracked file with the "
+                                            "same basename, letter case ignored."), repr(failure_lines))
         check(f"a failing git {failing_subcommand} gives a line naming {written.name}, a line with a command "
               "that reruns the hook on it, then the line saying what to do if that rerun fails too",
               len(failure_lines) == 4
               and failure_lines[1] == (f"A later run of this hook checks only the file that run's Write or Edit "
-                                       f"touched, so check {written} by running the next line's command: if git's "
-                                       "error above names a lock file, first wait one minute, and do not delete the "
-                                       "lock file; otherwise run the command now. The command prints nothing if the "
-                                       "name is free. Otherwise it prints JSON whose hookSpecificOutput."
+                                       f"touched, so check {written} by running the next line's command. If git's "
+                                       "error above names no lock file, run that command now. If git's error names "
+                                       f"a lock file, {LOCK_FILE_WAIT_CLAUSE}. The command prints nothing when no other tracked file has the "
+                                       "basename, or when the file is one this hook skips, such as an ignored "
+                                       "file. Otherwise it prints JSON whose hookSpecificOutput."
                                        "additionalContext field holds one of two texts: when another tracked file has "
-                                       "the name, this hook's warning, whose instructions you follow; or, when git "
+                                       "the basename, this hook's warning, whose instructions you follow; or, when git "
                                        "fails again, a git-failure message like this one, and the line here that "
                                        "begins \"If a line starting\" says what to do then.")
               and failure_lines[3] == ('If a line starting "file-name-collision-warning:" reports a git failure again '
@@ -447,9 +457,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                                        "of this message and of the new one, before you go on. If the check finds no git "
                                        "failure then, this failure needs no report."), repr(failure_lines))
         rerun_line = failure_lines[1] if len(failure_lines) > 1 else ""
-        check(f"a failing git {failing_subcommand}'s rerun line gives the lock-file wait before the run-now instruction",
-              "names a lock file, first wait one minute" in rerun_line
-              and rerun_line.find("lock file") < rerun_line.find("run the command now"), repr(rerun_line))
+        check(f"a failing git {failing_subcommand}'s rerun line says to run the command now when git names no lock "
+              "file, and gives the lock-file wait otherwise",
+              "names no lock file, run that command now. If git's error names a lock file, "
+              + LOCK_FILE_WAIT_CLAUSE + "." in rerun_line, repr(rerun_line))
         check(f"a failing git {failing_subcommand}'s rerun line says what the command prints when git fails again "
               "and points to the closing line",
               "or, when git fails again, a git-failure message like this one, and the line here that begins "
