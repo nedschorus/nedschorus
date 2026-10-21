@@ -958,6 +958,15 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a kickstart that fails is FAILED with its exit code, exit 1",
           exit_code == 1 and f"`launchctl kickstart {TARGET}` exited 3; the job was not started"
                              in errors and "started:" not in printed, (exit_code, printed, errors))
+    plist_path.unlink(missing_ok=True)
+    stub = MachineStub(crontab=f"{mac_mirror_line}\n".encode())
+    stub.exit_codes["print"] = 5
+    exit_code, printed, errors = run_main(["--install", "--start-once"] + DAILY, MAC, stub)
+    check("the rerun command a failed launchctl print prints carries --start-once when the run "
+          "was given it",
+          exit_code == 1 and (f"{SCRIPT_PATH.resolve()} --install --job "
+                              f"daily-full-test-run-of-main --start-once` on this machine.")
+          in errors, (exit_code, errors))
     stub = MachineStub(crontab=as_installed_today)
     exit_code, printed, errors = run_main(["--install", "--start-once"] + TWO_JOBS, NED_BOX, stub)
     check("--start-once where no selected job is a launchd job is refused before anything "

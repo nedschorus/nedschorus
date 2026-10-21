@@ -28,9 +28,9 @@ up, and when the box restarts its seats while the Mac is logged in, that
 window can come first. When the box does not answer — it may be rebooting
 too — the run retries for a bounded time and then reports the box's windows
 as missing, with the by-hand command, rather than opening nothing quietly.
-launch-claude-ubuntu starts each seat on a tmux server named after it, and an
-older seat may still run on the shared `default` server, which can hold
-several. When the box's tmux fails on a seat's own server or session for any
+Each seat runs on a tmux server named after it, which launch-claude-ubuntu
+creates when it starts the seat, and an older seat may still run on the
+shared `default` server, which can hold several. When the box's tmux fails on a seat's own server or session for any
 reason but that server or session being gone, that seat alone gets no window,
 and the report names it with tmux's error and the command that opens its
 window. When tmux fails on the `default` server, which seats it holds is
@@ -307,8 +307,9 @@ def ask_the_box_which_seats_are_alive(mac_booted_at: datetime, run=subprocess.ru
                     continue
                 failed_seat, _, failure = (
                     line[len(NED_BOX_LISTING_TMUX_FAILURE_PREFIX):].strip().partition(" "))
+                # A seat that fails on both its own server and the default one is one failure.
                 if not tmux_error_pattern.tmux_error_text_says_target_or_server_does_not_exist(
-                        failure):
+                        failure) and failed_seat not in dict(tmux_failures):
                     tmux_failures.append((failed_seat, failure.strip()))
             shared = [failure for failed_seat, failure in tmux_failures
                       if failed_seat

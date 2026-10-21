@@ -1183,10 +1183,12 @@ with tempfile.TemporaryDirectory() as temporary:
     box = BoxStub(answers=[(0, "gatekeeper\nprof attached\n", (
         f"{prefix} prof tmux -S /tmp/tmux-1000/prof list-clients -t =prof: server exited "
         f"unexpectedly\n{prefix} gatekeeper tmux -S /tmp/tmux-1000/gatekeeper list-clients "
-        f"-t =gatekeeper: server exited unexpectedly\n"))])
+        f"-t =gatekeeper: server exited unexpectedly\n{prefix} gatekeeper tmux -S "
+        f"/tmp/tmux-1000/default list-clients -t =gatekeeper: server exited unexpectedly\n"))])
     exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
     check("a seat the default server lists, whose own server failed, gets no window and is "
-          "reported only as withheld, whether the default server listed it attached or not",
+          "reported once, only as withheld, whether the default server listed it attached or "
+          "not, and even when its probe failed on the default server too",
           exit_code == 1 and box.windows == []
           and report.count("NO WINDOW onto gatekeeper") == 1
           and report.count("NO WINDOW onto prof") == 1

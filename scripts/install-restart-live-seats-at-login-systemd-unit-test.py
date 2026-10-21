@@ -232,6 +232,15 @@ with tempfile.TemporaryDirectory() as temporary:
           and (f"run `{shlex.join([str(SCRIPT_PATH.resolve()), '--start-now', '--unit-name', 't', '--checkout', str(checkout)])}` "
                "from a login session") in errors,
           (exit_code, errors, systemctl.verbs))
+    handoff_directory = root / "a handoff directory"
+    systemctl = SystemctlStub(is_enabled_failure=bus_error)
+    exit_code, printed, errors = run_main(
+        ["--checkout", str(checkout), "--unit-name", "t", "--start-now",
+         "--handoff-dir", str(handoff_directory)], unit_directory, systemctl=systemctl)
+    check("the rerun command a failed is-enabled prints carries the --handoff-dir the run was "
+          "given",
+          exit_code == 1 and shlex.join(["--handoff-dir", str(handoff_directory)]) + "`" in errors,
+          (exit_code, errors))
     systemctl = SystemctlStub(is_enabled_failure="")
     exit_code, printed, errors = run_main(
         ["--checkout", str(checkout), "--unit-name", "t", "--start-now"], unit_directory,

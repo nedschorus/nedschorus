@@ -471,14 +471,15 @@ class LaunchctlPrintFailed(Exception):
         # This run sends launchctl print's stdout to /dev/null and keeps only its stderr.
         self.next_steps = (
             "Fix what launchctl's error names." if error_text
-            else f"Run `launchctl print {target}` on this Mac to see launchd's answer, which "
-                 f"this run did not keep, and fix what it names.")
+            else f"Run `launchctl print {target}` on this Mac to see whether launchd has the "
+                 f"job loaded, which this run could not tell.")
         super().__init__(self.cause)
 
 
-def rerun_command(mode: str, job_name: str) -> str:
+def rerun_command(mode: str, job_name: str, start_once: bool = False) -> str:
     """Return the command that reruns mode for one job, for a failure message to quote."""
-    return shlex.join([str(Path(__file__).resolve()), mode, "--job", job_name])
+    return shlex.join([str(Path(__file__).resolve()), mode, "--job", job_name]
+                      + (["--start-once"] if start_once else []))
 
 
 def launchd_job_is_loaded(placement: dict, run) -> bool:
@@ -532,7 +533,8 @@ def booted_out_or_reported(target: str, plist_path: Path, run) -> bool:
     return False
 
 
-def install_launchd_job(machine, job, placement, launch_agents_directory: Path, run) -> bool:
+def install_launchd_job(machine, job, placement, launch_agents_directory: Path, run,
+                        start_once: bool = False) -> bool:
     """Return whether the installed job matches the table."""
     name, label = job["name"], placement["label"]
     plist_path = launch_agents_directory / f"{label}.plist"
@@ -543,7 +545,7 @@ def install_launchd_job(machine, job, placement, launch_agents_directory: Path, 
         print(f"FAILED: {name} — {failure.cause}; so whether {label} is loaded is unknown, "
               f"and the job was not installed.", file=sys.stderr)
         print(failure.next_steps, file=sys.stderr)
-        print(f"Then run `{rerun_command('--install', name)}` on this machine.", file=sys.stderr)
+        print(f"Then run `{rerun_command('--install', name, start_once)}` on this machine.", file=sys.stderr)
         return False
     if already_installed:
         print(f"unchanged: {name} — {plist_path} says what the table says, and launchd has "
@@ -577,7 +579,7 @@ def install_launchd_job(machine, job, placement, launch_agents_directory: Path, 
         print(f"FAILED: {name} — bootstrap exited 0, and then {failure.cause}; so whether "
               f"{label} is loaded is unknown.", file=sys.stderr)
         print(failure.next_steps, file=sys.stderr)
-        print(f"Then run `{rerun_command('--install', name)}` on this machine.", file=sys.stderr)
+        print(f"Then run `{rerun_command('--install', name, start_once)}` on this machine.", file=sys.stderr)
         return False
     if not loaded:
         print(f"FAILED: {name} — bootstrap exited 0, and `launchctl print "
@@ -817,7 +819,8 @@ def install_mode(machine, placed, launch_agents_directory: Path, start_once: boo
                     for old_line in old_lines:
                         print(f"  the line removed: {old_line}")
     for job, placement in launchd_jobs:
-        installed = install_launchd_job(machine, job, placement, launch_agents_directory, run)
+        installed = install_launchd_job(machine, job, placement, launch_agents_directory, run,
+                                        start_once)
         every_step_worked = every_step_worked and installed
         if installed and start_once:
             every_step_worked = start_launchd_job_once(machine, job, placement, run) \

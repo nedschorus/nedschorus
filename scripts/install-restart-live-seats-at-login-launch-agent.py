@@ -135,7 +135,7 @@ def remove(label: str, launch_agents_directory: Path, run=subprocess.run) -> int
               + f"; so {label} may still be loaded, and {plist_path} was kept.", file=sys.stderr)
         print("Fix what launchctl's error names." if error_text
               else f"Run `launchctl print {target}` on this Mac to see whether {label} is "
-                   "still loaded, and fix what it names.", file=sys.stderr)
+                   "still loaded.", file=sys.stderr)
         rerun = shlex.join([str(Path(__file__).resolve()), "--remove", "--label", label])
         print(f"Then run `{rerun}` on this Mac.", file=sys.stderr)
         return 1
