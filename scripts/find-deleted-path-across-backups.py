@@ -2294,8 +2294,8 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
 def git_failure_next_steps(rerun):
     """The lines that tell an agent what to do after a git failure in a run started as rerun."""
     return next_step_lines.git_failure_next_step_lines(
-        rerun, PROGRAM_PATH, failure_again="prints \"git's failure:\" again",
-        takes_a_branch_commit_or_path=True)
+        rerun, PROGRAM_PATH, text_the_failure_line_contains="git's failure:",
+        include_the_misspelt_branch_commit_or_path_line=True)
 
 
 def rerun_command(arguments):
@@ -2541,7 +2541,7 @@ def main(argv=None, runner=run_command):
               "reflog lines will say UNAVAILABLE for this same failure, and its other lines are complete.\n"
               "git's failure: %s\n"
               "If --repo names the wrong directory, or was left out and the current directory is not in the "
-              "path's checkout, re-run with --repo naming that checkout.\n%s"
+              "path's checkout, re-run with --repo naming a checkout of the repository the path was deleted from.\n%s"
               % (THIS_SCRIPT_NAME, args.repo, named, failure, git_failure_next_steps(rerun)),
               file=sys.stderr, flush=True)
         wanted = named

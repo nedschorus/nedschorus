@@ -1018,14 +1018,13 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
     check("a branch sync git failure ends with the next steps, naming the git command to rerun",
           report.endswith(
               f"If git's error names a lock file, such as .git/index.lock, wait one minute, then "
-              f"run `git -C {home} rev-parse --show-toplevel`; do not delete the lock file "
-              f"yourself.\n"
-              f"If none of the cases above applies, run `git -C {home} rev-parse --show-toplevel` "
-              f"once more, unchanged.\n"
-              "If the run you made by following a line above prints an error again, stop, do not "
-              "take the next step this prompt gives, and tell the user, word for word, the lines "
-              "the handoff-supervisor's branch sync printed the first time and the lines that "
-              "second run printed."), report)
+              f"run exactly `git -C {home} rev-parse --show-toplevel`; do not delete the lock "
+              f"file yourself.\n"
+              f"If git's error names no lock file, run exactly `git -C {home} rev-parse "
+              f"--show-toplevel` once more.\n"
+              "If the rerun prints an error again, stop, do not act on the rest of this prompt, "
+              "and tell the user word for word, the branch sync line in this prompt and the "
+              "error the rerun printed."), report)
     plan = supervisor.DialogIgnitionPlan(root / "extract.md", {})
     for shape, prompt in (
             ("dialog", plan.compose(report)),
@@ -1056,7 +1055,7 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
         report = sync_with_failing_call(home, call)
         check(f"a failed `git {call}` on a level branch is reported with git's error",
               " left as is — " in report and "fatal: stub failure" in report
-              and f"If none of the cases above applies, run `git -C {home} {call}" in report
+              and f"If git's error names no lock file, run exactly `git -C {home} {call}" in report
               and wrong_answer not in report, report)
 
     main_moves("main moves past the failing-git home")
@@ -1090,7 +1089,7 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
           "with git's error in place of the commit",
           "fast-forwarded to main (its new commit could not be read" in report
           and "fatal: stub failure" in report
-          and f"If none of the cases above applies, run `git -C {home} rev-parse --short HEAD`" in report, report)
+          and f"If git's error names no lock file, run exactly `git -C {home} rev-parse --short HEAD`" in report, report)
 
     (home / "agent-note.txt").write_text("own work\n", encoding="utf-8")
     git_in(["add", "-A"], home)

@@ -41,7 +41,7 @@ GIT_FAILURE_TEMPLATE = (
     "and the line that opens \"Keep this message\" says what to do then.\n"
     "{rerun}\n"
     + next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
-        "when you run that command", "file-name-collision-warning-hook.py")
+        "when you run that command", "file-name-collision-warning:")
 )
 
 

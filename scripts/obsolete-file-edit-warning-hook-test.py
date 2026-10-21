@@ -128,9 +128,10 @@ GIT_FAILURE_RERUN_LINE = (
     "instructions you follow; if git fails again, it prints a git-failure message like this one, "
     "and the line that opens \"Keep this message\" says what to do then.")
 GIT_FAILURE_RERUN_FAILS_TOO_LINE = (
-    "Keep this message: if obsolete-file-edit-warning-hook reports a git failure again when "
-    "you run that command, whether this error or another, tell the user both messages, "
-    "word for word. A subagent reports to the agent that dispatched it, not to the user.")
+    'If a line starting "obsolete-file-edit-warning-hook:" reports a git failure again when you '
+    "run that command, whether this error or another, tell the user, or, if you are a subagent, "
+    "the agent that dispatched you, word for word, every line of this message and of the new one, "
+    "before you go on. If the check finds no git failure then, this failure needs no report.")
 
 
 def named_rerun_command(result, edited_path) -> str:

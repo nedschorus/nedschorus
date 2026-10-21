@@ -548,7 +548,7 @@ def main() -> int:
         print(GIT_FAILURE_AGENT_FACING_MESSAGE_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW.format(
             path=file_path, rerun=rerun), file=sys.stderr)
         print(freshness.next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
-            "when you run that command", "obsolete-file-edit-warning-hook"), file=sys.stderr)
+            "when you run that command", "obsolete-file-edit-warning-hook:"), file=sys.stderr)
         return 1
 
 

@@ -438,10 +438,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                                        "instructions you follow; if git fails again, it prints a git-failure message "
                                        "like this one, and the line that opens \"Keep this message\" says what to do "
                                        "then.")
-              and failure_lines[3] == ("Keep this message: if file-name-collision-warning-hook.py reports a git failure "
-                                       "again when you run that command, whether this error or another, tell the user "
-                                       "both messages, word for word. A subagent reports to the agent that dispatched "
-                                       "it, not to the user."), repr(failure_lines))
+              and failure_lines[3] == ('If a line starting "file-name-collision-warning:" reports a git failure again '
+                                       "when you run that command, whether this error or another, tell the user, or, "
+                                       "if you are a subagent, the agent that dispatched you, word for word, every line "
+                                       "of this message and of the new one, before you go on. If the check finds no git "
+                                       "failure then, this failure needs no report."), repr(failure_lines))
         rerun_line = failure_lines[1] if len(failure_lines) > 1 else ""
         check(f"a failing git {failing_subcommand}'s rerun line gives the lock-file wait before the run-now instruction",
               "names a lock file, first wait one minute" in rerun_line

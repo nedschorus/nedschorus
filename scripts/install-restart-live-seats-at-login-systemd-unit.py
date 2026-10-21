@@ -173,8 +173,7 @@ def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: P
             print(f"Run `{rerun}` once more, on ned-box, the machine whose user manager runs "
                   f"the unit.", file=sys.stderr)
             print(next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
-                f'prints "so whether {unit_name} is enabled is unknown" again',
-                "install-restart-live-seats-at-login-systemd-unit"), file=sys.stderr)
+                f"so whether {unit_name} is enabled is unknown"), file=sys.stderr)
         return 1
     if enabled:
         # Starting preserves enable symlinks; rewriting an enabled unit would alter future boots.

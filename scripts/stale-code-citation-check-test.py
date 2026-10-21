@@ -142,11 +142,11 @@ def reports_the_git_failure_and_no_result(root, arguments, code, out, err):
              + " ".join(arguments))
     return (code == 2 and INJECTED_GIT_ERROR in err and "a git command failed" in err
             and "finding(s)" not in err
-            and "and you gave that name to stale-code-citation-check, correct it in your command" in err
-            and f"If none of the cases above applies, run {rerun} once more, unchanged." in err
-            and ('If the run you made by following a line above prints "could not check, because a git command failed" again, '
-                 'stop, and tell the user, word for word, the lines stale-code-citation-check printed the first '
-                 'time and the lines that second run printed.') in err)
+            and f"If a branch, commit or path you gave stale-code-citation-check on its command line is misspelt" in err
+            and f"If neither applies, run exactly {rerun} once more." in err
+            and ('If the rerun, or the corrected command, prints a line containing "could not check, because a git '
+                 'command failed" again, stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line containing '
+                 '"could not check, because a git command failed" from each run.') in err)
 
 
 def document(stamp="2026-05-01", status="design", body=""):
