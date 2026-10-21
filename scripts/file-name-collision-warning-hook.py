@@ -5,6 +5,7 @@
 import importlib.util
 import json
 import os
+import shlex
 import sys
 from pathlib import Path, PurePath
 
@@ -31,10 +32,21 @@ GIT_CALL_TIMEOUT_SECONDS = 10
 GIT_FAILURE_TEMPLATE = (
     "file-name-collision-warning: git {command} failed ({outcome}), so {path} was not checked "
     "for a name another tracked file has.\n"
-    "Nothing needs rerunning: this check runs again at your next Write or Edit.\n"
+    "A later run of this hook checks only the file that run's Write or Edit touched, so check "
+    "{path} now by running the next line's command; if git's error above names a lock file, wait "
+    "one minute before running the command, and do not delete the lock file. The command prints "
+    "nothing if the name is free, and otherwise prints, inside JSON, this hook's warning, whose "
+    "instructions you follow.\n"
+    "{rerun}\n"
     + next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
-        "at your next Write or Edit", "file-name-collision-warning-hook.py")
+        "when you run that command", "file-name-collision-warning-hook.py")
 )
+
+
+def rerun_command(working_directory, file_path) -> str:
+    """Return a shell command that runs this hook on file_path as Claude Code would."""
+    payload = json.dumps({"cwd": str(working_directory), "tool_input": {"file_path": file_path}})
+    return f"printf '%s\\n' {shlex.quote(payload)} | python3 {shlex.quote(str(Path(__file__).resolve()))}"
 
 
 def git_output(arguments, cwd: Path, accepted_exit_codes=(0,)) -> str:
@@ -44,13 +56,14 @@ def git_output(arguments, cwd: Path, accepted_exit_codes=(0,)) -> str:
         timeout_seconds=GIT_CALL_TIMEOUT_SECONDS))
 
 
-def git_failure_text(failure, path) -> str:
+def git_failure_text(failure, path, working_directory) -> str:
     """Return the stderr text for a git failure; its first line, the one Claude Code shows the user, carries the cause."""
     if failure.returncode is None:
         outcome = failure.stderr
     else:
         outcome = f"exit {failure.returncode}: {' '.join(failure.stderr.split()) or 'no error text'}"
-    return GIT_FAILURE_TEMPLATE.format(command=" ".join(failure.arguments), outcome=outcome, path=path)
+    return GIT_FAILURE_TEMPLATE.format(command=" ".join(failure.arguments), outcome=outcome, path=path,
+                                       rerun=rerun_command(working_directory, path))
 
 
 def checkout_of(working_directory: Path):
@@ -159,7 +172,7 @@ def main() -> int:
             return 0
         others = tracked_paths_sharing_name(relative_path, checkout)
     except git_machine_readable_output.GitCommandFailed as failure:
-        print(git_failure_text(failure, file_path), file=sys.stderr)
+        print(git_failure_text(failure, file_path, working_directory), file=sys.stderr)
         return 1
     if not others:
         return 0

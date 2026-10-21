@@ -100,6 +100,7 @@ keeps the edit; exit 0 would read as "this file is not obsolete".
 
 import importlib.util
 import json
+import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -187,8 +188,13 @@ GIT_FAILURE_CAUSE_LINE = (
     "obsolete-file-edit-warning-hook: {failure}, so the edited file was not checked "
     "against origin/main; the edit itself succeeded."
 )
-GIT_FAILURE_NOTHING_TO_RERUN_LINE = (
-    "Nothing needs rerunning: this check runs again at your next Edit or Write.")
+GIT_FAILURE_RERUN_NOW_LINES = (
+    "A later run of this hook checks only the file that run's Edit or Write touched, so check "
+    "{path} now by running the next line's command; if git's error above names a lock file, wait "
+    "one minute before running the command, and do not delete the lock file. The command prints "
+    "nothing when there is nothing new to tell you about the file, and otherwise prints, inside "
+    "JSON, this hook's warning, whose instructions you follow.\n"
+    "{rerun}")
 RECORD_WRITE_FAILED_LINE = (
     "obsolete-file-edit-warning could not record that it gave this warning, so it "
     "will give it again at your next edit of this file ({record}: {reason}). Nothing "
@@ -500,6 +506,12 @@ def obsolete_file_warning_line(repository_path: str, commit_count, advice: str,
     return f"{line}\n{advice}" if advice_on_own_lines else f"{line} {advice}"
 
 
+def rerun_command(working_directory: Path, file_path: str) -> str:
+    """A shell command that runs this hook on file_path as Claude Code would."""
+    payload = json.dumps({"cwd": str(working_directory), "tool_input": {"file_path": file_path}})
+    return f"printf '%s\\n' {shlex.quote(payload)} | python3 {shlex.quote(str(Path(__file__).resolve()))}"
+
+
 def main() -> int:
     payload = json.loads(sys.stdin.read())
     if not isinstance(payload, dict):
@@ -528,9 +540,10 @@ def main() -> int:
         print(GIT_FAILURE_CAUSE_LINE.format(failure=failure), file=sys.stderr)
         # The shared wording comes through checkout-freshness-catch-up's copy, so a
         # hook copied away from it fails in the one load the top-level handler reports.
-        print(GIT_FAILURE_NOTHING_TO_RERUN_LINE, file=sys.stderr)
+        print(GIT_FAILURE_RERUN_NOW_LINES.format(
+            path=file_path, rerun=rerun_command(working_directory, file_path)), file=sys.stderr)
         print(freshness.next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
-            "at your next Edit or Write", "obsolete-file-edit-warning-hook"), file=sys.stderr)
+            "when you run that command", "obsolete-file-edit-warning-hook"), file=sys.stderr)
         return 1
 
 
