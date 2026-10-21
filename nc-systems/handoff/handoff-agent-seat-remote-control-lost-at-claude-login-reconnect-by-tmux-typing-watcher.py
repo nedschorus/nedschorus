@@ -15,28 +15,35 @@ DISCONNECT_TEXT. It does not turn Remote Control back on. Each run finds every
 running agent-seat (a live `claude` process whose parent is
 `handoff-supervisor.py --agent <seat>`), reads its session record
 ~/.claude/sessions/<pid>.json and its current transcript, and types
-`/remote-control <seat>` and Enter into the seat's tmux session (server
-`-L <seat>`, session `<seat>`) when all of these hold:
+`/remote-control <seat>` and Enter into the claude's own tmux pane (server
+`-L <seat>`, the pane id the session record's "tmux" field ends with) when all
+of these hold:
 - the transcript's latest Remote Control line is that disconnect line, with no
   later bridge_status line ("/remote-control is active"), which Claude Code
   logs whenever Remote Control comes back on, by the command or by itself;
 - this program has not already typed for that disconnect line;
 - the record's status is not "waiting", which Claude Code sets while a dialog
   waits for an answer;
+- the pane is not in a tmux mode such as copy mode, where typed keys go to tmux
+  and "/" starts a search;
 - the pane shows the prompt line empty: the line between the input box's two
   rules is the prompt character alone.
 Otherwise it types nothing and tries again on the next run. Typing only on the
 disconnect line matters: while Remote Control is on, the same command opens
 its menu instead, whose choices include "Disconnect this session".
 
-It does not check afterwards that Remote Control came back. A failure it meets,
-such as a session record it cannot read or a tmux command that fails, is
-written to decisions.jsonl in LOG_DIRECTORY, printed to stderr, and makes the
-run exit 1; the first time each failure is met, it is also shown to the user
-in a terminal window on his Mac, opened with
-scripts/open-mac-window-from-ned-box.py running --show-notice. When the
-notice cannot be written or the window cannot be opened, that is printed to
-stderr too. Each typing is also written to decisions.jsonl, which is what
+It does not check afterwards that Remote Control came back. A failure it meets
+in one agent-seat, such as a session record it cannot read or a tmux command
+that fails or times out, is written to decisions.jsonl in LOG_DIRECTORY and
+printed to stderr; the run goes on to the next agent-seat and, once every
+agent-seat is checked, exits 1. The first time a failure is met, it is also
+shown to the user in a terminal window on his Mac, opened with
+scripts/open-mac-window-from-ned-box.py running --show-notice. "The first
+time" counts once per agent-seat, claude process and kind of failure; once per
+disconnect line for a failed typing; and once per error text for a failure that
+stops the whole run. When the notice cannot be written or the window cannot be
+opened, that is printed to stderr too, and a later run that meets the same
+failure tries the notice again. Each typing is also written to decisions.jsonl, which is what
 keeps a later run from typing again for the same disconnect line.
 
 Off ned-box the program refuses: the agent-seats it reads are ned-box's.
@@ -102,25 +109,26 @@ SECONDS_BETWEEN_TEXT_AND_ENTER = 0.5
 TMUX_TIMEOUT_SECONDS = 30
 # Longer than the opener's own ssh time limit, so the opener reports its timeout itself.
 MAC_WINDOW_OPENER_TIMEOUT_SECONDS = 90
+PANE_IN_MODE = "1"
 CRON_LOG = Path.home() / ".claude" / f"{PROGRAM}.log"
 
 SHOW_NOTICE_CLOSE_PROMPT = "Press Enter to close this window."
 
 RUN_FAILED_NOTICE_TEMPLATE = (
     "The Remote Control watcher on ned-box failed and is checking no agent-seat: {problem}\n"
-    "Until this is fixed, Remote Control that a Claude login on ned-box turns off stays off. The "
-    "watcher tells you again only if the error changes.\n"
-    "To have it fixed, ask an agent on ned-box to fix it, giving it this notice.\n"
+    "Until the watcher is fixed, Remote Control that a Claude login on ned-box turns off stays off. "
+    "The watcher sends another notice only if its error changes.\n"
+    "To have the watcher fixed, give this notice to an agent on ned-box and ask it to fix the watcher.\n"
     "Record: {record}, and the cron log {cron_log}\n"
 )
 
 RECORD_PROBLEM_NOTICE_TEMPLATE = (
     "The Remote Control watcher on ned-box cannot check {seat}: {problem}\n"
     "If a Claude login on ned-box turns Remote Control off in {seat}, the watcher cannot turn it "
-    "back on until this is fixed. It tells you again only if the problem changes.\n"
+    "back on until this problem is fixed. The watcher sends another notice only if the problem changes.\n"
     "If {seat}'s Remote Control is off, turn it on by typing in {seat}'s window:\n"
     "  /remote-control {seat}\n"
-    "To have the cause fixed, ask an agent on ned-box to fix it, giving it this notice.\n"
+    "To have the problem fixed, give this notice to an agent on ned-box and ask it to fix the problem.\n"
     "Record: {record}\n"
 )
 
@@ -130,7 +138,7 @@ TYPING_FAILED_NOTICE_TEMPLATE = (
     "A Claude login on ned-box turned it off at {disconnected_at}.\n"
     "To turn it on, type in {seat}'s window:\n"
     "  /remote-control {seat}\n"
-    "If the watcher keeps failing, ask an agent on ned-box to find out why, giving it this notice.\n"
+    "If the watcher keeps failing, give this notice to an agent on ned-box and ask it to find out why.\n"
     "Record: {record}\n"
 )
 
@@ -179,23 +187,33 @@ def notice_show(log_directory: Path, seat, kind, template, **fields) -> bool:
         path.write_text(template.format(seat=seat, record=log_directory / "decisions.jsonl",
                                         **fields), encoding="utf-8")
     except OSError as error:
-        print(f"{PROGRAM}: the notice to the user about {seat} was not written, so he was not "
-              f"told: {error}", file=sys.stderr)
+        print(f"{PROGRAM}: the notice to the user about {seat} was not written, so the user has not "
+              f"been told of the failure above; a later run that meets it tries the notice again: {error}",
+              file=sys.stderr)
         return False
     exit_code, output = run_command(
         [sys.executable, str(MAC_WINDOW_OPENER_PROGRAM), *show_notice_words(path)],
         MAC_WINDOW_OPENER_TIMEOUT_SECONDS)
     if exit_code != 0:
-        print(f"{PROGRAM}: the notice {path} did not open on the user's Mac, so he was not told; "
-              f"the opener exited {exit_code} and said: {output}", file=sys.stderr)
+        print(f"{PROGRAM}: the notice {path} did not open on the user's Mac, so the user has not been "
+              f"told of the failure above; a later run that meets it tries the notice again. The opener "
+              f"{outcome(exit_code)} and said: {output}", file=sys.stderr)
         return False
     return True
 
 
 def run_command(command, timeout_seconds):
-    completed = subprocess.run(command, capture_output=True, text=True, check=False,
-                               timeout=timeout_seconds)
+    """Return (exit code, output); the exit code is None when the command timed out and was killed."""
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, check=False,
+                                   timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        return None, f"it did not finish within {timeout_seconds} seconds"
     return completed.returncode, (completed.stdout + completed.stderr).strip()
+
+
+def outcome(exit_code):
+    return "timed out" if exit_code is None else f"exited {exit_code}"
 
 
 def show_notice_words(path):
@@ -229,8 +247,8 @@ def process_table(process_table_directory: Path):
             words = (entry / "cmdline").read_bytes().decode("utf-8", "replace").split("\0")
             # The command name in parentheses may hold spaces; the fields after it do not.
             fields_after_name = (entry / "stat").read_text().rsplit(")", 1)[1].split()
-        except FileNotFoundError:
-            # The process ended while the table was read.
+        except (FileNotFoundError, ProcessLookupError):
+            # The process ended while the table was read: before its file was opened, or after.
             continue
         started = int(fields_after_name[19]) / clock_ticks_per_second
         table[int(entry.name)] = (int(fields_after_name[1]), [word for word in words if word],
@@ -298,6 +316,7 @@ def check_seat(run: Run, seat, pid, age, session_records_directory: Path, projec
     try:
         record = json.loads(record_path.read_text(encoding="utf-8"))
         session_id, working_directory, status = record["sessionId"], record["cwd"], record["status"]
+        tmux_place = record.get("tmux")
     except FileNotFoundError:
         if age < SESSION_RECORD_GRACE_SECONDS:
             return
@@ -322,10 +341,24 @@ def check_seat(run: Run, seat, pid, age, session_records_directory: Path, projec
     if status == DIALOG_OPEN_STATUS:
         skip(run, seat, event, "a dialog is open: its session record's status is waiting")
         return
-    exit_code, pane_text = tmux(seat, "capture-pane", "-p", "-t", f"={seat}:")
+    # The record's "tmux" field reads <session>:@<window>.%<pane>; the pane id names this claude's pane.
+    pane = str(tmux_place).rpartition(".")[2]
+    if not pane.startswith("%"):
+        report_typing_failure(run, seat, event, disconnect,
+                              f"its session record names no tmux pane: its tmux field is {tmux_place!r}")
+        return
+    exit_code, mode = tmux(seat, "display-message", "-p", "-t", pane, "#{pane_in_mode}")
     if exit_code != 0:
         report_typing_failure(run, seat, event, disconnect,
-                              f"reading its tmux pane failed: tmux exited {exit_code}: {pane_text}")
+                              f"reading the mode of its tmux pane {pane} failed: tmux {outcome(exit_code)}: {mode}")
+        return
+    if mode == PANE_IN_MODE:
+        skip(run, seat, event, f"its tmux pane {pane} is in a mode such as copy mode")
+        return
+    exit_code, pane_text = tmux(seat, "capture-pane", "-p", "-t", pane)
+    if exit_code != 0:
+        report_typing_failure(run, seat, event, disconnect,
+                              f"reading its tmux pane {pane} failed: tmux {outcome(exit_code)}: {pane_text}")
         return
     if not prompt_line_is_empty(pane_text):
         skip(run, seat, event, "its prompt line is not empty, or no prompt line is shown")
@@ -336,10 +369,10 @@ def check_seat(run: Run, seat, pid, age, session_records_directory: Path, projec
     for number, arguments in enumerate((("-l", f"/remote-control {seat}"), ("Enter",))):
         if number:
             time.sleep(SECONDS_BETWEEN_TEXT_AND_ENTER)
-        exit_code, output = tmux(seat, "send-keys", "-t", f"={seat}:", *arguments)
+        exit_code, output = tmux(seat, "send-keys", "-t", pane, *arguments)
         if exit_code != 0:
             report_typing_failure(run, seat, event, disconnect,
-                                  f"typing into its tmux pane failed: tmux exited {exit_code}: {output}")
+                                  f"typing into its tmux pane {pane} failed: tmux {outcome(exit_code)}: {output}")
             return
     run.log(seat, "typed", typed=f"/remote-control {seat}", **event)
 
@@ -403,8 +436,8 @@ def main(argv=None, environment=None) -> int:
     if arguments.show_notice:
         return show_notice(arguments.show_notice)
     if sys.platform != "linux":
-        print(f"{PROGRAM}: refused: this program watches ned-box's agent-seats and runs only on "
-              "ned-box, where cron starts it.", file=sys.stderr)
+        print(f"{PROGRAM}: refused: this machine is not ned-box (it is not Linux), and this program "
+              "watches only ned-box's agent-seats.", file=sys.stderr)
         return 2
     return run_once(dict(os.environ) if environment is None else environment)
 

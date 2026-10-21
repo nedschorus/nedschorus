@@ -445,10 +445,30 @@ def case_tmux_server_gone(namespace):
         exit_code, errors = fixture.run()
         check("the seat's tmux server gone: the failed pane read reported with tmux's words, a notice "
               "opened, exit 1",
-              exit_code == 1 and "reading its tmux pane failed" in errors
+              exit_code == 1 and "reading the mode of its tmux pane %0 failed" in errors
               and fixture.decisions() == ["failure", "user told"] and len(fixture.ssh_requests()) == 1,
               (exit_code, errors, fixture.entries()))
     finally:
+        fixture.close()
+
+
+def case_capture_pane_failing(namespace):
+    fixture = lost_seat("capture-fails", namespace)
+    real_tmux = watcher.tmux
+
+    def tmux_whose_server_dies_before_the_pane_is_read(seat, *arguments):
+        if arguments[0] == "capture-pane":
+            fixture.kill_server()
+        return real_tmux(seat, *arguments)
+
+    watcher.tmux = tmux_whose_server_dies_before_the_pane_is_read
+    try:
+        exit_code, errors = fixture.run()
+        check("capture-pane failing: reported with tmux's words, a notice opened, exit 1",
+              exit_code == 1 and "reading its tmux pane %0 failed: tmux exited" in errors
+              and fixture.decisions() == ["failure", "user told"], (exit_code, errors, fixture.entries()))
+    finally:
+        watcher.tmux = real_tmux
         fixture.close()
 
 
@@ -467,7 +487,7 @@ def case_send_keys_failing(namespace):
         notices = fixture.notices()
         check("send-keys failing: reported on stderr, in a notice opened on the Mac, and by exit 1; "
               "the typing is not logged as done",
-              exit_code == 1 and "typing into its tmux pane failed" in errors
+              exit_code == 1 and "typing into its tmux pane %0 failed" in errors
               and fixture.decisions() == ["failure", "user told"] and len(notices) == 1
               and "2026-10-21T01:06:08.879Z" in notices[0].read_text(encoding="utf-8"),
               (exit_code, errors, fixture.entries()))
@@ -497,6 +517,100 @@ def case_reconnected_while_reading_the_pane(namespace):
         fixture.close()
 
 
+def case_copy_mode(namespace):
+    fixture = lost_seat("copy-mode", namespace)
+    try:
+        subprocess.run(["tmux", "-L", fixture.seat, "copy-mode", "-t", "%0"], check=True, capture_output=True)
+        exit_code, errors = fixture.run()
+        time.sleep(1)
+        subprocess.run(["tmux", "-L", fixture.seat, "send-keys", "-t", "%0", "-X", "cancel"],
+                       check=True, capture_output=True)
+        check("a pane in tmux copy mode: nothing typed, the skip logged, exit 0",
+              exit_code == 0 and "/remote-control" not in fixture.pane() and fixture.decisions() == ["skipped"]
+              and "copy mode" in fixture.entries()[0]["reason"], (exit_code, errors, fixture.entries()))
+        exit_code, errors = fixture.run()
+        check("once copy mode ends, a later run types",
+              exit_code == 0 and fixture.decisions() == ["skipped", "typed"]
+              and f"/remote-control {fixture.seat}" in fixture.typed(), (exit_code, errors, fixture.entries()))
+    finally:
+        fixture.close()
+
+
+def case_types_into_the_recorded_pane(namespace):
+    fixture = lost_seat("recorded-pane", namespace)
+    try:
+        painter = fixture.root / "paint.txt"
+        # A second window, made active, whose pane also shows an empty input box.
+        subprocess.run(["tmux", "-L", fixture.seat, "new-window", "-t", f"={fixture.seat}:",
+                        f"cat '{painter}'; stty -echo; exec cat"], check=True, capture_output=True)
+        exit_code, errors = fixture.run()
+        time.sleep(1)
+        recorded, active = (subprocess.run(["tmux", "-L", fixture.seat, "capture-pane", "-p", "-t", target],
+                                           capture_output=True, text=True, check=False).stdout
+                            for target in ("%0", f"={fixture.seat}:"))
+        check("the command is typed into the pane the session record names, not the active pane",
+              exit_code == 0 and f"/remote-control {fixture.seat}" in recorded
+              and "/remote-control" not in active, (exit_code, errors, recorded, active))
+    finally:
+        fixture.close()
+
+
+def case_record_names_no_pane(namespace):
+    fixture = lost_seat("no-pane", namespace)
+    try:
+        record = json.loads((fixture.records / f"{CLAUDE_PID}.json").read_text(encoding="utf-8"))
+        del record["tmux"]
+        fixture.write_record(text=json.dumps(record))
+        exit_code, errors = fixture.run()
+        time.sleep(1)
+        check("a session record that names no tmux pane: reported as a typing failure, exit 1, nothing typed",
+              exit_code == 1 and "names no tmux pane" in errors and "/remote-control" not in fixture.pane()
+              and fixture.decisions() == ["failure", "user told"], (exit_code, errors, fixture.entries()))
+    finally:
+        fixture.close()
+
+
+def case_tmux_timing_out(namespace):
+    fixture = lost_seat("tmux-timeout", namespace)
+    real_tmux = watcher.tmux
+
+    def tmux_that_hangs(seat, *arguments):
+        return watcher.run_command(["sleep", "5"], 0.2)
+
+    watcher.tmux = tmux_that_hangs
+    try:
+        exit_code, errors = fixture.run()
+        check("a tmux command that times out: reported as that seat's typing failure, the run not "
+              "stopped, exit 1",
+              exit_code == 1 and "timed out" in errors and "within 0.2 seconds" in errors
+              and fixture.decisions() == ["failure", "user told"], (exit_code, errors, fixture.entries()))
+    finally:
+        watcher.tmux = real_tmux
+        fixture.close()
+
+
+def case_process_ending_mid_read(namespace):
+    fixture = Fixture("ended-mid-read", namespace)
+    real_read_bytes = Path.read_bytes
+    ended = fixture.processes / "4900" / "cmdline"
+
+    def read_bytes_of_a_process_that_ends(path):
+        if path == ended:
+            raise ProcessLookupError(3, "No such process")
+        return real_read_bytes(path)
+
+    try:
+        fixture.add_seat_processes()
+        fixture.add_process(4900, 1, ["sleep", "1"])
+        Path.read_bytes = read_bytes_of_a_process_that_ends
+        seats = watcher.running_agent_seats(watcher.process_table(fixture.processes))
+        check("a process that ends after its file is opened is skipped, and the scan goes on",
+              [(seat, pid) for seat, pid, _ in seats] == [(fixture.seat, CLAUDE_PID)], seats)
+    finally:
+        Path.read_bytes = real_read_bytes
+        fixture.close()
+
+
 def case_notice_failing(namespace):
     fixture = lost_seat("notice-unwritable", namespace, pane=False)
     try:
@@ -504,7 +618,7 @@ def case_notice_failing(namespace):
         (fixture.logs / "notices").write_text("a file where the notices directory goes", encoding="utf-8")
         exit_code, errors = fixture.run()
         check("a notice that cannot be written: said on stderr, exit 1, not logged as told",
-              exit_code == 1 and "was not written, so he was not told" in errors
+              exit_code == 1 and "was not written, so the user has not been told" in errors
               and fixture.decisions() == ["failure"] and fixture.ssh_requests() == [],
               (exit_code, errors, fixture.entries()))
     finally:
@@ -625,8 +739,14 @@ def main():
         case_record_missing(namespace)
         case_record_unreadable(namespace)
         case_tmux_server_gone(namespace)
+        case_capture_pane_failing(namespace)
         case_send_keys_failing(namespace)
         case_reconnected_while_reading_the_pane(namespace)
+        case_copy_mode(namespace)
+        case_types_into_the_recorded_pane(namespace)
+        case_record_names_no_pane(namespace)
+        case_tmux_timing_out(namespace)
+        case_process_ending_mid_read(namespace)
         case_notice_failing(namespace)
         case_run_failure(namespace)
         case_run_failure_notice_not_shown(namespace)
