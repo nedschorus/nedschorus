@@ -67,11 +67,13 @@ REFERENCE_DENY_MESSAGE = (
 )
 
 COULD_NOT_CHECK_MESSAGE = (
-    "session-location-write-guard could not check the write to {path}: {cause}\n"
-    "The write goes ahead unchecked: this guard could not tell whether the checkout is on a "
-    "branch, has a commit yet, or is the machine's reference checkout.\n"
-    "If the write is into your own checkout, on a branch, carry on.\n"
-    "Otherwise, tell the user this guard could not run, with this message."
+    "session-location-write-guard did not check the write to {path}, and the write went "
+    "ahead: {cause}.\n"
+    "If your checkout is on a detached HEAD, and no rebase, merge, cherry-pick or revert is "
+    "stopped in it, run git switch -c <a-branch-name> before you commit.\n"
+    "If {path} is in the machine's reference checkout, tell the user which file you wrote; "
+    "do not revert it yourself.\n"
+    "Tell the user this guard could not check the write, quoting this message."
 )
 
 CROSS_REFERENCE_DENY_MESSAGE = (
@@ -111,7 +113,12 @@ def git_answer(arguments, working_directory: Path, answers=(0,)):
 
 
 def checkout_root_of(directory: Path):
+    """The checkout holding directory, or None outside one. Raises CheckCouldNotRun when git
+    cannot be launched or times out."""
     result = run_git(["rev-parse", "--show-toplevel"], directory)
+    if result.returncode == GIT_DID_NOT_RUN:
+        raise CheckCouldNotRun(f"git rev-parse --show-toplevel could not be started in "
+                               f"{directory}, or timed out: {result.stderr.strip()}")
     if result.returncode != 0:
         return None
     return Path(result.stdout.strip())
@@ -235,13 +242,15 @@ def main() -> int:
     # Resolve relative targets against the session cwd, which can differ from the hook process cwd.
     if not Path(file_path).is_absolute():
         file_path = str(session_cwd / file_path)
-    checkout = checkout_root_of(session_cwd)
     try:
-        return check_write(file_path, checkout)
+        return check_write(file_path, checkout_root_of(session_cwd))
     except CheckCouldNotRun as error:
-        # The hooks convention: a guard that breaks exits 1, so the user sees the break and work goes on.
-        print(COULD_NOT_CHECK_MESSAGE.format(path=file_path, cause=error), file=sys.stderr)
-        return 1
+        # Claude Code shows the model neither stderr nor exit 1; additionalContext is what it reads.
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": COULD_NOT_CHECK_MESSAGE.format(path=file_path, cause=error),
+        }}))
+        return 0
 
 
 def check_write(file_path: str, checkout) -> int:

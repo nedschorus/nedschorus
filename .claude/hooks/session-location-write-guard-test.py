@@ -42,24 +42,40 @@ def check(case_name, condition, detail=""):
 
 
 def run_hook(session_cwd: Path, file_path: str, decoy: Path, notebook: bool = False,
-             path_prefix: Path = None, process_cwd: Path = None, script_path: Path = None):
+             path_prefix: Path = None, process_cwd: Path = None, script_path: Path = None,
+             expect_note: bool = False, path: str = None):
     """Invoke the guard.
 
     path_prefix puts a directory first on PATH, so a stub git can drive states
-    a real git will not produce on demand. process_cwd runs the hook from
+    a real git will not produce on demand; path replaces PATH whole, so git can be
+    made impossible to launch. process_cwd runs the hook from
     somewhere other than the session's directory, which is how a relative
     target proves it is judged against the session and not against the hook.
+
+    result.note is the could-not-check note the agent reads, or "". The guard lets an
+    unchecked write through with exit 0, so a case that expects a checked pass would
+    pass on an unchecked one too; a note nobody expected is therefore a failure here.
     """
     key = "notebook_path" if notebook else "file_path"
     payload = json.dumps({"cwd": str(session_cwd), "tool_input": {key: file_path}})
     environment = dict(os.environ, CLAUDE_PROJECT_DIR=str(decoy))
     if path_prefix is not None:
         environment["PATH"] = f"{path_prefix}{os.pathsep}{environment.get('PATH', '')}"
-    return subprocess.run(
+    if path is not None:
+        environment["PATH"] = path
+    result = subprocess.run(
         [sys.executable, str(script_path or SCRIPT_PATH)], input=payload,
         capture_output=True, text=True, check=False, env=environment,
         cwd=str(process_cwd) if process_cwd is not None else None,
     )
+    result.note = ""
+    if result.returncode == 0 and result.stdout.strip():
+        output = json.loads(result.stdout)["hookSpecificOutput"]
+        if output.get("hookEventName") == "PreToolUse":
+            result.note = output.get("additionalContext", "")
+    if result.note and not expect_note:
+        check(f"no could-not-check note on a write to {file_path}", False, result.note)
+    return result
 
 
 def git(arguments, cwd: Path):
@@ -228,17 +244,20 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         encoding="utf-8")
     stub_git.chmod(0o755)
     # With no marker present the old reading's refusal is visible directly.
-    result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=stub_directory)
+    result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=stub_directory,
+                      expect_note=True)
     check("an unreadable HEAD does not refuse a healthy seat, and reports that it could not check",
-          result.returncode == 1 and "could not check the write" in result.stderr
-          and "exited 128" in result.stderr, (result.returncode, result.stderr))
+          "did not check the write" in result.note and "exited 128" in result.note,
+          (result.returncode, result.stdout, result.stderr))
     check("an unreadable HEAD does not claim the seat is on a detached HEAD",
-          "detached HEAD" not in result.stderr, result.stderr)
+          "this checkout is on a detached HEAD" not in result.stderr + result.note,
+          result.stderr + result.note)
     # And with one present, the old reading spent it to let the write through —
     # the seat paid an approval for a state it was never in.
     stub_marker = seat / ".location-write-approved"
     stub_marker.write_text("an approval that must not be spent here\n", encoding="utf-8")
-    result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=stub_directory)
+    result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=stub_directory,
+                      expect_note=True)
     check("an unreadable HEAD does not spend the seat's marker", stub_marker.exists())
     stub_marker.unlink(missing_ok=True)
 
@@ -248,7 +267,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     # broken it read as unborn — the same class the replacement was written to
     # close. Neither is reachable with a real git, so each gets a stub that
     # breaks exactly one command and passes the rest through.
-    for broken, wrong_state in (("symbolic-ref", "detached HEAD"),
+    for broken, wrong_state in (("symbolic-ref", "this checkout is on a detached HEAD"),
                                 ("rev-parse --verify", "no commits yet")):
         one_sided = tmp / f"stub-{broken.split()[0]}-{len(broken)}"
         one_sided.mkdir()
@@ -261,12 +280,13 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         stub.write_text("#!/bin/sh\n" + failing_case + f'exec {real_git} "$@"\n',
                         encoding="utf-8")
         stub.chmod(0o755)
-        result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=one_sided)
+        result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=one_sided,
+                          expect_note=True)
         check(f"a healthy seat survives a broken {broken}, and the guard says it could not check",
-              result.returncode == 1 and "could not check the write" in result.stderr
-              and "exited 3" in result.stderr, (result.returncode, result.stderr))
+              "did not check the write" in result.note and "exited 3" in result.note,
+              (result.returncode, result.stdout, result.stderr))
         check(f"a broken {broken} is not reported as \"{wrong_state}\"",
-              wrong_state not in result.stderr, result.stderr)
+              wrong_state not in result.stderr + result.note, result.stderr + result.note)
 
     # A git failure in any other question the guard asks is reported, not read as an answer.
     def failing_git_directory(name, condition):
@@ -282,29 +302,49 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     common_dir_failing = failing_git_directory(
         "git-common-dir", '[ "$1" = rev-parse ] && [ "$2" = --git-common-dir ]')
     result = run_hook(reference, str(reference / "docs.md"), decoy,
-                      path_prefix=common_dir_failing)
+                      path_prefix=common_dir_failing, expect_note=True)
     check("a failed reference-checkout question in the session's checkout is reported, "
           "not read as \"not the reference\"",
-          result.returncode == 1 and "stand-in failure" in result.stderr,
-          (result.returncode, result.stderr))
+          "stand-in failure" in result.note, (result.returncode, result.stdout, result.stderr))
     result = run_hook(seat, str(reference / "landed-from-seat.md"), decoy,
-                      path_prefix=common_dir_failing)
+                      path_prefix=common_dir_failing, expect_note=True)
     check("a failed reference-checkout question about a write's target is reported",
-          result.returncode == 1 and "stand-in failure" in result.stderr,
-          (result.returncode, result.stderr))
+          "stand-in failure" in result.note, (result.returncode, result.stdout, result.stderr))
     check_ignore_failing = failing_git_directory("check-ignore", '[ "$1" = check-ignore ]')
     result = run_hook(detached, str(detached / "notes.md"), decoy,
-                      path_prefix=check_ignore_failing)
+                      path_prefix=check_ignore_failing, expect_note=True)
     check("a failed git check-ignore in a detached checkout is reported, not read as \"not ignored\"",
-          result.returncode == 1 and "check-ignore" in result.stderr
-          and "stand-in failure" in result.stderr, (result.returncode, result.stderr))
+          "check-ignore" in result.note and "stand-in failure" in result.note,
+          (result.returncode, result.stdout, result.stderr))
     git_dir_failing = failing_git_directory(
         "absolute-git-dir", '[ "$1" = rev-parse ] && [ "$2" = --absolute-git-dir ]')
-    result = run_hook(detached, str(detached / "notes.md"), decoy, path_prefix=git_dir_failing)
+    result = run_hook(detached, str(detached / "notes.md"), decoy, path_prefix=git_dir_failing,
+                      expect_note=True)
     check("a failed git-directory lookup in a detached checkout is reported, not read as "
           "\"no operation in progress\"",
-          result.returncode == 1 and "--absolute-git-dir" in result.stderr
-          and "stand-in failure" in result.stderr, (result.returncode, result.stderr))
+          "--absolute-git-dir" in result.note and "stand-in failure" in result.note,
+          (result.returncode, result.stdout, result.stderr))
+
+    # A git that cannot be launched at all. checkout_root_of once read that as "not a
+    # repository", so a write from a detached or reference checkout passed with nothing said.
+    # A PATH holding only an empty directory makes git impossible to launch, as a missing git does.
+    no_git = tmp / "no-git-on-path"
+    no_git.mkdir()
+    result = run_hook(detached, str(detached / "notes.md"), decoy, path=str(no_git),
+                      expect_note=True)
+    check("a git that cannot be launched is reported, not read as \"not a repository\"",
+          "--show-toplevel could not be started" in result.note
+          and "FileNotFoundError" in result.note,
+          (result.returncode, result.stdout, result.stderr))
+    check("the could-not-check note lets the write through with exit 0 and prints nothing to "
+          "stderr", result.returncode == 0 and not result.stderr,
+          (result.returncode, result.stderr))
+    check("the could-not-check note tells the agent each next step on its own line",
+          "git switch -c" in result.note and "reference checkout" in result.note
+          and "do not revert it yourself" in result.note
+          and "the write went ahead" in result.note
+          and "Tell the user this guard could not check the write" in result.note
+          and len(result.note.splitlines()) == 4, result.note)
 
     def answering_git_directory(name, body):
         directory = tmp / f"stub-{name}"
@@ -317,25 +357,27 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     common_dir_empty = answering_git_directory(
         "git-common-dir-empty",
         'if [ "$1" = rev-parse ] && [ "$2" = --git-common-dir ]; then exit 0; fi\n')
-    result = run_hook(reference, str(reference / "docs.md"), decoy, path_prefix=common_dir_empty)
+    result = run_hook(reference, str(reference / "docs.md"), decoy, path_prefix=common_dir_empty,
+                      expect_note=True)
     check("a git that prints no common directory is reported, not read as \"not the reference\"",
-          result.returncode == 1 and "printed no git directory" in result.stderr,
-          (result.returncode, result.stderr))
+          "printed no git directory" in result.note,
+          (result.returncode, result.stdout, result.stderr))
     git_dir_empty = answering_git_directory(
         "absolute-git-dir-empty",
         'if [ "$1" = rev-parse ] && [ "$2" = --absolute-git-dir ]; then exit 0; fi\n')
-    result = run_hook(detached, str(detached / "notes.md"), decoy, path_prefix=git_dir_empty)
+    result = run_hook(detached, str(detached / "notes.md"), decoy, path_prefix=git_dir_empty,
+                      expect_note=True)
     check("a git that prints no git directory in a detached checkout is reported",
-          result.returncode == 1 and "printed nothing" in result.stderr,
-          (result.returncode, result.stderr))
+          "printed nothing" in result.note, (result.returncode, result.stdout, result.stderr))
     no_branch_no_commit = answering_git_directory(
         "no-branch-no-commit",
         'if [ "$1" = symbolic-ref ]; then exit 1; fi\n'
         'if [ "$1" = rev-parse ] && [ "$2" = --verify ]; then exit 1; fi\n')
-    result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=no_branch_no_commit)
+    result = run_hook(seat, str(seat / "notes.md"), decoy, path_prefix=no_branch_no_commit,
+                      expect_note=True)
     check("a HEAD that git says is on no branch and names no commit is reported, not allowed in "
-          "silence", result.returncode == 1 and "names no commit" in result.stderr,
-          (result.returncode, result.stderr))
+          "silence", "names no commit" in result.note,
+          (result.returncode, result.stdout, result.stderr))
 
     # The guard reads git's in-progress markers from the freshness hook's module, found
     # relative to the guard's own file; a copy of the guard beside a broken module shows
@@ -349,10 +391,11 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     (broken_tree / "scripts" / "checkout-freshness-catch-up.py").write_text(
         "raise RuntimeError('stand-in broken module')\n", encoding="utf-8")
     result = run_hook(detached, str(detached / "notes.md"), decoy,
-                      script_path=broken_tree / ".claude" / "hooks" / "session-location-write-guard.py")
+                      script_path=broken_tree / ".claude" / "hooks" / "session-location-write-guard.py",
+                      expect_note=True)
     check("a marker list that cannot be loaded is reported, not read as \"no operation in progress\"",
-          result.returncode == 1 and "in-progress markers" in result.stderr
-          and "stand-in broken module" in result.stderr, (result.returncode, result.stderr))
+          "in-progress markers" in result.note and "stand-in broken module" in result.note,
+          (result.returncode, result.stdout, result.stderr))
 
     # ------------------------------------------------------------------
     # PR #91's review: the .git asymmetry, and marker inertness
