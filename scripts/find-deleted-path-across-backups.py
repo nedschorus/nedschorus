@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Find a file that is no longer on disk, across every history this fleet keeps.
+"""Find a file that is no longer on disk, across every history the Mac and ned-box keep.
 
 WHY THIS EXISTS. On 2026-08-23 an agent followed a citation in nedschorus#46 to
 `md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md`, found
@@ -1013,7 +1013,7 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
             "local snapshots",
             UNAVAILABLE,
             ["could not list the local snapshots of %s — %s" % (MAC_DATA_VOLUME, failure),
-             "this surface is macOS-only; on the box there are none to list and none to search"],
+             "this surface is macOS-only; on ned-box there are none to list and none to search"],
             ["tmutil listlocalsnapshots %s" % MAC_DATA_VOLUME],
         )
     if not snapshots:
@@ -1566,7 +1566,7 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
         where = "this machine"
         code, out, stderr = runner([sys.executable, "-c"] + probe_arguments, timeout=SHORT_TIMEOUT_SECONDS)
     elif box_ssh_host:
-        where = "the box (%s)" % box_ssh_host
+        where = "ned-box (%s)" % box_ssh_host
         code, out, stderr = runner(
             ["ssh", "-o", "ConnectTimeout=%d" % BOX_LOG_STORE_CONNECT_TIMEOUT_SECONDS, "-o", "BatchMode=yes",
              box_ssh_host, "python3 -c " + " ".join(shlex.quote(a) for a in probe_arguments)],
@@ -1577,7 +1577,7 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
             return SurfaceReport(
                 "log-store",
                 UNAVAILABLE,
-                ["the box (%s) is unreachable — %s" % (box_ssh_host, first_error or "ssh failed"),
+                ["ned-box (%s) is unreachable — %s" % (box_ssh_host, first_error or "ssh failed"),
                  "see why with `ssh %s true`; once it connects, re-run this search" % box_ssh_host],
             )
     else:
@@ -1758,13 +1758,13 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
         hits = [h for h in out.splitlines() if h.strip()]
         first_error = stderr.strip().splitlines()[0] if stderr.strip() else ""
         if code == 255:
-            lines.append("the box (%s): unreachable — %s" % (box_ssh_host, first_error or "ssh failed"))
+            lines.append("ned-box (%s): unreachable — %s" % (box_ssh_host, first_error or "ssh failed"))
             statuses.append(UNAVAILABLE)
         elif code == BOX_TRANSCRIPTS_DIR_MISSING:
-            lines.append("the box (%s): ~/.claude/projects does not exist there" % box_ssh_host)
+            lines.append("ned-box (%s): ~/.claude/projects does not exist there" % box_ssh_host)
             statuses.append(UNAVAILABLE)
         elif hits:
-            lines.append("the box (%s): %d session transcript(s) mention it" % (box_ssh_host, len(hits)))
+            lines.append("ned-box (%s): %d session transcript(s) mention it" % (box_ssh_host, len(hits)))
             for hit in hits[:5]:
                 lines.append("    " + hit)
             if len(hits) > 5:
@@ -1772,14 +1772,14 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
             recovery.append("ssh %s %s | head" % (box_ssh_host, shlex.quote(_transcript_context_print_command(wanted, hits[0]))))
             statuses.append(FOUND)
         elif code == 1:
-            lines.append("the box (%s): searched ~/.claude/projects, no transcript mentions it" % box_ssh_host)
+            lines.append("ned-box (%s): searched ~/.claude/projects, no transcript mentions it" % box_ssh_host)
             statuses.append(NOT_FOUND)
         else:
-            lines.append("the box (%s): grep over ~/.claude/projects failed (exit %s) — %s"
+            lines.append("ned-box (%s): grep over ~/.claude/projects failed (exit %s) — %s"
                          % (box_ssh_host, code, first_error or "no error text"))
             statuses.append(UNAVAILABLE)
     else:
-        lines.append("the box: not searched — no ssh host given (--skip box, or an empty --box-ssh-host)")
+        lines.append("ned-box: not searched — no ssh host given (--skip box, or an empty --box-ssh-host)")
 
     if FOUND in statuses:
         # The searching session quotes the path too; a lone transcript hit may contain no recovered content.
@@ -1919,7 +1919,7 @@ def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=r
         return SurfaceReport(
             "timeshift",
             UNAVAILABLE,
-            ["the box (%s) is unreachable — %s" % (box_ssh_host, first_error or "ssh failed"),
+            ["ned-box (%s) is unreachable — %s" % (box_ssh_host, first_error or "ssh failed"),
              "the snapshots are fine; this machine just cannot see them right now"],
         )
     if code != 0:
@@ -2480,7 +2480,7 @@ def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, sea
 
 
 def render_header(wanted):
-    return "Searching every history this fleet keeps for: %s" % wanted
+    return "Searching every history the Mac and ned-box keep for: %s" % wanted
 
 
 def render_summary(reports):
@@ -2546,7 +2546,7 @@ def main(argv=None, runner=run_command):
     parser = argparse.ArgumentParser(
         allow_abbrev=False,
         description="Find a deleted path across this Mac's local snapshots, git and its reflog, the log-store, "
-                    "agent transcripts, Timeshift on the box, and Time Machine.",
+                    "agent transcripts, Timeshift on ned-box, and Time Machine.",
     )
     parser.add_argument("path", help="a git blob id of 40 lowercase hexadecimal characters; or a path: "
                                      "repo-relative, absolute, or the path's last whole component or components, "
@@ -2561,11 +2561,11 @@ def main(argv=None, runner=run_command):
     parser.add_argument("--timeshift-snapshot-root", default=os.environ.get("FIND_DELETED_PATH_TIMESHIFT_SNAPSHOT_ROOT", DEFAULT_TIMESHIFT_SNAPSHOT_ROOT))
     parser.add_argument("--log-store-root", default=os.environ.get("FIND_DELETED_PATH_LOG_STORE_ROOT", DEFAULT_LOG_STORE_ROOT),
                         help="the log-store's directory: read in place when it exists on this machine, "
-                             "otherwise on the box over ssh")
+                             "otherwise on ned-box over ssh")
     parser.add_argument("--skip", action="append", default=[],
                         choices=["localsnapshots", "git", "reflog", "logstore", "transcripts", "box", "timeshift",
                                  "timemachine"],
-                        help="skip a surface (repeatable); 'box' skips everything on the box — "
+                        help="skip a surface (repeatable); 'box' skips everything on ned-box — "
                              "its transcripts, Timeshift, and the log-store unless it is on this machine — "
                              "so nothing is sent over ssh")
     parser.add_argument("--found-copies-root",

@@ -66,7 +66,7 @@ LOCK_FILE_WAIT_CLAUSE = (
     "wait up to one minute for git to remove it by running "
     "`i=0; while [ -e \"<lock file path>\" ] && [ $i -lt 30 ]; do sleep 2; i=$((i+1)); done` with "
     "<lock file path> replaced by the path git's error names, without the quotes git puts around it "
-    "(Claude Code refuses a plain `sleep 60`), then run the next line's command, whether or not the "
+    "(Claude Code refuses a plain `sleep 60`), then run the command below this paragraph, whether or not the "
     "lock file is gone")
 
 
@@ -443,7 +443,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "that reruns the hook on it, then the line saying what to do if that rerun fails too",
               len(failure_lines) == 4
               and failure_lines[1] == (f"A later run of this hook checks only the file that run's Write or Edit "
-                                       f"touched, so check {written} by running the next line's command. If git's "
+                                       f"touched, so check {written} by running the command printed on its own line below this paragraph. If git's "
                                        "error above names no lock file, run that command now. If git's error names "
                                        f"a lock file, {LOCK_FILE_WAIT_CLAUSE}. The command prints nothing when no other tracked file has the "
                                        "basename, and also when this hook skips the file without checking: a file "

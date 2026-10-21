@@ -60,7 +60,7 @@ check("a git failure in a program that takes names on its command line gets four
           "If none of the cases above applies, run exactly `p --x` once more.",
           'If the rerun, or the corrected command, prints a line containing "p: could not" '
           f'again, stop, and tell {WHO} word for word, the line containing "p: could not" '
-          "from each run."], lines)
+          "from the command that printed this message and from the rerun, or the corrected command."], lines)
 
 lines = next_step_lines.git_failure_next_step_lines(
     "`git -C d status`", "the sync", include_the_misspelt_branch_commit_or_path_line=False,

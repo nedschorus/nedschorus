@@ -994,7 +994,7 @@ with tempfile.TemporaryDirectory() as scratch:
                   f"If git's error names no lock file, run exactly {rerun} once more.",
                   'If the rerun prints a line containing "clean-worktrees: stopped, because" again, '
                   "stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line "
-                  'containing "clean-worktrees: stopped, because" from each run.'],
+                  'containing "clean-worktrees: stopped, because" from the command that printed this message and from the rerun.'],
               failed_listing.stderr)
 
     module = load_clean_worktrees_module()

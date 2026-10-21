@@ -1039,7 +1039,7 @@ with tempfile.TemporaryDirectory() as temporary:
               "Run `the-rerun` once more, on this machine; it tries this job alone.",
               'If the rerun prints a line containing "FAILED: j" again, stop, and tell '
               "the user, or, if you are a subagent, the agent that dispatched you, word for word, the line containing "
-              '"FAILED: j" from each run.'],
+              '"FAILED: j" from the command that printed this message and from the rerun.'],
           (silent_failure.cause, silent_failure.next_steps("the-rerun", "FAILED: j")))
     stub.print_error_text = b""
     exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
@@ -1052,7 +1052,7 @@ with tempfile.TemporaryDirectory() as temporary:
               "count as the rerun failing.",
               'If the rerun prints a line containing "NOT CHECKED: daily-full-test-run-of-main" '
               "again, stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line "
-              'containing "NOT CHECKED: daily-full-test-run-of-main" from each run.'], (exit_code, errors))
+              'containing "NOT CHECKED: daily-full-test-run-of-main" from the command that printed this message and from the rerun.'], (exit_code, errors))
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
     install_rerun = f"{SCRIPT_PATH.resolve()} --install --job daily-full-test-run-of-main"
     check("--install whose launchctl print fails printing no error ends with the rerun and "
@@ -1061,7 +1061,7 @@ with tempfile.TemporaryDirectory() as temporary:
               f"Run `{install_rerun}` once more, on this machine; it tries this job alone.",
               'If the rerun prints a line containing "FAILED: daily-full-test-run-of-main" again, '
               "stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line "
-              'containing "FAILED: daily-full-test-run-of-main" from each run.'], (exit_code, errors))
+              'containing "FAILED: daily-full-test-run-of-main" from the command that printed this message and from the rerun.'], (exit_code, errors))
     stub.print_error_text = b"Could not print: injected launchctl failure\n"
     before = len(stub.commands)
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)

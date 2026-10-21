@@ -146,7 +146,7 @@ def reports_the_git_failure_and_no_result(root, arguments, code, out, err):
             and f"If none of the cases above applies, run exactly {rerun} once more." in err
             and ('If the rerun, or the corrected command, prints a line containing "could not check, because a git '
                  'command failed" again, stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line containing '
-                 '"could not check, because a git command failed" from each run.') in err)
+                 '"could not check, because a git command failed" from the command that printed this message and from the rerun, or the corrected command.') in err)
 
 
 def document(stamp="2026-05-01", status="design", body=""):
