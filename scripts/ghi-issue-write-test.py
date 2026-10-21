@@ -100,6 +100,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+# On macOS the temporary directory is reached through a link (/var is /private/var),
+# and the programs under test print resolved paths, so every scratch path is built resolved.
+tempfile.tempdir = os.path.realpath(tempfile.gettempdir())
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 TOOL = __import__("importlib").import_module("importlib.util")
 _git_environment_fixture_spec = TOOL.spec_from_file_location(
