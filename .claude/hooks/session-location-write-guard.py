@@ -72,10 +72,9 @@ COULD_NOT_CHECK_MESSAGE = (
     "If your checkout is on a detached HEAD, and no rebase, merge, cherry-pick or revert is "
     "stopped in it, run git switch -c <a-branch-name> before you commit, so the commit is "
     "not lost when HEAD moves.\n"
-    "If {path} is in the machine's reference-checkout, tell the user which file you wrote, in "
-    "the same message; do not revert it yourself.\n"
-    "Tell the user this guard could not check the write, quoting this whole note, then carry "
-    "on with your task."
+    "Tell the user this guard could not check the write, quoting this whole note. If {path} is "
+    "in the machine's reference-checkout, say so in that message, and do not revert the write "
+    "yourself. Then carry on with your task."
 )
 
 CROSS_REFERENCE_DENY_MESSAGE = (
