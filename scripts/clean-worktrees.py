@@ -114,11 +114,13 @@ Usage:
   scripts/clean-worktrees.py [--only-done | --remove] [--repo PATH]
 
 Exit codes: 0 ok, 1 a removal, a record's shipment, a ref deletion, or a
-work-snapshot listing or deletion failed, 2 bad invocation.
+work-snapshot listing or deletion failed, 2 bad invocation, or git could not
+list the worktrees or the branches, which stops the run where it failed.
 """
 
 import importlib.util
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -169,6 +171,16 @@ def run_git(repo, *arguments):
 
 
 FINISHED_WITH_FAILURES_LINE = "clean-worktrees: finished; each failure is named above"
+STOPPED_LINE_START = "clean-worktrees: stopped, because "
+
+GIT_FAILURE_NEXT_STEP_LINES = (
+    "If git's error names a lock file, such as .git/index.lock, wait one minute, then run {rerun}; "
+    "do not delete the lock file yourself.\n"
+    "If git's error names a branch, commit or path that does not exist, and you gave that name "
+    "to {program}, correct it in your command, then run the corrected command.\n"
+    "In any other case, run {rerun} once more.\n"
+    "If {rerun} fails again, stop and tell the user what {program} printed, "
+    "git's error included; a subagent tells the agent that dispatched it instead.")
 
 
 def main_checkout_of(repo):
@@ -180,10 +192,11 @@ def main_checkout_of(repo):
 
 
 def list_worktrees(repo, main_checkout):
-    """Return (path, branch-or-None) pairs excluding the primary checkout."""
-    listing = run_git(repo, "worktree", "list", "--porcelain", "-z")
+    """Return (path, branch-or-None) pairs excluding the primary checkout; raise
+    git_output.GitCommandFailed when git cannot list them."""
+    listing = git_output.run_git(repo, ["worktree", "list", "--porcelain", "-z"])
     worktrees = []
-    for record in git_output.worktree_records(listing.stdout):
+    for record in git_output.worktree_records(listing):
         path = Path(record.path)
         if path.resolve() == main_checkout.resolve():
             continue
@@ -197,29 +210,28 @@ def list_worktrees(repo, main_checkout):
 
 
 def dead_worktree_registrations(repo):
-    """Return (path, git reason) for unlocked prunable registrations."""
+    """Return (path, git reason) for unlocked prunable registrations; raise
+    git_output.GitCommandFailed when git cannot list them."""
     # A prunable directory can still exist and hold work; report git's reason without inferring absence.
-    listing = run_git(repo, "worktree", "list", "--porcelain", "-z")
+    listing = git_output.run_git(repo, ["worktree", "list", "--porcelain", "-z"])
     return [(record.path, record.prunable_reason or "no reason given")
-            for record in git_output.worktree_records(listing.stdout)
+            for record in git_output.worktree_records(listing)
             if record.prunable_reason is not None]
 
 
 def branch_refs_with_no_worktree_fully_on_main(repo):
-    listing = run_git(repo, "worktree", "list", "--porcelain", "-z")
-    if listing.returncode != 0:
-        return []
+    """Return the local branches no worktree holds that carry nothing beyond origin/main;
+    raise git_output.GitCommandFailed when git cannot list either."""
+    listing = git_output.run_git(repo, ["worktree", "list", "--porcelain", "-z"])
     attached = {
         record.branch[len("refs/heads/"):]
-        for record in git_output.worktree_records(listing.stdout)
+        for record in git_output.worktree_records(listing)
         if record.branch is not None and record.branch.startswith("refs/heads/")
     }
     # Use lstrip=2: :short can return heads/<name> when a same-named tag shadows a branch.
-    landed = run_git(repo, "for-each-ref", "--format=%(refname:lstrip=2)",
-                     "--merged", "origin/main", "refs/heads/")
-    if landed.returncode != 0:
-        return []
-    return [branch for branch in landed.stdout.splitlines()
+    landed = git_output.run_git(repo, ["for-each-ref", "--format=%(refname:lstrip=2)",
+                                       "--merged", "origin/main", "refs/heads/"])
+    return [branch for branch in os.fsdecode(landed).splitlines()
             if branch not in attached]
 
 
@@ -428,34 +440,9 @@ def remove_worktree(worktree, branch, repo, discarded):
     return True
 
 
-def main(argv=None):
-    # The daily job writes to a log without -u; a run killed mid-removal must still show what it announced.
-    sys.stdout.reconfigure(line_buffering=True)
-    arguments = sys.argv[1:] if argv is None else list(argv)
-    if arguments in (["--help"], ["-h"]):
-        print(__doc__)
-        return 0
-    repo = REPO_ROOT
-    if "--repo" in arguments:
-        flag_position = arguments.index("--repo")
-        try:
-            repo = Path(arguments[flag_position + 1])
-        except IndexError:
-            print("clean-worktrees: --repo needs a path", file=sys.stderr)
-            return 2
-        del arguments[flag_position:flag_position + 2]
-    only_done = "--only-done" in arguments
-    remove = "--remove" in arguments
-    leftover = [a for a in arguments if a not in ("--only-done", "--remove")]
-    if leftover or (only_done and remove):
-        print(__doc__, file=sys.stderr)
-        return 2
-
-    main_checkout = main_checkout_of(repo)
-    if main_checkout is None:
-        print(f"clean-worktrees: {repo} is not a git repository", file=sys.stderr)
-        return 2
-
+def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
+    """Report or remove the worktrees and orphaned branch refs, and report dead registrations;
+    return the number of failures, or raise git_output.GitCommandFailed when git cannot list them."""
     failures = 0
     for worktree, branch in list_worktrees(repo, main_checkout):
         done, reason, discarded = classify(worktree, branch, main_checkout)
@@ -488,6 +475,49 @@ def main(argv=None):
         print("dead registration(s) git would prune: "
               + ", ".join(f"{path} ({reason})" for path, reason in dead_registrations)
               + " — remove with: git worktree prune")
+
+    return failures
+
+
+def main(argv=None):
+    # The daily job writes to a log without -u; a run killed mid-removal must still show what it announced.
+    sys.stdout.reconfigure(line_buffering=True)
+    arguments = sys.argv[1:] if argv is None else list(argv)
+    given_arguments = list(arguments)
+    if arguments in (["--help"], ["-h"]):
+        print(__doc__)
+        return 0
+    repo = REPO_ROOT
+    if "--repo" in arguments:
+        flag_position = arguments.index("--repo")
+        try:
+            repo = Path(arguments[flag_position + 1])
+        except IndexError:
+            print("clean-worktrees: --repo needs a path", file=sys.stderr)
+            return 2
+        del arguments[flag_position:flag_position + 2]
+    only_done = "--only-done" in arguments
+    remove = "--remove" in arguments
+    leftover = [a for a in arguments if a not in ("--only-done", "--remove")]
+    if leftover or (only_done and remove):
+        print(__doc__, file=sys.stderr)
+        return 2
+
+    main_checkout = main_checkout_of(repo)
+    if main_checkout is None:
+        print(f"clean-worktrees: {repo} is not a git repository", file=sys.stderr)
+        return 2
+
+    try:
+        failures = clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done)
+    except git_output.GitCommandFailed as error:
+        # The cause stays on one line: the handoff-supervisor reports this line alone.
+        rerun = shlex.join([sys.executable, str(Path(__file__).resolve()), *given_arguments])
+        print(f"{STOPPED_LINE_START}{' '.join(str(error).split())}; "
+              f"this run checked and did nothing beyond what it printed before this line.\n"
+              + GIT_FAILURE_NEXT_STEP_LINES.format(rerun=rerun, program="scripts/clean-worktrees.py"),
+              file=sys.stderr)
+        return 2
 
     # The handoff-supervisor records each agent-seat's first listings in its handoff directory.
     failures += work_snapshots.clean_leftover_work_snapshots(
