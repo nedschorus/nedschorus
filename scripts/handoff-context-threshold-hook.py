@@ -274,7 +274,7 @@ def work_in_flight(transcript_path: str, background_task_wait_seconds: float,
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Fire the handoff skill when context runs low.")
-    parser.add_argument("--threshold-used-percentage", type=float, default=50.0)
+    parser.add_argument("--threshold-used-percentage", type=float, default=33.0)
     parser.add_argument(
         "--ceiling-used-percentage", type=float, default=65.0,
         help="above this used share the handoff fires even with work in flight",
