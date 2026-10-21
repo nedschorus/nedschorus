@@ -288,6 +288,12 @@ def local_branches(checkout: Path):
         return None
 
 
+def head_is_unborn(checkout: Path) -> bool:
+    """Whether the repository has no commit yet; raises GitCommandFailed when git fails."""
+    # With -q --verify, rev-parse exits 1 and prints nothing when HEAD names no commit.
+    return git_output(["rev-parse", "-q", "--verify", "HEAD"], checkout, accepted_exit_codes=(0, 1)).strip() == ""
+
+
 def worktree_fingerprint(checkout: Path):
     """Return a digest of HEAD, the uncommitted changes and the untracked files; raises GitCommandFailed when git fails."""
     head = git_output(["rev-parse", "HEAD"], checkout)
@@ -403,6 +409,9 @@ def main() -> int:
         if top_level is None or not top_level.strip():
             return 0
         checkout = Path(os.fsdecode(top_level).strip())
+        # A repository with no commit yet has no branch to compare, and HEAD cannot be read.
+        if head_is_unborn(checkout):
+            return 0
         record_path = reported_names_path(checkout)
         fingerprint = worktree_fingerprint(checkout)
         record_key = reported_names_record_key_for(checkout)

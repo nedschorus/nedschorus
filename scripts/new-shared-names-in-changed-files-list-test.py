@@ -532,7 +532,8 @@ def run_hook_in_process(hook, root: Path, clone: Path, payload: dict, planted_fa
 
 
 def case_hook_git_failure_exits_1_with_the_cause_on_stderr(root):
-    for planted in ("rev-parse --show-toplevel", "rev-parse --absolute-git-dir", "rev-parse HEAD", "status",
+    for planted in ("rev-parse --show-toplevel", "rev-parse -q --verify HEAD", "rev-parse --absolute-git-dir",
+                    "rev-parse HEAD", "status",
                     "diff HEAD", "ls-files -z --others", "symbolic-ref"):
         case_root = root / planted.replace(" ", "_")
         case_root.mkdir()
@@ -568,6 +569,15 @@ def case_hook_git_failure_exits_1_with_the_cause_on_stderr(root):
                                   "tool_input": {"command": "ls"}}, {"rev-parse --show-toplevel": "timeout"}, stderr)
     check("a git call that times out exits 1 and says so on stderr",
           code == 1 and "did not finish within 10 s" in stderr.getvalue(), f"exit {code}: {stderr.getvalue()!r}")
+    unborn = root / "no-commit-yet"
+    git(["init", "-q", "-b", "main", str(unborn)], root)
+    write(unborn, "alpha.py", "def first_helper():\n    return 1\n")
+    unborn_state = root / "state-unborn"
+    unborn_state.mkdir()
+    for tool_name, tool_input in (("Write", {"file_path": "alpha.py"}), ("Bash", {"command": "ls"})):
+        code, context = run_hook(unborn, unborn_state, {"tool_name": tool_name, "tool_input": tool_input})
+        check(f"a {tool_name} call in a repository with no commit yet exits 0 and says nothing",
+              code == 0 and context == "", f"exit {code}: {context}")
     loose = root / "not-a-repository"
     loose.mkdir()
     state_root = root / "state-outside"

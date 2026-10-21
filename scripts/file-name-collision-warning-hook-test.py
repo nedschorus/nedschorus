@@ -267,6 +267,13 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a session seated outside any checkout is silent",
           silent(run_hook(hook_payload(not_a_repository, loose_file))))
 
+    unborn = tmp / "no-commit-yet"
+    unborn.mkdir()
+    git(["init", "-q", "-b", "main"], unborn)
+    unborn_file = write_file(unborn, "scripts/cold-read-grid.py")
+    check("a write in a repository with no commit yet is silent",
+          silent(run_hook(hook_payload(unborn, unborn_file))))
+
     # --- letter case: two files, or one file spelled two ways ------------
     # The positive pair comes first: both sides of the comparison are folded,
     # so each side gets a case whose tracked fixture carries the uppercase.
