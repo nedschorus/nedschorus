@@ -58,8 +58,8 @@ _git_output_spec = importlib.util.spec_from_file_location(
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 _defect_line_reader_spec = importlib.util.spec_from_file_location(
-    "pull_request_description_defect_line_hashtags_reader_common",
-    Path(__file__).resolve().with_name("pull-request-description-defect-line-hashtags-reader-common.py"))
+    "pull_request_description_defect_line_root_cause_status_and_follow_up_link_reader",
+    Path(__file__).resolve().with_name("pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py"))
 defect_line_reader = importlib.util.module_from_spec(_defect_line_reader_spec)
 _defect_line_reader_spec.loader.exec_module(defect_line_reader)
 
