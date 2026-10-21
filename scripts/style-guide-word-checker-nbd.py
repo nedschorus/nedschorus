@@ -101,7 +101,8 @@ def parse_words_to_avoid_table(page_text: str) -> Tuple[StyleGuideWordListEntry,
 
 
 # Raises on a missing page or a malformed table, so the hook, which loads this module
-# inside a try, prints nothing rather than checking against a partial list.
+# inside a try, reports the fault on stderr and exits 1 rather than checking against a
+# partial list.
 STYLE_GUIDE_WORD_LIST = parse_words_to_avoid_table(
     STYLE_GUIDE_PAGE_PATH.read_text(encoding="utf-8"))
 

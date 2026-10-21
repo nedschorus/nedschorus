@@ -48,7 +48,7 @@ def _load_style_guide_word_checker():
     """Return the checker module loaded by path; raises when it will not load."""
     specification = importlib.util.spec_from_file_location(
         "style_guide_word_checker",
-        Path(__file__).resolve().with_name("style-guide-word-checker.py"))
+        Path(__file__).resolve().with_name("style-guide-word-checker-nbd.py"))
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -166,7 +166,7 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as error:
-        print(f"style-guide-word-checker-markdown-edit-hook: the text just written was not "
+        print(f"style-guide-word-checker-markdown-edit-hook-nbd: the text just written was not "
               f"checked for style-guide words, because the hook failed; the write itself "
               f"succeeded: {type(error).__name__}: {error}", file=sys.stderr)
         sys.exit(1)

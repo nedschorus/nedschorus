@@ -175,7 +175,7 @@ All line numbers are in `scripts/style-guide-word-checker.py` at `07fbc10e` unle
 
 ## Next action
 
-Fix the six shapes in the checker and the hook, adding one case per item to `scripts/style-guide-word-checker-markdown-edit-hook-test.py`, built from the inputs above. Each case fails on main at `07fbc10e` and passes after the fix.
+Fix the six shapes in the checker and the hook, adding one case per item to `scripts/style-guide-word-checker-markdown-edit-hook-nbd-test.py`, built from the inputs above. Each case fails on main at `07fbc10e` and passes after the fix.
 
 - Items 1, 5 and 6: accept a closing fence only at zero to three spaces of indentation with nothing before the run, as CommonMark does. End list tracking at a heading as well as at an unindented line after a blank. Decide how a fence that never closes is treated; one choice is to treat an indented opening fence whose closing fence never comes as not a fence, so that a misread line cannot hide the rest of the text.
 - Item 2: match a code span's closing run only when the closing run has exactly the opening run's length, with no backtick next to either run; `backtick_run_closing` (line 192) already matches runs that way and can serve as the model.
