@@ -555,6 +555,38 @@ def case_types_into_the_recorded_pane(namespace):
         fixture.close()
 
 
+def open_active_window_with_empty_box(fixture):
+    """A second window, made active, whose pane shows an empty input box and is in no mode."""
+    painter = fixture.root / "active-paint.txt"
+    painter.write_text("other window\n" + "\n".join(EMPTY_BOX) + "\n  status line\n", encoding="utf-8")
+    subprocess.run(["tmux", "-L", fixture.seat, "new-window", "-t", f"={fixture.seat}:",
+                    f"cat '{painter}'; stty -echo; exec cat"], check=True, capture_output=True)
+    time.sleep(0.5)
+
+
+def case_recorded_pane_decides_mode_and_prompt(namespace):
+    fixture = lost_seat("recorded-pane-mode", namespace)
+    try:
+        subprocess.run(["tmux", "-L", fixture.seat, "copy-mode", "-t", "%0"], check=True, capture_output=True)
+        open_active_window_with_empty_box(fixture)
+        exit_code, errors = fixture.run()
+        check("the recorded pane in copy mode while the active pane is not: nothing typed, the skip logged",
+              exit_code == 0 and fixture.decisions() == ["skipped"]
+              and "copy mode" in fixture.entries()[0]["reason"], (exit_code, errors, fixture.entries()))
+    finally:
+        fixture.close()
+    fixture = lost_seat("recorded-pane-draft", namespace, box_lines=[EMPTY_BOX[0], "❯\xa0yes, merge it", RULE])
+    try:
+        open_active_window_with_empty_box(fixture)
+        exit_code, errors = fixture.run()
+        check("a draft in the recorded pane while the active pane's prompt is empty: nothing typed, "
+              "the skip logged",
+              exit_code == 0 and fixture.decisions() == ["skipped"]
+              and "not empty" in fixture.entries()[0]["reason"], (exit_code, errors, fixture.entries()))
+    finally:
+        fixture.close()
+
+
 def case_record_names_no_pane(namespace):
     fixture = lost_seat("no-pane", namespace)
     try:
@@ -744,6 +776,7 @@ def main():
         case_reconnected_while_reading_the_pane(namespace)
         case_copy_mode(namespace)
         case_types_into_the_recorded_pane(namespace)
+        case_recorded_pane_decides_mode_and_prompt(namespace)
         case_record_names_no_pane(namespace)
         case_tmux_timing_out(namespace)
         case_process_ending_mid_read(namespace)

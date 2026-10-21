@@ -188,7 +188,7 @@ def notice_show(log_directory: Path, seat, kind, template, **fields) -> bool:
                                         **fields), encoding="utf-8")
     except OSError as error:
         print(f"{PROGRAM}: the notice to the user about {seat} was not written, so the user has not "
-              f"been told of the failure above; a later run that meets it tries the notice again: {error}",
+              f"been told of the failure above; a later run that meets the same failure tries the notice again: {error}",
               file=sys.stderr)
         return False
     exit_code, output = run_command(
@@ -196,7 +196,7 @@ def notice_show(log_directory: Path, seat, kind, template, **fields) -> bool:
         MAC_WINDOW_OPENER_TIMEOUT_SECONDS)
     if exit_code != 0:
         print(f"{PROGRAM}: the notice {path} did not open on the user's Mac, so the user has not been "
-              f"told of the failure above; a later run that meets it tries the notice again. The opener "
+              f"told of the failure above; a later run that meets the same failure tries the notice again. The opener "
               f"{outcome(exit_code)} and said: {output}", file=sys.stderr)
         return False
     return True
