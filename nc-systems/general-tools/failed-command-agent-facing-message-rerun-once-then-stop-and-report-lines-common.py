@@ -2,13 +2,19 @@
 """The next-step lines a program prints for an agent after one of its commands failed.
 
 Every program that tells an agent "rerun once, then stop and tell the user" takes
-the wording from here, so a correction reaches all of them at once.
+the wording from here, so a correction reaches all of them at once. A file-edit
+hook also takes from here the command its lines tell the agent to rerun, and the
+printer that puts its message where the agent reads it.
 
 Load it by path, under the snake_case form of its file name:
 
     spec = importlib.util.spec_from_file_location(
         "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common", <path>)
 """
+
+import json
+import shlex
+from pathlib import Path
 
 # Named before the report, so a subagent does not act on "tell the user" first.
 REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT = (
@@ -90,3 +96,22 @@ def hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(whe
             f"error or another, tell {REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT} "
             f"word for word, every line of this message and of the new one, before you go on. "
             f"If the check finds no git failure then, this failure needs no report.")
+
+
+def file_edit_hook_shell_command_that_runs_the_hook_on_one_file_as_claude_code_would(
+        hook_script_path: Path, working_directory, file_path: str) -> str:
+    """A shell command that runs the hook at hook_script_path on file_path as Claude Code would."""
+    payload = json.dumps({"cwd": str(working_directory), "tool_input": {"file_path": file_path}})
+    return f"printf '%s\\n' {shlex.quote(payload)} | python3 {shlex.quote(str(hook_script_path))}"
+
+
+def post_tool_use_hook_additional_context_print_for_agent(text) -> None:
+    """Print text as additionalContext, which the agent reads next when the hook exits 0.
+
+    A git failure takes this channel too: Claude Code records the stderr of a
+    PostToolUse exit 1 in the transcript but never passes it to the model.
+    """
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "additionalContext": text,
+    }}, ensure_ascii=False))

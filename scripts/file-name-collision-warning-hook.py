@@ -5,7 +5,6 @@
 import importlib.util
 import json
 import os
-import shlex
 import sys
 from pathlib import Path, PurePath
 
@@ -46,13 +45,6 @@ GIT_FAILURE_TEMPLATE = (
 )
 
 
-def shell_command_that_runs_this_hook_on_one_file_as_claude_code_would(working_directory,
-                                                                         file_path) -> str:
-    """Return a shell command that runs this hook on file_path as Claude Code would."""
-    payload = json.dumps({"cwd": str(working_directory), "tool_input": {"file_path": file_path}})
-    return f"printf '%s\\n' {shlex.quote(payload)} | python3 {shlex.quote(str(Path(__file__).resolve()))}"
-
-
 def git_output(arguments, cwd: Path, accepted_exit_codes=(0,)) -> str:
     """Return git stdout; raises GitCommandFailed when git fails."""
     return os.fsdecode(git_machine_readable_output.run_git(
@@ -66,7 +58,8 @@ def git_failure_text(failure, path, working_directory) -> str:
         outcome = failure.stderr
     else:
         outcome = f"exit {failure.returncode}: {' '.join(failure.stderr.split()) or 'no error text'}"
-    rerun = shell_command_that_runs_this_hook_on_one_file_as_claude_code_would(working_directory, path)
+    rerun = next_step_lines.file_edit_hook_shell_command_that_runs_the_hook_on_one_file_as_claude_code_would(
+        Path(__file__).resolve(), working_directory, path)
     return GIT_FAILURE_TEMPLATE.format(command=" ".join(failure.arguments), outcome=outcome, path=path,
                                        rerun=rerun)
 
@@ -177,25 +170,15 @@ def main() -> int:
             return 0
         others = tracked_paths_sharing_name(relative_path, checkout)
     except git_machine_readable_output.GitCommandFailed as failure:
-        print_for_agent(git_failure_text(failure, file_path, working_directory))
+        next_step_lines.post_tool_use_hook_additional_context_print_for_agent(
+            git_failure_text(failure, file_path, working_directory))
         return 0
     if not others:
         return 0
 
-    print_for_agent(collision_warning_line(relative_path, others))
+    next_step_lines.post_tool_use_hook_additional_context_print_for_agent(
+        collision_warning_line(relative_path, others))
     return 0
-
-
-def print_for_agent(text) -> None:
-    """Print text as additionalContext, which the agent reads next when the hook exits 0.
-
-    A git failure takes this channel too: Claude Code records the stderr of a
-    PostToolUse exit 1 in the transcript but never passes it to the model.
-    """
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PostToolUse",
-        "additionalContext": text,
-    }}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
