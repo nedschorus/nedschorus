@@ -1,0 +1,402 @@
+#!/usr/bin/env python3
+"""Carry out the user's A, AO, D, O2 or O3 answer to the waiting item of an
+open approval-walk: give each text the answered item adds, its `#new` lines, a
+cold-read-fast-read, then record in the walk-minutes that the answer took
+effect.
+
+Usage, from the agent-session's checkout:
+  walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check
+      [--obvious | --disapproved | --option N] [--item N]
+  walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py close
+
+The answer is an approval, A, unless a flag says otherwise: --obvious for AO,
+--disapproved for D, --option 2 or 3 for O2 or O3, which approve the item's
+"Option N" paragraph instead of its recommendation. --item N picks one of the
+waiting items when the `#next_to_present` line names several.
+
+The open approval-walk and its waiting items are found with WALK_FINDER_FILE,
+loaded by path, the module the walk-me-through Stop hook uses too, so the
+`#next_to_present` line and the walk-document's item headings are read exactly
+as that hook reads them.
+
+CHECK finds the texts the change adds: the item's `#new` lines, a line whose
+first word is `#new`, after any list or quotation marker, outside fenced code;
+the text is the rest of the line, without one pair of surrounding quotation
+marks. For each text it looks for a cold-read-record holding a fast-read.md and
+a file under target/ that contains the text, whitespace aside, in the
+checkout's cold-read-records/ and in the log-store's. For each text with none,
+it saves the text to a scratch file and runs cold-read-fast-read.py --target on
+that file. Then it writes the answer line and one status line per text, or "no
+proposed text marked", into the walk-minutes, and prints the status lines, the
+judgement the agent must make on new reports, and the close step to run. It
+appends one line of counts to the log-store's COUNTS_LOG_FILE_NAME.
+
+A fast read that prints a line opening FAILED, or exits nonzero, ends CHECK
+before the walk-minutes are written: the program prints that line, or a FAILED
+line of its own, with FAST_READ_FAILED_LINES, and exits 1; the item stays
+waiting. A counts line that cannot be written is printed as such after the
+rest, with exit 2.
+
+CLOSE reads the last answer line CHECK wrote. When the `#next_to_present` line
+still names that line's items, it records that the answer took effect; when it
+names others, a new item a finding raised is waiting, and the answer is
+recorded as held for it. Either way it prints the lines the agent's next
+message must include, the status lines among them.
+
+No open approval-walk, or an item the walk-minutes or the walk-document do not
+let the program find, is a failure: one line on stderr, exit 1.
+
+Agent-facing messages follow
+docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
+"""
+import argparse
+import datetime
+import importlib.util
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPOSITORY_TOP = HERE.parents[2]
+WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
+FAST_READ_PROGRAM = REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-fast-read.py"
+LOG_STORE = Path("/home/nedlern/nedschorus-logs")
+COUNTS_LOG_FILE_NAME = "walk-me-through-answer-added-texts-cold-read-fast-read-already-done-or-had-to-run-counts-per-check.tsv"
+RECORDS_DIRECTORY_NAME = "cold-read-records"
+PROGRAM = "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close"
+
+NEW_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*#new\b[:\s]*(.*)$")
+QUOTE_PAIRS = (('"', '"'), ("“", "”"), ("'", "'"))
+ANSWER_LINE = re.compile(r"^(?P<item>items? .+?): the user answered (?P<answered>.+?)(?: #approved_obvious)? "
+                         r"\([^)]*\), which makes its change\. Fast reads:$")
+STATUS_LINE_PREFIX = "- "
+OBVIOUS_HASHTAG = " #approved_obvious"
+APPROVED, DISAPPROVED = "approved", "disapproved"
+OUTCOMES = {APPROVED: "<accepted>", DISAPPROVED: "<rejected>"}
+
+NO_PROPOSED_TEXT = "no proposed text marked"
+STATUS_ALREADY_DONE = "`#new` text {number}, \"{excerpt}\": fast read already done ({record})."
+STATUS_HAD_TO_BE_RUN = "`#new` text {number}, \"{excerpt}\": fast read had to be run ({record})."
+CHECK_JUDGEMENT_LINES = (
+    "Read each fast-read report named above as had to be run.",
+    "If a finding holds and changes how a text is understood but not what the item decides, "
+    "apply it to that text's `#new` line in the walk-document {document}.",
+    "If a finding would change what the item decides, write that change as a new item right "
+    "after {item} in the walk-document, numbered as the walk-me-through skill's Re-planning section "
+    "says, and set the minutes' `#next_to_present` line to the new item; "
+    "the close step says when to present it.",
+)
+CHECK_CLOSE_LINE = "Then run `python3 {program} close` and do what it prints."
+COUNTS_NOT_LOGGED = (
+    "The fast-read counts were not logged to {log}: {error}.",
+    "Include this line in your next message to the user, and carry on as the lines above say.",
+)
+FAST_READ_FAILED_LINES = (
+    "The item stays waiting: the minutes do not record the answer.",
+    "Tell the user the line above, and ask whether to run `python3 {program} check{flags}` again or "
+    "answer the item another way.",
+)
+CHECK_MINUTES = "{item}: the user answered {answered}{obvious} ({date_and_time}), which makes its change. Fast reads:"
+CLOSE_TOOK_EFFECT_MINUTES = "{item}: {answered}; every text the change adds has had a fast read. {outcome}"
+CLOSE_HELD_MINUTES = "{item}: answer held: {new_item}, raised by a fast-read finding, waits for the user's answer. <open>"
+CLOSE_TOOK_EFFECT_LINES = (
+    "{item}'s answer is recorded in the minutes, and its change may now be made.",
+    "Your next message must include these lines, as they are:",
+)
+CLOSE_HELD_LINES = (
+    "{item}'s answer does not take effect yet: {new_item}, which a fast-read finding raised, is waiting, "
+    "and the minutes record the answer as held for it.",
+    "Your next message must include these lines, as they are:",
+)
+CLOSE_TOOK_EFFECT_NEXT = (
+    "If the change needs nothing more from the user, such as a text he has not yet seen, start it as the "
+    "walk-me-through skill's sentence on ready work says; if it edits a file that work you dispatched "
+    "earlier is still editing, start it when that earlier work finishes.",
+    "Then move the approval-walk on: to the next item, or after the last item, to the walk-me-through "
+    "skill's closing.",
+)
+CLOSE_HELD_NEXT = ("Then present {new_item}, and record the user's answer to it in the minutes as "
+                   "the outcome of {item} too.")
+
+
+class Failure(Exception):
+    """A step that cannot go on; its argument is the line to print."""
+
+
+class FastReadFailed(Exception):
+    """A fast read failed; its argument is the FAILED line, printed as it is."""
+
+
+def load_walk_finder():
+    spec = importlib.util.spec_from_file_location(
+        "walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common", WALK_FINDER_FILE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def the_open_walk(walk_finder, cwd):
+    """Return (checkout top, minutes path, #next_to_present value, parser)."""
+    top = walk_finder.checkout_top(Path(cwd))
+    if top is None:
+        raise Failure(f"{cwd} is not in a git checkout, so no approval-walk can be open there.")
+    parser = walk_finder.markdown_parser()
+    walk_directory = top / walk_finder.WALK_DIRECTORY
+    walk = walk_finder.open_walk(walk_directory, parser) if walk_directory.is_dir() else None
+    if walk is None:
+        raise Failure(f"no approval-walk is open in {walk_directory}.")
+    minutes, value, _ = walk
+    return top, minutes, value, parser
+
+
+def waiting_items(walk_finder, value, minutes):
+    """Return (running count such as `item 4.1 of 6`, item numbers, M or None) of the `#next_to_present` value."""
+    match = walk_finder.VALUE_COUNT.match(value)
+    if not match:
+        raise Failure(f"the last `#next_to_present` line in {minutes}, `{value}`, names no item.")
+    try:
+        numbers, total = walk_finder.parse_items(value)
+    except walk_finder.UnusableRange as problem:
+        raise Failure(f"the last `#next_to_present` line in {minutes}, `{value}`, {problem}.")
+    return match[0], numbers, total
+
+
+def chosen_item(count, numbers, total, item, minutes):
+    """Return (running count, item numbers) of the item --item names, or of every waiting item without it."""
+    if item is None:
+        return count, numbers
+    if item not in numbers:
+        raise Failure(f"--item {item} is not among the items the last `#next_to_present` line in {minutes} "
+                      f"names, `{count}`; give one of {', '.join(numbers)}.")
+    return (f"item {item} of {total}" if total else f"item {item}"), [item]
+
+
+def item_lines(walk_finder, minutes, numbers, total, count, parser):
+    """Return (walk-document path, the lines of the items numbered, outside fenced code)."""
+    document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
+    if not document.is_file():
+        raise Failure(f"the walk-document {document} does not exist.")
+    text = document.read_text(encoding="utf-8")
+    spans = [unit for unit in walk_finder.item_unit_spans(text, parser)
+             if set(unit[0]) & set(numbers) and (total is None or unit[1] == total)]
+    if not spans:
+        raise Failure(f"the walk-document {document} has no heading for `{count}`.")
+    code = walk_finder.code_line_numbers(parser.parse(text))
+    lines = text.split("\n")
+    kept = []
+    for unit_numbers, unit_total, _, first, end in spans:
+        if len(numbers) == 1 and len(unit_numbers) > 1:
+            own_first, own_end = walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+                lines[first:end], numbers[0], unit_numbers, unit_total)
+            first, end = first + own_first, first + own_end
+        kept += [lines[number] for number in range(first, end) if number not in code]
+    return document, kept
+
+
+def proposed_texts(lines):
+    texts = []
+    for line in lines:
+        match = NEW_LINE.match(line)
+        if not match:
+            continue
+        text = match[1].strip()
+        for opening, closing in QUOTE_PAIRS:
+            if len(text) >= 2 and text.startswith(opening) and text.endswith(closing):
+                text = text[1:-1].strip()
+                break
+        if text:
+            texts.append(text)
+    return texts
+
+
+def squeezed(text):
+    return " ".join(text.split())
+
+
+def fast_read_record_holding(text, record_directories):
+    """Return the cold-read-record directory whose fast read read the text, or None."""
+    wanted = squeezed(text)
+    for directory in record_directories:
+        if not directory.is_dir():
+            continue
+        for record in sorted(directory.iterdir()):
+            if not (record / "fast-read.md").is_file() or not (record / "target").is_dir():
+                continue
+            for target in (record / "target").rglob("*"):
+                if target.is_file() and wanted in squeezed(target.read_text(encoding="utf-8", errors="replace")):
+                    return record
+    return None
+
+
+def run_fast_read(text, name, fast_read_program):
+    """Fast-read the text from a scratch file; return the report's directory, or raise FastReadFailed."""
+    scratch = Path(tempfile.mkdtemp(prefix=PROGRAM + "-"))
+    target = scratch / f"{name}.md"
+    target.write_text(text + "\n", encoding="utf-8")
+    result = subprocess.run([sys.executable, str(fast_read_program), "--target", str(target)],
+                            capture_output=True, text=True)
+    lines = result.stdout.strip().split("\n")
+    failed = [line for line in lines if line.startswith("FAILED")]
+    if failed:
+        raise FastReadFailed(failed[0])
+    if result.returncode != 0 or not lines[-1]:
+        raise FastReadFailed(f"FAILED: {fast_read_program} --target {target} exited {result.returncode} "
+                             f"without naming a report; its stderr: {result.stderr.strip()[-500:]}")
+    return Path(lines[-1]).parent
+
+
+def excerpt(text):
+    return text if len(text) <= 60 else text[:57].rstrip() + "..."
+
+
+def file_name_part(text):
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def append_to_minutes(minutes, lines):
+    existing = minutes.read_text(encoding="utf-8")
+    separator = "" if existing.endswith("\n") else "\n"
+    with open(minutes, "a", encoding="utf-8") as file:
+        file.write(separator + "\n".join(lines) + "\n")
+
+
+def answered_word(arguments):
+    """The answer as the walk-minutes write it: approved, disapproved, or approved option N."""
+    if arguments.disapproved:
+        return DISAPPROVED
+    if arguments.option is not None:
+        return f"{APPROVED} option {arguments.option}"
+    return APPROVED
+
+
+def check_flags(arguments):
+    """The flags this check step was run with, to repeat in the command it tells the agent to rerun."""
+    flags = ""
+    if arguments.obvious:
+        flags += " --obvious"
+    if arguments.disapproved:
+        flags += " --disapproved"
+    if arguments.option is not None:
+        flags += f" --option {arguments.option}"
+    if arguments.item is not None:
+        flags += f" --item {arguments.item}"
+    return flags
+
+
+def check(arguments):
+    walk_finder = load_walk_finder()
+    top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
+    count, numbers, total = waiting_items(walk_finder, value, minutes)
+    item, numbers = chosen_item(count, numbers, total, arguments.item, minutes)
+    document, lines = item_lines(walk_finder, minutes, numbers, total, item, parser)
+    texts = proposed_texts(lines)
+    record_directories = arguments.cold_read_records or [top / RECORDS_DIRECTORY_NAME,
+                                                         LOG_STORE / RECORDS_DIRECTORY_NAME]
+    walk_name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
+    statuses, already_done, had_to_be_run = [], 0, 0
+    for number, text in enumerate(texts, 1):
+        record = fast_read_record_holding(text, record_directories)
+        if record is not None:
+            already_done += 1
+            statuses.append(STATUS_ALREADY_DONE.format(number=number, excerpt=excerpt(text), record=record))
+            continue
+        name = f"{walk_name}-{file_name_part(item)}-new-{number}"
+        record = run_fast_read(text, name, arguments.fast_read_program)
+        had_to_be_run += 1
+        statuses.append(STATUS_HAD_TO_BE_RUN.format(number=number, excerpt=excerpt(text), record=record))
+    if not texts:
+        statuses.append(NO_PROPOSED_TEXT)
+    now = datetime.datetime.now().astimezone()
+    append_to_minutes(minutes, [CHECK_MINUTES.format(item=item, answered=answered_word(arguments),
+                                                     obvious=OBVIOUS_HASHTAG if arguments.obvious else "",
+                                                     date_and_time=f"{now:%Y-%m-%d %H:%M}")]
+                      + [STATUS_LINE_PREFIX + status for status in statuses])
+    output = list(statuses)
+    if had_to_be_run:
+        output += [line.format(document=document, item=item) for line in CHECK_JUDGEMENT_LINES]
+    output.append(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve()))
+    log = arguments.counts_log or LOG_STORE / COUNTS_LOG_FILE_NAME
+    try:
+        with open(log, "a", encoding="utf-8") as file:
+            file.write("\t".join([now.isoformat(timespec="seconds"), walk_name, item,
+                                  f"texts={len(texts)}", f"already_done={already_done}",
+                                  f"had_to_be_run={had_to_be_run}"]) + "\n")
+    except OSError as error:
+        output += [line.format(log=log, error=error) for line in COUNTS_NOT_LOGGED]
+        print("\n".join(output))
+        return 2
+    print("\n".join(output))
+    return 0
+
+
+def last_answer(minutes):
+    """Return (item, answered, status lines) of the walk-minutes' last answer line, or raise Failure."""
+    lines = minutes.read_text(encoding="utf-8").split("\n")
+    for index in range(len(lines) - 1, -1, -1):
+        match = ANSWER_LINE.match(lines[index])
+        if match:
+            statuses = []
+            for line in lines[index + 1:]:
+                if not line.startswith(STATUS_LINE_PREFIX):
+                    break
+                statuses.append(line[len(STATUS_LINE_PREFIX):])
+            return match["item"], match["answered"], statuses
+    raise Failure(f"{minutes} has no line recording an answer that makes a change; run "
+                  f"`python3 {Path(__file__).resolve()} check` first, with the flag for the user's answer as "
+                  f"`--help` lists it.")
+
+
+def close(arguments):
+    walk_finder = load_walk_finder()
+    _, minutes, value, _ = the_open_walk(walk_finder, arguments.cwd)
+    item, answered, statuses = last_answer(minutes)
+    waiting, waiting_numbers, _ = waiting_items(walk_finder, value, minutes)
+    try:
+        answered_numbers, _ = walk_finder.parse_items(item)
+    except walk_finder.UnusableRange as problem:
+        raise Failure(f"the last answer line in {minutes} names `{item}`, which {problem}.")
+    if set(answered_numbers) <= set(waiting_numbers):
+        outcome = OUTCOMES[DISAPPROVED if answered == DISAPPROVED else APPROVED]
+        append_to_minutes(minutes, [CLOSE_TOOK_EFFECT_MINUTES.format(item=item, answered=answered, outcome=outcome)])
+        output = ([line.format(item=item) for line in CLOSE_TOOK_EFFECT_LINES] + statuses
+                  + list(CLOSE_TOOK_EFFECT_NEXT))
+    else:
+        append_to_minutes(minutes, [CLOSE_HELD_MINUTES.format(item=item, new_item=waiting)])
+        output = ([line.format(item=item, new_item=waiting) for line in CLOSE_HELD_LINES] + statuses
+                  + [CLOSE_HELD_NEXT.format(item=item, new_item=waiting)])
+    print("\n".join(output))
+    return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("step", choices=("check", "close"))
+    answer = parser.add_mutually_exclusive_group()
+    answer.add_argument("--obvious", action="store_true", help="check: the answer was AO, approve as obvious")
+    answer.add_argument("--disapproved", action="store_true", help="check: the answer was D, disapprove")
+    answer.add_argument("--option", type=int, choices=(2, 3),
+                        help="check: the answer was O2 or O3, approving the item's \"Option N\" paragraph")
+    parser.add_argument("--item", help="check: the one waiting item the answer is for, such as 5 or 4.1")
+    parser.add_argument("--cwd", default=os.getcwd(), help="a directory in the walk's checkout")
+    parser.add_argument("--cold-read-records", type=Path, action="append",
+                        help="a cold-read-records directory to search instead of the defaults; repeatable")
+    parser.add_argument("--fast-read-program", type=Path, default=FAST_READ_PROGRAM)
+    parser.add_argument("--counts-log", type=Path)
+    arguments = parser.parse_args(argv)
+    try:
+        return check(arguments) if arguments.step == "check" else close(arguments)
+    except Failure as failure:
+        print(f"{PROGRAM} {arguments.step}: {failure.args[0]}", file=sys.stderr)
+        return 1
+    except FastReadFailed as failure:
+        print("\n".join([failure.args[0]] + [line.format(program=Path(__file__).resolve(),
+                                                          flags=check_flags(arguments))
+                                              for line in FAST_READ_FAILED_LINES]))
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
