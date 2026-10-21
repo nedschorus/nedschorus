@@ -37,9 +37,6 @@ CONTROL_DIRECTORY_VARIABLE = "PULL_REQUEST_REVIEW_PLAN_TEST_CONTROL_DIRECTORY"
 FIXTURE_PULL_REQUEST_NUMBER = 852
 FIXTURE_GITHUB_REPOSITORY = "fixture-owner/fixture-repository"
 CHECK_FAILURE_NAMES = []
-# Above the review plan's own 60 s limit on each git and gh call, so its timeout refusal can be seen,
-# and below run-all-test-suites.py's 600 s per-suite floor, so a hang is named by its call.
-FIXTURE_SUBPROCESS_TIMEOUT_SECONDS = 120
 
 _review_plan_spec = importlib.util.spec_from_file_location("pull_request_review_plan", REVIEW_PLAN_SCRIPT)
 review_plan_module = importlib.util.module_from_spec(_review_plan_spec)
@@ -149,7 +146,7 @@ class ReviewPlanTemporaryRepositoryFixture:
         result = subprocess.run(
             ["git", "-C", str(self.repository), "-c", "user.name=Review plan fixture",
              "-c", "user.email=review-plan@nedschorus.invalid", "-c", "core.hooksPath=/dev/null", *arguments],
-            env=self.environment, capture_output=True, text=True, timeout=FIXTURE_SUBPROCESS_TIMEOUT_SECONDS)
+            env=self.environment, capture_output=True, text=True, timeout=10)
         if result.returncode != expected_exit:
             raise AssertionError(f"fixture git {arguments} exited {result.returncode}: {result.stderr}\n{result.stdout}")
         return result.stdout.strip()
@@ -192,7 +189,7 @@ class ReviewPlanTemporaryRepositoryFixture:
             [sys.executable, str(REVIEW_PLAN_SCRIPT), "--pull-request", str(FIXTURE_PULL_REQUEST_NUMBER),
              "--repository", str(self.repository), "--github-repository", FIXTURE_GITHUB_REPOSITORY,
              *(["--json"] if json_output else []), *extra_arguments],
-            env=environment or self.environment, capture_output=True, text=True, timeout=FIXTURE_SUBPROCESS_TIMEOUT_SECONDS)
+            env=environment or self.environment, capture_output=True, text=True, timeout=10)
 
     def run_review_plan_with_git_failing_on(self, *failing_arguments):
         stand_in_directory = self.repository.parent / "failing-git-bin"
@@ -668,7 +665,7 @@ def run_fast_read_command_cases(fixture):
         relative_result = subprocess.run(
             [sys.executable, str(REVIEW_PLAN_SCRIPT), "--pull-request", str(FIXTURE_PULL_REQUEST_NUMBER),
              "--repository", "..", "--github-repository", FIXTURE_GITHUB_REPOSITORY],
-            cwd=fixture.repository / "scripts", env=fixture.environment, capture_output=True, text=True, timeout=FIXTURE_SUBPROCESS_TIMEOUT_SECONDS)
+            cwd=fixture.repository / "scripts", env=fixture.environment, capture_output=True, text=True, timeout=10)
     finally:
         fixture.environment = saved_environment
     relative_lines = relative_result.stderr.splitlines()

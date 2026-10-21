@@ -364,11 +364,11 @@ def rendered_title_note(event, kind, more_than_listed):
                   for index in range(count)]
     if event == "reply":
         lines = hook.title_note_lines(hook.PREVIOUS_REPLY_TITLE_OPENING_LINES,
-                                      hook.PREVIOUS_REPLY_WRONG_NUMBER_LINE, (mismatches, None, count))
+                                      hook.PREVIOUS_REPLY_WRONG_NUMBER_LINE, (mismatches, None, []))
         opening = hook.PREVIOUS_REPLY_TITLE_OPENING_LINES
     else:
         lines = hook.title_note_lines(hook.MARKDOWN_TITLE_OPENING_LINES, hook.MARKDOWN_WRONG_NUMBER_LINE,
-                                      (mismatches, None, count), "docs/a.md", True)
+                                      (mismatches, None, []), "docs/a.md", True)
         opening = hook.MARKDOWN_TITLE_OPENING_LINES
     return lines, opening
 
@@ -799,6 +799,126 @@ check("UserPromptSubmit: when gh reports an error other than an absent item, tit
       result.returncode == 0 and context is not None
       and "because gh could not report the titles: gh api graphql failed: gh: stand-in gh: "
           "resource not accessible" in context["additionalContext"], result.stdout)
+
+# --- When gh fails: the command that checks the links now --------------------
+
+recheck_link_text = "Don't `quote` \"this\" title"
+link_lines = f"See [{recheck_link_text}]({PULL_URL}) and [Bash guards: messages say why]({ISSUE_URL})."
+recheck_titles_environment = dict(HOOK_ENVIRONMENT, **{
+    GH_STAND_IN_MODE_VARIABLE: "titles", GH_STAND_IN_TITLES_VARIABLE: json.dumps(TITLES)})
+
+
+def recheck_command_in(context):
+    """The note's last line, which is the command that checks the links now."""
+    return context["additionalContext"].split("\n")[-1] if context else ""
+
+
+def run_shell(command, environment):
+    return subprocess.run(["bash", "-c", command], capture_output=True, text=True, timeout=60,
+                          env=environment)
+
+
+result = run_hook(tool_payload("Edit", REPOSITORY / "docs" / "old.md", old_string="Old",
+                               new_string=link_lines), failing_environment)
+context = context_of(result)
+file_recheck = recheck_command_in(context)
+check("PostToolUse: when gh fails, the note says a later run never checks these links and to run the command",
+      result.returncode == 0 and context is not None
+      and "because gh could not report the titles: gh api graphql failed: stand-in gh: no network. "
+          "A later run of this hook checks only the text written, or the reply sent, after this one, "
+          "never these links, so check them now by running the command on the next line."
+          in context["additionalContext"]
+      and "the check runs again next time" not in context["additionalContext"], result.stdout)
+check("PostToolUse: the note's last line runs this hook's recheck on the file and the links written",
+      file_recheck.startswith(f"python3 {HOOK_PATH} --recheck-link-titles-in-file docs/old.md "),
+      file_recheck)
+
+rechecked = run_shell(file_recheck, recheck_titles_environment)
+check("the printed file recheck, with gh working, notes the link whose text is not its title",
+      rechecked.returncode == 0
+      and hook.MARKDOWN_TITLE_OPENING_LINES[0].format(path="docs/old.md", count=2) in rechecked.stdout
+      and f'"{recheck_link_text}" links {PULL_URL}; the title on GitHub is "{TITLES["1256"]}"'
+          in rechecked.stdout
+      and f'links {ISSUE_URL}; the title on GitHub is "{TITLES["1196"]}"' in rechecked.stdout,
+      rechecked.stdout + rechecked.stderr)
+
+rechecked = run_shell(file_recheck, failing_environment)
+failure_lines = rechecked.stdout.splitlines()
+check("the printed recheck, when gh fails again, says so, exits 1, and gives the same command to run once more",
+      rechecked.returncode == 1
+      and failure_lines[:3] == [
+          "bare-number-citation-in-markdown-and-agent-reply-warning-hook --recheck-link-titles-in-file: "
+          "the text of 2 link(s) to pull requests or GitHub issues was not checked against their titles "
+          "on GitHub, because gh could not report the titles: gh api graphql failed: stand-in gh: no network.",
+          "Run exactly this command once more:", file_recheck],
+      rechecked.stdout + rechecked.stderr)
+check("and says to stop after the rerun fails too, and report both runs' failure lines",
+      failure_lines[3:] == [
+          'If the rerun prints a line containing "could not report the titles" again, stop, do not run '
+          "it a third time, and tell the user, or, if you are a subagent, the agent that dispatched you, "
+          'word for word, the line containing "could not report the titles" from each run.',
+          hook.LINK_TITLES_RECHECK_STOP_MEANS_ONLY_STOP_RERUNNING_LINE],
+      rechecked.stdout)
+
+matching_environment = dict(HOOK_ENVIRONMENT, **{
+    GH_STAND_IN_MODE_VARIABLE: "titles",
+    GH_STAND_IN_TITLES_VARIABLE: json.dumps({"1256": recheck_link_text,
+                                             "1196": "Bash guards: messages say why"})})
+rechecked = run_shell(file_recheck, matching_environment)
+check("the printed recheck, when no link's text differs from its title, says nothing needs doing",
+      rechecked.returncode == 0 and rechecked.stdout.strip() == hook.LINK_TITLES_RECHECK_NOTHING_TO_DO_LINE.format(
+          flag="--recheck-link-titles-in-file", count=2), rechecked.stdout + rechecked.stderr)
+
+path = transcript(user("go"), assistant("m1", text_block(link_lines)))
+result = run_hook(prompt_payload(path), failing_environment)
+reply_recheck = recheck_command_in(context_of(result))
+check("UserPromptSubmit: when gh fails, the note's last line runs this hook's recheck on the reply's links",
+      reply_recheck.startswith(f"python3 {HOOK_PATH} --recheck-link-titles-in-reply "), result.stdout)
+rechecked = run_shell(reply_recheck, recheck_titles_environment)
+check("the printed reply recheck, with gh working, gives the reply's title note",
+      rechecked.returncode == 0
+      and hook.PREVIOUS_REPLY_TITLE_OPENING_LINES[0].format(count=2) in rechecked.stdout
+      and f'"{recheck_link_text}" links {PULL_URL}' in rechecked.stdout,
+      rechecked.stdout + rechecked.stderr)
+
+single_link = f"[A wrong title here]({PULL_URL})"
+rechecked = subprocess.run([sys.executable, str(HOOK_PATH), "--recheck-link-titles-in-reply", single_link],
+                           capture_output=True, text=True, timeout=60, env=failing_environment)
+check("a reply recheck of one link, when gh fails, names its own flag and the one link",
+      rechecked.returncode == 1 and rechecked.stdout.startswith(
+          "bare-number-citation-in-markdown-and-agent-reply-warning-hook --recheck-link-titles-in-reply: "
+          "the text of 1 link(s) ")
+      and rechecked.stdout.splitlines()[2] == hook.link_titles_recheck_shell_command_text(
+          hook.repository_item_links_in(single_link)),
+      rechecked.stdout + rechecked.stderr)
+rechecked = subprocess.run([sys.executable, str(HOOK_PATH), "--recheck-link-titles-in-file", "a.md", single_link],
+                           capture_output=True, text=True, timeout=60, env=dict(HOOK_ENVIRONMENT, **{
+                               GH_STAND_IN_MODE_VARIABLE: "titles",
+                               GH_STAND_IN_TITLES_VARIABLE: json.dumps({"1256": "A wrong title here"})}))
+check("a file recheck of one link takes the path apart from the link",
+      rechecked.returncode == 0 and rechecked.stdout.strip() == hook.LINK_TITLES_RECHECK_NOTHING_TO_DO_LINE.format(
+          flag="--recheck-link-titles-in-file", count=1), rechecked.stdout + rechecked.stderr)
+
+for name, arguments in (("the file flag alone", ["--recheck-link-titles-in-file"]),
+                        ("no link after the file flag's path", ["--recheck-link-titles-in-file", "a.md"]),
+                        ("no link after the reply flag", ["--recheck-link-titles-in-reply"]),
+                        ("an unknown flag", ["--check", f"[A wrong title here]({PULL_URL})"]),
+                        ("an unknown flag that sorts before the file flag, with a path and a link",
+                         ["--check", "a.md", single_link]),
+                        ("an unknown flag that sorts after the reply flag", ["--zzz", single_link])):
+    result = subprocess.run([sys.executable, str(HOOK_PATH), *arguments], capture_output=True,
+                            text=True, timeout=60, env=recheck_titles_environment)
+    check(f"a recheck command line in no accepted form prints the usage and exits 64: {name}",
+          result.returncode == 64 and "--recheck-link-titles-in-reply <link>" in result.stdout,
+          (result.returncode, result.stdout, result.stderr))
+
+result = subprocess.run([sys.executable, str(HOOK_PATH), "--help"], capture_output=True, text=True,
+                        timeout=60, env=recheck_titles_environment)
+check("--help prints the recheck's two forms and exits 0",
+      result.returncode == 0 and result.stdout.startswith("usage:\n")
+      and "was not one this program accepts" not in result.stdout
+      and "--recheck-link-titles-in-file <path of the Markdown file> <link>" in result.stdout,
+      (result.returncode, result.stdout, result.stderr))
 
 # --- One note per reply, shortened after the first in an agent-session -------
 
