@@ -101,11 +101,44 @@ def write_document(root: Path, name: str, text: str, date="2026-01-02", commit=T
     return path
 
 
-def run(root: Path, *arguments):
+def run(root: Path, *arguments, environment=None):
     completed = subprocess.run(
         [sys.executable, str(root / "scripts" / PROGRAM.name), *arguments],
-        cwd=str(root), capture_output=True, text=True, check=False)
+        cwd=str(root), env=environment, capture_output=True, text=True, check=False)
     return completed.returncode, completed.stdout, completed.stderr
+
+
+INJECTED_GIT_ERROR = "fatal: injected git failure"
+
+
+def run_with_git_failing(root: Path, failing_arguments: str, *arguments):
+    """Run the program with a stand-in git first on PATH: it exits 128 when its
+    arguments contain failing_arguments, and runs the real git otherwise."""
+    stand_in_directory = root.parent / "stand-in-git-bin"
+    stand_in_directory.mkdir(exist_ok=True)
+    stand_in_git = stand_in_directory / "git"
+    stand_in_git.write_text(
+        f"#!{sys.executable}\nimport os, sys\n"
+        f"if {failing_arguments!r} in ' '.join(sys.argv[1:]):\n"
+        f"    sys.stderr.write({INJECTED_GIT_ERROR!r} + '\\n')\n"
+        f"    sys.exit(128)\n"
+        f"os.execv({shutil.which('git')!r}, ['git', *sys.argv[1:]])\n",
+        encoding="utf-8")
+    stand_in_git.chmod(0o755)
+    environment = dict(os.environ, PATH=f"{stand_in_directory}{os.pathsep}{os.environ['PATH']}")
+    return run(root, *arguments, environment=environment)
+
+
+def reports_the_git_failure_and_no_result(root, arguments, code, out, err):
+    """Exit 2, git's error, no result, and the exact rerun command."""
+    rerun = (f"cd {root} && python3 {(root / 'scripts' / PROGRAM.name).resolve()} "
+             + " ".join(arguments))
+    return (code == 2 and INJECTED_GIT_ERROR in err and "a git command failed" in err
+            and "finding(s)" not in err
+            and "and you gave that name to stale-code-citation-check, correct it in your command" in err
+            and f"In any other case, run {rerun} once more." in err
+            and f"If {rerun} fails again, stop and tell the user what "
+                f"stale-code-citation-check printed" in err)
 
 
 def document(stamp="2026-05-01", status="design", body=""):
@@ -740,6 +773,44 @@ with tempfile.TemporaryDirectory() as workspace:
     code, out, err = run(root, "--base", base)
     check("an uncommitted edit to a non-ASCII path is read by its real name",
           code == 1 and "scripts/naïve.py changed" in out, f"{code} {out} {err}")
+
+# --- A git command that fails is reported, never read as "no findings" ----
+with tempfile.TemporaryDirectory() as workspace:
+    root = Path(workspace) / "repository"
+    root.mkdir()
+    new_repository(str(root))
+    write_code(root, "scripts/cited.py", CODE, date="2026-04-01")
+    write_document(root, "docs/design.md", document(
+        body="The test is `scripts/cited.py` lines 20-24.\n\n"
+             "## Line numbers\n\nThese line numbers are those of commit 1234567abc."),
+        date="2026-05-02")
+    base = git(root, "rev-parse", "HEAD")
+    write_code(root, "scripts/cited.py", CODE + "a new line\n", date="2026-06-01")
+    (root / "scripts" / "untracked.py").write_text(CODE, encoding="utf-8")
+
+    code, out, err = run_with_git_failing(root, "no git command fails here", "--base", base)
+    check("the stand-in git passes every other command to the real git",
+          code == 1 and "scripts/cited.py changed" in out, f"{code} {out} {err}")
+
+    for failing_arguments, what in (
+            (f"rev-parse --verify --quiet {base}", "resolving --base"),
+            (f"diff -z --name-only {base}...HEAD", "the committed diff"),
+            ("diff -z --name-only HEAD", "the uncommitted diff"),
+            ("ls-files -z --others", "the untracked-file listing"),
+            ("log -1 --format=%cs", "a change date"),
+            ("ls-files -z -- *.md", "the document listing")):
+        code, out, err = run_with_git_failing(root, failing_arguments, "--base", base)
+        check(f"changed-paths mode exits 2 with git's error when {what} fails",
+              reports_the_git_failure_and_no_result(root, ["--base", base], code, out, err),
+              f"{code} {out} {err}")
+
+    for failing_arguments, what in (
+            ("log -1 --format=%cs -- scripts/cited.py", "a cited file's history"),
+            ("rev-parse --verify --quiet 1234567abc", "resolving a pinned commit")):
+        code, out, err = run_with_git_failing(root, failing_arguments, "docs/design.md")
+        check(f"document mode exits 2 with git's error when {what} fails",
+              reports_the_git_failure_and_no_result(root, ["docs/design.md"], code, out, err),
+              f"{code} {out} {err}")
 
 print()
 if failures:
