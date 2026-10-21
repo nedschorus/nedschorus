@@ -245,11 +245,16 @@ with tempfile.TemporaryDirectory() as temporary:
     exit_code, printed, errors = run_main(
         ["--checkout", str(checkout), "--unit-name", "t", "--start-now"], unit_directory,
         systemctl=systemctl)
-    check("--start-now whose is-enabled fails printing nothing says systemctl printed no error, "
-          "instead of sending the reader to an error that was never printed",
-          exit_code == 1 and "systemctl printed no error" in errors
-          and "error names" not in errors and "error says" not in errors,
-          (exit_code, errors))
+    rerun = shlex.join([str(SCRIPT_PATH.resolve()), "--start-now", "--unit-name", "t",
+                        "--checkout", str(checkout)])
+    check("--start-now whose is-enabled fails printing nothing tells the reader to rerun once "
+          "and then tell the user, not to fix an error that was never printed",
+          exit_code == 1 and "printing nothing on stderr" in errors
+          and errors.splitlines()[-2:] == [
+              f"Run `{rerun}` once more.",
+              "If it fails again, stop and tell the user what "
+              "install-restart-live-seats-at-login-systemd-unit printed; a subagent tells the "
+              "agent that dispatched it instead."], (exit_code, errors))
     for state, code in (("not-found", 4), ("masked", 1)):
         answered = installer.unit_is_enabled(
             "t", run=lambda command, **_: subprocess.CompletedProcess(

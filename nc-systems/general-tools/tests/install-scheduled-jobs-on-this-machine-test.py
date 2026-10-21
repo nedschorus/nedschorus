@@ -1031,12 +1031,15 @@ with tempfile.TemporaryDirectory() as temporary:
           and "loaded in" not in printed and "matches: " not in printed,
           (exit_code, printed, errors))
     silent_failure = installer.LaunchctlPrintFailed(TARGET, 5, "")
-    check("a launchctl print that fails printing no error says so, and sends the reader to run "
-          "it on the Mac, not to fix an error that was never printed",
+    check("a launchctl print that fails printing no error says so, and tells the reader to "
+          "rerun once and then tell the user, not to fix an error that was never printed",
           silent_failure.cause.endswith("and printed no error")
-          and silent_failure.next_steps.startswith(f"Run `launchctl print {TARGET}` on this Mac")
-          and "error names" not in silent_failure.next_steps,
-          (silent_failure.cause, silent_failure.next_steps))
+          and silent_failure.next_steps("the-rerun").splitlines() == [
+              "Run `the-rerun` once more.",
+              "If it fails again, stop and tell the user what "
+              "install-scheduled-jobs-on-this-machine printed; a subagent tells the agent that "
+              "dispatched it instead."],
+          (silent_failure.cause, silent_failure.next_steps("the-rerun")))
     before = len(stub.commands)
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
     check("--install over a plist that says what the table says, whose launchctl print fails "
@@ -1048,6 +1051,12 @@ with tempfile.TemporaryDirectory() as temporary:
                f"unknown, and the job was not installed.") in errors
           and stub.commands[before:] == [["launchctl", "print", TARGET]],
           (exit_code, printed, errors, stub.commands[before:]))
+    exit_code, printed, errors = run_main(["--install", "--start-once"] + DAILY, MAC, stub)
+    check("over a plist that says what the table says, the rerun command a failed launchctl "
+          "print prints carries --start-once when the run was given it",
+          exit_code == 1 and "the job was not installed." in errors
+          and (f"{SCRIPT_PATH.resolve()} --install --job daily-full-test-run-of-main "
+               f"--start-once` on this machine.") in errors, (exit_code, errors))
     plist_path.unlink()
     stub = MachineStub(crontab=None)
     stub.exit_codes["crontab-write"] = 1

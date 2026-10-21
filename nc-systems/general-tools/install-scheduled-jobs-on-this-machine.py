@@ -468,12 +468,17 @@ class LaunchctlPrintFailed(Exception):
                       f"(loaded) nor {LAUNCHCTL_PRINT_SERVICE_NOT_FOUND} (no such job loaded)"
                       + (f", with the error: {error_text}" if error_text
                          else ", and printed no error"))
-        # This run sends launchctl print's stdout to /dev/null and keeps only its stderr.
-        self.next_steps = (
-            "Fix what launchctl's error names." if error_text
-            else f"Run `launchctl print {target}` on this Mac to see whether launchd has the "
-                 f"job loaded, which this run could not tell.")
+        self.error_text = error_text
         super().__init__(self.cause)
+
+    def next_steps(self, rerun: str) -> str:
+        """Return the lines that tell the reader what to do, ending in rerun."""
+        if self.error_text:
+            return f"Fix what launchctl's error names.\nThen run `{rerun}` on this machine."
+        return (f"Run `{rerun}` once more.\n"
+                f"If it fails again, stop and tell the user what "
+                f"install-scheduled-jobs-on-this-machine printed; a subagent tells the agent "
+                f"that dispatched it instead.")
 
 
 def rerun_command(mode: str, job_name: str, start_once: bool = False) -> str:
@@ -544,8 +549,7 @@ def install_launchd_job(machine, job, placement, launch_agents_directory: Path, 
     except LaunchctlPrintFailed as failure:
         print(f"FAILED: {name} — {failure.cause}; so whether {label} is loaded is unknown, "
               f"and the job was not installed.", file=sys.stderr)
-        print(failure.next_steps, file=sys.stderr)
-        print(f"Then run `{rerun_command('--install', name, start_once)}` on this machine.", file=sys.stderr)
+        print(failure.next_steps(rerun_command('--install', name, start_once)), file=sys.stderr)
         return False
     if already_installed:
         print(f"unchanged: {name} — {plist_path} says what the table says, and launchd has "
@@ -578,8 +582,7 @@ def install_launchd_job(machine, job, placement, launch_agents_directory: Path, 
     except LaunchctlPrintFailed as failure:
         print(f"FAILED: {name} — bootstrap exited 0, and then {failure.cause}; so whether "
               f"{label} is loaded is unknown.", file=sys.stderr)
-        print(failure.next_steps, file=sys.stderr)
-        print(f"Then run `{rerun_command('--install', name, start_once)}` on this machine.", file=sys.stderr)
+        print(failure.next_steps(rerun_command('--install', name, start_once)), file=sys.stderr)
         return False
     if not loaded:
         print(f"FAILED: {name} — bootstrap exited 0, and `launchctl print "
@@ -989,8 +992,7 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
     for name, placement, failure in not_checked:
         print(f"NOT CHECKED: {name} — {failure.cause}; so whether launchd has "
               f"{placement['label']} loaded is unknown.", file=sys.stderr)
-        print(failure.next_steps, file=sys.stderr)
-        print(f"Then run `{rerun_command('--check', name)}` on this machine.", file=sys.stderr)
+        print(failure.next_steps(rerun_command('--check', name)), file=sys.stderr)
     if not_checked:
         return 2
     return 1 if differences or not_in_table else 0

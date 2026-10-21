@@ -162,10 +162,10 @@ def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: P
             print(f"Otherwise fix what systemctl's error names, then run `{rerun}`.",
                   file=sys.stderr)
         else:
-            print(f"systemctl printed no error, so run `systemctl --user is-enabled "
-                  f"{unit_name}.service` from a login session of the user whose manager runs "
-                  f"the unit to see whether {unit_name} is enabled, then run `{rerun}` there.",
-                  file=sys.stderr)
+            print(f"Run `{rerun}` once more.", file=sys.stderr)
+            print("If it fails again, stop and tell the user what "
+                  "install-restart-live-seats-at-login-systemd-unit printed; a subagent tells "
+                  "the agent that dispatched it instead.", file=sys.stderr)
         return 1
     if enabled:
         # Starting preserves enable symlinks; rewriting an enabled unit would alter future boots.

@@ -133,11 +133,15 @@ def remove(label: str, launch_agents_directory: Path, run=subprocess.run) -> int
               f"exited {booted.returncode}"
               + (f": {error_text}" if error_text else ", printing nothing on stderr")
               + f"; so {label} may still be loaded, and {plist_path} was kept.", file=sys.stderr)
-        print("Fix what launchctl's error names." if error_text
-              else f"Run `launchctl print {target}` on this Mac to see whether {label} is "
-                   "still loaded.", file=sys.stderr)
         rerun = shlex.join([str(Path(__file__).resolve()), "--remove", "--label", label])
-        print(f"Then run `{rerun}` on this Mac.", file=sys.stderr)
+        if error_text:
+            print("Fix what launchctl's error names.", file=sys.stderr)
+            print(f"Then run `{rerun}` on this Mac.", file=sys.stderr)
+        else:
+            print(f"Run `{rerun}` once more.", file=sys.stderr)
+            print("If it fails again, stop and tell the user what "
+                  "install-restart-live-seats-at-login-launch-agent printed; a subagent tells "
+                  "the agent that dispatched it instead.", file=sys.stderr)
         return 1
     if plist_path.is_file():
         plist_path.unlink()

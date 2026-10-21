@@ -225,11 +225,15 @@ with tempfile.TemporaryDirectory() as temporary:
     launchctl = LaunchctlStub(bootout_exit_code=3, print_exit_code=0)
     exit_code, printed, errors = run_main(
         ["--label", "com.nedschorus.test", "--remove"], agents_directory, launchctl=launchctl)
-    check("a bootout that fails printing no error, with the job still loaded, sends the reader "
-          "to launchctl print instead of to an error that was never printed",
+    rerun = shlex.join([str(SCRIPT_PATH.resolve()), "--remove", "--label", "com.nedschorus.test"])
+    check("a bootout that fails printing no error, with the job still loaded, tells the reader "
+          "to rerun once and then tell the user, not to fix an error that was never printed",
           exit_code == 1 and "printing nothing on stderr" in errors
-          and f"Run `launchctl print {target}` on this Mac to see whether" in errors
-          and "error names" not in errors, (exit_code, errors))
+          and errors.splitlines()[-2:] == [
+              f"Run `{rerun}` once more.",
+              "If it fails again, stop and tell the user what "
+              "install-restart-live-seats-at-login-launch-agent printed; a subagent tells the "
+              "agent that dispatched it instead."], (exit_code, errors))
     launchctl = LaunchctlStub(bootout_exit_code=5, print_exit_code=1)
     exit_code, printed, errors = run_main(
         ["--label", "com.nedschorus.test", "--remove"], agents_directory, launchctl=launchctl)
