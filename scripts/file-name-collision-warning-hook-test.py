@@ -437,7 +437,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               and f"exit 128: fatal: planted {failing_subcommand} failure second line of the "
               "planted error" in failure_lines[0]
               and failure_lines[0].endswith(f"so {written} was not checked for another tracked file with the "
-                                            "same basename, letter case ignored."), repr(failure_lines))
+                                            "same basename; this hook compares basenames ignoring letter case, so "
+                                            "README.md and readme.md count as the same basename."), repr(failure_lines))
         check(f"a failing git {failing_subcommand} gives a line naming {written.name}, a line with a command "
               "that reruns the hook on it, then the line saying what to do if that rerun fails too",
               len(failure_lines) == 4
@@ -445,8 +446,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                                        f"touched, so check {written} by running the next line's command. If git's "
                                        "error above names no lock file, run that command now. If git's error names "
                                        f"a lock file, {LOCK_FILE_WAIT_CLAUSE}. The command prints nothing when no other tracked file has the "
-                                       "basename, or when the file is one this hook skips, such as an ignored "
-                                       "file. Otherwise it prints JSON whose hookSpecificOutput."
+                                       "basename, and also when this hook skips the file without checking: a file "
+                                       "outside the checkout, a file git ignores, a file named SKILL.md, README.md "
+                                       "or .gitkeep in any letter case, or a working directory that no longer "
+                                       "exists or is in no git repository. Otherwise it prints JSON whose hookSpecificOutput."
                                        "additionalContext field holds one of two texts: when another tracked file has "
                                        "the basename, this hook's warning, whose instructions you follow; or, when git "
                                        "fails again, a git-failure message like this one, and the last line here says "

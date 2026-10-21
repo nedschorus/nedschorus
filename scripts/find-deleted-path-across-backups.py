@@ -2308,17 +2308,53 @@ REPO_PLACEHOLDER = "<checkout>"
 
 
 def arguments_without_repo(arguments):
-    """arguments with every --repo option and its value left out."""
+    """arguments with every --repo option and its value left out; after a -- separator every argument is kept."""
     kept = []
     skip_next = False
-    for argument in arguments:
+    for position, argument in enumerate(arguments):
         if skip_next:
             skip_next = False
+        elif argument == "--":
+            return kept + list(arguments[position:])
         elif argument == "--repo":
             skip_next = True
         elif not argument.startswith("--repo="):
             kept.append(argument)
     return kept
+
+
+def git_top_level_failure_message(repo, named, failure, skip, repo_rerun):
+    """The lines, before the shared next steps, for a git top-level failure; true for whichever git surfaces --skip left in."""
+    git_surfaces = [name for flag, name in (("git", "git"), ("reflog", "git reflog")) if flag not in skip]
+    if len(git_surfaces) == 2:
+        affected = ("The git and git reflog surfaces cannot search, and their result lines will say UNAVAILABLE "
+                    "for this failure.")
+    elif git_surfaces:
+        affected = ("The %s surface cannot search, and its result line will say UNAVAILABLE for this failure; "
+                    "--skip left out the other git surface." % git_surfaces[0])
+    else:
+        affected = ("--skip left out the git and git reflog surfaces, so no surface prints a line for this "
+                    "failure.")
+    found = ("If some surface finds the path, this program exits 0 when this program copied a version, 5 when this "
+             "program copied no version but printed a command that copies one, and 4 otherwise.")
+    if git_surfaces:
+        not_found = "If no surface finds the path, this program exits 3, for an incomplete search."
+    else:
+        not_found = ("If no surface finds the path, this program exits 1, for a search that missed everywhere, when "
+                     "at least one surface ran and every surface that ran reports NOT FOUND, and 3, for an incomplete "
+                     "search, otherwise.")
+    return ("%s: git could not find the top level of the repository at %s. This program searches several "
+            "surfaces, the places a deleted file may survive, such as local snapshots, git, git reflog, the "
+            "log-store, transcripts, Timeshift and Time Machine, and prints one result line per surface. %s Every "
+            "other surface that --skip did not leave out runs as usual, given the absolute path %s unchanged, since "
+            "git could not turn it into a path inside the repository; each such surface matches that path in its "
+            "own way, and its result line reports that surface's own result, which this git failure does not "
+            "affect, though a surface can still be UNAVAILABLE for a reason of its own.\n"
+            "%s %s\n"
+            "git's failure: %s\n"
+            "If --repo names the wrong directory, or was left out and the current directory is not in the path's "
+            "checkout, run %s with %s replaced by a checkout of the repository the path was deleted from."
+            % (THIS_SCRIPT_NAME, repo, affected, named, found, not_found, failure, repo_rerun, REPO_PLACEHOLDER))
 
 
 def rerun_command(arguments):
@@ -2559,26 +2595,10 @@ def main(argv=None, runner=run_command):
         wanted, _ = _repo_relative_form(named, args.repo, runner)
     except _GitCommandFailed as failure:
         # The git surfaces report the same failure as UNAVAILABLE; the other surfaces can still search.
-        repo_rerun = rerun_command(arguments_without_repo(sys.argv[1:] if argv is None else argv)
-                                   + ["--repo", REPO_PLACEHOLDER])
-        print("%s: git could not find the top level of the repository at %s. This program searches several "
-              "surfaces, the places a deleted file may survive, such as local snapshots, git, git reflog, the "
-              "log-store, transcripts, Timeshift and Time Machine, and prints one result line per surface. The git "
-              "and git reflog surfaces cannot search, and their result lines will say UNAVAILABLE for this "
-              "failure. Every other surface that --skip did not leave out runs as usual, given the absolute path %s "
-              "unchanged, since git could not turn it into a path inside the repository; each such surface matches "
-              "that path in its own way, and its result line reports that surface's own result, which this git "
-              "failure does not affect, though a surface can still be UNAVAILABLE for a reason of its own.\n"
-              "If some surface finds the path, this program exits 0 when it copied a version, 5 when it copied "
-              "none but printed a command that copies one, and 4 otherwise. If no surface finds the path, it exits "
-              "3, for an incomplete search.\n"
-              "git's failure: %s\n"
-              "If --repo names the wrong directory, or was left out and the current directory is not in the "
-              "path's checkout, run %s with %s replaced by a checkout of the repository the path was deleted "
-              "from.\n%s"
-              % (THIS_SCRIPT_NAME, args.repo, named, failure, repo_rerun, REPO_PLACEHOLDER,
-                 git_failure_next_steps(rerun)),
-              file=sys.stderr, flush=True)
+        repo_rerun = rerun_command(["--repo", REPO_PLACEHOLDER]
+                                   + arguments_without_repo(sys.argv[1:] if argv is None else argv))
+        print(git_top_level_failure_message(args.repo, named, failure, set(args.skip), repo_rerun)
+              + "\n" + git_failure_next_steps(rerun), file=sys.stderr, flush=True)
         wanted = named
     shown = wanted if wanted == args.path else "%s (given as %s)" % (wanted, args.path)
 
