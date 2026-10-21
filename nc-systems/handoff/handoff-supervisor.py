@@ -87,6 +87,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -274,8 +275,15 @@ BRANCH_SYNC_PROGRAM_NAME = "the handoff-supervisor's branch sync"
 
 def branch_sync_git_failure_next_steps(error) -> str:
     """The next-step lines for a GitCommandFailed the branch sync reports."""
-    rerun = f"`git -C {error.directory} {' '.join(error.arguments)}`"
+    rerun = f"`{shlex.join(['git', '-C', str(error.directory), *error.arguments])}`"
     return GIT_FAILURE_NEXT_STEP_LINES.format(rerun=rerun, program=BRANCH_SYNC_PROGRAM_NAME)
+
+
+def branch_state_instruction_after(branch_sync_report: str) -> str:
+    """The branch-state instruction, left out after a git failure, whose next steps may end in stopping."""
+    stop_line = GIT_FAILURE_NEXT_STEP_LINES.rpartition("{rerun}")[2].format(
+        program=BRANCH_SYNC_PROGRAM_NAME)
+    return "" if branch_sync_report.endswith(stop_line) else BRANCH_STATE_INSTRUCTION
 
 
 BRANCH_STATE_INSTRUCTION = (
@@ -573,9 +581,9 @@ def handoff_file_paths(handoff_directory: Path) -> list:
 def read_process_command_line(process_id: int):
     """Return (command_line, ps_answered), distinguishing absence from an unanswered query."""
     # macOS truncates ps output to terminal width even through a pipe unless -ww is given.
+    arguments = ["ps", "-ww", "-p", str(process_id), "-o", "args="]
     try:
-        finished = subprocess.run(["ps", "-ww", "-p", str(process_id), "-o", "args="],
-                                  capture_output=True, text=True, check=False,
+        finished = subprocess.run(arguments, capture_output=True, text=True, check=False,
                                   timeout=PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS)
     except (OSError, subprocess.SubprocessError):
         return None, False
@@ -583,7 +591,7 @@ def read_process_command_line(process_id: int):
     if finished.returncode == 1 and not finished.stdout.strip() and not finished.stderr.strip():
         return None, True
     if finished.returncode != 0:
-        print(f"handoff-supervisor: ps -p {process_id} exited {finished.returncode}: "
+        print(f"handoff-supervisor: {shlex.join(arguments)} exited {finished.returncode}: "
               f"{finished.stderr.strip() or 'no error text'}", file=sys.stderr)
         return None, False
     command_line = finished.stdout.strip()
@@ -808,7 +816,7 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
         SUPERVISOR_POINTER_SENTENCE,
     ]
     if branch_sync_report:
-        lines.append(branch_sync_report + BRANCH_STATE_INSTRUCTION)
+        lines.append(branch_sync_report + branch_state_instruction_after(branch_sync_report))
     lines.extend(overview_refresh_due)
     lines.extend(memory_review_due)
     roster = spawned_subagent_roster_from(handoff_fields)
@@ -861,7 +869,7 @@ class BootRecoveryIgnitionPlan:
             "repository are your whole context.)"
         )
         if branch_sync_report:
-            prompt += " " + branch_sync_report + BRANCH_STATE_INSTRUCTION
+            prompt += " " + branch_sync_report + branch_state_instruction_after(branch_sync_report)
         for line in overview_refresh_due:
             prompt += " " + line
         for line in memory_review_due:

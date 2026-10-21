@@ -984,21 +984,23 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
         "#!/bin/sh\n"
         'case "$*" in\n'
         '  *"$FAIL_GIT_CALL_CONTAINING"*)\n'
-        "    echo 'fatal: stub failure' >&2; exit 128 ;;\n"
+        '    echo "${FAIL_GIT_STDERR:-fatal: stub failure}" >&2; exit 128 ;;\n'
         "esac\n"
         f'exec "{real_git}" "$@"\n',
         encoding="utf-8")
     stub_git.chmod(0o755)
 
-    def sync_with_failing_call(checkout, call):
+    def sync_with_failing_call(checkout, call, stderr="fatal: stub failure"):
         original_path = os.environ.get("PATH", "")
         os.environ["PATH"] = f"{stub_directory}{os.pathsep}{original_path}"
         os.environ["FAIL_GIT_CALL_CONTAINING"] = call
+        os.environ["FAIL_GIT_STDERR"] = stderr
         try:
             return supervisor.sync_working_branch_with_main(checkout)
         finally:
             os.environ["PATH"] = original_path
             del os.environ["FAIL_GIT_CALL_CONTAINING"]
+            del os.environ["FAIL_GIT_STDERR"]
 
     def main_moves(message):
         (seed / "README.md").write_text(f"{message}\n", encoding="utf-8")
@@ -1017,6 +1019,21 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
           report.endswith(supervisor.GIT_FAILURE_NEXT_STEP_LINES.format(
               rerun=f"`git -C {home} rev-parse --show-toplevel`",
               program="the handoff-supervisor's branch sync")), report)
+    plan = supervisor.DialogIgnitionPlan(root / "extract.md", {})
+    for shape, prompt in (
+            ("dialog", plan.compose(report)),
+            ("boot-recovery", supervisor.BootRecoveryIgnitionPlan("next").compose(report))):
+        check(f"after a branch sync git failure, the {shape} prompt gives the next steps and "
+              "no rebase instruction, which would contradict their stop",
+              report in prompt and supervisor.BRANCH_STATE_INSTRUCTION not in prompt, prompt)
+
+    class SpacedFailure:
+        directory = Path("/tmp/checkout with spaces")
+        arguments = ["rev-parse", "HEAD"]
+    check("the rerun command quotes a checkout path that holds a space",
+          "`git -C '/tmp/checkout with spaces' rev-parse HEAD`"
+          in supervisor.branch_sync_git_failure_next_steps(SpacedFailure()),
+          supervisor.branch_sync_git_failure_next_steps(SpacedFailure()))
     check("a failed --show-toplevel is reported with git's error, not as no checkout",
           report.startswith("branch sync: could not tell whether this is a git checkout")
           and "fatal: stub failure" in report, report)
@@ -1041,6 +1058,15 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
         report = f"raised {type(error).__name__}: {error}"
     check("a git directory git cannot read is reported, and the checkout is not moved",
           report.startswith("branch sync: main left as is — ")
+          and git_in(["rev-parse", "HEAD"], home).stdout.strip() == head_before, report)
+    # git_directory answers None when git calls the checkout no repository,
+    # which after --show-toplevel answered means its git directory has gone.
+    report = sync_with_failing_call(
+        home, "rev-parse --absolute-git-dir",
+        stderr="fatal: not a git repository (or any of the parent directories): .git")
+    check("a git directory that is gone after --show-toplevel answered is reported, and "
+          "the checkout is not moved",
+          report.startswith("branch sync: main left as is — git directory unreadable")
           and git_in(["rev-parse", "HEAD"], home).stdout.strip() == head_before, report)
     head_before = git_in(["rev-parse", "HEAD"], home).stdout.strip()
     report = sync_with_failing_call(home, "merge-base --is-ancestor HEAD origin/main")

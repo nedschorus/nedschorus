@@ -180,7 +180,11 @@ def run_process_identity_cases(workspace: Path):
     line, answered = supervisor.read_process_command_line(os.getpid())
     check("the real reader reads this process's own command line",
           answered and line is not None and "python" in line.lower(), (answered, line))
-    line, answered = supervisor.read_process_command_line(99999999)
+    # A child that has exited and been reaped names no process, on Linux and on
+    # macOS alike; a made-up id like 99999999 is refused on macOS as too large.
+    reaped = subprocess.Popen([sys.executable, "-c", "pass"])
+    reaped.wait()
+    line, answered = supervisor.read_process_command_line(reaped.pid)
     check("the real reader says ps ANSWERED for a process that is not there",
           answered and line is None, (answered, line))
     real_search_path = os.environ.get("PATH", "")
@@ -237,8 +241,9 @@ def run_process_identity_cases(workspace: Path):
         os.environ["PATH"] = real_search_path
     check("a ps that fails with an error is reported as not having answered, not as "
           "'no such process'", not answered and line is None, (answered, line))
-    check("and the reader prints ps's error",
-          "ps: stub failure" in complaint.getvalue(), complaint.getvalue())
+    check("and the reader prints ps's error, after the ps command exactly as it ran",
+          f"ps -ww -p {os.getpid()} -o args= exited 1: ps: stub failure"
+          in complaint.getvalue(), complaint.getvalue())
 
     alive, detail = supervisor.process_is_supervisor_for_agent(
         99999999, "x", read_command_line=ps_says_no_such_process)
