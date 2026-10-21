@@ -1625,9 +1625,24 @@ def report_ghi_info_files_left_at_moved_from(relative: str, moved_from: str,
                                              report):
     """Files from ghi-info that main holds beside the path this GHI-MD
     moved from are not copied, because the log-store names them by the old
-    file name and the run looks for questions under the new one."""
+    file name and the run looks for questions under the new one. One whose
+    question the log-store already holds under the new name, copied there
+    after an earlier run of this edit, is not reported again."""
+    prefix = Path(relative).name[:-len(".md")]
+    try:
+        asked = {ruling_question_lines(text)[1]
+                 for _, text in ghi_info_files_in_log_store(prefix, runner)}
+    except (Refused, subprocess.TimeoutExpired, OSError, ValueError):
+        # Unread, every file is reported: a copy made twice is settled
+        # twice, which costs less than a question never copied.
+        asked = set()
     for item in ghi_info_files_beside_on_main(moved_from, revision,
                                               repository_root, runner):
+        # Checked: the path came from a listing of this same commit.
+        text = runner(["git", "show", f"{revision}:{item}"],
+                      cwd=str(repository_root)).stdout or ""
+        if ruling_question_lines(text)[1] in asked:
+            continue
         report(
             f"{item} on main is a file from ghi-info beside {moved_from}, "
             f"the path this GHI-MD moved from, and was not copied into the "

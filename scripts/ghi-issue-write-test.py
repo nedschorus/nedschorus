@@ -2510,6 +2510,53 @@ def run_old_ghi_info_files_on_main_cases(scratch: Path):
           len(left) == 2 and old_file in left[0] and old_file_2 in left[1]
           and all(EDIT_RELATIVE in line and GHI_INFO_HEAD in line
                   for line in left), left)
+
+    moved_store = log_store_at(scratch / "moved-from-store")
+    moved_store.mkdir()
+    moved_answers = {
+        f"git show {MAIN_COMMIT}:{MOVED_RELATIVE}": Completed(
+            "", returncode=128),
+        f"git show {BASE_REVISION}:{MOVED_RELATIVE}": Completed(
+            "", returncode=128),
+        f"git show {MAIN_COMMIT}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        f"git show {BASE_REVISION}:{EDIT_RELATIVE}": Completed(FILE_TEXT),
+        f"git show {MAIN_COMMIT}:{old_file}": Completed(
+            ghi_info_file("does ruling two still hold?")),
+        f"git show {MAIN_COMMIT}:{old_file_2}": Completed(
+            ghi_info_file("does ruling one still hold?")),
+        "git merge-base": Completed(BASE_REVISION + "\n"),
+        "git ls-remote": Completed(""),
+        "gh pr create": Completed("pr\n"),
+        ASK: Completed("verdict: unrelated\n"),
+        "gh issue view": issue_json(EDIT_TITLE, one_link),
+        # Before the catch-all listing: the Recorder answers the first key
+        # found in the command, so these two tell the directories apart.
+        f"git ls-tree --name-only -z {MAIN_COMMIT} nc-systems/statusline/":
+            Completed(""),
+        f"git ls-tree --name-only -z {MAIN_COMMIT} docs/issues/": listing,
+        "git ls-tree": Completed(f"{EDIT_RELATIVE}\0"),
+    }
+    moved_source = filed_ghi_md(scratch, directory="nc-systems/statusline")
+    moved_lines = []
+    tool.edit(moved_source, REPO, scratch, Recorder(moved_answers),
+              moved_lines.append)
+    moved_left = [line for line in moved_lines
+                  if "the path this GHI-MD moved from" in line]
+    check("an edit that moves a GHI-MD reports each file from ghi-info "
+          "left beside the path it moved from",
+          len(moved_left) == 2 and old_file in moved_left[0]
+          and old_file_2 in moved_left[1], moved_lines)
+
+    (moved_store / f"{GHI_INFO_HEAD}2026-10-19.md").write_text(
+        ghi_info_file("does ruling two still hold?"))
+    rerun_lines = []
+    tool.edit(moved_source, REPO, scratch, Recorder(moved_answers),
+              rerun_lines.append)
+    rerun_left = [line for line in rerun_lines
+                  if "the path this GHI-MD moved from" in line]
+    check("a rerun of that edit leaves out a file whose question the "
+          "log-store already holds under the new name",
+          len(rerun_left) == 1 and old_file_2 in rerun_left[0], rerun_lines)
     log_store_at(scratch / "default-log-store")
 
 
