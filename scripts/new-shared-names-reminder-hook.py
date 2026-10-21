@@ -85,7 +85,7 @@ GIT_FAILURE_TEMPLATE = (
     "this branch were not listed.\n"
     "Nothing needs rerunning: this check runs again at your next file edit or shell command.\n"
     + next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
-        "at your next file edit or shell command", "new-shared-names-reminder-hook.py")
+        "at your next file edit or shell command", "new-shared-names-reminder:")
 )
 BRANCH_CHECK_FAILURE_TEMPLATE = (
     "new-shared-names-reminder: the check of whether this branch's name is new failed, so "

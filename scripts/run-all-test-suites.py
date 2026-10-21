@@ -1259,7 +1259,7 @@ def git_failure_next_step_lines(program_file):
     """The lines that end a refusal after a git failure, for a run of program_file."""
     return next_step_lines.git_failure_next_step_lines(
         f"the same {program_file} command", program_file,
-        failure_again='prints "not run — git" again', takes_a_branch_commit_or_path=True)
+        text_the_failure_line_contains="not run — git", include_the_misspelt_branch_commit_or_path_line=True)
 
 
 def first_line_of_error(completed):

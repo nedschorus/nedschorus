@@ -33,48 +33,61 @@ def check(name, condition, detail=None):
         print(f"FAIL  {name}: {detail!r}")
 
 
-SUBAGENT = "A subagent reports to the agent that dispatched it, not to the user."
+WHO = "the user, or, if you are a subagent, the agent that dispatched you,"
 
 lines = next_step_lines.git_failure_next_step_lines(
-    "`p --x`", "p", failure_again='prints "p: could not" again',
-    takes_a_branch_commit_or_path=True).splitlines()
-check("a git failure in a program that takes names gets four lines, ending in the failure "
-      "the second run would print, both runs' lines word for word, and whom a subagent tells",
+    "`p --x`", "p", text_the_failure_line_contains="p: could not",
+    include_the_misspelt_branch_commit_or_path_line=True).splitlines()
+check("a git failure in a program that takes names on its command line gets four lines: "
+      "two cases, the unchanged rerun when neither applies, and the stop naming "
+      "the text to look for, who is told, and which lines",
       lines == [
           "If git's error names a lock file, such as .git/index.lock, wait one minute, "
-          "then run `p --x`; do not delete the lock file yourself.",
-          "If git's error names a branch, commit or path that does not exist, and you gave "
-          "that name to p, correct it in your command, then run the corrected command.",
-          "If none of the cases above applies, run `p --x` once more, unchanged.",
-          'If the run you made by following a line above prints "p: could not" again, stop, and tell the user, word for '
-          "word, the lines p printed the first time and the lines that second run printed. "
-          + SUBAGENT], lines)
+          "then run exactly `p --x`; do not delete the lock file yourself.",
+          "If a branch, commit or path you gave p on its command line is misspelt or does "
+          "not exist, correct it in your command, then run the corrected command.",
+          "If neither applies, run exactly `p --x` once more.",
+          'If the rerun, or the corrected command, prints a line containing "p: could not" '
+          f'again, stop, and tell {WHO} word for word, the line containing "p: could not" '
+          "from each run."], lines)
 
 lines = next_step_lines.git_failure_next_step_lines(
-    "`git -C d status`", "the sync", failure_again="prints an error again",
-    takes_a_branch_commit_or_path=False, read_by_a_subagent=False).splitlines()
-check("a program that takes no names leaves out the misspelt-name line, and a line no "
-      "subagent reads leaves out the subagent sentence",
-      len(lines) == 3 and not any("you gave that name" in line for line in lines)
-      and lines[-1] == "If the run you made by following a line above prints an error again, stop, and tell the user, "
-                       "word for word, the lines the sync printed the first time and the "
-                       "lines that second run printed.", lines)
+    "`git -C d status`", "the sync", include_the_misspelt_branch_commit_or_path_line=False,
+    rerun_fails_when="prints an error again", which_lines_to_quote_in_the_report="the sync line and the error",
+    read_by_a_subagent=False,
+    next_step_to_skip_when_the_rerun_fails_too="act on the rest of this prompt").splitlines()
+check("a program that takes no names gets one case; a line no subagent reads names only "
+      "the user; the stop holds back the work that follows; free text replaces the marker",
+      lines[1:] == [
+          "If git's error names no lock file, run exactly `git -C d status` once more.",
+          "If the rerun prints an error again, stop, do not act on the rest of this prompt, "
+          "and tell the user word for word, the sync line and the error."], lines)
 
-line = next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
-    "prints an error again", "the sync", read_by_a_subagent=False,
-    also_not="take the next step below")
-check("a stop that holds back the work that follows says so in the stop itself",
-      line == "If the run you made by following a line above prints an error again, stop, do "
-              "not take the next step below, and tell the user, word for word, the lines the "
-              "sync printed the first time and the lines that second run printed.", line)
+for case_name, arguments in [
+        ("neither the failure text nor the free-text pair", {}),
+        ("the failure text and which lines to quote",
+         {"text_the_failure_line_contains": "x", "which_lines_to_quote_in_the_report": "y"}),
+        ("the failure text and when the rerun fails",
+         {"text_the_failure_line_contains": "x", "rerun_fails_when": "fails"}),
+        ("when the rerun fails without which lines to quote", {"rerun_fails_when": "fails"})]:
+    try:
+        line = next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+            **arguments)
+    except TypeError as error:
+        line = None
+        said = str(error)
+    check(f"a call giving {case_name} is refused, naming the arguments",
+          line is None and "text_the_failure_line_contains" in said
+          and "which_lines_to_quote_in_the_report" in said, line)
 
 line = next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
-    "at your next Edit", "h.py")
-check("a hook's line says to keep this message, that any git failure counts, and to tell "
-      "both messages word for word",
-      line == "Keep this message: if h.py reports a git failure again at your next Edit, "
-              "whether this error or another, tell the user both messages, word for word. "
-              + SUBAGENT, line)
+    "at your next Edit", "h:")
+check("a hook's line names the prefix to look for, says any git failure counts, when to "
+      "tell, and that a clean check needs no report",
+      line == 'If a line starting "h:" reports a git failure again at your next Edit, whether '
+              f"this error or another, tell {WHO} word for word, every line of this message and "
+              "of the new one, before you go on. If the check finds no git failure then, this "
+              "failure needs no report.", line)
 
 print(f"{failures} failure(s)" if failures else "all cases pass")
 sys.exit(1 if failures else 0)

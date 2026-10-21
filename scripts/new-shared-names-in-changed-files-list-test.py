@@ -551,10 +551,10 @@ def case_hook_git_failure_exits_1_with_the_cause_on_stderr(root):
               and "were not listed" in lines[0], repr(lines))
         check(f"a failing git {planted} gives the two next-step lines, which ask for no rerun",
               lines[1:] == ["Nothing needs rerunning: this check runs again at your next file edit or shell command.",
-                            "Keep this message: if new-shared-names-reminder-hook.py reports a git failure again "
-                            "at your next file edit or shell command, whether this error or another, tell the "
-                            "user both messages, word for word. A subagent reports to the agent that "
-                            "dispatched it, not to the user."], repr(lines))
+                            'If a line starting "new-shared-names-reminder:" reports a git failure again at your next file edit or shell command, whether this error '
+                            "or another, tell the user, or, if you are a subagent, the agent that dispatched you, "
+                            "word for word, every line of this message and of the new one, before you go on. If "
+                            "the check finds no git failure then, this failure needs no report."], repr(lines))
     (root / "detached").mkdir()
     detached = make_clone(root / "detached", BASE_MAIN_FILES)
     git(["remote", "set-head", "origin", "--delete"], detached)

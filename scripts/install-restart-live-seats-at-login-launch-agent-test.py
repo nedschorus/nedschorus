@@ -231,11 +231,9 @@ with tempfile.TemporaryDirectory() as temporary:
           exit_code == 1 and "printing nothing on stderr" in errors
           and errors.splitlines()[-2:] == [
               f"Run `{rerun}` once more, on this Mac.",
-              'If the run you made by following a line above prints "so com.nedschorus.test may still be loaded" again, '
-              "stop, and tell the user, word for word, the lines "
-              "install-restart-live-seats-at-login-launch-agent printed the first time and the "
-              "lines that second run printed. A subagent reports to the agent that dispatched "
-              "it, not to the user."], (exit_code, errors))
+              'If the rerun prints a line containing "so com.nedschorus.test may still be loaded" '
+              "again, stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the "
+              'line containing "so com.nedschorus.test may still be loaded" from each run.'], (exit_code, errors))
     launchctl = LaunchctlStub(bootout_exit_code=5, print_exit_code=1)
     exit_code, printed, errors = run_main(
         ["--label", "com.nedschorus.test", "--remove"], agents_directory, launchctl=launchctl)

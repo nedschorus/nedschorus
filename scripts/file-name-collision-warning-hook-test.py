@@ -428,10 +428,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               and f"so {written} was not checked" in failure_lines[0], repr(failure_lines))
         check(f"a failing git {failing_subcommand} gives the two next-step lines, which ask for no rerun",
               failure_lines[1:] == ["Nothing needs rerunning: this check runs again at your next Write or Edit.",
-                                    "Keep this message: if file-name-collision-warning-hook.py reports a git failure again "
-                                    "at your next Write or Edit, whether this error or another, tell the user both "
-                                    "messages, word for word. A subagent reports to the agent that dispatched it, "
-                                    "not to the user."], repr(failure_lines))
+                                    'If a line starting "file-name-collision-warning:" reports a git failure again at your next Write or Edit, whether this error '
+                                    "or another, tell the user, or, if you are a subagent, the agent that dispatched you, "
+                                    "word for word, every line of this message and of the new one, before you go on. If "
+                                    "the check finds no git failure then, this failure needs no report."], repr(failure_lines))
 
     # --- malformed payloads cost nothing and say nothing ------------------
     check("a payload that is not JSON exits 0 and prints nothing",

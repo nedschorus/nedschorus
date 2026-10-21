@@ -489,10 +489,10 @@ class LaunchctlPrintFailed(Exception):
             return f"Fix what launchctl's error names.\nThen run `{rerun}` on this machine."
         return "\n".join(
             [f"Run `{rerun}` once more, on this machine; it tries this job alone."]
-            + ([f"A {drift_line} line is drift the check found, not this failure, and is no "
-                f"reason to stop."] if drift_line else [])
+            + ([f"A {drift_line} line is not this failure: it is drift the check found, and "
+                f"does not count as the rerun failing."] if drift_line else [])
             + [next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
-                f'prints "{failure_line}" again', PROGRAM)])
+                failure_line)])
 
 
 def rerun_command(mode: str, job_name: str, start_once: bool = False) -> str:

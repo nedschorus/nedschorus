@@ -10,55 +10,83 @@ Load it by path, under the snake_case form of its file name:
         "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common", <path>)
 """
 
-# Only who is told changes for a subagent: where the line says to stop, it still stops.
-SUBAGENT_REPORTS_TO_ITS_DISPATCHER_NOT_THE_USER_SENTENCE = (
-    "A subagent reports to the agent that dispatched it, not to the user.")
+# Named before the report, so a subagent does not act on "tell the user" first.
+REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT = (
+    "the user, or, if you are a subagent, the agent that dispatched you,")
 
 
 def agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
-        failure_again, program, *, read_by_a_subagent=True, also_not=""):
-    """The closing line: when the second run fails too, stop and report both runs' lines.
+        text_the_failure_line_contains=None, *, rerun_fails_when=None,
+        which_lines_to_quote_in_the_report=None,
+        phrase_a_stop_message_uses_for_the_command_the_agent_reruns="the rerun",
+        read_by_a_subagent=True,
+        next_step_to_skip_when_the_rerun_fails_too=None):
+    """The closing line: when the rerun fails too, stop and report what both runs printed.
 
-    failure_again is what the reader sees when the second run fails, such as
-    'prints "could not check" again': exit codes differ between programs, and
-    some print a failure and exit 0. also_not names work the stop holds back
-    that the reader would otherwise go on to, such as "take the next step below".
-    Leave the subagent sentence out where no subagent reads the line, as in a
-    session's first prompt.
+    text_the_failure_line_contains is text the failure's own line contains, such as "could not
+    check": exit codes differ between programs, and some print a failure and
+    exit 0, so the reader is given text to look for. Where no such text exists,
+    pass rerun_fails_when and which_lines_to_quote_in_the_report instead; any other
+    mix of the three raises TypeError.
+    next_step_to_skip_when_the_rerun_fails_too names work the stop holds back
+    that the reader would otherwise go on to. Leave out the subagent clause
+    where no subagent reads the line, as in a session's first prompt.
     """
-    stop = f"stop, do not {also_not}," if also_not else "stop,"
-    line = (f"If the run you made by following a line above {failure_again}, {stop} and tell "
-            f"the user, word for word, the lines {program} printed the first time and the "
-            f"lines that second run printed.")
-    if read_by_a_subagent:
-        line += f" {SUBAGENT_REPORTS_TO_ITS_DISPATCHER_NOT_THE_USER_SENTENCE}"
-    return line
+    free_text = (rerun_fails_when, which_lines_to_quote_in_the_report)
+    if (None in free_text) if text_the_failure_line_contains is None else free_text != (None, None):
+        raise TypeError(
+            "pass either text_the_failure_line_contains alone, or both rerun_fails_when "
+            "and which_lines_to_quote_in_the_report")
+    if text_the_failure_line_contains is not None:
+        rerun_fails_when = f'prints a line containing "{text_the_failure_line_contains}" again'
+        which_lines_to_quote_in_the_report = (
+            f'the line containing "{text_the_failure_line_contains}" from each run')
+    stop = (f"stop, do not {next_step_to_skip_when_the_rerun_fails_too},"
+            if next_step_to_skip_when_the_rerun_fails_too else "stop,")
+    who = REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT if read_by_a_subagent else "the user"
+    return (f"If {phrase_a_stop_message_uses_for_the_command_the_agent_reruns} "
+            f"{rerun_fails_when}, {stop} and tell {who} word for word, "
+            f"{which_lines_to_quote_in_the_report}.")
 
 
-def git_failure_next_step_lines(rerun, program, *, failure_again,
-                                takes_a_branch_commit_or_path, read_by_a_subagent=True,
-                                also_not=""):
+def git_failure_next_step_lines(rerun, program, *, include_the_misspelt_branch_commit_or_path_line,
+                                text_the_failure_line_contains=None, rerun_fails_when=None,
+                                which_lines_to_quote_in_the_report=None, read_by_a_subagent=True,
+                                next_step_to_skip_when_the_rerun_fails_too=None):
     """The lines for a git command that failed in a program the agent ran.
 
-    The line about a misspelt name is printed only for a program that takes a
-    branch, commit or path from the agent; elsewhere no name of the agent's can
+    Include the misspelt-name line only for a program that takes a branch,
+    commit or path on its command line; elsewhere no name of the agent's can
     be wrong.
     """
     lines = [f"If git's error names a lock file, such as .git/index.lock, wait one minute, "
-             f"then run {rerun}; do not delete the lock file yourself."]
-    if takes_a_branch_commit_or_path:
-        lines.append(f"If git's error names a branch, commit or path that does not exist, and "
-                     f"you gave that name to {program}, correct it in your command, then run "
-                     f"the corrected command.")
-    lines += [f"If none of the cases above applies, run {rerun} once more, unchanged.",
-              agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
-                  failure_again, program, read_by_a_subagent=read_by_a_subagent,
-                  also_not=also_not)]
+             f"then run exactly {rerun}; do not delete the lock file yourself."]
+    if include_the_misspelt_branch_commit_or_path_line:
+        lines += [f"If a branch, commit or path you gave {program} on its command line is "
+                  f"misspelt or does not exist, correct it in your command, then run the "
+                  f"corrected command.",
+                  f"If neither applies, run exactly {rerun} once more."]
+        phrase_a_stop_message_uses_for_the_command_the_agent_reruns = "the rerun, or the corrected command,"
+    else:
+        lines.append(f"If git's error names no lock file, run exactly {rerun} once more.")
+        phrase_a_stop_message_uses_for_the_command_the_agent_reruns = "the rerun"
+    lines.append(agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+        text_the_failure_line_contains, rerun_fails_when=rerun_fails_when,
+        which_lines_to_quote_in_the_report=which_lines_to_quote_in_the_report,
+        phrase_a_stop_message_uses_for_the_command_the_agent_reruns=(
+            phrase_a_stop_message_uses_for_the_command_the_agent_reruns),
+        read_by_a_subagent=read_by_a_subagent,
+        next_step_to_skip_when_the_rerun_fails_too=next_step_to_skip_when_the_rerun_fails_too))
     return "\n".join(lines)
 
 
 def hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(when, program):
-    """The closing line for a hook, which runs again by itself `when`, such as "at your next Edit"."""
-    return (f"Keep this message: if {program} reports a git failure again {when}, whether this "
-            f"error or another, tell the user both messages, word for word. "
-            f"{SUBAGENT_REPORTS_TO_ITS_DISPATCHER_NOT_THE_USER_SENTENCE}")
+    """The closing line for a hook, which runs again by itself `when`, such as "at your next Edit".
+
+    program is the prefix the hook's lines start with, so the reader can match
+    the next report to this one.
+    """
+    return (f'If a line starting "{program}" reports a git failure again {when}, whether this '
+            f"error or another, tell {REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT} "
+            f"word for word, every line of this message and of the new one, before you go on. "
+            f"If the check finds no git failure then, this failure needs no report.")
