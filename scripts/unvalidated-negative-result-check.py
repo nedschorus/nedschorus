@@ -637,7 +637,7 @@ def lines_the_agents_grep_could_read(lines, corpus_root, control_tokens):
     return [line for line in lines if named[line] not in skipped]
 
 
-def run_control(stage, pattern, corpus_root, zero_inputs, skipped=None):
+def run_control(stage, pattern, corpus_root, zero_inputs, skipped):
     """Run weakened searches and report the first that matches. Raises
     ControlSearchCouldNotRun when none matched and one or more could not run,
     because a search that failed found nothing for a reason that is not
@@ -654,6 +654,7 @@ def run_control(stage, pattern, corpus_root, zero_inputs, skipped=None):
     if words is None or [word for word, _ in words] != tokens:
         return None
     errors = []
+    agents_search_runs = None
 
     def search_tokens(searched_pattern):
         searched = []
@@ -713,14 +714,17 @@ def run_control(stage, pattern, corpus_root, zero_inputs, skipped=None):
                     "matched": [f"{path}: counted 0 by the original, matched by "
                                 f"the weakened search" for path in recovered[:5]],
                 }
-        if finished.returncode >= FIRST_ERROR_EXIT_STATUS:
+        # A signal's negative return code is a failure too, not a 'no match'.
+        if finished.returncode not in (0, 1):
             failure = (f"`{control_command}` exited {finished.returncode}: "
                        f"{finished.stderr.strip() or 'no error text'}")
-            if search_with_the_agents_pattern_runs(search_tokens(pattern), corpus_root):
-                if skipped is not None:
-                    skipped.append(f"{failure}, while the same search with the "
-                                   f"agent's own pattern `{pattern}` runs, so the "
-                                   f"weakened pattern `{weaker}` is at fault")
+            if agents_search_runs is None:
+                agents_search_runs = search_with_the_agents_pattern_runs(
+                    search_tokens(pattern), corpus_root)
+            if agents_search_runs:
+                skipped.append(f"{failure}, while the same search with the "
+                               f"agent's own pattern `{pattern}` runs, so the "
+                               f"weakened pattern `{weaker}` is at fault")
             else:
                 errors.append(failure)
     if errors:
@@ -735,7 +739,7 @@ def search_with_the_agents_pattern_runs(tokens, corpus_root):
                                   text=True, timeout=60)
     except (OSError, subprocess.SubprocessError):
         return False
-    return finished.returncode < FIRST_ERROR_EXIT_STATUS
+    return finished.returncode in (0, 1)
 
 
 def meaningful_stderr(stderr):
@@ -887,11 +891,17 @@ def control_errors_lines(verdict):
 def control_skips_lines(verdict):
     """The lines that say a weakened control search was skipped because this
     check's own weakening broke it; the agent's search is not at fault."""
+    if verdict.fires:
+        what_to_do = ("The verdict above stands on the signals that fired; follow "
+                      "its instructions.")
+    else:
+        what_to_do = ("No other signal fired, but without this control the empty "
+                      "result is not yet evidence of absence: before you report "
+                      "absence, search once with a weaker pattern of your own, "
+                      "and report absence only if that search also finds nothing.")
     return [f"A weakened control search was skipped, so this result was not "
             f"checked against it: {skip}. This is the check's own weakening, "
-            f"not a fault in your search. The verdict above stands on the other "
-            f"signals alone; before you report absence, search once with a "
-            f"weaker pattern of your own and read what it returns."
+            f"not a fault in your search. {what_to_do}"
             for skip in verdict.control_skips]
 
 

@@ -429,11 +429,11 @@ check("a search fed by a pipe is never re-run over the corpus",
       f"searches files the original never read")
 
 check("the control refuses a command carrying a pipe",
-      check_module.run_control("grep -rn 'a/b' . | head", "a/b", corpus, [])
+      check_module.run_control("grep -rn 'a/b' . | head", "a/b", corpus, [], [])
       is None,
       "only a bare read-only search is ever re-run")
 check("the control refuses a command carrying a redirect",
-      check_module.run_control("grep -rn 'a/b' . > out.txt", "a/b", corpus, [])
+      check_module.run_control("grep -rn 'a/b' . > out.txt", "a/b", corpus, [], [])
       is None)
 check("a path pattern weakens to its last segment",
       ("last path segment", "handoff-supervisor.py") in
@@ -997,7 +997,8 @@ code, out, _err = run_program_with(
     "--control-corpus-root", broken_weakening_corpus)
 check("a command whose weakened pattern grep rejects exits 0 and says the "
       "control was skipped, not that the search is at fault",
-      code == 0 and "was skipped" in out and "not a fault in your search" in out,
+      code == 0 and "was skipped" in out and "not a fault in your search" in out
+      and "not yet evidence of absence" in out and "stands on the signals" not in out,
       f"{code} {out!r}")
 check("a search with the agent's pattern that cannot be started does not count as "
       "running, so the weakened search's failure is still reported",
@@ -1015,6 +1016,36 @@ code, out, _err = run_program_with(
 check("a fixture replay whose weakened pattern grep rejects exits 0 and says "
       "the control was skipped",
       code == 0 and "was skipped" in out, f"{code} {out!r}")
+
+
+# A search killed by a signal returns a negative code, which is below 2 but is
+# not an answer. The stand-in is killed when its arguments hold the pattern
+# named in KILL_GREP_WHEN, and exits 1 otherwise.
+SIGNAL_STAND_INS = SUITE_SCRATCH / "a-grep-that-a-signal-kills"
+SIGNAL_STAND_INS.mkdir()
+(SIGNAL_STAND_INS / "grep").write_text(
+    "#!/bin/bash\n"
+    'for argument in "$@"; do\n'
+    '  if [ "$KILL_GREP_WHEN" = any ] || [ "$argument" = "$KILL_GREP_WHEN" ]; then kill -TERM $$; fi\n'
+    "done\n"
+    "exit 1\n", encoding="utf-8")
+(SIGNAL_STAND_INS / "grep").chmod(0o755)
+signal_corpus = in_a_scratch_corpus({"src/a.txt": "nothing here\n"})
+with_signal_stand_in = {"PATH": f"{SIGNAL_STAND_INS}{os.pathsep}{os.environ['PATH']}"}
+code, out, _err = run_program_with(
+    dict(with_signal_stand_in, KILL_GREP_WHEN="any"),
+    "--command", "grep -rn 'zzz/qqq' src", "--exit-code", "1", "--run-control",
+    "--control-corpus-root", signal_corpus)
+check("a weakened search and the agent's own search both killed by a signal exit 2, "
+      "not 0 with the weakening skipped",
+      code == 2 and "could not run" in out and "was skipped" not in out, f"{code} {out!r}")
+killed_weakening = judged_with(dict(with_signal_stand_in, KILL_GREP_WHEN="qqq"),
+                               "grep -rn 'zzz/qqq' src", signal_corpus)
+check("a weakened search killed by a signal, while the agent's own search runs, is "
+      "skipped and said so, not read as the weakening finding nothing",
+      killed_weakening.control_errors == [] and len(killed_weakening.control_skips) == 1
+      and "exited -15" in killed_weakening.control_skips[0],
+      f"errors {killed_weakening.control_errors} skips {killed_weakening.control_skips}")
 
 
 # ------------------------------------------------ what a control never runs
