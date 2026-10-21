@@ -5,7 +5,9 @@ ends failed at the redesigns ceiling; and section 9's record — the topic
 branch, one commit per state-exit with its trailer and only the files it
 names, run-state.json, the record's layout, the state-exit file, the
 user-rulings file, recovery from the last commit, the refusals before
-row 1 cuts the topic branch, and no push.
+row 1 cuts the topic branch, no push, and a failing git command raised
+with git's error rather than read as an absent start point or file or
+ignored during a discard.
 
 The whole-run cases are split over four files,
 design-to-main-whole-run-*-test.py, so that the suite runner runs them at
@@ -18,8 +20,10 @@ import importlib.util
 import json
 import pathlib
 import shutil
+import os
 import tempfile
 import unittest
+from unittest import mock
 
 _fixture_spec = importlib.util.spec_from_file_location(
     "design_to_main_test_fixture",
@@ -1122,6 +1126,80 @@ class ThePathsChangedSinceACommitAreTheFilesAsStored(unittest.TestCase):
             self.assertEqual(record.paths_changed_since(base), ["café.md", "my notes.md"])
         finally:
             repository.remove()
+
+
+STAND_IN_GIT_ERROR = "fatal: stand-in git failure"
+
+
+class AGitFailureIsRaisedNotReadAsAnAnswer(unittest.TestCase):
+    """A stand-in git on PATH exits 128 for the subcommands named in
+    STAND_IN_GIT_FAIL and runs the real git for every other one."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.repository = fixture.ThrowawayRepository()
+        cls.machine, cls.run_state, cls.record, _ = fixture.make_machine(
+            fixture.prefix_to_design_approved(), cls.repository)
+        fixture.drive(cls.machine, cls.run_state)
+        cls.stand_in_directory = pathlib.Path(tempfile.mkdtemp(prefix="stand-in-git-"))
+        stand_in = cls.stand_in_directory / "git"
+        # The record runs `git -C <checkout> <subcommand> ...`, so the subcommand is $3.
+        stand_in.write_text(
+            "#!/bin/sh\n"
+            "for failing in $STAND_IN_GIT_FAIL; do\n"
+            "  if [ \"$3\" = \"$failing\" ]; then echo \"%s\" >&2; exit 128; fi\n"
+            "done\n"
+            "exec %s \"$@\"\n" % (STAND_IN_GIT_ERROR, shutil.which("git")))
+        stand_in.chmod(0o755)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.repository.remove()
+        shutil.rmtree(cls.stand_in_directory, ignore_errors=True)
+
+    def git_failing(self, *subcommands):
+        return mock.patch.dict(os.environ, {
+            "PATH": "%s%s%s" % (self.stand_in_directory, os.pathsep, os.environ["PATH"]),
+            "STAND_IN_GIT_FAIL": " ".join(subcommands)})
+
+    def assert_raises_git_failure(self, call):
+        with self.assertRaises(G.git_output.GitCommandFailed) as failed:
+            call()
+        self.assertEqual(failed.exception.returncode, 128)
+        self.assertIn(STAND_IN_GIT_ERROR, str(failed.exception))
+        return failed.exception
+
+    def test_a_failing_rev_parse_of_the_start_point_is_not_a_missing_start_point(self):
+        with self.git_failing("rev-parse"):
+            self.assert_raises_git_failure(self.record.require_topic_branch_start_point)
+
+    def test_a_failing_look_at_head_is_not_a_run_state_that_was_never_committed(self):
+        with self.git_failing("ls-tree", "show", "cat-file"):
+            self.assert_raises_git_failure(self.machine.recover)
+
+    def test_a_failing_show_of_a_committed_run_state_is_raised(self):
+        with self.git_failing("show"):
+            self.assert_raises_git_failure(self.record.run_state_text_at_last_commit)
+
+    def test_a_failing_look_at_head_is_not_a_named_file_that_is_not_there(self):
+        with self.git_failing("ls-tree", "show", "cat-file"):
+            self.assert_raises_git_failure(
+                lambda: self.record.named_files_that_are_not_there(["never-written.md"]))
+
+    def test_each_failing_discard_step_stops_the_discard_with_git_s_error(self):
+        stray = self.record.absolute(fixture.COMPONENT_DIRECTORY + "/half-written.py")
+        for step in ("reset", "checkout", "clean"):
+            with self.subTest(step=step):
+                stray.parent.mkdir(parents=True, exist_ok=True)
+                stray.write_text("half\n")
+                with self.git_failing(step):
+                    failure = self.assert_raises_git_failure(
+                        lambda: self.record.discard_all_uncommitted_work_for_recovery(self.run_state))
+                self.assertEqual(failure.arguments[0], step)
+                # The clean that would remove the untracked file never ran.
+                self.assertTrue(stray.exists())
+        self.record.discard_all_uncommitted_work_for_recovery(self.run_state)
+        self.assertFalse(stray.exists())
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

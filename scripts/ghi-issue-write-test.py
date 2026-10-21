@@ -628,6 +628,9 @@ def run_cases(scratch: Path):
           str(first.timeout_of("git push")))
     check("the worktree is removed even though the run succeeded",
           first.ran("git worktree remove"), str(first.commands()))
+    check_failed_worktree_removal_is_printed(
+        "a filing", lambda runner: tool.create(source, REPO, scratch, runner,
+                                               quiet), first.answers)
 
     second = Recorder({
         "gh issue list": Completed(PLACEHOLDER),
@@ -1963,6 +1966,254 @@ EARLIER_EDIT_TITLE = f"GHI-MD edit for issue 570: {EDIT_TITLE}"
 EARLIER_EDIT_URL = "https://github.com/nedschorus/nedschorus/pull/21"
 
 
+WORKTREE_REMOVAL_STDERR = "fatal: cannot remove a locked working tree"
+
+
+def check_failed_worktree_removal_is_printed(operation, land, answers):
+    """Lands once with `git worktree remove` failing and once with `git
+    worktree add` failing: the first prints the left-behind record and
+    the command that clears it, the second, which registered nothing, does
+    not."""
+    for removal_fails in (True, False):
+        failing = ({"git worktree remove": Completed(
+                        "", 128, WORKTREE_REMOVAL_STDERR)}
+                   if removal_fails else
+                   {"git worktree add": Completed("", 128, "fatal: no space"),
+                    "git worktree remove": Completed(
+                        "", 128, "fatal: is not a working tree")})
+        recorder = Recorder({**failing, **answers})
+        complaint = io.StringIO()
+        with contextlib.redirect_stderr(complaint):
+            try:
+                land(recorder)
+            except tool.Refused:
+                pass
+        said = complaint.getvalue()
+        if removal_fails:
+            check(f"{operation} whose worktree cannot be removed says the "
+                  "record was left behind, that the pull request was "
+                  "opened, and how to clear it",
+                  WORKTREE_REMOVAL_STDERR in said
+                  and "record of the temporary worktree" in said
+                  and "worktree remove -f -f" in said
+                  and "already pushed its branch" in said,
+                  said)
+        else:
+            check(f"{operation} whose worktree was never added says nothing "
+                  "about removing it",
+                  "record of the temporary worktree" not in said
+                  and not recorder.ran(
+                      "git worktree remove"), (said, recorder.commands()))
+
+
+def run_git_failure_cases(scratch: Path):
+    """Each git command whose exit code the tool reads: an answer git gives
+    with a code is told apart from git failing."""
+    revision, relative = "abc123", "docs/issues/5-x.md"
+    show = f"git show {revision}:{relative}"
+    listing = f"git ls-tree --name-only -z {revision} -- {relative}"
+    for case_name, answers, expected in [
+            ("blob_at returns what git show prints",
+             {show: Completed("text\n")}, "text\n"),
+            ("blob_at reads a path the listing leaves out as absent",
+             {show: Completed("", 128, "fatal: path does not exist"),
+              listing: Completed("")}, None),
+            ("blob_at raises when the listing fails",
+             {show: Completed("", 128, "fatal: bad object"),
+              listing: Completed("", 128, "fatal: Not a valid object name")},
+             "fatal: Not a valid object name"),
+            ("blob_at raises when the listing holds a path git show could "
+             "not read",
+             {show: Completed("", 128, "fatal: unable to read blob"),
+              listing: Completed(relative + "\0")},
+             "fatal: unable to read blob")]:
+        try:
+            outcome = tool.blob_at(revision, relative, scratch,
+                                   Recorder(answers))
+        except tool.Refused as refusal:
+            outcome = refusal
+        if isinstance(expected, str) and expected.startswith("fatal"):
+            check(case_name,
+                  isinstance(outcome, tool.Refused) and outcome.code == 1
+                  and expected in str(outcome)
+                  and "wait one minute" in str(outcome), repr(outcome))
+        else:
+            check(case_name, outcome == expected, repr(outcome))
+
+    merge_base = f"git merge-base HEAD {MAIN_COMMIT}"
+    for case_name, answer, expected in [
+            ("merge_base_with_main returns the merge base",
+             Completed("base\n"), "base"),
+            ("merge_base_with_main reads exit 1 as no merge base",
+             Completed("", 1), ""),
+            ("merge_base_with_main raises when git fails",
+             Completed("", 128, "fatal: not a git repository"), None)]:
+        try:
+            outcome = tool.merge_base_with_main(
+                MAIN_COMMIT, scratch, Recorder({merge_base: answer}))
+        except tool.Refused as refusal:
+            outcome = refusal
+        if expected is None:
+            check(case_name,
+                  isinstance(outcome, tool.Refused) and outcome.code == 1
+                  and "fatal: not a git repository" in str(outcome),
+                  repr(outcome))
+        else:
+            check(case_name, outcome == expected, repr(outcome))
+    reported = []
+    try:
+        tool.refuse_on_conflict(
+            relative, None, None, None, MAIN_COMMIT, scratch,
+            Recorder({merge_base: Completed("", 128, "fatal: bad object")}),
+            reported.append)
+        outcome = "no refusal"
+    except tool.Refused as refusal:
+        outcome = refusal.code
+    check("a merge base git could not find is not reported as no merge base",
+          outcome == 1 and not reported, (outcome, reported))
+
+    difference = f"git diff {revision} {MAIN_COMMIT} -- {relative}"
+    for case_name, answer, expected in [
+            ("a conflict refusal shows the change it would discard",
+             Completed("+a line\n"), "+a line"),
+            ("a conflict refusal whose diff fails says it could not be "
+             "shown and why",
+             Completed("", 128, "fatal: bad revision"),
+             "fatal: bad revision")]:
+        refusal = tool.conflict_refusal(
+            "Refused: conflict.", "Fold it.", relative, revision,
+            MAIN_COMMIT, scratch, Recorder({difference: answer}))
+        shown = str(refusal).split("The change you would have discarded:\n")[1]
+        check(case_name,
+              refusal.code == 66 and expected in shown
+              and (answer.returncode == 0) == ("not shown" not in shown),
+              shown)
+
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        tracked = tool.tracked_paths_at_head(scratch, Recorder({
+            "git ls-tree -r --name-only -z HEAD":
+                Completed("", 128, "fatal: Not a valid object name HEAD")}))
+    check("a tracked-tree listing that fails is printed before the heading "
+          "is let through",
+          tracked == [] and "fatal: Not a valid object name HEAD"
+          in complaint.getvalue() and "not checked for a file path"
+          in complaint.getvalue(), complaint.getvalue())
+
+    # A checkout with no commit yet, where git exits 128 for HEAD as it does
+    # for a failure, and the stand-in for one whose HEAD git cannot read.
+    unborn = scratch / "unborn"
+    subprocess.run(["git", "init", "-q", str(unborn)], check=True,
+                   capture_output=True)
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        tracked = tool.tracked_paths_at_head(unborn, tool.run)
+        located = tool.merge_base_with_main(
+            "4b825dc642cb6eb9a060e54bf8d69288fbee4904", unborn, tool.run)
+    check("a checkout with no commit yet tracks nothing, and says nothing "
+          "about it", tracked == [] and not complaint.getvalue(),
+          (tracked, complaint.getvalue()))
+    check("a checkout with no commit yet has no merge base with main",
+          located == "", repr(located))
+    try:
+        tool.head_is_unborn(scratch, Recorder({
+            "git rev-parse --verify --quiet HEAD": Completed(
+                "", 128, "fatal: not a git repository")}))
+        outcome = "no refusal"
+    except tool.Refused as refusal:
+        outcome = str(refusal)
+    check("a HEAD git cannot read is raised, not taken for no commit yet",
+          "fatal: not a git repository" in outcome, outcome)
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        tracked = tool.tracked_paths_at_head(scratch, Recorder({
+            "git ls-tree -r --name-only -z HEAD": Completed(
+                "", 128, "fatal: not a git repository"),
+            "git rev-parse --verify --quiet HEAD": Completed(
+                "", 128, "fatal: not a git repository")}))
+    check("and the heading check still lets the heading through, saying so",
+          tracked == [] and "not checked for a file path"
+          in complaint.getvalue(), complaint.getvalue())
+
+    def unborn_probe_times_out(arguments, **options):
+        if arguments[:2] == ["git", "rev-parse"]:
+            raise subprocess.TimeoutExpired(arguments, 30)
+        return Completed("", 128, "fatal: unable to read tree")
+    complaint = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(complaint):
+            tracked = tool.tracked_paths_at_head(scratch,
+                                                 unborn_probe_times_out)
+    except subprocess.TimeoutExpired as expiry:
+        tracked = expiry
+    check("a failed listing whose no-commit-yet probe times out still lets "
+          "the heading through, saying so",
+          tracked == [] and "not checked for a file path"
+          in complaint.getvalue(), (tracked, complaint.getvalue()))
+
+    worktree_parent = scratch / "removal"
+    worktree = worktree_parent / "worktree"
+    worktree.mkdir(parents=True)
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        tool.remove_landing_worktree(worktree, worktree_parent, scratch,
+                                     Recorder({"git worktree remove": Completed(
+                                         "", 128, WORKTREE_REMOVAL_STDERR)}),
+                                     False)
+    check("a worktree whose removal failed after a landing that stopped "
+          "early has its directory deleted, says no pull request was "
+          "opened, and prints the command that clears git's record",
+          not worktree_parent.exists()
+          and "stopped before it opened a pull request" in complaint.getvalue()
+          and f"git -C {scratch} worktree remove -f -f {worktree}"
+          in complaint.getvalue(),
+          complaint.getvalue())
+    # A locked worktree in a real repository: the tool's own removal fails,
+    # and the command it prints must clear the record git keeps, which
+    # `git worktree prune` and a single --force both leave in place.
+    locked_repository = scratch / "locked-repository"
+    subprocess.run(["git", "init", "-q", str(locked_repository)], check=True,
+                   capture_output=True)
+    subprocess.run(["git", "-C", str(locked_repository), "-c",
+                    "user.email=test@example.com", "-c", "user.name=test",
+                    "commit", "-q", "--allow-empty", "-m", "one"],
+                   check=True, capture_output=True)
+    locked_parent = scratch / "locked-parent"
+    locked = locked_parent / "worktree"
+    for arguments in (["worktree", "add", "-q", "--detach", str(locked)],
+                      ["worktree", "lock", str(locked)]):
+        subprocess.run(["git", "-C", str(locked_repository), *arguments],
+                       check=True, capture_output=True)
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        tool.remove_landing_worktree(locked, locked_parent, locked_repository,
+                                     tool.run, True)
+    printed = next((line for line in complaint.getvalue().splitlines()
+                    if line.startswith("Run ")
+                    and line.endswith(" to remove that record.")), "")
+    cleared = subprocess.run(
+        printed[len("Run "):-len(" to remove that record.")], shell=True,
+        capture_output=True, text=True) if printed else None
+    listed = subprocess.run(
+        ["git", "-C", str(locked_repository), "worktree", "list",
+         "--porcelain"], capture_output=True, text=True, check=True).stdout
+    check("the command printed for a locked worktree clears git's record of "
+          "it",
+          "locked working tree" in complaint.getvalue()
+          and cleared is not None and cleared.returncode == 0
+          and str(locked) not in listed,
+          (complaint.getvalue(), cleared and cleared.stderr, listed))
+
+    complaint = io.StringIO()
+    with contextlib.redirect_stderr(complaint):
+        worktree.mkdir(parents=True)
+        tool.remove_landing_worktree(worktree, worktree_parent, scratch,
+                                     Recorder(), True)
+    check("a worktree removed cleanly prints nothing",
+          not complaint.getvalue() and not worktree_parent.exists(),
+          complaint.getvalue())
+
+
 def earlier_edit_pull_request(*paths):
     """What `gh pr list --head <that branch> --json ...,files` answers with
     when an earlier edit of those paths is open on it."""
@@ -2224,6 +2475,9 @@ def run_edit_cases(scratch: Path):
         "git ls-tree": Completed(EDIT_RELATIVE + "\0"),
     })
     edited_number, finished = tool.edit(source, REPO, scratch, landing, quiet)
+    check_failed_worktree_removal_is_printed(
+        "an edit", lambda runner: tool.edit(source, REPO, scratch, runner,
+                                            quiet), landing.answers)
     check("the edit lands the file on a pull request of its own",
           edited_number == 570 and landing.ran("git worktree add")
           and landing.ran("gh pr create"), str(landing.commands()))
@@ -2522,7 +2776,7 @@ def run_edit_cases(scratch: Path):
 
     # 128 is what git answers for a path that is not in the tree asked of,
     # measured; the older cases above say 1, which blob_at reads the same
-    # way — it asks only whether the call succeeded.
+    # way, because the listing it then asks for leaves the path out.
     moved_source = filed_ghi_md(scratch, directory="nc-systems/statusline")
     moved = Recorder({
         f"git show {MAIN_COMMIT}:{MOVED_RELATIVE}": Completed("",
@@ -5042,6 +5296,8 @@ def main():
                 run_edit_cases(Path(name))
             with tempfile.TemporaryDirectory(prefix="ghi-issue-adjudication-test-") as name:
                 run_adjudication_question_file_cases(Path(name))
+            with tempfile.TemporaryDirectory(prefix="ghi-issue-git-failure-test-") as name:
+                run_git_failure_cases(Path(name))
             print()
             if failures:
                 print(f"{len(failures)} case(s) failed")

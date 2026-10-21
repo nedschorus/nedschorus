@@ -951,10 +951,15 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
             reasons.append("git status unreadable")
         elif tracked_changes:
             reasons.append(f"{tracked_changes} uncommitted tracked change(s)")
-        git_dir = checkout_freshness_catch_up.git_directory(working_directory)
-        # --show-toplevel answered above, so no git directory means git could not read it.
-        if git_dir is None:
-            reasons.append("git directory unreadable")
+        try:
+            git_dir = checkout_freshness_catch_up.git_directory(working_directory)
+        except git.GitCommandFailed as error:
+            git_dir = None
+            reasons.append(f"git directory unreadable ({error})")
+        else:
+            # --show-toplevel answered above, so no git directory means git could not read it.
+            if git_dir is None:
+                reasons.append("git directory unreadable")
         marker = (checkout_freshness_catch_up.in_progress_marker(git_dir)
                   if git_dir is not None else None)
         if marker is not None:
@@ -1252,8 +1257,11 @@ def remove_finished_worktrees_at_handoff(
     # Only a run that finished prints this line; any other nonzero exit aborted or was refused.
     finished = CLEANER_FINISHED_WITH_FAILURES_LINE in stdout.splitlines()
     if cleaner.returncode != 0 and not finished:
-        detail = stderr.strip().splitlines()[-1:] or ["no detail"]
-        report += f"; clean-worktrees.py exited {cleaner.returncode}: {detail[0]}"
+        # A stopped run's cause line is followed by next-step lines; any other failure's cause is last.
+        lines = stderr.strip().splitlines()
+        stopped = [line for line in lines if line.startswith(CLEANER_STOPPED_LINE_START)]
+        detail = (stopped or lines[-1:] or ["no detail"])[0]
+        report += f"; clean-worktrees.py exited {cleaner.returncode}: {detail}"
     return report
 
 
@@ -1276,6 +1284,7 @@ def stop_worktree_cleaner_process_group(cleaner) -> str:
 
 
 CLEANER_FINISHED_WITH_FAILURES_LINE = "clean-worktrees: finished; each failure is named above"
+CLEANER_STOPPED_LINE_START = "clean-worktrees: stopped, because "
 # clean-worktrees.py prints this for each record that did not ship; the line ends with the shipper's own line.
 KEPT_FOR_RECORDS_MARKER = (": record shipment FAILED, worktree kept — removing it would delete "
                            "a record the log-store does not hold: ")

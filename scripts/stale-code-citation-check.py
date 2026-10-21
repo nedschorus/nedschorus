@@ -4,9 +4,10 @@
 import argparse
 import datetime
 import importlib.util
+import os
 import pathlib
 import re
-import subprocess
+import shlex
 import sys
 
 PROGRAM = "stale-code-citation-check"
@@ -22,6 +23,7 @@ _git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output
 
 EXIT_FINDINGS = 1
 EXIT_BAD_INVOCATION = 2
+EXIT_COULD_NOT_CHECK = 2
 
 DESIGN_AS_OF_NAME = "design-as-of"
 STATUS_NAME = "status"
@@ -65,12 +67,19 @@ def load_md_drift_lint():
     return module
 
 
-def git_output(arguments, repository_root: pathlib.Path) -> str:
+def git_output(arguments, repository_root: pathlib.Path,
+               accepted_exit_codes=(0,)) -> str:
+    """Return git's stdout; raise GitCommandFailed on any other exit code."""
     # surrogateescape: -z output carries each path's bytes as stored, which need not be UTF-8.
-    completed = subprocess.run(["git", *arguments], cwd=str(repository_root),
-                               capture_output=True, text=True, errors="surrogateescape",
-                               check=False)
-    return completed.stdout
+    return git_machine_readable_output.run_git(
+        repository_root, arguments, accepted_exit_codes=accepted_exit_codes,
+    ).decode("utf-8", errors="surrogateescape")
+
+
+def resolves_to_a_commit(name: str, repository_root: pathlib.Path) -> bool:
+    # --verify --quiet exits 1 for a name that is no commit; any other failure raises.
+    return bool(git_output(["rev-parse", "--verify", "--quiet", name + "^{commit}"],
+                           repository_root, accepted_exit_codes=(0, 1)).strip())
 
 
 def frontmatter_lines(text: str):
@@ -164,10 +173,7 @@ def names_a_commit(text: str, repository_root: pathlib.Path) -> bool:
     for token in set(COMMIT_ISH_TOKEN.findall(text)):
         key = (str(repository_root), token)
         if key not in _commit_ish_cache:
-            completed = subprocess.run(
-                ["git", "rev-parse", "--verify", "--quiet", token + "^{commit}"],
-                cwd=str(repository_root), capture_output=True, text=True, check=False)
-            _commit_ish_cache[key] = completed.returncode == 0
+            _commit_ish_cache[key] = resolves_to_a_commit(token, repository_root)
         if _commit_ish_cache[key]:
             return True
     return False
@@ -210,14 +216,6 @@ def stamped_documents(repository_root: pathlib.Path, lint) -> list:
         if frontmatter_field(text, DESIGN_AS_OF_FIELD) is not None:
             found.append(path)
     return found
-
-
-def base_resolves(base: str, repository_root: pathlib.Path) -> bool:
-    # git_output returns an empty string on failure; an invalid base would otherwise look like a clean diff.
-    completed = subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", base + "^{commit}"],
-        cwd=str(repository_root), capture_output=True, text=True, check=False)
-    return completed.returncode == 0
 
 
 def newest_commit_date_in_range(relative: str, base: str,
@@ -350,7 +348,31 @@ def findings_for_document(document: pathlib.Path, repository_root: pathlib.Path,
     return findings, pinned_count
 
 
+def git_failure_next_steps(argv) -> str:
+    """The lines telling an agent what to do after a git command failed."""
+    # The rerun must start in this directory: FILE arguments are relative to it.
+    rerun = (f"cd {shlex.quote(os.getcwd())} && "
+             + shlex.join(["python3", str(pathlib.Path(__file__).resolve()),
+                           *(sys.argv[1:] if argv is None else argv)]))
+    return (
+        f"If git's error names a lock file, such as .git/index.lock, wait one minute, then run {rerun}; do not delete the lock file yourself.\n"
+        f"If git's error names a branch, commit or path that does not exist, and you gave that name to {PROGRAM}, correct it in your command, then run the corrected command.\n"
+        f"In any other case, run {rerun} once more.\n"
+        f"If {rerun} fails again, stop and tell the user what {PROGRAM} printed, git's error included; a subagent tells the agent that dispatched it instead.")
+
+
 def main(argv=None) -> int:
+    try:
+        return run_check(argv)
+    except git_machine_readable_output.GitCommandFailed as failure:
+        print(f"{PROGRAM}: could not check, because a git command failed, so "
+              f"no result is reported: {failure}\n"
+              f"{git_failure_next_steps(argv)}",
+              file=sys.stderr)
+        return EXIT_COULD_NOT_CHECK
+
+
+def run_check(argv) -> int:
     parser = argparse.ArgumentParser(
         prog=f"scripts/{PROGRAM}.py",
         description="A design document's line-number citations still point at "
@@ -391,7 +413,7 @@ def main(argv=None) -> int:
         scope = f"{len(arguments.files)} named document(s)"
     else:
         mode = "changed paths"
-        if not base_resolves(arguments.base, REPOSITORY_ROOT):
+        if not resolves_to_a_commit(arguments.base, REPOSITORY_ROOT):
             print(f"{PROGRAM}: pass --base a ref this repository holds; "
                   f"{arguments.base!r} names no commit. Fetch it, or name "
                   f"origin/main.", file=sys.stderr)

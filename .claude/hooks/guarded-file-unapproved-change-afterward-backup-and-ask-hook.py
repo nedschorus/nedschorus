@@ -111,28 +111,37 @@ ASK_FILE = "{path}, version {key}.{reason} Its change against the newest approve
 EDIT_ON_UNAPPROVED_VERSION = (
     " The Edit or Write did not approve this version, because it was made on a version the user "
     "had not approved: the instruction-file guard's approval covers only that call's change, not "
-    "the unapproved text already in the file.")
+    "the unapproved text already in the file. An obvious-fix or `#pre_approved_change` marker you "
+    "wrote before the Edit or Write does not change this: the call spent it, so the lines below "
+    "about those two markers do not apply to you, and the text it was made on needs the user's "
+    "yes.")
 ASK_INSTRUCTIONS = (
-    "If you are a subagent and you wrote an obvious-fix marker before you made the change, run "
-    "once: python3 {program} --approve {pairs}, then tell the agent that dispatched you what you "
-    "fixed, and do none of the steps below.\n"
+    "If you are a subagent, and you wrote an obvious-fix marker and then made the change with a "
+    "command other than Edit or Write, run once: python3 {program} --approve {pairs}, then tell "
+    "the agent that dispatched you what you fixed, and do none of the steps below.\n"
+    "If you are a subagent, and you wrote a `#pre_approved_change` marker and then made the change "
+    "with a command other than Edit or Write, run once: python3 {program} --approve {pairs}, "
+    "report nothing, and do none of the steps below.\n"
     "If you are any other subagent, stop: make no further edit, report the change to the agent "
     "that dispatched you instead of asking the user, and do none of the steps below.\n"
     "Show the user each change above and ask him whether he approves it.\n"
     "If he approves, write his words into {marker} at the top of your session's checkout, then "
     "run once: python3 {program} --approve {pairs}\n"
-    "If you wrote an obvious-fix marker before you made the change, run that --approve command "
-    "without asking him, then tell him what you fixed.\n"
-    "If you wrote a `#pre_approved_change` marker before you made the change, run that "
-    "--approve command without asking him.\n"
+    "If you wrote an obvious-fix marker and then made the change with a command other than Edit "
+    "or Write, run that --approve command without asking him; the fix is not reported to him.\n"
+    "If you wrote a `#pre_approved_change` marker and then made the change with a command other "
+    "than Edit or Write, run that --approve command without asking him.\n"
     "If he declines, run: python3 {program} --restore {pairs}\n"
     "If he declines a version that is in a commit, also run, for each such file: "
     "git commit --only -m \"Put back the approved <file name>\" -- <path>")
 REMINDER = (
     "Reminder: {path} still holds version {key}, which the user has not approved.\n"
-    "If you are a subagent and you wrote an obvious-fix marker before you made the change, run "
-    "once: python3 {program} --approve {path} {key}, then tell the agent that dispatched you what "
-    "you fixed.\n"
+    "If you are a subagent, and you wrote an obvious-fix marker and then made the change with a "
+    "command other than Edit or Write, run once: python3 {program} --approve {path} {key}, then "
+    "tell the agent that dispatched you what you fixed.\n"
+    "If you are a subagent, and you wrote a `#pre_approved_change` marker and then made the change "
+    "with a command other than Edit or Write, run once: python3 {program} --approve {path} {key}, "
+    "and report nothing.\n"
     "If you are any other subagent, stop: make no further edit, and report the change to the "
     "agent that dispatched you instead of asking the user.\n"
     "Otherwise show the user the change and ask him, as this hook's earlier message said.\n"
@@ -167,7 +176,7 @@ class Refused(Exception):
 
 
 class BranchUnreadable(RuntimeError):
-    """git could not say whether HEAD is on a branch."""
+    """git could not say whether HEAD is a commit on a branch."""
 
 
 def load_module(name, path):
@@ -299,9 +308,16 @@ class Store:
             mount_point = Path(os.environ.get(MOUNT_POINT_VARIABLE) or MAC_MOUNT_POINT)
             table_file = os.environ.get(MOUNT_TABLE_VARIABLE)
             try:
-                table = (Path(table_file).read_text(encoding="utf-8") if table_file else
-                         subprocess.run(["mount"], capture_output=True, text=True, timeout=10,
-                                        check=False).stdout)
+                if table_file:
+                    table = Path(table_file).read_text(encoding="utf-8")
+                else:
+                    listed = subprocess.run(["mount"], capture_output=True, text=True,
+                                            timeout=10, check=False)
+                    if listed.returncode != 0:
+                        raise StoreUnreachable(
+                            f"the mount table could not be read: mount exited "
+                            f"{listed.returncode}: {listed.stderr.strip() or 'no stderr'}")
+                    table = listed.stdout
             except (OSError, subprocess.SubprocessError) as error:
                 raise StoreUnreachable(f"the mount table could not be read: {error}")
             problem = mac_mount_problem(table, mount_point)
@@ -439,7 +455,7 @@ def versions_head_holds(checkout, versions):
     not a durable ref. A branch's HEAD is the one durable ref the hook can ask cheaply on every
     tool call; a version only another durable ref holds is copied, and the daily prune deletes
     the copy. Raises BranchUnreadable, a RuntimeError carrying git's stderr, when git
-    symbolic-ref fails with any exit other than 1."""
+    rev-parse --verify or git symbolic-ref fails with any exit other than 1."""
     relative = {}
     for path, blob_id in versions:
         if blob_id == DELETED:
@@ -448,10 +464,15 @@ def versions_head_holds(checkout, versions):
             path, blob_id)
     if not relative:
         return set()
-    if subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify", "HEAD^{commit}"],
-                      capture_output=True, timeout=60, check=False).returncode == 1:
-        # A repository with no commit yet holds nothing.
+    # git rev-parse -q --verify exits 1, with nothing on stderr, when HEAD names no commit yet.
+    head_commit = subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify",
+                                  "HEAD^{commit}"], capture_output=True, timeout=60, check=False)
+    if head_commit.returncode == 1:
         return set()
+    if head_commit.returncode != 0:
+        raise BranchUnreadable(f"git rev-parse -q --verify HEAD^{{commit}} in {checkout} exited "
+                               f"{head_commit.returncode}: "
+                               f"{head_commit.stderr.decode(errors='replace').strip()}")
     # git symbolic-ref -q exits 1, with nothing on stderr, when HEAD is detached; any other
     # nonzero exit is git failing.
     on_branch = subprocess.run(["git", "-C", str(checkout), "symbolic-ref", "-q", "HEAD"],
@@ -776,8 +797,10 @@ class Check:
     def __init__(self, path, data, key, copy_hash, how="", in_git=False, previous=None):
         self.path, self.data, self.key, self.copy_hash, self.how = path, data, key, copy_hash, how
         self.in_git = in_git
-        # The key of the version the previous run saw: None when it saw none, DELETED when the
-        # file was absent, so in both cases the call wrote the whole file.
+        # The key of the version the previous run saw: None when no run recorded the file,
+        # DELETED when it was absent. A Write then wrote the whole file, but an Edit was made on
+        # a version no run saw, such as one a shell command wrote in a run that saved no state;
+        # that version is approved with the Edit's result without asking the user.
         self.previous = previous
 
 
@@ -1329,11 +1352,23 @@ def restore(pairs):
         if checkout is None or key == DELETED or path in failed:
             continue
         relative = os.path.relpath(path, checkout)
-        tree = subprocess.run(["git", "-C", str(checkout), "ls-tree", "HEAD", "--", relative],
-                              capture_output=True, text=True, check=False).stdout.split()
+        # A repository with no commit yet has no commit to hold the declined version.
+        if subprocess.run(["git", "-C", str(checkout), "rev-parse", "-q", "--verify",
+                           "HEAD^{commit}"], capture_output=True, check=False).returncode == 1:
+            continue
+        listed = subprocess.run(["git", "-C", str(checkout), "ls-tree", "HEAD", "--", relative],
+                                capture_output=True, text=True, check=False)
+        commit_command = (f"git commit --only -m \"Put back the approved {Path(path).name}\" "
+                          f"-- {path}")
+        if listed.returncode != 0:
+            lines.append(f"Could not tell whether the declined version of {path} is in a commit: "
+                         f"git ls-tree exited {listed.returncode}: "
+                         f"{listed.stderr.strip() or 'no stderr'}\n"
+                         f"If the declined version is in a commit, run: {commit_command}")
+            continue
+        tree = listed.stdout.split()
         if len(tree) >= 3 and tree[2] == current[path][1]:
-            lines.append(f"The declined version is in a commit; run: git commit --only -m "
-                         f"\"Put back the approved {Path(path).name}\" -- {path}")
+            lines.append(f"The declined version is in a commit; run: {commit_command}")
     if failed:
         raise RestoreIncomplete(lines)
     return lines

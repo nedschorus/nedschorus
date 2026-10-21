@@ -174,6 +174,12 @@ _ned_box_home_spec = importlib.util.spec_from_file_location(
     / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 ned_box_home_path_constants = importlib.util.module_from_spec(_ned_box_home_spec)
 _ned_box_home_spec.loader.exec_module(ned_box_home_path_constants)
+_git_machine_readable_output_spec = importlib.util.spec_from_file_location(
+    "git_machine_readable_output_runner_and_parser_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "git-machine-readable-output-runner-and-parser-common.py")
+git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
+_git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
 # The log also contains runtime and model text; only program-prefixed lines are cell status.
 CELL_PROGRAM_NAMES = tuple(path.stem for path in CELL_LAUNCHERS.values())
 # Pin terminology effort explicitly so launcher tier-map changes cannot change the pass.
@@ -295,18 +301,23 @@ def frozen_paths_and_landing_time(target: pathlib.Path) -> tuple:
     """The paths a record freezes this document under -- its present one and
     every earlier one git shows -- and when main last took a change to it, so
     that only the runs reviewing the change in hand count. A document outside
-    any git repository has one path and no landing time."""
+    any git repository has one path and no landing time; a git that fails
+    raises FullRunCountUnavailable."""
     resolved = target.resolve()
-    top = subprocess.run(["git", "-C", str(target.parent), "rev-parse", "--show-toplevel"],
-                         capture_output=True, text=True, check=False)
-    if top.returncode != 0:
-        return {str(pathlib.Path(*resolved.parts[1:]))}, None
-    relative = str(resolved.relative_to(pathlib.Path(top.stdout.strip()).resolve()))
+    try:
+        top = git_machine_readable_output.run_git_unless_outside_a_repository(
+            target.parent, ["rev-parse", "--show-toplevel"])
+        if top is None:
+            return {str(pathlib.Path(*resolved.parts[1:]))}, None
+        # --verify --quiet exits 1, printing nothing, when there is no origin/main.
+        has_main = bool(git_machine_readable_output.run_git(
+            target.parent, ["rev-parse", "--verify", "--quiet", "origin/main"],
+            accepted_exit_codes=(0, 1)).strip())
+    except git_machine_readable_output.GitCommandFailed as failure:
+        raise FullRunCountUnavailable(str(failure)) from None
+    relative = str(resolved.relative_to(pathlib.Path(os.fsdecode(top).strip()).resolve()))
     history = git_output(target, "log", "--follow", "--name-only", "--format=", "--", target.name)
     paths = {relative} | {line for line in history.splitlines() if line.strip()}
-    has_main = subprocess.run(
-        ["git", "-C", str(target.parent), "rev-parse", "--verify", "--quiet", "origin/main"],
-        capture_output=True, text=True, check=False).returncode == 0
     # --first-parent: a merge commit is TREESAME to its topic parent, so plain
     # `git log` simplifies it away and reports the topic commit's older time.
     # Every path is given, so a document renamed on a branch not yet merged is

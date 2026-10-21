@@ -722,7 +722,7 @@ if not RUNNING_AS_ROOT:
               and f"walk-minutes in {s.walk} (in part)" in result.stdout
               and "b-2026-10-02-minutes.md" in result.stdout, result.stdout)
 else:
-    print("SKIP: unreadable-file cases: running as root, which reads a mode-000 file")
+    print("SKIP  unreadable-file cases: running as root, which reads a mode-000 file")
 
 # A transcript grep listed that the program then cannot open.
 with scratch() as base:

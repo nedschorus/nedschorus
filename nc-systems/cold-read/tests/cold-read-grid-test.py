@@ -1949,6 +1949,44 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 2 and "refusing cold-read-full-run 4" in result.stderr,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
+    # A git that fails on the document's checkout is not "outside any
+    # repository" and not "no origin/main": the run goes ahead uncounted and
+    # says why. A stand-in git fails one query run on the document's
+    # directory and passes every other call to the real git.
+    real_git = shutil.which("git")
+    for failing_query, case_slug in (
+            (["rev-parse", "--show-toplevel"], "full-run-count-toplevel-git-fails"),
+            (["rev-parse", "--verify", "--quiet", "origin/main"],
+             "full-run-count-origin-main-git-fails")):
+        repository = build_scratch_repository(scratch, case_slug)
+        for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
+            seed_log_store_record(repository, f"cold-read-grid-test-target-{day}",
+                                  ["claude-hunt-deep.md"])
+        git_stub_directory = stubs / case_slug
+        git_stub_directory.mkdir(parents=True, exist_ok=True)
+        # The program may pass the directory resolved: on the Mac the scratch
+        # directory is under /var, a link to /private/var.
+        failing_directory = os.path.realpath(repository / Path(TARGET_RELATIVE_PATH).parent)
+        (git_stub_directory / "git").write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "arguments = sys.argv[1:]\n"
+            "if (arguments[:1] == ['-C'] and len(arguments) > 1\n"
+            f"        and os.path.realpath(arguments[1]) == {failing_directory!r}\n"
+            f"        and arguments[2:] == {failing_query!r}):\n"
+            "    sys.stderr.write('fatal: index file corrupt\\n')\n"
+            "    sys.exit(128)\n"
+            f"os.execv({real_git!r}, [{real_git!r}, *sys.argv[1:]])\n",
+            encoding="utf-8")
+        (git_stub_directory / "git").chmod(0o755)
+        result = run_grid(repository, git_stub_directory)
+        check(f"a failed `git {' '.join(failing_query)}` runs the review uncounted and names git's failure",
+              "EARLIER COLD-READ-FULL-RUNS NOT COUNTED" in result.stdout
+              and f"git {' '.join(failing_query)} in " in result.stdout
+              and "index file corrupt" in result.stdout
+              and "refusing cold-read-full-run" not in result.stderr,
+              f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
     # A change merged from a topic branch lands at the merge, not at the
     # topic's commit: runs between the two reviewed that change and do not count.
     repository = build_scratch_repository(scratch, "full-run-count-merged-topic")

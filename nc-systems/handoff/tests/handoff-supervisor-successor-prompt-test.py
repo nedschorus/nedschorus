@@ -862,6 +862,23 @@ def run_branch_sync_cases(workspace: Path):
           report)
     home_index.write_bytes(saved_index)
 
+    # A git directory git cannot read is reported, never raised: the supervisor
+    # calls this between sessions and must go on to relaunch the seat.
+    catch_up = supervisor.checkout_freshness_catch_up
+    real_git_directory = catch_up.git_directory
+
+    def git_directory_fails(checkout):
+        raise catch_up.git_output.GitCommandFailed(
+            ["rev-parse", "--absolute-git-dir"], checkout, 128, "fatal: injected")
+    catch_up.git_directory = git_directory_fails
+    try:
+        report = supervisor.sync_working_branch_with_main(home)
+    finally:
+        catch_up.git_directory = real_git_directory
+    check("an unreadable git directory leaves the checkout as it is, with git's error",
+          report.startswith("branch sync: agent-branch left as is — git directory unreadable")
+          and "fatal: injected" in report, report)
+
     # A detached checkout with an untracked file is fast-forwarded too: an
     # agent-seat's own checkout sits detached.
     detached_home = root / "detached-agent-home"

@@ -289,8 +289,21 @@ class Run:
                 f"stdout {self.stdout.strip()[:300]!r}, stderr {self.stderr.strip()[:300]!r}")
 
 
+# A stand-in jq that fails when one of its arguments is the case's filter, and
+# runs the real jq for every other call.
+JQ_STAND_IN = """#!/usr/bin/env bash
+for argument in "$@"; do
+  if [ "$argument" = "$MERGE_GATE_TEST_JQ_FAILING_FILTER" ]; then
+    echo "jq: error: injected failure" >&2
+    exit 5
+  fi
+done
+exec "$MERGE_GATE_TEST_REAL_JQ" "$@"
+"""
+
+
 def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=None,
-             wrapper=None, arguments=None):
+             wrapper=None, arguments=None, jq_failing_filter=None):
     case_dir = Path(tempfile.mkdtemp(dir=scratch))
     home = case_dir / "home"
     token_dir = home / ".config" / "nedschorus"
@@ -302,6 +315,9 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
     stand_in = stand_in_dir / "gh"
     stand_in.write_text(GH_STAND_IN)
     stand_in.chmod(0o755)
+    if jq_failing_filter is not None:
+        (stand_in_dir / "jq").write_text(JQ_STAND_IN)
+        (stand_in_dir / "jq").chmod(0o755)
     routes = dict(routes)
     routes.setdefault("body", {"stdout_file": str(captured(DESCRIPTION_WITH_ROOT_CAUSE))})
     routes_file = case_dir / "routes.json"
@@ -315,6 +331,9 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
         f"{stand_in_dir}{os.pathsep}{os.environ['PATH']}",
         MERGE_GATE_TEST_GH_ROUTES=str(routes_file),
         MERGE_GATE_TEST_GH_CALL_LOG=str(call_log))
+    if jq_failing_filter is not None:
+        environment.update(MERGE_GATE_TEST_JQ_FAILING_FILTER=jq_failing_filter,
+                           MERGE_GATE_TEST_REAL_JQ=shutil.which("jq"))
     if arguments is None:
         arguments = [str(pr), expected, since]
     if wrapper:
@@ -1270,6 +1289,42 @@ def case_follow_up_lookup_unparsable(gate):
         JQ_ERROR_ABOVE, f"\n{RERUN_ONCE_JQ}\n"), run.summary()
 
 
+APPROVAL_FIELD_FILTERS = (".commit_id", ".id", ".submitted_at", ".user.login")
+
+
+def case_approval_field_read_fails(gate):
+    # jq can read the approval, so only a failing jq makes these reads fail; read
+    # unchecked, an empty .user.login let the gate pass naming no approver.
+    details = []
+    for field_filter in APPROVAL_FIELD_FILTERS:
+        run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(),
+                       jq_failing_filter=field_filter)
+        if not could_not_run_after_gh(run, BASE_PR, "GATE COULD NOT RUN: could not parse the approving review\n",
+                                      JQ_ERROR_ABOVE, f"\n{RERUN_ONCE_JQ}\n"):
+            details.append(f"{field_filter}: {run.summary()}")
+    return not details, "; ".join(details)
+
+
+NOT_FIXED_LINE_FILTERS = ("length", ".[0].line", ".[0].link // empty")
+
+
+def case_not_fixed_line_read_fails(gate):
+    # Read unchecked, an empty count skipped the loop, so a not-fixed line without
+    # #follow_up passed.
+    details = []
+    for line_filter in NOT_FIXED_LINE_FILTERS:
+        description = json.loads(captured("nedschorus-nedschorus-1363-pr-view-body.json").read_text())
+        description["body"] += "\n\nRoot cause not fixed: a cause stays."
+        routes = base_routes()
+        routes["body"] = {"stdout_file": str(scratch_file("-body.json", json.dumps(description)))}
+        run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], routes,
+                       jq_failing_filter=line_filter)
+        if not could_not_run_after_gh(run, BASE_PR, f"GATE COULD NOT RUN: could not parse pull request {BASE_PR}'s description\n",
+                                      JQ_ERROR_ABOVE, f"\n{RERUN_ONCE_JQ}\n"):
+            details.append(f"{line_filter}: {run.summary()}")
+    return not details, "; ".join(details)
+
+
 def case_description_label_after_an_indented_bullet(gate):
     return description_passes(gate, captured("nedschorus-nedschorus-1278-pr-view-body.json"))
 
@@ -1416,6 +1471,7 @@ CASES = [
     ("E7 inline comments after the approval refuse", case_e7_new_inline_comments),
     ("E10 a comment stamped exactly reviewed-since is not new", case_e10_stamped_exactly_since_is_not_new),
     ("E8 a pull request state jq cannot read could not run", case_e8_state_unparsable),
+    ("E8 an approving review jq cannot read could not run", case_approval_field_read_fails),
     ("E9 gh failing on the pull request state read could not run", case_e9_state_read_fails),
     ("E9 gh failing on a channel read could not run", case_e9_gh_fails),
     ("E9 the inline comment channel failing after its first page could not run",
@@ -1476,6 +1532,7 @@ CASES = [
      case_follow_up_pull_request_closed_unmerged),
     ("H4 a #follow_up link GitHub does not find could not run", case_follow_up_link_not_found),
     ("H4 a link lookup jq cannot read could not run", case_follow_up_lookup_unparsable),
+    ("H4 a not-fixed line jq cannot read could not run", case_not_fixed_line_read_fails),
     ("H5 a #follow_up link with a #fragment passes", case_follow_up_link_with_a_fragment),
     ("H5 a #follow_up link with a sub-path passes", case_follow_up_link_with_a_sub_path),
     ("H6 a #follow_up link to the pull request being merged refuses before any lookup",
@@ -1689,6 +1746,12 @@ MUTATIONS = [
      [('[ $? -eq 0 ] || cannot "could not read pull request $PR\'s description',
        ': || cannot "could not read pull request $PR\'s description')],
      [case_description_read_fails]),
+    ("without the approving review's parse checks",
+     [('|| cannot "$APPROVAL_UNPARSABLE"', '|| : "$APPROVAL_UNPARSABLE"')],
+     [case_approval_field_read_fails]),
+    ("without the not-fixed lines' parse checks",
+     [('|| cannot "$DESCRIPTION_UNPARSABLE"', '|| : "$DESCRIPTION_UNPARSABLE"')],
+     [case_not_fixed_line_read_fails]),
     ("without the description parse check",
      [('[ $? -eq 0 ] || cannot "could not parse pull request $PR\'s description',
        ': || cannot "could not parse pull request $PR\'s description')],

@@ -15,6 +15,7 @@ Run: python3 scripts/dangling-path-citation-check-test.py
 """
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -82,6 +83,30 @@ def run_check(root: Path, base: str, *arguments):
     completed = subprocess.run(
         [sys.executable, str(root / "scripts" / CHECK_SCRIPT.name), "--base", base, *arguments],
         cwd=root, capture_output=True, text=True, check=False)
+    return completed.returncode, completed.stdout, completed.stderr
+
+
+INJECTED_GIT_ERROR = "fatal: injected git failure"
+
+
+def run_check_with_git_failing(root: Path, failing_arguments: str, base: str):
+    """Run the check with a stand-in git first on PATH: it exits 128 when its
+    arguments contain failing_arguments, and runs the real git otherwise."""
+    stand_in_directory = root.parent / "stand-in-git-bin"
+    stand_in_directory.mkdir(exist_ok=True)
+    stand_in_git = stand_in_directory / "git"
+    stand_in_git.write_text(
+        f"#!{sys.executable}\nimport os, sys\n"
+        f"if {failing_arguments!r} in ' '.join(sys.argv[1:]):\n"
+        f"    sys.stderr.write({INJECTED_GIT_ERROR!r} + '\\n')\n"
+        f"    sys.exit(128)\n"
+        f"os.execv({shutil.which('git')!r}, ['git', *sys.argv[1:]])\n",
+        encoding="utf-8")
+    stand_in_git.chmod(0o755)
+    environment = dict(os.environ, PATH=f"{stand_in_directory}{os.pathsep}{os.environ['PATH']}")
+    completed = subprocess.run(
+        [sys.executable, str(root / "scripts" / CHECK_SCRIPT.name), "--base", base],
+        cwd=root, env=environment, capture_output=True, text=True, check=False)
     return completed.returncode, completed.stdout, completed.stderr
 
 
@@ -1037,6 +1062,51 @@ with tempfile.TemporaryDirectory() as workspace:
           and "GHI" not in completed.stdout,
           f"{completed.returncode} {completed.stdout!r} {completed.stderr!r}")
 
+
+# --- a git command that fails is reported, never read as "no findings" ----
+with tempfile.TemporaryDirectory() as workspace:
+    root = Path(workspace) / "repo"
+    root.mkdir()
+    base = build_repository(root)
+    (root / "scripts" / "already-here.py").unlink()
+    commit_change(root, "scripts/launcher", "#!/bin/sh\n# Runs scripts/not-there.py first.\n",
+                  executable=True)
+    code, out, err = run_check_with_git_failing(root, "no git command fails here", base)
+    check("the stand-in git passes every other command to the real git",
+          code == 1 and "scripts/not-there.py" in out, f"{code} {out!r} {err!r}")
+    def reports_the_git_failure_and_no_result(base, code, err):
+        """Exit 2, git's error, no result, and the exact rerun command."""
+        rerun = (f"cd {root} && python3 "
+                 f"{(root / 'scripts' / CHECK_SCRIPT.name).resolve()} --base {base}")
+        return (code == 2 and INJECTED_GIT_ERROR in err and "a git command failed" in err
+                and "finding(s)" not in err
+                and "and you gave that name to dangling-path-citation-check, correct it in your command" in err
+                and f"In any other case, run {rerun} once more." in err
+                and f"If {rerun} fails again, stop and tell the user what "
+                    f"dangling-path-citation-check printed" in err)
+
+    for failing_arguments, what in (
+            ("ls-tree -z HEAD --name-only -d", "listing the root directories"),
+            (f"ls-tree -z {base} -- scripts/launcher", "asking whether the base holds a file"),
+            ("grep -z -l", "searching for citations of a removed path")):
+        code, out, err = run_check_with_git_failing(root, failing_arguments, base)
+        check(f"the check exits 2 with git's error when {what} fails",
+              reports_the_git_failure_and_no_result(base, code, err), f"{code} {out!r} {err!r}")
+
+    # A file the base holds, so its base text is read.
+    base_with_launcher = git(root, "rev-parse", "HEAD").stdout.strip()
+    commit_change(root, "scripts/launcher",
+                  "#!/bin/sh\n# Runs scripts/not-there.py first.\n# And scripts/also-not-there.py.\n",
+                  executable=True)
+    code, out, err = run_check_with_git_failing(root, "no git command fails here",
+                                                base_with_launcher)
+    check("a dangling path added to a file the base holds is reported",
+          code == 1 and "scripts/also-not-there.py" in out, f"{code} {out!r} {err!r}")
+    code, out, err = run_check_with_git_failing(root, f"show {base_with_launcher}:",
+                                                base_with_launcher)
+    check("the check exits 2 with git's error when reading a file's base text fails",
+          reports_the_git_failure_and_no_result(base_with_launcher, code, err),
+          f"{code} {out!r} {err!r}")
 
 if failures:
     print(f"\n{len(failures)} case(s) failed: {', '.join(failures)}")

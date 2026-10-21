@@ -436,6 +436,38 @@ def cases(scratch):
           and second in world.versions(claude),
           (result.returncode, result.stderr, claude.read_text(), world.versions(claude)))
 
+    world = fresh(scratch, "restore-commit-check-fails")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2, committed\n")
+    world.git("commit", "-qam", "v2")
+    second = world.key(claude)
+    world.run()
+    world.failing_git("ls-tree HEAD --")
+    result = world.command("--restore", claude, second)
+    world.failing_git(None)
+    check("--restore whose git ls-tree fails says it could not tell whether the declined version "
+          "is in a commit, with git's stderr and the command to run if it is",
+          result.returncode == 0 and claude.read_text() == "project v1\n"
+          and "Could not tell whether the declined version" in result.stdout
+          and "injected failure" in result.stdout and "git commit --only" in result.stdout,
+          (result.returncode, result.stdout, result.stderr))
+
+    world = fresh(scratch, "restore-unborn-repository")
+    unborn = world.agents / "unborn"
+    unborn.mkdir()
+    world.git("init", "-q", cwd=unborn)
+    unborn_claude = unborn / "CLAUDE.md"
+    unborn_claude.write_text("unborn v1\n")
+    world.run(tool="Edit", file_path=unborn_claude, cwd=unborn)
+    unborn_claude.write_text("unborn v2\n")
+    declined = world.key(unborn_claude)
+    world.run(cwd=unborn)
+    result = world.command("--restore", unborn_claude, declined)
+    check("--restore in a repository with no commit yet gives no commit advice and reports no "
+          "failure", result.returncode == 0 and "commit" not in result.stdout.lower()
+          and unborn_claude.read_text() == "unborn v1\n",
+          (result.returncode, result.stdout, result.stderr, unborn_claude.read_text()))
+
     # -- a version git holds is logged, not copied, and read back from git
     world = fresh(scratch, "git-holds")
     claude = world.repo / "CLAUDE.md"
@@ -539,6 +571,16 @@ def cases(scratch):
     world.failing_git(None)
     check("a hook run whose git symbolic-ref exits 128 exits 0 and tells the agent, with git's stderr",
           "symbolic-ref -q HEAD" in message and "exited 128" in message
+          and "injected failure" in message, message)
+
+    world = fresh(scratch, "hook-run-head-commit-unreadable")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2\n")
+    world.failing_git("rev-parse -q --verify HEAD^{commit}")
+    message = world.run()
+    world.failing_git(None)
+    check("a hook run whose git rev-parse --verify exits 128 tells the agent, with git's stderr",
+          "rev-parse -q --verify" in message and "exited 128" in message
           and "injected failure" in message, message)
 
     world = fresh(scratch, "git-read-back-fails")
@@ -953,23 +995,69 @@ def cases(scratch):
     world = fresh(scratch, "subagent-line")
     claude = world.repo / "CLAUDE.md"
     claude.write_text("project v2\n")
+    key = world.key(claude)
     message = world.run()
     reminder = world.run()
-    check("the ask tells a subagent with an obvious-fix marker to run --approve and tell its "
-          "dispatcher, before any step that asks the user",
-          0 <= message.find("If you are a subagent and you wrote an obvious-fix marker")
-          < message.find("Show the user each change")
-          and "--approve" in message[:message.find("Show the user each change")]
-          and "tell the agent that dispatched you what you fixed" in message, message)
+    obvious_fix_subagent = ("If you are a subagent, and you wrote an obvious-fix marker and then "
+                            "made the change with a command other than Edit or Write, run once")
+    pre_approved_subagent = ("If you are a subagent, and you wrote a `#pre_approved_change` marker "
+                             "and then made the change with a command other than Edit or Write, "
+                             "run once")
+    other_subagent = "If you are any other subagent, stop: make no further edit"
+    ask_subagent_line = message[message.find(obvious_fix_subagent):
+                                message.find(pre_approved_subagent)]
+    ask_pre_approved_line = message[message.find(pre_approved_subagent):
+                                    message.find(other_subagent)]
+    check("the ask tells a subagent that wrote an obvious-fix marker and then changed the file by "
+          "a command other than Edit or Write to run --approve and tell its dispatcher, on its "
+          "own line before any step that asks the user",
+          0 <= message.find(obvious_fix_subagent) < message.find(pre_approved_subagent)
+          < message.find(other_subagent) < message.find("Show the user each change")
+          and f"--approve {claude} {key}" in ask_subagent_line
+          and "tell the agent that dispatched you what you fixed" in ask_subagent_line, message)
+    check("the ask tells a subagent that wrote a #pre_approved_change marker and then changed the "
+          "file by a command other than Edit or Write to run --approve and report nothing, on its "
+          "own line before the line that stops any other subagent",
+          f"--approve {claude} {key}" in ask_pre_approved_line
+          and "report nothing" in ask_pre_approved_line, message)
     check("the ask tells any other subagent to stop editing before any step that asks the user",
-          0 <= message.find("If you are any other subagent, stop: make no further edit")
-          < message.find("Show the user each change"), message)
-    check("the reminder gives a subagent with an obvious-fix marker the --approve command",
-          "If you are a subagent and you wrote an obvious-fix marker" in reminder
-          and f"--approve {claude}" in reminder, reminder)
+          0 <= message.find(other_subagent) < message.find("Show the user each change"), message)
+    check("the ask tells an agent that is not a subagent to approve with its obvious-fix or "
+          "#pre_approved_change marker only a change it made by a command other than Edit or "
+          "Write, and not to report the obvious fix to the user",
+          "If you wrote an obvious-fix marker and then made the change with a command other than "
+          "Edit or Write, run that --approve command without asking him; the fix is not reported "
+          "to him" in message
+          and "tell him what you fixed" not in message
+          and "If you wrote a `#pre_approved_change` marker and then made the change with a "
+          "command other than Edit or Write, run that --approve command without asking him"
+          in message, message)
+    reminder_subagent_line = reminder[reminder.find(obvious_fix_subagent):
+                                      reminder.find(pre_approved_subagent)]
+    reminder_pre_approved_line = reminder[reminder.find(pre_approved_subagent):
+                                          reminder.find(other_subagent)]
+    check("the reminder gives a subagent that wrote an obvious-fix marker and then changed the "
+          "file by a command other than Edit or Write the --approve command, on its own line",
+          0 <= reminder.find(obvious_fix_subagent) < reminder.find(pre_approved_subagent)
+          < reminder.find(other_subagent)
+          and f"--approve {claude} {key}" in reminder_subagent_line, reminder)
+    check("the reminder gives a subagent that wrote a #pre_approved_change marker and then changed "
+          "the file by a command other than Edit or Write the --approve command, on its own line",
+          f"--approve {claude} {key}" in reminder_pre_approved_line
+          and "report nothing" in reminder_pre_approved_line, reminder)
     check("the reminder tells any other subagent to stop editing and report, and names the "
-          "approval marker", "If you are any other subagent, stop: make no further edit"
-          in reminder and ".walk-approved" in reminder, reminder)
+          "approval marker", other_subagent in reminder and ".walk-approved" in reminder, reminder)
+
+    # -- an Edit of a file no run recorded is approved with the text it was made on
+    world = fresh(scratch, "edit-on-version-no-run-recorded")
+    skill = world.repo / ".claude" / "skills" / "unrecorded" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("a skill a shell command wrote, in a run that saved no state\n")
+    skill.write_text("a skill a shell command wrote, in a run that saved no state\nan Edit's line\n")
+    message = world.run(tool="Edit", file_path=skill)
+    check("an Edit of a guarded file no run recorded approves the result without asking, though "
+          "no one approved the text it was made on: the gap the comment on Check.previous names",
+          message == "" and world.key(skill) in world.store_file(skill, "approved"), message)
 
     # -- an Edit or Write approves its result only when the version it was made on is approved
     world = fresh(scratch, "edit-on-unapproved-shell-edit")
@@ -985,6 +1073,11 @@ def cases(scratch):
           "the --approve command for the result",
           "it was made on a version the user had not approved" in message
           and f"{HOOK} --approve {claude} {key}" in message, message)
+    check("the ask about that Edit's result says a marker written before the Edit does not "
+          "approve it, since the Edit spent the marker",
+          "An obvious-fix or `#pre_approved_change` marker you wrote before the Edit or Write does "
+          "not change this: the call spent it, so the lines below about those two markers do not "
+          "apply to you, and the text it was made on needs the user's yes." in message, message)
     claude.write_text("project v3 by shell\n")
     message = world.run()
     check("a shell edit made on an unapproved version is asked about without the Edit's reason",
@@ -1307,6 +1400,21 @@ def mac_cases(scratch):
     check("and nothing is created", not world.store.exists())
     world.store = saved
     del world.extra_environment["GUARDED_FILE_VERSIONS_STORE_DIRECTORY"]
+
+    failing_mount = Path(scratch) / "mac" / "failing-mount"
+    failing_mount.mkdir()
+    (failing_mount / "mount").write_text(
+        "#!/bin/sh\necho 'mount: stand-in failure' >&2\nexit 1\n")
+    (failing_mount / "mount").chmod(0o755)
+    del world.extra_environment["GUARDED_FILE_VERSIONS_MOUNT_TABLE"]
+    world.extra_environment["PATH"] = f"{failing_mount}:{os.environ['PATH']}"
+    claude.write_text("project v4 while mount fails\n")
+    message = world.run()
+    check("a failed mount command is reported as the failure it is, not as the share not mounted",
+          "did not run" in message and "mount exited 1" in message
+          and "stand-in failure" in message and "is not mounted" not in message, message)
+    del world.extra_environment["PATH"]
+    world.extra_environment["GUARDED_FILE_VERSIONS_MOUNT_TABLE"] = str(table)
 
     directory = world.store / str(claude).lstrip("/")
     (directory / "approved").unlink()
