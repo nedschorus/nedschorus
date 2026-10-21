@@ -1007,7 +1007,7 @@ with tempfile.TemporaryDirectory() as temporary:
                f"print {TARGET}` exited 5, which is neither 0 (loaded) nor 113 (no such job loaded), "
                f"with the error: Could not print: injected launchctl failure; so "
                f"whether {LABEL} is loaded is unknown.") in errors
-          and f"{SCRIPT_PATH.resolve()} --install` again on this machine." in errors
+          and f"{SCRIPT_PATH.resolve()} --install --job daily-full-test-run-of-main` on this machine." in errors
           and "installed:" not in printed, (exit_code, printed, errors))
     exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
     check("--check whose launchctl print fails with other than service-not-found reports the "
@@ -1017,9 +1017,17 @@ with tempfile.TemporaryDirectory() as temporary:
                f"which is neither 0 (loaded) nor 113 (no such job loaded), with the error: "
                f"Could not print: injected launchctl failure; so whether launchd has {LABEL} "
                f"loaded is unknown.") in errors
-          and f"{SCRIPT_PATH.resolve()} --check` again on this machine." in errors
+          and "Fix what launchctl's error names." in errors
+          and f"{SCRIPT_PATH.resolve()} --check --job daily-full-test-run-of-main` on this machine." in errors
           and "loaded in" not in printed and "matches: " not in printed,
           (exit_code, printed, errors))
+    silent_failure = installer.LaunchctlPrintFailed(TARGET, 5, "")
+    check("a launchctl print that fails printing no error says so, and sends the reader to run "
+          "it on the Mac, not to fix an error that was never printed",
+          silent_failure.cause.endswith("and printed no error")
+          and silent_failure.next_steps.startswith(f"Run `launchctl print {TARGET}` on this Mac")
+          and "error names" not in silent_failure.next_steps,
+          (silent_failure.cause, silent_failure.next_steps))
     before = len(stub.commands)
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
     check("--install over a plist that says what the table says, whose launchctl print fails "

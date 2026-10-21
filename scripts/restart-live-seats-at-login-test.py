@@ -1121,11 +1121,11 @@ with tempfile.TemporaryDirectory() as temporary:
         "probe": ("list-clients", "server exited unexpectedly")},
         with_stderr=True, sessions_without_home=("fleet-anchor", "probe"))
     check("the remote listing names a failure on the shared default server with "
-          f"{restart.NED_BOX_LISTING_TMUX_FAILURE_ON_SHARED_SERVER_SEAT!r}, and reports none on "
+          f"{restart.NED_BOX_LISTING_TMUX_FAILURE_SEAT_PLACEHOLDER_FOR_SHARED_DEFAULT_SERVER!r}, and reports none on "
           "a server or session that is no seat's",
           listed == ["seat-a attached"] and len(listing_errors.splitlines()) == 1
           and listing_errors.startswith(
-              f"{prefix} {restart.NED_BOX_LISTING_TMUX_FAILURE_ON_SHARED_SERVER_SEAT} tmux -S ")
+              f"{prefix} {restart.NED_BOX_LISTING_TMUX_FAILURE_SEAT_PLACEHOLDER_FOR_SHARED_DEFAULT_SERVER} tmux -S ")
           and listing_errors.rstrip().endswith(
               "/default list-sessions: server exited unexpectedly"),
           (listed, listing_errors))
@@ -1153,7 +1153,7 @@ with tempfile.TemporaryDirectory() as temporary:
                                       "exited unexpectedly")],
           (seats, attached, detail, withheld))
     shared_broken = BoxStub(answers=[(0, "seat-a\n", (
-        f"{prefix} {restart.NED_BOX_LISTING_TMUX_FAILURE_ON_SHARED_SERVER_SEAT} tmux -S "
+        f"{prefix} {restart.NED_BOX_LISTING_TMUX_FAILURE_SEAT_PLACEHOLDER_FOR_SHARED_DEFAULT_SERVER} tmux -S "
         f"/tmp/tmux-1000/default list-sessions: server exited unexpectedly \n"))])
     seats, detail, _, withheld = restart.ask_the_box_which_seats_are_alive(
         BOOT_AT, run=shared_broken, sleep=shared_broken.sleep, monotonic=shared_broken.monotonic)
@@ -1175,8 +1175,23 @@ with tempfile.TemporaryDirectory() as temporary:
           exit_code == 1 and [command[-1] for command in box.windows] == ["prof"]
           and "NO WINDOW onto gatekeeper — the box's tmux failed on it (tmux -S "
               "/tmp/tmux-1000/gatekeeper list-sessions: server exited unexpectedly)" in report
-          and f"{restart.BOX_LAUNCHER_PATH} gatekeeper" in report
+          and f"run on this Mac: {restart.BOX_LAUNCHER_PATH} gatekeeper" in report
           and "1 box window(s) could not be opened: gatekeeper" in report,
+          (exit_code, box.windows, report))
+    handoffs = root / "box-seat-on-default-and-own-server-tmux-failed"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(0, "gatekeeper\nprof attached\n", (
+        f"{prefix} prof tmux -S /tmp/tmux-1000/prof list-clients -t =prof: server exited "
+        f"unexpectedly\n{prefix} gatekeeper tmux -S /tmp/tmux-1000/gatekeeper list-clients "
+        f"-t =gatekeeper: server exited unexpectedly\n"))])
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("a seat the default server lists, whose own server failed, gets no window and is "
+          "reported only as withheld, whether the default server listed it attached or not",
+          exit_code == 1 and box.windows == []
+          and report.count("NO WINDOW onto gatekeeper") == 1
+          and report.count("NO WINDOW onto prof") == 1
+          and "prof already has a window attached" not in report
+          and "window opened onto" not in report,
           (exit_code, box.windows, report))
     # User-ruled 2026-09-28T16:37:05Z: a box seat's home is always
     # ~/agents/<name>, since launch-claude-ubuntu reads no agents-root

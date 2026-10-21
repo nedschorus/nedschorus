@@ -14,6 +14,7 @@ Run: python3 scripts/install-restart-live-seats-at-login-systemd-unit-test.py
 import importlib.util
 import io
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -227,8 +228,19 @@ with tempfile.TemporaryDirectory() as temporary:
           and ("`systemctl --user is-enabled t.service` exited 1: Failed to connect to user scope "
                "bus via local transport: No such file or directory; so whether t is enabled is "
                "unknown, and nothing was written or started.") in errors
-          and not unit_directory.exists() and systemctl.verbs == [["is-enabled", "t.service"]],
+          and not unit_directory.exists() and systemctl.verbs == [["is-enabled", "t.service"]]
+          and (f"run `{shlex.join([str(SCRIPT_PATH.resolve()), '--start-now', '--unit-name', 't', '--checkout', str(checkout)])}` "
+               "from a login session") in errors,
           (exit_code, errors, systemctl.verbs))
+    systemctl = SystemctlStub(is_enabled_failure="")
+    exit_code, printed, errors = run_main(
+        ["--checkout", str(checkout), "--unit-name", "t", "--start-now"], unit_directory,
+        systemctl=systemctl)
+    check("--start-now whose is-enabled fails printing nothing says systemctl printed no error, "
+          "instead of sending the reader to an error that was never printed",
+          exit_code == 1 and "systemctl printed no error" in errors
+          and "error names" not in errors and "error says" not in errors,
+          (exit_code, errors))
     for state, code in (("not-found", 4), ("masked", 1)):
         answered = installer.unit_is_enabled(
             "t", run=lambda command, **_: subprocess.CompletedProcess(

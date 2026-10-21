@@ -13,6 +13,7 @@ import importlib.util
 import io
 import os
 import plistlib
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -217,7 +218,18 @@ with tempfile.TemporaryDirectory() as temporary:
           exit_code == 1 and plist_path.is_file() and "unloaded" not in printed
           and (f"`launchctl bootout {target}` exited 5: Boot-out failed: 5: Input/output error; "
                f"so com.nedschorus.test may still be loaded, and {plist_path} was kept.")
-              in errors, (exit_code, printed, errors))
+              in errors
+          and "Fix what launchctl's error names." in errors
+          and (f"Then run `{shlex.join([str(SCRIPT_PATH.resolve()), '--remove', '--label', 'com.nedschorus.test'])}` "
+               "on this Mac.") in errors, (exit_code, printed, errors))
+    launchctl = LaunchctlStub(bootout_exit_code=3, print_exit_code=0)
+    exit_code, printed, errors = run_main(
+        ["--label", "com.nedschorus.test", "--remove"], agents_directory, launchctl=launchctl)
+    check("a bootout that fails printing no error, with the job still loaded, sends the reader "
+          "to launchctl print instead of to an error that was never printed",
+          exit_code == 1 and "printing nothing on stderr" in errors
+          and f"Run `launchctl print {target}` on this Mac to see whether" in errors
+          and "error names" not in errors, (exit_code, errors))
     launchctl = LaunchctlStub(bootout_exit_code=5, print_exit_code=1)
     exit_code, printed, errors = run_main(
         ["--label", "com.nedschorus.test", "--remove"], agents_directory, launchctl=launchctl)

@@ -53,6 +53,7 @@ Usage:
 
 import argparse
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -128,9 +129,11 @@ def unit_is_enabled(unit_name: str, run=subprocess.run) -> bool:
     if (asked.stdout or "").strip() in SYSTEMCTL_IS_ENABLED_NOT_ENABLED_STATES:
         return False
     error_text = " ".join((asked.stderr or "").split())
-    raise SystemctlCouldNotAnswer(
+    failure = SystemctlCouldNotAnswer(
         f"`{' '.join(command)}` exited {asked.returncode}"
         + (f": {error_text}" if error_text else ", printing nothing on stderr"))
+    failure.error_text = error_text
+    raise failure
 
 
 def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: Path,
@@ -148,12 +151,20 @@ def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: P
         print(f"install-restart-live-seats-at-login-systemd-unit: {failure}; so whether "
               f"{unit_name} is enabled is unknown, and nothing was written or started.",
               file=sys.stderr)
-        rerun = (f"`{Path(__file__).resolve()} --start-now` again, with the same --checkout, "
-                 "--unit-name and --handoff-dir you passed")
-        print("When systemctl's error says it could not connect to the user bus, run "
-              f"{rerun}, from a login session of the user whose manager runs the unit, such "
-              "as an ssh login.", file=sys.stderr)
-        print(f"Otherwise fix what systemctl's error names, then run {rerun}.", file=sys.stderr)
+        rerun = shlex.join([str(Path(__file__).resolve()), "--start-now", "--unit-name",
+                            unit_name, "--checkout", str(checkout)]
+                           + (["--handoff-dir", str(handoff_directory)]
+                              if handoff_directory else []))
+        if failure.error_text:
+            print("When systemctl's error says it could not connect to the user bus, run "
+                  f"`{rerun}` from a login session of the user whose manager runs the unit, "
+                  "such as an ssh login.", file=sys.stderr)
+            print(f"Otherwise fix what systemctl's error names, then run `{rerun}`.",
+                  file=sys.stderr)
+        else:
+            print(f"systemctl printed no error, so run `systemctl --user is-enabled "
+                  f"{unit_name}.service` from a login session of the user whose manager runs "
+                  f"the unit, fix what it names, then run `{rerun}` there.", file=sys.stderr)
         return 1
     if enabled:
         # Starting preserves enable symlinks; rewriting an enabled unit would alter future boots.

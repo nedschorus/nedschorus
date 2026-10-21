@@ -27,13 +27,15 @@ one: recovery on the box opens a window on the Mac after each seat it brings
 up, and when the box restarts its seats while the Mac is logged in, that
 window can come first. When the box does not answer — it may be rebooting
 too — the run retries for a bounded time and then reports the box's windows
-as missing, with the by-hand command, rather than opening nothing quietly. When
-the box's tmux fails on one seat's server or session for any reason but that
-server or session being gone, that seat alone gets no window and is reported
-with tmux's error and the by-hand command; every seat runs on a tmux server
-named after it, so the failure names its seat. A failure on the shared
-`default` server, which can hold several seats, withholds every window on the
-box, reported as above. On
+as missing, with the by-hand command, rather than opening nothing quietly.
+launch-claude-ubuntu starts each seat on a tmux server named after it, and an
+older seat may still run on the shared `default` server, which can hold
+several. When the box's tmux fails on a seat's own server or session for any
+reason but that server or session being gone, that seat alone gets no window,
+and the report names it with tmux's error and the command that opens its
+window. When tmux fails on the `default` server, which seats it holds is
+unknown, so no box seat gets a window, and the report says the box did not
+answer, quoting tmux's error. On
 the box this job asks the Mac for no windows itself: recovery opens a window
 on the Mac after each seat it brings up, and a window that does not open
 makes this run exit nonzero, with the seat counted as come up.
@@ -214,10 +216,10 @@ BOX_QUERY_RETRY_SECONDS = 5.0
 AGENT_SEAT_CLIENT_ATTACHED_SINCE_MAC_BOOT_LISTING_TEXT = "attached"
 # The listing prints each failed tmux command on stderr after this text and the seat it
 # failed on, for the Mac to tell tmux's "that server or session is gone" answers from its
-# failures. A failure on the default server names this seat instead, since that server can
-# hold several seats.
+# failures. A failure on the default server names this placeholder instead, since that
+# server can hold several seats.
 NED_BOX_LISTING_TMUX_FAILURE_PREFIX = "tmux failed on the box:"
-NED_BOX_LISTING_TMUX_FAILURE_ON_SHARED_SERVER_SEAT = "*"
+NED_BOX_LISTING_TMUX_FAILURE_SEAT_PLACEHOLDER_FOR_SHARED_DEFAULT_SERVER = "*"
 
 
 def ned_box_running_agent_seats_list_command_marking_clients_attached_since_mac_boot(
@@ -231,7 +233,7 @@ def ned_box_running_agent_seats_list_command_marking_clients_attached_since_mac_
         'if ! seat_names=$(tmux -S "$seat_socket_path" list-sessions -F "#{session_name}" 2>&1); '
         'then socket_name=$(basename "$seat_socket_path"); '
         'if [ "$socket_name" = default ]; '
-        f'then report_tmux_failure "{NED_BOX_LISTING_TMUX_FAILURE_ON_SHARED_SERVER_SEAT}" '
+        f'then report_tmux_failure "{NED_BOX_LISTING_TMUX_FAILURE_SEAT_PLACEHOLDER_FOR_SHARED_DEFAULT_SERVER}" '
         '"tmux -S $seat_socket_path list-sessions: $seat_names"; '
         'elif [ -d "$HOME/agents/$socket_name" ]; '
         'then report_tmux_failure "$socket_name" "tmux -S $seat_socket_path list-sessions: '
@@ -309,15 +311,21 @@ def ask_the_box_which_seats_are_alive(mac_booted_at: datetime, run=subprocess.ru
                         failure):
                     tmux_failures.append((failed_seat, failure.strip()))
             shared = [failure for failed_seat, failure in tmux_failures
-                      if failed_seat == NED_BOX_LISTING_TMUX_FAILURE_ON_SHARED_SERVER_SEAT]
+                      if failed_seat
+                      == NED_BOX_LISTING_TMUX_FAILURE_SEAT_PLACEHOLDER_FOR_SHARED_DEFAULT_SERVER]
             if shared:
                 return None, ("its tmux could not list the seats on its shared default "
                               "server: " + "; ".join(shared)), [], []
             seats, already_attached = (
                 ned_box_agent_seat_listing_parse_into_needing_window_and_attached_since_mac_boot(
                     finished.stdout))
-            # A seat tmux failed on is never in the listing: the box skips it.
-            return seats, f"answered on attempt {attempts}", already_attached, tmux_failures
+            # A seat whose own server failed can still be listed from the default server;
+            # it stays withheld, since whether its own server holds a live seat is unknown.
+            withheld_seats = {failed_seat for failed_seat, _ in tmux_failures}
+            return ([seat for seat in seats if seat not in withheld_seats],
+                    f"answered on attempt {attempts}",
+                    [seat for seat in already_attached if seat not in withheld_seats],
+                    tmux_failures)
         if finished.returncode != 255:
             return None, (f"the box answered with exit {finished.returncode}: "
                           f"{finished.stderr.strip()}"), [], []
@@ -504,8 +512,8 @@ def main(argv=None) -> int:
         for seat, failure in box_windows["withheld"]:
             windows_not_opened.append(seat)
             print(f"  box {box}: NO WINDOW onto {seat} — the box's tmux failed on it ({failure}), "
-                  f"so whether it is alive is unknown; once that tmux error is fixed, by hand: "
-                  f"{BOX_LAUNCHER_PATH} {seat}")
+                  f"so whether it is alive is unknown; once that tmux error is fixed on {box}, "
+                  f"run on this Mac: {BOX_LAUNCHER_PATH} {seat}")
     # On the box, recovery opened each restarted seat's window on the Mac and reported
     # one that did not open in that seat's line, printed above.
     windows_not_opened += [seat for seat, came_up, report in reports
