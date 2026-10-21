@@ -7,7 +7,7 @@ A working outline, not for merging. One line per concept; the prose pages are wr
 - It rests on SDLC best practices, but it is far more rigid than any team of people would accept.
 - People lack agents' patience: they will not grep every name, follow every rule, or bring a fresh pair of eyes to every check. Agents do, every time the system asks them to.
 - So much of the work can run as state machines, gates and checks that would be too onerous for people, and that suit agents well.
-- Cheap computing makes the rigidity affordable: ned-box, a 2026 mini PC, runs roughly a million times as many instructions per second as the PDP-7 that Unix was first written on in 1969, and has about three million times its memory.
+- Cheap computing makes the rigidity affordable: ned-box, a 2026 mini PC, runs on the order of a million times as many instructions per second as the PDP-7 that Unix was first written on in 1969, and has about three million times its memory.
 - That is why these techniques are not SDLC best practice, or not yet.
 
 ## 1. Purpose, scope and principles
