@@ -262,7 +262,8 @@ GIT_UNTRACKED_FILE_WOULD_BE_OVERWRITTEN_TEXT = "untracked working tree files wou
 GIT_FAILED_CAUSE_LINE = "{prefix}: {what}, because a git command failed: {error}\n"
 GIT_FAILED_STOP_HOOK_USER_NEXT_STEP_LINES = (
     "This check runs again at the end of the agent's next turn.\n"
-    "If it reports the same failure then, ask the agent to find the cause of git's error above."
+    "If that run also reports a git failure, whether this error or another, paste both "
+    "messages to the agent and ask it to find the cause: the agent does not see these messages."
 )
 GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES = (
     "Nothing needs rerunning: this check runs again when the next prompt arrives.\n"

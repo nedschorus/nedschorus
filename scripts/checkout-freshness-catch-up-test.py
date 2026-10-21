@@ -2579,6 +2579,7 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
               and INJECTED_STDERR in display_text(run)
               and "\nThis check runs again at the end of the agent's next turn.\n"
                   in display_text(run)
+              and "paste both messages to the agent" in display_text(run)
               and "tell the user" not in display_text(run)
               and "you gave that name to" not in display_text(run),
               f"rc={run.returncode} {run.stdout} {run.stderr}")
