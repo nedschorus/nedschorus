@@ -33,17 +33,20 @@ GIT_FAILURE_TEMPLATE = (
     "file-name-collision-warning: git {command} failed ({outcome}), so {path} was not checked "
     "for a name another tracked file has.\n"
     "A later run of this hook checks only the file that run's Write or Edit touched, so check "
-    "{path} now by running the next line's command; if git's error above names a lock file, wait "
-    "one minute before running the command, and do not delete the lock file. The command prints "
-    "nothing if the name is free, and otherwise prints, inside JSON, this hook's warning, whose "
-    "instructions you follow.\n"
+    "{path} by running the next line's command: if git's error above names a lock file, first wait "
+    "one minute, and do not delete the lock file; otherwise run the command now. The command "
+    "prints nothing if the name is free; if another tracked file has the name, it prints JSON "
+    "whose hookSpecificOutput.additionalContext field holds this hook's warning, whose "
+    "instructions you follow; if git fails again, it prints a git-failure message like this one, "
+    "and the line that opens \"Keep this message\" says what to do then.\n"
     "{rerun}\n"
     + next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
         "when you run that command", "file-name-collision-warning-hook.py")
 )
 
 
-def rerun_command(working_directory, file_path) -> str:
+def shell_command_that_runs_this_hook_on_one_file_as_claude_code_would(working_directory,
+                                                                         file_path) -> str:
     """Return a shell command that runs this hook on file_path as Claude Code would."""
     payload = json.dumps({"cwd": str(working_directory), "tool_input": {"file_path": file_path}})
     return f"printf '%s\\n' {shlex.quote(payload)} | python3 {shlex.quote(str(Path(__file__).resolve()))}"
@@ -62,8 +65,9 @@ def git_failure_text(failure, path, working_directory) -> str:
         outcome = failure.stderr
     else:
         outcome = f"exit {failure.returncode}: {' '.join(failure.stderr.split()) or 'no error text'}"
+    rerun = shell_command_that_runs_this_hook_on_one_file_as_claude_code_would(working_directory, path)
     return GIT_FAILURE_TEMPLATE.format(command=" ".join(failure.arguments), outcome=outcome, path=path,
-                                       rerun=rerun_command(working_directory, path))
+                                       rerun=rerun)
 
 
 def checkout_of(working_directory: Path):

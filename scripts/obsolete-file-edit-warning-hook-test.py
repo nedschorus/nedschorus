@@ -121,10 +121,12 @@ def silent(result) -> bool:
 
 GIT_FAILURE_RERUN_LINE = (
     "A later run of this hook checks only the file that run's Edit or Write touched, so check "
-    "{path} now by running the next line's command; if git's error above names a lock file, wait "
-    "one minute before running the command, and do not delete the lock file. The command prints "
-    "nothing when there is nothing new to tell you about the file, and otherwise prints, inside "
-    "JSON, this hook's warning, whose instructions you follow.")
+    "{path} by running the next line's command: if git's error above names a lock file, first wait "
+    "one minute, and do not delete the lock file; otherwise run the command now. The command "
+    "prints nothing when there is nothing new to tell you about the file; when there is, it prints "
+    "JSON whose hookSpecificOutput.additionalContext field holds this hook's warning, whose "
+    "instructions you follow; if git fails again, it prints a git-failure message like this one, "
+    "and the line that opens \"Keep this message\" says what to do then.")
 GIT_FAILURE_RERUN_FAILS_TOO_LINE = (
     "Keep this message: if obsolete-file-edit-warning-hook reports a git failure again when "
     "you run that command, whether this error or another, tell the user both messages, "
@@ -552,6 +554,14 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("a git that fails on every call is reported on stderr, exit 1",
           reported_git_failure(result, "rev-parse", "fatal: shimmed failing-git", edited_file),
           result.stdout + result.stderr)
+    rerun_line = (result.stderr.splitlines() + ["", ""])[1]
+    check("a git failure's rerun line gives the lock-file wait before the run-now instruction",
+          "names a lock file, first wait one minute" in rerun_line
+          and rerun_line.find("lock file") < rerun_line.find("run the command now"), rerun_line)
+    check("a git failure's rerun line says what the command prints when git fails again "
+          "and points to the closing line",
+          "if git fails again, it prints a git-failure message like this one, and the line that "
+          "opens \"Keep this message\" says what to do then." in rerun_line, rerun_line)
 
     result = run_hook(hook_payload(checkout, edited_file),
                       path_replacement=no_git_directory)
