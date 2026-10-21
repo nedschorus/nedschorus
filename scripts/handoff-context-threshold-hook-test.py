@@ -698,6 +698,21 @@ with tempfile.TemporaryDirectory() as workspace:
                           ("--threshold-used-percentage", "75"))
         check("threshold is configurable", result.returncode == 0, f"code {result.returncode}")
 
+        # The default threshold is a third of the window: 35% fires, 30% does not.
+        just_over = transcript_with_usage(workspace, "just-over-a-third.jsonl", 100_000,
+                                          cache_read=250_000)
+        just_under = transcript_with_usage(workspace, "just-under-a-third.jsonl", 100_000,
+                                           cache_read=200_000)
+        marker_file.unlink(missing_ok=True)
+        result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(just_under)})
+        check("by default the hook stays silent at 30% of the window",
+              result.returncode == 0 and not result.stderr.strip(),
+              f"code {result.returncode}, stderr {result.stderr[:120]}")
+        result = run_hook({"session_id": PROBE_SESSION_ID, "transcript_path": str(just_over)})
+        check("by default the hook fires at 35% of the window",
+              result.returncode == 2 and is_handoff_instruction(result.stderr),
+              f"code {result.returncode}, stderr {result.stderr[:120]}")
+
         # --- A session its caller reincarnates is left alone ---------------
         # 2026-09-16: ghi-info, run by scripts/ghi-info-ask.py as `claude -p`
         # turns, crossed the threshold mid-answer, and the handoff notice came
@@ -870,7 +885,7 @@ with tempfile.TemporaryDirectory() as workspace:
         unknown_deferred_marker_file.unlink(missing_ok=True)
 
         below_threshold = transcript_of(workspace, "deferral-below-threshold.jsonl", [
-            usage_record(100_000, cache_read=300_000),  # 40% — nothing to say yet
+            usage_record(100_000, cache_read=150_000),  # 25% — nothing to say yet
             subagent_spawn_record("a2573a7737ae643dc", "Build the cold-read tool"),
         ])
         result = run_hook({"session_id": DEFERRAL_PROBE_SESSION_ID,
