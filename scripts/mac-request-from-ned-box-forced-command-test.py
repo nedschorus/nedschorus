@@ -319,7 +319,7 @@ check("a refused window request names the --agent-seat form too",
 result, opened, log = run_program("open-in-typora tmux")
 check("an open-in-typora request opens no window", opened is None, opened)
 check("a window request that is refused names the open-in-typora form too",
-      "To open a file in Typora instead, run on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box.py" in run_program("open-windowx tmux")[0].stderr)
+      "To open a file in Typora instead, run on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box-nbd.py" in run_program("open-windowx tmux")[0].stderr)
 
 
 def typora_refusal_of(request, ned_box_home="/home/nedlern"):

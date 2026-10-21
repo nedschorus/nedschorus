@@ -327,7 +327,7 @@ def open_in_typora(request):
     except RequestRefused as refusal:
         log_error = append_to_request_log("refused", request)
         print(f"{PROGRAM}: Typora was not opened, because {refusal}.", file=sys.stderr)
-        print(f"To open a file in Typora, run on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box.py <path of a file under {ned_box_home}/>", file=sys.stderr)
+        print(f"To open a file in Typora, run on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box-nbd.py <path of a file under {ned_box_home}/>", file=sys.stderr)
         print("If you already ran that with an existing file, tell the user this reason and the file you wanted shown.", file=sys.stderr)
         if log_error:
             print(f"The refusal could not be added to the request log {REQUEST_LOG_PATH} either: {log_error}", file=sys.stderr)
@@ -459,7 +459,7 @@ def main():
         else:
             print(f"Send a request of the form: {REQUEST_VERB} <word> [<word> ...], each word made of letters, digits and _ . / : = @ % + , -", file=sys.stderr)
             print("To open an agent-seat's window instead, run on ned-box: scripts/open-mac-window-from-ned-box.py --agent-seat <seat>", file=sys.stderr)
-            print("To open a file in Typora instead, run on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box.py <path>", file=sys.stderr)
+            print("To open a file in Typora instead, run on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box-nbd.py <path>", file=sys.stderr)
             print("To open an HTML page in the browser instead, run on ned-box: scripts/open-html-page-in-mac-browser-from-ned-box.py <path>", file=sys.stderr)
             print("If the command needs shell syntax or quoted words, put it in a script on ned-box and ask for a window running that script.", file=sys.stderr)
         if log_error:
