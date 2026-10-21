@@ -68,7 +68,7 @@ def check(name, condition, detail=""):
     if condition:
         print("PASS  %s" % name)
     else:
-        print("FAIL  %s%s" % (name, (" — " + detail) if detail else ""))
+        print("FAIL  %s%s" % (name, (" — " + str(detail)) if detail else ""))
         failures.append(name)
 
 
@@ -2795,7 +2795,38 @@ check("one refused mount among searched-and-empty snapshots is UNAVAILABLE, list
 
 tm_none = FakeRunner([("tmutil destinationinfo", (1, "", "tmutil: no destination configured"))])
 report = finder.search_time_machine("a/b.md", runner=tm_none)
-check("no configured destination is UNAVAILABLE", report.status == UNAVAILABLE)
+check("no configured destination is UNAVAILABLE, saying so without naming the machine a Mac",
+      report.status == UNAVAILABLE
+      and report.lines == ["no Time Machine destination is configured on this machine"], repr(report.lines))
+
+check("arguments_without_repo leaves out --repo with its value, and --repo=, keeping every other argument",
+      finder.arguments_without_repo(["a.md", "--repo", "/r", "--skip", "box", "--repo=/s"]) == ["a.md", "--skip", "box"],
+      repr(finder.arguments_without_repo(["a.md", "--repo", "/r", "--skip", "box", "--repo=/s"])))
+
+check("arguments_without_repo keeps every argument after a -- separator, a path named --repo included",
+      finder.arguments_without_repo(["--repo", "/r", "--", "--repo", "x.md"]) == ["--", "--repo", "x.md"],
+      finder.arguments_without_repo(["--repo", "/r", "--", "--repo", "x.md"]))
+
+for abbreviated in (["--rep", "/x"], ["--rep=/x"]):
+    refused = subprocess.run([sys.executable, str(Path(finder.__file__).resolve())] + abbreviated + ["/x/a.md"],
+                             capture_output=True, text=True, timeout=60)
+    check("the abbreviated option %s is refused as unrecognized, so it cannot set --repo behind "
+          "arguments_without_repo's back" % abbreviated[0],
+          refused.returncode == 2 and "unrecognized arguments: %s" % abbreviated[0] in refused.stderr,
+          "exit %s\n%s" % (refused.returncode, refused.stderr))
+
+message = finder.build_agent_facing_message_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command("/r", "/r/a.md", "planted failure", {"reflog"}, "python3 p")
+check("with only git reflog skipped, the git-failure message names the git surface alone and keeps exit 3 for no find",
+      "The git surface cannot search, and its result line will say UNAVAILABLE for this failure; --skip left out "
+      "the other git surface." in message
+      and "If no surface finds the path, this program exits 3, for an incomplete search." in message, message)
+
+report = finder.search_time_machine("a/b.md", runner=FakeRunner(
+    [("tmutil destinationinfo", (127, "", "tmutil: not found on this machine"))]))
+check("a machine without tmutil, such as ned-box, is UNAVAILABLE because Time Machine exists only on macOS",
+      report.status == UNAVAILABLE
+      and report.lines == ["tmutil: not found on this machine, and Time Machine exists only on macOS, so this "
+                           "machine has no Time Machine backup to search"], repr(report.lines))
 
 # --------------------------------------------------------------------------
 # the assembled report
@@ -3283,7 +3314,7 @@ with contextlib.redirect_stderr(spoken_errors):
 check("condition 3 — a deletion lookup git fails speaks nothing, and says so with git's words and the run's command",
       announced is None and not any(c.startswith("say") for c in deletion_lookup_fails.calls)
       and "bad object refs/heads/gone" in spoken_errors.getvalue()
-      and "If neither applies, run exactly python3 RUN-AS-GIVEN once more." in spoken_errors.getvalue(),
+      and "If none of the cases above applies, run exactly python3 RUN-AS-GIVEN once more." in spoken_errors.getvalue(),
       "%r %s %r" % (announced, deletion_lookup_fails.calls, spoken_errors.getvalue()))
 no_repository = FakeRunner([("rev-parse --show-toplevel", (128, "", "fatal: not a git repository\n")),
                             DELETED_2026_08_13_NOON])
@@ -4204,7 +4235,7 @@ with tempfile.TemporaryDirectory() as tmp:
     program = str(Path(finder.__file__).resolve())
     arguments = [str(repo / "a" / "b.md"), "--repo", str(repo), "--found-copies-root", str(tmp / "found"),
                  "--skip", "box", "--skip", "localsnapshots", "--skip", "transcripts", "--skip", "logstore"]
-    rerun_line = "If neither applies, run exactly %s once more." % shlex.join(["python3", program] + arguments)
+    rerun_line = "If none of the cases above applies, run exactly %s once more." % shlex.join(["python3", program] + arguments)
     checkout = str(Path(program).parents[1])
     for how, typed, directory in (("by absolute path from another directory", program, str(elsewhere)),
                                   ("by a path relative to its checkout", os.path.relpath(program, checkout),
@@ -4213,11 +4244,62 @@ with tempfile.TemporaryDirectory() as tmp:
             [sys.executable, typed] + arguments, cwd=directory, capture_output=True, text=True,
             env=dict(os.environ, PATH="%s%s%s" % (stand_ins, os.pathsep, os.environ["PATH"]),
                      STAND_IN_TABLE=str(table), STAND_IN_CALLS=str(calls)))
+        check("a run %s says what a surface is, that only the git surfaces are unavailable and the others search "
+              "the absolute path" % how,
+              ("git could not find the top level of the repository at %s. This program searches several surfaces, "
+               "the places a deleted file may survive, such as local snapshots, git, git reflog, the log-store, "
+               "transcripts, Timeshift and Time Machine, and prints one result line per surface. The git and git "
+               "reflog surfaces cannot search, and their result lines will say UNAVAILABLE for this failure. Every "
+               "other surface that --skip did not leave out runs as usual, given the absolute path %s unchanged, "
+               "since git could not turn it into a path inside the repository; each such surface matches that path "
+               "in its own way, and its result line reports that surface's own result, which this git failure does "
+               "not affect, though a surface can still be UNAVAILABLE for a reason of its own.\n" % (repo, repo / "a" / "b.md")) in completed.stderr,
+              completed.stderr)
+        check("... gives the exit status for a find and for no find, and exits 3 when no surface finds the path",
+              "If some surface finds the path, this program exits 0 when this program copied a version, 5 when this "
+              "program copied no version but printed a command that copies one, and 4 otherwise. If no surface "
+              "finds the path, this program exits 3, for an incomplete search.\n" in completed.stderr
+              and completed.returncode == 3, "exit %s\n%s" % (completed.returncode, completed.stderr))
+        repo_rerun = shlex.join(["python3", program, "--repo", "<checkout>"]
+                                + [a for a in arguments if a not in ("--repo", str(repo))])
+        check("... and the wrong --repo line gives the whole command, with only the checkout to fill in",
+              ("run %s with <checkout> replaced by a checkout of the repository the path was deleted from.\n"
+               % repo_rerun) in completed.stderr, "%r\n%s" % (repo_rerun, completed.stderr))
         check("a run %s prints both git-failure messages" % how,
               "git could not find the top level of the repository at %s" % repo in completed.stderr
               and "did not speak its announcement" in completed.stderr, completed.stderr + completed.stdout)
         check("... and each names the program's absolute path, with every argument, as the command to rerun",
               completed.stderr.count(rerun_line) == 2, "%r\n%s" % (rerun_line, completed.stderr))
+    # Both git surfaces skipped, and the path after a -- separator.
+    (tmp / "log-store").mkdir()
+    skip_both = ["--repo", str(repo), "--found-copies-root", str(tmp / "found"), "--log-store-root", str(tmp / "log-store"),
+                 "--skip", "box", "--skip", "localsnapshots", "--skip", "transcripts", "--skip", "timemachine",
+                 "--skip", "git", "--skip", "reflog", "--", str(repo / "a" / "b.md")]
+    stand_in_environment = dict(os.environ, PATH="%s%s%s" % (stand_ins, os.pathsep, os.environ["PATH"]),
+                                STAND_IN_TABLE=str(table), STAND_IN_CALLS=str(calls))
+    completed = subprocess.run([sys.executable, program] + skip_both, cwd=str(elsewhere), capture_output=True,
+                               text=True, env=stand_in_environment)
+    check("with both git surfaces skipped, a git top-level failure prints no git result line and the search exits 1 "
+          "when the one surface that ran reports NOT FOUND",
+          completed.returncode == 1
+          and not any(line.startswith(("git ", "git reflog")) for line in completed.stdout.splitlines()),
+          "exit %s\n%s\n%s" % (completed.returncode, completed.stdout, completed.stderr))
+    check("... and the message says --skip left both out and gives exit 1 or 3 for no find, not a bare 3",
+          "--skip left out the git and git reflog surfaces, so no surface prints a line for this failure." in completed.stderr
+          and "If no surface finds the path, this program exits 1, for a search that missed everywhere, when at least "
+              "one surface ran and every surface that ran reports NOT FOUND, and 3, for an incomplete search, "
+              "otherwise.\n" in completed.stderr
+          and "will say UNAVAILABLE" not in completed.stderr, completed.stderr)
+    printed = re.search(r"checkout, run (.*) with <checkout> replaced by", completed.stderr)
+    check("... and the printed --repo command puts --repo before the -- separator",
+          printed is not None and printed.group(1).index("--repo '<checkout>'") < printed.group(1).index(" -- "),
+          completed.stderr)
+    recovery = subprocess.run(printed.group(1).replace("'<checkout>'", shlex.quote(str(repo))) if printed else "false",
+                              shell=True, cwd=str(elsewhere), capture_output=True, text=True, env=stand_in_environment)
+    check("... and argparse accepts that command once <checkout> is filled in",
+          recovery.returncode != 2 and "usage:" not in recovery.stderr,
+          "exit %s\n%s" % (recovery.returncode, recovery.stderr))
+
     check("... and the password announcement is never spoken",
           not any(line.startswith("say ") for line in calls.read_text().splitlines()), calls.read_text())
 

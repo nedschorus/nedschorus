@@ -929,7 +929,7 @@ def _missing_on_this_machine(path):
 def search_time_machine_after(blob_id, path, seen, runner=run_command, prompt_for_root=False):
     """Open the first Time Machine snapshot taken after the hook saw the version, and print the command that
     copies path from it."""
-    destination = _time_machine_destination(runner)
+    destination, _ = _time_machine_destination(runner)
     if destination is None:
         return SurfaceReport("time machine", UNAVAILABLE, ["no Time Machine destination is configured on this "
                                                            "machine; the version was seen on the Mac, so run this "
@@ -1987,9 +1987,9 @@ def _timeshift_probe_script(wanted, snapshot_root, search_roots):
 
 def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TIME_MACHINE_SNAPSHOT_LIMIT,
                         runner=run_command, prompt_for_root=False):
-    destination = _time_machine_destination(runner)
+    destination, why_none = _time_machine_destination(runner)
     if destination is None:
-        return SurfaceReport("time machine", UNAVAILABLE, ["no Time Machine destination is configured on this Mac"])
+        return SurfaceReport("time machine", UNAVAILABLE, [why_none])
 
     name = destination["name"]
     device, mount_point, attached = _time_machine_volume_state(name, runner)
@@ -2134,9 +2134,15 @@ def _time_machine_manual_recovery(snapshot, device, path_inside=None, clear_firs
 
 
 def _time_machine_destination(runner):
-    code, out, _ = runner(["tmutil", "destinationinfo"])
+    """Return (destination, None), or (None, the line saying why there is none)."""
+    code, out, stderr = runner(["tmutil", "destinationinfo"])
+    if code == 127:
+        # run_command's answer for a missing program; ned-box has no tmutil.
+        return None, ("%s, and Time Machine exists only on macOS, so this machine has no Time Machine "
+                      "backup to search" % stderr.strip())
+    none_configured = "no Time Machine destination is configured on this machine"
     if code != 0:
-        return None
+        return None, none_configured
     destination = {}
     for line in out.splitlines():
         if ":" not in line:
@@ -2148,7 +2154,7 @@ def _time_machine_destination(runner):
             destination["name"] = value
         elif key == "mount point" and value:
             destination["mount_point"] = value
-    return destination if destination.get("name") else None
+    return (destination, None) if destination.get("name") else (None, none_configured)
 
 
 def _time_machine_volume_state(name, runner):
@@ -2296,6 +2302,59 @@ def git_failure_next_steps(rerun):
     return next_step_lines.git_failure_next_step_lines(
         rerun, PROGRAM_PATH, text_the_failure_line_contains="git's failure:",
         include_the_misspelt_branch_commit_or_path_line=True)
+
+
+REPO_PLACEHOLDER = "<checkout>"
+
+
+def arguments_without_repo(arguments):
+    """arguments with every --repo option and its value left out; after a -- separator every argument is kept."""
+    kept = []
+    skip_next = False
+    for position, argument in enumerate(arguments):
+        if skip_next:
+            skip_next = False
+        elif argument == "--":
+            return kept + list(arguments[position:])
+        elif argument == "--repo":
+            skip_next = True
+        elif not argument.startswith("--repo="):
+            kept.append(argument)
+    return kept
+
+
+def build_agent_facing_message_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command(repo, named, failure, skip, repo_rerun):
+    """The lines, before the shared next steps, for a git top-level failure; true for whichever git surfaces --skip left in."""
+    git_surfaces = [name for flag, name in (("git", "git"), ("reflog", "git reflog")) if flag not in skip]
+    if len(git_surfaces) == 2:
+        affected = ("The git and git reflog surfaces cannot search, and their result lines will say UNAVAILABLE "
+                    "for this failure.")
+    elif git_surfaces:
+        affected = ("The %s surface cannot search, and its result line will say UNAVAILABLE for this failure; "
+                    "--skip left out the other git surface." % git_surfaces[0])
+    else:
+        affected = ("--skip left out the git and git reflog surfaces, so no surface prints a line for this "
+                    "failure.")
+    found = ("If some surface finds the path, this program exits 0 when this program copied a version, 5 when this "
+             "program copied no version but printed a command that copies one, and 4 otherwise.")
+    if git_surfaces:
+        not_found = "If no surface finds the path, this program exits 3, for an incomplete search."
+    else:
+        not_found = ("If no surface finds the path, this program exits 1, for a search that missed everywhere, when "
+                     "at least one surface ran and every surface that ran reports NOT FOUND, and 3, for an incomplete "
+                     "search, otherwise.")
+    return ("%s: git could not find the top level of the repository at %s. This program searches several "
+            "surfaces, the places a deleted file may survive, such as local snapshots, git, git reflog, the "
+            "log-store, transcripts, Timeshift and Time Machine, and prints one result line per surface. %s Every "
+            "other surface that --skip did not leave out runs as usual, given the absolute path %s unchanged, since "
+            "git could not turn it into a path inside the repository; each such surface matches that path in its "
+            "own way, and its result line reports that surface's own result, which this git failure does not "
+            "affect, though a surface can still be UNAVAILABLE for a reason of its own.\n"
+            "%s %s\n"
+            "git's failure: %s\n"
+            "If --repo names the wrong directory, or was left out and the current directory is not in the path's "
+            "checkout, run %s with %s replaced by a checkout of the repository the path was deleted from."
+            % (THIS_SCRIPT_NAME, repo, affected, named, found, not_found, failure, repo_rerun, REPO_PLACEHOLDER))
 
 
 def rerun_command(arguments):
@@ -2483,7 +2542,9 @@ def print_surface_as_it_finishes(report):
 
 
 def main(argv=None, runner=run_command):
+    # An abbreviation such as --rep would set --repo yet slip past arguments_without_repo.
     parser = argparse.ArgumentParser(
+        allow_abbrev=False,
         description="Find a deleted path across this Mac's local snapshots, git and its reflog, the log-store, "
                     "agent transcripts, Timeshift on the box, and Time Machine.",
     )
@@ -2536,14 +2597,10 @@ def main(argv=None, runner=run_command):
         wanted, _ = _repo_relative_form(named, args.repo, runner)
     except _GitCommandFailed as failure:
         # The git surfaces report the same failure as UNAVAILABLE; the other surfaces can still search.
-        print("%s: git could not find the top level of the repository at %s. The search runs to the end, matching "
-              "the absolute path %s as that absolute path, not as a path inside the repository; its git and git "
-              "reflog lines will say UNAVAILABLE for this same failure, and its other lines are complete.\n"
-              "git's failure: %s\n"
-              "If --repo names the wrong directory, or was left out and the current directory is not in the "
-              "path's checkout, re-run with --repo naming a checkout of the repository the path was deleted from.\n%s"
-              % (THIS_SCRIPT_NAME, args.repo, named, failure, git_failure_next_steps(rerun)),
-              file=sys.stderr, flush=True)
+        repo_rerun = rerun_command(["--repo", REPO_PLACEHOLDER]
+                                   + arguments_without_repo(sys.argv[1:] if argv is None else argv))
+        print(build_agent_facing_message_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command(args.repo, named, failure, set(args.skip), repo_rerun)
+              + "\n" + git_failure_next_steps(rerun), file=sys.stderr, flush=True)
         wanted = named
     shown = wanted if wanted == args.path else "%s (given as %s)" % (wanted, args.path)
 

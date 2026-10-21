@@ -191,12 +191,12 @@ GIT_FAILURE_CAUSE_LINE = (
 )
 GIT_FAILURE_AGENT_FACING_MESSAGE_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW = (
     "A later run of this hook checks only the file that run's Edit or Write touched, so check "
-    "{path} by running the next line's command: if git's error above names a lock file, first wait "
-    "one minute, and do not delete the lock file; otherwise run the command now. The command "
+    "{path} by running the next line's command. If git's error above names no lock file, run that "
+    "command now. If git's error names a lock file, {wait_for_lock_file}. The command "
     "prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
     "whose hookSpecificOutput.additionalContext field holds one of two texts: this hook's warning, "
     "whose instructions you follow; or, when git fails again, a git-failure message like this one, "
-    "and the line here that begins \"If a line starting\" says what to do then.\n"
+    "and the last line here says what to do then.\n"
     "{rerun}")
 RECORD_WRITE_FAILED_LINE = (
     "obsolete-file-edit-warning could not record that it gave this warning, so it "
@@ -541,9 +541,12 @@ def main() -> int:
         freshness.next_step_lines.post_tool_use_hook_additional_context_print_for_agent("\n".join((
             GIT_FAILURE_CAUSE_LINE.format(failure=failure),
             GIT_FAILURE_AGENT_FACING_MESSAGE_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW.format(
-                path=file_path, rerun=rerun),
-            freshness.next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
-                "when you run that command", "obsolete-file-edit-warning-hook:"))))
+                path=file_path, rerun=rerun,
+                wait_for_lock_file=freshness.next_step_lines
+                .lock_file_named_by_git_error_wait_then_rerun_instruction("the next line's command")),
+            freshness.next_step_lines
+            .hook_agent_instruction_if_rerun_command_reports_git_failure_tell_user_both_outputs_line(
+                "obsolete-file-edit-warning-hook:"))))
         return 0
 
 

@@ -30,18 +30,24 @@ GIT_CALL_TIMEOUT_SECONDS = 10
 
 GIT_FAILURE_TEMPLATE = (
     "file-name-collision-warning: git {command} failed ({outcome}), so {path} was not checked "
-    "for a name another tracked file has.\n"
+    "for another tracked file with the same basename; this hook compares basenames ignoring letter "
+    "case, so Notes.md and notes.md count as the same basename.\n"
     "A later run of this hook checks only the file that run's Write or Edit touched, so check "
-    "{path} by running the next line's command: if git's error above names a lock file, first wait "
-    "one minute, and do not delete the lock file; otherwise run the command now. The command "
-    "prints nothing if the name is free. Otherwise it prints JSON whose "
+    "{path} by running the next line's command. If git's error above names no lock file, run that "
+    "command now. If git's error names a lock file, "
+    + next_step_lines.lock_file_named_by_git_error_wait_then_rerun_instruction("the next line's command")
+    .replace("{", "{{").replace("}", "}}")
+    + ". The command "
+    "prints nothing when no other tracked file has the basename, and also when this hook skips the "
+    "file without checking: a file outside the checkout, a file git ignores, a file named SKILL.md, "
+    "README.md or .gitkeep in any letter case, or a working directory that no longer exists or is in "
+    "no git repository. Otherwise it prints JSON whose "
     "hookSpecificOutput.additionalContext field holds one of two texts: when another tracked file "
-    "has the name, this hook's warning, whose instructions you follow; or, when git fails again, a "
-    "git-failure message like this one, and the line here that begins \"If a line starting\" says "
-    "what to do then.\n"
+    "has the basename, this hook's warning, whose instructions you follow; or, when git fails again, a "
+    "git-failure message like this one, and the last line here says what to do then.\n"
     "{rerun}\n"
-    + next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
-        "when you run that command", "file-name-collision-warning:")
+    + next_step_lines.hook_agent_instruction_if_rerun_command_reports_git_failure_tell_user_both_outputs_line(
+        "file-name-collision-warning:")
 )
 
 
