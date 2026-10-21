@@ -15,21 +15,27 @@ Ask these questions in order. Question 2 can lead on to question 3; otherwise st
 3. **Can a check see the wrong act only after it happens?** Then detect it, tell the agent, and have it corrected: detect-inform-correct.
 4. **Does the agent need to know something, or be reminded of something, to act as instructed?** Then tell it just in time, just before it acts: a prompt, a reminder of a tool, a skill or a code-prompt-code procedure, or a series of steps to follow. Without a detection that triggers it, an instruction lies dormant. Sometimes a well-designed skill, whose `description:` line is the trigger, is all that is needed.
 5. **Is it judgment no check can make?** If another agent can judge it, a review by another agent; if only the user can decide it, an approval-walk.
-6. **Only if none fits:** a line in the seat-brief when only one agent-seat does that work, in the glossary when it is what a word means, or, last of all, in CLAUDE.md or the user's own `~/.claude/CLAUDE.md`. For a rule that several agent-seats need but not every agent, ask the user where it goes. Text that is loaded at the start of an agent-session is easily ignored by the time it applies.
+6. **Only if none fits:** a line in the seat-brief when only one agent-seat does that work, in the glossary when it is what a word means, or, last of all, in CLAUDE.md or the user's own `~/.claude/CLAUDE.md`. For a rule that several agent-seats need but not every agent, ask the user where it goes. [cut = if you know what agents need it don't ask the user -but cut all weak crap - when not sure if a statement is useful cut- we need a tough editor, not a sloppy mess] Text that is loaded at the start of an agent-session works nicely for a fresh, short lived agent, and poorly for a long lived agent after 50k tokens of context. 
 
-A hook should speak only in the case it can recognise exactly. A hook that speaks on most turns is ignored, and costs context.
+A hook should speak only in the case it can recognise exactly [thats not right or consistent cut]. A hook that speaks on most turns is ignored, and costs context. [true but cut - the wrong way to explain] Ideally hooks are mechanical and precise, but we don't rule out good enough detection and good enough correction. In something is better than nothing, unless there so many false positives that agents learn to ignore the true positives.  [or something like that]
 
 ## How an agent's act passes through these techniques
 
 ```mermaid
 stateDiagram-v2
-    [*] --> AboutToAct
-    AboutToAct --> Refused: a detection before the act fires and blocks it
-    AboutToAct --> Acting: no detection fires, or one adds a just-in-time instruction
-    Refused --> AboutToAct: the agent does what the refusal says, or gives its reason (soft-block), or the user approves (user-block)
-    Acting --> Done
-    Done --> Correcting: a detection after the act fires
-    Correcting --> Done: a program reverts the act, or the agent is told to correct it and does
+    [*] --> PreToolHook
+    PreToolHook --> Hard-block: Something unwanted is detected and blocked. Caller is told what happened, why and given advice on how to correct, including asking the user to explicitly approve the action. Expect the agent to try another way to make progress towards its goal. 
+    PreToolHook --> Alert: Something is detected that could benefit from additional context or needs a post-tool-check. Unlock the appropriate post-tool detector or add helpful additional context. 
+    PreTookHook --> Soft-block-no-reason-provided: Something potentially unwanted is detected and blocked. The caller is told why, and told if they have a reason to go ahead, to try again, but this time with a reason. This may scare off agents so soft-blocks need to be logged and reviewed.
+    PreToolHook --> Soft-block-reason-provided: Something potentially unwanted is detected and blocked, but the caller has provided a reason they should be allowed to continue.
+    Soft-block-reason-provided-->PostToolHook: The tool call procedes. 
+    PreToolHook-->PostToolHook: Nothing is detected. The tool call procedes. 
+    PostToolHook-->Done
+    PostToolHook-->PostToolDetect: Something is detected after the tool has completed. A file's SHA has changed, or a new file has been created or deleted or name chaged with a known pre-fix or suffix, or other detection mechanisms, like #hashtags added within a file.
+    PostToolDetect-->Programatic-correct: If necessary the file is reverted, or other result are corrected mechanically. The agent is instructed in correct techique for future reference (though this will fade as new tokens are added to its context) 
+    PostToolDetect-->Agent-correct: If the result can not be mechanically corrected, the agent it told to revert as best it can, and instructed in correct technique for its future reference.  
+    Agent-Correcting --> Done:
+    Programtic-Correct --> Done:
     Done --> [*]
 ```
 
