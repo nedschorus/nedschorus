@@ -56,7 +56,7 @@ specification = importlib.util.spec_from_file_location(
     "markdown_edit_hard_wrapped_paragraph_reminder_hook_nbd", str(HOOK_PATH))
 hook = importlib.util.module_from_spec(specification)
 specification.loader.exec_module(hook)
-parser_common = hook.markdown_commonmark_parser_install_if_missing_common()
+parser_common = hook.markdown_commonmark_parser_with_tables_common()
 
 # ---------------------------------------------------------------------------
 # The detector, called directly.
