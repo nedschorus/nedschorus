@@ -73,7 +73,7 @@ COULD_NOT_CHECK_MESSAGE = (
     "stopped in it, run git switch -c <a-branch-name> before you commit, so the commit is "
     "not lost when HEAD moves.\n"
     "Tell the user this guard could not check the write, quoting this whole note. If {path} is "
-    "in the machine's reference-checkout, say so in that message, and do not revert the write "
+    "in the machine's reference-checkout, say so in that message. Do not revert the write "
     "yourself. Then carry on with your task."
 )
 
