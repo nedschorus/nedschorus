@@ -7,7 +7,8 @@ The test runner counts a skipped test case only as a printed line matching
 unittest's own skip machinery, still exits 0, so its skips vanish from every
 report and the suite reads as a full pass.
 
-Usage: test-suite-skip-lines-in-the-form-the-test-runner-counts-test.py [--checkout DIR]
+Usage: test-suites-source-scan-for-skipped-case-prints-run-all-test-suites-cannot-count-test.py
+         [--checkout DIR]
   --checkout  scan this checkout's test suites only, without the self-check
               cases; default, the checkout this file is in, with them
 """
@@ -32,9 +33,10 @@ if SCAN_ONLY:
     REPOSITORY = Path(sys.argv[2])
 
 # A print or echo inside a string literal is a fixture another suite feeds to
-# the test runner, so a quote just before it exempts the line.
-UNCOUNTED_SKIP_PRINT = re.compile(
-    r"""(?<!["'])\b(?:print\(\s*f?|echo\s+|printf\s+)["']?SKIP(?![ \t])""")
+# the test runner, so a quote just before it exempts it. print's argument may
+# start on a later line than `print(`, so the scan runs over the whole text.
+SKIP_PRINT = re.compile(
+    r"""(?<!["'])\b(?P<call>print\(\s*f?|echo[ \t]+|printf[ \t]+)(?P<quote>["']?)SKIP""")
 UNITTEST_SKIP = re.compile(
     r"""(?:(?<!["'])\.skipTest\(|(?<!["'@\w])@?unittest\.skip(?:If|Unless)?\()""")
 
@@ -42,20 +44,35 @@ PRINT_INSTEAD = ("print one line per skipped test case that opens SKIP and a spa
                  "such as `SKIP  <test case>: <why it was skipped>`")
 
 
+def printed_line_is_counted(match, text):
+    """Whether the line this SKIP print writes matches the test runner's ^SKIP\\s."""
+    after = text[match.end():]
+    if after.startswith((" ", "\t", "\\t")):
+        return True
+    # print("SKIP", "case") writes "SKIP case": print puts a space between arguments.
+    quote = match.group("quote")
+    return (match.group("call").startswith("print") and bool(quote)
+            and re.match(re.escape(quote) + r"\s*,", after) is not None)
+
+
 def uncounted_skip_forms(path, text):
     """Each line of one suite that skips in a form the test runner does not count."""
-    found = []
-    for number, line in enumerate(text.splitlines(), start=1):
-        if UNCOUNTED_SKIP_PRINT.search(line):
-            found.append(f"{path}:{number}: {line.strip()}\n"
+    lines = text.splitlines()
+    found = {}
+    for match in SKIP_PRINT.finditer(text):
+        if printed_line_is_counted(match, text):
+            continue
+        number = text.count("\n", 0, match.start("quote")) + 1
+        found[number] = (f"{path}:{number}: {lines[number - 1].strip()}\n"
                          f"  The test runner counts only a line matching ^SKIP\\s; "
                          f"{PRINT_INSTEAD}.")
-        elif UNITTEST_SKIP.search(line):
-            found.append(f"{path}:{number}: {line.strip()}\n"
-                         f"  unittest's own skips print no SKIP line, so the test runner "
-                         f"never counts them; skip the case in plain code and "
-                         f"{PRINT_INSTEAD}.")
-    return found
+    for number, line in enumerate(lines, start=1):
+        if number not in found and UNITTEST_SKIP.search(line):
+            found[number] = (f"{path}:{number}: {line.strip()}\n"
+                             f"  unittest's own skips print no SKIP line, so the test runner "
+                             f"never counts them; skip the case in plain code and "
+                             f"{PRINT_INSTEAD}.")
+    return [found[number] for number in sorted(found)]
 
 
 failures = []
@@ -81,6 +98,13 @@ if not SCAN_ONLY:
         ("unittest's skip decorator is refused", "@unittest.skip('no tmux')", True),
         ("unittest's skipIf decorator is refused", "@unittest.skipIf(True, 'no tmux')", True),
         ("unittest's skipUnless decorator is refused", "@unittest.skipUnless(False, 'x')", True),
+        ("a SKIP print whose text starts on the next source line is refused",
+         "print(\n    'SKIP: a case')", True),
+        ("a bare SKIP print is refused", 'print("SKIP")', True),
+        ("SKIP as its own print argument is accepted", 'print("SKIP", "a case: no tmux")', False),
+        ("SKIP and an escaped tab is accepted", 'print("SKIP\\ta case")', False),
+        ("a SKIP print whose counted text starts on the next source line is accepted",
+         "print(\n    'SKIP  a case')", False),
         ("a SKIP line with two spaces is accepted", 'print("SKIP  a case: no tmux")', False),
         ("a SKIP line with one space is accepted", "print(f\"SKIP {name}: {reason}\")", False),
         ("a shell SKIP line with a space is accepted", 'echo "SKIP  a case"', False),
@@ -113,6 +137,11 @@ if not SCAN_ONLY:
     refused = run_on_scratch_checkout("x = 1\n" "print('SKIP: a case')\n")
     check("a checkout holding an uncounted skip line exits 1 and names the file and line",
           refused.returncode == 1 and "a-test.py:2: " in refused.stdout, refused.stdout + refused.stderr)
+    refused = run_on_scratch_checkout("x = 1\n" "print(\n" "    'SKIP: a case')\n")
+    check("a checkout holding an uncounted skip print split over two lines exits 1 and names "
+          "the line of the SKIP text",
+          refused.returncode == 1 and "a-test.py:3: 'SKIP: a case')" in refused.stdout,
+          refused.stdout + refused.stderr)
     accepted = run_on_scratch_checkout("print('SKIP  a case: no tmux')\n")
     check("a checkout whose skip lines are all counted exits 0",
           accepted.returncode == 0, accepted.stdout + accepted.stderr)
