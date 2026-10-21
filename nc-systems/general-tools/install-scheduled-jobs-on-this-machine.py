@@ -143,7 +143,8 @@ Exit codes: 0 done, or for --check every job matches; 1 a step failed after
 this program began changing the machine, or for --check a job differs or is
 not in the table; 2 not run — a bad invocation, a table this program cannot
 use, a machine the table does not name, a job's program missing, a crontab
-that could not be read, or a shell parser that could not be installed.
+that could not be read, or a shell parser that could not be installed; or for
+--check, a job not checked because `launchctl print` could not report it.
 
 Every option of main() beyond argv is a seam for
 tests/install-scheduled-jobs-on-this-machine-test.py, which installs nothing
@@ -455,9 +456,48 @@ def report_failed_crontab_write(failure) -> None:
 
 
 
+# launchctl print exits 113 when the domain has no such service.
+LAUNCHCTL_PRINT_SERVICE_NOT_FOUND = 113
+
+
+class LaunchctlPrintFailed(Exception):
+    """`launchctl print` exited with neither 0 nor service-not-found, so whether the job is loaded is unknown."""
+
+    def __init__(self, target: str, exit_code: int, error_text: str):
+        self.cause = (f"`launchctl print {target}` exited {exit_code}, which is neither 0 "
+                      f"(loaded) nor {LAUNCHCTL_PRINT_SERVICE_NOT_FOUND} (no such job loaded)"
+                      + (f", with the error: {error_text}" if error_text
+                         else ", and printed no error"))
+        self.error_text = error_text
+        super().__init__(self.cause)
+
+    def next_steps(self, rerun: str) -> str:
+        """Return the lines that tell the reader what to do, ending in rerun."""
+        if self.error_text:
+            return f"Fix what launchctl's error names.\nThen run `{rerun}` on this machine."
+        return (f"Run `{rerun}` once more.\n"
+                f"If it fails again, stop and tell the user what "
+                f"install-scheduled-jobs-on-this-machine printed; a subagent tells the agent "
+                f"that dispatched it instead.")
+
+
+def rerun_command(mode: str, job_name: str, start_once: bool = False) -> str:
+    """Return the command that reruns mode for one job, for a failure message to quote."""
+    return shlex.join([str(Path(__file__).resolve()), mode, "--job", job_name]
+                      + (["--start-once"] if start_once else []))
+
+
 def launchd_job_is_loaded(placement: dict, run) -> bool:
-    return run(["launchctl", "print", launchd_target(placement)],
-               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    """Return whether launchd has the job loaded; raise LaunchctlPrintFailed when it cannot tell."""
+    target = launchd_target(placement)
+    printed = run(["launchctl", "print", target],
+                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    if printed.returncode == 0:
+        return True
+    if printed.returncode == LAUNCHCTL_PRINT_SERVICE_NOT_FOUND:
+        return False
+    raise LaunchctlPrintFailed(target, printed.returncode,
+                               " ".join((printed.stderr or b"").decode(errors="replace").split()))
 
 
 def installed_plist_says_what_the_table_says(plist_path: Path, machine: dict, job: dict,
@@ -481,10 +521,6 @@ def installed_plist_matches(plist_path: Path, machine: dict, job: dict, placemen
         and installed_plist_carries_the_written_by_line(plist_path)
 
 
-# launchctl print exits 113 when the domain has no such service.
-LAUNCHCTL_PRINT_SERVICE_NOT_FOUND = 113
-
-
 def booted_out_or_reported(target: str, plist_path: Path, run) -> bool:
     """Return whether launchd confirms the job is unloaded; report failure otherwise."""
     # Keep the plist on uncertainty: deleting it could leave a loaded job invisible to --check.
@@ -502,12 +538,20 @@ def booted_out_or_reported(target: str, plist_path: Path, run) -> bool:
     return False
 
 
-def install_launchd_job(machine, job, placement, launch_agents_directory: Path, run) -> bool:
+def install_launchd_job(machine, job, placement, launch_agents_directory: Path, run,
+                        start_once: bool = False) -> bool:
     """Return whether the installed job matches the table."""
     name, label = job["name"], placement["label"]
     plist_path = launch_agents_directory / f"{label}.plist"
-    if installed_plist_matches(plist_path, machine, job, placement) \
-            and launchd_job_is_loaded(placement, run):
+    try:
+        already_installed = installed_plist_matches(plist_path, machine, job, placement) \
+            and launchd_job_is_loaded(placement, run)
+    except LaunchctlPrintFailed as failure:
+        print(f"FAILED: {name} — {failure.cause}; so whether {label} is loaded is unknown, "
+              f"and the job was not installed.", file=sys.stderr)
+        print(failure.next_steps(rerun_command('--install', name, start_once)), file=sys.stderr)
+        return False
+    if already_installed:
         print(f"unchanged: {name} — {plist_path} says what the table says, and launchd has "
               f"{label} loaded.")
         return True
@@ -533,7 +577,14 @@ def install_launchd_job(machine, job, placement, launch_agents_directory: Path, 
         print("Otherwise read what launchctl printed above, and run this again after that "
               "cause is removed.", file=sys.stderr)
         return False
-    if not launchd_job_is_loaded(placement, run):
+    try:
+        loaded = launchd_job_is_loaded(placement, run)
+    except LaunchctlPrintFailed as failure:
+        print(f"FAILED: {name} — bootstrap exited 0, and then {failure.cause}; so whether "
+              f"{label} is loaded is unknown.", file=sys.stderr)
+        print(failure.next_steps(rerun_command('--install', name, start_once)), file=sys.stderr)
+        return False
+    if not loaded:
         print(f"FAILED: {name} — bootstrap exited 0, and `launchctl print "
               f"{launchd_target(placement)}` does not find the job.", file=sys.stderr)
         print(f"Run `launchctl print {launchd_target(placement)}`, read what it prints, and "
@@ -771,7 +822,8 @@ def install_mode(machine, placed, launch_agents_directory: Path, start_once: boo
                     for old_line in old_lines:
                         print(f"  the line removed: {old_line}")
     for job, placement in launchd_jobs:
-        installed = install_launchd_job(machine, job, placement, launch_agents_directory, run)
+        installed = install_launchd_job(machine, job, placement, launch_agents_directory, run,
+                                        start_once)
         every_step_worked = every_step_worked and installed
         if installed and start_once:
             every_step_worked = start_launchd_job_once(machine, job, placement, run) \
@@ -852,10 +904,12 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
                every_job_selected: bool) -> int:
     differences = 0
     differences_only_the_marker = 0
+    not_checked = []
     installed_text = None
     for job, placement in placed:
         name, differs = job["name"], []
         marker_differences_of_this_job = 0
+        loaded_state_unknown = False
         if not Path(program_path_of(machine, job)).is_file():
             differs.append(f"its program {program_path_of(machine, job)} is not a file on "
                            f"this machine")
@@ -883,16 +937,20 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
                                f"marking it as written by this installer; --install adds that "
                                f"line")
                 marker_differences_of_this_job = 1
-            if not launchd_job_is_loaded(placement, run):
-                differs.append(f"launchd has no job {placement['label']} loaded in "
-                               f"{launchd_domain()}")
+            try:
+                if not launchd_job_is_loaded(placement, run):
+                    differs.append(f"launchd has no job {placement['label']} loaded in "
+                                   f"{launchd_domain()}")
+            except LaunchctlPrintFailed as failure:
+                not_checked.append((name, placement, failure))
+                loaded_state_unknown = True
         if differs:
             differences += 1
             if len(differs) == marker_differences_of_this_job:
                 differences_only_the_marker += 1
             for difference in differs:
                 print(f"DIFFERS: {name} — {difference}.")
-        else:
+        elif not loaded_state_unknown:
             print(f"matches: {name} — {placement['scheduler']}.")
     not_in_table = shares_a_line = 0
     if every_job_selected:
@@ -931,6 +989,12 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
                   "and keep the other job.")
         print(f"To learn whether a job was retired on purpose, run "
               f"`git log -p -- {table_path}` in the clone.")
+    for name, placement, failure in not_checked:
+        print(f"NOT CHECKED: {name} — {failure.cause}; so whether launchd has "
+              f"{placement['label']} loaded is unknown.", file=sys.stderr)
+        print(failure.next_steps(rerun_command('--check', name)), file=sys.stderr)
+    if not_checked:
+        return 2
     return 1 if differences or not_in_table else 0
 
 

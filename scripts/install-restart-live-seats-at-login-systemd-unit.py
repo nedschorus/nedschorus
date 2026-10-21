@@ -53,6 +53,7 @@ Usage:
 
 import argparse
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -109,10 +110,30 @@ def systemctl(run, *arguments):
     return run(["systemctl", "--user", *arguments])
 
 
+# is-enabled exits nonzero both for these states, which it prints on stdout, and when it
+# cannot ask the manager at all, as when the user bus is unreachable.
+SYSTEMCTL_IS_ENABLED_NOT_ENABLED_STATES = (
+    "disabled", "linked", "linked-runtime", "masked", "masked-runtime", "not-found", "bad")
+
+
+class SystemctlCouldNotAnswer(Exception):
+    """systemctl exited nonzero without printing an answer; the message names the command and its error."""
+
+
 def unit_is_enabled(unit_name: str, run=subprocess.run) -> bool:
-    """Return whether systemctl reports the unit enabled."""
-    return run(["systemctl", "--user", "is-enabled", f"{unit_name}.service"],
-               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    """Return whether systemctl reports the unit enabled; raise SystemctlCouldNotAnswer when it cannot tell."""
+    command = ["systemctl", "--user", "is-enabled", f"{unit_name}.service"]
+    asked = run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if asked.returncode == 0:
+        return True
+    if (asked.stdout or "").strip() in SYSTEMCTL_IS_ENABLED_NOT_ENABLED_STATES:
+        return False
+    error_text = " ".join((asked.stderr or "").split())
+    failure = SystemctlCouldNotAnswer(
+        f"`{' '.join(command)}` exited {asked.returncode}"
+        + (f": {error_text}" if error_text else ", printing nothing on stderr"))
+    failure.error_text = error_text
+    raise failure
 
 
 def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: Path,
@@ -124,7 +145,29 @@ def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: P
               f"under {checkout}/scripts — pass --checkout with the durable checkout",
               file=sys.stderr)
         return 1
-    if start_now and unit_is_enabled(unit_name, run):
+    try:
+        enabled = start_now and unit_is_enabled(unit_name, run)
+    except SystemctlCouldNotAnswer as failure:
+        print(f"install-restart-live-seats-at-login-systemd-unit: {failure}; so whether "
+              f"{unit_name} is enabled is unknown, and nothing was written or started.",
+              file=sys.stderr)
+        rerun = shlex.join([str(Path(__file__).resolve()), "--start-now", "--unit-name",
+                            unit_name, "--checkout", str(checkout)]
+                           + (["--handoff-dir", str(handoff_directory)]
+                              if handoff_directory else []))
+        if failure.error_text:
+            print("When systemctl's error says it could not connect to the user bus, run "
+                  f"`{rerun}` from a login session of the user whose manager runs the unit, "
+                  "such as an ssh login.", file=sys.stderr)
+            print(f"Otherwise fix what systemctl's error names, then run `{rerun}`.",
+                  file=sys.stderr)
+        else:
+            print(f"Run `{rerun}` once more.", file=sys.stderr)
+            print("If it fails again, stop and tell the user what "
+                  "install-restart-live-seats-at-login-systemd-unit printed; a subagent tells "
+                  "the agent that dispatched it instead.", file=sys.stderr)
+        return 1
+    if enabled:
         # Starting preserves enable symlinks; rewriting an enabled unit would alter future boots.
         print(f"install-restart-live-seats-at-login-systemd-unit: {unit_name} is enabled, "
               "so a test start would leave it running at every boot with this run's "

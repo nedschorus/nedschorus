@@ -14,6 +14,7 @@ Run: python3 scripts/install-restart-live-seats-at-login-systemd-unit-test.py
 import importlib.util
 import io
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -38,19 +39,26 @@ def check(case_name, condition, detail=""):
 
 class SystemctlStub:
     """Records every systemctl command; answers the verbs in failing with
-    exit 1, is-enabled with 0 only for the units in enabled (nonzero is
-    what systemctl answers for disabled and unknown), everything else with
-    success. on_start, when given, is called at the start verb so a case
+    exit 1, is-enabled with 0 only for the units in enabled and otherwise
+    with exit 1 and "disabled" (or, with is_enabled_failure, exit 1, no
+    state and that error, as systemctl answers when it cannot reach the
+    user manager), everything else with success. on_start, when given, is called at the start verb so a case
     can look at the world as the manager would see it then."""
 
-    def __init__(self, failing=(), enabled=(), on_start=None):
+    def __init__(self, failing=(), enabled=(), on_start=None, is_enabled_failure=None):
         self.commands, self.failing = [], set(failing)
         self.enabled, self.on_start = set(enabled), on_start
+        self.is_enabled_failure = is_enabled_failure
 
-    def __call__(self, command, stdout=None, stderr=None):
+    def __call__(self, command, stdout=None, stderr=None, text=None):
         self.commands.append(list(command))
         if command[2] == "is-enabled":
-            return subprocess.CompletedProcess(command, 0 if command[3] in self.enabled else 1)
+            if command[3] in self.enabled:
+                return subprocess.CompletedProcess(command, 0, stdout="enabled\n", stderr="")
+            if self.is_enabled_failure is not None:
+                return subprocess.CompletedProcess(command, 1, stdout="",
+                                                   stderr=self.is_enabled_failure)
+            return subprocess.CompletedProcess(command, 1, stdout="disabled\n", stderr="")
         if command[2] == "start" and self.on_start is not None:
             self.on_start()
         return subprocess.CompletedProcess(command, 1 if command[2] in self.failing else 0)
@@ -207,6 +215,52 @@ with tempfile.TemporaryDirectory() as temporary:
           and (unit_directory / "t.service").read_text() == before
           and systemctl.verbs == [["is-enabled", "t.service"]],
           (exit_code, errors, systemctl.verbs))
+
+    unit_directory = root / "user-start-now-is-enabled-fails"
+    bus_error = "Failed to connect to user scope bus via local transport: No such file or directory\n"
+    systemctl = SystemctlStub(is_enabled_failure=bus_error)
+    exit_code, printed, errors = run_main(
+        ["--checkout", str(checkout), "--unit-name", "t", "--start-now"], unit_directory,
+        systemctl=systemctl)
+    check("--start-now whose is-enabled fails without printing a state is refused with "
+          "systemctl's error, and nothing is written or started",
+          exit_code == 1
+          and ("`systemctl --user is-enabled t.service` exited 1: Failed to connect to user scope "
+               "bus via local transport: No such file or directory; so whether t is enabled is "
+               "unknown, and nothing was written or started.") in errors
+          and not unit_directory.exists() and systemctl.verbs == [["is-enabled", "t.service"]]
+          and (f"run `{shlex.join([str(SCRIPT_PATH.resolve()), '--start-now', '--unit-name', 't', '--checkout', str(checkout)])}` "
+               "from a login session") in errors,
+          (exit_code, errors, systemctl.verbs))
+    handoff_directory = root / "a handoff directory"
+    systemctl = SystemctlStub(is_enabled_failure=bus_error)
+    exit_code, printed, errors = run_main(
+        ["--checkout", str(checkout), "--unit-name", "t", "--start-now",
+         "--handoff-dir", str(handoff_directory)], unit_directory, systemctl=systemctl)
+    check("the rerun command a failed is-enabled prints carries the --handoff-dir the run was "
+          "given",
+          exit_code == 1 and shlex.join(["--handoff-dir", str(handoff_directory)]) + "`" in errors,
+          (exit_code, errors))
+    systemctl = SystemctlStub(is_enabled_failure="")
+    exit_code, printed, errors = run_main(
+        ["--checkout", str(checkout), "--unit-name", "t", "--start-now"], unit_directory,
+        systemctl=systemctl)
+    rerun = shlex.join([str(SCRIPT_PATH.resolve()), "--start-now", "--unit-name", "t",
+                        "--checkout", str(checkout)])
+    check("--start-now whose is-enabled fails printing nothing tells the reader to rerun once "
+          "and then tell the user, not to fix an error that was never printed",
+          exit_code == 1 and "printing nothing on stderr" in errors
+          and errors.splitlines()[-2:] == [
+              f"Run `{rerun}` once more.",
+              "If it fails again, stop and tell the user what "
+              "install-restart-live-seats-at-login-systemd-unit printed; a subagent tells the "
+              "agent that dispatched it instead."], (exit_code, errors))
+    for state, code in (("not-found", 4), ("masked", 1)):
+        answered = installer.unit_is_enabled(
+            "t", run=lambda command, **_: subprocess.CompletedProcess(
+                command, code, stdout=f"{state}\n", stderr=""))
+        check(f"is-enabled's {state} state, exit {code}, is an answer: not enabled",
+              answered is False, answered)
 
     # The output directory is created before start: StandardOutput=append:
     # does not create it, and a start into a missing directory fails before
