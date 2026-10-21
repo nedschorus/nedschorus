@@ -951,6 +951,37 @@ def run_cases():
                   f"--ro-bind {standard_library} {standard_library}" in config
                   and f"--ro-bind {home_python} {home_python}" in config,
                   f"rc={completed.returncode} out={completed.stdout[-600:]} config={config[:1500]}")
+
+        # Repository paths longer than a file name may be: each file named in the scratch
+        # directory, the suite's proof included, stays within the 255-byte limit.
+        long_directory = "/".join(["d" * 80] * 3)
+        long_source = f"{long_directory}/{'s' * 100}.py"
+        long_suite = f"{long_directory}/{'s' * 100}-test.py"
+        with tempfile.TemporaryDirectory() as scratch_name:
+            repository, base, head = scratch_repository(scratch_name, {
+                long_source: "def double(x):\n    return x + x\n",
+                long_suite: "import sys\nsys.exit(0)\n"})
+            venv, control = fake_venv(scratch_name, {"dump": []})
+            fake_bin = Path(scratch_name) / "bin"
+            fake_bin.mkdir()
+            (fake_bin / "bwrap").write_text("#!/bin/sh\nexit 0\n")
+            (fake_bin / "bwrap").chmod(0o755)
+            completed = run_script(repository, control, "--head", head, "--base", base,
+                                   "--cosmic-ray-venv", str(venv),
+                                   path_override=f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+                                   dropped_variables=(inside_variable,))
+            config = ((control / "config.toml").read_text()
+                      if (control / "config.toml").exists() else "")
+            proofs = re.findall(r"\S+\.started", config)
+            check("with paths longer than a file name may be, the run goes to its summary",
+                  completed.returncode == 0 and "SUMMARY:" in completed.stdout
+                  and "File name too long" not in completed.stderr,
+                  f"rc={completed.returncode} out={completed.stdout[-600:]} "
+                  f"err={completed.stderr[-600:]}")
+            check("with paths longer than a file name may be, the suite's proof file name is "
+                  "within 255 bytes",
+                  proofs and all(len(Path(proof.strip("'")).name.encode()) <= 255
+                                 for proof in proofs), proofs)
     else:
         print("SKIP  the signal sandbox cases: bwrap is used only on Linux")
 
@@ -991,6 +1022,16 @@ def run_cases():
             check(f"{label}: the run {'stops, naming the suite' if named else 'goes on'}",
                   (raised is not None and "a-test.py" in raised and "did not start" in raised)
                   if named else raised is None, raised)
+    stem_for = survivors.scratch_file_name_stem_under_255_bytes_unique_to_repository_paths
+    long_path = "/".join(["é" * 120] * 3) + ".py"
+    stems = [stem_for(long_path, long_path), stem_for(long_path, long_path),
+             stem_for("a/x.py", "a/x-test.py"), stem_for("b/x.py", "a/x-test.py")]
+    check("a scratch file name stem stays within 255 bytes with its longest suffix, "
+          "whatever the paths' length",
+          len((stems[0] + ".test-sandbox-did-not-start").encode()) <= 255, stems[0])
+    check("a scratch file name stem is the same for the same paths and differs for paths "
+          "that differ only before the last name",
+          stems[0] == stems[1] and stems[2] != stems[3], stems)
     with tempfile.TemporaryDirectory() as scratch_name:
         repository, base, head = scratch_repository(scratch_name, {
             "scripts/tést.py": "VALUE = 1\n",
