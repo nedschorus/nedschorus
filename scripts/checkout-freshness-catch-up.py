@@ -256,15 +256,18 @@ DETACHED_FAST_FORWARD_REFUSED_LINES = (
 GIT_UNTRACKED_FILE_WOULD_BE_OVERWRITTEN_TEXT = "untracked working tree files would be overwritten"
 # A git command failed where this script needed its answer: the run stops
 # there, having moved nothing past what it already reported. The next-step
-# lines are the wording every program in this project gives after a git
-# failure: the hook variant where the failing command was the hook's own,
-# the other where the reader ran the command.
+# lines depend on the reader and on when the hook runs again: the Stop
+# hook's message reaches only the user, the notes delivery's only the agent,
+# and the other modes' reader ran the command and can run it again.
 GIT_FAILED_CAUSE_LINE = "{prefix}: {what}, because a git command failed: {error}\n"
-GIT_FAILED_HOOK_NEXT_STEP_LINES = (
-    "Nothing needs rerunning: this check runs again at the end of your next turn.\n"
-    "If the same failure is reported again at the end of your next turn, tell the user "
-    "what {program} printed, git's error included; a subagent tells the agent that "
-    "dispatched it instead."
+GIT_FAILED_STOP_HOOK_USER_NEXT_STEP_LINES = (
+    "This check runs again at the end of the agent's next turn.\n"
+    "If it reports the same failure then, ask the agent to find the cause of git's error above."
+)
+GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES = (
+    "Nothing needs rerunning: this check runs again when the next prompt arrives.\n"
+    "If the same failure is reported again with the next prompt, tell the user what "
+    "{program} printed, git's error included."
 )
 GIT_FAILED_RERUN_NEXT_STEP_LINES = (
     "If git's error names a lock file, such as .git/index.lock, wait one minute, then "
@@ -277,11 +280,8 @@ GIT_FAILED_RERUN_NEXT_STEP_LINES = (
 )
 
 
-def git_failed_text(prefix: str, what: str, error, rerun: str = None) -> str:
-    """The message for a GitCommandFailed: the hook variant when rerun is None,
-    else the lines that tell the reader to run rerun again."""
-    next_steps = (GIT_FAILED_HOOK_NEXT_STEP_LINES if rerun is None
-                  else GIT_FAILED_RERUN_NEXT_STEP_LINES)
+def git_failed_text(prefix: str, what: str, error, next_steps: str, rerun: str = None) -> str:
+    """The message for a GitCommandFailed: GIT_FAILED_CAUSE_LINE, then next_steps."""
     return (GIT_FAILED_CAUSE_LINE + next_steps).format(
         prefix=prefix, what=what, error=error, rerun=rerun, program=Path(__file__).name)
 
@@ -949,8 +949,6 @@ def merge_blockers(checkout: Path, git_dir: Path):
     list means safe. Raises GitCommandFailed when git cannot read the branch."""
     blockers = []
     branch = current_branch(checkout)
-    if branch is None:
-        blockers.append("no commit yet")
     if branch == "HEAD":
         blockers.append("detached HEAD")
     if branch == "main":
@@ -1706,7 +1704,7 @@ def main(argv=None) -> int:
             print(report_line(repository, arguments.interval_seconds))
         except git_output.GitCommandFailed as error:
             print(git_failed_text("freshness", f"{repository} was not compared with "
-                                  "origin/main", error,
+                                  "origin/main", error, GIT_FAILED_RERUN_NEXT_STEP_LINES,
                                   rerun=f"`python3 {Path(__file__).resolve()} --report "
                                         f"--repo {repository}`"))
         return 0
@@ -1721,7 +1719,7 @@ def main(argv=None) -> int:
                     fast_forward_reference_checkout(reference, arguments.interval_seconds)
         except git_output.GitCommandFailed as error:
             report(git_failed_text("catch-up", f"the reference checkout of {repository} "
-                                   "was not updated", error,
+                                   "was not updated", error, GIT_FAILED_RERUN_NEXT_STEP_LINES,
                                    rerun=f"`python3 {Path(__file__).resolve()} "
                                          f"--reference-pull --repo {repository}`"))
         flush_report()
@@ -1747,7 +1745,8 @@ def main(argv=None) -> int:
             text = deliver_pending_agent_notes(root) if root is not None else ""
         except git_output.GitCommandFailed as error:
             text = git_failed_text("checkout-freshness", "the notes queued for you in "
-                                   f"{session_cwd} were not delivered", error)
+                                   f"{session_cwd} were not delivered", error,
+                                   GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES)
         if text:
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
                                                      "additionalContext": text}},
@@ -1773,7 +1772,7 @@ def main(argv=None) -> int:
                                                     operator_facing=False)
     except git_output.GitCommandFailed as error:
         report(git_failed_text("checkout-freshness", f"the freshness check of {session_cwd} "
-                               "stopped", error))
+                               "stopped", error, GIT_FAILED_STOP_HOOK_USER_NEXT_STEP_LINES))
     flush_hook_output()
     return 0
 

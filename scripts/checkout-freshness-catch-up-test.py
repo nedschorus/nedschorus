@@ -2577,8 +2577,9 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
               run.returncode == 0 and never_blocks(run)
               and "a git command failed" in display_text(run)
               and INJECTED_STDERR in display_text(run)
-              and "\nNothing needs rerunning: this check runs again at the end of your next "
-                  "turn.\n" in display_text(run)
+              and "\nThis check runs again at the end of the agent's next turn.\n"
+                  in display_text(run)
+              and "tell the user" not in display_text(run)
               and "you gave that name to" not in display_text(run),
               f"rc={run.returncode} {run.stdout} {run.stderr}")
     # The first branch read alone fails: main() must not take the failure for
@@ -2631,7 +2632,8 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
     check("note delivery tells the agent when git cannot find the git directory, "
           "with the hook's next steps",
           run.returncode == 0 and INJECTED_STDERR in agent_text(run)
-          and "Nothing needs rerunning" in agent_text(run)
+          and "this check runs again when the next prompt arrives." in agent_text(run)
+          and "end of your next turn" not in agent_text(run)
           and "you gave that name to" not in agent_text(run), run.stdout + run.stderr)
     run = run_catch_up_once(["--report", "--repo", str(level_seat)], git_dir_fails)
     check("--report prints the git failure instead of 'not a git checkout'",
