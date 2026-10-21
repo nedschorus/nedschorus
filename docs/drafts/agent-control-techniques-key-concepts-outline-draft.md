@@ -2,6 +2,14 @@
 
 A working outline, not for merging. One line per concept; the prose pages are written from it once it is right. *Proposed* marks what is not built; *question* marks what needs the user's ruling; the numbers in square brackets count this project's hooks on that Claude Code hook event today.
 
+## 0. Why this system is unlike any built before 2026
+
+- It rests on SDLC best practices, but it is far more rigid than any team of people would accept.
+- People lack agents' patience: they will not grep every name, follow every rule, or bring a fresh pair of eyes to every check. Agents do, every time the system asks them to.
+- So much of the work can run as state machines, gates and checks that would be too onerous for people, and that suit agents well.
+- Cheap computing makes the rigidity affordable: ned-box, a 2026 mini PC, runs roughly a million times as many instructions per second as the PDP-7 that Unix was first written on in 1969, and has about three million times its memory.
+- That is why these techniques are not SDLC best practice, or not yet.
+
 ## 1. Purpose, scope and principles
 
 - Purpose: instruct and control agents, in what they do, what they say, and how they work with the user and with other agents.
@@ -9,8 +17,9 @@ A working outline, not for merging. One line per concept; the prose pages are wr
 - A mechanism beats a prompt, always; but not everything can be a mechanism.
 - Prompt and code are a continuum, not a choice: code-prompt-code, a program that hands one judgment to a model, almost always beats a prompt alone.
 - A prompt to a fresh agent, given only what the step needs, works far better than the same prompt to a busy agent deep in a long context.
-- Something is better than nothing: a good-enough check beats none, unless its false alarms teach agents to ignore it.
-- Good enough, not perfect: a technique should be efficient, reasonably safe, and reasonably quick to build, run and maintain.
+- Good and working beats three things: doing nothing; expecting too much of agents, such as hoping a line in CLAUDE.md will fix a problem; and trying to be perfect, which no system of this size can be.
+- Good and working means efficient, reasonably safe, and reasonably quick to build, run and maintain.
+- A good-enough check beats none, unless its false alarms teach agents to ignore it.
 - Set the system up for success: names, prefixes and suffixes that say what a file is let agents and programs both act on it rightly.
 - Effort up front is amortised: a confusing name, renamed once, pays back over thousands of future pull requests.
 - Agents forget: their context fades as it grows, they cannot recall a note, and they may believe they remember what they do not. So whatever must be kept exactly goes in a file, a tag or a log, never in an agent's memory.
