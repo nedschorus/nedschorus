@@ -45,7 +45,7 @@ handoff-supervisor.py ──reads <seat>-handoff.md, kills claude, runs handoff-
 - `scripts/recover-crashed-seats.py`: brings back an agent-seat whose handoff-supervisor is gone, resuming its last transcript worth resuming, or starting fresh from its newest conversation-tail when there is none, or, when a session-handoff waits, leaving it to a new handoff-supervisor; it restarts an agent-seat whose exit was recorded only when the person running it says yes, so a run without a terminal leaves such an agent-seat down.
 - `scripts/restart-live-seats-at-login.py`, the login restart: hands `recover-crashed-seats.py` each agent-seat whose heartbeat places it at the machine's stop; on the Mac it also opens a window running `launch-claude-ubuntu` onto each ned-box agent-seat that has a live tmux session.
 - `scripts/install-restart-live-seats-at-login-launch-agent.py` and `scripts/install-restart-live-seats-at-login-systemd-unit.py`: install what runs the login restart on the Mac and on ned-box.
-- `nc-systems/handoff/agent-seat-state-records-reader.py`, the records reader: the rules for reading an agent-seat's records from its files, for the login restart, `recover-crashed-seats.py` and `scripts/seat-task-list-read.py`; it re-exports the handoff-supervisor's readers, which own the file names.
+- `nc-systems/handoff/agent-seat-state-records-reader.py`, the records reader: the rules for reading an agent-seat's records from its files, for the login restart, `recover-crashed-seats.py` and `scripts/seat-task-list-read-nbd.py`; it re-exports the handoff-supervisor's readers, which own the file names.
 
 ## Invariants
 

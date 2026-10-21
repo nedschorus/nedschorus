@@ -151,7 +151,7 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "scripts/sanity-check-record-ship-test.py": 4,
     "scripts/sanity-check-record-ship.py": 5,
     "scripts/seat-shared-file-ship-test.py": 10,
-    "scripts/seat-task-list-read-test.py": 7,
+    "scripts/seat-task-list-read-nbd-test.py": 7,
     "scripts/session-statusline-command-test.py": 3,
     "scripts/stale-code-citation-check-test.py": 3,
     "scripts/supervisor-file-names-defined-once-test.py": 32,

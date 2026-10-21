@@ -33,7 +33,7 @@ Closes when the items are individually answered/absorbed by builds, or supersede
 
 Closed as not planned on 2026-09-29, by the user's "y" to item 1 of the walk eight-deferrals-with-no-trigger-2026-09-29 (minutes: `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/eight-deferrals-with-no-trigger-2026-09-29-minutes.md`). Not planned rather than completed, because only item 5 was built.
 
-- Item 5, task-list visibility, was the one item ever asked for as a build, and it is built: the task viewer `scripts/seat-task-list-read.py`, on main since 2026-09-21. PR [Fold every seat, on both machines, into the one task viewer](https://github.com/nedschorus/nedschorus/pull/646), merged 2026-09-22, extended the task viewer to every seat on both machines. The task viewer only reads task lists; nobody asked for it to write.
+- Item 5, task-list visibility, was the one item ever asked for as a build, and it is built: the task viewer `scripts/seat-task-list-read-nbd.py`, on main since 2026-09-21. PR [Fold every seat, on both machines, into the one task viewer](https://github.com/nedschorus/nedschorus/pull/646), merged 2026-09-22, extended the task viewer to every seat on both machines. The task viewer only reads task lists; nobody asked for it to write.
 - Item 3 was not studied as asked. The nearest thing built is `scripts/handoff-extract-conversation.py`, which extracts the two-voice dialog from a session transcript at every handoff.
 - Items 1, 2 and 4 had no work after this issue was filed, and nothing waits on any of them.
 
