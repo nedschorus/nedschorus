@@ -2576,7 +2576,10 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
         check(f"the Stop hook tells the user when {shim_name.replace('-', ' ')}",
               run.returncode == 0 and never_blocks(run)
               and "a git command failed" in display_text(run)
-              and INJECTED_STDERR in display_text(run),
+              and INJECTED_STDERR in display_text(run)
+              and "\nNothing needs rerunning: this check runs again at the end of your next "
+                  "turn.\n" in display_text(run)
+              and "you gave that name to" not in display_text(run),
               f"rc={run.returncode} {run.stdout} {run.stderr}")
     # The first branch read alone fails: main() must not take the failure for
     # a branch that is not main and carry on.
@@ -2609,19 +2612,44 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
         check(f"a deleted working directory is silent ({' '.join(mode) or 'Stop hook'})",
               run.returncode == 0 and run.stdout.strip() == "" and run.stderr.strip() == "",
               f"rc={run.returncode} {run.stdout} {run.stderr}")
+    # A repository with no commit yet has no branch to compare: silence, not a
+    # git failure at every turn.
+    unborn = failing_tmp / "unborn-head"
+    unborn.mkdir()
+    git(["init", "-q", "-b", "topic"], unborn)
+    for mode in ([], ["--deliver-pending-agent-notes"]):
+        run = run_catch_up_once([*mode, "--cwd", str(unborn)])
+        check(f"a repository with no commit yet is silent ({' '.join(mode) or 'Stop hook'})",
+              run.returncode == 0 and run.stdout.strip() == "" and run.stderr.strip() == "",
+              f"rc={run.returncode} {run.stdout} {run.stderr}")
+    check("a repository with no commit yet has no current branch",
+          catch_up_module.current_branch(unborn) is None,
+          str(catch_up_module.current_branch(unborn)))
     git_dir_fails = failing_git_shim("git-dir-fails-in-modes", '*" --absolute-git-dir "*')
     run = run_catch_up_once(["--deliver-pending-agent-notes", "--cwd", str(level_seat)],
                             git_dir_fails)
-    check("note delivery tells the agent when git cannot find the git directory",
-          run.returncode == 0 and INJECTED_STDERR in agent_text(run), run.stdout + run.stderr)
+    check("note delivery tells the agent when git cannot find the git directory, "
+          "with the hook's next steps",
+          run.returncode == 0 and INJECTED_STDERR in agent_text(run)
+          and "Nothing needs rerunning" in agent_text(run)
+          and "you gave that name to" not in agent_text(run), run.stdout + run.stderr)
     run = run_catch_up_once(["--report", "--repo", str(level_seat)], git_dir_fails)
     check("--report prints the git failure instead of 'not a git checkout'",
           run.returncode == 0 and INJECTED_STDERR in run.stdout
-          and "not a git checkout" not in run.stdout, run.stdout + run.stderr)
+          and "not a git checkout" not in run.stdout
+          and f"In any other case, run `python3 {SCRIPT_PATH.resolve()} --report --repo "
+              f"{level_seat.resolve()}` once more." in run.stdout
+          and "and you gave that name to checkout-freshness-catch-up.py, correct it in your "
+              "command, then run the corrected command." in run.stdout
+          and "fails again, stop and tell the user" in run.stdout
+          and "Nothing needs rerunning" not in run.stdout, run.stdout + run.stderr)
     worktree_list_fails = failing_git_shim("worktree-list-fails-in-modes", '*" worktree list "*')
     run = run_catch_up_once(["--reference-pull", "--repo", str(level_seat)], worktree_list_fails)
-    check("--reference-pull prints the git failure instead of saying nothing",
-          run.returncode == 0 and INJECTED_STDERR in run.stdout, run.stdout + run.stderr)
+    check("--reference-pull prints the git failure instead of saying nothing, "
+          "with the command that runs it again",
+          run.returncode == 0 and INJECTED_STDERR in run.stdout
+          and "--reference-pull --repo" in run.stdout and "once more." in run.stdout
+          and "Nothing needs rerunning" not in run.stdout, run.stdout + run.stderr)
 
 print()
 if failures:

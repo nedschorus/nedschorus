@@ -889,7 +889,11 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
         reasons.append("git status unreadable")
     elif tracked_changes:
         reasons.append(f"{tracked_changes} uncommitted tracked change(s)")
-    git_dir = checkout_freshness_catch_up.git_directory(working_directory)
+    try:
+        git_dir = checkout_freshness_catch_up.git_directory(working_directory)
+    except checkout_freshness_catch_up.git_output.GitCommandFailed as error:
+        git_dir = None
+        reasons.append(f"git directory unreadable ({error})")
     marker = (checkout_freshness_catch_up.in_progress_marker(git_dir)
               if git_dir is not None else None)
     if marker is not None:

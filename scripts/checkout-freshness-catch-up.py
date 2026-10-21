@@ -255,26 +255,35 @@ DETACHED_FAST_FORWARD_REFUSED_LINES = (
 # refusal the agent can clear, so the one not sent to the user.
 GIT_UNTRACKED_FILE_WOULD_BE_OVERWRITTEN_TEXT = "untracked working tree files would be overwritten"
 # A git command failed where this script needed its answer: the run stops
-# there, having moved nothing past what it already reported. The last four
-# lines are the wording every program in this project gives after a git failure.
-GIT_FAILED_LINES = (
-    "{prefix}: {what}, because a git command failed: {error}\n"
+# there, having moved nothing past what it already reported. The next-step
+# lines are the wording every program in this project gives after a git
+# failure: the hook variant where the failing command was the hook's own,
+# the other where the reader ran the command.
+GIT_FAILED_CAUSE_LINE = "{prefix}: {what}, because a git command failed: {error}\n"
+GIT_FAILED_HOOK_NEXT_STEP_LINES = (
+    "Nothing needs rerunning: this check runs again at the end of your next turn.\n"
+    "If the same failure is reported again at the end of your next turn, tell the user "
+    "what {program} printed, git's error included; a subagent tells the agent that "
+    "dispatched it instead."
+)
+GIT_FAILED_RERUN_NEXT_STEP_LINES = (
     "If git's error names a lock file, such as .git/index.lock, wait one minute, then "
     "run {rerun}; do not delete the lock file yourself.\n"
-    "If git's error names a branch, commit or path that does not exist, check that the "
-    "command you ran names the right one, correct it if not, then run it again.\n"
+    "If git's error names a branch, commit or path that does not exist, and you gave that "
+    "name to {program}, correct it in your command, then run the corrected command.\n"
     "In any other case, run {rerun} once more.\n"
-    "If {rerun} fails a second time, stop and tell the user what {program} printed, "
+    "If {rerun} fails again, stop and tell the user what {program} printed, "
     "git's error included; a subagent tells the agent that dispatched it instead."
 )
-# The hook modes run at a turn's end or with a prompt, never by the agent's hand.
-HOOK_RERUN = "your last command"
 
 
-def git_failed_text(prefix: str, what: str, error, rerun: str = HOOK_RERUN) -> str:
-    """GIT_FAILED_LINES for a GitCommandFailed."""
-    return GIT_FAILED_LINES.format(prefix=prefix, what=what, error=error, rerun=rerun,
-                                   program=Path(__file__).name)
+def git_failed_text(prefix: str, what: str, error, rerun: str = None) -> str:
+    """The message for a GitCommandFailed: the hook variant when rerun is None,
+    else the lines that tell the reader to run rerun again."""
+    next_steps = (GIT_FAILED_HOOK_NEXT_STEP_LINES if rerun is None
+                  else GIT_FAILED_RERUN_NEXT_STEP_LINES)
+    return (GIT_FAILED_CAUSE_LINE + next_steps).format(
+        prefix=prefix, what=what, error=error, rerun=rerun, program=Path(__file__).name)
 
 
 UNKNOWN_ADVICE = ("Your head state could not be determined (a git command failed); nothing "
@@ -717,8 +726,13 @@ def git_directory(checkout: Path):
     return path_unless_outside_a_repository(["rev-parse", "--absolute-git-dir"], checkout)
 
 
-def current_branch(checkout: Path) -> str:
-    """The checked-out branch's name, "HEAD" when detached."""
+def current_branch(checkout: Path):
+    """The checked-out branch's name, "HEAD" when detached, None when HEAD is
+    unborn: a repository with no commit yet has no branch to compare."""
+    # --abbrev-ref exits 128 on an unborn HEAD, so that case is asked first.
+    if run_git_or_raise(["rev-parse", "--verify", "--quiet", "HEAD"], checkout, timeout=15,
+                        accepted_exit_codes=(0, 1)).returncode == 1:
+        return None
     return run_git_or_raise(["rev-parse", "--abbrev-ref", "HEAD"], checkout,
                             timeout=15).stdout.strip()
 
@@ -935,6 +949,8 @@ def merge_blockers(checkout: Path, git_dir: Path):
     list means safe. Raises GitCommandFailed when git cannot read the branch."""
     blockers = []
     branch = current_branch(checkout)
+    if branch is None:
+        blockers.append("no commit yet")
     if branch == "HEAD":
         blockers.append("detached HEAD")
     if branch == "main":
@@ -1342,6 +1358,8 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
     stamp_path = git_dir / STAMP_FILE_NAME
     stamp = fetch_if_stale(checkout, stamp_path, interval_seconds)
     branch = current_branch(checkout)
+    if branch is None:
+        return
     state_key, state_text = head_state(checkout, branch)
 
     # 1. Misbehaviour, to the agent, once per distinct finding of each
