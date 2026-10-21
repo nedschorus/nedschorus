@@ -91,6 +91,19 @@ def git_output(directory, *arguments, environment=None, input_text=None):
     return result.stdout.strip()
 
 
+def git_output_or_none_on_exit_1(directory, *arguments):
+    """stdout of a git command, stripped, or None when git exits 1; raises
+    WorkSnapshotError for any other failure."""
+    result = run_git(directory, *arguments)
+    if result.returncode == 1:
+        return None
+    if result.returncode != 0:
+        raise WorkSnapshotError(
+            f"git {' '.join(arguments)} in {directory} exited {result.returncode}: "
+            f"{result.stderr.strip()}")
+    return result.stdout.strip()
+
+
 # ---------------------------------------------------------------- owners
 
 
@@ -289,16 +302,12 @@ def tree_of_worktree_now(worktree):
         return git_output(worktree, "write-tree", environment=environment)
 
 
-def head_commit(worktree):
-    result = run_git(worktree, "rev-parse", "--verify", "-q", "HEAD")
-    return result.stdout.strip() if result.returncode == 0 else None
-
-
 def build_work_snapshot_commit(worktree, agent_seat, transcript):
     tree = tree_of_worktree_now(worktree)
-    head = head_commit(worktree)
-    branch_result = run_git(worktree, "symbolic-ref", "-q", "--short", "HEAD")
-    branch = branch_result.stdout.strip() if branch_result.returncode == 0 else "detached"
+    head = head_commit_or_raise(worktree)
+    # symbolic-ref -q exits 1 only for a detached HEAD.
+    branch = git_output_or_none_on_exit_1(
+        worktree, "symbolic-ref", "-q", "--short", "HEAD") or "detached"
     trailers = [
         f"{TRAILER_WORKTREE}: {worktree}",
         f"{TRAILER_BRANCH}: {branch}",
@@ -324,8 +333,8 @@ def build_work_snapshot_commit(worktree, agent_seat, transcript):
 
 
 def current_ref_value(directory, ref):
-    result = run_git(directory, "rev-parse", "--verify", "-q", ref)
-    return result.stdout.strip() if result.returncode == 0 else None
+    """The commit ref holds, or None when ref does not exist."""
+    return git_output_or_none_on_exit_1(directory, "rev-parse", "--verify", "-q", ref)
 
 
 def refresh_work_snapshot(worktree, owner_key, agent_seat, transcript):

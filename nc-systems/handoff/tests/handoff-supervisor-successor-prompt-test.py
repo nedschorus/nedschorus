@@ -951,6 +951,149 @@ def run_branch_sync_cases(workspace: Path):
     check("a branch ahead of main with all of main reports nothing to pull",
           "nothing to pull" in report, report)
 
+    no_remote = root / "no-remote"
+    git_in(["init", "--quiet", "--initial-branch=main", str(no_remote)], root)
+    git_in(["config", "user.name", "agent"], no_remote)
+    git_in(["config", "user.email", "agent@nedschorus.invalid"], no_remote)
+    git_in(["commit", "--quiet", "--allow-empty", "-m", "alone"], no_remote)
+    report = supervisor.sync_working_branch_with_main(no_remote)
+    check("a checkout with no origin/main reports that, not a failure",
+          report.startswith("branch sync: no origin/main to sync with"), report)
+
+    # A checkout made with git init and given origin/main, before its first commit.
+    unborn = root / "unborn-home"
+    git_in(["init", "--quiet", "--initial-branch=topic", str(unborn)], root)
+    git_in(["remote", "add", "origin", str(remote)], unborn)
+    git_in(["fetch", "--quiet", "origin"], unborn)
+    report = supervisor.sync_working_branch_with_main(unborn)
+    check("a checkout with no commits yet is reported as such, not as a git failure",
+          report.startswith("branch sync: topic has no commits yet, so not compared with main"),
+          report)
+
+    run_branch_sync_git_failure_cases(root, remote, seed)
+
+
+def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
+    """Each git call the branch sync reads an answer from, failing with exit 128,
+    is reported with git's error, never read as one of the answers."""
+    real_git = shutil.which("git")
+    stub_directory = root / "git-failing-on-one-call"
+    stub_directory.mkdir()
+    stub_git = stub_directory / "git"
+    stub_git.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        '  *"$FAIL_GIT_CALL_CONTAINING"*)\n'
+        '    echo "${FAIL_GIT_STDERR:-fatal: stub failure}" >&2; exit 128 ;;\n'
+        "esac\n"
+        f'exec "{real_git}" "$@"\n',
+        encoding="utf-8")
+    stub_git.chmod(0o755)
+
+    def sync_with_failing_call(checkout, call, stderr="fatal: stub failure"):
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{stub_directory}{os.pathsep}{original_path}"
+        os.environ["FAIL_GIT_CALL_CONTAINING"] = call
+        os.environ["FAIL_GIT_STDERR"] = stderr
+        try:
+            return supervisor.sync_working_branch_with_main(checkout)
+        finally:
+            os.environ["PATH"] = original_path
+            del os.environ["FAIL_GIT_CALL_CONTAINING"]
+            del os.environ["FAIL_GIT_STDERR"]
+
+    def main_moves(message):
+        (seed / "README.md").write_text(f"{message}\n", encoding="utf-8")
+        git_in(["add", "-A"], seed)
+        git_in(["commit", "--quiet", "-m", message], seed)
+        git_in(["pull", "--quiet", "--rebase", "origin", "main"], seed)
+        git_in(["push", "--quiet", "origin", "main"], seed)
+
+    home = root / "failing-git-home"
+    git_in(["clone", "--quiet", str(remote), str(home)], root)
+    git_in(["config", "user.name", "agent"], home)
+    git_in(["config", "user.email", "agent@nedschorus.invalid"], home)
+
+    report = sync_with_failing_call(home, "rev-parse --show-toplevel")
+    check("a branch sync git failure ends with the next steps, naming the git command to rerun",
+          report.endswith(supervisor.GIT_FAILURE_NEXT_STEP_LINES.format(
+              rerun=f"`git -C {home} rev-parse --show-toplevel`",
+              program="the handoff-supervisor's branch sync")), report)
+    plan = supervisor.DialogIgnitionPlan(root / "extract.md", {})
+    for shape, prompt in (
+            ("dialog", plan.compose(report)),
+            ("boot-recovery", supervisor.BootRecoveryIgnitionPlan("next").compose(report))):
+        check(f"after a branch sync git failure, the {shape} prompt gives the next steps and "
+              "no rebase instruction, which would contradict their stop",
+              report in prompt and supervisor.BRANCH_STATE_INSTRUCTION not in prompt, prompt)
+
+    class SpacedFailure:
+        directory = Path("/tmp/checkout with spaces")
+        arguments = ["rev-parse", "HEAD"]
+    check("the rerun command quotes a checkout path that holds a space",
+          "`git -C '/tmp/checkout with spaces' rev-parse HEAD`"
+          in supervisor.branch_sync_git_failure_next_steps(SpacedFailure()),
+          supervisor.branch_sync_git_failure_next_steps(SpacedFailure()))
+    check("a failed --show-toplevel is reported with git's error, not as no checkout",
+          report.startswith("branch sync: could not tell whether this is a git checkout")
+          and "fatal: stub failure" in report, report)
+
+    for call, wrong_answer in (
+            ("rev-parse --verify --quiet origin/main", "no origin/main"),
+            ("rev-parse --verify --quiet HEAD", "no commits yet"),
+            ("rev-parse --abbrev-ref HEAD", "current with main"),
+            ("merge-base --is-ancestor origin/main HEAD", " ahead of main"),
+            ("rev-list --count origin/main..HEAD", "current with main")):
+        report = sync_with_failing_call(home, call)
+        check(f"a failed `git {call}` on a level branch is reported with git's error",
+              " left as is — " in report and "fatal: stub failure" in report
+              and f"In any other case, run `git -C {home} {call}" in report
+              and wrong_answer not in report, report)
+
+    main_moves("main moves past the failing-git home")
+    head_before = git_in(["rev-parse", "HEAD"], home).stdout.strip()
+    try:
+        report = sync_with_failing_call(home, "rev-parse --absolute-git-dir")
+    except Exception as error:
+        report = f"raised {type(error).__name__}: {error}"
+    check("a git directory git cannot read is reported, and the checkout is not moved",
+          report.startswith("branch sync: main left as is — ")
+          and git_in(["rev-parse", "HEAD"], home).stdout.strip() == head_before, report)
+    # git_directory answers None when git calls the checkout no repository,
+    # which after --show-toplevel answered means its git directory has gone.
+    report = sync_with_failing_call(
+        home, "rev-parse --absolute-git-dir",
+        stderr="fatal: not a git repository (or any of the parent directories): .git")
+    check("a git directory that is gone after --show-toplevel answered is reported, and "
+          "the checkout is not moved",
+          report.startswith("branch sync: main left as is — git directory unreadable")
+          and git_in(["rev-parse", "HEAD"], home).stdout.strip() == head_before, report)
+    head_before = git_in(["rev-parse", "HEAD"], home).stdout.strip()
+    report = sync_with_failing_call(home, "merge-base --is-ancestor HEAD origin/main")
+    check("a failed `git merge-base --is-ancestor HEAD origin/main` is reported, and "
+          "the checkout is not moved",
+          " left as is — " in report and "fatal: stub failure" in report
+          and " behind" not in report
+          and git_in(["rev-parse", "HEAD"], home).stdout.strip() == head_before, report)
+
+    report = sync_with_failing_call(home, "rev-parse --short HEAD")
+    check("a fast-forward whose new commit cannot be read says it fast-forwarded, "
+          "with git's error in place of the commit",
+          "fast-forwarded to main (its new commit could not be read" in report
+          and "fatal: stub failure" in report
+          and f"In any other case, run `git -C {home} rev-parse --short HEAD`" in report, report)
+
+    (home / "agent-note.txt").write_text("own work\n", encoding="utf-8")
+    git_in(["add", "-A"], home)
+    git_in(["commit", "--quiet", "-m", "the agent's own work"], home)
+    main_moves("main moves again, so the failing-git home diverges")
+    for call in ("rev-list --count origin/main..HEAD", "rev-list --count HEAD..origin/main"):
+        report = sync_with_failing_call(home, call)
+        check(f"a failed `git {call}` on a diverged branch is reported with git's error, "
+              "not counted as ?",
+              " left as is — " in report and "fatal: stub failure" in report
+              and "?" not in report, report)
+
 
 # The overview-refresh-due instruction, word for word. A template: the
 # overview, its draft, the command and the commit are filled in per system.
@@ -1305,7 +1448,13 @@ def run_overview_refresh_due_cases(workspace: Path):
 
     # A read of one system's overview that hangs. aardvark sorts before widget,
     # so ending the loop there would lose widget's line.
-    commit({"nc-systems/aardvark/aardvark.py": "print('aardvark')\n"}, "the aardvark lands")
+    # The zebra has no overview, so nothing is said of it.
+    aardvark_landed = commit({"nc-systems/aardvark/aardvark.py": "print('aardvark')\n",
+                              "nc-systems/zebra/zebra.py": "print('zebra')\n"},
+                             "the aardvark and the zebra land")
+    commit({"docs/nedschorus-wiki/nedschorus-aardvark-architecture-overview.md":
+            "# The aardvark: an overview\n\n" + checked_line(aardvark_landed) + "\n"},
+           "the aardvark's overview, checked")
     main = publish()
     expected = expected_widget_overview_refresh_due_line(grown, main, 1, git_in(["rev-parse", main], repository).stdout.strip())
     real_git = shutil.which("git")
@@ -1331,9 +1480,9 @@ def run_overview_refresh_due_cases(workspace: Path):
             return getattr(subprocess, name)
 
         def run(self, arguments, *positional, **keywords):
-            if "timeout" in keywords and not any(
+            if "timeout" in keywords and not ("show" in arguments and any(
                     "nedschorus-aardvark-architecture-overview.md" in str(argument)
-                    for argument in arguments):
+                    for argument in arguments)):
                 keywords["timeout"] = 60
             return subprocess.run(arguments, *positional, **keywords)
 
@@ -1361,6 +1510,36 @@ def run_overview_refresh_due_cases(workspace: Path):
     check("the system passed over is named on the console with the cause",
           "handoff-supervisor: overview check for aardvark passed over: TimeoutExpired"
           in console.getvalue(), console.getvalue())
+
+    # git show exits 128 for an absent path too; a present overview it cannot
+    # read is a failure, named on the console, not a system with no overview.
+    failing_stub_directory = root / "git-that-fails-on-one-overview"
+    failing_stub_directory.mkdir()
+    failing_stub_git = failing_stub_directory / "git"
+    failing_stub_git.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        '  *"show "*":docs/nedschorus-wiki/nedschorus-aardvark-architecture-overview.md"*)\n'
+        "    echo 'fatal: stub failure' >&2; exit 128 ;;\n"
+        "esac\n"
+        f'exec "{real_git}" "$@"\n',
+        encoding="utf-8")
+    failing_stub_git.chmod(0o755)
+    console = io.StringIO()
+    os.environ["PATH"] = f"{failing_stub_directory}{os.pathsep}{original_path}"
+    try:
+        with contextlib.redirect_stdout(console):
+            due = overview_refresh_due_or_missing(repository)
+    finally:
+        os.environ["PATH"] = original_path
+    check("a present overview git show cannot read passes over that system only",
+          due == (expected,), f"{due!r}\nexpected: {expected!r}\n{console.getvalue()}")
+    check("and the failure is named on the console with git's error",
+          "handoff-supervisor: overview check for aardvark passed over: "
+          "OverviewCheckGitFailure: git show " in console.getvalue()
+          and "fatal: stub failure" in console.getvalue(), console.getvalue())
+    check("a system with no overview is passed over in silence",
+          "zebra" not in console.getvalue(), console.getvalue())
 
 
 def run_overview_refresh_unusable_system_name_cases(workspace: Path):
