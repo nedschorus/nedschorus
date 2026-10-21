@@ -4,7 +4,7 @@
 
 The *substance* of the standing decisions below was approved by the user in an approval-walk held on 2026-09-03 and 2026-09-04. That approval-walk's record is its minutes, which are kept in the log-store rather than on main (user-ruled 2026-09-08) at `nedlern@ned-box:/home/nedlern/nedschorus-logs/walk/2026-09-03-ai-native-architecture-overview-decisions-minutes.md`, and which are named for the day it opened and carries both days' rulings, quoting his words where the wording was his and summarising where it was not.
 
-The *wording* of this file is pending approval. Nobody has yet read it as a stranger would, and the user has not read it whole. It sits in `docs/nedschorus-wiki/queue/` for that reason, and is promoted to `docs/nedschorus-wiki/` when both are done. So: treat a standing decision's substance as settled, and treat any sentence here, including the decisions' own phrasing, as text that may still be wrong.
+The *wording* of this file is pending approval. Nobody has yet read it as a stranger would, and the user has not read it whole. So: treat a standing decision's substance as settled, and treat any sentence here, including the decisions' own phrasing, as text that may still be wrong.
 
 **What this document is.** The project's objective, not its plan. It is not maintained to match reality; reality is measured against it, and a gap between them is a fact about the project rather than a defect in this file. The detail behind each subject lives in [the notes](../cross-project/nedschorus-ai-native-software-development-notes.md), which are explanatory, possibly wrong, and not prescriptive. Every subject here appears there in the same order, where there is detail to carry.
 
@@ -135,29 +135,23 @@ These are the present architectural decisions established by the human direction
 
 ## Project organization
 
-The existing Nedschorus placement rule remains useful: GitHub Issues carry walkable state, Markdown carries substantive reasoning, and queues hold material whose disposition is undecided. The workflow store adds machine execution state; it does not replace those human-readable canonical locations.
+The existing Nedschorus placement rule remains useful: GitHub Issues carry walkable state, Markdown carries substantive reasoning, and queues hold material whose disposition is undecided.
 
 | Place | Holds |
 | --- | --- |
 | `docs/nedschorus-wiki/` | Current standing knowledge that is difficult to reconstruct from code alone |
 | `docs/issues/<n>-<slug>.md` | Substantive working material paired with a GitHub Issue, including its design, which is written here and refined in place until its code lands, then pinned to what landed; design-to-main adds the design-contract beside it, and both move into the component's directory when code starts |
 | `docs/cross-project/` | Designs written while the project was bootstrapped; no new design goes here, and the directory is to be retired |
-| `handoff/` and uncommitted transcripts on each machine | Session continuity and complete conversation evidence |
 | `nc-queue/` | Human-requested notes awaiting their initial review |
 | `docs/nedschorus-wiki/queue/` and `docs/issues/queue/` | Material with a known destination awaiting review |
-| `legacy-feature-queue/` | Legacy behavior whose disposition is not yet decidable |
 | GitHub Issues and pull requests | Work state, decisions, reviews, and check-in path |
 | Git | Code, current Markdown, history, hashes, and ordinary provenance |
-| Workflow store | Leases, attempts, dependency edges, policy manifests, pending questions, idempotency keys, and materialized execution state |
-| Evidence store | Large logs, traces, test evidence, screenshots, and deployment evidence referenced by stable identifiers |
 
 Every output is either current at its canonical location or in a named queue with a queue-drain. A queue item is reviewed by the human and then promoted, edited in place, demoted to supporting evidence, or dropped with a recorded reason.
 
 A substantial work item uses a GHI-MD: the issue carries current state and the Markdown file carries the detail needed by an independent reader. Clarifications edit the current body rather than stacking corrective comments; comments record genuinely new events. When an issue closes, its working document follows the repository's established archive, promotion, or deletion rule.
 
 Logical output versions are immutable even when their repository file is revised in place. Git commit and content hash identify the accepted version; an edit creates a new logical version and `supersedes` edge. Reviews and descendants remain tied to the old hash until reconciliation accepts them against the new one.
-
-The obsolete boot-up founding plan is intentionally removed rather than retained beside this document. Its historical content remains available at `git show 615a230:docs/cross-project/nedschorus-founding-plan.md`. Current documents should cite this objective for live rules and use the Git-history pointer only when discussing a founding event.
 
 ## Accepted residuals
 
