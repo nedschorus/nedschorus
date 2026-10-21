@@ -23,6 +23,13 @@ _git_output_spec = importlib.util.spec_from_file_location(
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 EXIT_FINDINGS = 1
 EXIT_BAD_INVOCATION = 2
 
@@ -345,11 +352,9 @@ def git_failure_next_steps(argv) -> str:
     rerun = (f"cd {shlex.quote(os.getcwd())} && "
              + shlex.join(["python3", str(pathlib.Path(__file__).resolve()),
                            *(sys.argv[1:] if argv is None else argv)]))
-    return (
-        f"If git's error names a lock file, such as .git/index.lock, wait one minute, then run {rerun}; do not delete the lock file yourself.\n"
-        f"If git's error names a branch, commit or path that does not exist, and you gave that name to {PROGRAM}, correct it in your command, then run the corrected command.\n"
-        f"In any other case, run {rerun} once more.\n"
-        f"If {rerun} fails again, stop and tell the user what {PROGRAM} printed, git's error included; a subagent tells the agent that dispatched it instead.")
+    return next_step_lines.git_failure_next_step_lines(
+        rerun, PROGRAM, failure_again='prints "could not check, because a git command failed" again',
+        takes_a_branch_commit_or_path=True)
 
 
 def main(argv=None) -> int:

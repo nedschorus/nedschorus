@@ -2640,18 +2640,18 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
     check("--report prints the git failure instead of 'not a git checkout'",
           run.returncode == 0 and INJECTED_STDERR in run.stdout
           and "not a git checkout" not in run.stdout
-          and f"In any other case, run `python3 {SCRIPT_PATH.resolve()} --report --repo "
-              f"{level_seat.resolve()}` once more." in run.stdout
-          and "and you gave that name to checkout-freshness-catch-up.py, correct it in your "
-              "command, then run the corrected command." in run.stdout
-          and "fails again, stop and tell the user" in run.stdout
+          and f"If none of the cases above applies, run `python3 {SCRIPT_PATH.resolve()} --report --repo "
+              f"{level_seat.resolve()}` once more, unchanged." in run.stdout
+          and "you gave that name to" not in run.stdout
+          and ('If the run you made by following a line above prints "because a git command failed" again, stop, and tell the user, '
+               "word for word, the lines checkout-freshness-catch-up.py printed the first time") in run.stdout
           and "Nothing needs rerunning" not in run.stdout, run.stdout + run.stderr)
     worktree_list_fails = failing_git_shim("worktree-list-fails-in-modes", '*" worktree list "*')
     run = run_catch_up_once(["--reference-pull", "--repo", str(level_seat)], worktree_list_fails)
     check("--reference-pull prints the git failure instead of saying nothing, "
           "with the command that runs it again",
           run.returncode == 0 and INJECTED_STDERR in run.stdout
-          and "--reference-pull --repo" in run.stdout and "once more." in run.stdout
+          and "--reference-pull --repo" in run.stdout and "once more, unchanged." in run.stdout
           and "Nothing needs rerunning" not in run.stdout, run.stdout + run.stderr)
 
 print()

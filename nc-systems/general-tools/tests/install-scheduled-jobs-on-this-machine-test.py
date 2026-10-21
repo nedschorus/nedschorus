@@ -155,6 +155,7 @@ class MachineStub:
         self.crontab_list_failure = None      # (exit code, stderr bytes)
         self.exit_codes = {}                  # "crontab-write" | "lint" | "bootstrap" | "kickstart" | "bootout" | "print"
         self.bootstrap_loads_the_job = True
+        self.print_error_text = b"Could not print: injected launchctl failure\n"
         # The macOS failure: `crontab` exits 0 and leaves an empty crontab.
         self.crontab_write_installs_empty_crontab = False
 
@@ -179,7 +180,7 @@ class MachineStub:
         elif command[:2] == ["launchctl", "print"]:
             code = self.exit_codes.get("print", 0 if command[2] in self.loaded else 113)
             if code not in (0, 113):
-                err = b"Could not print: injected launchctl failure\n"
+                err = self.print_error_text
         elif command[:2] == ["launchctl", "bootout"]:
             if "bootout" in self.exit_codes and command[2] in self.loaded:
                 code, err = self.exit_codes["bootout"], b"Boot-out failed: 5: Input/output error\n"
@@ -1034,12 +1035,38 @@ with tempfile.TemporaryDirectory() as temporary:
     check("a launchctl print that fails printing no error says so, and tells the reader to "
           "rerun once and then tell the user, not to fix an error that was never printed",
           silent_failure.cause.endswith("and printed no error")
-          and silent_failure.next_steps("the-rerun").splitlines() == [
-              "Run `the-rerun` once more.",
-              "If it fails again, stop and tell the user what "
-              "install-scheduled-jobs-on-this-machine printed; a subagent tells the agent that "
-              "dispatched it instead."],
-          (silent_failure.cause, silent_failure.next_steps("the-rerun")))
+          and silent_failure.next_steps("the-rerun", "FAILED: j").splitlines() == [
+              "Run `the-rerun` once more, on this machine; it tries this job alone.",
+              'If the run you made by following a line above prints "FAILED: j" again, stop, and tell the user, word for '
+              "word, the lines install-scheduled-jobs-on-this-machine printed the first time and "
+              "the lines that second run printed. A subagent reports to the agent that "
+              "dispatched it, not to the user."],
+          (silent_failure.cause, silent_failure.next_steps("the-rerun", "FAILED: j")))
+    stub.print_error_text = b""
+    exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
+    check_rerun = f"{SCRIPT_PATH.resolve()} --check --job daily-full-test-run-of-main"
+    check("--check whose launchctl print fails printing no error ends with the rerun and with "
+          "when to stop, which is NOT CHECKED again, not a DIFFERS line, and exits 2",
+          exit_code == 2 and errors.splitlines()[-3:] == [
+              f"Run `{check_rerun}` once more, on this machine; it tries this job alone.",
+              "A DIFFERS line is drift the check found, not this failure, and is no reason "
+              "to stop.",
+              'If the run you made by following a line above prints "NOT CHECKED: daily-full-test-run-of-main" again, '
+              "stop, and tell the user, word for word, the lines "
+              "install-scheduled-jobs-on-this-machine printed the first time and the lines that "
+              "second run printed. A subagent reports to the agent that dispatched it, not to "
+              "the user."], (exit_code, errors))
+    exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
+    install_rerun = f"{SCRIPT_PATH.resolve()} --install --job daily-full-test-run-of-main"
+    check("--install whose launchctl print fails printing no error ends with the rerun and "
+          "with when to stop, and exits 1",
+          exit_code == 1 and errors.splitlines()[-2:] == [
+              f"Run `{install_rerun}` once more, on this machine; it tries this job alone.",
+              'If the run you made by following a line above prints "FAILED: daily-full-test-run-of-main" again, stop, '
+              "and tell the user, word for word, the lines install-scheduled-jobs-on-this-machine "
+              "printed the first time and the lines that second run printed. A subagent reports "
+              "to the agent that dispatched it, not to the user."], (exit_code, errors))
+    stub.print_error_text = b"Could not print: injected launchctl failure\n"
     before = len(stub.commands)
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
     check("--install over a plist that says what the table says, whose launchctl print fails "

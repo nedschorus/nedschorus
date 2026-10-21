@@ -102,6 +102,13 @@ from typing import Optional
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIRECTORY = REPOSITORY_ROOT / "scripts"
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 _worth_resuming_spec = importlib.util.spec_from_file_location(
     "seat_transcript_worth_resuming",
     SCRIPTS_DIRECTORY / "seat-transcript-worth-resuming.py")
@@ -264,26 +271,34 @@ SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
 WRITTEN_BY_SESSION_FIELD = "written-by-session"
 WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 
-GIT_FAILURE_NEXT_STEP_LINES = (
-    "If git's error names a lock file, such as .git/index.lock, wait one minute, then run "
-    "{rerun}; do not delete the lock file yourself.\n"
-    "In any other case, run {rerun} once more.\n"
-    "If {rerun} fails again, stop and tell the user what {program} printed, "
-    "git's error included; a subagent tells the agent that dispatched it instead.")
 BRANCH_SYNC_PROGRAM_NAME = "the handoff-supervisor's branch sync"
+# The prompt goes on to the next step; a stop must hold that back too.
+BRANCH_SYNC_STOP_HOLDS_BACK = "take the next step this prompt gives"
 
 
 def branch_sync_git_failure_next_steps(error) -> str:
     """The next-step lines for a GitCommandFailed the branch sync reports."""
     rerun = f"`{shlex.join(['git', '-C', str(error.directory), *error.arguments])}`"
-    return GIT_FAILURE_NEXT_STEP_LINES.format(rerun=rerun, program=BRANCH_SYNC_PROGRAM_NAME)
+    return next_step_lines.git_failure_next_step_lines(
+        rerun, BRANCH_SYNC_PROGRAM_NAME, failure_again="prints an error again",
+        takes_a_branch_commit_or_path=False, read_by_a_subagent=False,
+        also_not=BRANCH_SYNC_STOP_HOLDS_BACK)
 
 
 def branch_state_instruction_after(branch_sync_report: str) -> str:
     """The branch-state instruction, left out after a git failure, whose next steps may end in stopping."""
-    stop_line = GIT_FAILURE_NEXT_STEP_LINES.rpartition("{rerun}")[2].format(
-        program=BRANCH_SYNC_PROGRAM_NAME)
+    stop_line = next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+        "prints an error again", BRANCH_SYNC_PROGRAM_NAME, read_by_a_subagent=False,
+        also_not=BRANCH_SYNC_STOP_HOLDS_BACK)
     return "" if branch_sync_report.endswith(stop_line) else BRANCH_STATE_INSTRUCTION
+
+
+def branch_sync_report_in_prompt(branch_sync_report: str) -> str:
+    """The report as the prompt carries it: a report of several lines, such as a git
+    failure's next steps, stands as its own paragraph instead of running on from the
+    sentence before it."""
+    text = branch_sync_report + branch_state_instruction_after(branch_sync_report)
+    return f"\n\n{text}\n\n" if "\n" in branch_sync_report else text
 
 
 BRANCH_STATE_INSTRUCTION = (
@@ -816,7 +831,7 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
         SUPERVISOR_POINTER_SENTENCE,
     ]
     if branch_sync_report:
-        lines.append(branch_sync_report + branch_state_instruction_after(branch_sync_report))
+        lines.append(branch_sync_report_in_prompt(branch_sync_report))
     lines.extend(overview_refresh_due)
     lines.extend(memory_review_due)
     roster = spawned_subagent_roster_from(handoff_fields)
@@ -869,7 +884,7 @@ class BootRecoveryIgnitionPlan:
             "repository are your whole context.)"
         )
         if branch_sync_report:
-            prompt += " " + branch_sync_report + branch_state_instruction_after(branch_sync_report)
+            prompt += " " + branch_sync_report_in_prompt(branch_sync_report)
         for line in overview_refresh_due:
             prompt += " " + line
         for line in memory_review_due:

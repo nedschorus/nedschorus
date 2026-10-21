@@ -3562,7 +3562,8 @@ sys.exit(module.main())
           "claiming no record",
           exit_code == 2 and "a git failure this case made" in errors.getvalue()
           and runner_git_main.git_failure_next_step_lines(shlex.join(
-              [str(RUNNER_SCRIPT.resolve()), *sys_argv_of_the_baseline_case[1:]]))
+              [str(RUNNER_SCRIPT.resolve()), *sys_argv_of_the_baseline_case[1:]]),
+              runner_git_main.STOPPED_BEFORE_LAUNCH_AGAIN)
           in errors.getvalue()
           and claimed == [],
           f"exit {exit_code}, stderr {errors.getvalue()!r}, records {claimed}")
@@ -3609,7 +3610,7 @@ sys.exit(module.main())
               and runner_cell_git.git_failure_next_step_lines(
                   runner_cell_git.rerun_command_for_cell(
                       "cut", "claude", "docs/agents/sanity-checker-cut-adversarial-prompt.md",
-                      [], None)) in printed.getvalue()
+                      [], None), runner_cell_git.CELL_GIT_CHECK_FAILED_AGAIN) in printed.getvalue()
               and "a git failure this case made" in printed.getvalue(),
               f"exit {exit_code}, report {report_text[:200]!r}, output {printed.getvalue()!r}")
 

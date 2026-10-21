@@ -971,8 +971,14 @@ with tempfile.TemporaryDirectory() as scratch:
               (failed_listing.returncode, failed_listing.stdout, failed_listing.stderr))
         check(f"a failed worktree listing{' under ' + flags[0] if flags else ''} gives the "
               "shared next steps, naming the command that was run",
-              stderr_lines[1:] == load_clean_worktrees_module().GIT_FAILURE_NEXT_STEP_LINES.format(
-                  rerun=rerun, program="scripts/clean-worktrees.py").splitlines(),
+              stderr_lines[1:] == [
+                  f"If git's error names a lock file, such as .git/index.lock, wait one minute, "
+                  f"then run {rerun}; do not delete the lock file yourself.",
+                  f"If none of the cases above applies, run {rerun} once more, unchanged.",
+                  'If the run you made by following a line above prints a line starting "clean-worktrees: stopped, because" '
+                  "again, stop, and tell the user, word for word, the lines "
+                  "scripts/clean-worktrees.py printed the first time and the lines that second run "
+                  "printed. A subagent reports to the agent that dispatched it, not to the user."],
               failed_listing.stderr)
 
     module = load_clean_worktrees_module()

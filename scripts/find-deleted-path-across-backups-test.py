@@ -3283,7 +3283,7 @@ with contextlib.redirect_stderr(spoken_errors):
 check("condition 3 — a deletion lookup git fails speaks nothing, and says so with git's words and the run's command",
       announced is None and not any(c.startswith("say") for c in deletion_lookup_fails.calls)
       and "bad object refs/heads/gone" in spoken_errors.getvalue()
-      and "In any other case, run python3 RUN-AS-GIVEN once more." in spoken_errors.getvalue(),
+      and "If none of the cases above applies, run python3 RUN-AS-GIVEN once more, unchanged." in spoken_errors.getvalue(),
       "%r %s %r" % (announced, deletion_lookup_fails.calls, spoken_errors.getvalue()))
 no_repository = FakeRunner([("rev-parse --show-toplevel", (128, "", "fatal: not a git repository\n")),
                             DELETED_2026_08_13_NOON])
@@ -4204,7 +4204,7 @@ with tempfile.TemporaryDirectory() as tmp:
     program = str(Path(finder.__file__).resolve())
     arguments = [str(repo / "a" / "b.md"), "--repo", str(repo), "--found-copies-root", str(tmp / "found"),
                  "--skip", "box", "--skip", "localsnapshots", "--skip", "transcripts", "--skip", "logstore"]
-    rerun_line = "In any other case, run %s once more." % shlex.join(["python3", program] + arguments)
+    rerun_line = "If none of the cases above applies, run %s once more, unchanged." % shlex.join(["python3", program] + arguments)
     checkout = str(Path(program).parents[1])
     for how, typed, directory in (("by absolute path from another directory", program, str(elsewhere)),
                                   ("by a path relative to its checkout", os.path.relpath(program, checkout),

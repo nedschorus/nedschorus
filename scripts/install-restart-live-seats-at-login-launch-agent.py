@@ -39,12 +39,20 @@ Usage:
 """
 
 import argparse
+import importlib.util
 import os
 import plistlib
 import shlex
 import subprocess
 import sys
 from pathlib import Path
+
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
 
 DEFAULT_LABEL = "com.nedschorus.restart-live-seats-at-login"
 PROGRAM_FILE_NAME = "restart-live-seats-at-login.py"
@@ -138,10 +146,10 @@ def remove(label: str, launch_agents_directory: Path, run=subprocess.run) -> int
             print("Fix what launchctl's error names.", file=sys.stderr)
             print(f"Then run `{rerun}` on this Mac.", file=sys.stderr)
         else:
-            print(f"Run `{rerun}` once more.", file=sys.stderr)
-            print("If it fails again, stop and tell the user what "
-                  "install-restart-live-seats-at-login-launch-agent printed; a subagent tells "
-                  "the agent that dispatched it instead.", file=sys.stderr)
+            print(f"Run `{rerun}` once more, on this Mac.", file=sys.stderr)
+            print(next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                f'prints "so {label} may still be loaded" again',
+                "install-restart-live-seats-at-login-launch-agent"), file=sys.stderr)
         return 1
     if plist_path.is_file():
         plist_path.unlink()
