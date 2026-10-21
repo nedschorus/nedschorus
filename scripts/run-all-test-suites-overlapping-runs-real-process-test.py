@@ -3,8 +3,10 @@
 
 Runs scripts/run-all-test-suites.py, and scripts/run-suite-in-signal-sandbox.py,
 as real processes, each suite in its own test sandbox. Admission's CPU and
-memory thresholds are opened wide by a small driver, so the cases do not
-depend on how busy the machine is; the admission directory is this test's own.
+memory thresholds are opened wide by a small driver; the admission directory
+is this test's own. Each run's suite waits until the other run's suite has
+started, through a directory the driver binds writable into both test
+sandboxes, so the runs overlap however far apart a busy machine starts them.
 
 The last case is the collision that made test runs take turns: two
 overlapping runs of scripts/resupervise-seat-test.py both exited 0 while
@@ -51,9 +53,11 @@ def check(case_name, condition, detail=""):
 
 
 # Loads a program as a module, opens admission's thresholds wide, and runs its main.
+# Given a meeting directory first, it binds that directory writable into every suite's
+# test sandbox, which otherwise shares nothing writable with another run's.
 DRIVER_SOURCE = r'''
 import importlib.util, sys
-program_path, *arguments = sys.argv[1:]
+meeting_directory, program_path, *arguments = sys.argv[1:]
 spec = importlib.util.spec_from_file_location("program_under_test", program_path)
 program = importlib.util.module_from_spec(spec)
 sys.argv = [program_path, *arguments]
@@ -61,13 +65,23 @@ spec.loader.exec_module(program)
 runner = getattr(program, "runner", program)
 runner.TEST_SUITE_ADMISSION_CPU_PERCENT_BELOW = 101
 runner.TEST_SUITE_ADMISSION_AVAILABLE_MEMORY_BYTES_ABOVE = -1
+if meeting_directory:
+    unwrapped = runner.command_prefix_starting_one_suite_in_its_test_sandbox
+    def with_meeting_directory(sandbox_prefix, checkout, writable_paths=(), *rest):
+        return unwrapped(sandbox_prefix, checkout, [*writable_paths, meeting_directory], *rest)
+    runner.command_prefix_starting_one_suite_in_its_test_sandbox = with_meeting_directory
 sys.exit(program.main(arguments))
 '''
+NO_MEETING_DIRECTORY = ""
 
-# Each suite claims one fixed name under /tmp and holds it: two suites sharing /tmp
-# would find each other's claim.
+# Sized to how long the other run may take to start its suite on a machine at full CPU.
+OTHER_SUITE_START_WAIT_SECONDS = 120
+
+# Each suite claims one fixed name under /tmp and holds it until the other run's suite has
+# started: two suites sharing /tmp would find each other's claim.
 CLAIMING_SUITE = r'''
-import os, time
+import os, tempfile, time
+meeting_directory = MEETING_DIRECTORY
 claim = "/tmp/run-all-test-suites-overlapping-runs-claim"
 if os.path.exists(claim):
     print(f"FAIL  the claim under /tmp is free: another suite holds it: {open(claim).read()}")
@@ -76,8 +90,18 @@ with open(claim, "w") as handle:
     handle.write(str(os.getpid()))
 print("PASS  claimed /tmp alone", flush=True)
 print(f"PASS  runs at niceness {os.nice(0)}", flush=True)
+# Not named by process ID: each suite is in a PID namespace of its own, so both may share one.
+tempfile.mkstemp(dir=meeting_directory, prefix="started-")
+deadline = time.monotonic() + OTHER_SUITE_START_WAIT_SECONDS
+while len(os.listdir(meeting_directory)) < 2:
+    if time.monotonic() > deadline:
+        print(f"FAIL  the other run's suite started within {OTHER_SUITE_START_WAIT_SECONDS} s of "
+              f"this one: {meeting_directory} holds {os.listdir(meeting_directory)}", flush=True)
+        raise SystemExit(1)
+    time.sleep(0.1)
+print("PASS  saw the other run's suite started while this one ran", flush=True)
+# Long enough for each run to record the machine's readings three times.
 time.sleep(3)
-print("PASS  still alone after 3 s", flush=True)
 '''
 
 
@@ -124,14 +148,19 @@ with tempfile.TemporaryDirectory(prefix="run-all-test-suites-overlapping-runs-")
     repository = scratch / "repository"
     repository.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
-    (repository / "claims-tmp-test.py").write_text(CLAIMING_SUITE)
+    meeting_directory = scratch / "meeting"
+    meeting_directory.mkdir()
+    (repository / "claims-tmp-test.py").write_text(
+        CLAIMING_SUITE.replace("MEETING_DIRECTORY", repr(str(meeting_directory)))
+        .replace("OTHER_SUITE_START_WAIT_SECONDS", str(OTHER_SUITE_START_WAIT_SECONDS)))
     subprocess.run(["git", "add", "."], cwd=repository, check=True)
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
                     "-m", "start"], cwd=repository, check=True)
     lock_file = scratch / "machine" / "run.lock"
 
     runs = run_together(
-        [[sys.executable, "-c", DRIVER_SOURCE, str(RUNNER_PATH), "--checkout", str(repository),
+        [[sys.executable, "-c", DRIVER_SOURCE, str(meeting_directory), str(RUNNER_PATH),
+          "--checkout", str(repository),
           "--lock-file", str(lock_file), "--log-dir", str(scratch / f"logs-{name}"),
           "--recorded-inputs-directory", str(scratch / f"recorded-{name}"),
           "--wait-for-lock-seconds", "1"]
@@ -143,11 +172,9 @@ with tempfile.TemporaryDirectory(prefix="run-all-test-suites-overlapping-runs-")
                   for _, output in runs), runs)
     first_rows = case_rows(scratch / "logs-first")
     second_rows = case_rows(scratch / "logs-second")
-    first_times = [float(row[4]) for row in first_rows]
-    second_times = [float(row[4]) for row in second_rows]
-    check("the runs overlapped: each run's suite printed a case while the other's suite ran",
-          len(first_times) == 3 and len(second_times) == 3
-          and first_times[0] < second_times[-1] and second_times[0] < first_times[-1],
+    check("the runs overlapped: each run's suite saw the other's start while it ran",
+          all(any(row[1] == "PASS" and row[5].startswith("saw the other run's suite started")
+                  for row in rows) for rows in (first_rows, second_rows)),
           (first_rows, second_rows))
     runner_spec = importlib.util.spec_from_file_location("run_all_test_suites", RUNNER_PATH)
     runner = importlib.util.module_from_spec(runner_spec)
@@ -185,7 +212,8 @@ with tempfile.TemporaryDirectory(prefix="run-all-test-suites-overlapping-runs-")
     (blocked / "run.lock.test-suite-admission").write_text("a file where the admission "
                                                           "directory belongs\n")
     code, output = run_together(
-        [[sys.executable, "-c", DRIVER_SOURCE, str(RUNNER_PATH), "--checkout", str(repository),
+        [[sys.executable, "-c", DRIVER_SOURCE, NO_MEETING_DIRECTORY, str(RUNNER_PATH),
+          "--checkout", str(repository),
           "--lock-file", str(blocked / "run.lock"), "--log-dir", str(scratch / "logs-blocked"),
           "--recorded-inputs-directory", str(scratch / "recorded-blocked")]], scratch)[0]
     check("an admission directory that cannot be made stops the run with exit 2, saying so",
@@ -193,7 +221,8 @@ with tempfile.TemporaryDirectory(prefix="run-all-test-suites-overlapping-runs-")
     unopenable = scratch / "unopenable"
     (unopenable / "run.lock.test-suite-admission" / "slot-00").mkdir(parents=True)
     code, output = run_together(
-        [[sys.executable, "-c", DRIVER_SOURCE, str(RUNNER_PATH), "--checkout", str(repository),
+        [[sys.executable, "-c", DRIVER_SOURCE, NO_MEETING_DIRECTORY, str(RUNNER_PATH),
+          "--checkout", str(repository),
           "--lock-file", str(unopenable / "run.lock"),
           "--log-dir", str(scratch / "logs-unopenable"),
           "--recorded-inputs-directory", str(scratch / "recorded-unopenable")]], scratch)[0]
@@ -203,7 +232,7 @@ with tempfile.TemporaryDirectory(prefix="run-all-test-suites-overlapping-runs-")
 
     # The collision that made test runs take turns, on the real suite.
     collisions = run_together(
-        [[sys.executable, "-c", DRIVER_SOURCE, str(ONE_SUITE_PATH),
+        [[sys.executable, "-c", DRIVER_SOURCE, NO_MEETING_DIRECTORY, str(ONE_SUITE_PATH),
           "scripts/resupervise-seat-test.py", "--checkout", str(CHECKOUT),
           "--lock-file", str(lock_file)] for _ in range(2)], CHECKOUT)
     check("two runs of scripts/resupervise-seat-test.py at once both pass",
