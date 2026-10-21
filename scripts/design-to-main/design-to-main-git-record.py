@@ -93,10 +93,14 @@ class TopicBranchGitRecord:
 
 
     def require_topic_branch_start_point(self):
+        """Raise TopicBranchCutRefused when the start point is absent, GitCommandFailed when git fails."""
         # Validate before assembling the initial package: instance counting needs the start point before branch creation.
         start_point = self.topic_branch_start_point
-        if self.git("rev-parse", "--verify", "--quiet",
-                    "%s^{commit}" % start_point, check=False).returncode != 0:
+        # --verify --quiet prints the commit on exit 0 and nothing on exit 1, its "absent" answer.
+        if not git_output.run_git(
+                self.repository_dir,
+                ["rev-parse", "--verify", "--quiet", "%s^{commit}" % start_point],
+                accepted_exit_codes=(0, 1)).strip():
             raise TopicBranchCutRefused(
                 "the checkout at %s has no %s to cut the topic branch %r from; "
                 "the run does not start and the checkout is as it was" % (
@@ -189,12 +193,18 @@ class TopicBranchGitRecord:
         with open(path, "a") as rulings:
             rulings.write("- %s (user-ruled %s)\n" % (text, date))
 
+    def path_is_at_head(self, path):
+        """Return whether path is in HEAD's tree; raise GitCommandFailed when git fails."""
+        # git show and cat-file -e exit 128 both for an absent path and for a failure; ls-tree exits 0 when absent.
+        return bool(git_output.tree_entries(git_output.run_git(
+            self.repository_dir, ["ls-tree", "-z", "HEAD", "--", str(path)])))
+
     def run_state_text_at_last_commit(self):
-        """Return the run-state.json text at HEAD, or None when absent."""
-        shown = self.git("show", "HEAD:%s" % self.run_state_path, check=False)
-        if shown.returncode != 0:
+        """Return the run-state.json text at HEAD, or None when absent; raise GitCommandFailed when git fails."""
+        if not self.path_is_at_head(self.run_state_path):
             return None
-        return shown.stdout
+        return git_output.run_git(
+            self.repository_dir, ["show", "HEAD:%s" % self.run_state_path]).decode()
 
 
     def commit_state_exit(self, run, subject, trailer, named_files=()):
@@ -208,13 +218,13 @@ class TopicBranchGitRecord:
         return self.head_commit()
 
     def named_files_that_are_not_there(self, named_files):
-        """Return paths absent from both the worktree and HEAD, excluding tracked deletions."""
+        """Return paths absent from both the worktree and HEAD, excluding tracked deletions;
+        raise GitCommandFailed when git fails."""
         missing = []
         for path in named_files:
             if self.absolute(path).exists():
                 continue
-            tracked = self.git("cat-file", "-e", "HEAD:%s" % path, check=False)
-            if tracked.returncode != 0:
+            if not self.path_is_at_head(path):
                 missing.append(path)
         return missing
 
@@ -230,10 +240,10 @@ class TopicBranchGitRecord:
         self.put_the_whole_checkout_back_to_head()
 
     def put_the_whole_checkout_back_to_head(self):
+        """Discard staged, changed and untracked work; raise GitCommandFailed at the first git step that fails."""
         # Reset the index first: checkout restores from the index, so staged work would otherwise survive recovery.
-        self.git("reset", "-q", check=False)
-        self.git("checkout", "--", ".", check=False)
-        self.git("clean", "-fdq", check=False)
+        for step in (["reset", "-q"], ["checkout", "--", "."], ["clean", "-fdq"]):
+            git_output.run_git(self.repository_dir, step)
 
 
     def paths_changed_since(self, commit):
