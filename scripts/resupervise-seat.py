@@ -345,7 +345,8 @@ def resupervise_box_seat(arguments) -> int:
         if missing.returncode != 0:
             return refuse(
                 f"the box-side checks exited {remote.returncode}, and `ssh {arguments.agent_box} "
-                f"test -f {BOX_SCRIPT_PATH}` exited {missing.returncode} ({ssh_error}), so "
+                f"{shlex.quote(f'test -f {BOX_SCRIPT_PATH}')}` exited {missing.returncode} "
+                f"({ssh_error}), so "
                 "whether the script is on the box is unknown; nothing was launched. Run that "
                 "command, read what it prints, and re-run after that cause is removed."
             )

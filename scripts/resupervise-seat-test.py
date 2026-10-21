@@ -1051,7 +1051,7 @@ def run_box_script_probe_cases():
              "to ask why (exit 255: ssh: connect to host testbox port 22: Connection refused); "
              "nothing was launched. Check that `ssh testbox true` succeeds from this machine, "
              "then re-run.\n",
-        2: f"resupervise-seat: the box-side checks exited 1, and `ssh testbox test -f {script}` "
+        2: f"resupervise-seat: the box-side checks exited 1, and `ssh testbox 'test -f {script}'` "
            "exited 2 (bash: test: too many arguments), so whether the script is on the box is "
            "unknown; nothing was launched. Run that command, read what it prints, and re-run "
            "after that cause is removed.\n",
@@ -1068,6 +1068,12 @@ def run_box_script_probe_cases():
         check(f"the box-side checks failing, with the script probe exiting {probe_exit_code}, "
               "refuses with the refusal for that exit",
               status == 1 and errors.getvalue() == refusal, (status, errors.getvalue()))
+        if probe_exit_code == 2:
+            printed_command = errors.getvalue().split("`")[1]
+            check("the probe command the refusal gives keeps $HOME inside single quotes, so it "
+                  "expands on the box, not on the machine it is typed on",
+                  shlex.split(printed_command) == ["ssh", "testbox", f"test -f {script}"]
+                  and script.startswith("$HOME/"), printed_command)
 
 
 def run_apostrophe_propagation_case(workspace: Path):
