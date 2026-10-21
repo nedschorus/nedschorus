@@ -1057,13 +1057,10 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--target", required=True,
-        help="document path, relative to the repo root or absolute")
+        help="document path, relative to the current directory or absolute")
     args = parser.parse_args()
 
-    target = pathlib.Path(args.target)
-    if not target.is_absolute():
-        target = REPO_ROOT / target
-    target = target.resolve()
+    target = pathlib.Path(args.target).resolve()
     if not target.is_file():
         print(f"{PROGRAM}: target not found: {target}", file=sys.stderr)
         print(f"FAILED (target not found: {target})")

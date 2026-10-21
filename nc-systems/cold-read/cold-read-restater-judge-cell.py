@@ -168,7 +168,7 @@ def build_judge_argument_parser():
         "--case", required=True, action="append", nargs=4,
         metavar=("DRAFT", "PERFECT", "DEFECT_LIST", "RESTATEMENT"),
         help="one document's four files, in that order, each relative to the "
-             "repository root or absolute. Repeat once per document; the "
+             "current directory or absolute. Repeat once per document; the "
              "ruled campaign passes three. The cases are numbered in the "
              "order given, and the judge reports against those numbers",
     )
@@ -191,7 +191,7 @@ def build_judge_argument_parser():
         "--prompt-file", required=True, metavar="PATH",
         help="the file holding the judge's instructions, with "
              "{RESTATER_CLASS}, {CASES_BLOCK} and {REPORT_PATH} substituted "
-             "into it; relative to the repository root unless absolute. "
+             "into it; relative to the current directory unless absolute. "
              "Required: this program carries no prompt of its own, because "
              "the judge's instructions are prose the user reads before they "
              "land, not code that rides in on a pull request. The stamp "
@@ -223,9 +223,7 @@ def resolve_judge_prompt_file(path_argument: str) -> pathlib.Path:
 
 def resolve_case_file(case_number: int, role: str, path_argument: str) -> pathlib.Path:
     """Resolve a case path, reporting its case number and role on failure."""
-    path = pathlib.Path(path_argument)
-    if not path.is_absolute():
-        path = common.REPO_ROOT / path
+    path = pathlib.Path(path_argument).resolve()
     if not path.is_file():
         raise common.CellRefusal(
             f"case {case_number}: {role} not found: {path}")

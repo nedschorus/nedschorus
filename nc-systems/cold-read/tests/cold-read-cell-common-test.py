@@ -375,7 +375,7 @@ def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
          "--cell", cell, "--tier", "second-strongest-model",
          "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
          *arguments],
-        capture_output=True, text=True, check=False, env=environment,
+        capture_output=True, text=True, check=False, env=environment, cwd=repository,
     )
 
 
@@ -651,11 +651,15 @@ with tempfile.TemporaryDirectory() as scratch:
             stamped_report, runtime="claude", model="m", effort="e", cell="c",
             tier="t", target_argument=missing_target, duration_s=0)
         unreadable_stamp = stamped_report.read_text(encoding="utf-8").split("\n", 1)[0]
-    # The launcher finds a relative --target under the repository root, so the stamp must hash that file.
+    # The launcher resolves a relative --target against the current directory, so the stamp must hash that file.
+    # The path also exists under the repository root, with other bytes, so hashing that copy fails the case.
     relative_target = "nc-systems/cold-read/cold-read-grid.py"
-    expected_sha256 = hashlib.sha256((common_module.REPO_ROOT / relative_target).read_bytes()).hexdigest()
+    elsewhere_target_bytes = b"the current directory's copy, not the repository's\n"
+    expected_sha256 = hashlib.sha256(elsewhere_target_bytes).hexdigest()
     cwd_before = os.getcwd()
     with tempfile.TemporaryDirectory() as elsewhere:
+        (Path(elsewhere) / relative_target).parent.mkdir(parents=True)
+        (Path(elsewhere) / relative_target).write_bytes(elsewhere_target_bytes)
         relative_report = Path(elsewhere) / "report.md"
         relative_report.write_text("review\n", encoding="utf-8")
         os.chdir(elsewhere)
@@ -1758,9 +1762,9 @@ with tempfile.TemporaryDirectory() as scratch:
     )
     received_prompt = (received_prompt_path.read_text(encoding="utf-8")
                        if received_prompt_path.is_file() else "")
-    # Compared with both paths blanked out: the cell resolves the target
-    # through the repository root, so on a temporary directory behind a
-    # symlink (macOS /var) its path is spelled differently from the test's.
+    # Compared with both paths blanked out: the cell resolves the target and
+    # the report, so on a temporary directory behind a symlink (macOS /var)
+    # their paths are spelled differently from the test's.
     shared_terminology_template = (
         (scratch_prompts / "terminology.md").read_text(encoding="utf-8")
         .replace("{TARGET_PATH}", "<path>").replace("{REPORT_PATH}", "<path>"))
@@ -1768,6 +1772,7 @@ with tempfile.TemporaryDirectory() as scratch:
         received_prompt
         .replace(str((repository / TARGET_RELATIVE_PATH).resolve()), "<path>")
         .replace(str(repository / TARGET_RELATIVE_PATH), "<path>")
+        .replace(str(report.resolve()), "<path>")
         .replace(str(report), "<path>"))
     check("the Claude cell reads that same shared terminology.md",
           result.returncode == 0 and "CODEX COPY MARKER" not in received_prompt
