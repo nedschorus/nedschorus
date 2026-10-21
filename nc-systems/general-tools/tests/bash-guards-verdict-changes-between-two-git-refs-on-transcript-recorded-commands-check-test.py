@@ -265,6 +265,59 @@ try:
     check("a guard whose own `except Exception` surrounds a timed-out read: exit 2, the timeout is not swallowed",
           status == 2 and "TIMEOUT" in out and "NO VERDICT CHANGED" not in out, f"status {status}\n{out}\n{err}")
 
+    codex_guard = "scripts/hand-typed-codex-exec-redirect-hook.py"
+    calls_file = Path(scratch) / "codex-guard-calls-on-tmux-kill-server"
+
+    def codex_guard_on_tmux_kill_server(code_on_tmux_kill_server):
+        # Not the first fixture pair, so the retry pass must look past a row that did not time out.
+        # Each call appends to calls_file first, so a test can count the readings across worker processes.
+        return commit_with_guard_changed(codex_guard, (
+            "_refusal_for_command_as_written = refusal_for_command\n"
+            "def refusal_for_command(command):\n"
+            "    import time\n"
+            "    if command == 'tmux kill-server':\n"
+            f"        with open({str(calls_file)!r}, 'a') as calls:\n"
+            "            calls.write('call\\n')\n"
+            + "".join(f"        {line}\n" for line in code_on_tmux_kill_server.splitlines())
+            + "    return _refusal_for_command_as_written(command)"), scratch)
+
+    def codex_guard_calls_on_tmux_kill_server():
+        calls = len(calls_file.read_text().splitlines()) if calls_file.exists() else 0
+        calls_file.unlink(missing_ok=True)
+        return calls
+
+    hanging_once_on_tmux_kill_server = codex_guard_on_tmux_kill_server(
+        f"if len(open({str(calls_file)!r}).readlines()) == 1:\n    time.sleep(30)")
+    status, out, err = run_replay(hanging_once_on_tmux_kill_server, scratch, "--per-pair-timeout-seconds", "2",
+                                  "--new-process-pairs", "none")
+    calls = codex_guard_calls_on_tmux_kill_server()
+    check("a guard that times out on its first reading of a pair and answers on the second: read again alone, exit 0",
+          status == 0 and "NO VERDICT CHANGED" in out and calls == 2
+          and "in-process, head: timed-out readings read again, alone: 1; passed on the second reading: 1" in err,
+          f"status {status}; calls {calls}\n{out}\n{err}")
+
+    hanging_on_tmux_kill_server = codex_guard_on_tmux_kill_server("time.sleep(30)")
+    status, out, err = run_replay(hanging_on_tmux_kill_server, scratch, "--per-pair-timeout-seconds", "2",
+                                  "--new-process-pairs", "none")
+    calls = codex_guard_calls_on_tmux_kill_server()
+    check("a guard that times out on both readings of a pair: a failed reading, exit 2",
+          status == 2 and "TIMEOUT" in out and calls == 2
+          and "in-process, head: timed-out readings read again, alone: 1; passed on the second reading: 0" in err,
+          f"status {status}; calls {calls}\n{out}\n{err}")
+
+    raising_on_tmux_kill_server = codex_guard_on_tmux_kill_server(
+        "raise RuntimeError('the guard broke on tmux kill-server')")
+    status, out, err = run_replay(raising_on_tmux_kill_server, scratch, "--new-process-pairs", "none")
+    calls = codex_guard_calls_on_tmux_kill_server()
+    check("a guard that raises on a pair: not read again, exit 2",
+          status == 2 and "EXCEPTION RuntimeError" in out and calls == 1 and "read again" not in err,
+          f"status {status}; calls {calls}\n{out}\n{err}")
+
+    check("the step deadline covers every reading timing out in the parallel pass and again alone",
+          replay.step_deadline_seconds(9, 3, 7)
+          == (3 + 9) * (len(replay.GUARDS) + 1) * 7 + replay.STEP_DEADLINE_MARGIN_SECONDS,
+          replay.step_deadline_seconds(9, 3, 7))
+
     def add_bash_hook(worktree):
         path = worktree / ".claude" / "settings.json"
         settings = json.loads(path.read_text())
@@ -429,9 +482,10 @@ try:
           f"status {status}; failed {failed}; differing {differing}\n{out}\n{err}")
 
     # The first child to read `ls -la` hangs for good, so only the per-pair timeout ends that reading,
-    # and a sender that kept the hung child would hang the readings after it too. Hanging once keeps
-    # the case to one timeout, which can then be the replay's default of 20 s: a reading takes well
-    # under a second on an idle machine and several seconds on a loaded one, at the workers' nice 15.
+    # and a sender that kept the hung child would hang the readings after it too, each then counted as
+    # read again. Hanging once keeps the case to one timeout, which can then be the replay's default of
+    # 20 s: a reading takes well under a second on an idle machine and several seconds on a loaded one,
+    # at the workers' nice 15. The timed-out reading is read again, by a fresh child, and passes.
     hang_once_marker = Path(scratch) / "a-child-hung-on-ls"
     hanging_child_on_ls = commit_with_reader_changed_in_its_long_running_child(
         f"if not os.path.exists({str(hang_once_marker)!r}): open({str(hang_once_marker)!r}, 'x').close(); "
@@ -440,10 +494,10 @@ try:
     status, out, err = run_replay(hanging_child_on_ls, scratch, "--jobs", "1",
                                   "--scratch-directory", str(hung_child_scratch), base_ref=hanging_child_on_ls)
     failed, differing = failed_new_process_readings_and_rows_differing_from_in_process(hung_child_scratch)
-    check("a shell reader child that hangs on `ls -la`: exit 2 by the per-pair timeout, only that pair's readings "
-          "fail, and the hung child answers no later request",
-          status == 2 and "TIMEOUT" in out and failed and set(failed) == {"ls -la"} and not differing
-          and hang_once_marker.exists(),
+    check("a shell reader child that hangs on `ls -la`: the per-pair timeout ends that one reading, which passes "
+          "when read again, exit 0, and the hung child answers no later request",
+          status == 0 and "NO VERDICT CHANGED" in out and failed == [] and not differing and hang_once_marker.exists()
+          and "new-process, base: timed-out readings read again, alone: 1; passed on the second reading: 1" in err,
           f"status {status}; failed {failed}; differing {differing}\n{out}\n{err}")
 
     def reader_without_the_long_running_child_flag(worktree):

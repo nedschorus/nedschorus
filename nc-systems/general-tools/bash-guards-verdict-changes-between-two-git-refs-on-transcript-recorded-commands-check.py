@@ -29,8 +29,10 @@ Steps:
 
 Exit status: 0 when no verdict differs and no added guard refuses a recorded command; 1 when a
 verdict differs or an added guard refuses a recorded command; 2 when the replay itself
-failed, which includes a guard that raised or timed out on a recorded command at either ref,
-because that row has no verdict to compare. A message that differs while its verdict does not is
+failed, which includes a guard that raised on a recorded command at either ref, or timed out on
+it twice, because that row has no verdict to compare. A reading that times out is read once more,
+alone, after the step's other readings have finished, since a timeout can come from the machine's
+load rather than the guard. A message that differs while its verdict does not is
 printed, and does not change the exit status. The scratch directory is removed after an exit 0
 unless --scratch-directory named it; after an exit 1 or 2 it is kept, and its path is printed.
 """
@@ -573,7 +575,8 @@ def smoke_check(checkout, new_process, search_file_directory, timeout, guards_le
 
 def ref_verdicts(checkout, pairs, jobs, new_process, search_file_directory, search_file_main, timeout,
                  guards_left_out=()):
-    """Return (rows, shell readers switched to a new process, how many of them read one command per process)."""
+    """Return (rows, shell readers switched to a new process, how many of them read one command per process,
+    how many timed-out readings were read again, how many of those passed on the second reading)."""
     switched, one_command_per_process = smoke_check(checkout, new_process, search_file_directory, timeout,
                                                     guards_left_out)
     tasks = [pairs[start:start + PAIRS_PER_TASK] for start in range(0, len(pairs), PAIRS_PER_TASK)]
@@ -593,6 +596,21 @@ def ref_verdicts(checkout, pairs, jobs, new_process, search_file_directory, sear
                 continue
             rows.extend(task_rows)
             workers_switched.add(worker_switched)
+        read_again, passed_again = 0, 0
+        # One pair at a time, after the parallel pass, so the other jobs' load is gone. Not after a worker
+        # died: rows then no longer line up with pairs.
+        for index, row in enumerate(rows if not not_read else []):
+            readings = row if isinstance(row, dict) else {None: row}  # A search-file main() row is one reading.
+            timed_out = [key for key, reading in readings.items() if reading[0] == "TIMEOUT"]
+            if not timed_out:
+                continue
+            (again,), _ = executor.submit(read, [pairs[index]]).result()
+            again = again if isinstance(again, dict) else {None: again}
+            for key in timed_out:
+                readings[key] = again[key]
+                passed_again += not is_failed_reading(again[key][0])
+            read_again += len(timed_out)
+            rows[index] = readings if isinstance(row, dict) else readings[None]
     finally:
         # Without waiting: the step then exits, and run_step_in_child() stops its process group.
         executor.shutdown(wait=False, cancel_futures=True)
@@ -604,7 +622,7 @@ def ref_verdicts(checkout, pairs, jobs, new_process, search_file_directory, sear
     if workers_switched - {switched}:
         raise ReplayFailed(f"the workers at {checkout} switched {sorted(workers_switched)} shell readers to a new "
                            f"process, where the check before them switched {switched}")
-    return rows, switched, one_command_per_process
+    return rows, switched, one_command_per_process, read_again, passed_again
 
 
 # ---------------------------------------------------------------- step 4: compare
@@ -681,9 +699,10 @@ STOP_CHECK_INTERVAL_SECONDS = 0.2  # How soon a stop signal received during a st
 
 
 def step_deadline_seconds(pair_count, jobs, timeout):
-    """The longest one step can take if every reading of every pair runs to its timeout."""
+    """The longest one step can take if every reading of every pair runs to its timeout, and then every pair
+    is read again alone and every reading runs to its timeout again."""
     readings_per_pair = len(GUARDS) + 1  # The guards, or search-file main(); plus the smoke check's share.
-    return -(-pair_count // jobs) * readings_per_pair * timeout + STEP_DEADLINE_MARGIN_SECONDS
+    return (-(-pair_count // jobs) + pair_count) * readings_per_pair * timeout + STEP_DEADLINE_MARGIN_SECONDS
 
 
 def run_step_in_child(arguments, log_path, deadline_seconds):
@@ -854,6 +873,10 @@ def replay_with_sigterm_handled(arguments):
                 mode_failed.extend(failed)
                 all_failed.extend((pair, f"{mode}, {key}", at, reading) for pair, key, at, reading in failed)
                 one_command_per_process = written["shell_readers_reading_one_command_per_process"]
+                if written["timed_out_readings_read_again"]:
+                    print(f"{mode}, {label}: timed-out readings read again, alone: "
+                          f"{written['timed_out_readings_read_again']}; passed on the second reading: "
+                          f"{written['timed_out_readings_passed_on_the_second_reading']}", file=sys.stderr)
                 print(f"{mode}, {label}: {len(rows[label])} rows in {time.monotonic() - started:.0f}s; "
                       f"shell readers in a new process: {written['shell_readers_in_a_new_process']}"
                       + (f", of which one command per process: {one_command_per_process}"
@@ -914,11 +937,13 @@ def replay_with_sigterm_handled(arguments):
 def verdicts_step(checkout, pairs_path, out_path, jobs, new_process, search_file_main, search_file_directory,
                   timeout, guards_left_out):
     pairs = json.loads(Path(pairs_path).read_text())
-    rows, switched, one_command_per_process = ref_verdicts(
+    rows, switched, one_command_per_process, read_again, passed_again = ref_verdicts(
         checkout, pairs, int(jobs), new_process == "1", search_file_directory, search_file_main == "1", int(timeout),
         json.loads(guards_left_out))
     Path(out_path).write_text(json.dumps({"rows": rows, "shell_readers_in_a_new_process": switched,
-                                          "shell_readers_reading_one_command_per_process": one_command_per_process}))
+                                          "shell_readers_reading_one_command_per_process": one_command_per_process,
+                                          "timed_out_readings_read_again": read_again,
+                                          "timed_out_readings_passed_on_the_second_reading": passed_again}))
     return 0
 
 
@@ -942,7 +967,8 @@ def main(argv=None):
         parser.add_argument("--scratch-directory", help="kept after the run; by default a temporary directory, "
                                                         "removed when no verdict changed")
         parser.add_argument("--per-pair-timeout-seconds", type=int, default=DEFAULT_PER_PAIR_TIMEOUT_SECONDS,
-                            help="how long one guard may take on one command before the reading counts as failed")
+                            help="how long one guard may take on one command before the reading is read again, "
+                                 "and then before it counts as failed")
         parser.add_argument("--show", type=int, default=20, help="how many rows to print per list")
         return replay(parser.parse_args(argv))
     except ReplayFailed as error:
