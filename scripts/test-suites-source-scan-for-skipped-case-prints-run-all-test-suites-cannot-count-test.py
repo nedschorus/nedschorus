@@ -40,19 +40,20 @@ SKIP_PRINT = re.compile(
 UNITTEST_SKIP = re.compile(
     r"""(?:(?<!["'])\.skipTest\(|(?<!["'@\w])@?unittest\.skip(?:If|Unless)?\()""")
 
-PRINT_INSTEAD = ("print one line per skipped test case that opens SKIP and a space, "
-                 "such as `SKIP  <test case>: <why it was skipped>`")
+PRINT_INSTEAD = ("print one line per skipped test case from one string that opens SKIP "
+                 "and a space, then the test case and why it was skipped, such as "
+                 "`SKIP  <test case>: <why it was skipped>`")
 
 
 def printed_line_is_counted(match, text):
-    """Whether the line this SKIP print writes matches the test runner's ^SKIP\\s."""
-    after = text[match.end():]
-    if after.startswith((" ", "\t", "\\t")):
-        return True
-    # print("SKIP", "case") writes "SKIP case": print puts a space between arguments.
-    quote = match.group("quote")
-    return (match.group("call").startswith("print") and bool(quote)
-            and re.match(re.escape(quote) + r"\s*,", after) is not None)
+    """Whether the SKIP text itself is followed by a literal space.
+
+    Only then is the printed line certain to match ^SKIP\\s: a tab escape means
+    a tab in Python but a backslash and a t to echo, and SKIP as a print
+    argument of its own depends on sep and on what follows, so every other
+    form is refused rather than guessed.
+    """
+    return text.startswith(" ", match.end())
 
 
 def uncounted_skip_forms(path, text):
@@ -101,8 +102,14 @@ if not SCAN_ONLY:
         ("a SKIP print whose text starts on the next source line is refused",
          "print(\n    'SKIP: a case')", True),
         ("a bare SKIP print is refused", 'print("SKIP")', True),
-        ("SKIP as its own print argument is accepted", 'print("SKIP", "a case: no tmux")', False),
-        ("SKIP and an escaped tab is accepted", 'print("SKIP\\ta case")', False),
+        ("SKIP as its own print argument is refused", 'print("SKIP", "a case: no tmux")', True),
+        ("SKIP alone with flush is refused", 'print("SKIP", flush=True)', True),
+        ("SKIP as its own argument with a separator is refused",
+         'print("SKIP", "a case", sep=":")', True),
+        ("SKIP and an escaped tab is refused", 'print("SKIP\\ta case")', True),
+        ("a shell SKIP line with an escaped tab is refused", 'echo "SKIP\\ta case"', True),
+        ("an unquoted shell SKIP line with a space is accepted", 'echo SKIP a case', False),
+        ("a printf SKIP line with a space is accepted", "printf 'SKIP  %s\\n' case", False),
         ("a SKIP print whose counted text starts on the next source line is accepted",
          "print(\n    'SKIP  a case')", False),
         ("a SKIP line with two spaces is accepted", 'print("SKIP  a case: no tmux")', False),
