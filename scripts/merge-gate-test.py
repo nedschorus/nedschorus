@@ -88,7 +88,10 @@ The mutation section reruns named cases against a mutated COPY of the gate in a
 scratch directory, one mutation per fix, and requires each to go red. The file
 under test is never modified, so no revert can discard uncommitted work. Each
 mutation asserts that its replacement text was found. An unmutated copy is run
-after all mutations as the control.
+after all mutations as the control. Each copy has a copy of the description
+reader, pull-request-description-defect-line-hashtags-reader-common.py, beside
+it, because the gate runs the reader from its own directory; the reader's
+patterns are mutation-checked by the reader's own test.
 
 F7, UNSTABLE on the merge-state allow-list, has no case by the user's ruling.
 
@@ -133,6 +136,8 @@ import tempfile
 from pathlib import Path
 
 GATE = Path(__file__).with_name("merge-gate.sh")
+DESCRIPTION_DEFECT_LINE_READER = Path(__file__).with_name(
+    "pull-request-description-defect-line-hashtags-reader-common.py")
 FIXTURES = Path(__file__).with_name("merge-gate-test-captured-github-responses")
 BASH = shutil.which("bash")
 TEST_TOKEN = "merge-gate-test-token-not-a-credential"
@@ -301,9 +306,30 @@ done
 exec "$MERGE_GATE_TEST_REAL_JQ" "$@"
 """
 
+# A stand-in python3 that fails when it is asked to run the description reader,
+# and runs the real python3 for every other call, such as the gh stand-in's.
+PYTHON3_STAND_IN = """#!/usr/bin/env bash
+case "$1" in
+  */pull-request-description-defect-line-hashtags-reader-common.py)
+    echo "python3: injected failure" >&2
+    exit 5 ;;
+esac
+exec "$MERGE_GATE_TEST_REAL_PYTHON3" "$@"
+"""
+
+
+def gate_copy(text):
+    """A copy of the gate holding `text`, in a directory of its own beside a copy
+    of the description reader, which the gate runs from its own directory."""
+    directory = Path(tempfile.mkdtemp(dir=scratch))
+    shutil.copyfile(DESCRIPTION_DEFECT_LINE_READER, directory / DESCRIPTION_DEFECT_LINE_READER.name)
+    copy = directory / "merge-gate.sh"
+    copy.write_text(text)
+    return copy
+
 
 def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=None,
-             wrapper=None, arguments=None, jq_failing_filter=None):
+             wrapper=None, arguments=None, jq_failing_filter=None, description_reader_fails=False):
     case_dir = Path(tempfile.mkdtemp(dir=scratch))
     home = case_dir / "home"
     token_dir = home / ".config" / "nedschorus"
@@ -318,6 +344,9 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
     if jq_failing_filter is not None:
         (stand_in_dir / "jq").write_text(JQ_STAND_IN)
         (stand_in_dir / "jq").chmod(0o755)
+    if description_reader_fails:
+        (stand_in_dir / "python3").write_text(PYTHON3_STAND_IN)
+        (stand_in_dir / "python3").chmod(0o755)
     routes = dict(routes)
     routes.setdefault("body", {"stdout_file": str(captured(DESCRIPTION_WITH_ROOT_CAUSE))})
     routes_file = case_dir / "routes.json"
@@ -334,6 +363,8 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
     if jq_failing_filter is not None:
         environment.update(MERGE_GATE_TEST_JQ_FAILING_FILTER=jq_failing_filter,
                            MERGE_GATE_TEST_REAL_JQ=shutil.which("jq"))
+    if description_reader_fails:
+        environment.update(MERGE_GATE_TEST_REAL_PYTHON3=shutil.which("python3"))
     if arguments is None:
         arguments = [str(pr), expected, since]
     if wrapper:
@@ -1407,6 +1438,18 @@ def case_description_read_fails(gate):
                 "error gh printed is just above this line.\n", f"\n{RERUN_ONCE_GH}\n")), run.summary()
 
 
+def case_description_reader_fails(gate):
+    run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(),
+                   description_reader_fails=True)
+    reader = gate.parent / DESCRIPTION_DEFECT_LINE_READER.name
+    return could_not_run_after_gh(
+        run, BASE_PR,
+        f"GATE COULD NOT RUN: could not read the defect lines of pull request {BASE_PR}'s description "
+        f"with {reader}; any error python3 printed is just above this line.\n",
+        "\nRun the gate again once; if it fails the same way, tell the user this message and "
+        "python3's error.\n"), run.summary()
+
+
 def case_description_unparsable(gate):
     # gh pr view exits 0 but prints what jq cannot read as a description: a
     # captured channel, a list, which has no body field.
@@ -1509,6 +1552,7 @@ CASES = [
      case_description_no_defect_fixed_without_its_period),
     ("G3 gh failing on the description read could not run", case_description_read_fails),
     ("G3 a description jq cannot read could not run", case_description_unparsable),
+    ("G3 the description reader failing could not run", case_description_reader_fails),
     ("H1 a not-fixed hashtag line whose #follow_up link is a Markdown citation passes",
      case_follow_up_hashtag_with_a_markdown_citation),
     ("H1 a #follow_up link that ends a sentence passes", case_follow_up_bare_link_ending_a_sentence),
@@ -1674,48 +1718,17 @@ MUTATIONS = [
      [case_e2_head_moved]),
     ("without the pin-is-head check", [('[ "$approved_sha" = "$head" ] ||', "true ||")],
      [case_e3_approval_covers_another_commit]),
-    ("without the description check", [('[ "$has_defect_line" = "true" ] ||', "true ||")],
+    ("without the description check", [('[ "$defect_line_count" -gt 0 ] ||', "true ||")],
      [case_description_without_a_label]),
-    ("the label allowed anywhere in a line", [('any(test("^', 'any(test("')],
-     [case_description_with_the_label_only_mid_line, case_description_hashtag_only_mid_line]),
-    ("hashtags not accepted", [("(?:#(?:root_cause", "(?:#never(?:root_cause")],
-     [case_description_root_cause_hashtag_line, case_description_root_cause_not_fixed_hashtag_line,
-      case_description_no_defect_fixed_hashtag_line, case_description_hashtag_in_bold_after_a_bullet]),
-    ("\"#root_cause_not_fixed\" not accepted", [("(?:_not_fixed)?", "")],
-     [case_description_root_cause_not_fixed_hashtag_line]),
-    ("\"#no_defect_fixed\" not accepted", [("|no_defect_fixed)", "|no_defect_fixed_never)")],
-     [case_description_no_defect_fixed_hashtag_line]),
-    ("a hashtag allowed to run on into a longer word", [("(?!\\\\w)", "")],
-     [case_description_hashtag_run_on_into_a_longer_word]),
-    ("no bullet allowed before the label", [("(?:[-*+]\\\\s+)?", "")],
-     [case_description_label_after_an_indented_bullet]),
-    ("no bold type allowed around the label", [("(?:\\\\*\\\\*|__)?", "")],
-     [case_description_label_in_bold_type]),
-    ("\"Root cause not fixed:\" not accepted", [("(?: not fixed)?", "")],
-     [case_description_root_cause_not_fixed_line]),
-    ("\"No defect fixed.\" not accepted", [("|No defect fixed(?:", "|No defect fixed never(?:")],
-     [case_description_no_defect_fixed_line]),
-    ("the colon after \"Root cause\" made optional", [("(?:\\\\*\\\\*|__)?:|No", "(?:\\\\*\\\\*|__)?:?|No")],
-     [case_description_root_cause_without_its_colon]),
-    ("the period after \"No defect fixed\" dropped", [("(?:\\\\*\\\\*|__)?\\\\.)", "(?:\\\\*\\\\*|__)?)")],
-     [case_description_no_defect_fixed_without_its_period]),
+    ("without the description reader's check",
+     [('[ $? -eq 0 ] || cannot "could not read the defect lines',
+       ': || cannot "could not read the defect lines')],
+     [case_description_reader_fails]),
+    ("no line read as a not-fixed line",
+     [('select(.kind == "root_cause_not_fixed")', "select(false)")],
+     [case_follow_up_captured_not_fixed_line_without_it]),
     ("without the #follow_up check", [('[ -n "$link" ] || fail', "true || fail")],
      [case_follow_up_captured_not_fixed_line_without_it, case_follow_up_link_to_a_commit]),
-    ("the old not-fixed label not read as a not-fixed line",
-     [("|Root cause not fixed(?:", "|Root cause never fixed(?:")],
-     [case_follow_up_captured_not_fixed_line_without_it]),
-    ("the not-fixed hashtag not read as a not-fixed line",
-     [("(?:#root_cause_not_fixed(?!\\\\w)|", "(?:#never_root_cause_not_fixed(?!\\\\w)|")],
-     [case_follow_up_missing_on_an_outage_hashtag_line]),
-    ("a link anywhere on the line read as the #follow_up link",
-     [('capture("#follow_up(?!\\\\w).*?', 'capture(".*?')],
-     [case_follow_up_link_without_the_hashtag]),
-    ("a link other than an issue or pull request accepted",
-     [("(?:issues|pull)/[0-9]+)", "[a-z]+/[0-9a-z]+)")], [case_follow_up_link_to_a_commit]),
-    ("trailing punctuation kept on the link", [('sub("[.,;:]+$"; "")', '.')],
-     [case_follow_up_bare_link_ending_a_sentence]),
-    ("the carriage return kept on the line", [('| sub("\\r$"; "")', "")],
-     [case_follow_up_line_ending_in_carriage_return]),
     ("only the first not-fixed line checked", [("line_index < not_fixed_count", "line_index < 1")],
      [case_follow_up_second_not_fixed_line_without_it]),
     ("an issue closed as not planned not refused",
@@ -1730,8 +1743,6 @@ MUTATIONS = [
     ("without the link lookup parse check",
      [('[ $? -eq 0 ] || cannot "could not parse what GitHub returned', ': || cannot "could not parse what GitHub returned')],
      [case_follow_up_lookup_unparsable]),
-    ("a #fragment or sub-path no longer cut from the link", [("(?:[/#?].*)?$", "$")],
-     [case_follow_up_link_with_a_fragment, case_follow_up_link_with_a_sub_path]),
     ("a link to the pull request being merged not refused",
      [('[ "$link_number" != "$PR" ] || fail', 'true || fail')],
      [case_follow_up_link_to_this_pull_request,
@@ -1780,8 +1791,7 @@ def run_mutations():
             mutated = mutated.replace(old, new)
         if not applied:
             continue
-        mutated_gate = Path(tempfile.mkdtemp(dir=scratch)) / "merge-gate.sh"
-        mutated_gate.write_text(mutated)
+        mutated_gate = gate_copy(mutated)
         for target in targets:
             ok, detail = target(mutated_gate)
             check(f"mutation '{mutation_name}' turns red: {case_name_of(target)}", not ok,
@@ -1810,8 +1820,7 @@ def main():
     first = run_cases(GATE, "")
     run_mutations()
     # The control: an unmutated copy, run after every mutation.
-    control_gate = Path(tempfile.mkdtemp(dir=scratch)) / "merge-gate.sh"
-    shutil.copyfile(GATE, control_gate)
+    control_gate = gate_copy(GATE.read_text())
     control = run_cases(control_gate, "control after mutations: ")
     open_after = open_file_descriptor_count()
     check("no file descriptor is left open by the cases and mutations",
