@@ -18,7 +18,8 @@ A working outline, not for merging. One line per concept; the prose pages are wr
 - Prompt and code are a continuum, not a choice: code-prompt-code, a program that hands one judgment to a model, almost always beats a prompt alone.
 - A prompt to a fresh agent, given only what the step needs, works far better than the same prompt to a busy agent deep in a long context.
 - Good and working beats three things: doing nothing; expecting too much of agents, such as hoping a line in CLAUDE.md will fix a problem; and trying to be perfect, which no system of this size can be.
-- Good and working means efficient, reasonably safe, and reasonably quick to build, run and maintain.
+- Good and working means efficient, reasonably safe, and reasonably quick to build, run and maintain: one technique at one moment, measured, then a second only for a gap the measure shows.
+- Use what exists before adding: a moment in section 3, a store in section 6, a program already built; a new store, service, channel or record agents must write is the costliest fix and needs the reason no existing one serves.
 - A good-enough check beats none, unless its false alarms teach agents to ignore it.
 - Set the system up for success: names, prefixes and suffixes that say what a file is let agents and programs both act on it rightly.
 - Effort up front is amortised: a confusing name, renamed once, pays back over thousands of future pull requests.
@@ -86,7 +87,7 @@ A working outline, not for merging. One line per concept; the prose pages are wr
 - A pattern in a command, a file or a reply: a keyword, a regular expression, a parsed shell command, parsed Markdown.
 - A file name's prefix or suffix: `-nbd`, `-test.py`, `-prompt.md`, `-instructions.md`, `-design.md`, `-draft`.
 - A path: a guarded-file, a memory directory, the log-store.
-- A hashtag a program reads: `#next_to_present` in walk minutes; `#root_cause`, `#root_cause_not_fixed`, `#follow_up` in a pull request description; `#pre_approved_change` in a marker; also a review's `**Blocks.**` label, which the fix-round program reads.
+- A hashtag a program reads: `#next_to_present` in walk minutes; `#root_cause` and its kin in a pull request description; `#pre_approved_change` in a marker; a review's `**Blocks.**` label.
 - A marker file: `.walk-approved`, `.location-write-approved`, `.backup-write-approved`.
 - A changed hash: a guarded-file whose git blob hash changed without an approval.
 - A repository rule test: a test that fails the push or the merge when a file breaks a rule about its content, such as a citation in standing instructions or an `except: pass`; for such a rule it is cheaper and more complete than a hook.
@@ -94,7 +95,7 @@ A working outline, not for merging. One line per concept; the prose pages are wr
 - A count from logs: a fourth cold-read-full-run of one change; repeated failures.
 - A time: a daily job, such as the daily full test run.
 - A model's judgment, as code-prompt-code: a cold reader, a reviewer.
-- Quality: precise is best, and good enough is allowed. False positives are tolerable while they are rare or soft-blocked; the failure is so many that agents learn to ignore the true ones. False negatives are caught by a later detection.
+- Quality: precise is best, and good enough is allowed. A false alarm costs what the technique costs per fire, nothing for a note, a turn for a block or a send-back, so the fire rate on past transcripts picks the form; the failure is so many that agents learn to ignore the true ones. A miss is tolerable when the design names the later detection that catches it before it costs work; a miss nothing catches is a gap to write down, not a reason to build for every route.
 
 ## 6. Durable state: what agents must not be trusted to remember
 
@@ -103,6 +104,8 @@ A working outline, not for merging. One line per concept; the prose pages are wr
 - Logs: the shared-log; the log-store (cold-read-records, walks, transcripts, session-dialogs).
 - The task list; GHIs and their GHI-MDs.
 - Why: it is exact, it lasts as long as needed, and a program can read it, so it can drive a detection.
+- Put a record where the agents who need it already read: it then needs no delivery, receipt or second store.
+- A detector an agent must keep alive or read stops when that agent does; a hook or a scheduled job does not.
 
 ## 7. The act's states
 
@@ -115,9 +118,9 @@ A working outline, not for merging. One line per concept; the prose pages are wr
 ## 8. The workflow: fixing a problem in agent behaviour
 
 1. Notice: the user, a reviewer, an agent or a watcher sees the problem.
-2. Measure: search past transcripts and the log-store for how often it happens, in what pattern, and at which moment it could be caught. Build only when CLAUDE.md's rule on guards is met.
-3. Choose: the flowchart in section 9, then a pattern from section 10; a program, a block, a detection after the act, a just-in-time instruction, judgment, and standing text last. Pick the moment and the kind together.
-4. Write the agent-facing-message.
+2. Measure: from transcripts and the log-store, count the episodes, what each cost, the route each took (tool, binary, machine) and the moment a program could first have seen it. Build when the failure has happened, as a transcript or a log shows, or is foreseeable within a month on concrete evidence, and it loses or damages work, stops work beyond the failing task, or goes unnoticed until it does; otherwise leave it. A cause in the project's own code, settings or instructions is fixed, not guarded. The counts in hand suffice to choose; measure again only to pick a moment or set a detector's precision, never to defer the choice.
+3. Choose: the flowchart in section 9, then a pattern from section 10; a program, a block, a detection after the act, a just-in-time instruction, judgment, and standing text last. Pick the moment and the kind together, one pattern at one moment first, and a second only for misses that alone meet step 2's threshold; three or more, or a new store, service or channel, mean the problem was not cut small enough. Cover the routes the episodes took; name the rest as uncovered.
+4. Write the agent-facing-message: what was stopped or found; why it is wrong, in words the agent can give the user; what to do now, one instruction per line with its condition. A block or a send-back only for a detector right nearly every time and firing seldom (section 5); otherwise a note at the next turn.
 5. Cold-read it: a fresh-reader's misreadings often expose a flaw in the process itself; fix the process, not only the words.
 6. Build and test: cause the failure in a test; run mutation testing on the code that handles it; for a changed Bash guard, replay recorded commands through it at main and at the head to see which verdicts change. A reminder fires once for each thing it reminds of; a check that could not run says so, and never reads as a pass.
 7. Review and merge: merge-lane-2.
@@ -128,7 +131,7 @@ A working outline, not for merging. One line per concept; the prose pages are wr
 
 ```mermaid
 flowchart TD
-    N["A problem in agent behaviour is noticed and measured in transcripts and logs: how often, what pattern, at which moment"]
+    N["A problem in agent behaviour is noticed and measured in transcripts and logs: how often, at what cost, by which route, at which moment"]
     Q1{"Can a program do the step, or make the wrong act impossible or the default?"}
     T1["Patterns 1 to 3: a program does the step, code-prompt-code, a constraint"]
     Q2{"Can a check before the act tell that it is wrong?"}
@@ -147,16 +150,20 @@ flowchart TD
     N --> Q1
     Q1 -- yes --> T1
     Q1 -- no --> Q2
-    T1 -- what it cannot cover --> Q2
+    T1 -- "misses meet the threshold" --> Q2
+    T1 -- "misses below it" --> W
     Q2 -- yes --> T2
     Q2 -- no --> Q3
-    T2 -- what the block misses --> Q3
+    T2 -- "misses meet the threshold" --> Q3
+    T2 -- "misses below it" --> W
     Q3 -- yes --> T3
     Q3 -- no --> Q4
-    T3 --> Q4
+    T3 -- "misses meet the threshold" --> Q4
+    T3 -- "misses below it" --> W
     Q4 -- yes --> T4
     Q4 -- no --> Q5
-    T4 --> Q5
+    T4 -- "misses meet the threshold" --> Q5
+    T4 -- "misses below it" --> W
     Q5 -- yes --> T5
     Q5 -- "no, and nothing above fits" --> T6
     Q5 -- "no, and something above fits" --> W
@@ -168,18 +175,18 @@ flowchart TD
 
 ## 10. Patterns: the techniques, grouped
 
-Patterns combine, and most fixes use two: a block that names the program to use; a check after the act behind a block that a shell can route around; a line of standing text backed by a hook. Each pattern gives its kind and its moment, when to use it, and one example built here; the inventory lists every technique.
+Patterns combine, but most fixes are one, and few need a third: a block that names the program to use; a check after the act behind a block that a shell can route around; a line of standing text backed by a hook. Each pattern gives its kind and its moment, when to use it, and one example built here; the inventory lists every technique.
 
 1. **A program does the step, or keeps what agents would have to remember.** Do it instead; when the agent runs it, after the act, or on a schedule. A program does a step agents get wrong or forget, or holds the state they would otherwise have to recall. Use when the step is mechanical, or its rules are too many to keep in mind: this removes the problem instead of reminding agents of it. Example: a program keeps each checkout up to date with main, and tells the agent when a file of standing instructions it may be following has changed.
 2. **Code-prompt-code.** Do it instead; when the agent runs it. A program does everything but one judgment, hands that judgment to a fresh model with a minimal brief, and acts on the answer. Use when one step needs judgment and the rest is mechanical: the program keeps the counts, the files and the limits, which agents lose. Example: the cold read, where a program freezes a copy of the document, starts fresh cold-read-cells on it, collects their reports, and refuses a fourth full run of one change.
 3. **Constrain.** Constrain; before the work. Withhold the power, or set the default, so that the wrong act cannot happen or the right one happens unasked. Use when the agent never needs to do the wrong act. Example: each role's GitHub identity lacks the powers its role does not need; a fresh-agent that reviews starts without project hooks, Bash or credentials.
-4. **A block before the tool runs: hard, soft or user.** Block; just before a tool runs. A hard-block refuses an act that is always wrong; a soft-block refuses until the agent has checked and says why, in a marker or a prefix on the command, and each clear is logged; a user-block refuses until the user's own words, quoted into a marker, approve the act. Use a hard-block only where the check has almost no false alarms, a soft-block where it is usually right, and a user-block where only the user may decide. A check that parses commands misses other routes to the same act, so back it with a check after the act (pattern 8) or at commit or push (pattern 6). Examples: a tmux kill that names no server is refused (hard); keystrokes sent to a terminal are refused until the agent has checked the target and reruns the command with `CLAUDE_VERIFIED_DETACHED=1` (soft); a change to an instruction file waits for `.walk-approved` holding the user's words (user).
+4. **A block before the tool runs: hard, soft or user.** Block; just before a tool runs. The three kinds are section 4's. Use a hard-block only where the check has almost no false alarms, a soft-block where it is usually right, and a user-block where only the user may decide. A check that parses commands misses other routes to the same act, so back it with a check after the act (pattern 8) or at commit or push (pattern 6). Examples: a tmux kill that names no server is refused (hard); keystrokes sent to a terminal are refused until the agent has checked the target and reruns the command with `CLAUDE_VERIFIED_DETACHED=1` (soft); a change to an instruction file waits for `.walk-approved` holding the user's words (user).
 5. **Refuse and redirect.** Block, then do it instead; just before a tool runs. Refuse a hand-typed command for a step that a program does right, and name the program; or hand back the corrected command whole. Use when a program or a mechanical fix exists, so the refusal costs the agent one step. Examples: a hand-typed `codex exec` is refused, and the agent sent to `scripts/run-codex-task-from-brief.py`; a search whose file name the shell would pass as an option is refused, with the command corrected.
 6. **A git hook.** Block, or do it instead; at commit or push. Git runs it for every agent-binary, Codex included, whatever command made the commit or the push. Use when the act is a commit or a push, however it was typed. Examples: the pre-commit hook refuses a commit made under the wrong identity; the pre-push hook runs the test suites whose inputs changed.
 7. **A gate at the pull request.** Block, and judge; at a pull request. A program refuses the merge until something it can read is in place, and reviewers are chosen by what the pull request changes. Use for what must hold before main changes, which the agent that made the change cannot be trusted to check. Example: the merge gate refuses a pull request whose description has no `#root_cause`, `#root_cause_not_fixed` or `#no_defect_fixed` line.
 8. **A check on what was just written.** Detect, then correct or instruct; just after a tool runs. Check the file just written, and tell the agent what is wrong and how to fix it. Use when the mistake shows in the file and the fix is the agent's to make. Examples: a Markdown paragraph broken across lines is reported; words the style guide lists are named, with what to write instead.
-9. **A check on the reply at turn end.** Detect, then correct; at turn end. The reply has already been shown; a Stop hook finds a pattern in it, sends the agent back once with what to fix, and logs each fire, so that false alarms can be counted. Use when the mistake is in what the agent tells the user, and worth correcting now. Example: a reply that does not name the approval-walk item waiting for the user is sent back to name it.
-10. **A note on the last reply when the next prompt arrives.** Detect, then instruct; when the user's prompt arrives. Add a note to the agent's next turn about its last reply, without stopping anything. Use when the mistake is small and the agent should know for next time. Example: a reply naming a ned-box path, which the user cannot open on his Mac, gets a note at the next prompt.
+9. **A check on the reply at turn end.** Detect, then correct; at turn end. The reply has already been shown; a Stop hook finds a pattern in it, sends the agent back once with what to fix, and logs each fire, so that false alarms can be counted. Use when the mistake is in what the agent tells the user, worth a turn to correct now, and seldom detected; a frequent one takes pattern 10. Example: a reply that does not name the approval-walk item waiting for the user is sent back to name it.
+10. **A note on the last reply when the next prompt arrives.** Detect, then instruct; when the user's prompt arrives. Add a note to the agent's next turn about its last reply, without stopping anything. Use when the mistake is small, or detected too often for a send-back: a note costs no turn. Example: a reply naming a ned-box path, which the user cannot open on his Mac, gets a note at the next prompt.
 11. **Detection outside the session.** Detect; at commit or push, at a pull request, or on a schedule. A rule test in the repository fails the push or the merge when a file breaks a rule about its content; a scheduled job finds what no session sees. Its report must reach an agent or the user who will act on it, or it detects nothing. Use for rules about files' content, and for state that no session watches. Examples: a test fails when a standing instruction carries a citation; the test run at a pull request's head reports to merge-lane-2 before it merges.
 12. **A just-in-time instruction.** Instruct; just before the act, or when the agent runs a program. The instruction arrives when it applies: a hook's added context, a program's output or error saying what to do next, or a skill's steps, loaded when the agent judges that the skill's description matches its task. Use when the agent can do the step but forgets how or when. Example: a push that changes Markdown gets a reminder to run the citation checks first.
 13. **A fresh agent with a minimal brief.** Instruct, or judge; when a subagent or fresh-agent starts. Hand the step to a fresh agent whose brief holds only what the step needs. Use when the step needs care that a busy agent, deep in a long context, gives badly. Example: new shared names go to the naming fresh-agent, which checks them against the naming page.
