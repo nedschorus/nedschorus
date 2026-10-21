@@ -90,16 +90,29 @@ def pull_request_description_defect_lines(description):
     return found
 
 
+def not_utf8_place(raw, start):
+    """Where in `raw` the byte at `start` that is not UTF-8 sits: its line number and
+    up to 30 characters of that line on each side, the bad bytes shown as escapes."""
+    line_number = raw.count(b"\n", 0, start) + 1
+    line_start = raw.rfind(b"\n", 0, start) + 1
+    line_end = raw.find(b"\n", start)
+    line = raw[line_start:len(raw) if line_end == -1 else line_end]
+    column = start - line_start
+    before = line[max(0, column - 30):column].decode("utf-8", "backslashreplace")
+    after = line[column:column + 30].decode("utf-8", "backslashreplace")
+    return f"line {line_number} has byte 0x{raw[start]:02x}, in: {before}{after}"
+
+
 def main():
     argparse.ArgumentParser(
         description="Read one pull request description on stdin and print its defect lines "
                     "as a JSON list of {\"kind\", \"line\", \"link\"}.").parse_args()
+    raw = sys.stdin.buffer.read()
     try:
-        description = sys.stdin.buffer.read().decode("utf-8")
+        description = raw.decode("utf-8")
     except UnicodeDecodeError as error:
-        print(f"pull-request-description-defect-line-hashtags-reader-common: the description on "
-              f"stdin is not UTF-8 text ({error}); reading it again gives the same error, so the "
-              f"pull request's author must rewrite the description.", file=sys.stderr)
+        print(f"scripts/pull-request-description-defect-line-hashtags-reader-common.py: the description is not "
+              f"UTF-8 text: {not_utf8_place(raw, error.start)}", file=sys.stderr)
         return 2
     print(json.dumps(pull_request_description_defect_lines(description)))
     return 0

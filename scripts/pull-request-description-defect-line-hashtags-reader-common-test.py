@@ -98,10 +98,18 @@ def case_command_prints_an_empty_list_for_no_lines(_reader, path):
 
 
 def case_command_refuses_a_description_that_is_not_utf8(_reader, path):
-    completed = run_command(path, b"#root_cause \xff\n")
+    completed = run_command(path, b"#no_defect_fixed\nA caf\xe9 line, then more.\n")
     return (completed.returncode == 2 and completed.stdout == b""
-            and b"the description on stdin is not UTF-8 text" in completed.stderr,
+            and completed.stderr == (b"scripts/pull-request-description-defect-line-hashtags-reader-common.py: the "
+                                     b"description is not UTF-8 text: line 2 has byte 0xe9, in: "
+                                     b"A caf\\xe9 line, then more.\n"),
             f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
+
+
+def case_not_utf8_place_keeps_thirty_characters_each_side(reader, _path):
+    raw = b"a" * 50 + b"\xff" + b"b" * 50
+    place = reader.not_utf8_place(raw, 50)
+    return place == "line 1 has byte 0xff, in: " + "a" * 30 + "\\xff" + "b" * 29, place
 
 
 RC, NF, ND = "root_cause", "root_cause_not_fixed", "no_defect_fixed"
@@ -145,7 +153,8 @@ CASES = [
     ("a #follow_up link on a #root_cause line is not read", case_follow_up_on_a_root_cause_line_not_read),
     ("the command prints the lines as JSON", case_command_prints_the_lines_as_json),
     ("the command prints [] for a description with no defect line", case_command_prints_an_empty_list_for_no_lines),
-    ("the command exits 2 on a description that is not UTF-8", case_command_refuses_a_description_that_is_not_utf8),
+    ("the command exits 2 on a description that is not UTF-8, naming its line and the bytes around it", case_command_refuses_a_description_that_is_not_utf8),
+    ("the place of a byte that is not UTF-8 keeps 30 characters on each side", case_not_utf8_place_keeps_thirty_characters_each_side),
     ("#root_cause", case_root_cause_hashtag),
     ("#root_cause_not_fixed", case_not_fixed_hashtag),
     ("#no_defect_fixed", case_no_defect_fixed_hashtag),
@@ -232,6 +241,10 @@ MUTATIONS = [
      [case_follow_up_link_with_a_fragment, case_follow_up_link_with_a_sub_path, case_follow_up_link_with_a_query]),
     ("a description that is not UTF-8 read as success", [("        return 2", "        return 0")],
      [case_command_refuses_a_description_that_is_not_utf8]),
+    ("the line number counted from 0", [('raw.count(b"\\n", 0, start) + 1', 'raw.count(b"\\n", 0, start)')],
+     [case_command_refuses_a_description_that_is_not_utf8]),
+    ("the excerpt not cut to 30 characters", [("column - 30", "column - 300")],
+     [case_not_utf8_place_keeps_thirty_characters_each_side]),
 ]
 
 

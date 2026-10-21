@@ -330,9 +330,8 @@ body_read=$(gh pr view "$PR" --repo "$REPO" --json body)
 description=$(jq -er '.body | strings' <<<"$body_read")
 [ $? -eq 0 ] || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
 defect_lines=$(python3 "$DESCRIPTION_DEFECT_LINE_READER" <<<"$description")
-[ $? -eq 0 ] || cannot "could not read the defect lines of pull request $PR's description with $DESCRIPTION_DEFECT_LINE_READER; the reader's error, if it printed one, is just above this line." \
-  "If that error says the description is not UTF-8 text, running the gate again on the same description cannot help: ask the pull request's author to rewrite the description, then run the gate again." \
-  "Otherwise run the gate again once; if it stops again with GATE COULD NOT RUN, tell the user everything the gate printed."
+[ $? -eq 0 ] || cannot "could not read the defect lines of pull request $PR's description with $DESCRIPTION_DEFECT_LINE_READER; any error it printed is just above this line." \
+  "Run the gate again once; if it fails the same way, tell the user what both runs printed."
 [ "$defect_lines" != "[]" ] || fail "the pull request's description has no line beginning \"#root_cause\", \"#root_cause_not_fixed\" or \"#no_defect_fixed\", so it does not say whether the pull request fixes a defect and, if it does, whether the change removes the defect's root cause." \
   "Have the pull request's author add one of these lines to the description, starting the line with the hashtag, which may follow a bullet and may be in bold type: \"#root_cause\" and the root cause the change removes; \"#root_cause_not_fixed\" and the root cause that stays, or that none was found, with the reason; or \"#no_defect_fixed\" when the pull request fixes no defect." \
   "Editing the description needs no new commit. Once the description has the line, run the gate again."

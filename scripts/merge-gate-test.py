@@ -329,7 +329,8 @@ def gate_copy(text):
 
 
 def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=None,
-             wrapper=None, arguments=None, jq_failing_filter=None, description_reader_fails=False):
+             wrapper=None, arguments=None, jq_failing_filter=None, description_reader_fails=False,
+             cwd=None):
     case_dir = Path(tempfile.mkdtemp(dir=scratch))
     home = case_dir / "home"
     token_dir = home / ".config" / "nedschorus"
@@ -376,7 +377,7 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
     else:
         command = [BASH, str(gate), *arguments]
     completed = subprocess.run(command, capture_output=True, text=True, env=environment,
-                               timeout=120)
+                               timeout=120, cwd=cwd)
     calls = [json.loads(line) for line in call_log.read_text().splitlines() if line]
     return Run(completed, calls, home)
 
@@ -442,6 +443,12 @@ def passed_pinned_to(run, pr, sha):
 # Cases. Each returns (ok, detail) for the gate at the path it is given, so the
 # mutation section can rerun it against a mutated copy.
 # ---------------------------------------------------------------------------
+
+def case_gate_run_from_another_directory_finds_its_reader(gate):
+    elsewhere = Path(tempfile.mkdtemp(dir=scratch))
+    run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(), cwd=elsewhere)
+    return run.code == 0 and "gate passed" in run.stdout, run.summary()
+
 
 def case_a1_pass_control(gate):
     run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes())
@@ -1442,15 +1449,13 @@ def case_description_reader_fails(gate):
     run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(),
                    description_reader_fails=True)
     reader = gate.parent / DESCRIPTION_DEFECT_LINE_READER.name
-    return could_not_run_after_gh(
+    return (could_not_run_after_gh(
         run, BASE_PR,
         f"GATE COULD NOT RUN: could not read the defect lines of pull request {BASE_PR}'s description "
-        f"with {reader}; the reader's error, if it printed one, is just above this line.\n",
-        "\nIf that error says the description is not UTF-8 text, running the gate again on the same "
-        "description cannot help: ask the pull request's author to rewrite the description, then run "
-        "the gate again.\n"
-        "Otherwise run the gate again once; if it stops again with GATE COULD NOT RUN, tell the user "
-        "everything the gate printed.\n"), run.summary()
+        f"with {reader}; any error it printed is just above this line.\n"
+        "Run the gate again once; if it fails the same way, tell the user what both runs printed.\n")
+            and "UTF-8" not in run.stderr), run.summary()
+
 
 
 def case_description_unparsable(gate):
@@ -1556,6 +1561,8 @@ CASES = [
     ("G3 gh failing on the description read could not run", case_description_read_fails),
     ("G3 a description jq cannot read could not run", case_description_unparsable),
     ("G3 the description reader failing could not run", case_description_reader_fails),
+    ("G3 the gate run from a directory other than its own finds the description reader",
+     case_gate_run_from_another_directory_finds_its_reader),
     ("H1 a not-fixed hashtag line whose #follow_up link is a Markdown citation passes",
      case_follow_up_hashtag_with_a_markdown_citation),
     ("H1 a #follow_up link that ends a sentence passes", case_follow_up_bare_link_ending_a_sentence),
@@ -1723,9 +1730,11 @@ MUTATIONS = [
      [case_e3_approval_covers_another_commit]),
     ("without the description check", [('[ "$defect_lines" != "[]" ] ||', "true ||")],
      [case_description_without_a_label]),
+    ("the description reader found from the working directory",
+     [('DESCRIPTION_DEFECT_LINE_READER="$(dirname "${BASH_SOURCE[0]}")/', 'DESCRIPTION_DEFECT_LINE_READER="scripts/')],
+     [case_gate_run_from_another_directory_finds_its_reader]),
     ("without the description reader's check",
-     [('[ $? -eq 0 ] || cannot "could not read the defect lines',
-       ': || cannot "could not read the defect lines')],
+     [('[ $? -eq 0 ] || cannot "could not read the defect lines', 'true || cannot "could not read the defect lines')],
      [case_description_reader_fails]),
     ("no line read as a not-fixed line",
      [('select(.kind == "root_cause_not_fixed")', "select(false)")],
