@@ -36,7 +36,7 @@ def check(name, condition, detail=None):
 WHO = "the user, or, if you are a subagent, the agent that dispatched you,"
 
 lines = next_step_lines.git_failure_next_step_lines(
-    "`p --x`", "p", failure_marker="p: could not",
+    "`p --x`", "p", text_the_failure_line_contains="p: could not",
     include_the_misspelt_branch_commit_or_path_line=True).splitlines()
 check("a git failure in a program that takes names on its command line gets four lines: "
       "two cases, the unchanged rerun when neither applies, and the stop naming "
@@ -53,7 +53,7 @@ check("a git failure in a program that takes names on its command line gets four
 
 lines = next_step_lines.git_failure_next_step_lines(
     "`git -C d status`", "the sync", include_the_misspelt_branch_commit_or_path_line=False,
-    rerun_fails_when="prints an error again", lines_to_report="the sync line and the error",
+    rerun_fails_when="prints an error again", which_lines_to_quote_in_the_report="the sync line and the error",
     read_by_a_subagent=False,
     next_step_to_skip_when_the_rerun_fails_too="act on the rest of this prompt").splitlines()
 check("a program that takes no names gets one case; a line no subagent reads names only "
@@ -62,6 +62,23 @@ check("a program that takes no names gets one case; a line no subagent reads nam
           "If git's error names no lock file, run exactly `git -C d status` once more.",
           "If the rerun prints an error again, stop, do not act on the rest of this prompt, "
           "and tell the user word for word, the sync line and the error."], lines)
+
+for case_name, arguments in [
+        ("neither the failure text nor the free-text pair", {}),
+        ("the failure text and which lines to quote",
+         {"text_the_failure_line_contains": "x", "which_lines_to_quote_in_the_report": "y"}),
+        ("the failure text and when the rerun fails",
+         {"text_the_failure_line_contains": "x", "rerun_fails_when": "fails"}),
+        ("when the rerun fails without which lines to quote", {"rerun_fails_when": "fails"})]:
+    try:
+        line = next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+            **arguments)
+    except TypeError as error:
+        line = None
+        said = str(error)
+    check(f"a call giving {case_name} is refused, naming the arguments",
+          line is None and "text_the_failure_line_contains" in said
+          and "which_lines_to_quote_in_the_report" in said, line)
 
 line = next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
     "at your next Edit", "h:")

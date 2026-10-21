@@ -362,7 +362,7 @@ def git_failure_next_steps(argv) -> str:
              + shlex.join(["python3", str(pathlib.Path(__file__).resolve()),
                            *(sys.argv[1:] if argv is None else argv)]))
     return next_step_lines.git_failure_next_step_lines(
-        rerun, PROGRAM, failure_marker="could not check, because a git command failed",
+        rerun, PROGRAM, text_the_failure_line_contains="could not check, because a git command failed",
         include_the_misspelt_branch_commit_or_path_line=True)
 
 

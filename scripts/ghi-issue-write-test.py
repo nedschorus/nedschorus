@@ -2174,10 +2174,12 @@ def run_git_failure_cases(scratch: Path):
                                      False)
     printed_lines = complaint.getvalue().splitlines()
     check("a worktree whose removal failed after a landing that stopped "
-          "early has its directory deleted, says no pull request was "
+          "early has its directory deleted, says only git's record was left "
+          "behind, says no pull request was "
           "opened, and names prune, not the removal that failed, to clear "
           "git's record",
           not worktree_parent.exists()
+          and "was left behind; its directory on disk is gone" in complaint.getvalue()
           and "stopped before it opened a pull request" in complaint.getvalue()
           and f"so run `git -C {scratch} worktree prune`, which drops the record"
           in complaint.getvalue()
@@ -2197,9 +2199,11 @@ def run_git_failure_cases(scratch: Path):
                                          True)
     finally:
         tool.shutil.rmtree = real_rmtree
-    check("a worktree whose directory could not be deleted either names no "
+    check("a worktree whose directory could not be deleted either says its "
+          "directory and git's record were both left behind, names no "
           "cleanup command and says to report the lines",
           f"This run could not delete {kept} either" in complaint.getvalue()
+          and "its directory on disk, and git's record of it" in complaint.getvalue()
           and "worktree prune" not in complaint.getvalue(),
           complaint.getvalue())
     # A real repository: the tool's removal is made to fail, its directory

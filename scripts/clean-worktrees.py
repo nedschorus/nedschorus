@@ -514,7 +514,7 @@ def main(argv=None):
               f"this run checked and did nothing beyond what it printed before this line.\n"
               + next_step_lines.git_failure_next_step_lines(
                   rerun, "scripts/clean-worktrees.py",
-                  failure_marker=STOPPED_LINE_START.strip(),
+                  text_the_failure_line_contains=STOPPED_LINE_START.strip(),
                   include_the_misspelt_branch_commit_or_path_line=False),
               file=sys.stderr)
         return 2

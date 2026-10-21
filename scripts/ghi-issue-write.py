@@ -549,7 +549,7 @@ def git_failure_next_steps(rerun: str, program: str) -> str:
     return next_step_lines.git_failure_next_step_lines(
         rerun, program, include_the_misspelt_branch_commit_or_path_line=True,
         rerun_fails_when="stops again on a line naming a git command and its exit code",
-        lines_to_report='that line and the "So" line after it, from each run')
+        which_lines_to_quote_in_the_report='that line and the "So" line after it, from each run')
 
 
 def git_failure_refusal(arguments, completed, not_done: str) -> Refused:
@@ -598,23 +598,31 @@ def remove_landing_worktree(worktree: Path, worktree_parent: Path,
         return
     listed = shlex.join(["git", "-C", str(repository_root), "worktree", "list"])
     if worktree.exists():
+        left_behind = (
+            f"So both parts of the temporary worktree {worktree} were left "
+            f"behind: its directory on disk, and git's record of it, which "
+            f"`{listed}` still shows.")
         cleanup = (
             f"This run could not delete {worktree} either, so no command it "
             f"knows clears the record; tell "
-            f"{next_step_lines.THE_USER_OR_A_SUBAGENTS_DISPATCHER} word for "
-            "word, the lines this run printed from the one that says the "
+            f"{next_step_lines.REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT} "
+            "word for word, the lines this run printed from the one that says the "
             "removal exited.")
     else:
         # The removal that failed is not repeated: prune is a different
         # command, and drops the record of a worktree whose directory is gone.
         prune = shlex.join(["git", "-C", str(repository_root), "worktree",
                             "prune"])
+        left_behind = (
+            f"So git's record of the temporary worktree {worktree}, which "
+            f"`{listed}` still shows, was left behind; its directory on disk "
+            "is gone.")
         cleanup = (
             f"This run deleted the worktree's directory, so run `{prune}`, "
             "which drops the record of a worktree whose directory is gone.\n"
             f"If `{listed}` still shows {worktree} after that, tell "
-            f"{next_step_lines.THE_USER_OR_A_SUBAGENTS_DISPATCHER} word for "
-            "word, the lines this run printed from the one that says the "
+            f"{next_step_lines.REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT} "
+            "word for word, the lines this run printed from the one that says the "
             "removal exited, and what the prune printed.")
     said = (removed.stderr or removed.stdout or "").strip() or "no detail"
     outcome = (
@@ -625,8 +633,7 @@ def remove_landing_worktree(worktree: Path, worktree_parent: Path,
         "printed after this message; once the record is removed, do what "
         "that error's message says.")
     print(f"{shlex.join(arguments)} exited {removed.returncode}: {said}\n"
-          f"So git's record of the temporary worktree {worktree}, which "
-          f"`{listed}` still shows, was left behind.\n"
+          f"{left_behind}\n"
           f"{outcome}\n"
           f"{cleanup}", file=sys.stderr)
 

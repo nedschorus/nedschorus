@@ -391,14 +391,14 @@ CELL_GIT_CHECK_FAILED_AGAIN = "WARNING: the runner could not check"
 STOPPED_BEFORE_LAUNCH_AGAIN = "sanity-check stopped before any agent launched"
 
 
-def git_failure_next_step_lines(rerun: str, failure_marker: str) -> str:
+def git_failure_next_step_lines(rerun: str, text_the_failure_line_contains: str) -> str:
     """What to do after a git command the runner ran has failed, each line ending its line.
 
     Printed after the line that names the command and quotes git's error.
     """
     program = str(pathlib.Path(__file__).resolve())
     return next_step_lines.git_failure_next_step_lines(
-        rerun, program, failure_marker=failure_marker,
+        rerun, program, text_the_failure_line_contains=text_the_failure_line_contains,
         include_the_misspelt_branch_commit_or_path_line=True) + "\n"
 
 

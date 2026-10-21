@@ -2294,7 +2294,7 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
 def git_failure_next_steps(rerun):
     """The lines that tell an agent what to do after a git failure in a run started as rerun."""
     return next_step_lines.git_failure_next_step_lines(
-        rerun, PROGRAM_PATH, failure_marker="git's failure:",
+        rerun, PROGRAM_PATH, text_the_failure_line_contains="git's failure:",
         include_the_misspelt_branch_commit_or_path_line=True)
 
 
