@@ -1,6 +1,6 @@
-# What each agent-binary lets a program see and change
+# Hooks in each agent-binary: when they run, who sees their output, and what they can change
 
-A draft companion to [How this project guides and controls its agents](nedschorus-how-to-guide-and-control-agents.md). It lists, for each agent-binary the project runs, the moments at which a hook or a program can act, what a hook's output and its failure reach, and what a program can rewrite or undo. These facts were checked against each agent-binary's documentation on 2026-10-21; they change between releases, so check the current documentation before a design depends on one.
+A draft companion to [Techniques that shape what agents do and say, with hooks, prompts and code](nedschorus-techniques-that-shape-what-agents-do-and-say-with-hooks-prompts-and-code.md). It lists, for each agent-binary the project runs, the moments at which a hook or a program can act, what a hook's output and its failure reach, and what a program can rewrite or undo. These facts were checked against each agent-binary's documentation on 2026-10-21; they change between releases, so check the current documentation before a design depends on one.
 
 ## Claude Code
 

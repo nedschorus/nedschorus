@@ -1,133 +1,147 @@
 # Techniques that shape what agents do and say, with hooks, prompts and code
 
-This project's purpose is instructing and controlling agents: in their work, in what they say, and in how they work with the user and each other. This page lists its techniques. Read it before you propose a rule for CLAUDE.md or another file of agent-instructions, and before you build a hook or a check. To save a lesson, read [the page on saving a lesson where an agent meets it](nedschorus-how-to-save-a-lesson-where-an-agent-meets-it-when-it-applies-instead-of-in-a-memory-note.md).
+A draft. This page says how the project makes its AI agents do and say the right thing, and how to fix a problem in their behaviour. The detail lives in two companion pages: [hooks in each agent-binary: when they run, who sees their output, and what they can change](nedschorus-hooks-in-each-agent-binary-when-they-run-who-sees-their-output-and-what-they-can-change.md), and the [inventory of every technique](agent-control-techniques-inventory-draft.md).
 
-The goal is good enough, not perfect: efficient, reasonably safe, and reasonably quick to build, run and maintain. A detection that is good enough, as a skill's trigger is, is very useful. A block that refuses some correct acts and misses some wrong ones is acceptable: a soft-block lets the agent past a wrong refusal, and a detection after the act catches what the block missed.
+## Overview
 
-*Planned* marks what is decided but not built; *proposed* marks what is suggested but not decided; *pending a user-ruling* marks a question put to the user. Hooks are Claude Code's, so a technique built as a hook does not reach a Codex agent.
+**In short.** Agents are patient but forgetful: a rule read at the start of a long session fades, while a program that acts at the right moment does not. So the project controls its agents mainly by mechanism, tells them what they need at the moment they act, and leaves standing text for last. To fix a problem, name the act that went wrong and the first moment a program could prevent or see it, then walk the flowchart below: the first of its questions answered yes picks the technique. Tell the agent what was stopped and what to do, and judge the fix by whether the problem stops recurring.
 
-## Choosing a technique
+### The problem
 
-Ask these questions in order, and use each technique that fits: they work together.
+The project is run by AI agents working for one user: Claude Code agent-seats, and Codex and Gemini agents for some tasks, on two machines. What we shape is an agent's act: a tool call, such as an edit, a shell command or a file write; a reply to the user; a message to another agent, or the brief a fresh-agent starts from; a task created or marked done; a commit, a push or a pull request.
 
-1. **Can a program do the work?** Then a program does it, handing only the judgment to a prompt: code-prompt-code. A rare step that one sentence states needs no program.
-2. **Can a check before the act tell that the act is wrong?** Then refuse the act, and say in the refusal what to do instead: block-and-inform. When the check will often refuse a correct act, make the refusal a soft-block. For the wrong acts the check misses, go on to question 3.
-3. **Can a check see the wrong act only after it happens?** Then detect it, tell the agent, and have it corrected: detect-inform-correct.
-4. **Does the agent need to know or be reminded of something to act as instructed?** Then tell it just before it acts: a note, a reminder of a tool, a skill or a code-prompt-code procedure, or steps to follow. An instruction lies dormant unless a detection triggers it; a skill's `description:` line is often trigger enough.
-5. **Is it judgment no check can make?** If another agent can judge it, a review by another agent; if only the user can decide it, an approval-walk.
-6. **Only if none fits:** a line in the seat-brief when only one agent-seat does that work, in the glossary when it is what a word means, and last, in CLAUDE.md or the user's own `~/.claude/CLAUDE.md`. Text loaded at the start of an agent-session works well for a fresh, short-lived agent, and poorly for a long-lived one after 50,000 tokens of context.
+Agents fail in ways people do not. Their context fades as it grows, so an instruction read an hour ago no longer steers them. They cannot recall a note they have not reread, and may believe they remember what they do not. They state with confidence what they have not checked.
 
-A hook is best mechanical and precise, but a detection or a correction that is only good enough is allowed. Something is better than nothing, unless false positives are so many that agents learn to ignore the true ones.
+They also have a patience people lack. An agent will search every name, follow every rule and bring a fresh pair of eyes to every check, when a program asks it to at the moment. No team of people would accept the rigidity that takes; agents do, and cheap computing pays for it: ned-box, a 2026 mini PC, runs about a million times as many instructions per second as the PDP-7 that Unix was first written on. So much of the work runs as state machines, gates and checks that would be too onerous for people. That is why these techniques rest on SDLC best practice but are not yet part of it.
 
-## How an agent's act passes through these techniques
+### What the flowchart stands on
+
+**A mechanism beats a prompt.** Where a program can decide a step, it decides. Where only a judgment can, a program detects the moment, gathers what the judgment needs and hands it on; it never guesses in the judgment's place.
+
+**Prompt and code are a continuum.** Code-prompt-code, a program that hands one judgment to a model and acts on the answer, almost always beats a prompt alone. A fresh-agent given only what the step needs beats a busy agent deep in a long context. The judgment goes to whoever already holds what it needs: a fresh model when a program can gather the facts, and the acting agent, told what the program found, when the facts are only in its own context.
+
+**Detection comes first.** An instruction, a block or a correction does nothing until something detects its moment. The moments, in the order of the work, are: before the work starts; when a fresh-agent or subagent starts; when the user's prompt arrives; just before a tool runs; when the agent runs a program; just after a tool runs; at turn end, after the reply is shown; at commit or push; at a pull request; and on a schedule. A technique acts at the first moment that can prevent or see the wrong act, and at a later one only where the first cannot tell right from wrong.
+
+**The ladder.** The kinds of technique, from surest to weakest, are: do the step by program, or make the wrong act impossible; block it before it happens; catch it after and correct it; instruct the agent at the moment; hand it to a judge; and last, standing text, which fades over a long session. The flowchart walks down this ladder.
+
+**State lives outside the agent.** Whatever must be kept exactly goes in a file, a tag or a log a program can read: an approval, the walk-minutes, a session-handoff, the task list, the log-store. A record is written where its readers already read, at the moment it is made.
+
+**Every message teaches.** A block, a correction or a note says what was stopped or found, why it is wrong, and what to do now. A false alarm costs more than its turn, because enough of them teach agents to ignore the true ones. So a block fires only where its check is nearly always right, a detector that can run the program it would send the agent to runs it first and fires on the result, and a reminder fires once for each act it finds.
+
+**Good and working beats perfect.** Build only for a failure that has happened, or soon will, and that costs work. Fix a cause in the project's own code first, and use what already exists. Add one technique at one moment, measure it, and add a second only for a gap the measure shows. The measure is whether the problem stops recurring, never how often the technique fires.
+
+**Set the system up for success.** A name, prefix or suffix that says what a file is lets agents and programs act on it rightly, and a confusing name renamed once pays back over thousands of pull requests.
+
+**A technique reaches only what runs it.** A Claude Code hook reaches Claude Code agents only, and a git hook reaches every agent-binary that commits. A hook that fails with an error tells only the user, not the agent, and a guard that crashes or times out lets the act through unless it is set to block when it fails. Check each channel a design depends on, in the companion page on hooks, before building on it.
+
+## The flowchart
 
 ```mermaid
-stateDiagram-v2
-    state "Agent chooses an act" as Choosing
-    state "Pre-tool check" as PreToolCheck
-    state "Hard-blocked" as HardBlocked
-    state "Soft-blocked" as SoftBlocked
-    state "User-blocked" as UserBlocked
-    state "Tool runs" as ToolRuns
-    state "Post-tool check" as PostToolCheck
-    state "Program corrects" as ProgramCorrects
-    state "Agent corrects" as AgentCorrects
-    state "Done" as Done
-
-    [*] --> Choosing
-    Choosing --> PreToolCheck: calls a tool
-    PreToolCheck --> ToolRuns: nothing detected
-    PreToolCheck --> ToolRuns: alert, context added
-    PreToolCheck --> ToolRuns: marker clears a block
-    PreToolCheck --> HardBlocked: never allowed
-    PreToolCheck --> SoftBlocked: maybe unwanted, no reason
-    PreToolCheck --> UserBlocked: needs the user's approval
-    HardBlocked --> Choosing: tries another way
-    SoftBlocked --> Choosing: retries with a reason, or another way
-    UserBlocked --> Choosing: user approves, or another way
-    ToolRuns --> PostToolCheck: tool finishes
-    PostToolCheck --> Done: nothing detected
-    PostToolCheck --> ProgramCorrects: fixable by a program
-    PostToolCheck --> AgentCorrects: not fixable by a program
-    ProgramCorrects --> Done: reverted, agent told why
-    AgentCorrects --> Choosing: correction is a new act
-    Done --> Choosing: next act
-    Done --> [*]: turn ends
+flowchart TD
+    P["Which act went wrong, and when could a program first prevent or see it?"]
+    G1{"Has it happened, or will it soon, and does it cost work?"}
+    G2{"Is the cause in our own code, settings or instructions?"}
+    Q1{"Can a program do the step, or make the wrong act impossible?"}
+    Q2{"Can a check before the act tell that it is wrong?"}
+    Q3{"Can a check see it after the act?"}
+    Q4{"Can the agent, or a fresh-agent, do it right if told at the moment?"}
+    Q5{"Does it need a judgment no check can make?"}
+    X["Leave it, and write down the gap"]
+    F["Fix the cause"]
+    L1["Do it by program: a program does the step; code-prompt-code; a constraint"]
+    L2["Block it before: a hard, soft or user block; refuse and redirect; a git hook; a gate at the pull request"]
+    L3["Catch it after: a check on what was written; a check on the reply at turn end; a note at the next prompt; detection outside the session"]
+    L4["Instruct at the moment: a just-in-time instruction; a fresh-agent with a minimal brief"]
+    L5["Judge: another agent, or the user"]
+    L6["Standing text, last"]
+    M["Write the message, build and test it, then measure whether the problem stops"]
+    P --> G1
+    G1 -- no --> X
+    G1 -- yes --> G2
+    G2 -- yes --> F
+    G2 -- no --> Q1
+    Q1 -- yes --> L1
+    Q1 -- no --> Q2
+    Q2 -- yes --> L2
+    Q2 -- no --> Q3
+    Q3 -- yes --> L3
+    Q3 -- no --> Q4
+    Q4 -- yes --> L4
+    Q4 -- no --> Q5
+    Q5 -- yes --> L5
+    Q5 -- no --> L6
+    F & L1 & L2 & L3 & L4 & L5 & L6 --> M
+    M -- "the problem comes back" --> P
 ```
 
-| State | What happens |
-|---|---|
-| Agent chooses an act | The agent decides on a tool call. A correction it makes is a new act, and starts here. |
-| Pre-tool check | A PreToolUse hook reads the call. An alert adds a note to the agent's context and lets the tool run; *proposed:* an alert that also turns on a check for after the tool. A marker that clears a block, a soft-block's reason or a user-block's approval, lets the tool run; *proposed:* log and review each such clear, since a soft-block may scare agents off a correct act. |
-| Hard-blocked | Nothing overrides the refusal. It says what happened, why, and how to go on; expect the agent to find another way. |
-| Soft-blocked | The refusal says why, and that an agent with a reason to go ahead writes it into the marker the refusal names and tries again. |
-| User-blocked | Only the user's approval, quoted into the marker the refusal names, clears it. |
-| Post-tool check | A PostToolUse hook looks for what went wrong: a file whose hash changed, a file created, deleted or renamed with a known prefix or suffix, a hashtag added. |
-| Program corrects | A program reverts or fixes the result, and tells the agent the right technique; the lesson fades as its context grows. |
-| Agent corrects | The agent is told to undo the act as best it can, and taught the right technique. |
+## The flowchart explained
 
-A reply to the user is an act too, checked by the reply hooks under Correction.
+### As a whole
 
-## When a program does the work
+Start from one act and the first moment a program could prevent or see it. Two gates come before any technique: whether the problem is worth a fix, and whether its cause is the project's own. Then five questions walk down the ladder, and the first one answered yes picks the technique. Ask the five questions of the first moment; only where that moment cannot tell right from wrong, ask them again of the next moment. A technique can miss some episodes; go down to the next question only for those misses, and only when they alone are worth a fix. Most fixes are one technique at one moment; three or more mean the problem was not cut small enough. Every fix ends the same way, with a message, a test and a measure, and the chart starts again if the problem comes back.
 
-- **Code-prompt-code (CPC).** A long procedure in prose is followed unreliably, so a program does the steps and hands a prompt only the judgment. Built: `nc-systems/cold-read/cold-read-grid.py`; `scripts/ghi-info-ask.py`. *Planned:* a walk-runner for approval-walks.
-- **Code does the step.** For a step agents forget even when reminded: `scripts/git-client-side-hooks/prepare-commit-msg` stamps the session trailer on each commit.
-- **Reuse what is built.** *Planned:* a page of reusable components, and a hook that names the right row when an agent writes a solved problem again: GHI [Agents reuse what the project has already solved: shared helpers, one page of reusable components, and a reuse check before, during and after the build](https://github.com/nedschorus/nedschorus/issues/1123).
+Where common problems usually land:
 
-## Detection
+| The problem | The first moment a program can see it | Where it usually lands |
+|---|---|---|
+| A wrong edit, command or file write | just before the tool runs | a constraint, if the act is never needed; otherwise a block, or refuse and redirect |
+| A wrong commit or push | at commit or push | a git hook |
+| A mechanical step done wrong or forgotten | just after the act it follows, or on a schedule | a program does the step |
+| A wrong or unclear reply to the user | at turn end, or when the next prompt arrives | a check on the reply, or a note at the next prompt |
+| A step that needs care a busy agent will not give | when the agent runs a program, or when a fresh-agent starts | code-prompt-code, or a fresh-agent with a minimal brief |
+| A rule about what files contain | at push, or at the pull request | a repository rule test |
+| State that no session watches | on a schedule | a scheduled job whose report reaches someone who acts |
+| A decision only the user may make | before the act | a user-block, or an approval-walk |
 
-A detection notices the moment a technique applies, before the act or after it. Without one, nothing else fires.
+### Piece by piece
 
-- **A pattern in the act.** A hook matches a keyword or a command form in the tool call, the text just written, or the reply. Before the act: `scripts/hand-typed-codex-exec-redirect-hook.py` matches a hand-typed `codex exec`. After it: `scripts/style-guide-word-checker-markdown-edit-hook.py` reports words the style guide lists.
-- **A file name's prefix or suffix.** The kind of file is in its name. `.claude/hooks/instruction-file-guard.py` knows a reusable prompt by `-prompt.md` or `-instructions.md` and a reviewed design by `-design.md`; `scripts/run-all-test-suites.py` runs every `*-test.py` and `*-test.sh`; a pull request reviewer holds a file ending `-nbd` to the nice-but-dirty limits only.
-- **A hashtag that code reads.** A program finds a fixed hashtag exactly, where it misreads a label in prose: the walk-minutes' `#next_to_present` line; the merge gate's `#root_cause`, `#root_cause_not_fixed` and `#no_defect_fixed` lines.
-- **A skill's description.** A skill's `description:` line says when to use it, so the agent itself detects the moment; good enough, not exact. Built: every skill in `.claude/skills/`.
-- **A task's due time or prerequisite.** A promise to act later becomes a task whose metadata a program checks at each turn's end: `scripts/agent-seat-due-task-raise-hook.py`.
-- **The project's parsers.** A hand-written regular expression misreads ordinary input. Use the shared parsers in `nc-systems/general-tools/`: `shell-command-tree-sitter-bash-reader-common.py` for shell commands, `git-machine-readable-output-runner-and-parser-common.py` for git output, `python-source-agent-facing-string-collector-common.py` for messages in Python. For Markdown, use the markdown-it-py library; *planned:* a shared module on it.
+**Which act, and when.** Measure before choosing, from transcripts and the log-store: the episodes before and since any earlier fix, what each cost, the route each took (the tool, the agent-binary and the machine), the act that went wrong, and the first moment a program could have seen it. The counts decide whether to build and which moment to use; measure again only to pick a moment or tune a detector, never to put off the choice.
 
-## Blocking
+**Is it worth a fix?** Build when the failure has happened, or is foreseeable within a month on concrete evidence, and it loses or damages work, stops work beyond the task that failed, or goes unnoticed until it does. Otherwise write down the gap and leave it. A month's harm sizes the fix: what it costs to build and run should come back within a few months.
 
-- **Block-and-inform.** A PreToolUse hook refuses the tool call, and its refusal, an agent-facing-message, says what to do instead. A refusal is a hard-block, a soft-block or a user-block, by what clears it, as the state machine above shows. Built: `scripts/hand-typed-codex-exec-redirect-hook.py` refuses a hand-typed `codex exec` and names `scripts/run-codex-task-from-brief.py`; `.claude/hooks/instruction-file-guard.py` refuses an edit of a guarded-file until a `.walk-approved` marker holds the user's approval, a `#pre_approved_change` line with its reason, or an obvious-fix marker, so one refusal can accept more than one kind of clear. Write the refusal by [the agent-facing-message page](nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md).
-- **A gate in code.** A program refuses to go on without a step agents skip: `scripts/merge-gate.sh` refuses a pull request whose description lacks a root-cause line.
-- **The approval-walk Stop hook.** While an approval-walk is open, it refuses to end a turn whose reply does not name the item waiting for the user. Built: `nc-systems/skills/walk-me-through/walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py`.
+**Is the cause our own?** Look first for a cause in the project's own code, settings or instructions, and fix that rather than guard against it. A line of standing text added since the episodes is not a fix to wait on.
 
-## Correction
+**Can a program do the step, or make the wrong act impossible?** Ask it of each step of the problem, not of the whole: a problem that needs judgment at one step is often mechanical at the others. This removes the problem instead of reminding agents of it.
 
-- **Detect-inform-correct (DIC).** A check before the act misses some routes, such as a shell command that changes a guarded-file. A program detects the act just after it, while a fix is cheap, and a program or the agent corrects it. Built: `.claude/hooks/guarded-file-unapproved-change-afterward-backup-and-ask-hook.py` backs up a guarded-file changed without approval and has the agent ask the user; `scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook.py` tells the agent to rejoin a paragraph it broke across lines. *Pending a user-ruling:* which wrong acts a program may undo itself, and which the agent must correct.
-- **Detect-inform-correct on a reply.** A hook reads the agent's reply and tells it what broke a rule. A Stop hook has it fix the reply in the same turn: `scripts/cold-read-fast-read-due-for-linked-document-reminder-hook.py`, `scripts/absence-claim-locator-reminder-hook.py`. A UserPromptSubmit hook has it correct itself in the next reply, since the user has read the first: `scripts/bare-number-citation-in-markdown-and-agent-reply-warning-hook.py`, `scripts/ned-box-path-in-agent-reply-unclickable-on-mac-warning-hook.py`.
-- **Rewind.** Claude Code's rewind may serve as a correction; whether and how a program can use it is to be found out: GHI [Find whether Claude Code's rewind can correct an agent's wrong act, triggered by a program](https://github.com/nedschorus/nedschorus/issues/1758).
+| Technique | When to use it | Built here |
+|---|---|---|
+| A program does the step, or keeps what agents would have to remember | the step is mechanical, or its rules are too many to keep in mind | a program keeps each checkout up to date with main, and tells the agent when standing instructions it may be following have changed |
+| Code-prompt-code | one step needs judgment, and a program can gather what that judgment needs; the program keeps the counts, the files and the limits that agents lose | the cold read: a program freezes the document, starts fresh readers on it, collects their reports, and refuses a fourth full run of one change |
+| A constraint | the agent never needs to do the wrong act; the cheapest and surest technique | each role's GitHub identity lacks the powers its role does not need; a reviewing fresh-agent starts without project hooks, Bash or credentials |
 
-## Instruction
+**Can a check before the act tell that it is wrong?** A check that reads a command misses other routes to the same act, so back it with a check at commit or after the act.
 
-Whatever the technique, tell the agent whether its step worked, and if not, why not and the best way to do it, as [the agent-facing-message page](nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md) says. The places below run from strongest, at the moment the instruction applies, to weakest, at the start of an agent-session.
+| Technique | When to use it | Built here |
+|---|---|---|
+| A hard-block | the check has almost no false alarms; nothing overrides it | a tmux kill that names no server is refused |
+| A soft-block | the check is usually right; the agent clears it once it has checked, with a prefix or a reason | keystrokes sent to a terminal are refused until the agent has checked the target and reruns the command with `CLAUDE_VERIFIED_DETACHED=1` |
+| A user-block | only the user may decide; his quoted words clear it | a change to an instruction file waits for `.walk-approved` holding the user's words |
+| Refuse and redirect | a program does the step right, so the refusal costs the agent one step | a hand-typed `codex exec` is refused, and the agent sent to `scripts/run-codex-task-from-brief.py` |
+| A git hook | the act is a commit or a push, however it was typed; git runs it for every agent-binary | the pre-push hook runs the test suites whose inputs changed |
+| A gate at the pull request | what must hold before main changes, which the agent that made the change cannot be trusted to check | the merge gate refuses a pull request whose description has no root-cause line |
 
-- **A reminder on the act.** A hook adds a short note to the agent's context and lets the act go ahead. Before the act: `nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py` names the citation checks on a push that changes Markdown. After it: `scripts/new-shared-names-reminder-hook.py`; `nc-systems/general-tools/python-edit-changed-agent-facing-message-check-reminder-hook.py`.
-- **The steps of a skill.** For a procedure that needs judgment at each step; read when the skill's description triggers it.
-- **A program's output and manual.** A rule about one tool belongs in the tool's result or its `--help` text, where the agent reads it. Built: `scripts/ghi-info-ask.py` says how to include closed GHIs after searching only open ones.
-- **The seat-brief.** One agent-seat's instructions go in its seat-brief, which reloads after compaction; those for its start only go in initial-agent-instructions such as `docs/agents/seat-first-prompt.md`.
-- **The glossary.** A technique agents find odd gets a project-term in `docs/nedschorus-wiki/nedschorus-glossary.md`.
-- **CLAUDE.md, last.** Like a [nice-but-dirty](nedschorus-glossary.md) component, CLAUDE.md mostly works but not always: it is simple and helpful, but unreliable, and short on room. It is read at the start of an agent-session, and agents ignore it by the time a rule applies. Extend the sentence that already covers the action before adding a bullet.
-- **A cold read of every instruction.** The agent that reads an instruction has a different context from the one that wrote it, so fresh-agents read the text before it is used: the `/cold-read` skill.
+**Can a check see it after the act?**
 
-## Where only judgment will do
+| Technique | When to use it | Built here |
+|---|---|---|
+| A check on what was just written | the mistake shows in the file, and fixing it is the agent's job | a Markdown paragraph broken across lines is reported |
+| A check on the reply at turn end | the mistake is in what the agent told the user, is worth a turn to correct now, and is seldom detected; the reply has already been shown | a reply that does not name the approval-walk item waiting for the user is sent back to name it |
+| A note at the next prompt | the mistake is small, or detected too often for a send-back; a note costs no turn | a reply naming a ned-box path, which the user cannot open on his Mac, gets a note |
+| Detection outside the session | a rule about what files contain, or state that no session watches; its report must reach an agent or the user who will act on it | a test fails when standing instructions carry a citation; the tests at a pull request's head report to merge-lane-2 |
 
-- **A review by another agent.** An agent without the worker's context reviews the work: a fresh-agent; the other agent-binary, such as the Codex reviewer of each pull request (`scripts/code-review-codex-cell.py`); Claude Code's `advisor` tool, which some agent-sessions have: a stronger model that reads the agent's whole conversation and advises it; or `/sanity-check` for a design.
-- **An approval-walk.** `/walk-me-through` puts decisions to the user one item at a time.
+**Can the agent, or a fresh-agent, do it right if told at the moment?**
 
-## Tried, then corrected or dropped
+| Technique | When to use it | Built here |
+|---|---|---|
+| A just-in-time instruction | the agent can do the step but forgets how or when; it arrives as a hook's added context, a program's output or error, or a skill's steps | a push that changes Markdown gets a reminder to run the citation checks first |
+| A fresh-agent with a minimal brief | the step needs care that a busy agent gives badly, and the brief can carry all the step needs | new shared names go to the naming fresh-agent, which checks them against the naming page |
 
-- **Corrected: a soft-block on listed words and phrases.** It scared agents away from the tool it guarded; a note added to their context replaced it.
-- **Corrected: hard-blocks in place of soft-blocks everywhere.** It cost days of work and millions of tokens.
-- **Corrected: parsing shell commands as a complete guard.** A shell has too many routes to a file; detect-inform-correct catches the rest.
-- **Dropped: a watcher that read agents' transcripts and sent alerts.** The alerts were not useful.
-- **Replaced by this page: a ladder of techniques, and a table of hook events by moment.** Both sorted mechanisms by when they act; this page sorts them by their job.
+**Does it need a judgment no check can make?** Hand it to another agent, such as a pull request reviewer, a cold reader or the advisor, or to the user, in an approval-walk. Say what is judged, and against what.
 
-## Not built yet
+**Standing text, last.** CLAUDE.md, AGENTS.md, the seat-brief and the rule pages they point to hold what every agent needs everywhere, said briefly. Standing text is never the only fix for a mistake that recurs, because it fades over a long session, and it reaches only the agents whose binary loads its file.
 
-- *Proposed:* a hook that starts slow checks early so that a later hook adds their result: GHI [One Claude Code hook starts slow work early and a later hook adds the result, and a wiki page on hook techniques for controlling and instructing agents](https://github.com/nedschorus/nedschorus/issues/1515).
-- *Planned:* an hourly maintenance-job that raises due tasks to an idle agent-seat: GHI [Tasks raise themselves when their due time passes or their prerequisite is met](https://github.com/nedschorus/nedschorus/issues/940).
-- *Planned:* a Stop hook that refuses a reply promising later work until a task backs the promise: GHI [A project style guide: words to avoid, a mechanical checker, and a check on unbacked promises](https://github.com/nedschorus/nedschorus/issues/14).
-- *Proposed:* a hook that reminds an agent to run macOS `say` when it needs the user's attention; today that is a line in the user's `~/.claude/CLAUDE.md`.
-- *Pending a user-ruling:* a store that recalls lessons by subject: GHI [Save each lesson where agents meet it at the moment it applies, and decide whether a store that recalls lessons by subject is worth building](https://github.com/nedschorus/nedschorus/issues/1349).
+**The message.** Write the agent-facing-message in three parts, in order: what was stopped or found, quoting the words or the command; why it is wrong, in words the agent can pass on to the user; and what to do now, one instruction per line with the condition it applies under, naming the program that does the step where one exists. Use a block or a send-back only for a detector that is right nearly every time and fires seldom; otherwise, a note at the next turn.
 
-**Checked against:** commit [ce539455629470f01b6d247b20c47bb058c3a221](https://github.com/nedschorus/nedschorus/commit/ce539455629470f01b6d247b20c47bb058c3a221)
+**Build and test.** Cause the failure in a test, and run mutation testing on the code that handles it. A check that could not run says so, and never reads as a pass. Have the message cold-read: a fresh reader's misreading often exposes a flaw in the process itself, which is what to fix. Then merge-lane-2 reviews and merges it.
+
+**Measure whether the problem stops.** Log each fire, each clear and each correction, and measure a detector's precision on labelled examples. Count the episodes again from the same sources as before the fix, then keep the technique, correct it or drop it. A technique that keeps firing while the episodes go on has not worked.
