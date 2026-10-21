@@ -55,7 +55,7 @@ How to measure the result, and a search for duplicates, which the user proposed 
 
 ## Deferred-decisions
 
-1. Whether ShellCheck, the standard linter for shell scripts, gets a GHI of its own.
+1. Whether ShellCheck, the standard linter for shell scripts, gets a GHI of its own. Settled by the user on 2026-10-20: it does, GHI [ShellCheck checks every .sh file a pull request changes, and its findings block the merge](https://github.com/nedschorus/nedschorus/issues/1772).
 
 ## Next action
 
