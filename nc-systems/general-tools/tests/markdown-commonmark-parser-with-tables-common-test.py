@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Tests for nc-systems/general-tools/markdown-commonmark-parser-install-if-missing-common.py.
+"""Tests for nc-systems/general-tools/markdown-commonmark-parser-with-tables-common.py.
 
 The importer and the installer are test doubles, and the install state lives in a
 scratch directory, so nothing is installed. One case runs in a subprocess with stand-in
 markdown-it-py and mdurl packages on its path.
 
-Run: python3 nc-systems/general-tools/tests/markdown-commonmark-parser-install-if-missing-common-test.py
+Run: python3 nc-systems/general-tools/tests/markdown-commonmark-parser-with-tables-common-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -16,7 +16,7 @@ import tempfile
 from pathlib import Path
 
 MODULE_PATH = (Path(__file__).resolve().parents[1]
-               / "markdown-commonmark-parser-install-if-missing-common.py")
+               / "markdown-commonmark-parser-with-tables-common.py")
 
 failures = []
 
@@ -30,7 +30,7 @@ def check(case_name, condition, detail=""):
 
 
 specification = importlib.util.spec_from_file_location(
-    "markdown_commonmark_parser_install_if_missing_common", str(MODULE_PATH))
+    "markdown_commonmark_parser_with_tables_common", str(MODULE_PATH))
 parser_common = importlib.util.module_from_spec(specification)
 specification.loader.exec_module(parser_common)
 
@@ -74,13 +74,23 @@ with tempfile.TemporaryDirectory() as install_scratch:
         raised = error
     check("a failed install raises MarkdownParserMissing with what the install printed",
           raised is not None and "network is unreachable" in raised.install_output, raised)
-    def recording_runner(command, **kwargs):
-        recording_runner.kwargs = kwargs
-        return subprocess.CompletedProcess(command, 0, "", "")
-    parser_common.install_pinned_python_libraries(recording_runner)
-    check("the install gives pip the module's install timeout",
-          recording_runner.kwargs.get("timeout") == parser_common.INSTALL_TIMEOUT_SECONDS,
-          recording_runner.kwargs)
+    install = parser_common.python_libraries_pinned_requirements_install_if_missing_then_import_common()
+    real_pip_install = install.pinned_requirements_pip_install
+    pip_install_timeouts = []
+
+    def recording_pip_install(timeout_seconds):
+        pip_install_timeouts.append(timeout_seconds)
+        install_state["installs"] += 1
+        return ""
+    install.pinned_requirements_pip_install = recording_pip_install
+    install_state["installs"] = 0
+    try:
+        # The clock is past the failure the case above recorded, so the install is tried again.
+        parser_common.markdown_parser(importer_after_install, clock=lambda: 4_000_000_000.0)
+    finally:
+        install.pinned_requirements_pip_install = real_pip_install
+    check("the default installer is the shared pip install, given the module's install timeout",
+          pip_install_timeouts == [parser_common.INSTALL_TIMEOUT_SECONDS], pip_install_timeouts)
 
     # A newer markdown-it-py whose dependency is missing fails partway through its import and
     # leaves its submodules, and the newer mdurl it loaded first, loaded; the pinned copies
