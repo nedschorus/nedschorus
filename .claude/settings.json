@@ -40,6 +40,11 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/ned-box-path-in-agent-reply-unclickable-on-mac-warning-hook.py",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/what-do-you-think-prompt-asks-for-advisor-hook.py",
+            "timeout": 10
           }
         ]
       }
