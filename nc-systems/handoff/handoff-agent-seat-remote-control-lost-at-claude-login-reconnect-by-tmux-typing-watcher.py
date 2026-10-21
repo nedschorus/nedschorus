@@ -1,0 +1,413 @@
+#!/usr/bin/env python3
+"""Turn Remote Control back on in a ned-box agent-seat that a Claude login on ned-box turned off.
+
+Usage, on ned-box:
+  nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py
+      one run: check every running agent-seat and act. Cron runs this once a minute.
+  nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py --show-notice FILE
+      what a notice window on the user's Mac runs: print FILE, then wait for
+      Enter and close.
+
+When the claude.ai account or organization signed in on ned-box changes, as a
+`claude /login` does, Claude Code drops Remote Control in every running
+session and logs, in the session's transcript, a system line starting with
+DISCONNECT_TEXT. It does not turn Remote Control back on. Each run finds every
+running agent-seat (a live `claude` process whose parent is
+`handoff-supervisor.py --agent <seat>`), reads its session record
+~/.claude/sessions/<pid>.json and its current transcript, and types
+`/remote-control <seat>` and Enter into the seat's tmux session (server
+`-L <seat>`, session `<seat>`) when all of these hold:
+- the transcript's latest Remote Control line is that disconnect line, with no
+  later bridge_status line ("/remote-control is active"), which Claude Code
+  logs whenever Remote Control comes back on, by the command or by itself;
+- this program has not already typed for that disconnect line;
+- the record's status is not "waiting", which Claude Code sets while a dialog
+  waits for an answer;
+- the pane shows the prompt line empty: the line between the input box's two
+  rules is the prompt character alone.
+Otherwise it types nothing and tries again on the next run. Typing only on the
+disconnect line matters: while Remote Control is on, the same command opens
+its menu instead, whose choices include "Disconnect this session".
+
+It does not check afterwards that Remote Control came back. A failure it meets,
+such as a session record it cannot read or a tmux command that fails, is
+written to decisions.jsonl in LOG_DIRECTORY, printed to stderr, and makes the
+run exit 1; the first time each failure is met, it is also shown to the user
+in a terminal window on his Mac, opened with
+scripts/open-mac-window-from-ned-box.py running --show-notice. When the
+notice cannot be written or the window cannot be opened, that is printed to
+stderr too. Each typing is also written to decisions.jsonl, which is what
+keeps a later run from typing again for the same disconnect line.
+
+Off ned-box the program refuses: the agent-seats it reads are ned-box's.
+
+SCHEDULED. The job is declared in
+nc-systems/general-tools/scheduled-jobs-on-each-machine.json and installed
+with nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py
+--install --job handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher,
+on ned-box only, as the cron line
+    * * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> /home/nedlern/.claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log 2>&1
+
+The environment variables named by the *_ENVIRONMENT_VARIABLE constants
+override where the log, the session records, the transcripts and the process
+table are read from: the seams the test suite uses.
+"""
+
+import argparse
+import fcntl
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+PROGRAM = "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher"
+
+REPOSITORY = Path(__file__).resolve().parent.parent.parent
+MAC_WINDOW_OPENER_PROGRAM = REPOSITORY / "scripts" / "open-mac-window-from-ned-box.py"
+_project_directory_specification = importlib.util.spec_from_file_location(
+    "claude_code_session_transcript_project_directory_for_agent_seat_common",
+    REPOSITORY / "scripts" / "claude-code-session-transcript-project-directory-for-agent-seat-common.py")
+project_directory_module = importlib.util.module_from_spec(_project_directory_specification)
+_project_directory_specification.loader.exec_module(project_directory_module)
+
+LOG_DIRECTORY = Path.home() / "nedschorus-logs" / PROGRAM
+SESSION_RECORDS_DIRECTORY = Path.home() / ".claude" / "sessions"
+PROJECTS_DIRECTORY = Path.home() / ".claude" / "projects"
+PROCESS_TABLE_DIRECTORY = Path("/proc")
+LOG_DIRECTORY_ENVIRONMENT_VARIABLE = (
+    "NEDSCHORUS_HANDOFF_AGENT_SEAT_REMOTE_CONTROL_LOST_AT_CLAUDE_LOGIN_RECONNECT_BY_TMUX_TYPING_WATCHER_LOG_DIRECTORY")
+SESSION_RECORDS_DIRECTORY_ENVIRONMENT_VARIABLE = (
+    "NEDSCHORUS_HANDOFF_AGENT_SEAT_REMOTE_CONTROL_LOST_AT_CLAUDE_LOGIN_RECONNECT_BY_TMUX_TYPING_WATCHER_SESSION_RECORDS_DIRECTORY")
+PROJECTS_DIRECTORY_ENVIRONMENT_VARIABLE = (
+    "NEDSCHORUS_HANDOFF_AGENT_SEAT_REMOTE_CONTROL_LOST_AT_CLAUDE_LOGIN_RECONNECT_BY_TMUX_TYPING_WATCHER_PROJECTS_DIRECTORY")
+PROCESS_TABLE_DIRECTORY_ENVIRONMENT_VARIABLE = (
+    "NEDSCHORUS_HANDOFF_AGENT_SEAT_REMOTE_CONTROL_LOST_AT_CLAUDE_LOGIN_RECONNECT_BY_TMUX_TYPING_WATCHER_PROCESS_TABLE_DIRECTORY")
+
+DISCONNECT_TEXT = ("Remote Control disconnected — signed-in claude.ai account or organization "
+                   "changed on this machine")
+RECONNECT_SUBTYPE = "bridge_status"
+DIALOG_OPEN_STATUS = "waiting"
+PROMPT_CHARACTER = "❯"
+RULE_CHARACTER = "─"
+SUPERVISOR_PROGRAM_NAME = "handoff-supervisor.py"
+CLAUDE_PROGRAM_NAME = "claude"
+# Claude Code writes the session record only once its startup finishes, seconds after the process starts.
+SESSION_RECORD_GRACE_SECONDS = 60
+# Typed text and its Enter sent together can arrive as one paste, which the prompt does not submit.
+SECONDS_BETWEEN_TEXT_AND_ENTER = 0.5
+TMUX_TIMEOUT_SECONDS = 30
+# Longer than the opener's own ssh time limit, so the opener reports its timeout itself.
+MAC_WINDOW_OPENER_TIMEOUT_SECONDS = 90
+CRON_LOG = Path.home() / ".claude" / f"{PROGRAM}.log"
+
+SHOW_NOTICE_CLOSE_PROMPT = "Press Enter to close this window."
+
+RUN_FAILED_NOTICE_TEMPLATE = (
+    "The Remote Control watcher on ned-box failed and is checking no agent-seat: {problem}\n"
+    "Until this is fixed, Remote Control that a Claude login on ned-box turns off stays off. The "
+    "watcher tells you again only if the error changes.\n"
+    "To have it fixed, ask an agent on ned-box to fix it, giving it this notice.\n"
+    "Record: {record}, and the cron log {cron_log}\n"
+)
+
+RECORD_PROBLEM_NOTICE_TEMPLATE = (
+    "The Remote Control watcher on ned-box cannot check {seat}: {problem}\n"
+    "If a Claude login on ned-box turns Remote Control off in {seat}, the watcher cannot turn it "
+    "back on until this is fixed. It tells you again only if the problem changes.\n"
+    "If {seat}'s Remote Control is off, turn it on by typing in {seat}'s window:\n"
+    "  /remote-control {seat}\n"
+    "To have the cause fixed, ask an agent on ned-box to fix it, giving it this notice.\n"
+    "Record: {record}\n"
+)
+
+TYPING_FAILED_NOTICE_TEMPLATE = (
+    "Remote Control in {seat} is off, and the Remote Control watcher on ned-box could not turn it "
+    "back on: {problem}\n"
+    "A Claude login on ned-box turned it off at {disconnected_at}.\n"
+    "To turn it on, type in {seat}'s window:\n"
+    "  /remote-control {seat}\n"
+    "If the watcher keeps failing, ask an agent on ned-box to find out why, giving it this notice.\n"
+    "Record: {record}\n"
+)
+
+
+class Run:
+    """One run: its log directory, the log entries already written, and whether it met a failure."""
+
+    def __init__(self, log_directory: Path):
+        self.log_directory = log_directory
+        self.decisions_path = log_directory / "decisions.jsonl"
+        try:
+            text = self.decisions_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            text = ""
+        self.entries = [json.loads(line) for line in text.splitlines() if line.strip()]
+        self.failed = False
+
+    def log(self, seat, decision, **details):
+        entry = {"at": datetime.now(timezone.utc).isoformat(), "seat": seat, "decision": decision,
+                 **details}
+        with self.decisions_path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+        self.entries.append(entry)
+
+    def logged(self, **fields) -> bool:
+        return any(all(entry.get(key) == value for key, value in fields.items())
+                   for entry in self.entries)
+
+    def report(self, seat, kind, template, problem, key, **fields):
+        """Log a failure and print it; show the user a notice the first time its key is met."""
+        self.failed = True
+        print(f"{PROGRAM}: {seat}: {problem}", file=sys.stderr)
+        self.log(seat, "failure", kind=kind, problem=problem, key=key)
+        if self.logged(decision="user told", key=key):
+            return
+        if notice_show(self.log_directory, seat, kind, template, problem=problem, **fields):
+            self.log(seat, "user told", key=key)
+
+
+def notice_show(log_directory: Path, seat, kind, template, **fields) -> bool:
+    """Write a notice and open it in a window on the user's Mac; print to stderr what failed."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = log_directory / "notices" / f"{stamp}-{seat}-{kind}.txt"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(template.format(seat=seat, record=log_directory / "decisions.jsonl",
+                                        **fields), encoding="utf-8")
+    except OSError as error:
+        print(f"{PROGRAM}: the notice to the user about {seat} was not written, so he was not "
+              f"told: {error}", file=sys.stderr)
+        return False
+    exit_code, output = run_command(
+        [sys.executable, str(MAC_WINDOW_OPENER_PROGRAM), *show_notice_words(path)],
+        MAC_WINDOW_OPENER_TIMEOUT_SECONDS)
+    if exit_code != 0:
+        print(f"{PROGRAM}: the notice {path} did not open on the user's Mac, so he was not told; "
+              f"the opener exited {exit_code} and said: {output}", file=sys.stderr)
+        return False
+    return True
+
+
+def run_command(command, timeout_seconds):
+    completed = subprocess.run(command, capture_output=True, text=True, check=False,
+                               timeout=timeout_seconds)
+    return completed.returncode, (completed.stdout + completed.stderr).strip()
+
+
+def show_notice_words(path):
+    return [sys.executable, str(Path(__file__).resolve()), "--show-notice", str(path)]
+
+
+def show_notice(path: str) -> int:
+    """What a notice window on the Mac runs: the notice, then Enter closes it."""
+    sys.stdout.write(Path(path).read_text(encoding="utf-8"))
+    try:
+        input(f"\n{SHOW_NOTICE_CLOSE_PROMPT}")
+    except EOFError:
+        pass
+    return 0
+
+
+def tmux(seat, *arguments):
+    """Run one tmux command on the seat's own server; return (exit code, output)."""
+    return run_command(["tmux", "-L", seat, *arguments], TMUX_TIMEOUT_SECONDS)
+
+
+def process_table(process_table_directory: Path):
+    """Return {pid: (parent pid, argument words, seconds since start)} for every process still there."""
+    clock_ticks_per_second = os.sysconf("SC_CLK_TCK")
+    uptime_seconds = float((process_table_directory / "uptime").read_text().split()[0])
+    table = {}
+    for entry in process_table_directory.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            words = (entry / "cmdline").read_bytes().decode("utf-8", "replace").split("\0")
+            # The command name in parentheses may hold spaces; the fields after it do not.
+            fields_after_name = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+        except FileNotFoundError:
+            # The process ended while the table was read.
+            continue
+        started = int(fields_after_name[19]) / clock_ticks_per_second
+        table[int(entry.name)] = (int(fields_after_name[1]), [word for word in words if word],
+                                  uptime_seconds - started)
+    return table
+
+
+def running_agent_seats(table):
+    """Return [(seat, claude pid, seconds since the claude process started)], sorted by seat."""
+    supervisors = {}
+    for pid, (_, words, _) in table.items():
+        if (any(Path(word).name == SUPERVISOR_PROGRAM_NAME for word in words[:2])
+                and "--agent" in words[:-1]):
+            supervisors[pid] = words[words.index("--agent") + 1]
+    seats = []
+    for pid, (parent, words, age) in table.items():
+        if parent in supervisors and words and Path(words[0]).name == CLAUDE_PROGRAM_NAME:
+            seats.append((supervisors[parent], pid, age))
+    return sorted(seats)
+
+
+def latest_unanswered_disconnect(transcript: Path):
+    """Return the disconnect line after which Remote Control was not turned back on, or None."""
+    latest = None
+    try:
+        stream = transcript.open("rb")
+    except FileNotFoundError:
+        # Claude Code writes the transcript only from the session's first message on.
+        return None
+    with stream:
+        for raw in stream:
+            if not raw.endswith(b"\n"):
+                # The line Claude Code is still writing; the next run reads it whole.
+                break
+            # Most lines are large and unrelated; parse only the ones that can matter.
+            if b'"bridge_status"' not in raw and b"Remote Control disconnected" not in raw:
+                continue
+            entry = json.loads(raw)
+            if entry.get("type") != "system":
+                continue
+            if entry.get("subtype") == RECONNECT_SUBTYPE:
+                latest = None
+            elif str(entry.get("content", "")).startswith(DISCONNECT_TEXT):
+                latest = entry
+    return latest
+
+
+def prompt_line_is_empty(pane_text: str) -> bool:
+    """True when the input box shows the prompt character alone between its two rules."""
+    lines = pane_text.split("\n")
+
+    def is_rule(index):
+        stripped = lines[index].strip() if 0 <= index < len(lines) else ""
+        return stripped.startswith(RULE_CHARACTER * 2) and stripped.endswith(RULE_CHARACTER)
+
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].startswith(PROMPT_CHARACTER) and is_rule(index - 1) and is_rule(index + 1):
+            # str.strip removes the no-break space Claude Code puts after the prompt character.
+            return lines[index][len(PROMPT_CHARACTER):].strip() == ""
+    return False
+
+
+def check_seat(run: Run, seat, pid, age, session_records_directory: Path, projects_directory: Path):
+    record_path = session_records_directory / f"{pid}.json"
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        session_id, working_directory, status = record["sessionId"], record["cwd"], record["status"]
+    except FileNotFoundError:
+        if age < SESSION_RECORD_GRACE_SECONDS:
+            return
+        run.report(seat, "record-missing", RECORD_PROBLEM_NOTICE_TEMPLATE,
+                   f"its claude process {pid} has no session record at {record_path}",
+                   key=f"{seat}:{pid}:record-missing")
+        return
+    except (ValueError, KeyError) as error:
+        run.report(seat, "record-unreadable", RECORD_PROBLEM_NOTICE_TEMPLATE,
+                   f"its session record {record_path} could not be read as a record with "
+                   f"sessionId, cwd and status: {type(error).__name__}: {error}",
+                   key=f"{seat}:{pid}:record-unreadable:{type(error).__name__}")
+        return
+    transcript = (project_directory_module.project_directory_for_seat(
+        Path(working_directory), projects_directory) / f"{session_id}.jsonl")
+    disconnect = latest_unanswered_disconnect(transcript)
+    if disconnect is None:
+        return
+    event = {"session_id": session_id, "disconnect": disconnect.get("uuid")}
+    if run.logged(seat=seat, decision="typed", **event):
+        return
+    if status == DIALOG_OPEN_STATUS:
+        skip(run, seat, event, "a dialog is open: its session record's status is waiting")
+        return
+    exit_code, pane_text = tmux(seat, "capture-pane", "-p", "-t", f"={seat}:")
+    if exit_code != 0:
+        report_typing_failure(run, seat, event, disconnect,
+                              f"reading its tmux pane failed: tmux exited {exit_code}: {pane_text}")
+        return
+    if not prompt_line_is_empty(pane_text):
+        skip(run, seat, event, "its prompt line is not empty, or no prompt line is shown")
+        return
+    # Remote Control may have come back on by itself while this run read the pane.
+    if latest_unanswered_disconnect(transcript) is None:
+        return
+    for number, arguments in enumerate((("-l", f"/remote-control {seat}"), ("Enter",))):
+        if number:
+            time.sleep(SECONDS_BETWEEN_TEXT_AND_ENTER)
+        exit_code, output = tmux(seat, "send-keys", "-t", f"={seat}:", *arguments)
+        if exit_code != 0:
+            report_typing_failure(run, seat, event, disconnect,
+                                  f"typing into its tmux pane failed: tmux exited {exit_code}: {output}")
+            return
+    run.log(seat, "typed", typed=f"/remote-control {seat}", **event)
+
+
+def skip(run: Run, seat, event, reason):
+    """Log a skip once per disconnect and reason; a later run tries again."""
+    if not run.logged(seat=seat, decision="skipped", reason=reason, **event):
+        run.log(seat, "skipped", reason=reason, **event)
+
+
+def report_typing_failure(run: Run, seat, event, disconnect, problem):
+    run.report(seat, "typing-failed", TYPING_FAILED_NOTICE_TEMPLATE, problem,
+               key=f"{seat}:{event['session_id']}:{event['disconnect']}:typing-failed",
+               disconnected_at=disconnect.get("timestamp", "an unknown time"))
+
+
+def report_run_failure(log_directory: Path, error_text):
+    """Show the user a notice the first time this error is met; cron's log keeps every one."""
+    reported_path = log_directory / "reported-run-failures.txt"
+    try:
+        reported = reported_path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        reported = []
+    if error_text in reported:
+        return
+    if notice_show(log_directory, "watcher", "run-failed", RUN_FAILED_NOTICE_TEMPLATE,
+                   problem=error_text, cron_log=CRON_LOG):
+        with reported_path.open("a", encoding="utf-8") as stream:
+            stream.write(error_text + "\n")
+
+
+def run_once(environment) -> int:
+    log_directory = Path(environment.get(LOG_DIRECTORY_ENVIRONMENT_VARIABLE) or LOG_DIRECTORY)
+    session_records_directory = Path(environment.get(SESSION_RECORDS_DIRECTORY_ENVIRONMENT_VARIABLE)
+                                     or SESSION_RECORDS_DIRECTORY)
+    projects_directory = Path(environment.get(PROJECTS_DIRECTORY_ENVIRONMENT_VARIABLE)
+                              or PROJECTS_DIRECTORY)
+    process_table_directory = Path(environment.get(PROCESS_TABLE_DIRECTORY_ENVIRONMENT_VARIABLE)
+                                   or PROCESS_TABLE_DIRECTORY)
+    log_directory.mkdir(parents=True, exist_ok=True)
+    with (log_directory / "run.lock").open("w") as lock_stream:
+        try:
+            fcntl.flock(lock_stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            # A run still typing owns this minute; two runs could type twice.
+            return 0
+        try:
+            run = Run(log_directory)
+            for seat, pid, age in running_agent_seats(process_table(process_table_directory)):
+                check_seat(run, seat, pid, age, session_records_directory, projects_directory)
+        except Exception as error:  # noqa: BLE001 - a failed run must reach the user, not only cron's log
+            report_run_failure(log_directory, f"{type(error).__name__}: {error}")
+            raise
+        return 1 if run.failed else 0
+
+
+def main(argv=None, environment=None) -> int:
+    parser = argparse.ArgumentParser(prog=PROGRAM, description=__doc__.splitlines()[0])
+    parser.add_argument("--show-notice", metavar="FILE")
+    arguments = parser.parse_args(argv)
+    if arguments.show_notice:
+        return show_notice(arguments.show_notice)
+    if sys.platform != "linux":
+        print(f"{PROGRAM}: refused: this program watches ned-box's agent-seats and runs only on "
+              "ned-box, where cron starts it.", file=sys.stderr)
+        return 2
+    return run_once(dict(os.environ) if environment is None else environment)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
