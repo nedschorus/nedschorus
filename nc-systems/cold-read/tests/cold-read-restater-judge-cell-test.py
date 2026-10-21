@@ -210,7 +210,8 @@ def run_judge_cell(repository, stub_directory, plan, report_path, *arguments,
         command += ["--case", *case]
     command += list(arguments)
     return subprocess.run(
-        command, capture_output=True, text=True, check=False, env=environment)
+        command, capture_output=True, text=True, check=False, env=environment,
+        cwd=repository)
 
 
 def provenance_stamp_of(report):
@@ -319,7 +320,7 @@ with tempfile.TemporaryDirectory() as scratch:
          str(repository / "nc-systems" / "cold-read" / "cold-read-restater-judge-cell.py"),
          "--restater", RESTATER_CLASS, "--report", str(report),
          "--case", *THREE_CASES[0]],
-        capture_output=True, text=True, check=False, env=environment)
+        capture_output=True, text=True, check=False, env=environment, cwd=repository)
     check("omitting --prompt-file altogether is refused with exit 64, the way "
           "any missing required flag is",
           omitted.returncode == 64 and "--prompt-file" in omitted.stderr,

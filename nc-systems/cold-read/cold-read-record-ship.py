@@ -179,8 +179,6 @@ import tempfile
 import textwrap
 import typing
 
-# This file sits in nc-systems/cold-read/, two directories below the root.
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 # What a cold-read-record is called and where it lives, defined once in a
 # module so no program keeps its own copy. importlib, because the filename
 # has hyphens.
@@ -1157,7 +1155,7 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
     parser = argparse.ArgumentParser(
         description=description, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("record_directory", nargs="?",
-                        help="one record directory, relative to the repo root or absolute")
+                        help="one record directory, relative to the current directory or absolute")
     parser.add_argument("--all", action="store_true",
                         help=f"every directory under {records_dir.name}/ in this checkout")
     args = parser.parse_args(argv)
@@ -1168,10 +1166,7 @@ def ship_from_command_line(description: str, records_dir: pathlib.Path,
     host, records_path = destination
 
     if not args.all:
-        record_dir = pathlib.Path(args.record_directory)
-        if not record_dir.is_absolute():
-            record_dir = REPO_ROOT / record_dir
-        return ship_one(host, records_path, record_dir.resolve())
+        return ship_one(host, records_path, pathlib.Path(args.record_directory).resolve())
 
     directories = sorted(p for p in records_dir.glob("*") if p.is_dir()) \
         if records_dir.is_dir() else []

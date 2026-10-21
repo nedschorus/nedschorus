@@ -202,7 +202,7 @@ def run_agy_cell(repository, stub_directory, plan, report_path, *arguments,
          "--cell", "fast-clarify", "--tier", tier,
          "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
          *arguments],
-        capture_output=True, text=True, check=False, env=environment,
+        capture_output=True, text=True, check=False, env=environment, cwd=repository,
     )
 
 

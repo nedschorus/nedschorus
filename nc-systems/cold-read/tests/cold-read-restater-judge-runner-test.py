@@ -299,7 +299,8 @@ def run_runner(repository, stub_directory, plan, *arguments,
         command += ["--case", *case]
     command += list(arguments)
     return subprocess.run(
-        command, capture_output=True, text=True, check=False, env=environment)
+        command, capture_output=True, text=True, check=False, env=environment,
+        cwd=repository)
 
 
 def expected_record_directory(repository, restater=RESTATER_CLASS):

@@ -375,7 +375,7 @@ def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
          "--cell", cell, "--tier", "second-strongest-model",
          "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
          *arguments],
-        capture_output=True, text=True, check=False, env=environment,
+        capture_output=True, text=True, check=False, env=environment, cwd=repository,
     )
 
 
@@ -651,11 +651,15 @@ with tempfile.TemporaryDirectory() as scratch:
             stamped_report, runtime="claude", model="m", effort="e", cell="c",
             tier="t", target_argument=missing_target, duration_s=0)
         unreadable_stamp = stamped_report.read_text(encoding="utf-8").split("\n", 1)[0]
-    # The launcher finds a relative --target under the repository root, so the stamp must hash that file.
+    # The launcher resolves a relative --target against the current directory, so the stamp must hash that file.
+    # The path also exists under the repository root, with other bytes, so hashing that copy fails the case.
     relative_target = "nc-systems/cold-read/cold-read-grid.py"
-    expected_sha256 = hashlib.sha256((common_module.REPO_ROOT / relative_target).read_bytes()).hexdigest()
+    elsewhere_target_bytes = b"the current directory's copy, not the repository's\n"
+    expected_sha256 = hashlib.sha256(elsewhere_target_bytes).hexdigest()
     cwd_before = os.getcwd()
     with tempfile.TemporaryDirectory() as elsewhere:
+        (Path(elsewhere) / relative_target).parent.mkdir(parents=True)
+        (Path(elsewhere) / relative_target).write_bytes(elsewhere_target_bytes)
         relative_report = Path(elsewhere) / "report.md"
         relative_report.write_text("review\n", encoding="utf-8")
         os.chdir(elsewhere)

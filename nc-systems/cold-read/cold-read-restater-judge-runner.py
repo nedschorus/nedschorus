@@ -111,7 +111,6 @@ import subprocess
 import sys
 import time
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 _record_names_spec = importlib.util.spec_from_file_location(
     "cold_read_record_names",
     pathlib.Path(__file__).with_name("cold-read-record-names.py"))
@@ -163,12 +162,12 @@ def build_runner_argument_parser():
         "--case", required=True, action="append", nargs=4,
         metavar=("DRAFT", "PERFECT", "DEFECT_LIST", "RESTATEMENT"),
         help="one document's four files, in that order, each relative to the "
-             "repository root or absolute. Repeat once per document; the "
+             "current directory or absolute. Repeat once per document; the "
              "ruled campaign passes three")
     parser.add_argument(
         "--prompt-file", required=True, metavar="PATH",
         help="the file holding the judge's instructions, passed to both runs "
-             "unchanged; relative to the repository root unless absolute. "
+             "unchanged; relative to the current directory unless absolute. "
              "Required, because neither this program nor the judge cell "
              "carries that text -- see the module docstring")
     parser.add_argument(
@@ -231,7 +230,6 @@ def launch_judge_runs(
         err = open(stderr_path, "w", encoding="utf-8")  # pylint: disable=consider-using-with
         process = subprocess.Popen(  # pylint: disable=consider-using-with
             command, stdout=err, stderr=err, stdin=subprocess.DEVNULL,
-            cwd=REPO_ROOT,
         )
         err.close()
         running[run_number] = (process, report_path, stderr_path)
@@ -656,9 +654,7 @@ def main() -> int:
         return EXIT_BAD_INVOCATION
 
     if args.record_dir:
-        record_dir = pathlib.Path(args.record_dir)
-        if not record_dir.is_absolute():
-            record_dir = REPO_ROOT / record_dir
+        record_dir = pathlib.Path(args.record_dir).resolve()
         record_dir.mkdir(parents=True, exist_ok=True)
     else:
         record_dir = make_record_directory_for(
