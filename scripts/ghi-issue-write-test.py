@@ -2135,6 +2135,22 @@ def run_git_failure_cases(scratch: Path):
           tracked == [] and "not checked for a file path"
           in complaint.getvalue(), complaint.getvalue())
 
+    def unborn_probe_times_out(arguments, **options):
+        if arguments[:2] == ["git", "rev-parse"]:
+            raise subprocess.TimeoutExpired(arguments, 30)
+        return Completed("", 128, "fatal: unable to read tree")
+    complaint = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(complaint):
+            tracked = tool.tracked_paths_at_head(scratch,
+                                                 unborn_probe_times_out)
+    except subprocess.TimeoutExpired as expiry:
+        tracked = expiry
+    check("a failed listing whose no-commit-yet probe times out still lets "
+          "the heading through, saying so",
+          tracked == [] and "not checked for a file path"
+          in complaint.getvalue(), (tracked, complaint.getvalue()))
+
     worktree_parent = scratch / "removal"
     worktree = worktree_parent / "worktree"
     worktree.mkdir(parents=True)

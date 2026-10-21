@@ -722,7 +722,7 @@ def tracked_paths_at_head(repository_root: Path, runner) -> list:
     if completed.returncode != 0:
         try:
             unborn = head_is_unborn(repository_root, runner)
-        except Refused:
+        except (Refused, subprocess.TimeoutExpired):
             unborn = False
         if unborn:
             return []
@@ -736,16 +736,20 @@ def tracked_paths_at_head(repository_root: Path, runner) -> list:
               "which carries no file path (step 4 of "
               ".claude/skills/ghi-write/SKILL.md).\n"
               "If it names none, nothing more is needed.\n"
-              "If it names one, move the path into the text below the "
-              "heading, then:\n"
-              "If this run created the issue on GitHub, or edited an issue "
-              "created earlier, wait until the pull request this run opened "
-              "has merged, then run this program's edit operation on the "
-              "issue's GHI-MD as main holds it, which renames the issue "
-              "after the corrected heading.\n"
-              "If this run created no issue, because it was a dry run or "
-              "because it stopped before filing, run the same command "
-              "again.",
+              "If it names one and this run created the issue on GitHub, "
+              "or edited an issue created earlier, wait until the pull "
+              "request this run opened has merged, then pull main; the "
+              "heading reaches main unchanged, so correct it there.\n"
+              "If this run created the issue, next rerun the command the "
+              "run's last line gives, which finishes the filing.\n"
+              "Then move the path into the text below the heading in the "
+              "issue's GHI-MD as main holds it, and run this program's edit "
+              "operation on that file, which renames the issue after the "
+              "corrected heading.\n"
+              "If it names one and this run created no issue, because it "
+              "was a dry run or because it stopped before filing, move the "
+              "path into the text below the heading, then run the same "
+              "command again.",
               file=sys.stderr)
         return []
     return git_output.nul_separated_fields(completed.stdout)
