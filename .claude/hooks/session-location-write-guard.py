@@ -70,10 +70,11 @@ COULD_NOT_CHECK_MESSAGE = (
     "session-location-write-guard did not check the write to {path}, and the write went "
     "ahead: {cause}.\n"
     "If your checkout is on a detached HEAD, and no rebase, merge, cherry-pick or revert is "
-    "stopped in it, run git switch -c <a-branch-name> before you commit.\n"
-    "If {path} is in the machine's reference checkout, tell the user which file you wrote; "
+    "stopped in it, run git switch -c <a-branch-name> before you commit, so the commit is "
+    "not lost when HEAD moves.\n"
+    "If {path} is in the machine's reference-checkout, tell the user which file you wrote; "
     "do not revert it yourself.\n"
-    "Tell the user this guard could not check the write, quoting this message."
+    "Tell the user this guard could not check the write, quoting this whole note, then carry on."
 )
 
 CROSS_REFERENCE_DENY_MESSAGE = (
@@ -115,6 +116,9 @@ def git_answer(arguments, working_directory: Path, answers=(0,)):
 def checkout_root_of(directory: Path):
     """The checkout holding directory, or None outside one. Raises CheckCouldNotRun when git
     cannot be launched or times out."""
+    # A deleted directory makes the launch fail too; it is not a checkout, so the reference-checkout check still runs.
+    if not directory.is_dir():
+        return None
     result = run_git(["rev-parse", "--show-toplevel"], directory)
     if result.returncode == GIT_DID_NOT_RUN:
         raise CheckCouldNotRun(f"git rev-parse --show-toplevel could not be started in "
