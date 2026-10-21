@@ -341,10 +341,10 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           (result.returncode, result.stderr))
     check("the could-not-check note tells the agent each next step on its own line",
           "git switch -c" in result.note and "reference-checkout" in result.note
-          and "do not revert it yourself" in result.note
+          and "which file you wrote, in the same message; do not revert it yourself" in result.note
           and "the write went ahead" in result.note
           and "Tell the user this guard could not check the write" in result.note
-          and "quoting this whole note, then carry on." in result.note
+          and "quoting this whole note, then carry on with your task." in result.note
           and len(result.note.splitlines()) == 4, result.note)
 
     # A session whose directory was deleted. Launching git there fails as a missing git does,
