@@ -3,13 +3,17 @@
 
 The programs that print these lines reach this module through their own
 suites. These cases pin the wording itself, word for word, so a change to it
-is a change a reviewer sees here.
+is a change a reviewer sees here, and pin the rerun command and the printer
+that the file-edit hooks take from the module.
 
 Run: python3 nc-systems/general-tools/tests/failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
+import contextlib
 import importlib.util
+import io
+import json
 import subprocess
 import sys
 import tempfile
@@ -106,7 +110,6 @@ check("a hook that hands over a rerun command says to look inside the JSON's add
               "above needs no report.", line)
 
 
-
 def run_lock_file_wait_command(lock_file, seconds_until_removed=None):
     """Run the wait command the lock-file line gives, on lock_file; return (exit code, seconds taken)."""
     command = next_step_lines.WAIT_UP_TO_ONE_MINUTE_FOR_LOCK_FILE_TO_GO_COMMAND.replace(
@@ -145,6 +148,34 @@ with tempfile.TemporaryDirectory() as directory:
     check("the lock-file wait command, against a lock file that stays, stops after exactly 30 polls of "
           "2 seconds, one minute in all",
           completed.returncode == 0 and polls == ["2"] * 30, (completed.returncode, polls))
+
+with tempfile.TemporaryDirectory() as directory:
+    hook_script_path = Path(directory) / "a hook's copy.py"
+    hook_script_path.write_text(
+        "import sys\nsys.stdout.write(sys.stdin.read())\n", encoding="utf-8")
+    working_directory = Path(directory) / "o'clock dir"
+    file_path = "docs/it's a file \u00e9.md"
+    command = next_step_lines.file_edit_hook_shell_command_that_runs_the_hook_on_one_file_as_claude_code_would(
+        hook_script_path, working_directory, file_path)
+    payload = json.dumps({"cwd": str(working_directory), "tool_input": {"file_path": file_path}})
+    check("the rerun command pipes the hook's payload into python3 running the hook script given",
+          command == "printf '%s\\n' " + payload.replace("'", "'\"'\"'").join("''")
+          + " | python3 '" + str(hook_script_path).replace("'", "'\"'\"'") + "'", command)
+    completed = subprocess.run(["bash", "-c", command], capture_output=True, text=True, timeout=30)
+    check("run by a shell, the rerun command hands the hook script the cwd and file path "
+          "Claude Code would, quotes and spaces intact",
+          completed.returncode == 0 and json.loads(completed.stdout)
+          == {"cwd": str(working_directory), "tool_input": {"file_path": file_path}},
+          (completed.returncode, completed.stdout, completed.stderr))
+
+printed = io.StringIO()
+with contextlib.redirect_stdout(printed):
+    next_step_lines.post_tool_use_hook_additional_context_print_for_agent("line one \u00e9\nline two")
+check("the printer writes one JSON object carrying the text as PostToolUse additionalContext, "
+      "non-ASCII unescaped",
+      printed.getvalue() == json.dumps({"hookSpecificOutput": {
+          "hookEventName": "PostToolUse", "additionalContext": "line one \u00e9\nline two"}},
+          ensure_ascii=False) + "\n" and "\u00e9" in printed.getvalue(), printed.getvalue())
 
 print(f"{failures} failure(s)" if failures else "all cases pass")
 sys.exit(1 if failures else 0)

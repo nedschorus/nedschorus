@@ -102,7 +102,6 @@ Code records a PostToolUse exit 1 as a non-blocking error and keeps the edit.
 
 import importlib.util
 import json
-import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -510,13 +509,6 @@ def obsolete_file_warning_line(repository_path: str, commit_count, advice: str,
     return f"{line}\n{advice}" if advice_on_own_lines else f"{line} {advice}"
 
 
-def shell_command_that_runs_this_hook_on_one_file_as_claude_code_would(working_directory: Path,
-                                                                         file_path: str) -> str:
-    """A shell command that runs this hook on file_path as Claude Code would."""
-    payload = json.dumps({"cwd": str(working_directory), "tool_input": {"file_path": file_path}})
-    return f"printf '%s\\n' {shlex.quote(payload)} | python3 {shlex.quote(str(Path(__file__).resolve()))}"
-
-
 def main() -> int:
     payload = json.loads(sys.stdin.read())
     if not isinstance(payload, dict):
@@ -542,11 +534,11 @@ def main() -> int:
     try:
         return warn_about_edited_file(freshness, working_directory, file_path)
     except freshness.git_output.GitCommandFailed as failure:
-        rerun = shell_command_that_runs_this_hook_on_one_file_as_claude_code_would(
-            working_directory, file_path)
+        rerun = freshness.next_step_lines.file_edit_hook_shell_command_that_runs_the_hook_on_one_file_as_claude_code_would(
+            Path(__file__).resolve(), working_directory, file_path)
         # The shared wording comes through checkout-freshness-catch-up's copy, so a
         # hook copied away from it fails in the one load the top-level handler reports.
-        print_for_agent("\n".join((
+        freshness.next_step_lines.post_tool_use_hook_additional_context_print_for_agent("\n".join((
             GIT_FAILURE_CAUSE_LINE.format(failure=failure),
             GIT_FAILURE_AGENT_FACING_MESSAGE_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW.format(
                 path=file_path, rerun=rerun,
@@ -556,14 +548,6 @@ def main() -> int:
             .hook_agent_instruction_if_rerun_command_reports_git_failure_tell_user_both_outputs_line(
                 "obsolete-file-edit-warning-hook:"))))
         return 0
-
-
-def print_for_agent(text) -> None:
-    """Print text as additionalContext, which the agent reads next when the hook exits 0 (see THE CHANNEL)."""
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PostToolUse",
-        "additionalContext": text,
-    }}, ensure_ascii=False))
 
 
 def warn_about_edited_file(freshness, working_directory: Path, file_path: str) -> int:
@@ -599,7 +583,7 @@ def warn_about_edited_file(freshness, working_directory: Path, file_path: str) -
     if write_failure is not None:
         line += "\n" + RECORD_WRITE_FAILED_LINE.format(
             record=git_directory / PATH_SET_CACHE_FILE_NAME, reason=write_failure)
-    print_for_agent(line)
+    freshness.next_step_lines.post_tool_use_hook_additional_context_print_for_agent(line)
     return 0
 
 

@@ -396,6 +396,7 @@ if linux_only_cases_run_here("the report's sandbox lines"):
         # Each way the checkout's lists cannot be read refuses the run, exit 2.
         lists_unreadable_cases = (
             ("is a directory", None, "could not be read (IsADirectoryError"),
+            ("is not UTF-8", b"\xff\n", "is not UTF-8 text (UnicodeDecodeError"),
             ("is not valid Python", "SUITES_RUN_WITHOUT_ANY_SANDBOX = {\n",
              "is not valid Python"),
             ("lacks one list", "SUITES_RUN_WITHOUT_ANY_SANDBOX = {}\n"
@@ -420,6 +421,8 @@ if linux_only_cases_run_here("the report's sandbox lines"):
             if source is None:
                 lists_file.mkdir()
                 (lists_file / "kept-test.txt").write_text("so git keeps the directory\n")
+            elif isinstance(source, bytes):
+                lists_file.write_bytes(source)
             else:
                 lists_file.write_text(source)
             subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
@@ -435,6 +438,28 @@ if linux_only_cases_run_here("the report's sandbox lines"):
                   and "rerun the command you ran." in completed.stderr
                   and not (case_scratch / "logs" / "a-test.py.log").exists(),
                   (completed.returncode, completed.stderr[-600:]))
+            restore = f"git -C {repository} checkout -- scripts/run-all-test-suites.py"
+            if how == "is a directory":
+                check("when the checkout's scripts/run-all-test-suites.py is a directory, the "
+                      "refusal says how to grant read permission and how to move the directory "
+                      "aside and restore the file, and when to stop and tell the user",
+                      f"chmod u+r {lists_file}\n" in completed.stderr
+                      and f"mv {lists_file} {lists_file}.moved-aside && {restore}\n"
+                          in completed.stderr
+                      and "If neither case fits, a step fails, or this same error appears "
+                          "again after you rerun, stop and tell the user" in completed.stderr
+                      and "UTF-8" not in completed.stderr,
+                      completed.stderr[-1200:])
+            if how == "is not UTF-8":
+                check("when the checkout's scripts/run-all-test-suites.py is not UTF-8, the "
+                      "refusal says to restore it from git or re-save it as UTF-8, and when to "
+                      "stop and tell the user, and gives none of the OSError steps",
+                      f"restore it with: {restore}\n" in completed.stderr
+                      and "re-save it as UTF-8, keeping that change.\n" in completed.stderr
+                      and "If a step fails, or this same error appears again after you rerun, "
+                          "stop and tell the user" in completed.stderr
+                      and "chmod" not in completed.stderr and "mv " not in completed.stderr,
+                      completed.stderr[-1200:])
 
 # --- The mutation script's test command --------------------------------------
 
