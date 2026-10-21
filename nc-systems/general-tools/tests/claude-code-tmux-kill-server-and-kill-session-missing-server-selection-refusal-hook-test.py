@@ -131,6 +131,16 @@ def refusal_cases():
         "a later command after a word ending in ;": "tmux new -d -s a x\\; kill-server",
         "a later command after a quoted word ending in ;": "tmux new -d 'sleep 1;' kill-server",
         "a kill-server before an ANSI-C word above U+10FFFF": r"tmux kill-server; echo $'\U110000'",
+        "ssh remote command, as a Mac agent ran it 2026-08-12":
+            "ssh -o BatchMode=yes ned 'tmux kill-session -t test; tmux ls'",
+        "ssh remote command after an option that takes a value": "ssh -p 22 ned 'tmux kill-server'",
+        "ssh remote command split over words": "ssh ned tmux kill-server",
+        "ssh after a wrapper": "timeout 10 ssh ned 'tmux kill-server'",
+        "bash -c": "bash -c 'tmux kill-server'",
+        "sh -c after grouped flags": "sh -ec 'cd /tmp && tmux kill-session -t a'",
+        "zsh by full path": "/bin/zsh -c 'tmux kill-server'",
+        "bash -c inside ssh": "ssh ned \"bash -c 'tmux kill-server'\"",
+        "ssh inside bash -c": "bash -c \"ssh ned 'tmux kill-server'\"",
     }
     for name, command in refused.items():
         reason = run_main(command)
@@ -158,6 +168,14 @@ def allow_cases():
         "quoted prose": 'echo "never run tmux kill-server bare"',
         "unquoted echo": "echo tmux kill-server",
         "prose in an argument": 'printf "%s" "note: tmux kill-server"',
+        "ssh remote kill that names its server": "ssh ned 'tmux -L test kill-session -t test'",
+        "ssh with no remote command": "ssh -t ned",
+        "ssh whose -l value looks like a command": "ssh -l tmux ned uptime",
+        "bash -c naming its server": "bash -c 'tmux -S /tmp/s kill-server'",
+        "bash running a script file": "bash kill-server.sh",
+        "eval stays outside the guard": "eval 'tmux kill-server'",
+        "echo of an ssh command": "echo ssh ned 'tmux kill-server'",
+        "a wrapper with no program after it": "env X=1",
     }
     for name, command in allowed.items():
         reason = run_main(command)
@@ -232,6 +250,19 @@ def message_cases():
     chained = run_main("TMUX_TMPDIR=/tmp/a tmux new -d \\; kill-server")
     check("a chained kill gets no computed command", chained == guard.REFUSAL_WITHOUT_COMMAND_MESSAGE,
           repr(chained))
+    remote = run_main("ssh ned 'TMUX_TMPDIR=/tmp/a tmux kill-server'")
+    check("an ssh remote kill gets no computed command, since its socket is the remote machine's",
+          remote == guard.REFUSAL_WITHOUT_COMMAND_MESSAGE, repr(remote))
+    remote_inside_shell = run_main("bash -c \"ssh ned 'TMUX_TMPDIR=/tmp/a tmux kill-server'\"")
+    check("an ssh remote kill inside bash -c gets no computed command",
+          remote_inside_shell == guard.REFUSAL_WITHOUT_COMMAND_MESSAGE, repr(remote_inside_shell))
+    shell_inside_remote = run_main("ssh ned \"bash -c 'TMUX_TMPDIR=/tmp/a tmux kill-server'\"")
+    check("a bash -c kill inside an ssh remote command gets no computed command, since it runs there",
+          shell_inside_remote == guard.REFUSAL_WITHOUT_COMMAND_MESSAGE, repr(shell_inside_remote))
+    local_shell = run_main("bash -c 'TMUX_TMPDIR=/tmp/a tmux kill-server'")
+    check("a bash -c kill with TMUX_TMPDIR gives the exact command, since it runs here",
+          local_shell is not None and f"\ntmux -S /tmp/a/tmux-{os.getuid()}/default kill-server\n" in local_shell,
+          repr(local_shell))
 
 
 def malformed_input_cases():

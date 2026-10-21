@@ -166,7 +166,7 @@ TABLE_COPIES = {
         {prefix: set(options) for prefix, options in hook.COMMAND_RUNNING_PREFIX_VALUE_OPTIONS.items()}),
     "SHELL_STRING_RUNNERS": (set(SHELL_STRING_RUNNERS), set(hook.SHELL_STRING_RUNNERS)),
     "SHELL_VALUE_OPTIONS": (set(SHELL_VALUE_OPTIONS), set(hook.SHELL_VALUE_OPTIONS)),
-    "SSH_VALUE_LETTERS": (set(SSH_VALUE_LETTERS), set(hook.SSH_VALUE_LETTERS)),
+    "SSH_VALUE_LETTERS": (set(SSH_VALUE_LETTERS), set(hook.shell_reader.SSH_VALUE_LETTERS)),
 }
 for table, (copy, hooks_table) in TABLE_COPIES.items():
     check(f"the test's copy of the hook's {table} has the hook's members, so each member has a case",

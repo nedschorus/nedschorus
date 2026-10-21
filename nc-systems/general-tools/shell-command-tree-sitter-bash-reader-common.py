@@ -317,6 +317,53 @@ def _index_after_options(words, index, wrapper, options):
     return index
 
 
+SHELL_STRING_RUNNERS = ("bash", "sh", "zsh")
+# bash's -o and -O, and their + forms, take an option name as the next word.
+SHELL_VALUE_OPTIONS = {"-o", "+o", "-O", "+O"}
+# ssh's getopt string is "1246ab:c:e:fgi:kl:m:no:p:qstvxAB:CD:E:F:GI:J:KL:MNO:P:Q:R:S:TVw:W:XYy": these letters take a value.
+SSH_VALUE_LETTERS = "bceilmopBDEFIJLOPQRSwW"
+
+
+def shell_command_string(arguments):
+    """Return the command string of `bash -c <string>`, or None without -c."""
+    reads_string = False
+    index = 0
+    while index < len(arguments):
+        word = arguments[index]
+        if word == "--":
+            # `bash -c -- <string>`: the string follows the end of the options.
+            return arguments[index + 1] if reads_string and index + 1 < len(arguments) else None
+        if not word.startswith(("-", "+")):
+            return word if reads_string else None
+        if word in SHELL_VALUE_OPTIONS:
+            index += 1  # the value is the next word
+        elif not word.startswith("--") and "c" in word[1:]:
+            reads_string = True
+        index += 1
+    return None
+
+
+def ssh_remote_command(arguments):
+    """Return the command ssh runs on the remote machine, or None when there is none."""
+    index = 0
+    while index < len(arguments):
+        word = arguments[index]
+        if word == "--":
+            index += 1
+            break
+        if not word.startswith("-") or word == "-":
+            break
+        letters = word[1:]
+        for position, letter in enumerate(letters):
+            if letter in SSH_VALUE_LETTERS:
+                if position == len(letters) - 1:
+                    index += 1  # the value is the next word
+                break
+        index += 1
+    remote = arguments[index + 1:]  # past the destination
+    return " ".join(remote) if remote else None
+
+
 def shell_reader_python_libraries_pinned_requirements_pip_install(runner=subprocess.run):
     """Install the pinned requirements per user; return what pip printed, or raise ShellParserUnavailable."""
     return python_libraries_pinned_requirements_install_if_missing_then_import_common.pinned_requirements_pip_install(
