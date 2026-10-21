@@ -367,10 +367,11 @@ def case_hook_reports_this_worktrees_new_branch(root):
     }
     for command, branch in commands.items():
         subprocess.run(command, shell=True, cwd=str(clone), capture_output=True)
-        _, context = run_hook(clone, state_root, {"tool_name": "Bash", "tool_input": {"command": command}})
+        code, context = run_hook(clone, state_root, {"tool_name": "Bash", "tool_input": {"command": command}})
         reported = set(re.findall(r"^  (\S+) \(branch\)", context, re.M))
         expected = {branch} if branch else set()
-        check(f"after {command!r} the hook reports {expected or 'no branch'}", reported == expected, context)
+        check(f"after {command!r} the hook exits 0 and reports {expected or 'no branch'}",
+              code == 0 and reported == expected, f"exit {code}: {context}")
 
 
 def reported_branches(context: str):
@@ -477,19 +478,36 @@ def case_two_worktrees_each_report_their_own_branch(root):
           set(re.findall(r"^  (\S+) \(branch\)", other, re.M)) == {"second-worktree-topic"}, other)
 
 
-def run_hook_in_process(hook, root: Path, clone: Path, payload: dict, planted_failures: dict):
-    """Run the hook's main() with git subcommands named in planted_failures failing; return (exit, context).
+def planted_failure_for(arguments, planted_failures: dict):
+    """Return the planted outcome whose key's words begin the git arguments, after any -C <dir>, else None."""
+    if not arguments or arguments[0] != "git":
+        return None
+    git_arguments = list(arguments[3:] if arguments[1:2] == ["-C"] else arguments[1:])
+    for key, planted in planted_failures.items():
+        words = key.split()
+        if git_arguments[:len(words)] == words:
+            return planted
+    return None
 
-    planted_failures maps a git subcommand to a CompletedProcess exit code, or to "timeout".
+
+def run_hook_in_process(hook, root: Path, clone: Path, payload: dict, planted_failures: dict, stderr_sink=None):
+    """Run the hook's main() with the git commands named in planted_failures failing; return (exit, context).
+
+    planted_failures maps a git subcommand, or its first words such as "rev-parse HEAD", to a
+    CompletedProcess exit code, or to "timeout". stderr_sink, when given, receives what the hook
+    prints on stderr.
     """
     real_run = subprocess.run
 
     def run_with_planted_failures(arguments, **options):
-        planted = planted_failures.get(arguments[1]) if len(arguments) > 1 and arguments[0] == "git" else None
+        planted = planted_failure_for(arguments, planted_failures)
         if planted == "timeout":
             raise subprocess.TimeoutExpired(arguments, 10)
         if planted is not None:
-            return subprocess.CompletedProcess(arguments, planted, "", "fatal: planted failure\n")
+            error = "fatal: planted failure\nsecond line of the planted error\n"
+            if not options.get("text"):
+                return subprocess.CompletedProcess(arguments, planted, b"", error.encode())
+            return subprocess.CompletedProcess(arguments, planted, "", error)
         return real_run(arguments, **options)
     hook.STATE_DIRECTORY = root / "state"
     hook.subprocess.run = run_with_planted_failures
@@ -498,17 +516,75 @@ def run_hook_in_process(hook, root: Path, clone: Path, payload: dict, planted_fa
     (root / "tmp").mkdir(exist_ok=True)
     tempfile.tempdir = str(root / "tmp")
     body = json.dumps(dict({"session_id": "session-one", "cwd": str(clone)}, **payload))
-    original_stdin, original_stdout = sys.stdin, sys.stdout
+    original_stdin, original_stdout, original_stderr = sys.stdin, sys.stdout, sys.stderr
     sys.stdin, sys.stdout = io.StringIO(body), io.StringIO()
+    if stderr_sink is not None:
+        sys.stderr = stderr_sink
     try:
         code = hook.main()
         output = sys.stdout.getvalue()
     finally:
-        sys.stdin, sys.stdout = original_stdin, original_stdout
+        sys.stdin, sys.stdout, sys.stderr = original_stdin, original_stdout, original_stderr
         hook.subprocess.run = real_run
         tempfile.tempdir = original_tempdir
     context = json.loads(output)["hookSpecificOutput"]["additionalContext"] if output.strip() else ""
     return code, context
+
+
+def case_hook_git_failure_exits_1_with_the_cause_on_stderr(root):
+    for planted in ("rev-parse --show-toplevel", "rev-parse -q --verify HEAD", "rev-parse --absolute-git-dir",
+                    "rev-parse HEAD", "status",
+                    "diff HEAD", "ls-files -z --others", "symbolic-ref"):
+        case_root = root / planted.replace(" ", "_")
+        case_root.mkdir()
+        clone = make_clone(case_root, BASE_MAIN_FILES)
+        write(clone, "alpha.md", "A `name-not-listed-when-git-fails` here.\n")
+        hook = load_module(f"hook_for_git_failure_{planted}", HOOK_PATH)
+        stderr = io.StringIO()
+        code, context = run_hook_in_process(hook, case_root, clone, {"tool_name": "Write",
+                                            "tool_input": {"file_path": "alpha.md"}}, {planted: 128}, stderr)
+        lines = stderr.getvalue().splitlines()
+        check(f"a failing git {planted} exits 1 and tells the agent nothing on stdout",
+              code == 1 and context == "", f"exit {code}: {context}")
+        check(f"a failing git {planted}'s first stderr line names the command, git's error and what was not done",
+              bool(lines) and f"git {planted}" in lines[0] and "exit 128: fatal: planted failure second line of the planted error" in lines[0]
+              and "were not listed" in lines[0], repr(lines))
+        check(f"a failing git {planted} gives the two next-step lines, which ask for no rerun",
+              lines[1:] == ["Nothing needs rerunning: this check runs again at your next file edit or shell command.",
+                            "If the same failure is reported again at your next file edit or shell command, tell the user what "
+                            "new-shared-names-reminder-hook.py printed, git's error included; a subagent tells the "
+                            "agent that dispatched it instead."], repr(lines))
+    (root / "detached").mkdir()
+    detached = make_clone(root / "detached", BASE_MAIN_FILES)
+    git(["remote", "set-head", "origin", "--delete"], detached)
+    git(["checkout", "-q", "--detach"], detached)
+    detached_hook = load_module("hook_for_detached_head", HOOK_PATH)
+    check("a detached HEAD is never reported as a branch named HEAD, even where origin has no HEAD",
+          detached_hook.unreported_new_branch(detached, set(), detached_hook.reported_names_record_key_for(detached)) == "")
+    (root / "timeout").mkdir()
+    clone = make_clone(root / "timeout", BASE_MAIN_FILES)
+    hook = load_module("hook_for_git_timeout", HOOK_PATH)
+    stderr = io.StringIO()
+    code, _ = run_hook_in_process(hook, root / "timeout", clone, {"tool_name": "Bash",
+                                  "tool_input": {"command": "ls"}}, {"rev-parse --show-toplevel": "timeout"}, stderr)
+    check("a git call that times out exits 1 and says so on stderr",
+          code == 1 and "did not finish within 10 s" in stderr.getvalue(), f"exit {code}: {stderr.getvalue()!r}")
+    unborn = root / "no-commit-yet"
+    git(["init", "-q", "-b", "main", str(unborn)], root)
+    write(unborn, "alpha.py", "def first_helper():\n    return 1\n")
+    unborn_state = root / "state-unborn"
+    unborn_state.mkdir()
+    for tool_name, tool_input in (("Write", {"file_path": "alpha.py"}), ("Bash", {"command": "ls"})):
+        code, context = run_hook(unborn, unborn_state, {"tool_name": tool_name, "tool_input": tool_input})
+        check(f"a {tool_name} call in a repository with no commit yet exits 0 and says nothing",
+              code == 0 and context == "", f"exit {code}: {context}")
+    loose = root / "not-a-repository"
+    loose.mkdir()
+    state_root = root / "state-outside"
+    state_root.mkdir()
+    code, context = run_hook(loose, state_root, {"tool_name": "Write", "tool_input": {"file_path": "a.md"}})
+    check("a session seated outside any repository exits 0 and says nothing", code == 0 and context == "",
+          f"exit {code}: {context}")
 
 
 def case_branch_check_failure_is_told_and_the_file_check_still_runs(root):
@@ -516,9 +592,9 @@ def case_branch_check_failure_is_told_and_the_file_check_still_runs(root):
     write(clone, "after-failure.md", "A `still-checked-name` here.\n")
     hook = load_module("hook_for_branch_failure_case", HOOK_PATH)
     code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
-                                        "tool_input": {"file_path": "after-failure.md"}}, {"symbolic-ref": 128})
+                                        "tool_input": {"file_path": "after-failure.md"}}, {"show-ref": 128})
     check("a failing branch check exits 0", code == 0)
-    check("a failing branch check is told to the agent", "git symbolic-ref exited 128" in context, context)
+    check("a failing branch check is told to the agent", "git show-ref exited 128" in context, context)
     check("the file-name check still runs after a failing branch check", "still-checked-name" in context, context)
 
 
@@ -531,19 +607,21 @@ def case_branch_check_and_lister_both_failing_tell_only_the_lister_failure(root)
         raise RuntimeError("planted lister failure")
     hook.load_lister = lister_that_fails
     _, both = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
-                                  "tool_input": {"file_path": "a.md"}}, {"symbolic-ref": 128})
+                                  "tool_input": {"file_path": "a.md"}}, {"show-ref": 128})
     check("when both checks fail, the lister failure is told", "planted lister failure" in both, both)
     check("when both checks fail, no line says names in changed files are still listed",
-          "still listed" not in both and "git symbolic-ref exited 128" not in both, both)
+          "still listed" not in both and "git show-ref exited 128" not in both, both)
     hook.load_lister = working_lister
     _, later = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
-                                   "tool_input": {"file_path": "a.md"}}, {"symbolic-ref": 128})
+                                   "tool_input": {"file_path": "a.md"}}, {"show-ref": 128})
     check("a later run where only the branch check fails tells the branch-check failure",
-          "git symbolic-ref exited 128" in later and "still listed" in later, later)
+          "git show-ref exited 128" in later and "still listed" in later, later)
 
 
 def case_quiet_shell_calls_tell_the_branch_check_failure_once_the_lister_works_again(root):
     clone = make_clone(root, BASE_MAIN_FILES)
+    # On a branch origin has, every quiet call looks the branch up again, so a failing lookup is reached.
+    git(["push", "-q", "-u", "origin", "topic"], clone)
     hook = load_module("hook_for_quiet_both_failures_case", HOOK_PATH)
     working_lister = hook.load_lister
     quiet_call = {"tool_name": "Bash", "tool_input": {"command": "ls"}}
@@ -552,13 +630,13 @@ def case_quiet_shell_calls_tell_the_branch_check_failure_once_the_lister_works_a
     def lister_that_fails():
         raise RuntimeError("planted lister failure")
     hook.load_lister = lister_that_fails
-    _, both = run_hook_in_process(hook, root, clone, quiet_call, {"symbolic-ref": 128})
+    _, both = run_hook_in_process(hook, root, clone, quiet_call, {"show-ref": 128})
     check("a quiet shell call where both checks fail tells only the lister failure",
-          "planted lister failure" in both and "git symbolic-ref exited 128" not in both, both)
+          "planted lister failure" in both and "git show-ref exited 128" not in both, both)
     hook.load_lister = working_lister
-    _, later = run_hook_in_process(hook, root, clone, quiet_call, {"symbolic-ref": 128})
+    _, later = run_hook_in_process(hook, root, clone, quiet_call, {"show-ref": 128})
     check("a later quiet shell call where only the branch check fails tells the branch-check failure",
-          "git symbolic-ref exited 128" in later and "still listed" in later, later)
+          "git show-ref exited 128" in later and "still listed" in later, later)
 
 
 def case_remote_branch_lookup_failure_is_told_and_no_branch_reported(root):
@@ -576,14 +654,16 @@ def case_remote_branch_lookup_failure_is_told_and_no_branch_reported(root):
 
 def case_branch_check_failure_on_a_quiet_shell_call_is_told(root):
     clone = make_clone(root, BASE_MAIN_FILES)
+    # On a branch origin has, every quiet call looks the branch up again, so a failing lookup is reached.
+    git(["push", "-q", "-u", "origin", "topic"], clone)
     hook = load_module("hook_for_quiet_failure_case", HOOK_PATH)
     run_hook_in_process(hook, root, clone, {"tool_name": "Bash", "tool_input": {"command": "ls"}}, {})
     _, quiet = run_hook_in_process(hook, root, clone, {"tool_name": "Bash", "tool_input": {"command": "ls"}}, {})
     check("a quiet shell call with a working branch check is silent", quiet == "", quiet)
     _, context = run_hook_in_process(hook, root, clone, {"tool_name": "Bash", "tool_input": {"command": "ls"}},
-                                     {"symbolic-ref": 128})
+                                     {"show-ref": 128})
     check("a branch check that fails during a quiet shell call is still told to the agent",
-          "git symbolic-ref exited 128" in context, context)
+          "git show-ref exited 128" in context, context)
 
 
 def case_reminder_is_capped():
@@ -1182,6 +1262,7 @@ def main() -> int:
              case_subagent_worktree_branch_claude_code_named_is_not_reported,
              case_agent_seat_branch_in_its_agent_home_is_not_reported,
              case_agent_home_check_failure_is_told_and_no_branch_reported,
+             case_hook_git_failure_exits_1_with_the_cause_on_stderr,
              case_branch_check_failure_is_told_and_the_file_check_still_runs,
              case_branch_check_and_lister_both_failing_tell_only_the_lister_failure,
              case_quiet_shell_calls_tell_the_branch_check_failure_once_the_lister_works_again,
