@@ -31,7 +31,7 @@ GIT_CALL_TIMEOUT_SECONDS = 10
 GIT_FAILURE_TEMPLATE = (
     "file-name-collision-warning: git {command} failed ({outcome}), so {path} was not checked "
     "for another tracked file with the same basename; this hook compares basenames ignoring letter "
-    "case, so README.md and readme.md count as the same basename.\n"
+    "case, so Notes.md and notes.md count as the same basename.\n"
     "A later run of this hook checks only the file that run's Write or Edit touched, so check "
     "{path} by running the next line's command. If git's error above names no lock file, run that "
     "command now. If git's error names a lock file, "

@@ -438,7 +438,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               "planted error" in failure_lines[0]
               and failure_lines[0].endswith(f"so {written} was not checked for another tracked file with the "
                                             "same basename; this hook compares basenames ignoring letter case, so "
-                                            "README.md and readme.md count as the same basename."), repr(failure_lines))
+                                            "Notes.md and notes.md count as the same basename."), repr(failure_lines))
         check(f"a failing git {failing_subcommand} gives a line naming {written.name}, a line with a command "
               "that reruns the hook on it, then the line saying what to do if that rerun fails too",
               len(failure_lines) == 4

@@ -2323,7 +2323,7 @@ def arguments_without_repo(arguments):
     return kept
 
 
-def git_top_level_failure_message(repo, named, failure, skip, repo_rerun):
+def build_agent_facing_message_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command(repo, named, failure, skip, repo_rerun):
     """The lines, before the shared next steps, for a git top-level failure; true for whichever git surfaces --skip left in."""
     git_surfaces = [name for flag, name in (("git", "git"), ("reflog", "git reflog")) if flag not in skip]
     if len(git_surfaces) == 2:
@@ -2542,7 +2542,9 @@ def print_surface_as_it_finishes(report):
 
 
 def main(argv=None, runner=run_command):
+    # An abbreviation such as --rep would set --repo yet slip past arguments_without_repo.
     parser = argparse.ArgumentParser(
+        allow_abbrev=False,
         description="Find a deleted path across this Mac's local snapshots, git and its reflog, the log-store, "
                     "agent transcripts, Timeshift on the box, and Time Machine.",
     )
@@ -2597,7 +2599,7 @@ def main(argv=None, runner=run_command):
         # The git surfaces report the same failure as UNAVAILABLE; the other surfaces can still search.
         repo_rerun = rerun_command(["--repo", REPO_PLACEHOLDER]
                                    + arguments_without_repo(sys.argv[1:] if argv is None else argv))
-        print(git_top_level_failure_message(args.repo, named, failure, set(args.skip), repo_rerun)
+        print(build_agent_facing_message_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command(args.repo, named, failure, set(args.skip), repo_rerun)
               + "\n" + git_failure_next_steps(rerun), file=sys.stderr, flush=True)
         wanted = named
     shown = wanted if wanted == args.path else "%s (given as %s)" % (wanted, args.path)

@@ -2807,7 +2807,15 @@ check("arguments_without_repo keeps every argument after a -- separator, a path 
       finder.arguments_without_repo(["--repo", "/r", "--", "--repo", "x.md"]) == ["--", "--repo", "x.md"],
       finder.arguments_without_repo(["--repo", "/r", "--", "--repo", "x.md"]))
 
-message = finder.git_top_level_failure_message("/r", "/r/a.md", "planted failure", {"reflog"}, "python3 p")
+for abbreviated in (["--rep", "/x"], ["--rep=/x"]):
+    refused = subprocess.run([sys.executable, str(Path(finder.__file__).resolve())] + abbreviated + ["/x/a.md"],
+                             capture_output=True, text=True, timeout=60)
+    check("the abbreviated option %s is refused as unrecognized, so it cannot set --repo behind "
+          "arguments_without_repo's back" % abbreviated[0],
+          refused.returncode == 2 and "unrecognized arguments: %s" % abbreviated[0] in refused.stderr,
+          "exit %s\n%s" % (refused.returncode, refused.stderr))
+
+message = finder.build_agent_facing_message_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command("/r", "/r/a.md", "planted failure", {"reflog"}, "python3 p")
 check("with only git reflog skipped, the git-failure message names the git surface alone and keeps exit 3 for no find",
       "The git surface cannot search, and its result line will say UNAVAILABLE for this failure; --skip left out "
       "the other git surface." in message
