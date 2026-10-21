@@ -429,8 +429,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         check(f"a failing git {failing_subcommand} gives the two next-step lines, which ask for no rerun",
               failure_lines[1:] == ["Nothing needs rerunning: this check runs again at your next Write or Edit.",
                                     "If the same failure is reported again at your next Write or Edit, tell the user what "
-                                    "file-name-collision-warning-hook.py printed, git's error included; a subagent tells the "
-                                    "agent that dispatched it instead."], repr(failure_lines))
+                                    "file-name-collision-warning-hook.py printed both times, git's error included. "
+                                    "A subagent tells the agent that dispatched it, not the user."], repr(failure_lines))
 
     # --- malformed payloads cost nothing and say nothing ------------------
     check("a payload that is not JSON exits 0 and prints nothing",

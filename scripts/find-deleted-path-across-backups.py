@@ -368,6 +368,13 @@ _git_output_spec = importlib.util.spec_from_file_location(
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_rerun_then_stop_next_step_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-rerun-then-stop-next-step-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 FOUND = "FOUND"
 NOT_FOUND = "NOT FOUND"
 UNAVAILABLE = "UNAVAILABLE"
@@ -2286,14 +2293,7 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
 
 def git_failure_next_steps(rerun):
     """The lines that tell an agent what to do after a git failure in a run started as rerun."""
-    return ("If git's error names a lock file, such as .git/index.lock, wait one minute, then run %s; "
-            "do not delete the lock file yourself.\n"
-            "If git's error names a branch, commit or path that does not exist, and you gave that name to %s, "
-            "correct it in your command, then run the corrected command.\n"
-            "In any other case, run %s once more.\n"
-            "If %s fails again, stop and tell the user what %s printed, git's error included; a subagent tells "
-            "the agent that dispatched it instead."
-            % (rerun, PROGRAM_PATH, rerun, rerun, PROGRAM_PATH))
+    return next_step_lines.git_failure_next_step_lines(rerun, PROGRAM_PATH)
 
 
 def rerun_command(arguments):

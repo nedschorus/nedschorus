@@ -39,6 +39,8 @@ LINT_OVERVIEW_PATH_MODULE = (
     SCRIPTS / "architecture-overview-path-template-and-checked-against-commit-reader.py")
 GIT_OUTPUT_MODULE = (SCRIPTS.parent / "nc-systems" / "general-tools"
                      / "git-machine-readable-output-runner-and-parser-common.py")
+NEXT_STEP_LINES_MODULE = GIT_OUTPUT_MODULE.with_name(
+    "failed-command-rerun-then-stop-next-step-lines-common.py")
 
 failures = []
 
@@ -76,7 +78,8 @@ def new_repository(workspace: str) -> Path:
     shutil.copy(LINT, root / "scripts" / LINT.name)
     shutil.copy(LINT_OVERVIEW_PATH_MODULE, root / "scripts" / LINT_OVERVIEW_PATH_MODULE.name)
     (root / "nc-systems" / "general-tools").mkdir(parents=True)
-    shutil.copy(GIT_OUTPUT_MODULE, root / "nc-systems" / "general-tools" / GIT_OUTPUT_MODULE.name)
+    for module in (GIT_OUTPUT_MODULE, NEXT_STEP_LINES_MODULE):
+        shutil.copy(module, root / "nc-systems" / "general-tools" / module.name)
     git(root, "init", "-q", "-b", "main")
     git(root, "add", "-A")
     git(root, "commit", "-q", "-m", "scripts", date="2026-01-01")
@@ -137,8 +140,8 @@ def reports_the_git_failure_and_no_result(root, arguments, code, out, err):
             and "finding(s)" not in err
             and "and you gave that name to stale-code-citation-check, correct it in your command" in err
             and f"In any other case, run {rerun} once more." in err
-            and f"If {rerun} fails again, stop and tell the user what "
-                f"stale-code-citation-check printed" in err)
+            and f"If {rerun} fails again, stop, and tell the user what "
+                f"stale-code-citation-check printed and what the rerun printed" in err)
 
 
 def document(stamp="2026-05-01", status="design", body=""):

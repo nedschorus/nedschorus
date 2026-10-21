@@ -142,6 +142,13 @@ _git_output_spec = importlib.util.spec_from_file_location(
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_rerun_then_stop_next_step_lines_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "failed-command-rerun-then-stop-next-step-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 # Regenerable junk is left out of the list of files a removal discards.
 DISPOSABLE_JUNK_BASENAMES = (".DS_Store", "__pycache__")
 
@@ -172,16 +179,6 @@ def run_git(repo, *arguments):
 
 FINISHED_WITH_FAILURES_LINE = "clean-worktrees: finished; each failure is named above"
 STOPPED_LINE_START = "clean-worktrees: stopped, because "
-
-GIT_FAILURE_NEXT_STEP_LINES = (
-    "If git's error names a lock file, such as .git/index.lock, wait one minute, then run {rerun}; "
-    "do not delete the lock file yourself.\n"
-    "If git's error names a branch, commit or path that does not exist, and you gave that name "
-    "to {program}, correct it in your command, then run the corrected command.\n"
-    "In any other case, run {rerun} once more.\n"
-    "If {rerun} fails again, stop and tell the user what {program} printed, "
-    "git's error included; a subagent tells the agent that dispatched it instead.")
-
 
 def main_checkout_of(repo):
     """Return the primary checkout from the common git directory."""
@@ -515,7 +512,7 @@ def main(argv=None):
         rerun = shlex.join([sys.executable, str(Path(__file__).resolve()), *given_arguments])
         print(f"{STOPPED_LINE_START}{' '.join(str(error).split())}; "
               f"this run checked and did nothing beyond what it printed before this line.\n"
-              + GIT_FAILURE_NEXT_STEP_LINES.format(rerun=rerun, program="scripts/clean-worktrees.py"),
+              + next_step_lines.git_failure_next_step_lines(rerun, "scripts/clean-worktrees.py"),
               file=sys.stderr)
         return 2
 

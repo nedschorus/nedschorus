@@ -306,6 +306,13 @@ _git_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
+
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_rerun_then_stop_next_step_lines_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "failed-command-rerun-then-stop-next-step-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
 # The Codex cells' permission profile, as it appears in their sessions.
 CODEX_CREDENTIAL_DENYING_PERMISSION_PROFILE = "sanity-check-no-credentials"
 
@@ -377,21 +384,16 @@ GIT_CHECKS_FAILED_AFTER_A_CELL = []
 STOP_PROCESS_LISTING_FAILURE = None
 # The commit token of a provenance line whose commit git could not read.
 COMMIT_NOT_READ = "not-read-git-failed"
-# What to do after a git command the runner ran has failed, printed after the
-# line that names the command and quotes git's error.
-GIT_FAILURE_NEXT_STEP_LINES = (
-    "If git's error names a lock file, such as .git/index.lock, wait one minute, then run {rerun}; do not delete the lock file yourself.",
-    "If git's error names a branch, commit or path that does not exist, and you gave that name to {program}, correct it in your command, then run the corrected command.",
-    "In any other case, run {rerun} once more.",
-    "If {rerun} fails again, stop and tell the user what {program} printed, git's error included; a subagent tells the agent that dispatched it instead.",
-)
 
 
 def git_failure_next_step_lines(rerun: str) -> str:
-    """GIT_FAILURE_NEXT_STEP_LINES for this program and `rerun`, each ending its line."""
+    """What to do after a git command the runner ran has failed, each line ending its line.
+
+    Printed after the line that names the command and quotes git's error.
+    """
     program = str(pathlib.Path(__file__).resolve())
-    return "".join(line.format(rerun=rerun, program=program) + "\n"
-                   for line in GIT_FAILURE_NEXT_STEP_LINES)
+    return next_step_lines.git_failure_next_step_lines(rerun, program) + "\n"
+
 
 # The line a cell prints when its first launch produced no report and the
 # runner launches it once more: `RETRYING: <cell> — <cause class> — <detail>`.

@@ -971,8 +971,8 @@ with tempfile.TemporaryDirectory() as scratch:
               (failed_listing.returncode, failed_listing.stdout, failed_listing.stderr))
         check(f"a failed worktree listing{' under ' + flags[0] if flags else ''} gives the "
               "shared next steps, naming the command that was run",
-              stderr_lines[1:] == load_clean_worktrees_module().GIT_FAILURE_NEXT_STEP_LINES.format(
-                  rerun=rerun, program="scripts/clean-worktrees.py").splitlines(),
+              stderr_lines[1:] == load_clean_worktrees_module().next_step_lines.git_failure_next_step_lines(
+                  rerun, "scripts/clean-worktrees.py").splitlines(),
               failed_listing.stderr)
 
     module = load_clean_worktrees_module()

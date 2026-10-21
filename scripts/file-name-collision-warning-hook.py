@@ -15,6 +15,13 @@ _git_machine_readable_output_spec = importlib.util.spec_from_file_location(
 git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
 _git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_rerun_then_stop_next_step_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-rerun-then-stop-next-step-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 # These names are identified by their folders; SKILL.md and README.md are required by their consumers.
 EXEMPT_FILE_NAMES = frozenset({"skill.md", "readme.md", ".gitkeep"})
 
@@ -25,9 +32,8 @@ GIT_FAILURE_TEMPLATE = (
     "file-name-collision-warning: git {command} failed ({outcome}), so {path} was not checked "
     "for a name another tracked file has.\n"
     "Nothing needs rerunning: this check runs again at your next Write or Edit.\n"
-    "If the same failure is reported again at your next Write or Edit, tell the user what "
-    "file-name-collision-warning-hook.py printed, git's error included; a subagent tells the "
-    "agent that dispatched it instead."
+    + next_step_lines.same_failure_again_line(
+        "at your next Write or Edit", "file-name-collision-warning-hook.py")
 )
 
 

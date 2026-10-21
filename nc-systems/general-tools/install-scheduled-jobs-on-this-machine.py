@@ -172,6 +172,12 @@ _shell_reader_spec = importlib.util.spec_from_file_location(
 shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
 _shell_reader_spec.loader.exec_module(shell_reader)
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_rerun_then_stop_next_step_lines_common",
+    Path(__file__).resolve().with_name("failed-command-rerun-then-stop-next-step-lines-common.py"))
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 PROGRAM = "install-scheduled-jobs-on-this-machine"
 TABLE_FILE_NAME = "scheduled-jobs-on-each-machine.json"
 SCHEDULERS = ("cron", "launchd")
@@ -471,14 +477,17 @@ class LaunchctlPrintFailed(Exception):
         self.error_text = error_text
         super().__init__(self.cause)
 
-    def next_steps(self, rerun: str) -> str:
-        """Return the lines that tell the reader what to do, ending in rerun."""
+    def next_steps(self, rerun: str, failure_again: str = "fails the same way") -> str:
+        """Return the lines that tell the reader what to do.
+
+        With launchctl's error, they end in rerun; without it, in when to stop and
+        tell the user. failure_again says what counts as rerun failing again.
+        """
         if self.error_text:
             return f"Fix what launchctl's error names.\nThen run `{rerun}` on this machine."
-        return (f"Run `{rerun}` once more.\n"
-                f"If it fails again, stop and tell the user what "
-                f"install-scheduled-jobs-on-this-machine printed; a subagent tells the agent "
-                f"that dispatched it instead.")
+        return (f"Run `{rerun}` on this machine; it tries this job alone.\n"
+                + next_step_lines.rerun_then_stop_line(
+                    f"`{rerun}`", PROGRAM, failure=failure_again, error_included=None))
 
 
 def rerun_command(mode: str, job_name: str, start_once: bool = False) -> str:
@@ -992,7 +1001,11 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
     for name, placement, failure in not_checked:
         print(f"NOT CHECKED: {name} — {failure.cause}; so whether launchd has "
               f"{placement['label']} loaded is unknown.", file=sys.stderr)
-        print(failure.next_steps(rerun_command('--check', name)), file=sys.stderr)
+        print(failure.next_steps(
+            rerun_command('--check', name),
+            failure_again=f"prints NOT CHECKED for {name} again (a DIFFERS line is not this "
+                          f"failure: it means the check ran and found the job out of date)"),
+            file=sys.stderr)
     if not_checked:
         return 2
     return 1 if differences or not_in_table else 0

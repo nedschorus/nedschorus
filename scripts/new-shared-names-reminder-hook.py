@@ -39,6 +39,13 @@ _git_machine_readable_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_machine_readable_output = importlib.util.module_from_spec(_git_machine_readable_output_spec)
 _git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
+
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_rerun_then_stop_next_step_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-rerun-then-stop-next-step-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
 NAMING_PAGE_PATH = "docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md"
 NAMING_FRESH_AGENT_NAME = "new-name-propose-and-check-fresh-agent"
 REPORTED_NAMES_FILE_NAME = "new-shared-names-reported.json"
@@ -77,9 +84,8 @@ GIT_FAILURE_TEMPLATE = (
     "new-shared-names-reminder: git {command} failed ({outcome}), so the new shared names on "
     "this branch were not listed.\n"
     "Nothing needs rerunning: this check runs again at your next file edit or shell command.\n"
-    "If the same failure is reported again at your next file edit or shell command, tell the user what "
-    "new-shared-names-reminder-hook.py printed, git's error included; a subagent tells the "
-    "agent that dispatched it instead."
+    + next_step_lines.same_failure_again_line(
+        "at your next file edit or shell command", "new-shared-names-reminder-hook.py")
 )
 BRANCH_CHECK_FAILURE_TEMPLATE = (
     "new-shared-names-reminder: the check of whether this branch's name is new failed, so "

@@ -1016,9 +1016,9 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
 
     report = sync_with_failing_call(home, "rev-parse --show-toplevel")
     check("a branch sync git failure ends with the next steps, naming the git command to rerun",
-          report.endswith(supervisor.GIT_FAILURE_NEXT_STEP_LINES.format(
-              rerun=f"`git -C {home} rev-parse --show-toplevel`",
-              program="the handoff-supervisor's branch sync")), report)
+          report.endswith(supervisor.next_step_lines.git_failure_next_step_lines(
+              f"`git -C {home} rev-parse --show-toplevel`",
+              "the handoff-supervisor's branch sync", agent_gave_the_names=False)), report)
     plan = supervisor.DialogIgnitionPlan(root / "extract.md", {})
     for shape, prompt in (
             ("dialog", plan.compose(report)),

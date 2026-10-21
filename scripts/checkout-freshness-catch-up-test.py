@@ -2644,7 +2644,7 @@ with tempfile.TemporaryDirectory() as failing_git_scratch:
               f"{level_seat.resolve()}` once more." in run.stdout
           and "and you gave that name to checkout-freshness-catch-up.py, correct it in your "
               "command, then run the corrected command." in run.stdout
-          and "fails again, stop and tell the user" in run.stdout
+          and "fails again, stop, and tell the user what checkout-freshness-catch-up.py printed and what the rerun printed" in run.stdout
           and "Nothing needs rerunning" not in run.stdout, run.stdout + run.stderr)
     worktree_list_fails = failing_git_shim("worktree-list-fails-in-modes", '*" worktree list "*')
     run = run_catch_up_once(["--reference-pull", "--repo", str(level_seat)], worktree_list_fails)

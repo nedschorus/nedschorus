@@ -38,6 +38,8 @@ LINT_OVERVIEW_PATH_MODULE = Path(__file__).with_name(
     "architecture-overview-path-template-and-checked-against-commit-reader.py")
 GIT_OUTPUT_MODULE = (Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
                      / "git-machine-readable-output-runner-and-parser-common.py")
+NEXT_STEP_LINES_MODULE = GIT_OUTPUT_MODULE.with_name(
+    "failed-command-rerun-then-stop-next-step-lines-common.py")
 
 failures = []
 
@@ -70,8 +72,9 @@ def build_repository(root: Path):
         (root / "scripts" / source.name).write_text(source.read_text(encoding="utf-8"),
                                                    encoding="utf-8")
     (root / "nc-systems" / "general-tools").mkdir(parents=True)
-    (root / "nc-systems" / "general-tools" / GIT_OUTPUT_MODULE.name).write_text(
-        GIT_OUTPUT_MODULE.read_text(encoding="utf-8"), encoding="utf-8")
+    for module in (GIT_OUTPUT_MODULE, NEXT_STEP_LINES_MODULE):
+        (root / "nc-systems" / "general-tools" / module.name).write_text(
+            module.read_text(encoding="utf-8"), encoding="utf-8")
     (root / "scripts" / "already-here.py").write_text("# a file that exists\n", encoding="utf-8")
     (root / ".gitignore").write_text("cold-read-records/\n", encoding="utf-8")
     git(root, "add", "-A")
@@ -1082,8 +1085,8 @@ with tempfile.TemporaryDirectory() as workspace:
                 and "finding(s)" not in err
                 and "and you gave that name to dangling-path-citation-check, correct it in your command" in err
                 and f"In any other case, run {rerun} once more." in err
-                and f"If {rerun} fails again, stop and tell the user what "
-                    f"dangling-path-citation-check printed" in err)
+                and f"If {rerun} fails again, stop, and tell the user what "
+                    f"dangling-path-citation-check printed and what the rerun printed" in err)
 
     for failing_arguments, what in (
             ("ls-tree -z HEAD --name-only -d", "listing the root directories"),

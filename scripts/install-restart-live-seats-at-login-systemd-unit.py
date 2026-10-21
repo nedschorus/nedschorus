@@ -52,11 +52,19 @@ Usage:
 """
 
 import argparse
+import importlib.util
 import os
 import shlex
 import subprocess
 import sys
 from pathlib import Path
+
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_rerun_then_stop_next_step_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-rerun-then-stop-next-step-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
 
 DEFAULT_UNIT_NAME = "restart-live-seats-at-login"
 PROGRAM_FILE_NAME = "restart-live-seats-at-login.py"
@@ -162,10 +170,11 @@ def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: P
             print(f"Otherwise fix what systemctl's error names, then run `{rerun}`.",
                   file=sys.stderr)
         else:
-            print(f"Run `{rerun}` once more.", file=sys.stderr)
-            print("If it fails again, stop and tell the user what "
-                  "install-restart-live-seats-at-login-systemd-unit printed; a subagent tells "
-                  "the agent that dispatched it instead.", file=sys.stderr)
+            print(f"Run `{rerun}` on ned-box, the machine whose user manager runs the unit.",
+                  file=sys.stderr)
+            print(next_step_lines.rerun_then_stop_line(
+                f"`{rerun}`", "install-restart-live-seats-at-login-systemd-unit",
+                failure="fails the same way", error_included=None), file=sys.stderr)
         return 1
     if enabled:
         # Starting preserves enable symlinks; rewriting an enabled unit would alter future boots.

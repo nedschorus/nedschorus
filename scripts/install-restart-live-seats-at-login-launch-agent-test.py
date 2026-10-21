@@ -230,10 +230,10 @@ with tempfile.TemporaryDirectory() as temporary:
           "to rerun once and then tell the user, not to fix an error that was never printed",
           exit_code == 1 and "printing nothing on stderr" in errors
           and errors.splitlines()[-2:] == [
-              f"Run `{rerun}` once more.",
-              "If it fails again, stop and tell the user what "
-              "install-restart-live-seats-at-login-launch-agent printed; a subagent tells the "
-              "agent that dispatched it instead."], (exit_code, errors))
+              f"Run `{rerun}` on this Mac.",
+              f"If `{rerun}` fails the same way, stop, and tell the user what "
+              "install-restart-live-seats-at-login-launch-agent printed and what the rerun "
+              "printed. A subagent tells the agent that dispatched it, not the user."], (exit_code, errors))
     launchctl = LaunchctlStub(bootout_exit_code=5, print_exit_code=1)
     exit_code, printed, errors = run_main(
         ["--label", "com.nedschorus.test", "--remove"], agents_directory, launchctl=launchctl)

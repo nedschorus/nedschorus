@@ -187,12 +187,8 @@ GIT_FAILURE_CAUSE_LINE = (
     "obsolete-file-edit-warning-hook: {failure}, so the edited file was not checked "
     "against origin/main; the edit itself succeeded."
 )
-GIT_FAILURE_NEXT_STEP_LINES = (
-    "Nothing needs rerunning: this check runs again at your next Edit or Write.\n"
-    "If the same failure is reported again at your next Edit or Write, tell the user "
-    "what obsolete-file-edit-warning-hook printed, git's error included; a subagent "
-    "tells the agent that dispatched it instead."
-)
+GIT_FAILURE_NOTHING_TO_RERUN_LINE = (
+    "Nothing needs rerunning: this check runs again at your next Edit or Write.")
 RECORD_WRITE_FAILED_LINE = (
     "obsolete-file-edit-warning could not record that it gave this warning, so it "
     "will give it again at your next edit of this file ({record}: {reason}). Nothing "
@@ -530,7 +526,11 @@ def main() -> int:
         return warn_about_edited_file(freshness, working_directory, file_path)
     except freshness.git_output.GitCommandFailed as failure:
         print(GIT_FAILURE_CAUSE_LINE.format(failure=failure), file=sys.stderr)
-        print(GIT_FAILURE_NEXT_STEP_LINES, file=sys.stderr)
+        # The shared wording comes through checkout-freshness-catch-up's copy, so a
+        # hook copied away from it fails in the one load the top-level handler reports.
+        print(GIT_FAILURE_NOTHING_TO_RERUN_LINE, file=sys.stderr)
+        print(freshness.next_step_lines.same_failure_again_line(
+            "at your next Edit or Write", "obsolete-file-edit-warning-hook"), file=sys.stderr)
         return 1
 
 

@@ -102,6 +102,13 @@ from typing import Optional
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIRECTORY = REPOSITORY_ROOT / "scripts"
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_rerun_then_stop_next_step_lines_common",
+    REPOSITORY_ROOT / "nc-systems" / "general-tools"
+    / "failed-command-rerun-then-stop-next-step-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 _worth_resuming_spec = importlib.util.spec_from_file_location(
     "seat_transcript_worth_resuming",
     SCRIPTS_DIRECTORY / "seat-transcript-worth-resuming.py")
@@ -264,25 +271,20 @@ SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
 WRITTEN_BY_SESSION_FIELD = "written-by-session"
 WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 
-GIT_FAILURE_NEXT_STEP_LINES = (
-    "If git's error names a lock file, such as .git/index.lock, wait one minute, then run "
-    "{rerun}; do not delete the lock file yourself.\n"
-    "In any other case, run {rerun} once more.\n"
-    "If {rerun} fails again, stop and tell the user what {program} printed, "
-    "git's error included; a subagent tells the agent that dispatched it instead.")
 BRANCH_SYNC_PROGRAM_NAME = "the handoff-supervisor's branch sync"
 
 
 def branch_sync_git_failure_next_steps(error) -> str:
     """The next-step lines for a GitCommandFailed the branch sync reports."""
     rerun = f"`{shlex.join(['git', '-C', str(error.directory), *error.arguments])}`"
-    return GIT_FAILURE_NEXT_STEP_LINES.format(rerun=rerun, program=BRANCH_SYNC_PROGRAM_NAME)
+    return next_step_lines.git_failure_next_step_lines(
+        rerun, BRANCH_SYNC_PROGRAM_NAME, agent_gave_the_names=False)
 
 
 def branch_state_instruction_after(branch_sync_report: str) -> str:
     """The branch-state instruction, left out after a git failure, whose next steps may end in stopping."""
-    stop_line = GIT_FAILURE_NEXT_STEP_LINES.rpartition("{rerun}")[2].format(
-        program=BRANCH_SYNC_PROGRAM_NAME)
+    stop_line = next_step_lines.rerun_then_stop_line(
+        "{rerun}", BRANCH_SYNC_PROGRAM_NAME).partition("{rerun}")[2]
     return "" if branch_sync_report.endswith(stop_line) else BRANCH_STATE_INSTRUCTION
 
 

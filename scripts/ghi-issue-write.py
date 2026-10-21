@@ -388,6 +388,13 @@ _git_output_spec = importlib.util.spec_from_file_location(
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_rerun_then_stop_next_step_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-rerun-then-stop-next-step-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 
 def _load_sibling_script(module_name, file_name):
     spec = importlib.util.spec_from_file_location(
@@ -539,11 +546,7 @@ def run(arguments, timeout=GH_TIMEOUT_SECONDS, cwd=None, check=True):
 
 def git_failure_next_steps(rerun: str, program: str) -> str:
     """What an agent does after a git command this program ran failed."""
-    return (
-        f"If git's error names a lock file, such as .git/index.lock, wait one minute, then run {rerun}; do not delete the lock file yourself.\n"
-        f"If git's error names a branch, commit or path that does not exist, and you gave that name to {program}, correct it in your command, then run the corrected command.\n"
-        f"In any other case, run {rerun} once more.\n"
-        f"If {rerun} fails again, stop and tell the user what {program} printed, git's error included; a subagent tells the agent that dispatched it instead.")
+    return next_step_lines.git_failure_next_step_lines(rerun, program)
 
 
 def git_failure_refusal(arguments, completed, not_done: str) -> Refused:
@@ -608,8 +611,8 @@ def remove_landing_worktree(worktree: Path, worktree_parent: Path,
           "behind.\n"
           f"{outcome}\n"
           f"Run {cleanup} to remove that record.\n"
-          "If that fails, tell the user what it printed; a subagent tells "
-          "the agent that dispatched it instead.", file=sys.stderr)
+          "If that fails, tell the user what it printed. "
+          + next_step_lines.SUBAGENT_TELLS_ITS_DISPATCHER_SENTENCE, file=sys.stderr)
 
 
 def push_time_limit_seconds(environment):

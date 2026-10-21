@@ -47,6 +47,8 @@ HOOK_RELATIVE = Path("scripts/uncommitted-work-snapshot-hook.py")
 CLEANER_RELATIVE = Path("scripts/clean-worktrees.py")
 GIT_OUTPUT_MODULE_RELATIVE = Path(
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py")
+NEXT_STEP_LINES_MODULE_RELATIVE = Path(
+    "nc-systems/general-tools/failed-command-rerun-then-stop-next-step-lines-common.py")
 
 
 def load(path, name):
@@ -127,7 +129,7 @@ def new_clone():
     main = base / "main"
     git(SCRATCH, "clone", "-q", str(origin), str(main))
     for relative in (MODULE_RELATIVE, HOOK_RELATIVE, CLEANER_RELATIVE,
-                     GIT_OUTPUT_MODULE_RELATIVE):
+                     GIT_OUTPUT_MODULE_RELATIVE, NEXT_STEP_LINES_MODULE_RELATIVE):
         (main / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPOSITORY_ROOT / relative, main / relative)
     (main / "tracked.txt").write_text("one\n")

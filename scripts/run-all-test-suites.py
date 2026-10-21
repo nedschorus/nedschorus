@@ -590,6 +590,13 @@ git_redirecting_removal = importlib.util.module_from_spec(_git_redirecting_remov
 _git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
 GIT_REDIRECTING_ENVIRONMENT_VARIABLES = git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_rerun_then_stop_next_step_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-rerun-then-stop-next-step-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 # Whether a user attends the agent-session changes what some messages under test say, so a suite
 # is launched without them and each test sets them itself.
 AGENT_SESSION_ATTENDANCE_ENVIRONMENT_VARIABLES = (
@@ -1180,15 +1187,8 @@ def interpreter_and_version(given):
 
 def git_failure_next_step_lines(program_file):
     """The lines that end a refusal after a git failure, for a run of program_file."""
-    rerun = f"the same {program_file} command"
-    return "\n".join([
-        f"If git's error names a lock file, such as .git/index.lock, wait one minute, then run "
-        f"{rerun}; do not delete the lock file yourself.",
-        f"If git's error names a branch, commit or path that does not exist, and you gave that "
-        f"name to {program_file}, correct it in your command, then run the corrected command.",
-        f"In any other case, run {rerun} once more.",
-        f"If {rerun} fails again, stop and tell the user what {program_file} printed, git's "
-        f"error included; a subagent tells the agent that dispatched it instead."])
+    return next_step_lines.git_failure_next_step_lines(
+        f"the same {program_file} command", program_file)
 
 
 def first_line_of_error(completed):

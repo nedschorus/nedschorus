@@ -122,6 +122,13 @@ _git_output_spec = importlib.util.spec_from_file_location(
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_rerun_then_stop_next_step_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-rerun-then-stop-next-step-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 # Every Stop hook obeys this rule first: see the module's docstring.
 _stop_hooks_stay_silent_rule_specification = importlib.util.spec_from_file_location(
     "claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
@@ -270,15 +277,8 @@ GIT_FAILED_NOTES_DELIVERY_AGENT_NEXT_STEP_LINES = (
     "If the same failure is reported again with the next prompt, tell the user what "
     "{program} printed, git's error included."
 )
-GIT_FAILED_RERUN_NEXT_STEP_LINES = (
-    "If git's error names a lock file, such as .git/index.lock, wait one minute, then "
-    "run {rerun}; do not delete the lock file yourself.\n"
-    "If git's error names a branch, commit or path that does not exist, and you gave that "
-    "name to {program}, correct it in your command, then run the corrected command.\n"
-    "In any other case, run {rerun} once more.\n"
-    "If {rerun} fails again, stop and tell the user what {program} printed, "
-    "git's error included; a subagent tells the agent that dispatched it instead."
-)
+GIT_FAILED_RERUN_NEXT_STEP_LINES = next_step_lines.git_failure_next_step_lines(
+    "{rerun}", "{program}")
 
 
 def git_failed_text(prefix: str, what: str, error, next_steps: str, rerun: str = None) -> str:
