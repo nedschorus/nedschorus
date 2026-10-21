@@ -31,6 +31,8 @@ _shell_reader_spec = importlib.util.spec_from_file_location(
 shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
 _shell_reader_spec.loader.exec_module(shell_reader)
 is_program = shell_reader.is_program
+shell_command_string = shell_reader.shell_command_string
+ssh_remote_command = shell_reader.ssh_remote_command
 
 CODEX_EXEC_SUBCOMMANDS = ("exec", "e")
 # Programs that run the command after them, each with its options that take a value.
@@ -43,11 +45,7 @@ COMMAND_RUNNING_PREFIX_VALUE_OPTIONS = {
     "sandbox-exec": {"-f", "-p", "-D"},
     "setsid": set(),
 }
-SHELL_STRING_RUNNERS = ("bash", "sh", "zsh")
-# bash's -o and -O, and their + forms, take an option name as the next word.
-SHELL_VALUE_OPTIONS = {"-o", "+o", "-O", "+O"}
-# ssh's getopt string is "1246ab:c:e:fgi:kl:m:no:p:qstvxAB:CD:E:F:GI:J:KL:MNO:P:Q:R:S:TVw:W:XYy": these letters take a value.
-SSH_VALUE_LETTERS = "bceilmopBDEFIJLOPQRSwW"
+SHELL_STRING_RUNNERS = shell_reader.SHELL_STRING_RUNNERS
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 RUNNER_PATH = Path(__file__).resolve().parent / "run-codex-task-from-brief.py"
@@ -104,63 +102,14 @@ def program_index_after_prefixes(words):
     return None
 
 
-def shell_command_string(arguments):
-    """Return the command string of `bash -c <string>`, or None without -c."""
-    reads_string = False
-    index = 0
-    while index < len(arguments):
-        word = arguments[index]
-        if word == "--":
-            # `bash -c -- <string>`: the string follows the end of the options.
-            return arguments[index + 1] if reads_string and index + 1 < len(arguments) else None
-        if not word.startswith(("-", "+")):
-            return word if reads_string else None
-        if word in SHELL_VALUE_OPTIONS:
-            index += 1  # the value is the next word
-        elif not word.startswith("--") and "c" in word[1:]:
-            reads_string = True
-        index += 1
-    return None
-
-
 def shell_reads_commands_from_stdin(arguments) -> bool:
     """Return whether bash, sh or zsh with these arguments runs the commands on its stdin."""
-    # With -s the words after the options are positional parameters, and stdin is still run.
-    reads_stdin_explicitly = False
-    index = 0
-    while index < len(arguments):
-        word = arguments[index]
-        if word == "--" or not word.startswith(("-", "+")):
-            return reads_stdin_explicitly  # otherwise a script file
-        if word in SHELL_VALUE_OPTIONS:
-            index += 1
-        elif not word.startswith("--") and "c" in word[1:]:
-            return False
-        elif not word.startswith("--") and "s" in word[1:]:
-            reads_stdin_explicitly = True
-        index += 1
-    return True
-
-
-def ssh_remote_command(arguments):
-    """Return the command ssh runs on the remote machine, or None when there is none."""
-    index = 0
-    while index < len(arguments):
-        word = arguments[index]
-        if word == "--":
-            index += 1
-            break
-        if not word.startswith("-") or word == "-":
-            break
-        letters = word[1:]
-        for position, letter in enumerate(letters):
-            if letter in SSH_VALUE_LETTERS:
-                if position == len(letters) - 1:
-                    index += 1  # the value is the next word
-                break
-        index += 1
-    remote = arguments[index + 1:]  # past the destination
-    return " ".join(remote) if remote else None
+    flags, operand_index = shell_reader.shell_runner_options_read(arguments)
+    if "c" in flags:
+        return False
+    # With -s the words after the options are positional parameters, and stdin is still run;
+    # without it, a word after the options is a script file.
+    return "s" in flags or operand_index >= len(arguments)
 
 
 def is_shell_reading_stdin(words) -> bool:
