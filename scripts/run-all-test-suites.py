@@ -1167,7 +1167,10 @@ def checkout_top_directory(given):
     if top != Path(given).resolve():
         raise CouldNotRun(
             f"{PROGRAM}: not run — {given} is not the top directory of its checkout.\n"
-            f"Pass --checkout {shlex.quote(str(top))}")
+            f"Rerun the same command with this --checkout in place of yours: "
+            f"--checkout {shlex.quote(str(top))}\n"
+            f"Leaving --checkout out does not do the same: without it, this program tests "
+            f"the checkout its own file is in, not the current directory.")
     return top
 
 

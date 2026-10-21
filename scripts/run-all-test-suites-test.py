@@ -617,7 +617,7 @@ with tempfile.TemporaryDirectory() as scratch:
     result = run(root, checkout=repo / "sub")
     check("a subdirectory of a checkout is refused, exit 2, naming the top directory",
           result.returncode == 2
-          and f"Pass --checkout {repo.resolve()}" in result.stderr and ran(root) == [],
+          and f"in place of yours: --checkout {shlex.quote(str(repo.resolve()))}\n" in result.stderr and ran(root) == [],
           (result.returncode, result.stderr))
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
