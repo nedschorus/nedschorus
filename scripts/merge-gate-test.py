@@ -1451,13 +1451,19 @@ def case_description_reader_fails(gate):
     reader = gate.parent / DESCRIPTION_DEFECT_LINE_READER.name
     return (could_not_run_after_gh(
         run, BASE_PR,
-        f"GATE COULD NOT RUN: python3 {reader} failed on pull request {BASE_PR}'s description, so the gate "
-        "cannot read the description's defect lines; what python3 or that program printed is just above "
-        "this line.\n"
-        "Do not run the gate again until the cause is fixed: the description reached that program from "
-        "GitHub as UTF-8 text, so the cause is in the checkout the gate ran from, where that program is "
-        "missing or broken, or in python3, and a rerun fails the same way.\n"
-        "Tell the user this message and every line the gate printed.\n")
+        f"GATE COULD NOT RUN: python3 {reader} exited nonzero when the gate ran it with pull request {BASE_PR}'s "
+        "description on standard input, so the gate cannot read the description's defect lines; any error "
+        "python3 or that program printed is just above this line.\n"
+        "If that error says No such file or directory, that program is missing from the checkout the gate "
+        "ran from.\n"
+        "Otherwise that program or python3 cannot run, or that program has a defect, which the text of this "
+        "description may set off; the cause is not the description's encoding, because GitHub gives the gate "
+        "descriptions as UTF-8 text.\n"
+        "Either way a rerun fails the same way: do not run the gate again, and do not repair the checkout, "
+        "that program or python3 yourself.\n"
+        "Tell the user every line the gate printed, the error above included, leave pull request "
+        f"https://github.com/nedschorus/nedschorus/pull/{BASE_PR} unmerged, go on with other pull requests "
+        "meanwhile, and run the gate on this one again only once the user says the cause is fixed.\n")
             and "not UTF-8" not in run.stderr), run.summary()
 
 
@@ -1738,8 +1744,8 @@ MUTATIONS = [
      [('DESCRIPTION_DEFECT_LINE_READER="$(dirname "${BASH_SOURCE[0]}")/', 'DESCRIPTION_DEFECT_LINE_READER="scripts/')],
      [case_gate_run_from_another_directory_finds_its_reader]),
     ("without the description reader's check",
-     [('[ $? -eq 0 ] || cannot "python3 $DESCRIPTION_DEFECT_LINE_READER failed',
-       'true || cannot "python3 $DESCRIPTION_DEFECT_LINE_READER failed')],
+     [('[ $? -eq 0 ] || cannot "python3 $DESCRIPTION_DEFECT_LINE_READER exited nonzero',
+       'true || cannot "python3 $DESCRIPTION_DEFECT_LINE_READER exited nonzero')],
      [case_description_reader_fails]),
     ("no line read as a not-fixed line",
      [('select(.kind == "root_cause_not_fixed")', "select(false)")],

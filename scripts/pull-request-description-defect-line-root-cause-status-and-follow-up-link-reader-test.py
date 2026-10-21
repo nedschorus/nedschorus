@@ -22,6 +22,7 @@ from pathlib import Path
 READER = Path(__file__).with_name("pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
 ISSUE = "https://github.com/nedschorus/nedschorus/issues/1154"
 PULL_REQUEST = "https://github.com/nedschorus/nedschorus/pull/1636"
+ONE_CHARACTER_EACH = " (each byte that is not UTF-8 counts as one character): byte "
 
 failures = []
 
@@ -104,33 +105,38 @@ def case_command_refuses_a_description_that_is_not_utf8(_reader, path):
             and completed.stderr == (
                 reader + b": stopped: the pull request description on standard input is not UTF-8 text, "
                 b"so its defect lines cannot be read.\n"
-                b"The first byte that is not UTF-8 is at line 2, character 6: byte 0xe9, in: "
-                b"A caf\\xe9 line, then more.\n"
-                b"Write the whole description to a new file as UTF-8, because bytes after this one may not be "
-                b"UTF-8 either; for a file saved as Latin-1: iconv -f LATIN1 -t UTF-8 OLD_FILE > NEW_FILE\n"
-                b"Then run " + reader + b" again with the new file on standard input, and use the new file "
-                b"as the description.\n"),
+                b"The first byte that is not UTF-8 is at line 2, character 6 (each byte that is not UTF-8 "
+                b"counts as one character): byte 0xe9, in: A caf\\xe9 line, then more.\n"
+                b"A description read from GitHub is always UTF-8, so these bytes came from the file or the "
+                b"command output you sent to standard input.\n"
+                b"Correct the bytes in that file, or in the file that command read, so the text is UTF-8: "
+                b"replace each byte that the excerpt above shows as an escape, such as \\xe9, with the "
+                b"character it should be. Do not convert the whole file with iconv, which garbles text that "
+                b"is already UTF-8.\n"
+                b"Then run python3 " + reader + b" again with the corrected text on standard input; it "
+                b"exits 0 once the text is UTF-8.\n"),
             f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
 
 
 def case_not_utf8_place_keeps_thirty_characters_each_side(reader, _path):
     raw = b"a" * 50 + b"\xff" + b"b" * 50
     place = reader.not_utf8_place(raw, 50)
-    return place == ("line 1, character 51: byte 0xff, in: ..." + "a" * 30 + "\\xff" + "b" * 30
+    return place == ("line 1, character 51" + ONE_CHARACTER_EACH + "0xff, in: ..." + "a" * 30 + "\\xff" + "b" * 30
                      + "..."), place
 
 
 def case_not_utf8_place_cuts_on_characters_not_bytes(reader, _path):
     raw = "\u00e9".encode() * 40 + b"\xff" + "\u00e9".encode() * 40
     place = reader.not_utf8_place(raw, 80)
-    return place == ("line 1, character 41: byte 0xff, in: ..." + "\u00e9" * 30 + "\\xff"
+    return place == ("line 1, character 41" + ONE_CHARACTER_EACH + "0xff, in: ..." + "\u00e9" * 30 + "\\xff"
                      + "\u00e9" * 30 + "..."), place
 
 
 def case_not_utf8_place_counts_a_later_bad_byte_as_one_character(reader, _path):
-    raw = b"x\nab\xffcd\xfeef"
+    # Longer than the window after the byte, so the count of the later bad byte decides where it is cut.
+    raw = b"x\nab\xff" + b"c" * 5 + b"\xfe" + b"d" * 40
     place = reader.not_utf8_place(raw, 4)
-    return place == "line 2, character 3: byte 0xff, in: ab\\xffcd\\xfeef", place
+    return place == "line 2, character 3" + ONE_CHARACTER_EACH + "0xff, in: ab\\xff" + "c" * 5 + "\\xfe" + "d" * 24 + "...", place
 
 
 RC, NF, ND = "root_cause", "root_cause_not_fixed", "no_defect_fixed"
@@ -278,6 +284,9 @@ MUTATIONS = [
        "column = start - line_start"),
       ('excerpt = line[first:last].encode("utf-8", "surrogateescape")', "excerpt = line[first:last]")],
      [case_not_utf8_place_cuts_on_characters_not_bytes]),
+    ("a later bad byte counted as the four characters of its escape",
+     [('line = raw_line.decode("utf-8", "surrogateescape")', 'line = raw_line.decode("utf-8", "backslashreplace")')],
+     [case_not_utf8_place_counts_a_later_bad_byte_as_one_character]),
     ("the character number counted from 0", [("character {column + 1}", "character {column}")],
      [case_command_refuses_a_description_that_is_not_utf8]),
     ("no mark where the excerpt was cut", [('("..." if first > 0 else "") + ', ""), (' + ("..." if last < len(line) else "")', "")],

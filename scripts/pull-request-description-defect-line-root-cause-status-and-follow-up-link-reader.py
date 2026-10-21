@@ -110,7 +110,8 @@ def not_utf8_place(raw, start):
     first, last = max(0, column - NOT_UTF8_EXCERPT_CHARACTERS), column + 1 + NOT_UTF8_EXCERPT_CHARACTERS
     excerpt = line[first:last].encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
     excerpt = ("..." if first > 0 else "") + excerpt + ("..." if last < len(line) else "")
-    return f"line {line_number}, character {column + 1}: byte 0x{raw[start]:02x}, in: {excerpt}"
+    return (f"line {line_number}, character {column + 1} (each byte that is not UTF-8 counts as one "
+            f"character): byte 0x{raw[start]:02x}, in: {excerpt}")
 
 
 def main():
@@ -124,10 +125,14 @@ def main():
         print(f"{READER_PATH}: stopped: the pull request description on standard input is not UTF-8 "
               f"text, so its defect lines cannot be read.\n"
               f"The first byte that is not UTF-8 is at {not_utf8_place(raw, error.start)}\n"
-              f"Write the whole description to a new file as UTF-8, because bytes after this one may not be "
-              f"UTF-8 either; for a file saved as Latin-1: iconv -f LATIN1 -t UTF-8 OLD_FILE > NEW_FILE\n"
-              f"Then run {READER_PATH} again with the new file on standard input, and use the new file as "
-              f"the description.", file=sys.stderr)
+              f"A description read from GitHub is always UTF-8, so these bytes came from the file or the "
+              f"command output you sent to standard input.\n"
+              f"Correct the bytes in that file, or in the file that command read, so the text is UTF-8: "
+              f"replace each byte that the excerpt above shows as an escape, such as \\xe9, with the "
+              f"character it should be. Do not convert the whole file with iconv, which garbles text that "
+              f"is already UTF-8.\n"
+              f"Then run python3 {READER_PATH} again with the corrected text on standard input; it "
+              f"exits 0 once the text is UTF-8.", file=sys.stderr)
         return 2
     print(json.dumps(pull_request_description_defect_lines(description)))
     return 0
