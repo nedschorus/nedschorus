@@ -488,7 +488,7 @@ if linux_only_cases_run_here("the report's sandbox lines"):
             not_top = ""
         check("a --checkout below the checkout's top is refused with the top to pass, kept as "
               "one argument although its path holds a space",
-              printed_command(not_top, "in place of yours: ") == ["--checkout", str(repository)], not_top)
+              printed_command(not_top, "and its value with: ") == ["--checkout", str(repository)], not_top)
 
 # --- The mutation script's test command --------------------------------------
 
