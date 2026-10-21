@@ -187,17 +187,18 @@ def notice_show(log_directory: Path, seat, kind, template, **fields) -> bool:
         path.write_text(template.format(seat=seat, record=log_directory / "decisions.jsonl",
                                         **fields), encoding="utf-8")
     except OSError as error:
-        print(f"{PROGRAM}: the notice to the user about {seat} was not written ({error}). If the same "
-              "failure happens again, a later run tries the notice again; until then the user does not "
-              "know of it.", file=sys.stderr)
+        print(f"{PROGRAM}: the notice to the user about {seat} was not written ({error}). If the failure "
+              "this notice reports happens again, a later run tries the notice again; until then the user "
+              "does not know of that failure.", file=sys.stderr)
         return False
     exit_code, output = run_command(
         [sys.executable, str(MAC_WINDOW_OPENER_PROGRAM), *show_notice_words(path)],
         MAC_WINDOW_OPENER_TIMEOUT_SECONDS)
     if exit_code != 0:
         print(f"{PROGRAM}: the notice {path} did not open on the user's Mac (the opener "
-              f"{outcome(exit_code)} and said: {output}). If the same failure happens again, a later run "
-              "tries the notice again; until then the user does not know of it.", file=sys.stderr)
+              f"{outcome(exit_code)} and said: {output}). If the failure this notice reports happens "
+              "again, a later run tries the notice again; until then the user does not know of that "
+              "failure.", file=sys.stderr)
         return False
     return True
 
