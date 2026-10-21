@@ -650,7 +650,8 @@ def case_notice_failing(namespace):
         (fixture.logs / "notices").write_text("a file where the notices directory goes", encoding="utf-8")
         exit_code, errors = fixture.run()
         check("a notice that cannot be written: said on stderr, exit 1, not logged as told",
-              exit_code == 1 and "was not written, so the user has not been told" in errors
+              exit_code == 1 and "was not written (" in errors and "so the user has not been told" in errors
+              and "need not tell the user" in errors
               and fixture.decisions() == ["failure"] and fixture.ssh_requests() == [],
               (exit_code, errors, fixture.entries()))
     finally:
@@ -661,7 +662,8 @@ def case_notice_failing(namespace):
         exit_code, errors = fixture.run()
         check("a notice the Mac window opener cannot open: said on stderr with the opener's exit code, "
               "exit 1, not logged as told",
-              exit_code == 1 and "did not open on the user's Mac" in errors and "exited 1" in errors
+              exit_code == 1 and "did not open on the user's Mac (the opener exited 1" in errors
+              and "need not tell the user" in errors
               and fixture.decisions() == ["failure"], (exit_code, errors, fixture.entries()))
         fixture.ssh_exit.unlink()
         exit_code, errors = fixture.run()
