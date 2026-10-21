@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for watch-open-pull-requests.py.
+"""Tests for watch-open-pull-requests-nbd.py.
 
-Run: python3 scripts/watch-open-pull-requests-test.py
+Run: python3 scripts/watch-open-pull-requests-nbd-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 No case reaches GitHub. The subprocess cases put a fake `gh` first on the
@@ -38,7 +38,7 @@ import threading
 import time
 from pathlib import Path
 
-WATCH_SCRIPT = Path(__file__).with_name("watch-open-pull-requests.py")
+WATCH_SCRIPT = Path(__file__).with_name("watch-open-pull-requests-nbd.py")
 
 _spec = importlib.util.spec_from_file_location("watch_open_pull_requests",
                                                WATCH_SCRIPT)
