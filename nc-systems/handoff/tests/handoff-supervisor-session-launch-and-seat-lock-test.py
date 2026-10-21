@@ -290,8 +290,9 @@ def run_process_identity_cases(workspace: Path):
               and "ps could not be run" in complaints.getvalue(),
               complaints.getvalue())
         check("and names the way out, since whoever asked is now stuck on an assumption: "
-              "the user checks with ps -p, then removes the named lock file",
-              f"the user runs `ps -p {unidentifiable.pid}`" in complaints.getvalue()
+              "the user checks with the ps command the program ran, then removes the named lock file",
+              f"the user runs `ps -ww -p {unidentifiable.pid} -o args=`" in complaints.getvalue()
+              and "ps has still not answered, so the lock stays" in complaints.getvalue()
               and "the user removes the supervisor lock /handoffs/x-supervisor.lock"
               in complaints.getvalue(), complaints.getvalue())
         check("and does not claim a consequence only one of the callers has",

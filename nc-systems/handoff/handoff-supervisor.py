@@ -628,8 +628,13 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
               f"supervisor of {agent_name} is running, and treats {agent_name} as supervised "
               f"until ps answers or the lock is gone.\n"
               f"To find out whether a supervisor of {agent_name} is running, the user runs "
-              f"`ps -p {process_id}`; if its output does not show {SUPERVISOR_SCRIPT_FILE_NAME} "
-              f"with --agent {agent_name}, none is, and the user removes {lock}.\n"
+              f"`ps -ww -p {process_id} -o args=`, the command {program} itself ran.\n"
+              f"If its output shows {SUPERVISOR_SCRIPT_FILE_NAME} with --agent {agent_name}, "
+              "a supervisor is running, and the lock stays.\n"
+              f"If its output shows any other command, none is, and the user removes {lock}.\n"
+              "If it prints nothing, or fails with an error, ps has still not answered, so the "
+              "lock stays: when the process has ended, the next check finds that by itself; "
+              "otherwise the user runs the command again once ps works.\n"
               "An agent that sees this message tells the user what it says, and does not "
               "remove the lock itself.",
               file=sys.stderr)
