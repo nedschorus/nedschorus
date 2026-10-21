@@ -227,6 +227,12 @@ check("the report line for a run without the sandbox says so and why",
       and "bwrap is not on PATH" in runner.signal_sandbox_line((), "bwrap is not on PATH"))
 check("the refusal names the program that refused",
       runner.signal_sandbox_refusal("x", "some-program").startswith("some-program: not run"))
+_bwrap_arguments = runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE
+runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE = ("--ro-bind", "/a b", "/a b")
+_bwrap_check = runner.signal_sandbox_refusal("x").split("check that `", 1)[1].split("`", 1)[0]
+runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE = _bwrap_arguments
+check("the bwrap command the refusal says to try keeps a path holding a space as one argument",
+      shlex.split(_bwrap_check) == ["bwrap", "--ro-bind", "/a b", "/a b", "true"], _bwrap_check)
 
 # --- The runner refuses when bwrap is on PATH but broken ---------------------
 
@@ -279,6 +285,14 @@ def scratch_checkout(scratch, suites):
         subprocess.run(["git", "-C", str(repository), *git_arguments],
                        capture_output=True, check=True)
     return repository
+
+
+def printed_command(text, prefix):
+    """The arguments a shell gives the command printed after prefix, up to the end of its line."""
+    for line in text.splitlines():
+        if prefix in line:
+            return shlex.split(line.split(prefix, 1)[1])
+    return None
 
 
 def run_runner(scratch, repository, path):
@@ -413,7 +427,8 @@ if linux_only_cases_run_here("the report's sandbox lines"):
              "does not assign SUITES_RUN_WITHOUT_ANY_SANDBOX a literal"),
         )
         for number, (how, source, refusal) in enumerate(lists_unreadable_cases):
-            case_scratch = scratch / f"unreadable-{number}"
+            # The space shows that each path in a printed shell command stays one argument.
+            case_scratch = scratch / f"unreadable {number}"
             case_scratch.mkdir()
             repository = scratch_checkout(case_scratch, ["a-test.py"])
             lists_file = repository / "scripts" / "run-all-test-suites.py"
@@ -438,28 +453,42 @@ if linux_only_cases_run_here("the report's sandbox lines"):
                   and "rerun the command you ran." in completed.stderr
                   and not (case_scratch / "logs" / "a-test.py.log").exists(),
                   (completed.returncode, completed.stderr[-600:]))
-            restore = f"git -C {repository} checkout -- scripts/run-all-test-suites.py"
+            restore = ["git", "-C", str(repository), "checkout", "--",
+                       "scripts/run-all-test-suites.py"]
             if how == "is a directory":
                 check("when the checkout's scripts/run-all-test-suites.py is a directory, the "
                       "refusal says how to grant read permission and how to move the directory "
-                      "aside and restore the file, and when to stop and tell the user",
-                      f"chmod u+r {lists_file}\n" in completed.stderr
-                      and f"mv {lists_file} {lists_file}.moved-aside && {restore}\n"
-                          in completed.stderr
+                      "aside and restore the file, each command keeping the checkout path, "
+                      "which holds a space, as one argument, and when to stop and tell the user",
+                      printed_command(completed.stderr, "such as with: ")
+                      == ["chmod", "u+r", str(lists_file)]
+                      and printed_command(completed.stderr, "restore the file with: ")
+                      == ["mv", str(lists_file), f"{lists_file}.moved-aside", "&&", *restore]
                       and "If neither case fits, a step fails, or this same error appears "
                           "again after you rerun, stop and tell the user" in completed.stderr
                       and "UTF-8" not in completed.stderr,
                       completed.stderr[-1200:])
             if how == "is not UTF-8":
                 check("when the checkout's scripts/run-all-test-suites.py is not UTF-8, the "
-                      "refusal says to restore it from git or re-save it as UTF-8, and when to "
+                      "refusal says to restore it from git, keeping the checkout path, which "
+                      "holds a space, as one argument, or re-save it as UTF-8, and when to "
                       "stop and tell the user, and gives none of the OSError steps",
-                      f"restore it with: {restore}\n" in completed.stderr
+                      printed_command(completed.stderr, "restore it with: ") == restore
                       and "re-save it as UTF-8, keeping that change.\n" in completed.stderr
                       and "If a step fails, or this same error appears again after you rerun, "
                           "stop and tell the user" in completed.stderr
                       and "chmod" not in completed.stderr and "mv " not in completed.stderr,
                       completed.stderr[-1200:])
+
+        try:
+            runner.checkout_top_directory(str(repository / "scripts"))
+        except runner.CouldNotRun as error:
+            not_top = str(error)
+        else:
+            not_top = ""
+        check("a --checkout below the checkout's top is refused with the top to pass, kept as "
+              "one argument although its path holds a space",
+              printed_command(not_top, "Pass ") == ["--checkout", str(repository)], not_top)
 
 # --- The mutation script's test command --------------------------------------
 
