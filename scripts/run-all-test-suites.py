@@ -1167,12 +1167,11 @@ def checkout_top_directory(given):
     if top != Path(given).resolve():
         raise CouldNotRun(
             f"{PROGRAM}: not run — {given} is not the top directory of the git checkout "
-            f"it is in.\n"
+            f"that holds {given}.\n"
             f"Rerun the same command, replacing your --checkout and its value with: "
             f"--checkout {shlex.quote(str(top))}\n"
-            f"Leaving --checkout out does not do the same: without it, this program tests "
-            f"the checkout that contains run-all-test-suites.py itself, whatever the "
-            f"current directory is.")
+            f"If you leave --checkout out instead, this program tests the checkout that "
+            f"contains run-all-test-suites.py itself, whatever the current directory is.")
     return top
 
 
