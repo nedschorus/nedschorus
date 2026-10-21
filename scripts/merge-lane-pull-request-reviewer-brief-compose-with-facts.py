@@ -57,14 +57,17 @@ _git_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
+_defect_line_reader_spec = importlib.util.spec_from_file_location(
+    "pull_request_description_defect_line_hashtags_reader_common",
+    Path(__file__).resolve().with_name("pull-request-description-defect-line-hashtags-reader-common.py"))
+defect_line_reader = importlib.util.module_from_spec(_defect_line_reader_spec)
+_defect_line_reader_spec.loader.exec_module(defect_line_reader)
 
 
 class StepFailed(Exception):
     pass
 
 
-NOT_FIXED_LINE = re.compile(
-    r"^\s*(?:[-*+]\s+)?(?:\*\*|__)?(?:#root_cause_not_fixed(?!\w)|Root cause not fixed(?:\*\*|__)?:)")
 GITHUB_ISSUE_OR_PULL_REQUEST_LINK = re.compile(
     r"https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/(?:issues|pull)/([0-9]+)")
 # Far above the merged count, so gh lists them all.
@@ -160,8 +163,10 @@ def follow_up_pull_requests_text(number, merged_pull_requests):
     targets.add((common.REPOSITORY.lower(), int(number)))
     found = []
     for merged in merged_pull_requests.all():
-        for line in (merged["body"] or "").splitlines():
-            if NOT_FIXED_LINE.match(line) and linked_items(line) & targets:
+        for defect_line in defect_line_reader.pull_request_description_defect_lines(merged["body"] or ""):
+            line = defect_line["line"]
+            if (defect_line["kind"] == defect_line_reader.ROOT_CAUSE_NOT_FIXED
+                    and linked_items(line) & targets):
                 found.append(f"#{merged['number']} \"{merged['title']}\" ({merged['url']}), "
                              f"whose line is `{line.strip()}`")
     return ("- Merged pull requests whose not-fixed line links to an issue this pull request "
