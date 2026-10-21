@@ -189,6 +189,12 @@ def deny(reason):
     }}))
 
 
+PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
+    f"If the command started codex exec and it is still running, stop it, and run the task "
+    f"with python3 {RUNNER_PATH} instead; run that with --help for its options.\n"
+    "If it has already finished, use its output as it is.")
+
+
 def main(stdin=sys.stdin) -> int:
     try:
         payload = json.load(stdin)
@@ -203,7 +209,7 @@ def main(stdin=sys.stdin) -> int:
         refusal = refusal_for_command(command)
     except shell_reader.ShellParserUnavailable as error:
         print(shell_reader.parser_unavailable_hook_output(
-            "The hand-typed codex exec guard", error))
+            "The hand-typed codex exec guard", error, PARSER_UNAVAILABLE_NEXT_STEP_LINES))
         return 0
     if refusal:
         deny(refusal)

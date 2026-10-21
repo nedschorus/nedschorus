@@ -519,21 +519,26 @@ def tree_sitter_bash_install_failure_report_words_build(host, install_output, co
             f"Then pass on what the install printed, quoted as it is: {install_output}")
 
 
-def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
-    """Return the PreToolUse JSON that lets the command through and says it was not checked."""
+def parser_unavailable_hook_output(guard_name, error, next_step_lines, environment=os.environ):
+    """Return the PreToolUse JSON that lets the command through and says it was not checked.
+
+    next_step_lines is the guard's own text, one instruction per line, telling the agent what to
+    check now that the command has run. Each guard gives its own, because an undo that is safe
+    after one guard's command does further damage after another's, such as a second force push.
+    """
     host = socket.gethostname().split(".")[0]
+    next_steps = next_step_lines.rstrip("\n") + "\n"
     if isinstance(error, ShellCommandUnreadable):
         message = (
             f"{guard_name} let this command through without checking it, and the command has "
             f"run: the shell command reader ({Path(__file__).name}) failed on it on {host} "
             f"({error.install_output}).\n"
-            f"Look at what the command did. If the command did what {guard_name} exists to "
-            f"stop, undo what the command did, now, where you can.\n"
+            + next_steps
             + report_to_user_or_dispatching_agent_instruction_build(
                 f"\"{guard_name} let a command through unchecked on {host}, because the shell "
                 f"command reader failed on it ({error.install_output}).\" After those words, "
                 f"{COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}, then say whether it did what "
-                f"{guard_name} exists to stop, what you undid, and what you could not undo.",
+                f"{guard_name} exists to stop.",
                 environment))
         return json.dumps({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -542,9 +547,8 @@ def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
     message = (
         f"{guard_name} let this command through without checking it, and the command has run: "
         f"the shell parser tree-sitter-bash is missing on {host}, and installing it failed.\n"
-        f"Look at what the command did. If the command did what {guard_name} exists to stop, "
-        f"undo what the command did, now, where you can.\n"
-        f"Later commands are let through unchecked too, each with this message, until an "
+        + next_steps
+        + f"Later commands are let through unchecked too, each with this message, until an "
         f"install succeeds; the first command after {INSTALL_RETRY_SECONDS // 60} minutes "
         f"have passed tries the install again.\n"
         + report_to_user_or_dispatching_agent_instruction_build(
@@ -552,7 +556,7 @@ def parser_unavailable_hook_output(guard_name, error, environment=os.environ):
                 host, error.install_output,
                 "the project's Bash guards are not checking commands there")
             + f"\nThen {COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION}, and say whether it did what "
-            f"{guard_name} exists to stop, what you undid, and what you could not undo.",
+            f"{guard_name} exists to stop.",
             environment))
     return json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
@@ -1645,12 +1649,12 @@ def _simple_commands_in_a_new_process(command_text, glob_markers, runner=None):
                            input=request.encode("utf-8", SHELL_TEXT_ERRORS), capture_output=True,
                            timeout=INSTALL_TIMEOUT_SECONDS)
     except (OSError, subprocess.SubprocessError) as error:
-        raise ShellParserUnavailable(f"reading the command in a new process failed: {error}") \
+        raise ShellCommandUnreadable(f"reading the command in a new process failed: {error}") \
             from error
     if completed.returncode != 0:
         # The agent is told to quote this, so it gets the exception's own line, not the traceback.
         error_lines = completed.stderr.decode("utf-8", "replace").strip().splitlines()
-        raise ShellParserUnavailable(
+        raise ShellCommandUnreadable(
             "reading the command in a new process failed: "
             + (error_lines[-1] if error_lines else f"exit {completed.returncode}"))
     read = json.loads(completed.stdout.decode("utf-8", SHELL_TEXT_ERRORS))

@@ -1551,8 +1551,22 @@ with tempfile.TemporaryDirectory() as scratch:
         raised = None
     except reader.ShellParserUnavailable as error:
         raised = error
-    check("a new process that fails to read the command raises ShellParserUnavailable with its error",
-          raised is not None and "no parser" in raised.install_output, raised)
+    check("a new process that fails to read the command raises ShellCommandUnreadable with its error, "
+          "so the guard's note says the reader failed, not that the parser is missing",
+          isinstance(raised, reader.ShellCommandUnreadable) and "no parser" in raised.install_output,
+          raised)
+
+    def runner_timing_out(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, 1)
+    try:
+        reader._simple_commands_in_a_new_process("ls", None, runner_timing_out)
+        raised = None
+    except reader.ShellParserUnavailable as error:
+        raised = error
+    check("a new process that times out raises ShellCommandUnreadable, saying the read timed out",
+          isinstance(raised, reader.ShellCommandUnreadable)
+          and raised.install_output.startswith("reading the command in a new process failed: "),
+          raised)
 
     # The reader failing in the new process reaches this process as ShellCommandUnreadable.
     real_collect, real_stdin, real_stdout = reader._collect, sys.stdin, sys.stdout
@@ -1770,10 +1784,11 @@ except r.ShellParserUnavailable as error:
         assert "permissionDecision" not in hook_output, hook_output
         return hook_output["additionalContext"]
 
-    first = context_of(reader.parser_unavailable_hook_output("The force-push guard", error, {}))
-    again = context_of(reader.parser_unavailable_hook_output("The tmux kill guard", error, {}))
+    NEXT_STEPS = "If the command did X, tell the user.\nDo not do Y to correct it."
+    first = context_of(reader.parser_unavailable_hook_output("The force-push guard", error, NEXT_STEPS, {}))
+    again = context_of(reader.parser_unavailable_hook_output("The tmux kill guard", error, NEXT_STEPS, {}))
     unattended = context_of(reader.parser_unavailable_hook_output(
-        "The tmux kill guard", error, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
+        "The tmux kill guard", error, NEXT_STEPS, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
     check("the message says the command was not checked and has the user told, with what the "
           "install printed",
           "let this command through without checking it" in first
@@ -1786,9 +1801,14 @@ except r.ShellParserUnavailable as error:
         this_host, "", "").splitlines()[1]
     check("the install command stands on a line of its own in the message",
           install in first.splitlines(), first)
-    check("the words to report include the command, as a fenced code block, and what was undone",
-          reader.COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION in first and "what you undid" in first
-          and "what you could not undo" in first, first)
+    check("the words to report include the command, as a fenced code block, and ask nothing about "
+          "an undo",
+          reader.COMMAND_AS_FENCED_CODE_BLOCK_INSTRUCTION in first and "undid" not in first
+          and "could not undo" not in first, first)
+    check("when the parser is missing, the guard's own next-step lines follow the first line, and "
+          "nothing tells the agent to undo",
+          first.splitlines()[1:3] == NEXT_STEPS.splitlines() and "undo what the command did" not in first,
+          first)
     words = reader.tree_sitter_bash_install_failure_report_words_build(
         "ned-box", "pip: no network", "nothing is checked there").splitlines()
     check("for ned-box, the install command is the ssh form the user runs in a Terminal on the Mac",
@@ -1838,6 +1858,7 @@ except r.ShellParserUnavailable as error:
          "The search-file-argument guard"),
         ("nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-"
          "server-selection-refusal-hook.py", "The tmux kill guard"),
+        ("scripts/hand-typed-codex-exec-redirect-hook.py", "The hand-typed codex exec guard"),
     ]
     for relative, guard_name in GUARDS:
         guard = load(REPOSITORY_ROOT / relative, "guard_" + Path(relative).stem.replace("-", "_"))
@@ -1846,6 +1867,7 @@ except r.ShellParserUnavailable as error:
         def unavailable(*arguments, **keywords):
             raise guard.shell_reader.ShellParserUnavailable("pip: network is unreachable")
         guard.shell_reader.simple_commands = unavailable
+        own_lines = guard.PARSER_UNAVAILABLE_NEXT_STEP_LINES
         payload = {"tool_name": "Bash", "session_id": f"guard-{relative}", "cwd": scratch,
                    "tool_input": {"command": "tmux kill-server; git push --force o b"}}
         stdout = io.StringIO()
@@ -1858,14 +1880,19 @@ except r.ShellParserUnavailable as error:
         check(f"with no parser, {relative} lets the command through and says it was not checked",
               code == 0 and context.startswith(guard_name + " let this command through"),
               (code, context))
+        check(f"with no parser, {relative}'s note gives the guard's own next-step lines and no undo",
+              own_lines in context and "undo what the command did" not in context, context)
 
     unreadable = reader.ShellCommandUnreadable("ValueError: injected")
-    attended = context_of(reader.parser_unavailable_hook_output("The force-push guard", unreadable, {}))
+    attended = context_of(reader.parser_unavailable_hook_output(
+        "The force-push guard", unreadable, NEXT_STEPS, {}))
     unattended = context_of(reader.parser_unavailable_hook_output(
-        "The force-push guard", unreadable, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
-    check("when the reader fails, the guard's message says the command ran and what to check and undo",
-          "the command has run" in attended and "Look at what the command did" in attended
-          and "undo" in attended and "Tell the user" in attended and "ValueError: injected" in attended,
+        "The force-push guard", unreadable, NEXT_STEPS, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
+    check("when the reader fails, the guard's message says the command ran, then gives the guard's "
+          "own next-step lines, and nothing tells the agent to undo",
+          "the command has run" in attended and attended.splitlines()[1:3] == NEXT_STEPS.splitlines()
+          and "undo what the command did" not in attended and "undid" not in attended
+          and "Tell the user" in attended and "ValueError: injected" in attended,
           attended)
     check("in an agent-session no user attends, the reader-failed message does not ask to tell the user",
           "do not tell the user" in unattended and "Tell the user" not in unattended
@@ -1891,7 +1918,7 @@ except r.ShellParserUnavailable as error:
             for session in ({}, {"CLAUDE_CODE_SESSION_ATTENDED": "0"}):
                 built.clear()
                 message = context_of(reader.parser_unavailable_hook_output(
-                    "The force-push guard", failure, session))
+                    "The force-push guard", failure, NEXT_STEPS, session))
                 check(f"when {label}, with the session variables {session}, the guard's message "
                       f"ends with the report", len(built) == 1 and message.endswith(built[0]),
                       (built, message))
@@ -1900,7 +1927,8 @@ except r.ShellParserUnavailable as error:
     for session, attended_wanted in [((None, None), True), (("1", None), True), (("0", None), False),
                                      ((None, "1"), False)]:
         with reader.agent_session_attendance_environment_variables_temporarily_set_for_test(*session):
-            from_session = context_of(reader.parser_unavailable_hook_output("The force-push guard", unreadable))
+            from_session = context_of(reader.parser_unavailable_hook_output(
+                "The force-push guard", unreadable, NEXT_STEPS))
         check(f"with the session variables {session}, the message reads the session from them",
               ("Tell the user" in from_session) == attended_wanted
               and ("do not tell the user" in from_session) != attended_wanted, from_session)
@@ -1913,7 +1941,7 @@ except r.ShellParserUnavailable as error:
     check("the session variables are set inside the block and put back as they were after it",
           inside == (None, "1") and after == ("outer", None), (inside, after))
     missing_unattended = context_of(reader.parser_unavailable_hook_output(
-        "The force-push guard", reader.ShellParserUnavailable("pip: no network"),
+        "The force-push guard", reader.ShellParserUnavailable("pip: no network"), NEXT_STEPS,
         {"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
     check("in an agent-session no user attends, the parser-missing message still has a subagent "
           "report to the agent that dispatched it",
@@ -2026,7 +2054,7 @@ try:
 except reader.ShellParserUnavailable as error:
     raised = error
 check("a new process that fails outside the reader reaches the guard as its exception's line, not a traceback",
-      raised is not None and raised.install_output
+      isinstance(raised, reader.ShellCommandUnreadable) and raised.install_output
       == "reading the command in a new process failed: RuntimeError: the request could not be read",
       raised and raised.install_output)
 # A new process killed by a signal prints nothing; its exit status is then the agent's only clue.
@@ -2039,7 +2067,7 @@ try:
 except reader.ShellParserUnavailable as error:
     raised = error
 check("a new process killed by a signal, which prints nothing, reaches the guard as its exit status",
-      raised is not None
+      isinstance(raised, reader.ShellCommandUnreadable)
       and raised.install_output == "reading the command in a new process failed: exit -9",
       raised and raised.install_output)
 command = reader.simple_commands("cat <<E >~/x\nb\nE")[0]

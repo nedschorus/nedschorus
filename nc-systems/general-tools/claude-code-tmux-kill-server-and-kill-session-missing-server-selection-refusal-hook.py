@@ -185,6 +185,12 @@ def refusal_for(command, remote=False):
     return None
 
 
+PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
+    "If the command ran tmux kill-server or kill-session without -L or -S, tell the user which "
+    "command ran.\n"
+    "Do not restart a server or agent-seat yourself.")
+
+
 def main(stdin=sys.stdin):
     try:
         payload = json.load(stdin)
@@ -199,7 +205,7 @@ def main(stdin=sys.stdin):
         reason = refusal_for(command)
     except shell_reader.ShellParserUnavailable as error:
         print(shell_reader.parser_unavailable_hook_output(
-            "The tmux kill guard", error))
+            "The tmux kill guard", error, PARSER_UNAVAILABLE_NEXT_STEP_LINES))
         return 0
     if reason:
         deny(reason)

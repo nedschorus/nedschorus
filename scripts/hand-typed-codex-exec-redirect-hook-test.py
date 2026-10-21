@@ -239,6 +239,10 @@ check("without the shell parser the hook exits 0, lets the command through and s
       code == 0 and "permissionDecision" not in output
       and "hand-typed codex exec guard" in output.get("additionalContext", "")
       and "pip: no network" in output.get("additionalContext", ""), repr(output))
+check("without the shell parser the next step names the program by its absolute path and runs no pgrep",
+      f"python3 {hook.RUNNER_PATH} instead" in output.get("additionalContext", "")
+      and hook.RUNNER_PATH.is_absolute()
+      and "pgrep" not in output.get("additionalContext", ""), repr(output))
 
 program_help = subprocess.run(
     [sys.executable, str(HOOK_SCRIPT.with_name("run-codex-task-from-brief.py")), "--help"],
