@@ -2,12 +2,18 @@
 
 A working outline, not for merging. One line per concept; the prose pages are written from it once it is right. *Proposed* marks what is not built; *question* marks what needs the user's ruling; the numbers in square brackets count this project's hooks on that Claude Code hook event today.
 
-## 1. Purpose and stance
+## 1. Purpose, scope and principles
 
 - Purpose: instruct and control agents, in what they do, what they say, and how they work with the user and with other agents.
-- Scope: fixing a problem in agent behaviour. Out of scope, with one line and a link each: optimising instructions, code-prompt-code's internals, testing in general.
+- Scope: fixing a problem in agent behaviour. The parts of the system that work with it each have their own page, linked and not explained here: tool use, the cold read, code-prompt-code, testing, optimising instructions.
+- A mechanism beats a prompt, always; but not everything can be a mechanism.
+- Prompt and code are a continuum, not a choice: code-prompt-code, a program that hands one judgment to a model, almost always beats a prompt alone.
+- A prompt to a fresh agent, given only what the step needs, works far better than the same prompt to a busy agent deep in a long context.
+- Something is better than nothing: a good-enough check beats none, unless its false alarms teach agents to ignore it.
 - Good enough, not perfect: a technique should be efficient, reasonably safe, and reasonably quick to build, run and maintain.
-- Agents forget: their context fades as it grows, they cannot recall a note, and they may believe they remember what they do not. So whatever must be kept exactly goes in a file, never in an agent's memory.
+- Set the system up for success: names, prefixes and suffixes that say what a file is let agents and programs both act on it rightly.
+- Effort up front is amortised: a confusing name, renamed once, pays back over thousands of future pull requests.
+- Agents forget: their context fades as it grows, they cannot recall a note, and they may believe they remember what they do not. So whatever must be kept exactly goes in a file, a tag or a log, never in an agent's memory.
 - Detection comes first: an instruction, a block or a correction does nothing until something detects its moment.
 - Every message to an agent teaches: whether the step worked; if not, why; and what to do now.
 
@@ -54,6 +60,7 @@ A working outline, not for merging. One line per concept; the prose pages are wr
 - Instruct: tell the agent.
   - standing: CLAUDE.md, the seat-brief, the glossary; the weakest, fading over a long session;
   - on demand: a skill, triggered by its description;
+  - to a fresh agent: hand the step to a subagent or a fresh-agent whose brief holds only what the step needs;
   - just in time: a hook's added context, a program's output or error, a refusal's text;
   - at correction: the message that follows a detected mistake.
 - Judge: what no check can decide.
