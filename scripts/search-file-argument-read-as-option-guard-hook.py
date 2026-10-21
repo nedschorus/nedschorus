@@ -396,9 +396,7 @@ def unchecked_hook_output(why, report=None):
     message = (
         f"The search-file-argument guard let this command through without checking it, and "
         f"the command has run: {why}\n"
-        f"Look at the files the command's file patterns match. If one of them names a file "
-        f"whose name starts with -, the search read that name as an option, so run the search "
-        f"again with -- before the file names; if none does, the search ran as written.")
+        + PARSER_UNAVAILABLE_NEXT_STEP_LINES)
     if report is not None:
         message += "\n" + shell_reader.report_to_user_or_dispatching_agent_instruction_build(report)
     return json.dumps({"hookSpecificOutput": {
