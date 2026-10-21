@@ -27,7 +27,7 @@ A proposed change to a guarded-file, such as a skill, CLAUDE.md or a wiki page, 
 
 ## A worked example
 
-The user tells an agent: "I can only deal with these one at a time." The lesson: put one question to the user per message, written so he can answer it without other context, and do not list the other questions waiting beside it.
+The user tells an agent that he can deal with only one question at a time. The lesson: put one question to the user per message, written so he can answer it without other context, and do not list the other questions waiting beside it.
 
 1. **Actions.** One: writing a message to the user that asks him something.
 2. **Places, in order.**
