@@ -14,7 +14,7 @@ Agents read single files by path, never the whole wiki, so setting the wiki apar
 
 Measured on main on 2026-10-05 with `git ls-tree -r --name-only origin/main docs/`:
 
-- `docs/` holds 146 files, 144 of them markdown: `docs/issues/` 107, `docs/agents/` 18, `docs/nedschorus-wiki/` 12, and the rest in `docs/cross-project/`, `docs/design-to-main/`, `docs/drafts/` and `docs/founding/`.
+- `docs/` holds 146 files, 144 of them markdown: `docs/issues/` 107, `docs/agents/` 18, `docs/nedschorus-wiki/` 12, and the rest in `docs/cross-project/`, `docs/design-to-main/`, `docs/drafts/`, and in a founding-era directory since removed.
 - 75 files on main name `docs/nedschorus-wiki` (`git grep -l nedschorus-wiki origin/main`), 32 of them in `CLAUDE.md`, `.claude/`, `scripts/` and `nc-systems/`.
 - The instruction-file guard lists the wiki among the directories the user reviews: `REVIEWED_HOME_DIRECTORY_PREFIXES` in `.claude/hooks/instruction-file-guard.py`.
 - The Obsidian vault is on the Mac, over `docs/nedschorus-wiki/` in the Mac's own clone, `/Users/el/Projects/nedschorus`, as GHI [Host the project's Obsidian wiki vault — waits for the user's word](https://github.com/nedschorus/nedschorus/issues/482) records. The ned-box clone has no `.obsidian` directory.
