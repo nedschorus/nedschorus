@@ -2795,7 +2795,20 @@ check("one refused mount among searched-and-empty snapshots is UNAVAILABLE, list
 
 tm_none = FakeRunner([("tmutil destinationinfo", (1, "", "tmutil: no destination configured"))])
 report = finder.search_time_machine("a/b.md", runner=tm_none)
-check("no configured destination is UNAVAILABLE", report.status == UNAVAILABLE)
+check("no configured destination is UNAVAILABLE, saying so without naming the machine a Mac",
+      report.status == UNAVAILABLE
+      and report.lines == ["no Time Machine destination is configured on this machine"], repr(report.lines))
+
+check("arguments_without_repo leaves out --repo with its value, and --repo=, keeping every other argument",
+      finder.arguments_without_repo(["a.md", "--repo", "/r", "--skip", "box", "--repo=/s"]) == ["a.md", "--skip", "box"],
+      repr(finder.arguments_without_repo(["a.md", "--repo", "/r", "--skip", "box", "--repo=/s"])))
+
+report = finder.search_time_machine("a/b.md", runner=FakeRunner(
+    [("tmutil destinationinfo", (127, "", "tmutil: not found on this machine"))]))
+check("a machine without tmutil, such as ned-box, is UNAVAILABLE because Time Machine exists only on macOS",
+      report.status == UNAVAILABLE
+      and report.lines == ["tmutil: not found on this machine, and Time Machine exists only on macOS, so this "
+                           "machine has no Time Machine backup to search"], repr(report.lines))
 
 # --------------------------------------------------------------------------
 # the assembled report
@@ -3283,7 +3296,7 @@ with contextlib.redirect_stderr(spoken_errors):
 check("condition 3 — a deletion lookup git fails speaks nothing, and says so with git's words and the run's command",
       announced is None and not any(c.startswith("say") for c in deletion_lookup_fails.calls)
       and "bad object refs/heads/gone" in spoken_errors.getvalue()
-      and "If neither applies, run exactly python3 RUN-AS-GIVEN once more." in spoken_errors.getvalue(),
+      and "If none of the cases above applies, run exactly python3 RUN-AS-GIVEN once more." in spoken_errors.getvalue(),
       "%r %s %r" % (announced, deletion_lookup_fails.calls, spoken_errors.getvalue()))
 no_repository = FakeRunner([("rev-parse --show-toplevel", (128, "", "fatal: not a git repository\n")),
                             DELETED_2026_08_13_NOON])
@@ -4204,7 +4217,7 @@ with tempfile.TemporaryDirectory() as tmp:
     program = str(Path(finder.__file__).resolve())
     arguments = [str(repo / "a" / "b.md"), "--repo", str(repo), "--found-copies-root", str(tmp / "found"),
                  "--skip", "box", "--skip", "localsnapshots", "--skip", "transcripts", "--skip", "logstore"]
-    rerun_line = "If neither applies, run exactly %s once more." % shlex.join(["python3", program] + arguments)
+    rerun_line = "If none of the cases above applies, run exactly %s once more." % shlex.join(["python3", program] + arguments)
     checkout = str(Path(program).parents[1])
     for how, typed, directory in (("by absolute path from another directory", program, str(elsewhere)),
                                   ("by a path relative to its checkout", os.path.relpath(program, checkout),
@@ -4213,15 +4226,27 @@ with tempfile.TemporaryDirectory() as tmp:
             [sys.executable, typed] + arguments, cwd=directory, capture_output=True, text=True,
             env=dict(os.environ, PATH="%s%s%s" % (stand_ins, os.pathsep, os.environ["PATH"]),
                      STAND_IN_TABLE=str(table), STAND_IN_CALLS=str(calls)))
-        check("a run %s says only the git surfaces are unavailable, the others search the absolute path, and "
-              "the search exits 3 unless a surface finds the path" % how,
-              ("git could not find the top level of the repository at %s, so the git and git reflog surfaces "
-               "cannot search, and their lines will say UNAVAILABLE for this failure. Every other surface searches "
-               "as usual for the absolute path %s as given, since git could not turn it into a path inside the "
-               "repository, and each surface's line reports that surface's own result, which this git failure "
-               "does not affect. Unless a surface finds the path, the search exits 3, for an incomplete search."
-               % (repo, repo / "a" / "b.md")) in completed.stderr
-              and completed.returncode == 3, (completed.returncode, completed.stderr))
+        check("a run %s says what a surface is, that only the git surfaces are unavailable and the others search "
+              "the absolute path" % how,
+              ("git could not find the top level of the repository at %s. This program searches several surfaces, "
+               "the places a deleted file may survive, such as local snapshots, git, git reflog, the log-store, "
+               "transcripts, Timeshift and Time Machine, and prints one result line per surface. The git and git "
+               "reflog surfaces cannot search, and their result lines will say UNAVAILABLE for this failure. Every "
+               "other surface that --skip did not leave out runs as usual, given the absolute path %s unchanged, "
+               "since git could not turn it into a path inside the repository; each such surface matches that path "
+               "in its own way, and its result line reports that surface's own result, which this git failure does "
+               "not affect, though a surface can still be UNAVAILABLE for a reason of its own.\n" % (repo, repo / "a" / "b.md")) in completed.stderr,
+              completed.stderr)
+        check("... gives the exit status for a find and for no find, and exits 3 when no surface finds the path",
+              "If some surface finds the path, this program exits 0 when it copied a version, 5 when it copied none "
+              "but printed a command that copies one, and 4 otherwise. If no surface finds the path, it exits 3, "
+              "for an incomplete search.\n" in completed.stderr
+              and completed.returncode == 3, "exit %s\n%s" % (completed.returncode, completed.stderr))
+        repo_rerun = shlex.join(["python3", program] + [a for a in arguments if a not in ("--repo", str(repo))]
+                                + ["--repo", "<checkout>"])
+        check("... and the wrong --repo line gives the whole command, with only the checkout to fill in",
+              ("run %s with <checkout> replaced by a checkout of the repository the path was deleted from.\n"
+               % repo_rerun) in completed.stderr, "%r\n%s" % (repo_rerun, completed.stderr))
         check("a run %s prints both git-failure messages" % how,
               "git could not find the top level of the repository at %s" % repo in completed.stderr
               and "did not speak its announcement" in completed.stderr, completed.stderr + completed.stdout)

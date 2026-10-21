@@ -449,13 +449,14 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                                        "file. Otherwise it prints JSON whose hookSpecificOutput."
                                        "additionalContext field holds one of two texts: when another tracked file has "
                                        "the basename, this hook's warning, whose instructions you follow; or, when git "
-                                       "fails again, a git-failure message like this one, and the line here that "
-                                       "begins \"If a line starting\" says what to do then.")
-              and failure_lines[3] == ('If a line starting "file-name-collision-warning:" reports a git failure again '
-                                       "when you run that command, whether this error or another, tell the user, or, "
-                                       "if you are a subagent, the agent that dispatched you, word for word, every line "
-                                       "of this message and of the new one, before you go on. If the check finds no git "
-                                       "failure then, this failure needs no report."), repr(failure_lines))
+                                       "fails again, a git-failure message like this one, and the last line here says "
+                                       "what to do then.")
+              and failure_lines[3] == ("If the command on the line above prints JSON whose hookSpecificOutput.additionalContext "
+                                       'field starts with "file-name-collision-warning:" and reports a git failure, whether this '
+                                       "error or another, tell the user, or, if you are a subagent, the agent that "
+                                       "dispatched you, word for word, every line of this message and of that field, "
+                                       "before you go on. If the command prints nothing, or JSON whose field reports "
+                                       "no git failure, the git failure above needs no report."), repr(failure_lines))
         rerun_line = failure_lines[1] if len(failure_lines) > 1 else ""
         check(f"a failing git {failing_subcommand}'s rerun line says to run the command now when git names no lock "
               "file, and gives the lock-file wait otherwise",
@@ -463,8 +464,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
               + LOCK_FILE_WAIT_CLAUSE + "." in rerun_line, repr(rerun_line))
         check(f"a failing git {failing_subcommand}'s rerun line says what the command prints when git fails again "
               "and points to the closing line",
-              "or, when git fails again, a git-failure message like this one, and the line here that begins "
-              "\"If a line starting\" says what to do then." in rerun_line, repr(rerun_line))
+              "or, when git fails again, a git-failure message like this one, and the last line here says what to "
+              "do then." in rerun_line, repr(rerun_line))
         # The rerun runs with git working, so the file the failed run skipped is now checked.
         rerun = subprocess.run(failure_lines[2] if len(failure_lines) == 4 else "false",
                                shell=True, capture_output=True, text=True, check=False, cwd=str(tmp))
@@ -474,6 +475,15 @@ with tempfile.TemporaryDirectory() as temporary_directory:
         else:
             check(f"after a failing git {failing_subcommand}, the named rerun command checks {written.name} and finds it free",
                   silent(rerun) and rerun.stderr == "", repr(rerun))
+        # The closing line sends the reader into the JSON for the prefix, so a failing rerun must put it there.
+        failing_rerun = subprocess.run(failure_lines[2] if len(failure_lines) == 4 else "false",
+                                       shell=True, capture_output=True, text=True, check=False, cwd=str(tmp),
+                                       env=environment_with_failing_git(
+                                           tmp / f"stand-in-git-{failing_subcommand}", failing_subcommand))
+        check(f"when git {failing_subcommand} fails again, the named rerun command prints JSON whose "
+              "additionalContext field starts with the prefix the closing line names and reports the git failure",
+              agent_text(failing_rerun).startswith(f"file-name-collision-warning: git {failing_subcommand} ")
+              and " failed (" in agent_text(failing_rerun).splitlines()[0], repr(failing_rerun))
 
     # --- malformed payloads cost nothing and say nothing ------------------
     check("a payload that is not JSON exits 0 and prints nothing",

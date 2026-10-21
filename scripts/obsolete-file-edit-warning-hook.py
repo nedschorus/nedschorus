@@ -197,7 +197,7 @@ GIT_FAILURE_AGENT_FACING_MESSAGE_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CH
     "prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
     "whose hookSpecificOutput.additionalContext field holds one of two texts: this hook's warning, "
     "whose instructions you follow; or, when git fails again, a git-failure message like this one, "
-    "and the line here that begins \"If a line starting\" says what to do then.\n"
+    "and the last line here says what to do then.\n"
     "{rerun}")
 RECORD_WRITE_FAILED_LINE = (
     "obsolete-file-edit-warning could not record that it gave this warning, so it "
@@ -552,8 +552,9 @@ def main() -> int:
                 path=file_path, rerun=rerun,
                 wait_for_lock_file=freshness.next_step_lines
                 .lock_file_named_by_git_error_wait_then_rerun_instruction("the next line's command")),
-            freshness.next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
-                "when you run that command", "obsolete-file-edit-warning-hook:"))))
+            freshness.next_step_lines
+            .hook_agent_instruction_if_rerun_command_reports_git_failure_tell_user_both_outputs_line(
+                "obsolete-file-edit-warning-hook:"))))
         return 0
 
 

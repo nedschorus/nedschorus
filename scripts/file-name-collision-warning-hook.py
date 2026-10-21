@@ -42,11 +42,10 @@ GIT_FAILURE_TEMPLATE = (
     "skips, such as an ignored file. Otherwise it prints JSON whose "
     "hookSpecificOutput.additionalContext field holds one of two texts: when another tracked file "
     "has the basename, this hook's warning, whose instructions you follow; or, when git fails again, a "
-    "git-failure message like this one, and the line here that begins \"If a line starting\" says "
-    "what to do then.\n"
+    "git-failure message like this one, and the last line here says what to do then.\n"
     "{rerun}\n"
-    + next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
-        "when you run that command", "file-name-collision-warning:")
+    + next_step_lines.hook_agent_instruction_if_rerun_command_reports_git_failure_tell_user_both_outputs_line(
+        "file-name-collision-warning:")
 )
 
 

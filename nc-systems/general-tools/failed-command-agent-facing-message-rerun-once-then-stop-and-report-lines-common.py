@@ -84,7 +84,7 @@ def git_failure_next_step_lines(rerun, program, *, include_the_misspelt_branch_c
         lines += [f"If a branch, commit or path you gave {program} on its command line is "
                   f"misspelt or does not exist, correct it in your command, then run the "
                   f"corrected command.",
-                  f"If neither applies, run exactly {rerun} once more."]
+                  f"If none of the cases above applies, run exactly {rerun} once more."]
         phrase_a_stop_message_uses_for_the_command_the_agent_reruns = "the rerun, or the corrected command,"
     else:
         lines.append(f"If git's error names no lock file, run exactly {rerun} once more.")
@@ -109,3 +109,16 @@ def hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(whe
             f"error or another, tell {REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT} "
             f"word for word, every line of this message and of the new one, before you go on. "
             f"If the check finds no git failure then, this failure needs no report.")
+
+
+def hook_agent_instruction_if_rerun_command_reports_git_failure_tell_user_both_outputs_line(program):
+    """The closing line for a hook whose message ends with a command that reruns the hook.
+
+    The command prints the hook's JSON, so the reader looks inside its
+    additionalContext field for program, the prefix the hook's lines start with.
+    """
+    return (f"If the command on the line above prints JSON whose hookSpecificOutput.additionalContext "
+            f'field starts with "{program}" and reports a git failure, whether this error or another, '
+            f"tell {REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT} word for word, every line of "
+            f"this message and of that field, before you go on. If the command prints nothing, or JSON "
+            f"whose field reports no git failure, the git failure above needs no report.")

@@ -135,12 +135,14 @@ GIT_FAILURE_RERUN_LINE = (
     "prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
     "whose hookSpecificOutput.additionalContext field holds one of two texts: this hook's warning, "
     "whose instructions you follow; or, when git fails again, a git-failure message like this one, "
-    "and the line here that begins \"If a line starting\" says what to do then.")
+    "and the last line here says what to do then.")
 GIT_FAILURE_RERUN_FAILS_TOO_LINE = (
-    'If a line starting "obsolete-file-edit-warning-hook:" reports a git failure again when you '
-    "run that command, whether this error or another, tell the user, or, if you are a subagent, "
-    "the agent that dispatched you, word for word, every line of this message and of the new one, "
-    "before you go on. If the check finds no git failure then, this failure needs no report.")
+    "If the command on the line above prints JSON whose hookSpecificOutput.additionalContext "
+    'field starts with "obsolete-file-edit-warning-hook:" and reports a git failure, whether this '
+    "error or another, tell the user, or, if you are a subagent, the agent that dispatched you, "
+    "word for word, every line of this message and of that field, before you go on. If the "
+    "command prints nothing, or JSON whose field reports no git failure, the git failure above "
+    "needs no report.")
 
 
 def named_rerun_command(result, edited_path) -> str:
@@ -573,8 +575,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           + LOCK_FILE_WAIT_CLAUSE + "." in rerun_line, rerun_line)
     check("a git failure's rerun line says what the command prints when git fails again "
           "and points to the closing line",
-          "or, when git fails again, a git-failure message like this one, and the line here that "
-          "begins \"If a line starting\" says what to do then." in rerun_line, rerun_line)
+          "or, when git fails again, a git-failure message like this one, and the last line here "
+          "says what to do then." in rerun_line, rerun_line)
 
     result = run_hook(hook_payload(checkout, edited_file),
                       path_replacement=no_git_directory)
