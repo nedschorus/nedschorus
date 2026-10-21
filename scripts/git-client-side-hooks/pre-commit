@@ -96,7 +96,12 @@ fi
 
 refused_identity=""
 for role in AUTHOR COMMITTER; do
-    identity="$(git var "GIT_${role}_IDENT" 2>/dev/null)" || continue
+    if ! identity="$(git var "GIT_${role}_IDENT")"; then
+        echo "pre-commit: git var GIT_${role}_IDENT failed, so this commit's $(printf '%s' "$role" | tr 'A-Z' 'a-z') was not checked for the user's own address or the unconfigured-agent address, and this hook does not refuse the commit for it; git's error is just above this line." >&2
+        echo "Before you push this commit, run git log -1 --format='%an <%ae> / %cn <%ce>' and check that neither identity is the user's address or unconfigured-agent." >&2
+        echo "If git var keeps failing, tell the user this whole message." >&2
+        continue
+    fi
     # "Name <email> 1727000000 +0000" -> the email, lowercased.
     email="$(printf '%s\n' "$identity" | sed -n 's/.*<\([^>]*\)>.*/\1/p' | tr 'A-Z' 'a-z')"
     case "$email" in

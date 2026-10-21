@@ -997,6 +997,101 @@ def head(repo):
     return git(repo, "rev-parse", "HEAD").stdout.strip()
 
 
+# git failing is told apart from git's answer: no commit, detached HEAD, untracked files.
+def stand_in_git_failing_on(root, words):
+    """A PATH whose git fails, exit 128, when its arguments, joined by spaces, include words."""
+    bin_dir = root / "bin-git-failing-on"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "git").write_text(
+        "#!/bin/sh\n"
+        f"case \"$*\" in *{shlex.quote(words)}*)\n"
+        "    echo \"fatal: injected git failure\" >&2\n"
+        "    exit 128 ;;\n"
+        "esac\n"
+        f"exec {shlex.quote(shutil.which('git'))} \"$@\"\n")
+    (bin_dir / "git").chmod(0o755)
+    return {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"a-test.py": PASSES})
+    result = run(root, environment_extra=stand_in_git_failing_on(root, "rev-list --max-parents=0"))
+    check("when git cannot list HEAD's root commits, the run exits 2 before any suite runs, "
+          "rather than filing recordings under no-commit",
+          result.returncode == 2 and ran(root) == []
+          and "git could not list the root commits of HEAD" in result.stderr
+          and result.stderr.endswith(
+              "\n" + module.git_failure_next_step_lines("run-all-test-suites.py") + "\n")
+          and "fatal: injected git failure" in result.stderr
+          and not (root / "recordings" / "no-commit").exists(),
+          (result.returncode, ran(root), result.stderr))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"a-test.py": PASSES})
+    since = head(repo)
+    (repo / "untracked-test.py").write_text(SUITE_PREAMBLE + PASSES)
+    result = select_since(root, since, stand_in_git_failing_on(
+        root, "ls-files --others --exclude-standard -z"))
+    check("when git cannot list untracked files, a selective run exits 2 before any suite "
+          "runs, rather than selecting without them",
+          result.returncode == 2 and ran(root) == []
+          and "git ls-files --others failed" in result.stderr
+          and result.stderr.endswith(
+              "\n" + module.git_failure_next_step_lines("run-all-test-suites.py") + "\n")
+          and "fatal: injected git failure" in result.stderr,
+          (result.returncode, ran(root), result.stderr))
+
+
+def git_answering(answers):
+    """A stand-in for the program's git(): the first answer whose words are all in the call."""
+    def stand_in(checkout, *arguments):
+        for words, status, output, error in answers:
+            if all(word in arguments for word in words):
+                return subprocess.CompletedProcess(arguments, status, output, error)
+        raise AssertionError(f"unexpected git call {arguments}")
+    return stand_in
+
+
+real_program_git = module.git
+try:
+    for label, answers, expected in [
+            ("HEAD resolves", [(("rev-parse",), 0, "abc123\n", ""), (("status",), 0, "", "")],
+             "abc123"),
+            ("the branch has no commit yet", [(("rev-parse",), 1, "", ""),
+                                              (("status",), 0, "", "")], "no commit"),
+            ("git rev-parse fails", [(("rev-parse",), 128, "", "fatal: injected\n"),
+                                     (("status",), 0, "", "")],
+             "commit unknown (git rev-parse HEAD exited 128: fatal: injected)")]:
+        module.git = git_answering(answers)
+        commit, _ = module.commit_and_state(pathlib.Path("/nowhere"))
+        check(f"commit_and_state records the commit when {label}: {expected}",
+              commit == expected, commit)
+    for label, answers, expected in [
+            ("on a branch", [(("symbolic-ref",), 0, "topic\n", "")], "topic"),
+            ("detached", [(("symbolic-ref",), 1, "", "")], "HEAD"),
+            ("git symbolic-ref fails", [(("symbolic-ref",), 128, "", "fatal: injected\n")],
+             "branch unknown (git symbolic-ref HEAD exited 128: fatal: injected)")]:
+        module.git = git_answering(answers)
+        branch = module.branch_of_checkout(pathlib.Path("/nowhere"))
+        check(f"branch_of_checkout records the branch when {label}: {expected}",
+              branch == expected, branch)
+    module.git = git_answering([(("rev-parse",), 1, "", "")])
+    check("recordings_directory_for files a checkout with no commit yet under no-commit",
+          module.recordings_directory_for("/store", pathlib.Path("/nowhere"))
+          == pathlib.Path("/store/no-commit"))
+    module.git = git_answering([(("rev-parse",), 128, "", "fatal: injected\n")])
+    try:
+        module.recordings_directory_for("/store", pathlib.Path("/nowhere"))
+        refused = None
+    except module.CouldNotRun as refusal:
+        refused = str(refusal)
+    check("recordings_directory_for refuses when git cannot resolve HEAD",
+          refused is not None and "fatal: injected" in refused, refused)
+finally:
+    module.git = real_program_git
+
 # A recording made on another branch. The store is shared by every worktree
 # and clone on a machine, so the recording selection reads may have been
 # made where the suite read less than it reads here.
