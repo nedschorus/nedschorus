@@ -157,7 +157,7 @@ command -v jq >/dev/null 2>&1 || cannot "jq is not on PATH. Put jq on PATH, then
   "If jq is not installed on this machine, tell the user this message."
 command -v gh >/dev/null 2>&1 || cannot "gh is not on PATH. Put gh on PATH, then rerun the gate." \
   "If gh is not installed on this machine, tell the user this message."
-DESCRIPTION_DEFECT_LINE_READER="$(dirname "${BASH_SOURCE[0]}")/pull-request-description-defect-line-hashtags-reader-common.py"
+DESCRIPTION_DEFECT_LINE_READER="$(dirname "${BASH_SOURCE[0]}")/pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py"
 
 # An abbreviated or malformed EXPECTED used to refuse as "head moved", naming the
 # wrong cause: the head had not moved, the caller had passed a short sha.
@@ -330,8 +330,9 @@ body_read=$(gh pr view "$PR" --repo "$REPO" --json body)
 description=$(jq -er '.body | strings' <<<"$body_read")
 [ $? -eq 0 ] || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
 defect_lines=$(python3 "$DESCRIPTION_DEFECT_LINE_READER" <<<"$description")
-[ $? -eq 0 ] || cannot "could not read the defect lines of pull request $PR's description with $DESCRIPTION_DEFECT_LINE_READER; any error it printed is just above this line." \
-  "Run the gate again once; if it fails the same way, tell the user what both runs printed."
+[ $? -eq 0 ] || cannot "python3 $DESCRIPTION_DEFECT_LINE_READER failed on pull request $PR's description, so the gate cannot read the description's defect lines; what python3 or that program printed is just above this line." \
+  "Do not run the gate again until the cause is fixed: the description reached that program from GitHub as UTF-8 text, so the cause is in the checkout the gate ran from, where that program is missing or broken, or in python3, and a rerun fails the same way." \
+  "Tell the user this message and every line the gate printed."
 [ "$defect_lines" != "[]" ] || fail "the pull request's description has no line beginning \"#root_cause\", \"#root_cause_not_fixed\" or \"#no_defect_fixed\", so it does not say whether the pull request fixes a defect and, if it does, whether the change removes the defect's root cause." \
   "Have the pull request's author add one of these lines to the description, starting the line with the hashtag, which may follow a bullet and may be in bold type: \"#root_cause\" and the root cause the change removes; \"#root_cause_not_fixed\" and the root cause that stays, or that none was found, with the reason; or \"#no_defect_fixed\" when the pull request fixes no defect." \
   "Editing the description needs no new commit. Once the description has the line, run the gate again."

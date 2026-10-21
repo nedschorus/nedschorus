@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for pull-request-description-defect-line-hashtags-reader-common.py.
+"""Tests for pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py.
 
 Each case reads descriptions with the reader loaded from a path, or runs it as a
 command at that path, so the mutation section can rerun the cases against a
@@ -8,7 +8,7 @@ turn its cases red. The file under test is never modified. Each mutation asserts
 that its replacement text was found, and an unmutated copy is run after all
 mutations as the control.
 
-Run: python3 scripts/pull-request-description-defect-line-hashtags-reader-common-test.py
+Run: python3 scripts/pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader-test.py
 """
 
 import importlib.util
@@ -19,7 +19,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-READER = Path(__file__).with_name("pull-request-description-defect-line-hashtags-reader-common.py")
+READER = Path(__file__).with_name("pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
 ISSUE = "https://github.com/nedschorus/nedschorus/issues/1154"
 PULL_REQUEST = "https://github.com/nedschorus/nedschorus/pull/1636"
 
@@ -99,17 +99,38 @@ def case_command_prints_an_empty_list_for_no_lines(_reader, path):
 
 def case_command_refuses_a_description_that_is_not_utf8(_reader, path):
     completed = run_command(path, b"#no_defect_fixed\nA caf\xe9 line, then more.\n")
+    reader = b"scripts/pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py"
     return (completed.returncode == 2 and completed.stdout == b""
-            and completed.stderr == (b"scripts/pull-request-description-defect-line-hashtags-reader-common.py: the "
-                                     b"description is not UTF-8 text: line 2 has byte 0xe9, in: "
-                                     b"A caf\\xe9 line, then more.\n"),
+            and completed.stderr == (
+                reader + b": stopped: the pull request description on standard input is not UTF-8 text, "
+                b"so its defect lines cannot be read.\n"
+                b"The first byte that is not UTF-8 is at line 2, character 6: byte 0xe9, in: "
+                b"A caf\\xe9 line, then more.\n"
+                b"Write the whole description to a new file as UTF-8, because bytes after this one may not be "
+                b"UTF-8 either; for a file saved as Latin-1: iconv -f LATIN1 -t UTF-8 OLD_FILE > NEW_FILE\n"
+                b"Then run " + reader + b" again with the new file on standard input, and use the new file "
+                b"as the description.\n"),
             f"exit {completed.returncode}, stdout {completed.stdout!r}, stderr {completed.stderr!r}")
 
 
 def case_not_utf8_place_keeps_thirty_characters_each_side(reader, _path):
     raw = b"a" * 50 + b"\xff" + b"b" * 50
     place = reader.not_utf8_place(raw, 50)
-    return place == "line 1 has byte 0xff, in: " + "a" * 30 + "\\xff" + "b" * 29, place
+    return place == ("line 1, character 51: byte 0xff, in: ..." + "a" * 30 + "\\xff" + "b" * 30
+                     + "..."), place
+
+
+def case_not_utf8_place_cuts_on_characters_not_bytes(reader, _path):
+    raw = "\u00e9".encode() * 40 + b"\xff" + "\u00e9".encode() * 40
+    place = reader.not_utf8_place(raw, 80)
+    return place == ("line 1, character 41: byte 0xff, in: ..." + "\u00e9" * 30 + "\\xff"
+                     + "\u00e9" * 30 + "..."), place
+
+
+def case_not_utf8_place_counts_a_later_bad_byte_as_one_character(reader, _path):
+    raw = b"x\nab\xffcd\xfeef"
+    place = reader.not_utf8_place(raw, 4)
+    return place == "line 2, character 3: byte 0xff, in: ab\\xffcd\\xfeef", place
 
 
 RC, NF, ND = "root_cause", "root_cause_not_fixed", "no_defect_fixed"
@@ -154,7 +175,12 @@ CASES = [
     ("the command prints the lines as JSON", case_command_prints_the_lines_as_json),
     ("the command prints [] for a description with no defect line", case_command_prints_an_empty_list_for_no_lines),
     ("the command exits 2 on a description that is not UTF-8, naming its line and the bytes around it", case_command_refuses_a_description_that_is_not_utf8),
-    ("the place of a byte that is not UTF-8 keeps 30 characters on each side", case_not_utf8_place_keeps_thirty_characters_each_side),
+    ("the place of a byte that is not UTF-8 keeps 30 characters on each side, marking the cuts",
+     case_not_utf8_place_keeps_thirty_characters_each_side),
+    ("the place of a byte that is not UTF-8 is cut on characters, not bytes",
+     case_not_utf8_place_cuts_on_characters_not_bytes),
+    ("a later byte that is not UTF-8 counts as one character and shows as an escape",
+     case_not_utf8_place_counts_a_later_bad_byte_as_one_character),
     ("#root_cause", case_root_cause_hashtag),
     ("#root_cause_not_fixed", case_not_fixed_hashtag),
     ("#no_defect_fixed", case_no_defect_fixed_hashtag),
@@ -243,7 +269,18 @@ MUTATIONS = [
      [case_command_refuses_a_description_that_is_not_utf8]),
     ("the line number counted from 0", [('raw.count(b"\\n", 0, start) + 1', 'raw.count(b"\\n", 0, start)')],
      [case_command_refuses_a_description_that_is_not_utf8]),
-    ("the excerpt not cut to 30 characters", [("column - 30", "column - 300")],
+    ("the excerpt not cut to 30 characters",
+     [("NOT_UTF8_EXCERPT_CHARACTERS = 30", "NOT_UTF8_EXCERPT_CHARACTERS = 300")],
+     [case_not_utf8_place_keeps_thirty_characters_each_side]),
+    ("the excerpt cut on bytes",
+     [('line = raw_line.decode("utf-8", "surrogateescape")', "line = raw_line"),
+      ('column = len(raw_line[:start - line_start].decode("utf-8", "surrogateescape"))',
+       "column = start - line_start"),
+      ('excerpt = line[first:last].encode("utf-8", "surrogateescape")', "excerpt = line[first:last]")],
+     [case_not_utf8_place_cuts_on_characters_not_bytes]),
+    ("the character number counted from 0", [("character {column + 1}", "character {column}")],
+     [case_command_refuses_a_description_that_is_not_utf8]),
+    ("no mark where the excerpt was cut", [('("..." if first > 0 else "") + ', ""), (' + ("..." if last < len(line) else "")', "")],
      [case_not_utf8_place_keeps_thirty_characters_each_side]),
 ]
 

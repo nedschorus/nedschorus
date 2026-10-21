@@ -39,6 +39,9 @@ ROOT_CAUSE = "root_cause"
 ROOT_CAUSE_NOT_FIXED = "root_cause_not_fixed"
 NO_DEFECT_FIXED = "no_defect_fixed"
 
+READER_PATH = "scripts/pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py"
+NOT_UTF8_EXCERPT_CHARACTERS = 30
+
 _LINE_START = r"\s*(?:[-*+]\s+)?(?:\*\*|__)?"
 _BOLD_END = r"(?:\*\*|__)?"
 
@@ -91,16 +94,23 @@ def pull_request_description_defect_lines(description):
 
 
 def not_utf8_place(raw, start):
-    """Where in `raw` the byte at `start` that is not UTF-8 sits: its line number and
-    up to 30 characters of that line on each side, the bad bytes shown as escapes."""
+    """Where in `raw` the byte at `start` that is not UTF-8 sits: its line number,
+    its character number in that line, and the line around it, cut to the 30
+    characters before the byte and the 30 after it, with "..." where the line was
+    cut. Each byte that is not UTF-8 counts as one character and is shown as an
+    escape such as \\xe9."""
     line_number = raw.count(b"\n", 0, start) + 1
     line_start = raw.rfind(b"\n", 0, start) + 1
     line_end = raw.find(b"\n", start)
-    line = raw[line_start:len(raw) if line_end == -1 else line_end]
-    column = start - line_start
-    before = line[max(0, column - 30):column].decode("utf-8", "backslashreplace")
-    after = line[column:column + 30].decode("utf-8", "backslashreplace")
-    return f"line {line_number} has byte 0x{raw[start]:02x}, in: {before}{after}"
+    raw_line = raw[line_start:len(raw) if line_end == -1 else line_end]
+    # Cut on characters, not bytes: a cut inside a character of several bytes
+    # would show its good bytes as bad ones.
+    line = raw_line.decode("utf-8", "surrogateescape")
+    column = len(raw_line[:start - line_start].decode("utf-8", "surrogateescape"))
+    first, last = max(0, column - NOT_UTF8_EXCERPT_CHARACTERS), column + 1 + NOT_UTF8_EXCERPT_CHARACTERS
+    excerpt = line[first:last].encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+    excerpt = ("..." if first > 0 else "") + excerpt + ("..." if last < len(line) else "")
+    return f"line {line_number}, character {column + 1}: byte 0x{raw[start]:02x}, in: {excerpt}"
 
 
 def main():
@@ -111,8 +121,13 @@ def main():
     try:
         description = raw.decode("utf-8")
     except UnicodeDecodeError as error:
-        print(f"scripts/pull-request-description-defect-line-hashtags-reader-common.py: the description is not "
-              f"UTF-8 text: {not_utf8_place(raw, error.start)}", file=sys.stderr)
+        print(f"{READER_PATH}: stopped: the pull request description on standard input is not UTF-8 "
+              f"text, so its defect lines cannot be read.\n"
+              f"The first byte that is not UTF-8 is at {not_utf8_place(raw, error.start)}\n"
+              f"Write the whole description to a new file as UTF-8, because bytes after this one may not be "
+              f"UTF-8 either; for a file saved as Latin-1: iconv -f LATIN1 -t UTF-8 OLD_FILE > NEW_FILE\n"
+              f"Then run {READER_PATH} again with the new file on standard input, and use the new file as "
+              f"the description.", file=sys.stderr)
         return 2
     print(json.dumps(pull_request_description_defect_lines(description)))
     return 0
