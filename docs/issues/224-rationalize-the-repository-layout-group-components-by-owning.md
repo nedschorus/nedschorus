@@ -12,7 +12,7 @@ The repository is laid out by file type, so no system is findable in one place. 
 |---|---|
 | running and recycling seats | 14 — handoff supervisors and hooks, both launchers, `recover-crashed-seats`, `resupervise-seat`, statusline, dialog watcher |
 | reviewing documents | 9 — cold-read cells and grid, `sanity-check-attacks`, `code-review-codex-cell`, two lints |
-| getting work onto main | 4 — `git-gatekeeper`, `checkout-freshness-catch-up`, `clean-worktrees`, `watch-open-pull-requests` |
+| getting work onto main | 4 — `git-gatekeeper`, `checkout-freshness-catch-up`, `clean-worktrees`, `watch-open-pull-requests-nbd` |
 | GitHub issues | 2 — `ghi-info-ask`, `ghi-mirror-refresh` |
 | backup and recovery | 2 — `backup-health-check`, `find-deleted-path-across-backups` |
 

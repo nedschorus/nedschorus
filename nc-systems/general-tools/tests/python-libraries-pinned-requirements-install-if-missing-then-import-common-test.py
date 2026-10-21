@@ -358,6 +358,8 @@ check("the module parses as Python 3.9, so an older Python reaches the version c
 settings = json.loads((REPOSITORY_ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
 reader_source = (REPOSITORY_ROOT / "nc-systems" / "general-tools"
                  / "shell-command-tree-sitter-bash-reader-common.py").read_text(encoding="utf-8")
+markdown_parser_source = (REPOSITORY_ROOT / "nc-systems" / "general-tools"
+                          / "markdown-commonmark-parser-install-if-missing-common.py").read_text(encoding="utf-8")
 timeout_pattern = re.compile(r"^INSTALL_TIMEOUT_SECONDS = (\d+)$", re.MULTILINE)
 installing_hooks = []
 for groups in settings["hooks"].values():
@@ -371,6 +373,8 @@ for groups in settings["hooks"].values():
                 timeout_source, loads = script_source, "the shared module"
             elif "shell-command-tree-sitter-bash-reader-common.py" in script_source:
                 timeout_source, loads = reader_source, "the shell reader"
+            elif "markdown-commonmark-parser-install-if-missing-common.py" in script_source:
+                timeout_source, loads = markdown_parser_source, "the Markdown parser"
             else:
                 continue
             install_timeout = int(timeout_pattern.search(timeout_source).group(1))
@@ -381,8 +385,9 @@ check("every registered hook that may install the pinned libraries has a timeout
       "two installs",
       not too_short, (too_short, installing_hooks))
 # Each way a hook reaches the install must be found, or the case above checks nothing for it.
-check("the timeout case finds the hard-wrap reminder and a Bash guard that loads the shell reader",
-      ("scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook.py", "the shared module")
+check("the timeout case finds the hard-wrap reminder, which loads the Markdown parser, and a Bash "
+      "guard that loads the shell reader",
+      ("scripts/markdown-edit-hard-wrapped-paragraph-reminder-hook-nbd.py", "the Markdown parser")
       in [(entry[0], entry[3]) for entry in installing_hooks]
       and any(entry[3] == "the shell reader" for entry in installing_hooks), installing_hooks)
 

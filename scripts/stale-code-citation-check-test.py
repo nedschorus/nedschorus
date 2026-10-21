@@ -21,6 +21,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+# On macOS the temporary directory is reached through a link (/var is /private/var),
+# and the programs under test print resolved paths, so every scratch path is built resolved.
+tempfile.tempdir = os.path.realpath(tempfile.gettempdir())
+
 # Before anything runs git: a run started with GIT_DIR set, or with another
 # variable that redirects git, must still build this suite's scratch
 # repositories where the suite says, not in the repository the variable names.

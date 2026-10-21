@@ -26,8 +26,8 @@ Which lines form a paragraph is decided by markdown-it-py's CommonMark parser, n
 by this file: a paragraph, in a list item or at the top level, is broken when its
 inline content holds a soft line break. markdown-it-py is pinned in
 nc-systems/general-tools/python-libraries-pinned-requirements.txt; when it is
-missing, the hook installs the pinned file through the shared install module,
-for the python3 the hooks run. When that install fails, the hook writes to
+missing, the shared Markdown parser module installs the pinned file through the
+shared install module, for the python3 the hooks run. When that install fails, the hook writes to
 stderr what failed, what the install printed and the command that installs it
 by hand, and exits 1, which Claude Code shows as a non-blocking hook error.
 
@@ -48,9 +48,7 @@ import importlib.util
 import json
 import re
 import socket
-import subprocess
 import sys
-import time
 from pathlib import Path
 
 MARKDOWN_SUFFIXES = (".md", ".markdown")
@@ -93,46 +91,24 @@ PARSER_MISSING_BELOW_MINIMUM_PYTHON_MESSAGE = (
     "\"markdown-it-py is missing on {host} and could not be installed, so the hard-wrap reminder "
     "is off there. {instruction}\" "
     "Then pass on what the install printed, quoted as it is: {install_output}")
-# PostToolUse hooks run under a 30-second timeout; a cached wheel installs in about a second.
-INSTALL_TIMEOUT_SECONDS = 8
-INSTALL_STATE_DIRECTORY = Path.home() / ".cache" / "nedschorus-markdown-edit-hard-wrapped-paragraph-reminder"
 
 
-class MarkdownParserMissing(Exception):
-    """markdown-it-py cannot be imported, and installing it failed; install_output says how."""
-
-    def __init__(self, install_output):
-        super().__init__(install_output)
-        self.install_output = install_output
-
-
-@functools.lru_cache(maxsize=None)
-def python_libraries_pinned_requirements_install_if_missing_then_import_common():
-    """Return the shared install module, loaded by path when first needed."""
+@functools.cache
+def markdown_commonmark_parser_install_if_missing_common():
+    """Return the shared Markdown parser module, loaded by path when first needed."""
     specification = importlib.util.spec_from_file_location(
-        "python_libraries_pinned_requirements_install_if_missing_then_import_common",
+        "markdown_commonmark_parser_install_if_missing_common",
         Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-        / "python-libraries-pinned-requirements-install-if-missing-then-import-common.py")
+        / "markdown-commonmark-parser-install-if-missing-common.py")
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
 
 
-def import_markdown_it():
-    """Return the MarkdownIt class, raising ImportError when markdown-it-py is missing."""
-    from markdown_it import MarkdownIt
-    return MarkdownIt
-
-
-def _install_pinned_python_libraries(runner=subprocess.run):
-    return python_libraries_pinned_requirements_install_if_missing_then_import_common().pinned_requirements_pip_install(
-        INSTALL_TIMEOUT_SECONDS, runner)
-
-
 def parser_missing_message(error, host=None, python_version=None):
     """Return the stderr text for markdown-it-py missing on this machine and its install failed."""
     host = host or socket.gethostname().split(".")[0]
-    install = python_libraries_pinned_requirements_install_if_missing_then_import_common()
+    install = markdown_commonmark_parser_install_if_missing_common().python_libraries_pinned_requirements_install_if_missing_then_import_common()
     where, command = install.pinned_requirements_by_hand_install_command(
         host, python_version=python_version)
     if command is None:
@@ -152,26 +128,6 @@ def _load_edited_file_path_within_checkout_root_and_git_check_ignore():
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
-
-
-def markdown_parser(importer=import_markdown_it, installer=_install_pinned_python_libraries, clock=time.time):
-    """Return a CommonMark parser with tables, installing markdown-it-py when it is missing.
-
-    markdown-it-py and mdurl are written only in Python, so once their half-imported modules
-    are dropped, this process imports the installed copy and never needs a new process.
-
-    Raises MarkdownParserMissing when markdown-it-py is missing and installing it failed.
-    """
-    try:
-        markdown_it_class = importer()
-    except ImportError:
-        install = python_libraries_pinned_requirements_install_if_missing_then_import_common()
-        try:
-            markdown_it_class = install.python_libraries_pinned_requirements_install_if_missing_then_import(
-                importer, installer, clock, lambda: False, INSTALL_STATE_DIRECTORY, ("markdown_it", "mdurl"))
-        except install.PythonLibrariesPinnedRequirementsInstallOrImportFailed as error:
-            raise MarkdownParserMissing(error.install_output) from error
-    return markdown_it_class("commonmark").enable("table")
 
 
 def front_matter_blanked(text: str) -> str:
@@ -218,7 +174,7 @@ def markdown_broken_paragraph_line_ranges(text: str) -> list:
     trailing backslash or a trailing <br>, are breaks the author chose. A file
     holding display math or a footnote definition is never reported.
     Raises MarkdownParserMissing when markdown-it-py is missing and installing it failed."""
-    parser = markdown_parser()
+    parser = markdown_commonmark_parser_install_if_missing_common().markdown_parser()
     if holds_math_or_footnote_definition(text):
         return []
     tokens = parser.parse(front_matter_blanked(text))
@@ -365,7 +321,7 @@ def main() -> int:
         return 0
     try:
         broken_ranges = markdown_broken_paragraph_line_ranges(text)
-    except MarkdownParserMissing as error:
+    except markdown_commonmark_parser_install_if_missing_common().MarkdownParserMissing as error:
         print(parser_missing_message(error), file=sys.stderr)
         return 1
     if tool_name == "Edit" and broken_ranges:
