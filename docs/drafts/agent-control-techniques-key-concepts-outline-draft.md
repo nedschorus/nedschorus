@@ -43,26 +43,31 @@ A working outline, not for merging. One line per concept; the prose pages are wr
   - standing text loads: CLAUDE.md, the seat-brief [InstructionsLoaded can only observe].
 - The user's prompt arrives [UserPromptSubmit: 3].
 - As the act happens: just before a tool runs [PreToolUse: 10].
+- When the agent runs a program: its output, its errors and its `--help` say what to do next.
 - After the act, as soon as it is detected (*question*: "ASAP-post-detection" as a glossary term):
   - just after a tool runs [PostToolUse: 9; PostToolUseFailure: 1];
-  - the agent stops, or a subagent stops [Stop: 6; SubagentStop: 1];
+  - turn end: the agent or a subagent stops after its reply is shown, so a check on the reply corrects it and cannot block it [Stop: 6; SubagentStop: 1];
   - a task is created or completed [TaskCreated, TaskCompleted: 0; can refuse with a message];
   - a watched file changes, by any means [FileChanged: 0; cannot block, and cannot tell the agent].
+- At commit or push: the git hooks, which run whichever agent-binary commits [pre-commit, pre-merge-commit, prepare-commit-msg, pre-push].
 - On the user's screen only: a reply is displayed [MessageDisplay: 0; changes what the user sees, never what the agent knows].
-- Outside the session: the merge gate and the reviewers at a pull request; scheduled jobs and watchers; the output of a program the agent runs.
+- Outside the session, at a pull request: the merge-lane's reviewers, the test run at the head, the merge gate.
+- Outside the session, on a schedule: maintenance-jobs, watchers, the daily full test run.
+- What reaches a Codex agent: AGENTS.md, the git hooks, the reviewer instructions, and the limits a restricted fresh-agent starts with; no Claude Code hook does.
 
 ## 4. Kinds of technique: what it does
 
 - Do it instead: a program does the step; code-prompt-code hands only the judgment to a model.
+- Constrain: make the wrong act impossible, or the right act the default: powers withheld, such as one GitHub identity per role and a main branch that takes nothing unreviewed; restricted fresh-agents; settings and `.gitignore` defaults; test isolation. The cheapest and surest kind.
 - Detect: notice the moment, or the wrong act (section 5).
 - Block: refuse the act.
   - hard-block: nothing overrides it.
-  - soft-block: the agent clears it by writing its reason into the marker; each clear logged for review (*proposed*).
+  - soft-block: the agent clears it by writing its reason into the marker, or with a prefix on the command once it has checked; each clear logged for review (*proposed*).
   - user-block: only the user's approval, quoted into the marker, clears it.
 - Correct: undo or fix the act.
   - a program rewrites the act before it runs [PreToolUse `updatedInput`; not used here];
   - a program rewrites the result the agent sees [PostToolUse `updatedToolOutput`; not used here];
-  - a program reverts the act and tells the agent;
+  - a program reverts the act and tells the agent (*not built*: today the agent runs the guarded-file hook's `--restore` itself);
   - the agent is told to correct it, and how;
   - Claude Code's rewind: still to be found out, GHI [Find whether Claude Code's rewind can correct an agent's wrong act, triggered by a program](https://github.com/nedschorus/nedschorus/issues/1758);
   - *question, pending*: which wrong acts a program may undo by itself.
@@ -81,9 +86,10 @@ A working outline, not for merging. One line per concept; the prose pages are wr
 - A pattern in a command, a file or a reply: a keyword, a regular expression, a parsed shell command, parsed Markdown.
 - A file name's prefix or suffix: `-nbd`, `-test.py`, `-prompt.md`, `-instructions.md`, `-design.md`, `-draft`.
 - A path: a guarded-file, a memory directory, the log-store.
-- A hashtag a program reads: `#next_to_present` in walk minutes; `#root_cause`, `#root_cause_not_fixed`, `#follow_up` in a pull request description; `#pre_approved_change` in a marker.
+- A hashtag a program reads: `#next_to_present` in walk minutes; `#root_cause`, `#root_cause_not_fixed`, `#follow_up` in a pull request description; `#pre_approved_change` in a marker; also a review's `**Blocks.**` label, which the fix-round program reads.
 - A marker file: `.walk-approved`, `.location-write-approved`, `.backup-write-approved`.
 - A changed hash: a guarded-file whose git blob hash changed without an approval.
+- A repository rule test: a test that fails the push or the merge when a file breaks a rule about its content, such as a citation in standing instructions or an `except: pass`; for such a rule it is cheaper and more complete than a hook.
 - A skill's description matching the task in hand.
 - A count from logs: a fourth cold-read-full-run of one change; repeated failures.
 - A time: a daily job, such as the daily full test run.
@@ -103,23 +109,23 @@ A working outline, not for merging. One line per concept; the prose pages are wr
 - Agent chooses an act → Pre-tool check.
 - Pre-tool check → Tool runs (nothing detected; context added; a marker clears the block) | Hard-blocked | Soft-blocked | User-blocked.
 - Each blocked state → Agent chooses an act (another way; with a reason; after the user's approval).
-- Tool runs → Post-tool check → Done | Program corrects → Done | Agent corrects → Agent chooses an act.
-- A reply → Stop check → shown to the user | sent back to the agent with an instruction.
+- Tool runs → Post-tool check → Done | Program corrects → Done (*not built*) | Agent corrects → Agent chooses an act.
+- A reply, already shown → Stop check at turn end → the turn ends | the agent is sent back to correct it, with an instruction.
 
 ## 8. The workflow: fixing a problem in agent behaviour
 
 1. Notice: the user, a reviewer, an agent or a watcher sees the problem.
-2. Measure: search past transcripts for how often it happens, in what pattern, and at which moment it could be caught. Build only when CLAUDE.md's rule on guards is met.
+2. Measure: search past transcripts and the log-store for how often it happens, in what pattern, and at which moment it could be caught. Build only when CLAUDE.md's rule on guards is met.
 3. Choose: the flowchart; a program, a block, a detection after the act, a just-in-time instruction, judgment, and standing text last. Pick the moment and the kind together.
 4. Write the agent-facing-message.
 5. Cold-read it: a fresh-reader's misreadings often expose a flaw in the process itself; fix the process, not only the words.
-6. Build and test: cause the failure in a test; run mutation testing on the code that handles it.
+6. Build and test: cause the failure in a test; run mutation testing on the code that handles it; for a changed Bash guard, replay recorded commands through it at main and at the head to see which verdicts change. A reminder fires once for each thing it reminds of; a check that could not run says so, and never reads as a pass.
 7. Review and merge: merge-lane-2.
-8. Run: logs record each fire, clear and correction.
+8. Run: logs record each fire, clear and correction; a detector's precision is measured on labelled examples.
 9. Re-measure: keep it, correct it or drop it; the page's "Tried, then corrected or dropped" list.
 
 ## 9. Pending
 
-- The full technique inventory: Codex and a Claude subagent are reviewing the repository; their tables fill sections 4 and 5 with the files that build each technique.
+- The technique inventory is done, 110 techniques, in `docs/drafts/agent-control-techniques-inventory-draft.md`; next, group them into patterns, each tagged with its kind and moment.
 - Exceptions: what stays off the pages, and why.
 - Questions: "ASAP-post-detection" and "just-in-time" as glossary terms; "block-and-inform" (walk item 2); logging soft-block clears; MessageDisplay for fixes meant only for the user; FileChanged for guarded-files changed by shell commands (GHI [Catch a guarded file changed without the user's approval, ask him, and keep every version](https://github.com/nedschorus/nedschorus/issues/1268)); rewriting an act instead of refusing it.
