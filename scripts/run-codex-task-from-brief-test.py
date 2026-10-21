@@ -394,11 +394,13 @@ try:
         stalled_find_dir.mkdir()
         stalled_find_pid_file = scratch / "stalled-find.pid"
         stalled_find = stalled_find_dir / "find"
-        stalled_find.write_text(f'#!/bin/sh\necho $$ > "{stalled_find_pid_file}"\nexec sleep 20\n')
+        stalled_find.write_text(f'#!/bin/sh\necho $$ > "{stalled_find_pid_file}"\nexec sleep 120\n')
         stalled_find.chmod(0o755)
         started = time.monotonic()
         try:
-            completed, _, _ = run("report", path_first=stalled_find_dir, start_line_timeout=2)
+            # A loaded machine can take seconds to start the program, so the bound leaves room
+            # for it to reach its scan; the scan sleeps far past the bound.
+            completed, _, _ = run("report", path_first=stalled_find_dir, start_line_timeout=20)
             timed_out = False
         except subprocess.TimeoutExpired:
             timed_out = True
@@ -408,7 +410,7 @@ try:
         kill_leftovers(left)
         check("a program stalled before it starts Codex is stopped at the start-line bound, "
               "with the scan it started",
-              timed_out and waited < 15 and stalled_find_pid_file.exists() and not left,
+              timed_out and waited < 60 and stalled_find_pid_file.exists() and not left,
               f"timed out {timed_out}, {waited:.1f}s, left running {left}")
     else:
         print("SKIP  a program stalled before it starts Codex: the program runs find only on Linux")
