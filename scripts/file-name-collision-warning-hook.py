@@ -16,9 +16,9 @@ git_machine_readable_output = importlib.util.module_from_spec(_git_machine_reada
 _git_machine_readable_output_spec.loader.exec_module(git_machine_readable_output)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_rerun_then_stop_next_step_lines_common",
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
     Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-    / "failed-command-rerun-then-stop-next-step-lines-common.py")
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
@@ -32,7 +32,7 @@ GIT_FAILURE_TEMPLATE = (
     "file-name-collision-warning: git {command} failed ({outcome}), so {path} was not checked "
     "for a name another tracked file has.\n"
     "Nothing needs rerunning: this check runs again at your next Write or Edit.\n"
-    + next_step_lines.same_failure_again_line(
+    + next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
         "at your next Write or Edit", "file-name-collision-warning-hook.py")
 )
 

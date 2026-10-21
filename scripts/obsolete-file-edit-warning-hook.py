@@ -529,7 +529,7 @@ def main() -> int:
         # The shared wording comes through checkout-freshness-catch-up's copy, so a
         # hook copied away from it fails in the one load the top-level handler reports.
         print(GIT_FAILURE_NOTHING_TO_RERUN_LINE, file=sys.stderr)
-        print(freshness.next_step_lines.same_failure_again_line(
+        print(freshness.next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
             "at your next Edit or Write", "obsolete-file-edit-warning-hook"), file=sys.stderr)
         return 1
 

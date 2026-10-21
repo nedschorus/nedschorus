@@ -308,9 +308,9 @@ git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_rerun_then_stop_next_step_lines_common",
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
     REPO_ROOT / "nc-systems" / "general-tools"
-    / "failed-command-rerun-then-stop-next-step-lines-common.py")
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 # The Codex cells' permission profile, as it appears in their sessions.
@@ -386,13 +386,19 @@ STOP_PROCESS_LISTING_FAILURE = None
 COMMIT_NOT_READ = "not-read-git-failed"
 
 
-def git_failure_next_step_lines(rerun: str) -> str:
+# What each of the runner's two git-failure messages prints again when its rerun fails too.
+CELL_GIT_CHECK_FAILED_AGAIN = 'prints "WARNING: the runner could not check" again'
+STOPPED_BEFORE_LAUNCH_AGAIN = 'prints "sanity-check stopped before any agent launched" again'
+
+
+def git_failure_next_step_lines(rerun: str, failure_again: str) -> str:
     """What to do after a git command the runner ran has failed, each line ending its line.
 
     Printed after the line that names the command and quotes git's error.
     """
     program = str(pathlib.Path(__file__).resolve())
-    return next_step_lines.git_failure_next_step_lines(rerun, program) + "\n"
+    return next_step_lines.git_failure_next_step_lines(
+        rerun, program, failure_again=failure_again, takes_a_branch_commit_or_path=True) + "\n"
 
 
 # The line a cell prints when its first launch produced no report and the
@@ -1582,7 +1588,7 @@ def git_check_failed_after_a_cell(cell: str, what: str, failure, rerun: str) -> 
                      f"{failure}. {cell}'s report is saved without that check. Follow the "
                      f"steps below; the rerun command in them runs {cell} alone again, "
                      f"in a new record whose report has the check.\n"
-                     + git_failure_next_step_lines(rerun))
+                     + git_failure_next_step_lines(rerun, CELL_GIT_CHECK_FAILED_AGAIN))
     sys.stdout.flush()
 
 
@@ -1847,7 +1853,7 @@ def main() -> int:
     except git_output.GitCommandFailed as failure:
         rerun = shlex.join([str(pathlib.Path(__file__).resolve()), *sys.argv[1:]])
         sys.stderr.write(f"sanity-check stopped before any agent launched: {failure}.\n"
-                         + git_failure_next_step_lines(rerun))
+                         + git_failure_next_step_lines(rerun, STOPPED_BEFORE_LAUNCH_AGAIN))
         return 2
     except RunStoppedBySignal as stopped:
         stopped_by = stopped.signal_number

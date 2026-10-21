@@ -389,9 +389,9 @@ git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_rerun_then_stop_next_step_lines_common",
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
     Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-    / "failed-command-rerun-then-stop-next-step-lines-common.py")
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
@@ -546,7 +546,9 @@ def run(arguments, timeout=GH_TIMEOUT_SECONDS, cwd=None, check=True):
 
 def git_failure_next_steps(rerun: str, program: str) -> str:
     """What an agent does after a git command this program ran failed."""
-    return next_step_lines.git_failure_next_step_lines(rerun, program)
+    return next_step_lines.git_failure_next_step_lines(
+        rerun, program, failure_again="prints a git command's exit code and error again",
+        takes_a_branch_commit_or_path=True)
 
 
 def git_failure_refusal(arguments, completed, not_done: str) -> Refused:
@@ -611,8 +613,9 @@ def remove_landing_worktree(worktree: Path, worktree_parent: Path,
           "behind.\n"
           f"{outcome}\n"
           f"Run {cleanup} to remove that record.\n"
-          "If that fails, tell the user what it printed. "
-          + next_step_lines.SUBAGENT_TELLS_ITS_DISPATCHER_SENTENCE, file=sys.stderr)
+          "If that cleanup command fails, tell the user, word for word, what the cleanup "
+          "command printed. "
+          + next_step_lines.SUBAGENT_REPORTS_TO_ITS_DISPATCHER_NOT_THE_USER_SENTENCE, file=sys.stderr)
 
 
 def push_time_limit_seconds(environment):

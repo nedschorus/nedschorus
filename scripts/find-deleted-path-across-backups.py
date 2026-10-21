@@ -369,9 +369,9 @@ git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_rerun_then_stop_next_step_lines_common",
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
     Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-    / "failed-command-rerun-then-stop-next-step-lines-common.py")
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
@@ -2293,7 +2293,9 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
 
 def git_failure_next_steps(rerun):
     """The lines that tell an agent what to do after a git failure in a run started as rerun."""
-    return next_step_lines.git_failure_next_step_lines(rerun, PROGRAM_PATH)
+    return next_step_lines.git_failure_next_step_lines(
+        rerun, PROGRAM_PATH, failure_again="prints \"git's failure:\" again",
+        takes_a_branch_commit_or_path=True)
 
 
 def rerun_command(arguments):

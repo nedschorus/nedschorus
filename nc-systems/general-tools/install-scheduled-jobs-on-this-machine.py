@@ -173,8 +173,8 @@ shell_reader = importlib.util.module_from_spec(_shell_reader_spec)
 _shell_reader_spec.loader.exec_module(shell_reader)
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_rerun_then_stop_next_step_lines_common",
-    Path(__file__).resolve().with_name("failed-command-rerun-then-stop-next-step-lines-common.py"))
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().with_name("failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py"))
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
@@ -477,17 +477,22 @@ class LaunchctlPrintFailed(Exception):
         self.error_text = error_text
         super().__init__(self.cause)
 
-    def next_steps(self, rerun: str, failure_again: str = "fails the same way") -> str:
+    def next_steps(self, rerun: str, failure_line: str, drift_line: str = None) -> str:
         """Return the lines that tell the reader what to do.
 
         With launchctl's error, they end in rerun; without it, in when to stop and
-        tell the user. failure_again says what counts as rerun failing again.
+        tell the user. failure_line is the start of the line this failure printed,
+        which the rerun prints again if it fails the same way; drift_line, when
+        given, names an output line that is not this failure.
         """
         if self.error_text:
             return f"Fix what launchctl's error names.\nThen run `{rerun}` on this machine."
-        return (f"Run `{rerun}` on this machine; it tries this job alone.\n"
-                + next_step_lines.rerun_then_stop_line(
-                    f"`{rerun}`", PROGRAM, failure=failure_again, error_included=None))
+        return "\n".join(
+            [f"Run `{rerun}` once more, on this machine; it tries this job alone."]
+            + ([f"A {drift_line} line is drift the check found, not this failure, and is no "
+                f"reason to stop."] if drift_line else [])
+            + [next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                f'prints "{failure_line}" again', PROGRAM)])
 
 
 def rerun_command(mode: str, job_name: str, start_once: bool = False) -> str:
@@ -558,7 +563,8 @@ def install_launchd_job(machine, job, placement, launch_agents_directory: Path, 
     except LaunchctlPrintFailed as failure:
         print(f"FAILED: {name} — {failure.cause}; so whether {label} is loaded is unknown, "
               f"and the job was not installed.", file=sys.stderr)
-        print(failure.next_steps(rerun_command('--install', name, start_once)), file=sys.stderr)
+        print(failure.next_steps(rerun_command('--install', name, start_once), f"FAILED: {name}"),
+              file=sys.stderr)
         return False
     if already_installed:
         print(f"unchanged: {name} — {plist_path} says what the table says, and launchd has "
@@ -591,7 +597,8 @@ def install_launchd_job(machine, job, placement, launch_agents_directory: Path, 
     except LaunchctlPrintFailed as failure:
         print(f"FAILED: {name} — bootstrap exited 0, and then {failure.cause}; so whether "
               f"{label} is loaded is unknown.", file=sys.stderr)
-        print(failure.next_steps(rerun_command('--install', name, start_once)), file=sys.stderr)
+        print(failure.next_steps(rerun_command('--install', name, start_once), f"FAILED: {name}"),
+              file=sys.stderr)
         return False
     if not loaded:
         print(f"FAILED: {name} — bootstrap exited 0, and `launchctl print "
@@ -1001,11 +1008,8 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
     for name, placement, failure in not_checked:
         print(f"NOT CHECKED: {name} — {failure.cause}; so whether launchd has "
               f"{placement['label']} loaded is unknown.", file=sys.stderr)
-        print(failure.next_steps(
-            rerun_command('--check', name),
-            failure_again=f"prints NOT CHECKED for {name} again (a DIFFERS line is not this "
-                          f"failure: it means the check ran and found the job out of date)"),
-            file=sys.stderr)
+        print(failure.next_steps(rerun_command('--check', name), f"NOT CHECKED: {name}",
+                                 drift_line="DIFFERS"), file=sys.stderr)
     if not_checked:
         return 2
     return 1 if differences or not_in_table else 0

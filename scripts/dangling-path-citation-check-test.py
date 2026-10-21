@@ -39,7 +39,7 @@ LINT_OVERVIEW_PATH_MODULE = Path(__file__).with_name(
 GIT_OUTPUT_MODULE = (Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
                      / "git-machine-readable-output-runner-and-parser-common.py")
 NEXT_STEP_LINES_MODULE = GIT_OUTPUT_MODULE.with_name(
-    "failed-command-rerun-then-stop-next-step-lines-common.py")
+    "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
 
 failures = []
 
@@ -1084,9 +1084,10 @@ with tempfile.TemporaryDirectory() as workspace:
         return (code == 2 and INJECTED_GIT_ERROR in err and "a git command failed" in err
                 and "finding(s)" not in err
                 and "and you gave that name to dangling-path-citation-check, correct it in your command" in err
-                and f"In any other case, run {rerun} once more." in err
-                and f"If {rerun} fails again, stop, and tell the user what "
-                    f"dangling-path-citation-check printed and what the rerun printed" in err)
+                and f"If none of the cases above applies, run {rerun} once more, unchanged." in err
+                and ('If the run you made by following a line above prints "could not check, because a git command failed" again, '
+                     'stop, and tell the user, word for word, the lines dangling-path-citation-check printed the first '
+                     'time and the lines that second run printed.') in err)
 
     for failing_arguments, what in (
             ("ls-tree -z HEAD --name-only -d", "listing the root directories"),

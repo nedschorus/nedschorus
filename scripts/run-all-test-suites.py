@@ -591,9 +591,9 @@ _git_redirecting_removal_spec.loader.exec_module(git_redirecting_removal)
 GIT_REDIRECTING_ENVIRONMENT_VARIABLES = git_redirecting_removal.GIT_REDIRECTING_ENVIRONMENT_VARIABLES
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_rerun_then_stop_next_step_lines_common",
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
     Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-    / "failed-command-rerun-then-stop-next-step-lines-common.py")
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
@@ -1188,7 +1188,8 @@ def interpreter_and_version(given):
 def git_failure_next_step_lines(program_file):
     """The lines that end a refusal after a git failure, for a run of program_file."""
     return next_step_lines.git_failure_next_step_lines(
-        f"the same {program_file} command", program_file)
+        f"the same {program_file} command", program_file,
+        failure_again='prints "not run — git" again', takes_a_branch_commit_or_path=True)
 
 
 def first_line_of_error(completed):

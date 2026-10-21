@@ -60,9 +60,9 @@ import sys
 from pathlib import Path
 
 _next_step_lines_spec = importlib.util.spec_from_file_location(
-    "failed_command_rerun_then_stop_next_step_lines_common",
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
     Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-    / "failed-command-rerun-then-stop-next-step-lines-common.py")
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
 next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
 _next_step_lines_spec.loader.exec_module(next_step_lines)
 
@@ -170,11 +170,11 @@ def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: P
             print(f"Otherwise fix what systemctl's error names, then run `{rerun}`.",
                   file=sys.stderr)
         else:
-            print(f"Run `{rerun}` on ned-box, the machine whose user manager runs the unit.",
-                  file=sys.stderr)
-            print(next_step_lines.rerun_then_stop_line(
-                f"`{rerun}`", "install-restart-live-seats-at-login-systemd-unit",
-                failure="fails the same way", error_included=None), file=sys.stderr)
+            print(f"Run `{rerun}` once more, on ned-box, the machine whose user manager runs "
+                  f"the unit.", file=sys.stderr)
+            print(next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                f'prints "so whether {unit_name} is enabled is unknown" again',
+                "install-restart-live-seats-at-login-systemd-unit"), file=sys.stderr)
         return 1
     if enabled:
         # Starting preserves enable symlinks; rewriting an enabled unit would alter future boots.

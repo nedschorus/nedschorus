@@ -251,10 +251,12 @@ with tempfile.TemporaryDirectory() as temporary:
           "and then tell the user, not to fix an error that was never printed",
           exit_code == 1 and "printing nothing on stderr" in errors
           and errors.splitlines()[-2:] == [
-              f"Run `{rerun}` on ned-box, the machine whose user manager runs the unit.",
-              f"If `{rerun}` fails the same way, stop, and tell the user what "
-              "install-restart-live-seats-at-login-systemd-unit printed and what the rerun "
-              "printed. A subagent tells the agent that dispatched it, not the user."], (exit_code, errors))
+              f"Run `{rerun}` once more, on ned-box, the machine whose user manager runs the unit.",
+              'If the run you made by following a line above prints "so whether t is enabled is unknown" again, stop, and '
+              "tell the user, word for word, the lines "
+              "install-restart-live-seats-at-login-systemd-unit printed the first time and the "
+              "lines that second run printed. A subagent reports to the agent that dispatched "
+              "it, not to the user."], (exit_code, errors))
     for state, code in (("not-found", 4), ("masked", 1)):
         answered = installer.unit_is_enabled(
             "t", run=lambda command, **_: subprocess.CompletedProcess(
