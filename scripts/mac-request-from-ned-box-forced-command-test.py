@@ -14,6 +14,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -605,6 +606,12 @@ check("task lists: a tar failure is logged", "tar-failed-2" in log, log)
 result, log, archive = run_task_lists_read("read-agent-seat-task-lists", log_is_a_directory=True)
 check("task lists: a read that cannot be logged sends nothing and exits 3",
       result.returncode == forced_command.EXIT_LOG_UNWRITABLE and archive == b"", (result.returncode, result.stderr))
+
+REPOSITORY_ROOT = PROGRAM_PATH.resolve().parent.parent
+named_script_paths = sorted(set(re.findall(r"scripts/[A-Za-z0-9._-]*[A-Za-z0-9]", PROGRAM_PATH.read_text())))
+missing_script_paths = [path for path in named_script_paths if not (REPOSITORY_ROOT / path).exists()]
+check("every scripts/ path the forced command names, in a hint or elsewhere, exists in the repository",
+      named_script_paths and not missing_script_paths, missing_script_paths or "no scripts/ path found")
 
 print()
 if failures:
