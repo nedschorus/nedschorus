@@ -1365,8 +1365,12 @@ def _source_with_case_terminators_repaired(text, text_node_types, keep_first=Fal
                    + [(after_this_round(start), text[start:start + length])
                       for start, length in starts])
         # Only the terminator is replaced: what follows it in source may lie elsewhere in text.
-        for start, length in sorted(starts, reverse=True):
-            text = text[:start] + b";;" + text[start + length:]
+        # The text is joined once, since copying it once per terminator takes quadratic time.
+        pieces, previous = [], 0
+        for start, length in starts:
+            pieces += [text[previous:start], b";;"]
+            previous = start + length
+        text = b"".join(pieces + [text[previous:]])
         edits = []
         source, tree, taken = _source_with_heredoc_bodies_taken_out(text, keep_first, edits)
     restored = {}
