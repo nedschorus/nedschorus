@@ -8,7 +8,7 @@ The goal is good enough, not perfect: efficient, reasonably safe, and reasonably
 
 ## Choosing a technique
 
-Ask these questions in order, and use each technique that fits: they work together, so a program may also carry a block, a check after the act and a reminder.
+Ask these questions in order, and use each technique that fits: they work together.
 
 1. **Can a program do the work?** Then a program does it, handing only the judgment to a prompt: code-prompt-code. A rare step that one sentence states needs no program.
 2. **Can a check before the act tell that the act is wrong?** Then refuse the act, and say in the refusal what to do instead: block-and-inform. When the check will often refuse a correct act, make the refusal a soft-block. For the wrong acts the check misses, go on to question 3.
@@ -118,7 +118,7 @@ Whatever the technique, tell the agent whether its step worked, and if not, why 
 
 - **Corrected: a soft-block on listed words and phrases.** It scared agents away from the tool it guarded; a note added to their context replaced it.
 - **Corrected: hard-blocks in place of soft-blocks everywhere.** It cost days of work and millions of tokens.
-- **Corrected: parsing shell commands as a complete guard.** A shell has too many routes to a file; detect-inform-correct catches what the parse misses.
+- **Corrected: parsing shell commands as a complete guard.** A shell has too many routes to a file; detect-inform-correct catches the rest.
 - **Dropped: a watcher that read agents' transcripts and sent alerts.** The alerts were not useful.
 - **Replaced by this page: a ladder of techniques, and a table of hook events by moment.** Both sorted mechanisms by when they act; this page sorts them by their job.
 
