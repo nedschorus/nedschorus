@@ -88,18 +88,21 @@ HEAD or no origin/main, a file outside the checkout.
 A GIT STEP THAT FAILS after the file is known to be obsolete, such as the
 commit count or the overlap check, is said in the warning itself, and that
 warning is never held back as a repeat. Any other git failure, git missing or a
-git call timing out included, is the hook failing.
+git call timing out included, means the file was not checked: exit 0, with
+`additionalContext` naming the git command and its error, then the command that
+checks the file now. Not exit 1: Claude Code records the stderr of a
+PostToolUse exit 1 in the transcript but never passes it to the model, so the
+agent would never learn the file went unchecked.
 
 A FAULT OF THE HOOK ITSELF, such as stdin that is not a JSON object,
-checkout-freshness-catch-up.py failing to load, a git failure or any exception:
-nothing on stdout, exit 1, and on stderr a first line naming the hook and the
-fault, followed for a git failure by what to do next. Claude Code records a
-PostToolUse exit 1 as a non-blocking error, shows its first stderr line and
-keeps the edit; exit 0 would read as "this file is not obsolete".
+checkout-freshness-catch-up.py failing to load, or any exception: nothing on
+stdout, exit 1, and on stderr one line naming the hook and the fault. Claude
+Code records a PostToolUse exit 1 as a non-blocking error and keeps the edit.
 """
 
 import importlib.util
 import json
+import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -187,8 +190,15 @@ GIT_FAILURE_CAUSE_LINE = (
     "obsolete-file-edit-warning-hook: {failure}, so the edited file was not checked "
     "against origin/main; the edit itself succeeded."
 )
-GIT_FAILURE_NOTHING_TO_RERUN_LINE = (
-    "Nothing needs rerunning: this check runs again at your next Edit or Write.")
+GIT_FAILURE_AGENT_FACING_MESSAGE_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW = (
+    "A later run of this hook checks only the file that run's Edit or Write touched, so check "
+    "{path} by running the next line's command: if git's error above names a lock file, first wait "
+    "one minute, and do not delete the lock file; otherwise run the command now. The command "
+    "prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
+    "whose hookSpecificOutput.additionalContext field holds one of two texts: this hook's warning, "
+    "whose instructions you follow; or, when git fails again, a git-failure message like this one, "
+    "and the line here that begins \"If a line starting\" says what to do then.\n"
+    "{rerun}")
 RECORD_WRITE_FAILED_LINE = (
     "obsolete-file-edit-warning could not record that it gave this warning, so it "
     "will give it again at your next edit of this file ({record}: {reason}). Nothing "
@@ -500,6 +510,13 @@ def obsolete_file_warning_line(repository_path: str, commit_count, advice: str,
     return f"{line}\n{advice}" if advice_on_own_lines else f"{line} {advice}"
 
 
+def shell_command_that_runs_this_hook_on_one_file_as_claude_code_would(working_directory: Path,
+                                                                         file_path: str) -> str:
+    """A shell command that runs this hook on file_path as Claude Code would."""
+    payload = json.dumps({"cwd": str(working_directory), "tool_input": {"file_path": file_path}})
+    return f"printf '%s\\n' {shlex.quote(payload)} | python3 {shlex.quote(str(Path(__file__).resolve()))}"
+
+
 def main() -> int:
     payload = json.loads(sys.stdin.read())
     if not isinstance(payload, dict):
@@ -525,13 +542,25 @@ def main() -> int:
     try:
         return warn_about_edited_file(freshness, working_directory, file_path)
     except freshness.git_output.GitCommandFailed as failure:
-        print(GIT_FAILURE_CAUSE_LINE.format(failure=failure), file=sys.stderr)
+        rerun = shell_command_that_runs_this_hook_on_one_file_as_claude_code_would(
+            working_directory, file_path)
         # The shared wording comes through checkout-freshness-catch-up's copy, so a
         # hook copied away from it fails in the one load the top-level handler reports.
-        print(GIT_FAILURE_NOTHING_TO_RERUN_LINE, file=sys.stderr)
-        print(freshness.next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
-            "at your next Edit or Write", "obsolete-file-edit-warning-hook:"), file=sys.stderr)
-        return 1
+        print_for_agent("\n".join((
+            GIT_FAILURE_CAUSE_LINE.format(failure=failure),
+            GIT_FAILURE_AGENT_FACING_MESSAGE_LINES_NAMING_UNCHECKED_FILE_AND_COMMAND_THAT_CHECKS_IT_NOW.format(
+                path=file_path, rerun=rerun),
+            freshness.next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
+                "when you run that command", "obsolete-file-edit-warning-hook:"))))
+        return 0
+
+
+def print_for_agent(text) -> None:
+    """Print text as additionalContext, which the agent reads next when the hook exits 0 (see THE CHANNEL)."""
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PostToolUse",
+        "additionalContext": text,
+    }}, ensure_ascii=False))
 
 
 def warn_about_edited_file(freshness, working_directory: Path, file_path: str) -> int:
@@ -567,10 +596,7 @@ def warn_about_edited_file(freshness, working_directory: Path, file_path: str) -
     if write_failure is not None:
         line += "\n" + RECORD_WRITE_FAILED_LINE.format(
             record=git_directory / PATH_SET_CACHE_FILE_NAME, reason=write_failure)
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PostToolUse",
-        "additionalContext": line,
-    }}, ensure_ascii=False))
+    print_for_agent(line)
     return 0
 
 
