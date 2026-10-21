@@ -7,7 +7,6 @@ module, for the python3 the hooks run, and raises MarkdownParserMissing when tha
 
 import functools
 import importlib.util
-import subprocess
 import time
 from pathlib import Path
 
@@ -42,16 +41,14 @@ def import_markdown_it():
     return MarkdownIt
 
 
-def install_pinned_python_libraries(runner=subprocess.run):
-    return python_libraries_pinned_requirements_install_if_missing_then_import_common().pinned_requirements_pip_install(
-        INSTALL_TIMEOUT_SECONDS, runner)
-
-
-def markdown_parser(importer=import_markdown_it, installer=install_pinned_python_libraries, clock=time.time):
+def markdown_parser(importer=import_markdown_it, installer=None, clock=time.time):
     """Return a CommonMark parser with tables, installing markdown-it-py when it is missing.
 
     markdown-it-py and mdurl are written only in Python, so once their half-imported modules
     are dropped, this process imports the installed copy and never needs a new process.
+
+    installer defaults to the shared module's pip install of the pinned file, with this
+    module's install timeout.
 
     Raises MarkdownParserMissing when markdown-it-py is missing and installing it failed.
     """
@@ -59,6 +56,8 @@ def markdown_parser(importer=import_markdown_it, installer=install_pinned_python
         markdown_it_class = importer()
     except ImportError:
         install = python_libraries_pinned_requirements_install_if_missing_then_import_common()
+        if installer is None:
+            installer = functools.partial(install.pinned_requirements_pip_install, INSTALL_TIMEOUT_SECONDS)
         try:
             markdown_it_class = install.python_libraries_pinned_requirements_install_if_missing_then_import(
                 importer, installer, clock, lambda: False, INSTALL_STATE_DIRECTORY, ("markdown_it", "mdurl"))

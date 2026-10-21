@@ -94,12 +94,12 @@ PARSER_MISSING_BELOW_MINIMUM_PYTHON_MESSAGE = (
 
 
 @functools.cache
-def markdown_commonmark_parser_install_if_missing_common():
+def markdown_commonmark_parser_with_tables_common():
     """Return the shared Markdown parser module, loaded by path when first needed."""
     specification = importlib.util.spec_from_file_location(
-        "markdown_commonmark_parser_install_if_missing_common",
+        "markdown_commonmark_parser_with_tables_common",
         Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
-        / "markdown-commonmark-parser-install-if-missing-common.py")
+        / "markdown-commonmark-parser-with-tables-common.py")
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -108,7 +108,7 @@ def markdown_commonmark_parser_install_if_missing_common():
 def parser_missing_message(error, host=None, python_version=None):
     """Return the stderr text for markdown-it-py missing on this machine and its install failed."""
     host = host or socket.gethostname().split(".")[0]
-    install = markdown_commonmark_parser_install_if_missing_common().python_libraries_pinned_requirements_install_if_missing_then_import_common()
+    install = markdown_commonmark_parser_with_tables_common().python_libraries_pinned_requirements_install_if_missing_then_import_common()
     where, command = install.pinned_requirements_by_hand_install_command(
         host, python_version=python_version)
     if command is None:
@@ -174,7 +174,7 @@ def markdown_broken_paragraph_line_ranges(text: str) -> list:
     trailing backslash or a trailing <br>, are breaks the author chose. A file
     holding display math or a footnote definition is never reported.
     Raises MarkdownParserMissing when markdown-it-py is missing and installing it failed."""
-    parser = markdown_commonmark_parser_install_if_missing_common().markdown_parser()
+    parser = markdown_commonmark_parser_with_tables_common().markdown_parser()
     if holds_math_or_footnote_definition(text):
         return []
     tokens = parser.parse(front_matter_blanked(text))
@@ -321,7 +321,7 @@ def main() -> int:
         return 0
     try:
         broken_ranges = markdown_broken_paragraph_line_ranges(text)
-    except markdown_commonmark_parser_install_if_missing_common().MarkdownParserMissing as error:
+    except markdown_commonmark_parser_with_tables_common().MarkdownParserMissing as error:
         print(parser_missing_message(error), file=sys.stderr)
         return 1
     if tool_name == "Edit" and broken_ranges:

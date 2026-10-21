@@ -359,7 +359,7 @@ settings = json.loads((REPOSITORY_ROOT / ".claude" / "settings.json").read_text(
 reader_source = (REPOSITORY_ROOT / "nc-systems" / "general-tools"
                  / "shell-command-tree-sitter-bash-reader-common.py").read_text(encoding="utf-8")
 markdown_parser_source = (REPOSITORY_ROOT / "nc-systems" / "general-tools"
-                          / "markdown-commonmark-parser-install-if-missing-common.py").read_text(encoding="utf-8")
+                          / "markdown-commonmark-parser-with-tables-common.py").read_text(encoding="utf-8")
 timeout_pattern = re.compile(r"^INSTALL_TIMEOUT_SECONDS = (\d+)$", re.MULTILINE)
 installing_hooks = []
 for groups in settings["hooks"].values():
@@ -373,7 +373,7 @@ for groups in settings["hooks"].values():
                 timeout_source, loads = script_source, "the shared module"
             elif "shell-command-tree-sitter-bash-reader-common.py" in script_source:
                 timeout_source, loads = reader_source, "the shell reader"
-            elif "markdown-commonmark-parser-install-if-missing-common.py" in script_source:
+            elif "markdown-commonmark-parser-with-tables-common.py" in script_source:
                 timeout_source, loads = markdown_parser_source, "the Markdown parser"
             else:
                 continue

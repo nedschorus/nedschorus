@@ -111,7 +111,7 @@ STOP_HOOKS_STAY_SILENT_RULE_FILE = (
     REPOSITORY_TOP / "nc-systems" / "general-tools"
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
 MARKDOWN_PARSER_MODULE_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
-                               / "markdown-commonmark-parser-install-if-missing-common.py")
+                               / "markdown-commonmark-parser-with-tables-common.py")
 CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 WALK_DIRECTORY = Path("docs") / "walk"
 MINUTES_SUFFIX = "-minutes.md"
@@ -285,7 +285,7 @@ def checkout_top(directory):
 
 
 def markdown_parser():
-    return load_module("markdown_commonmark_parser_install_if_missing_common",
+    return load_module("markdown_commonmark_parser_with_tables_common",
                        MARKDOWN_PARSER_MODULE_FILE).markdown_parser()
 
 
