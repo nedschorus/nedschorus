@@ -121,9 +121,10 @@ def silent(result) -> bool:
 
 GIT_FAILURE_NEXT_STEP_LINES = [
     "Nothing needs rerunning: this check runs again at your next Edit or Write.",
-    "Keep this message: if obsolete-file-edit-warning-hook reports a git failure again at "
-    "your next Edit or Write, whether this error or another, tell the user both messages, "
-    "word for word. A subagent reports to the agent that dispatched it, not to the user.",
+    'If a line starting "obsolete-file-edit-warning-hook:" reports a git failure again at your next Edit or Write, whether this error '
+    "or another, tell the user, or, if you are a subagent, the agent that dispatched you, "
+    "word for word, every line of this message and of the new one, before you go on. If "
+    "the check finds no git failure then, this failure needs no report.",
 ]
 
 

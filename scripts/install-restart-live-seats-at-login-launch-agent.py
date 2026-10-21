@@ -148,8 +148,7 @@ def remove(label: str, launch_agents_directory: Path, run=subprocess.run) -> int
         else:
             print(f"Run `{rerun}` once more, on this Mac.", file=sys.stderr)
             print(next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
-                f'prints "so {label} may still be loaded" again',
-                "install-restart-live-seats-at-login-launch-agent"), file=sys.stderr)
+                f"so {label} may still be loaded"), file=sys.stderr)
         return 1
     if plist_path.is_file():
         plist_path.unlink()

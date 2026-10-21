@@ -33,7 +33,7 @@ GIT_FAILURE_TEMPLATE = (
     "for a name another tracked file has.\n"
     "Nothing needs rerunning: this check runs again at your next Write or Edit.\n"
     + next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
-        "at your next Write or Edit", "file-name-collision-warning-hook.py")
+        "at your next Write or Edit", "file-name-collision-warning:")
 )
 
 

@@ -530,7 +530,7 @@ def main() -> int:
         # hook copied away from it fails in the one load the top-level handler reports.
         print(GIT_FAILURE_NOTHING_TO_RERUN_LINE, file=sys.stderr)
         print(freshness.next_step_lines.hook_agent_instruction_if_git_failure_recurs_tell_user_both_outputs_line(
-            "at your next Edit or Write", "obsolete-file-edit-warning-hook"), file=sys.stderr)
+            "at your next Edit or Write", "obsolete-file-edit-warning-hook:"), file=sys.stderr)
         return 1
 
 

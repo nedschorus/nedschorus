@@ -273,23 +273,27 @@ WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 
 BRANCH_SYNC_PROGRAM_NAME = "the handoff-supervisor's branch sync"
 # The prompt goes on to the next step; a stop must hold that back too.
-BRANCH_SYNC_STOP_HOLDS_BACK = "take the next step this prompt gives"
+BRANCH_SYNC_STOP_HOLDS_BACK = "act on the rest of this prompt"
+BRANCH_SYNC_RERUN_FAILS_WHEN = "prints an error again"
+BRANCH_SYNC_LINES_TO_REPORT = "the branch sync line in this prompt and the error the rerun printed"
 
 
 def branch_sync_git_failure_next_steps(error) -> str:
     """The next-step lines for a GitCommandFailed the branch sync reports."""
     rerun = f"`{shlex.join(['git', '-C', str(error.directory), *error.arguments])}`"
     return next_step_lines.git_failure_next_step_lines(
-        rerun, BRANCH_SYNC_PROGRAM_NAME, failure_again="prints an error again",
-        takes_a_branch_commit_or_path=False, read_by_a_subagent=False,
-        also_not=BRANCH_SYNC_STOP_HOLDS_BACK)
+        rerun, BRANCH_SYNC_PROGRAM_NAME, include_the_misspelt_branch_commit_or_path_line=False,
+        rerun_fails_when=BRANCH_SYNC_RERUN_FAILS_WHEN, lines_to_report=BRANCH_SYNC_LINES_TO_REPORT,
+        read_by_a_subagent=False,
+        next_step_to_skip_when_the_rerun_fails_too=BRANCH_SYNC_STOP_HOLDS_BACK)
 
 
 def branch_state_instruction_after(branch_sync_report: str) -> str:
     """The branch-state instruction, left out after a git failure, whose next steps may end in stopping."""
     stop_line = next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
-        "prints an error again", BRANCH_SYNC_PROGRAM_NAME, read_by_a_subagent=False,
-        also_not=BRANCH_SYNC_STOP_HOLDS_BACK)
+        rerun_fails_when=BRANCH_SYNC_RERUN_FAILS_WHEN, lines_to_report=BRANCH_SYNC_LINES_TO_REPORT,
+        read_by_a_subagent=False,
+        next_step_to_skip_when_the_rerun_fails_too=BRANCH_SYNC_STOP_HOLDS_BACK)
     return "" if branch_sync_report.endswith(stop_line) else BRANCH_STATE_INSTRUCTION
 
 

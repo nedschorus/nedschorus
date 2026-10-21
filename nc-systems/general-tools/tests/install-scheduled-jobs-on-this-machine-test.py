@@ -1037,10 +1037,9 @@ with tempfile.TemporaryDirectory() as temporary:
           silent_failure.cause.endswith("and printed no error")
           and silent_failure.next_steps("the-rerun", "FAILED: j").splitlines() == [
               "Run `the-rerun` once more, on this machine; it tries this job alone.",
-              'If the run you made by following a line above prints "FAILED: j" again, stop, and tell the user, word for '
-              "word, the lines install-scheduled-jobs-on-this-machine printed the first time and "
-              "the lines that second run printed. A subagent reports to the agent that "
-              "dispatched it, not to the user."],
+              'If the rerun prints a line containing "FAILED: j" again, stop, and tell '
+              "the user, or, if you are a subagent, the agent that dispatched you, word for word, the line containing "
+              '"FAILED: j" from each run.'],
           (silent_failure.cause, silent_failure.next_steps("the-rerun", "FAILED: j")))
     stub.print_error_text = b""
     exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
@@ -1049,23 +1048,20 @@ with tempfile.TemporaryDirectory() as temporary:
           "when to stop, which is NOT CHECKED again, not a DIFFERS line, and exits 2",
           exit_code == 2 and errors.splitlines()[-3:] == [
               f"Run `{check_rerun}` once more, on this machine; it tries this job alone.",
-              "A DIFFERS line is drift the check found, not this failure, and is no reason "
-              "to stop.",
-              'If the run you made by following a line above prints "NOT CHECKED: daily-full-test-run-of-main" again, '
-              "stop, and tell the user, word for word, the lines "
-              "install-scheduled-jobs-on-this-machine printed the first time and the lines that "
-              "second run printed. A subagent reports to the agent that dispatched it, not to "
-              "the user."], (exit_code, errors))
+              "A DIFFERS line is not this failure: it is drift the check found, and does not "
+              "count as the rerun failing.",
+              'If the rerun prints a line containing "NOT CHECKED: daily-full-test-run-of-main" '
+              "again, stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line "
+              'containing "NOT CHECKED: daily-full-test-run-of-main" from each run.'], (exit_code, errors))
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
     install_rerun = f"{SCRIPT_PATH.resolve()} --install --job daily-full-test-run-of-main"
     check("--install whose launchctl print fails printing no error ends with the rerun and "
           "with when to stop, and exits 1",
           exit_code == 1 and errors.splitlines()[-2:] == [
               f"Run `{install_rerun}` once more, on this machine; it tries this job alone.",
-              'If the run you made by following a line above prints "FAILED: daily-full-test-run-of-main" again, stop, '
-              "and tell the user, word for word, the lines install-scheduled-jobs-on-this-machine "
-              "printed the first time and the lines that second run printed. A subagent reports "
-              "to the agent that dispatched it, not to the user."], (exit_code, errors))
+              'If the rerun prints a line containing "FAILED: daily-full-test-run-of-main" again, '
+              "stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line "
+              'containing "FAILED: daily-full-test-run-of-main" from each run.'], (exit_code, errors))
     stub.print_error_text = b"Could not print: injected launchctl failure\n"
     before = len(stub.commands)
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)

@@ -973,12 +973,11 @@ with tempfile.TemporaryDirectory() as scratch:
               "shared next steps, naming the command that was run",
               stderr_lines[1:] == [
                   f"If git's error names a lock file, such as .git/index.lock, wait one minute, "
-                  f"then run {rerun}; do not delete the lock file yourself.",
-                  f"If none of the cases above applies, run {rerun} once more, unchanged.",
-                  'If the run you made by following a line above prints a line starting "clean-worktrees: stopped, because" '
-                  "again, stop, and tell the user, word for word, the lines "
-                  "scripts/clean-worktrees.py printed the first time and the lines that second run "
-                  "printed. A subagent reports to the agent that dispatched it, not to the user."],
+                  f"then run exactly {rerun}; do not delete the lock file yourself.",
+                  f"If git's error names no lock file, run exactly {rerun} once more.",
+                  'If the rerun prints a line containing "clean-worktrees: stopped, because" again, '
+                  "stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line "
+                  'containing "clean-worktrees: stopped, because" from each run.'],
               failed_listing.stderr)
 
     module = load_clean_worktrees_module()

@@ -547,8 +547,9 @@ def run(arguments, timeout=GH_TIMEOUT_SECONDS, cwd=None, check=True):
 def git_failure_next_steps(rerun: str, program: str) -> str:
     """What an agent does after a git command this program ran failed."""
     return next_step_lines.git_failure_next_step_lines(
-        rerun, program, failure_again="prints a git command's exit code and error again",
-        takes_a_branch_commit_or_path=True)
+        rerun, program, include_the_misspelt_branch_commit_or_path_line=True,
+        rerun_fails_when="stops again on a line naming a git command and its exit code",
+        lines_to_report='that line and the "So" line after it, from each run')
 
 
 def git_failure_refusal(arguments, completed, not_done: str) -> Refused:
@@ -589,16 +590,32 @@ def remove_landing_worktree(worktree: Path, worktree_parent: Path,
     raising would replace the landing's own error, and after a landing that
     succeeded the issue and its pull request are already made.
     `pull_request_opened` says which of the two the message reports."""
-    arguments = ["git", "worktree", "remove", "--force", str(worktree)]
+    # Forced twice, because a single --force refuses a locked worktree.
+    arguments = ["git", "worktree", "remove", "-f", "-f", str(worktree)]
     removed = runner(arguments, cwd=str(repository_root), check=False)
     shutil.rmtree(worktree_parent, ignore_errors=True)
     if removed.returncode == 0:
         return
-    # Forced twice, because `prune` and a single --force both leave a
-    # locked worktree's record in place; this clears it whether or not the
-    # directory is still there.
-    cleanup = shlex.join(["git", "-C", str(repository_root), "worktree",
-                          "remove", "-f", "-f", str(worktree)])
+    listed = shlex.join(["git", "-C", str(repository_root), "worktree", "list"])
+    if worktree.exists():
+        cleanup = (
+            f"This run could not delete {worktree} either, so no command it "
+            f"knows clears the record; tell "
+            f"{next_step_lines.THE_USER_OR_A_SUBAGENTS_DISPATCHER} word for "
+            "word, the lines this run printed from the one that says the "
+            "removal exited.")
+    else:
+        # The removal that failed is not repeated: prune is a different
+        # command, and drops the record of a worktree whose directory is gone.
+        prune = shlex.join(["git", "-C", str(repository_root), "worktree",
+                            "prune"])
+        cleanup = (
+            f"This run deleted the worktree's directory, so run `{prune}`, "
+            "which drops the record of a worktree whose directory is gone.\n"
+            f"If `{listed}` still shows {worktree} after that, tell "
+            f"{next_step_lines.THE_USER_OR_A_SUBAGENTS_DISPATCHER} word for "
+            "word, the lines this run printed from the one that says the "
+            "removal exited, and what the prune printed.")
     said = (removed.stderr or removed.stdout or "").strip() or "no detail"
     outcome = (
         "This run had already pushed its branch and opened its pull "
@@ -609,13 +626,9 @@ def remove_landing_worktree(worktree: Path, worktree_parent: Path,
         "that error's message says.")
     print(f"{shlex.join(arguments)} exited {removed.returncode}: {said}\n"
           f"So git's record of the temporary worktree {worktree}, which "
-          f"`git -C {repository_root} worktree list` still shows, was left "
-          "behind.\n"
+          f"`{listed}` still shows, was left behind.\n"
           f"{outcome}\n"
-          f"Run {cleanup} to remove that record.\n"
-          "If that cleanup command fails, tell the user, word for word, what the cleanup "
-          "command printed. "
-          + next_step_lines.SUBAGENT_REPORTS_TO_ITS_DISPATCHER_NOT_THE_USER_SENTENCE, file=sys.stderr)
+          f"{cleanup}", file=sys.stderr)
 
 
 def push_time_limit_seconds(environment):
