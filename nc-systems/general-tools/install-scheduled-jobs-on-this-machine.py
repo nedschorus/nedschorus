@@ -464,8 +464,14 @@ class LaunchctlPrintFailed(Exception):
     """`launchctl print` exited with neither 0 nor service-not-found, so whether the job is loaded is unknown."""
 
     def __init__(self, target: str, exit_code: int, error_text: str):
-        self.cause = (f"`launchctl print {target}` exited {exit_code}"
-                      + (f": {error_text}" if error_text else ", printing nothing on stderr"))
+        self.cause = (f"`launchctl print {target}` exited {exit_code}, which is neither 0 "
+                      f"(loaded) nor {LAUNCHCTL_PRINT_SERVICE_NOT_FOUND} (no such job loaded)"
+                      + (f", with the error: {error_text}" if error_text
+                         else ", and printed no error"))
+        self.next_steps = (
+            f"Fix what launchctl's error names. When it names nothing, run `launchctl print "
+            f"{target}` by hand to see launchd's whole answer, because this run kept only "
+            f"launchctl's error and discarded the rest.")
         super().__init__(self.cause)
 
 
@@ -530,8 +536,9 @@ def install_launchd_job(machine, job, placement, launch_agents_directory: Path, 
     except LaunchctlPrintFailed as failure:
         print(f"FAILED: {name} — {failure.cause}; so whether {label} is loaded is unknown, "
               f"and the job was not installed.", file=sys.stderr)
-        print(f"Run `launchctl print {launchd_target(placement)}`, read what it prints, and run "
-              f"this again after that cause is removed.", file=sys.stderr)
+        print(failure.next_steps, file=sys.stderr)
+        print(f"Then run `{Path(__file__).resolve()} --install` again on this machine.",
+              file=sys.stderr)
         return False
     if already_installed:
         print(f"unchanged: {name} — {plist_path} says what the table says, and launchd has "
@@ -564,8 +571,9 @@ def install_launchd_job(machine, job, placement, launch_agents_directory: Path, 
     except LaunchctlPrintFailed as failure:
         print(f"FAILED: {name} — bootstrap exited 0, and then {failure.cause}; so whether "
               f"{label} is loaded is unknown.", file=sys.stderr)
-        print(f"Run `launchctl print {launchd_target(placement)}`, read what it prints, and "
-              f"run this again after that cause is removed.", file=sys.stderr)
+        print(failure.next_steps, file=sys.stderr)
+        print(f"Then run `{Path(__file__).resolve()} --install` again on this machine.",
+              file=sys.stderr)
         return False
     if not loaded:
         print(f"FAILED: {name} — bootstrap exited 0, and `launchctl print "
@@ -891,6 +899,7 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
     for job, placement in placed:
         name, differs = job["name"], []
         marker_differences_of_this_job = 0
+        loaded_state_unknown = False
         if not Path(program_path_of(machine, job)).is_file():
             differs.append(f"its program {program_path_of(machine, job)} is not a file on "
                            f"this machine")
@@ -924,13 +933,14 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
                                    f"{launchd_domain()}")
             except LaunchctlPrintFailed as failure:
                 not_checked.append((name, placement, failure))
+                loaded_state_unknown = True
         if differs:
             differences += 1
             if len(differs) == marker_differences_of_this_job:
                 differences_only_the_marker += 1
             for difference in differs:
                 print(f"DIFFERS: {name} — {difference}.")
-        else:
+        elif not loaded_state_unknown:
             print(f"matches: {name} — {placement['scheduler']}.")
     not_in_table = shares_a_line = 0
     if every_job_selected:
@@ -972,8 +982,9 @@ def check_mode(machine, placed, launch_agents_directory: Path, table_path: Path,
     for name, placement, failure in not_checked:
         print(f"NOT CHECKED: {name} — {failure.cause}; so whether launchd has "
               f"{placement['label']} loaded is unknown.", file=sys.stderr)
-        print(f"Run `launchctl print {launchd_target(placement)}`, read what it prints, and "
-              f"run --check again after that cause is removed.", file=sys.stderr)
+        print(failure.next_steps, file=sys.stderr)
+        print(f"Then run `{Path(__file__).resolve()} --check` again on this machine.",
+              file=sys.stderr)
     if not_checked:
         return 2
     return 1 if differences or not_in_table else 0

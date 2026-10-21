@@ -1004,23 +1004,29 @@ with tempfile.TemporaryDirectory() as temporary:
           "service-not-found is FAILED with print's exit and error, exit 1, not installed",
           exit_code == 1
           and (f"FAILED: daily-full-test-run-of-main — bootstrap exited 0, and then `launchctl "
-               f"print {TARGET}` exited 5: Could not print: injected launchctl failure; so "
+               f"print {TARGET}` exited 5, which is neither 0 (loaded) nor 113 (no such job loaded), "
+               f"with the error: Could not print: injected launchctl failure; so "
                f"whether {LABEL} is loaded is unknown.") in errors
+          and f"{SCRIPT_PATH.resolve()} --install` again on this machine." in errors
           and "installed:" not in printed, (exit_code, printed, errors))
     exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
     check("--check whose launchctl print fails with other than service-not-found reports the "
           "job NOT CHECKED with print's exit and error, not as unloaded, and exits 2",
           exit_code == 2
-          and (f"NOT CHECKED: daily-full-test-run-of-main — `launchctl print {TARGET}` exited 5: "
+          and (f"NOT CHECKED: daily-full-test-run-of-main — `launchctl print {TARGET}` exited 5, "
+               f"which is neither 0 (loaded) nor 113 (no such job loaded), with the error: "
                f"Could not print: injected launchctl failure; so whether launchd has {LABEL} "
                f"loaded is unknown.") in errors
-          and "loaded in" not in printed, (exit_code, printed, errors))
+          and f"{SCRIPT_PATH.resolve()} --check` again on this machine." in errors
+          and "loaded in" not in printed and "matches: " not in printed,
+          (exit_code, printed, errors))
     before = len(stub.commands)
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
     check("--install over a plist that says what the table says, whose launchctl print fails "
           "with other than service-not-found, is FAILED, exit 1, and boots nothing out",
           exit_code == 1
-          and (f"FAILED: daily-full-test-run-of-main — `launchctl print {TARGET}` exited 5: "
+          and (f"FAILED: daily-full-test-run-of-main — `launchctl print {TARGET}` exited 5, "
+               f"which is neither 0 (loaded) nor 113 (no such job loaded), with the error: "
                f"Could not print: injected launchctl failure; so whether {LABEL} is loaded is "
                f"unknown, and the job was not installed.") in errors
           and stub.commands[before:] == [["launchctl", "print", TARGET]],

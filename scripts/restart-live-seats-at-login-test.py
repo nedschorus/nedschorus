@@ -40,11 +40,13 @@ failures = []
 
 
 def run_listing_command_against_fake_tmux(mac_booted_at_epoch_seconds, clients_by_seat,
-                                          failures_by_seat=None, with_stderr=False):
+                                          failures_by_seat=None, with_stderr=False,
+                                          sessions_without_home=("fleet-anchor",)):
     """Run the box listing under bash with a fake tmux; return its output lines.
 
     Each seat gets a real unix socket in a scratch TMUX_TMPDIR, as tmux makes one per
-    seat server; a seat with a home under the scratch HOME's agents/ is a seat.
+    seat server; a seat with a home under the scratch HOME's agents/ is a seat, and every
+    session but those in sessions_without_home gets one.
     failures_by_seat maps a seat to (tmux verb, error text): that verb on its socket
     exits 1 printing the text on stderr. with_stderr returns (lines, stderr)."""
     import shutil
@@ -63,7 +65,7 @@ def run_listing_command_against_fake_tmux(mac_booted_at_epoch_seconds, clients_b
             (scratch / f"{seat}.clients").write_text("".join(f"{c}\n" for c in created))
             verb, error_text = (failures_by_seat or {}).get(seat, ("", ""))
             (scratch / f"{seat}.fails").write_text(f"{verb}\n{error_text}\n")
-            if seat != "fleet-anchor":
+            if seat not in sessions_without_home:
                 (scratch / "home" / "agents" / seat).mkdir(parents=True)
         fake_tmux = bin_directory / "tmux"
         fake_tmux.write_text(
@@ -1101,37 +1103,81 @@ with tempfile.TemporaryDirectory() as temporary:
         "seat-c": ("list-clients", "can't find session: seat-c"),
         "seat-d": ("list-sessions", "no server running on /tmp/tmux-1000/seat-d")},
         with_stderr=True)
-    check("the remote listing, run against a fake tmux that fails on some sockets, lists the "
-          "seats it could read and prints each failed tmux command with its error on stderr",
-          listed == ["seat-a attached"] and len(listing_errors.splitlines()) == 3
-          and "list-sessions: server exited unexpectedly" in listing_errors
-          and "list-clients -t =seat-c: can't find session: seat-c" in listing_errors
-          and "list-sessions: no server running on /tmp/tmux-1000/seat-d" in listing_errors
-          and all(line.startswith(restart.NED_BOX_LISTING_TMUX_FAILURE_PREFIX + " tmux -S ")
-                  for line in listing_errors.splitlines()),
-          (listed, listing_errors))
     prefix = restart.NED_BOX_LISTING_TMUX_FAILURE_PREFIX
+    check("the remote listing, run against a fake tmux that fails on some sockets, lists the "
+          "seats it could read and prints each failed tmux command, after the seat it failed "
+          "on, with its error on stderr",
+          listed == ["seat-a attached"] and len(listing_errors.splitlines()) == 3
+          and f"{prefix} seat-b tmux -S " in listing_errors
+          and "list-sessions: server exited unexpectedly" in listing_errors
+          and f"{prefix} seat-c tmux -S " in listing_errors
+          and "list-clients -t =seat-c: can't find session: seat-c" in listing_errors
+          and f"{prefix} seat-d tmux -S " in listing_errors,
+          (listed, listing_errors))
+    listed, listing_errors = run_listing_command_against_fake_tmux(2000, {
+        "seat-a": ["2500"], "default": [], "fleet-anchor": [], "probe": []}, failures_by_seat={
+        "default": ("list-sessions", "server exited unexpectedly"),
+        "fleet-anchor": ("list-sessions", "server exited unexpectedly"),
+        "probe": ("list-clients", "server exited unexpectedly")},
+        with_stderr=True, sessions_without_home=("fleet-anchor", "probe"))
+    check("the remote listing names a failure on the shared default server with "
+          f"{restart.NED_BOX_LISTING_TMUX_FAILURE_ON_SHARED_SERVER_SEAT!r}, and reports none on "
+          "a server or session that is no seat's",
+          listed == ["seat-a attached"] and len(listing_errors.splitlines()) == 1
+          and listing_errors.startswith(
+              f"{prefix} {restart.NED_BOX_LISTING_TMUX_FAILURE_ON_SHARED_SERVER_SEAT} tmux -S ")
+          and listing_errors.rstrip().endswith(
+              "/default list-sessions: server exited unexpectedly"),
+          (listed, listing_errors))
     gone_only = BoxStub(answers=[(0, "seat-a\n", (
-        f"{prefix} tmux -S /tmp/tmux-1000/seat-c list-clients -t =seat-c: can't find session: "
-        f"seat-c \n{prefix} tmux -S /tmp/tmux-1000/seat-d list-sessions: no server running on "
-        f"/tmp/tmux-1000/seat-d \n"))])
-    seats, detail, _ = restart.ask_the_box_which_seats_are_alive(
+        f"{prefix} seat-c tmux -S /tmp/tmux-1000/seat-c list-clients -t =seat-c: can't find "
+        f"session: seat-c \n{prefix} seat-d tmux -S /tmp/tmux-1000/seat-d list-sessions: no "
+        f"server running on /tmp/tmux-1000/seat-d \n"))])
+    seats, detail, _, withheld = restart.ask_the_box_which_seats_are_alive(
         BOOT_AT, run=gone_only, sleep=gone_only.sleep, monotonic=gone_only.monotonic)
     check("tmux's answers that a seat's session or server is gone are not failures: the box "
           "answered, with the seats it listed",
-          seats == ["seat-a"] and detail == "answered on attempt 1", (seats, detail))
-    broken = BoxStub(answers=[(0, "seat-a\n", (
-        f"{prefix} tmux -S /tmp/tmux-1000/seat-b list-sessions: server exited unexpectedly \n"
-        f"{prefix} tmux -S /tmp/tmux-1000/seat-d list-sessions: no server running on "
-        f"/tmp/tmux-1000/seat-d \n"))])
-    seats, detail, _ = restart.ask_the_box_which_seats_are_alive(
-        BOOT_AT, run=broken, sleep=broken.sleep, monotonic=broken.monotonic)
-    check("any other tmux failure on the box means the box did not answer, and the detail "
-          "quotes the failed tmux command and its error, and only that one",
-          seats is None and len(broken.queries) == 1
-          and detail == ("its tmux could not list every seat: tmux -S "
-                         "/tmp/tmux-1000/seat-b list-sessions: server exited unexpectedly"),
+          seats == ["seat-a"] and detail == "answered on attempt 1" and withheld == [],
+          (seats, detail, withheld))
+    one_seat_broken = BoxStub(answers=[(0, "seat-a\nseat-e attached\n", (
+        f"{prefix} seat-b tmux -S /tmp/tmux-1000/seat-b list-sessions: server exited "
+        f"unexpectedly \n{prefix} seat-d tmux -S /tmp/tmux-1000/seat-d list-sessions: no server "
+        f"running on /tmp/tmux-1000/seat-d \n"))])
+    seats, detail, attached, withheld = restart.ask_the_box_which_seats_are_alive(
+        BOOT_AT, run=one_seat_broken, sleep=one_seat_broken.sleep,
+        monotonic=one_seat_broken.monotonic)
+    check("another tmux failure on one seat's own server withholds that seat alone, quoting "
+          "the failed tmux command and its error; the box still answers for the other seats",
+          seats == ["seat-a"] and attached == ["seat-e"] and detail == "answered on attempt 1"
+          and withheld == [("seat-b", "tmux -S /tmp/tmux-1000/seat-b list-sessions: server "
+                                      "exited unexpectedly")],
+          (seats, attached, detail, withheld))
+    shared_broken = BoxStub(answers=[(0, "seat-a\n", (
+        f"{prefix} {restart.NED_BOX_LISTING_TMUX_FAILURE_ON_SHARED_SERVER_SEAT} tmux -S "
+        f"/tmp/tmux-1000/default list-sessions: server exited unexpectedly \n"))])
+    seats, detail, _, withheld = restart.ask_the_box_which_seats_are_alive(
+        BOOT_AT, run=shared_broken, sleep=shared_broken.sleep, monotonic=shared_broken.monotonic)
+    check("a tmux failure on the shared default server means the box did not answer, and the "
+          "detail quotes the failed tmux command and its error",
+          seats is None and len(shared_broken.queries) == 1 and withheld == []
+          and detail == ("its tmux could not list the seats on its shared default server: "
+                         "tmux -S /tmp/tmux-1000/default list-sessions: server exited "
+                         "unexpectedly"),
           (seats, detail))
+    handoffs = root / "box-one-seat-tmux-failed"
+    write_state(handoffs, "mac-seat", STOP - timedelta(days=3))
+    box = BoxStub(answers=[(0, "prof\n", (
+        f"{prefix} gatekeeper tmux -S /tmp/tmux-1000/gatekeeper list-sessions: server exited "
+        f"unexpectedly\n"))])
+    exit_code, report, errors = run_main(["--handoff-dir", str(handoffs)], box=box)
+    check("a run opens windows onto the box's other seats, reports the withheld seat with "
+          "tmux's error and the by-hand command, and exits nonzero",
+          exit_code == 1 and [command[-1] for command in box.windows] == ["prof"]
+          and "NO WINDOW onto gatekeeper — the box's tmux failed on it (tmux -S "
+              "/tmp/tmux-1000/gatekeeper list-sessions: server exited unexpectedly)" in report
+          and f"{restart.BOX_LAUNCHER_PATH} gatekeeper" in report
+          and "1 box window(s) could not be opened: gatekeeper" in report,
+          (exit_code, box.windows, report))
     # User-ruled 2026-09-28T16:37:05Z: a box seat's home is always
     # ~/agents/<name>, since launch-claude-ubuntu reads no agents-root
     # variable (user-ruled 2026-09-22), so the box listing reads none either.

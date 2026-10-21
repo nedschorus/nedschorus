@@ -132,7 +132,11 @@ def remove(label: str, launch_agents_directory: Path, run=subprocess.run) -> int
               f"exited {booted.returncode}"
               + (f": {error_text}" if error_text else ", printing nothing on stderr")
               + f"; so {label} may still be loaded, and {plist_path} was kept.", file=sys.stderr)
-        print("Run this again after the cause in launchctl's error is removed.", file=sys.stderr)
+        print("Fix what launchctl's error names. When it printed no error, run "
+              f"`launchctl print {target}` to see whether {label} is still loaded.",
+              file=sys.stderr)
+        print(f"Then run `{Path(__file__).resolve()} --remove` again, with the same --label "
+              "you passed.", file=sys.stderr)
         return 1
     if plist_path.is_file():
         plist_path.unlink()

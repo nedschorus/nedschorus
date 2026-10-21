@@ -148,11 +148,12 @@ def install(unit_name: str, checkout: Path, handoff_directory, unit_directory: P
         print(f"install-restart-live-seats-at-login-systemd-unit: {failure}; so whether "
               f"{unit_name} is enabled is unknown, and nothing was written or started.",
               file=sys.stderr)
-        print("When systemctl's error says it could not connect to the user bus, run this "
-              "again from a login session of the user whose manager runs the unit, such as an "
-              "ssh login.", file=sys.stderr)
-        print("Otherwise run this again after the cause systemctl names is removed.",
-              file=sys.stderr)
+        rerun = (f"`{Path(__file__).resolve()} --start-now` again, with the same --checkout, "
+                 "--unit-name and --handoff-dir you passed")
+        print("When systemctl's error says it could not connect to the user bus, run "
+              f"{rerun}, from a login session of the user whose manager runs the unit, such "
+              "as an ssh login.", file=sys.stderr)
+        print(f"Otherwise fix what systemctl's error names, then run {rerun}.", file=sys.stderr)
         return 1
     if enabled:
         # Starting preserves enable symlinks; rewriting an enabled unit would alter future boots.
