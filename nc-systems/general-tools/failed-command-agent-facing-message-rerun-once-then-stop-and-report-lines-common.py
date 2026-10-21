@@ -65,7 +65,8 @@ def agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
     if text_the_failure_line_contains is not None:
         rerun_fails_when = f'prints a line containing "{text_the_failure_line_contains}" again'
         which_lines_to_quote_in_the_report = (
-            f'the line containing "{text_the_failure_line_contains}" from each run')
+            f'the line containing "{text_the_failure_line_contains}" from the command that printed '
+            f'this message and from {phrase_a_stop_message_uses_for_the_command_the_agent_reruns.rstrip(",")}')
     stop = (f"stop, do not {next_step_to_skip_when_the_rerun_fails_too},"
             if next_step_to_skip_when_the_rerun_fails_too else "stop,")
     who = REPORT_RECIPIENT_PHRASE_USER_OR_DISPATCHING_AGENT if read_by_a_subagent else "the user"

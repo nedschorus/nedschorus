@@ -124,11 +124,11 @@ LOCK_FILE_WAIT_CLAUSE = (
     "wait up to one minute for git to remove it by running "
     "`i=0; while [ -e \"<lock file path>\" ] && [ $i -lt 30 ]; do sleep 2; i=$((i+1)); done` with "
     "<lock file path> replaced by the path git's error names, without the quotes git puts around it "
-    "(Claude Code refuses a plain `sleep 60`), then run the next line's command, whether or not the "
+    "(Claude Code refuses a plain `sleep 60`), then run the command below this paragraph, whether or not the "
     "lock file is gone")
 GIT_FAILURE_RERUN_LINE = (
     "A later run of this hook checks only the file that run's Edit or Write touched, so check "
-    "{path} by running the next line's command. If git's error above names no lock file, run that "
+    "{path} by running the command printed on its own line below this paragraph. If git's error above names no lock file, run that "
     "command now. If git's error names a lock file, "
     + LOCK_FILE_WAIT_CLAUSE.replace("{", "{{").replace("}", "}}")
     + ". The command "

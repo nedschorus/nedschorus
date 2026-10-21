@@ -33,9 +33,10 @@ GIT_FAILURE_TEMPLATE = (
     "for another tracked file with the same basename; this hook compares basenames ignoring letter "
     "case, so Notes.md and notes.md count as the same basename.\n"
     "A later run of this hook checks only the file that run's Write or Edit touched, so check "
-    "{path} by running the next line's command. If git's error above names no lock file, run that "
+    "{path} by running the command printed on its own line below this paragraph. If git's error "
+    "above names no lock file, run that "
     "command now. If git's error names a lock file, "
-    + next_step_lines.lock_file_named_by_git_error_wait_then_rerun_instruction("the next line's command")
+    + next_step_lines.lock_file_named_by_git_error_wait_then_rerun_instruction("the command below this paragraph")
     .replace("{", "{{").replace("}", "}}")
     + ". The command "
     "prints nothing when no other tracked file has the basename, and also when this hook skips the "

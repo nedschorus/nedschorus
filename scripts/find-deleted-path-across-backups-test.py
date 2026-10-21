@@ -1583,9 +1583,9 @@ with tempfile.TemporaryDirectory() as tmp:
 
     box_no_dir = LocalShellRunner([], box_home)
     report = finder.search_transcripts("a/b.md", str(mac_dir), "nedlern@ned-box", box_no_dir)
-    box_lines = [l for l in report.lines if l.startswith("the box")]
+    box_lines = [l for l in report.lines if l.startswith("ned-box (")]
     check("a box with no ~/.claude/projects says so, never 'searched ..., no transcript mentions it'",
-          box_lines == ["the box (nedlern@ned-box): ~/.claude/projects does not exist there"],
+          box_lines == ["ned-box (nedlern@ned-box): ~/.claude/projects does not exist there"],
           str(box_lines))
     box_script = [c for c in box_no_dir.calls if c.startswith("ssh")][0]
     check("the box grep is not piped, so its own exit status reaches the caller",
@@ -1597,7 +1597,7 @@ with tempfile.TemporaryDirectory() as tmp:
     box_empty = LocalShellRunner([], box_home)
     report = finder.search_transcripts("a/b.md", str(mac_dir), "nedlern@ned-box", box_empty)
     check("a box whose transcripts do not mention the path is searched and says so",
-          any(l.startswith("the box") and "no transcript mentions it" in l for l in report.lines),
+          any(l.startswith("ned-box (") and "no transcript mentions it" in l for l in report.lines),
           str(report.lines))
 
     Path(box_projects, "session.jsonl").write_text('{"text": "read a/b.md today"}\n')
@@ -1660,7 +1660,7 @@ check("--skip box sends nothing over ssh",
       not any(c.startswith("ssh") for c in skip_box.calls), str(skip_box.calls))
 transcripts_report = [r for r in reports if r.surface == "transcripts"][0]
 check("--skip box: the transcripts surface says its box half was not searched",
-      any(l.startswith("the box: not searched") for l in transcripts_report.lines), str(transcripts_report.lines))
+      any(l.startswith("ned-box: not searched") for l in transcripts_report.lines), str(transcripts_report.lines))
 check("--skip box drops the Timeshift surface", not any(r.surface == "timeshift" for r in reports))
 check("--skip box drops the log-store when it is not on this machine",
       not any(r.surface == "log-store" for r in reports), str([r.surface for r in reports]))
@@ -1936,7 +1936,7 @@ with tempfile.TemporaryDirectory() as tmp:
     report = finder.search_log_store("pr-main-process-design.md", str(Path(tmp, "no-store-here")),
                                      "nedlern@ned-box", LocalShellRunner([], Path(tmp)), store_is_here=False)
     check("log-store: a root the box does not have is UNAVAILABLE, naming it",
-          report.status == UNAVAILABLE and any("does not exist on the box" in l for l in report.lines),
+          report.status == UNAVAILABLE and any("does not exist on ned-box (" in l for l in report.lines),
           "%s %s" % (report.status, report.lines))
 
     for index in range(finder.LOG_STORE_HITS_SHOWN + 2):
@@ -2303,7 +2303,7 @@ with tempfile.TemporaryDirectory() as tmp:
           str(on_mac.calls))
     check("on the Mac: transcripts' local half is still this Mac's",
           by_surface["transcripts"].lines[0].startswith("this Mac: ")
-          and any(l.startswith("the box (nedlern@ned-box)") for l in by_surface["transcripts"].lines),
+          and any(l.startswith("ned-box (nedlern@ned-box)") for l in by_surface["transcripts"].lines),
           str(by_surface["transcripts"].lines))
 
     # A local bash exits 255 only on its own account: it is not ssh's
@@ -2447,7 +2447,7 @@ with tempfile.TemporaryDirectory() as tmp:
           not any(str(copy) in c for c in on_mac.calls)
           and not any("log-store copy" in l for l in reports[0].lines)
           and reports[0].lines[0].startswith("this Mac: ")
-          and any(l.startswith("the box (nedlern@ned-box)") for l in reports[0].lines),
+          and any(l.startswith("ned-box (nedlern@ned-box)") for l in reports[0].lines),
           "%s %s" % (on_mac.calls, reports[0].lines))
 
 age_words = getattr(finder, "_age_in_words", lambda seconds: None)
@@ -2875,7 +2875,7 @@ with contextlib.redirect_stderr(main_errors):
                            "--box-ssh-host", "", "--skip", "timemachine", "--skip", "localsnapshots"],
                           FakeRunner([("rev-parse --git-dir", (0, ".git\n", "")), TOP_LEVEL_FAILS]))
 check("an absolute path git cannot make repo-relative is searched as that absolute path, with git's words on stderr",
-      code == 3 and "Searching every history this fleet keeps for: /repo/a/b.md" in text
+      code == 3 and "Searching every history the Mac and ned-box keep for: /repo/a/b.md" in text
       and "unable to read index" in main_errors.getvalue(),
       "exit=%s\n%s\n%s" % (code, text, main_errors.getvalue()))
 check("... and the docstring's exit-code block promises exactly that",
@@ -2936,7 +2936,7 @@ check("every flag the docstring names is one the parser accepts",
 code, text = run_main(["/repo/md-review-records/x/dispositions.md", "--repo", "/repo", "--skip", "transcripts",
                        "--skip", "box", "--skip", "timemachine", "--skip", "localsnapshots"], git_absolute)
 check("the header shows the repo-relative form an absolute path was searched as",
-      text.startswith("Searching every history this fleet keeps for: md-review-records/x/dispositions.md "
+      text.startswith("Searching every history the Mac and ned-box keep for: md-review-records/x/dispositions.md "
                       "(given as /repo/md-review-records/x/dispositions.md)"),
       text.splitlines()[0])
 
@@ -3061,7 +3061,7 @@ with tempfile.TemporaryDirectory() as tmp:
               still_searching and re.search(r"^git\s+FOUND$", seen.decode("utf-8", "replace"), re.M) is not None,
               "still searching: %s; read before the kill: %r" % (still_searching, seen))
         check("streaming, real pipe: a run killed mid-search keeps every section that had answered, and no summary",
-              printed.startswith("Searching every history this fleet keeps for: a/b.md")
+              printed.startswith("Searching every history the Mac and ned-box keep for: a/b.md")
               and re.search(r"^git\s+FOUND$", printed, re.M) and re.search(r"^git reflog\s+NOT FOUND$", printed, re.M)
               and "Recoverable from" not in printed,
               repr(printed))
@@ -3581,7 +3581,7 @@ check("cited query: ... and the summary says where the copy went, and that nothi
                        % os.path.dirname(copied_lines[0] if copied_lines else "")) for l in text.splitlines()),
       text)
 check("cited query: ... and the header shows the path searched and the form it was given in",
-      "Searching every history this fleet keeps for: %s (given as %s)" % (minutes, cited) in text, text)
+      "Searching every history the Mac and ned-box keep for: %s (given as %s)" % (minutes, cited) in text, text)
 
 with tempfile.TemporaryDirectory() as tmp:
     repo = git_fixture_repo(tmp)
@@ -3607,7 +3607,7 @@ with tempfile.TemporaryDirectory() as tmp:
             os.chdir(directory_before)
         check("cited query: ../a/b.md from a subdirectory, --repo %s, is searched as a/b.md and FOUND in git"
               % ("." if repo_argument == "." else "<top level>"),
-              code == 0 and "Searching every history this fleet keeps for: a/b.md (given as ../a/b.md)" in text
+              code == 0 and "Searching every history the Mac and ned-box keep for: a/b.md (given as ../a/b.md)" in text
               and "git             FOUND" in text,
               "exit=%s\n%s" % (code, text))
         check("cited query: ... and the copy this run made holds the file",
@@ -3743,7 +3743,7 @@ with tempfile.TemporaryDirectory() as tmp:
     box_runner = LocalShellRunner([], box_home)
     report = finder.search_transcripts(DASH_NAME, "/nonexistent-dir", "nedlern@ned-box", box_runner)
     check("transcripts: the box's grep script searches %r as text, and FINDS it" % DASH_NAME,
-          any(l.startswith("the box") and "1 session transcript(s) mention it" in l for l in report.lines),
+          any(l.startswith("ned-box (") and "1 session transcript(s) mention it" in l for l in report.lines),
           str(report.lines))
 
     store = Path(tmp, "store")

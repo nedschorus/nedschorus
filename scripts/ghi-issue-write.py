@@ -549,7 +549,8 @@ def git_failure_next_steps(rerun: str, program: str) -> str:
     return next_step_lines.git_failure_next_step_lines(
         rerun, program, include_the_misspelt_branch_commit_or_path_line=True,
         rerun_fails_when="stops again on a line naming a git command and its exit code",
-        which_lines_to_quote_in_the_report='that line and the "So" line after it, from each run')
+        which_lines_to_quote_in_the_report=('that line and the "So" line after it, from the command that '
+                                            'printed this message and from the rerun, or the corrected command'))
 
 
 def git_failure_refusal(arguments, completed, not_done: str) -> Refused:
