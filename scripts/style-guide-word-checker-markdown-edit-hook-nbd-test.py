@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Tests for style-guide-word-checker-markdown-edit-hook.py and the word list
-and scanner in style-guide-word-checker.py.
+"""Tests for style-guide-word-checker-markdown-edit-hook-nbd.py and the word list
+and scanner in style-guide-word-checker-nbd.py.
 
-Run: python3 scripts/style-guide-word-checker-markdown-edit-hook-test.py
+Run: python3 scripts/style-guide-word-checker-markdown-edit-hook-nbd-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 The scanner's cases call the checker directly. The hook's cases run the hook
@@ -40,8 +40,8 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
-HOOK_PATH = Path(__file__).with_name("style-guide-word-checker-markdown-edit-hook.py")
-CHECKER_PATH = Path(__file__).with_name("style-guide-word-checker.py")
+HOOK_PATH = Path(__file__).with_name("style-guide-word-checker-markdown-edit-hook-nbd.py")
+CHECKER_PATH = Path(__file__).with_name("style-guide-word-checker-nbd.py")
 SHARED_GIT_TRACKING_CHECK_RELATIVE_PATH = Path(
     "nc-systems", "general-tools", "edited-file-path-within-checkout-root-and-git-check-ignore-common.py")
 SHARED_GIT_TRACKING_CHECK_PATH = (Path(__file__).resolve().parents[1]
@@ -415,7 +415,7 @@ def reported(result, fault_words):
     """A fault: exit 1, no report on stdout, one stderr line naming the hook and the fault."""
     lines = result.stderr.splitlines()
     return (result.returncode == 1 and result.stdout == "" and len(lines) == 1
-            and lines[0].startswith("style-guide-word-checker-markdown-edit-hook: ")
+            and lines[0].startswith("style-guide-word-checker-markdown-edit-hook-nbd: ")
             and fault_words in lines[0])
 
 

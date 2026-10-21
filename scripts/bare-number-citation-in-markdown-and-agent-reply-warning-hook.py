@@ -7,7 +7,7 @@ in the agent's previous reply.
 One program, two hook events, told apart by the payload's hook_event_name:
 
   PostToolUse on Edit and Write of a .md or .markdown file: scan the text just
-      written, as style-guide-word-checker-markdown-edit-hook.py does. Edit
+      written, as style-guide-word-checker-markdown-edit-hook-nbd.py does. Edit
       scans new_string alone. Write scans only the lines HEAD does not already
       hold, so an edit to a file whose old bare numbers are kept on purpose
       (agent-only files such as those under scripts/ and .claude/hooks/) is
