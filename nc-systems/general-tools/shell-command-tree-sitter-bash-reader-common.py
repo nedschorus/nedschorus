@@ -318,29 +318,58 @@ def _index_after_options(words, index, wrapper, options):
 
 
 SHELL_STRING_RUNNERS = ("bash", "sh", "zsh")
-# bash's -o and -O, and their + forms, take an option name as the next word.
-SHELL_VALUE_OPTIONS = {"-o", "+o", "-O", "+O"}
+# In a short-option cluster such as -eo, each o or O takes an option name from the next word.
+SHELL_VALUE_LETTERS = "oO"
+# bash's long options that take the next word as their value.
+SHELL_VALUE_LONG_OPTIONS = {"--rcfile", "--init-file"}
 # ssh's getopt string is "1246ab:c:e:fgi:kl:m:no:p:qstvxAB:CD:E:F:GI:J:KL:MNO:P:Q:R:S:TVw:W:XYy": these letters take a value.
 SSH_VALUE_LETTERS = "bceilmopBDEFIJLOPQRSwW"
+# -G prints the configuration and -V the version; with either, ssh connects to nothing and runs nothing.
+SSH_RUN_NOTHING_LETTERS = "GV"
 
 
-def shell_command_string(arguments):
-    """Return the command string of `bash -c <string>`, or None without -c."""
-    reads_string = False
+def shell_runner_options_read(arguments):
+    """Read the options of bash, sh or zsh as bash reads them.
+
+    Return (flags, operand_index): flags is the set of short-option letters left on, with
+    noexec as n; operand_index is the index of the first word after the options, which is
+    the command string under -c, or len(arguments) when there is none.
+    """
+    flags = set()
     index = 0
     while index < len(arguments):
         word = arguments[index]
         if word == "--":
-            # `bash -c -- <string>`: the string follows the end of the options.
-            return arguments[index + 1] if reads_string and index + 1 < len(arguments) else None
-        if not word.startswith(("-", "+")):
-            return word if reads_string else None
-        if word in SHELL_VALUE_OPTIONS:
-            index += 1  # the value is the next word
-        elif not word.startswith("--") and "c" in word[1:]:
-            reads_string = True
+            return flags, index + 1
+        if not word.startswith(("-", "+")) or word == "+":
+            return flags, index
+        if word.startswith("--"):
+            if word in SHELL_VALUE_LONG_OPTIONS:
+                index += 1  # the value is the next word
+            index += 1
+            continue
+        turns_on = word[0] == "-"
+        for letter in word[1:]:
+            if letter in SHELL_VALUE_LETTERS:
+                index += 1  # each value is a following word, in order
+                if letter == "o" and index < len(arguments) and arguments[index] == "noexec":
+                    letter = "n"
+                else:
+                    continue
+            if turns_on:
+                flags.add(letter)
+            else:
+                flags.discard(letter)
         index += 1
-    return None
+    return flags, index
+
+
+def shell_command_string(arguments):
+    """Return the command string of `bash -c <string>`, or None without -c or under -n, which runs nothing."""
+    flags, operand_index = shell_runner_options_read(arguments)
+    if "c" not in flags or "n" in flags or operand_index >= len(arguments):
+        return None
+    return arguments[operand_index]
 
 
 def ssh_remote_command(arguments):
@@ -355,6 +384,8 @@ def ssh_remote_command(arguments):
             break
         letters = word[1:]
         for position, letter in enumerate(letters):
+            if letter in SSH_RUN_NOTHING_LETTERS:
+                return None
             if letter in SSH_VALUE_LETTERS:
                 if position == len(letters) - 1:
                     index += 1  # the value is the next word

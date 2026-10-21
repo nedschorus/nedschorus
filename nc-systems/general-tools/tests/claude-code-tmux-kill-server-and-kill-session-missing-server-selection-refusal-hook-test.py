@@ -141,6 +141,13 @@ def refusal_cases():
         "zsh by full path": "/bin/zsh -c 'tmux kill-server'",
         "bash -c inside ssh": "ssh ned \"bash -c 'tmux kill-server'\"",
         "ssh inside bash -c": "bash -c \"ssh ned 'tmux kill-server'\"",
+        "bash -eo pipefail -c, the value letter inside a cluster": "bash -eo pipefail -c 'tmux kill-server'",
+        "bash -O extglob -c": "bash -O extglob -c 'tmux kill-server'",
+        "bash -c - <string>, where a lone - ends the options as -- does": "bash -c - 'tmux kill-server'",
+        "bash --rcfile <file> -c": "bash --rcfile /dev/null -c 'tmux kill-server'",
+        "bash --init-file <file> -c": "bash --init-file /dev/null -c 'tmux kill-server'",
+        "bash -eo pipefail -c inside ssh": "ssh ned \"bash -eo pipefail -c 'tmux kill-server'\"",
+        "bash -n then +n -c, which runs the string": "bash -n +n -c 'tmux kill-server'",
     }
     for name, command in refused.items():
         reason = run_main(command)
@@ -170,6 +177,10 @@ def allow_cases():
         "prose in an argument": 'printf "%s" "note: tmux kill-server"',
         "ssh remote kill that names its server": "ssh ned 'tmux -L test kill-session -t test'",
         "ssh with no remote command": "ssh -t ned",
+        "ssh -G, which prints its configuration and runs nothing": "ssh -G ned 'tmux kill-server'",
+        "ssh -V, which prints its version and runs nothing": "ssh -V ned 'tmux kill-server'",
+        "bash -n -c, which reads the string and runs nothing": "bash -n -c 'tmux kill-server'",
+        "bash -o noexec -c, which runs nothing": "bash -o noexec -c 'tmux kill-server'",
         "ssh whose -l value looks like a command": "ssh -l tmux ned uptime",
         "bash -c naming its server": "bash -c 'tmux -S /tmp/s kill-server'",
         "bash running a script file": "bash kill-server.sh",

@@ -46,7 +46,6 @@ COMMAND_RUNNING_PREFIX_VALUE_OPTIONS = {
     "setsid": set(),
 }
 SHELL_STRING_RUNNERS = shell_reader.SHELL_STRING_RUNNERS
-SHELL_VALUE_OPTIONS = shell_reader.SHELL_VALUE_OPTIONS
 ENVIRONMENT_ASSIGNMENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 RUNNER_PATH = Path(__file__).resolve().parent / "run-codex-task-from-brief.py"
@@ -105,21 +104,12 @@ def program_index_after_prefixes(words):
 
 def shell_reads_commands_from_stdin(arguments) -> bool:
     """Return whether bash, sh or zsh with these arguments runs the commands on its stdin."""
-    # With -s the words after the options are positional parameters, and stdin is still run.
-    reads_stdin_explicitly = False
-    index = 0
-    while index < len(arguments):
-        word = arguments[index]
-        if word == "--" or not word.startswith(("-", "+")):
-            return reads_stdin_explicitly  # otherwise a script file
-        if word in SHELL_VALUE_OPTIONS:
-            index += 1
-        elif not word.startswith("--") and "c" in word[1:]:
-            return False
-        elif not word.startswith("--") and "s" in word[1:]:
-            reads_stdin_explicitly = True
-        index += 1
-    return True
+    flags, operand_index = shell_reader.shell_runner_options_read(arguments)
+    if "c" in flags:
+        return False
+    # With -s the words after the options are positional parameters, and stdin is still run;
+    # without it, a word after the options is a script file.
+    return "s" in flags or operand_index >= len(arguments)
 
 
 def is_shell_reading_stdin(words) -> bool:
