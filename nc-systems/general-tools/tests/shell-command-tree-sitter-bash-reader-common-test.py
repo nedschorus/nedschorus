@@ -136,6 +136,40 @@ def read_times_in_a_child(read_definition, sizes):
     return json.loads(completed.stdout)
 
 
+# A quadratic loop in the reader's own Python shows as lines run, which no machine load changes; a
+# quadratic copy inside one line, such as a bytes slice, does not show.
+READER_LINES_RUN_CHILD_CODE = (
+    "import importlib.util, json, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+    "r = importlib.util.module_from_spec(s); s.loader.exec_module(r)\n"
+    "exec(sys.argv[2])\n"
+    "lines_run, reader_file = 0, r.simple_commands.__code__.co_filename\n"
+    "def count_line(frame, event, argument):\n"
+    " global lines_run\n"
+    " lines_run += event == 'line'\n"
+    " return count_line\n"
+    "def trace_reader(frame, event, argument):\n"
+    " return count_line if frame.f_code.co_filename == reader_file else None\n"
+    "counts, outputs = [], []\n"
+    "for n in json.loads(sys.argv[3]):\n"
+    " lines_run = 0; sys.settrace(trace_reader); output = read(n); sys.settrace(None)\n"
+    " counts.append(lines_run); outputs.append(output)\n"
+    "print(json.dumps([counts, outputs]))")
+
+
+def reader_lines_run_counted_in_a_child(read_definition, sizes):
+    """Count the reader's lines run by read(n) at each of sizes in a new process under the guard's 30 s.
+
+    Return [counts, outputs], or the error as a string.
+    """
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", READER_LINES_RUN_CHILD_CODE, str(MODULE_PATH), read_definition,
+             json.dumps(sizes)], timeout=30, check=True, capture_output=True, text=True)
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
+        return repr(problem)
+    return json.loads(completed.stdout)
+
+
 ANSI_C_WORDS = [r"$'a\nb'", r"$'\t\x41\101\e\cA\c?'", r"$'it\'s \"x\" \?'", r"$'keep \q and \x and \u'",
                 r"$'nul\0after'", r"a$'\n'b", r"$'\c\\x'", r"$'\0101\x4142'", r"$'\a\b\f\r\v\E'",
                 r"$'\xff\x80 \351 a\xc3 \0401'", r"$'\777 \400'", r"$'\cé \c☃ \c\xe9'",
@@ -814,18 +848,16 @@ counted = parses_counted_in_a_child(
 check("a body holding 2,000 cases ended by ;& is repaired in at most two parses more than 500 such "
       "cases, inside a guard's 30 s, and the command after them is read",
       parses_grow_by_a_constant(counted) and counted[1][2] == ["tmux", "kill-server"], counted)
-# The offsets of the terminators one round writes are moved once, not once per terminator. That
-# leaves no parse to count, so the time for 30,000 is compared with the time for 7,500, with the
-# parse's own checks made free: moving them once per terminator took about 15 times as long, and
-# moving them once takes about 8 times as long.
-timed = read_times_in_a_child(
+# The offsets of the terminators one round writes are moved once, not once per terminator; moving
+# them once per terminator runs about 16 times the reader's lines at four times the terminators.
+counted = reader_lines_run_counted_in_a_child(
     "r._inside_text = lambda *arguments, **options: False\n"
     "def read(n):\n return len(r._source_with_case_terminators_repaired("
-    "b'$(case x in x) :;& esac)\\n' * n, r.TEXT_NODE_TYPES, all_at_once=True)[3])", [7500, 30000])
-check("30,000 terminators written in one round have their offsets moved in less than 12 times the time "
-      "of 7,500, inside a guard's 30 s",
-      isinstance(timed, list) and timed[0][1] < 30 and timed[0][1] < 12 * timed[0][0]
-      and timed[1] == [7500, 30000], timed)
+    "b'$(case x in x) :;& esac)\\n' * n, r.TEXT_NODE_TYPES, all_at_once=True)[3])", [2000, 8000])
+check("8,000 terminators written in one round have their offsets moved in less than 5 times the reader's "
+      "lines run for 2,000, inside a guard's 30 s",
+      isinstance(counted, list) and 1 <= counted[0][0] and counted[0][1] < 5 * counted[0][0]
+      and counted[1] == [2000, 8000], counted)
 counted = parses_counted_in_a_child("'case a in a) zzp;& esac\\n' * n + 'tmux kill-server'", [500, 2000])
 check("2,000 cases ended by ;& are repaired in at most two parses more than 500 such cases, inside a "
       "guard's 30 s, and the command after them is read",
