@@ -275,6 +275,13 @@ def make_legacy_fixture(root: Path, name: str):
     return legacy, legacy_commit
 
 
+def _no_origin_repository(root: Path) -> Path:
+    """A repository with no remotes."""
+    repository = root / "no-origin-repository"
+    git(["init", "--quiet", "--initial-branch=main", str(repository)], root)
+    return repository
+
+
 def base_request(work, remote, base, files, message="fixture change", issue="none",
                  overrides=None):
     """A complete, well-formed argv, with any flag overridable by exact name.
@@ -502,6 +509,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
     original_fetch_main_tip = gatekeeper.fetch_main_tip
     original_paths_changed = gatekeeper.paths_changed_between
     original_build_candidate = gatekeeper.build_candidate
+    original_find_existing_check_in = gatekeeper.find_existing_check_in
     rounds = {"count": 0}
 
     def always_rejected(clone):
@@ -515,6 +523,8 @@ with tempfile.TemporaryDirectory() as workspace_name:
     gatekeeper.fetch_main_tip = always_moving
     gatekeeper.paths_changed_between = lambda clone, older, newer: set()  # never a conflict
     gatekeeper.build_candidate = lambda clone, request, worktree, digest, target=None: "c" * 40
+    # The simulated tips are not commits, so git cannot search them for the digest.
+    gatekeeper.find_existing_check_in = lambda clone, digest, ref=None: None
     try:
         capped = None
         try:
@@ -536,6 +546,7 @@ with tempfile.TemporaryDirectory() as workspace_name:
         gatekeeper.fetch_main_tip = original_fetch_main_tip
         gatekeeper.paths_changed_between = original_paths_changed
         gatekeeper.build_candidate = original_build_candidate
+        gatekeeper.find_existing_check_in = original_find_existing_check_in
 
     # --- retired by slice 3: main-moved is no longer an ending --------------
     # Slice 1 refused when main had moved at all. Slice 3 splits that: moved
@@ -1482,6 +1493,176 @@ with tempfile.TemporaryDirectory() as workspace_name:
 
     check("T11 no import refusal moved main",
           git(["rev-parse", "main"], remote).stdout.strip() == main_before_imports)
+
+    # --- a git failure is reported, never read as an answer -----------------
+    # A stand-in git on PATH fails exactly the command under test, as a broken
+    # repository does, and passes every other command to the real git.
+    real_git = shutil.which("git")
+
+    def failing_git(name, pattern):
+        directory = workspace / f"failing-git-{name}"
+        directory.mkdir()
+        (directory / "git").write_text(
+            "#!/bin/sh\n"
+            f"case \" $* \" in *\"{pattern}\"*) echo 'fatal: stand-in failure' >&2; exit 128;; esac\n"
+            f'exec {real_git} "$@"\n', encoding="utf-8")
+        (directory / "git").chmod(0o755)
+        return directory
+
+    @contextlib.contextmanager
+    def git_on_path(directory):
+        before = os.environ["PATH"]
+        os.environ["PATH"] = f"{directory}{os.pathsep}{before}"
+        try:
+            yield
+        finally:
+            os.environ["PATH"] = before
+
+    def refusal_of(call):
+        try:
+            call()
+        except gatekeeper.Refusal as refusal:
+            return refusal
+        return None
+
+    remote, work, base = make_fixture(workspace, "git-fails")
+    (work / "README.md").write_text("seed\nchanged\n", encoding="utf-8")
+    git(["commit", "--quiet", "-am", "a second commit"], work)
+    tip = git(["rev-parse", "HEAD"], work).stdout.strip()
+    for name, pattern, call, what in (
+            ("diff", "diff --name-only",
+             lambda: gatekeeper.paths_changed_between(work, base, tip),
+             "the paths main changed"),
+            ("log", "--grep Gatekeeper-digest",
+             lambda: gatekeeper.find_existing_check_in(work, "0" * 64, tip),
+             "whether the work is already on main"),
+            ("show", " show ",
+             lambda: gatekeeper.read_base_content(work, base, ["README.md"]),
+             "a path's content at the base"),
+            ("verify-path", "--verify " + base + ":",
+             lambda: gatekeeper.read_base_content(work, base, ["README.md"]),
+             "whether a path exists at the base"),
+            ("status", "status --porcelain",
+             lambda: gatekeeper.undeclared_changes(work, ["README.md"]),
+             "the working copy's other changes"),
+            ("get-url", "remote get-url",
+             lambda: gatekeeper.resolve_remote(work, None),
+             "the origin remote"),
+            ("fetch", "fetch --quiet origin",
+             lambda: gatekeeper.compute_base(work),
+             "the base, when main cannot be fetched")):
+        with git_on_path(failing_git(name, pattern)):
+            refusal = refusal_of(call)
+        check(f"a git failure reading {what} is reported as workspace-io-error with git's stderr",
+              refusal is not None and refusal.error == "workspace-io-error"
+              and "stand-in failure" in refusal.facts, refusal)
+
+    check("a path absent at the base still reads as absent",
+          gatekeeper.read_base_content(work, base, ["no-such-file"]) == {"no-such-file": None})
+    check("a repository with no origin remote still refuses as having none",
+          (lambda refusal: refusal is not None and "no 'origin' remote" in refusal.facts)(
+              refusal_of(lambda: gatekeeper.resolve_remote(_no_origin_repository(workspace),
+                                                           None))))
+
+    with git_on_path(failing_git("slug", "remote get-url")):
+        refusal = refusal_of(lambda: gatekeeper.derive_repo_slug(work))
+    check("a git failure reading the origin for the audit says git failed, not that origin "
+          "is not on GitHub",
+          refusal is not None and refusal.error == "audit-failed"
+          and "stand-in failure" in refusal.facts and "is not a GitHub" not in refusal.facts,
+          refusal)
+
+    legacy, legacy_commit = make_legacy_fixture(workspace, "git-fails")
+    with git_on_path(failing_git("legacy-verify", "--verify " + legacy_commit + "^{commit}")):
+        refusal = refusal_of(lambda: gatekeeper.read_legacy_content(
+            str(legacy), {"commit": legacy_commit, "source": "old-tool.py", "dest": "x.py"}))
+    check("a git failure checking the legacy commit is reported, not read as \"no such commit\"",
+          refusal is not None and refusal.error == "workspace-io-error"
+          and "stand-in failure" in refusal.facts, refusal)
+    with git_on_path(failing_git("legacy-show", " show " + legacy_commit)):
+        refusal = refusal_of(lambda: gatekeeper.read_legacy_content(
+            str(legacy), {"commit": legacy_commit, "source": "old-tool.py", "dest": "x.py"}))
+    check("a git failure reading the legacy path is reported, not read as \"no such path\"",
+          refusal is not None and refusal.error == "workspace-io-error"
+          and "stand-in failure" in refusal.facts, refusal)
+    with git_on_path(failing_git("legacy-verify-path", "--verify " + legacy_commit + ":")):
+        refusal = refusal_of(lambda: gatekeeper.read_legacy_content(
+            str(legacy), {"commit": legacy_commit, "source": "old-tool.py", "dest": "x.py"}))
+    check("a git failure checking the legacy path is reported, not read as \"no such path\"",
+          refusal is not None and refusal.error == "workspace-io-error"
+          and "stand-in failure" in refusal.facts, refusal)
+    refusal = refusal_of(lambda: gatekeeper.read_legacy_content(
+        str(legacy), {"commit": legacy_commit, "source": "no-such-path.py", "dest": "x.py"}))
+    check("an absent legacy path still refuses as import-invalid",
+          refusal is not None and refusal.error == "import-invalid"
+          and "does not exist" in refusal.facts, refusal)
+    refusal = refusal_of(lambda: gatekeeper.read_legacy_content(
+        str(legacy), {"commit": "1" * 40, "source": "old-tool.py", "dest": "x.py"}))
+    check("an absent legacy commit still refuses as import-invalid",
+          refusal is not None and refusal.error == "import-invalid"
+          and "no commit" in refusal.facts, refusal)
+
+    refusal = refusal_of(lambda: gatekeeper.resolve_repository(str(workspace / "no-such-dir")))
+    check("a repository git cannot find is refused with git's own words",
+          refusal is not None and "cannot change to" in refusal.facts, refusal)
+
+    original_attempt_push = gatekeeper.attempt_push
+    original_build_candidate = gatekeeper.build_candidate
+    gatekeeper.attempt_push = lambda clone: (True, "")
+    gatekeeper.build_candidate = lambda clone, request, worktree, digest, target=None: "c" * 40
+    try:
+        with git_on_path(failing_git("rev-list", "rev-list --count")):
+            outcome = gatekeeper.integrate_and_push(
+                work, {"base": base, "paths": ["README.md"], "message": "m", "issue": "none",
+                       "agent": "a", "origin": "none", "import": None},
+                {"README.md": b"seed\n"}, "0" * 64)
+    finally:
+        gatekeeper.attempt_push = original_attempt_push
+        gatekeeper.build_candidate = original_build_candidate
+    check("a failed count after a push that landed is reported beside the success",
+          outcome[0] == "c" * 40 and outcome[1] is None and "stand-in failure" in outcome[2],
+          outcome)
+
+    remote, work, base = make_fixture(workspace, "count-fails-end-to-end")
+    rival = workspace / "count-fails-rival"
+    git(["clone", "--quiet", str(remote), str(rival)], workspace)
+    git(["config", "user.name", "rival"], rival)
+    git(["config", "user.email", "rival@nedschorus.invalid"], rival)
+    (rival / "keep.txt").write_text("untouched\nthe rival's line\n", encoding="utf-8")
+    git(["commit", "--quiet", "-am", "a rival commit on main"], rival)
+    git(["push", "--quiet", "origin", "main"], rival)
+    (work / "README.md").write_text("seed\nlands over a rival\n", encoding="utf-8")
+    environment = {**os.environ, "XDG_STATE_HOME": str(state_home),
+                   "PATH": f"{failing_git('rev-list-end-to-end', 'rev-list --count')}"
+                           f"{os.pathsep}{os.environ['PATH']}"}
+    environment.pop("CLAUDE_CODE_SESSION_ID", None)
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), *base_request(work, remote, base, ["README.md"])],
+        capture_output=True, text=True, check=False, env=environment,
+    )
+    payload = load_payload(completed.stdout)
+    check("a check-in whose integration count fails still checks in, and its summary says the "
+          "count is unknown, with git's stderr",
+          payload.get("outcome") == "checked-in"
+          and "is unknown" in payload.get("summary", "")
+          and "stand-in failure" in payload.get("summary", ""), payload)
+
+    remote, work, base = make_fixture(workspace, "advisory-status-fails")
+    (work / "README.md").write_text("seed\nchecked in while status fails\n", encoding="utf-8")
+    environment = {**os.environ, "XDG_STATE_HOME": str(state_home),
+                   "PATH": f"{failing_git('status-end-to-end', 'status --porcelain')}"
+                           f"{os.pathsep}{os.environ['PATH']}"}
+    environment.pop("CLAUDE_CODE_SESSION_ID", None)
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), *base_request(work, remote, base, ["README.md"])],
+        capture_output=True, text=True, check=False, env=environment,
+    )
+    payload = load_payload(completed.stdout)
+    check("a check-in whose git status fails still checks in, and its advisory says the other "
+          "changes are unknown, with git's stderr",
+          payload.get("outcome") == "checked-in"
+          and "unknown" in payload.get("advisory", "")
+          and "stand-in failure" in payload.get("advisory", ""), payload)
 
     # --- the origin trailer records the submitting session -----------------
     remote, work, base = make_fixture(workspace, "origin")
