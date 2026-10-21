@@ -428,17 +428,23 @@ try:
           and failed and set(failed) == {"ls -la"} and not differing and "in-process, " not in out.split("REPLAY FAILED")[-1],
           f"status {status}; failed {failed}; differing {differing}\n{out}\n{err}")
 
-    hanging_child_on_ls = commit_with_reader_changed_in_its_long_running_child("import time; time.sleep(60)", scratch)
+    # The first child to read `ls -la` hangs for good, so only the per-pair timeout ends that reading,
+    # and a sender that kept the hung child would hang the readings after it too. Hanging once keeps
+    # the case to one timeout, which can then be the replay's default of 20 s: a reading takes well
+    # under a second on an idle machine and several seconds on a loaded one, at the workers' nice 15.
+    hang_once_marker = Path(scratch) / "a-child-hung-on-ls"
+    hanging_child_on_ls = commit_with_reader_changed_in_its_long_running_child(
+        f"if not os.path.exists({str(hang_once_marker)!r}): open({str(hang_once_marker)!r}, 'x').close(); "
+        "time.sleep(10 ** 6)", scratch)
     hung_child_scratch = Path(scratch) / "run-hung-child"
-    started = time.monotonic()
-    status, out, err = run_replay(hanging_child_on_ls, scratch, "--jobs", "1", "--per-pair-timeout-seconds", "2",
+    status, out, err = run_replay(hanging_child_on_ls, scratch, "--jobs", "1",
                                   "--scratch-directory", str(hung_child_scratch), base_ref=hanging_child_on_ls)
     failed, differing = failed_new_process_readings_and_rows_differing_from_in_process(hung_child_scratch)
     check("a shell reader child that hangs on `ls -la`: exit 2 by the per-pair timeout, only that pair's readings "
-          "fail, and its late reply answers no later request",
+          "fail, and the hung child answers no later request",
           status == 2 and "TIMEOUT" in out and failed and set(failed) == {"ls -la"} and not differing
-          and time.monotonic() - started < 120,
-          f"status {status} after {time.monotonic() - started:.0f}s; failed {failed}; differing {differing}\n{out}\n{err}")
+          and hang_once_marker.exists(),
+          f"status {status}; failed {failed}; differing {differing}\n{out}\n{err}")
 
     def reader_without_the_long_running_child_flag(worktree):
         with open(worktree / SHELL_READER, "a") as handle:

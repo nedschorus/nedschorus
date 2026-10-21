@@ -17,7 +17,6 @@ import json
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -110,44 +109,44 @@ check("a hook that hands over a rerun command says to look inside the JSON's add
               "above needs no report.", line)
 
 
-def run_lock_file_wait_command(lock_file, seconds_until_removed=None):
-    """Run the wait command the lock-file line gives, on lock_file; return (exit code, seconds taken)."""
-    command = next_step_lines.WAIT_UP_TO_ONE_MINUTE_FOR_LOCK_FILE_TO_GO_COMMAND.replace(
-        next_step_lines.LOCK_FILE_PATH_PLACEHOLDER, str(lock_file))
-    if seconds_until_removed is not None:
-        command = f'(sleep {seconds_until_removed}; rm -f "{lock_file}") & {command}; wait'
-    started = time.monotonic()
-    completed = subprocess.run(["sh", "-c", command], check=False, timeout=90)
-    return completed.returncode, time.monotonic() - started
+def run_lock_file_wait_command(directory, lock_file_present, removed_at_poll=0):
+    """Run the wait command the lock-file line gives, by sh, with a sleep stub first on PATH.
 
-
-with tempfile.TemporaryDirectory() as directory:
-    lock_file = Path(directory) / "index.lock"
-    exit_code, seconds = run_lock_file_wait_command(lock_file)
-    check("the lock-file wait command, run by sh, returns at once when the lock file is absent",
-          exit_code == 0 and seconds < 2, (exit_code, seconds))
-    lock_file.write_text("")
-    exit_code, seconds = run_lock_file_wait_command(lock_file, seconds_until_removed=1)
-    check("the lock-file wait command returns within one poll of git removing the lock file",
-          exit_code == 0 and 1 <= seconds < 5 and not lock_file.exists(), (exit_code, seconds))
-
-with tempfile.TemporaryDirectory() as directory:
-    # A sleep stub first on PATH returns at once and counts its calls, so the cap is reached in no time.
+    The stub returns at once and records each call; at call removed_at_poll it removes the lock
+    file, as git does when it finishes. Return (exit code, the stub's arguments, one per call,
+    whether the lock file is still there).
+    """
     stub_directory = Path(directory) / "bin"
     stub_directory.mkdir()
     calls = Path(directory) / "sleep-calls"
-    (stub_directory / "sleep").write_text(f'#!/bin/sh\necho "$1" >> "{calls}"\n')
-    (stub_directory / "sleep").chmod(0o755)
     lock_file = Path(directory) / "index.lock"
-    lock_file.write_text("")
+    if lock_file_present:
+        lock_file.write_text("")
+    (stub_directory / "sleep").write_text(
+        f'#!/bin/sh\necho "$1" >> "{calls}"\n'
+        f'if [ "$(wc -l < "{calls}")" -eq {removed_at_poll} ]; then rm -f "{lock_file}"; fi\n')
+    (stub_directory / "sleep").chmod(0o755)
     command = next_step_lines.WAIT_UP_TO_ONE_MINUTE_FOR_LOCK_FILE_TO_GO_COMMAND.replace(
         next_step_lines.LOCK_FILE_PATH_PLACEHOLDER, str(lock_file))
     completed = subprocess.run(["sh", "-c", command], check=False, timeout=30,
                                env={"PATH": f"{stub_directory}:/usr/bin:/bin"})
     polls = calls.read_text().splitlines() if calls.exists() else []
+    return completed.returncode, polls, lock_file.exists()
+
+
+with tempfile.TemporaryDirectory() as directory:
+    outcome = run_lock_file_wait_command(directory, lock_file_present=False)
+    check("the lock-file wait command, run by sh, returns without a poll when the lock file is absent",
+          outcome == (0, [], False), outcome)
+with tempfile.TemporaryDirectory() as directory:
+    outcome = run_lock_file_wait_command(directory, lock_file_present=True, removed_at_poll=3)
+    check("the lock-file wait command returns at the first poll after git removes the lock file",
+          outcome == (0, ["2"] * 3, False), outcome)
+with tempfile.TemporaryDirectory() as directory:
+    outcome = run_lock_file_wait_command(directory, lock_file_present=True)
     check("the lock-file wait command, against a lock file that stays, stops after exactly 30 polls of "
           "2 seconds, one minute in all",
-          completed.returncode == 0 and polls == ["2"] * 30, (completed.returncode, polls))
+          outcome == (0, ["2"] * 30, True), outcome)
 
 with tempfile.TemporaryDirectory() as directory:
     hook_script_path = Path(directory) / "a hook's copy.py"
