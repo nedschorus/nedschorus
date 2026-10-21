@@ -3549,6 +3549,7 @@ sys.exit(module.main())
         runner_git_main.RECORDS_ROOT = pathlib.Path(scratch) / "sanity-check-records"
         sys.argv = [str(RUNNER_SCRIPT), "--adversarial-prompt", "cut", "--runtime", "claude",
                     "--target", "docs/agents/sanity-checker-cut-adversarial-prompt.md"]
+        sys_argv_of_the_baseline_case = list(sys.argv)
         printed, errors = io.StringIO(), io.StringIO()
         try:
             with contextlib.redirect_stdout(printed), contextlib.redirect_stderr(errors):
@@ -3560,6 +3561,9 @@ sys.exit(module.main())
     check("a baseline snapshot git fails ends the run with exit 2 and git's words, "
           "claiming no record",
           exit_code == 2 and "a git failure this case made" in errors.getvalue()
+          and runner_git_main.git_failure_next_step_lines(shlex.join(
+              [str(RUNNER_SCRIPT.resolve()), *sys_argv_of_the_baseline_case[1:]]))
+          in errors.getvalue()
           and claimed == [],
           f"exit {exit_code}, stderr {errors.getvalue()!r}, records {claimed}")
 
@@ -3602,6 +3606,10 @@ sys.exit(module.main())
               f"report, prints git's words and exits 2",
               exit_code == 2 and expected_commit in report_text
               and "WARNING: the runner could not check" in printed.getvalue()
+              and runner_cell_git.git_failure_next_step_lines(
+                  runner_cell_git.rerun_command_for_cell(
+                      "cut", "claude", "docs/agents/sanity-checker-cut-adversarial-prompt.md",
+                      [], None)) in printed.getvalue()
               and "a git failure this case made" in printed.getvalue(),
               f"exit {exit_code}, report {report_text[:200]!r}, output {printed.getvalue()!r}")
 
@@ -3613,7 +3621,8 @@ sys.exit(module.main())
     with contextlib.redirect_stdout(printed):
         runner_stopping_git.git_check_failed_after_a_cell(
             "cut-adversarial-prompt-claude", "the commit its report describes",
-            git_failure(runner_stopping_git, ["rev-parse", "--short", "HEAD"]))
+            git_failure(runner_stopping_git, ["rev-parse", "--short", "HEAD"]),
+            "the rerun command")
     runner_stopping_git.RUN_STOPPED.clear()
     check("a git failure while the run is stopping prints nothing and fails nothing",
           printed.getvalue() == "" and runner_stopping_git.GIT_CHECKS_FAILED_AFTER_A_CELL == [],

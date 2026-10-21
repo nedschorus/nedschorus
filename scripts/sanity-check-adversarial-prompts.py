@@ -377,6 +377,21 @@ GIT_CHECKS_FAILED_AFTER_A_CELL = []
 STOP_PROCESS_LISTING_FAILURE = None
 # The commit token of a provenance line whose commit git could not read.
 COMMIT_NOT_READ = "not-read-git-failed"
+# What to do after a git command the runner ran has failed, printed after the
+# line that names the command and quotes git's error.
+GIT_FAILURE_NEXT_STEP_LINES = (
+    "If git's error names a lock file, such as .git/index.lock, wait one minute, then run {rerun}; do not delete the lock file yourself.",
+    "If git's error names a branch, commit or path that does not exist, and you gave that name to {program}, correct it in your command, then run the corrected command.",
+    "In any other case, run {rerun} once more.",
+    "If {rerun} fails again, stop and tell the user what {program} printed, git's error included; a subagent tells the agent that dispatched it instead.",
+)
+
+
+def git_failure_next_step_lines(rerun: str) -> str:
+    """GIT_FAILURE_NEXT_STEP_LINES for this program and `rerun`, each ending its line."""
+    program = str(pathlib.Path(__file__).resolve())
+    return "".join(line.format(rerun=rerun, program=program) + "\n"
+                   for line in GIT_FAILURE_NEXT_STEP_LINES)
 
 # The line a cell prints when its first launch produced no report and the
 # runner launches it once more: `RETRYING: <cell> — <cause class> — <detail>`.
@@ -1466,7 +1481,8 @@ class FailedLaunch(typing.NamedTuple):
 def launch_cell_once(cell: str, adversarial_prompt: str, runtime: str, prompt: str,
                      target: str, out_dir: pathlib.Path, baseline_status: dict,
                      corpus: tuple, checkout: pathlib.Path,
-                     scratch_record_dir: pathlib.Path, relaunched_after: str = ""):
+                     scratch_record_dir: pathlib.Path, relaunched_after: str = "",
+                     rerun_command: str = ""):
     """Launch one cell once, and save its report when it wrote one. Returns
     None when the report was saved, and the FailedLaunch otherwise; prints the
     agent-binary's own words and the launch's warnings, and neither the
@@ -1514,7 +1530,8 @@ def launch_cell_once(cell: str, adversarial_prompt: str, runtime: str, prompt: s
         stray = stray_paths_since(baseline_status, checkout, scratch_record_dir)
     except git_output.GitCommandFailed as failure:
         stray = []
-        git_check_failed_after_a_cell(cell, "whether it modified the review copy", failure)
+        git_check_failed_after_a_cell(cell, f"whether {cell} modified the review copy", failure,
+                                      rerun_command)
     if stray:
         print(f"WARNING: the review copy was modified outside the cells' scratch "
               f"directories, seen when {cell} finished: {', '.join(stray)}",
@@ -1534,7 +1551,8 @@ def launch_cell_once(cell: str, adversarial_prompt: str, runtime: str, prompt: s
         revision = reviewed_revision(baseline_status, checkout)
     except git_output.GitCommandFailed as failure:
         revision = f"commit={COMMIT_NOT_READ} {reviewed_worktree_state(baseline_status)}"
-        git_check_failed_after_a_cell(cell, "the commit its report describes", failure)
+        git_check_failed_after_a_cell(cell, f"the commit {cell}'s report describes", failure,
+                                      rerun_command)
     out_path = out_dir / f"{cell}.md"
     overwrote_stray_write = write_report(
         out_path,
@@ -1549,7 +1567,7 @@ def launch_cell_once(cell: str, adversarial_prompt: str, runtime: str, prompt: s
     return None
 
 
-def git_check_failed_after_a_cell(cell: str, what: str, failure) -> None:
+def git_check_failed_after_a_cell(cell: str, what: str, failure, rerun: str) -> None:
     """Print that a git check could not be made for a cell whose agent has
     finished, and make the run exit 2. The cell's report is still saved: the
     agent's work is not thrown away for the runner's own failure. Silent
@@ -1557,10 +1575,13 @@ def git_check_failed_after_a_cell(cell: str, what: str, failure) -> None:
     if RUN_STOPPED.is_set():
         return
     GIT_CHECKS_FAILED_AFTER_A_CELL.append(cell)
-    print(f"WARNING: the runner could not check {what} for {cell}, because "
-          f"{failure}. Its report is saved without that check. Fix what git "
-          f"names, then run this command again with only {cell}'s "
-          f"--adversarial-prompt and --runtime, for a report that has it.", flush=True)
+    # One write, so another cell's lines cannot land between these.
+    sys.stdout.write(f"WARNING: the runner could not check {what}, because "
+                     f"{failure}. {cell}'s report is saved without that check; the command "
+                     f"below runs {cell} alone again, in a new record whose report "
+                     f"has the check.\n"
+                     + git_failure_next_step_lines(rerun))
+    sys.stdout.flush()
 
 
 def failed_launch_is_relaunched(cause_class: str) -> bool:
@@ -1648,10 +1669,14 @@ def run_cell(adversarial_prompt: str, runtime: str, target: str, context: list,
     prompt = assemble_prompt(adversarial_prompt, target, context, problem_statement,
                              str(cell_scratch_dir(scratch_record_dir or out_dir, cell)))
 
+    rerun_command = rerun_command_for_cell(adversarial_prompt, runtime, target, context,
+                                           problem_statement)
+
     def launch(relaunched_after: str = ""):
         return launch_cell_once(cell, adversarial_prompt, runtime, prompt, target, out_dir,
                                 baseline_status, corpus, checkout,
-                                scratch_record_dir or out_dir, relaunched_after)
+                                scratch_record_dir or out_dir, relaunched_after,
+                                rerun_command)
 
     if RUN_STOPPED.is_set():
         return cell, False
@@ -1681,7 +1706,7 @@ def run_cell(adversarial_prompt: str, runtime: str, target: str, context: list,
     # say "the FAILED line above".
     lines = failed_cell_lines(
         adversarial_prompt, runtime, failure, relaunched,
-        rerun_command_for_cell(adversarial_prompt, runtime, target, context, problem_statement))
+        rerun_command)
     sys.stdout.write("".join(line + "\n" for line in lines))
     sys.stdout.flush()
     CELLS_FINISHED.add(cell)
@@ -1818,8 +1843,9 @@ def main() -> int:
     try:
         return run_cells_in_review_copy(args, target_path, run_log)
     except git_output.GitCommandFailed as failure:
-        print(f"sanity-check stopped before any agent launched: {failure}. "
-              f"Fix what git names, then rerun this command.", file=sys.stderr)
+        rerun = shlex.join([str(pathlib.Path(__file__).resolve()), *sys.argv[1:]])
+        sys.stderr.write(f"sanity-check stopped before any agent launched: {failure}.\n"
+                         + git_failure_next_step_lines(rerun))
         return 2
     except RunStoppedBySignal as stopped:
         stopped_by = stopped.signal_number

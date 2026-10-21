@@ -979,6 +979,44 @@ check("a fixture replay whose control search failed exits 2 and says so",
       code == 2 and "could not run" in out, f"{code} {out!r}")
 
 
+# A weakening grep rejects as a regex is the check's own fault: the agent's
+# `\(zzz/qqq\)` is valid, its last segment `qqq\)` is not.
+broken_weakening_corpus = in_a_scratch_corpus({"src/a.txt": "nothing here\n"})
+broken_weakening_command = "grep -rn '\\(zzz/qqq\\)' src"
+broken_weakening = judge(broken_weakening_command, exit_code=1, stdout="",
+                         control_corpus_root=broken_weakening_corpus)
+check("a weakened pattern grep rejects is skipped and said so, not reported as "
+      "the agent's search failing",
+      not broken_weakening.fires and broken_weakening.control_errors == []
+      and len(broken_weakening.control_skips) == 1
+      and "qqq\\)" in broken_weakening.control_skips[0],
+      f"{broken_weakening.signals} errors {broken_weakening.control_errors} "
+      f"skips {broken_weakening.control_skips}")
+code, out, _err = run_program_with(
+    {}, "--command", broken_weakening_command, "--exit-code", "1", "--run-control",
+    "--control-corpus-root", broken_weakening_corpus)
+check("a command whose weakened pattern grep rejects exits 0 and says the "
+      "control was skipped, not that the search is at fault",
+      code == 0 and "was skipped" in out and "not a fault in your search" in out,
+      f"{code} {out!r}")
+check("a search with the agent's pattern that cannot be started does not count as "
+      "running, so the weakened search's failure is still reported",
+      not check_module.search_with_the_agents_pattern_runs(
+          [str(NO_PROGRAMS / "grep"), "-rn", "needle", "."], broken_weakening_corpus))
+broken_weakening_fixtures = SUITE_SCRATCH / "fixtures-whose-weakening-grep-rejects"
+broken_weakening_fixtures.mkdir()
+(broken_weakening_fixtures / "skipped.json").write_text(json.dumps({
+    "case": "a quiet search whose weakening grep rejects", "provenance": "this suite",
+    "command": broken_weakening_command, "exit_code": 1, "stdout": "",
+    "must_fire": False, "control_corpus_root": "."}), encoding="utf-8")
+code, out, _err = run_program_with(
+    {}, "--replay-fixtures", str(broken_weakening_fixtures), "--run-control",
+    "--control-corpus-root", broken_weakening_corpus)
+check("a fixture replay whose weakened pattern grep rejects exits 0 and says "
+      "the control was skipped",
+      code == 0 and "was skipped" in out, f"{code} {out!r}")
+
+
 # ------------------------------------------------ what a control never runs
 
 for refused_stage in ("find . -name 'x/needle'",
