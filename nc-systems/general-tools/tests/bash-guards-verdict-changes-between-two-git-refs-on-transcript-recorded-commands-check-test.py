@@ -223,6 +223,16 @@ def signal_in_popen_wait_lock_gap_script(signal_name, handler_name):
     )
 
 
+# A guard's code that times its reading out at once, as the replay's per-pair timer firing there would, but only
+# while the replay has that timer set; unset, the reading goes on and the case fails. A wall-clock hang would
+# need a per-pair timeout short enough that a loaded machine also times out the readings meant to pass.
+PER_PAIR_TIMEOUT_DELIVERED_WHILE_ARMED = (
+    "    import signal\n"
+    "    if signal.getitimer(signal.ITIMER_REAL)[0] > 0:\n"
+    "        signal.raise_signal(signal.SIGALRM)\n")
+PER_PAIR_TIMEOUT_LOAD_CANNOT_REACH = "600"
+
+
 def stopped_by_sigterm(*_):
     raise SystemExit(1)  # So the temporary directory and its worktrees are removed below.
 
@@ -366,9 +376,9 @@ try:
         return calls
 
     hanging_once_on_tmux_kill_server = codex_guard_on_tmux_kill_server(
-        f"if len(open({str(calls_file)!r}).readlines()) == 1:\n    time.sleep(30)")
-    status, out, err = run_replay(hanging_once_on_tmux_kill_server, scratch, "--per-pair-timeout-seconds", "2",
-                                  "--new-process-pairs", "none")
+        f"if len(open({str(calls_file)!r}).readlines()) == 1:\n" + PER_PAIR_TIMEOUT_DELIVERED_WHILE_ARMED)
+    status, out, err = run_replay(hanging_once_on_tmux_kill_server, scratch, "--per-pair-timeout-seconds",
+                                  PER_PAIR_TIMEOUT_LOAD_CANNOT_REACH, "--new-process-pairs", "none")
     calls = codex_guard_calls_on_tmux_kill_server()
     check("a guard that times out on its first reading of a pair and answers on the second: read again alone, exit 0",
           status == 0 and "NO VERDICT CHANGED" in out and calls == 2
@@ -467,12 +477,13 @@ try:
         "    text = stdin.read()\n"
         f"    if '\"ls -la\"' in text and not os.path.exists({str(main_hang_once_marker)!r}):\n"
         f"        open({str(main_hang_once_marker)!r}, 'x').close()\n"
-        "        time.sleep(30)\n"
+        + "".join(f"    {line}\n" for line in PER_PAIR_TIMEOUT_DELIVERED_WHILE_ARMED.splitlines()) +
         "    return _main_as_written(stdin=io.StringIO(text), clock=clock)\n"
         "import io, os"), scratch)
     main_hung_once_scratch = Path(scratch) / "run-search-file-main-hung-once"
-    status, out, err = run_replay(main_hanging_once_on_ls, scratch, "--per-pair-timeout-seconds", "2",
-                                  "--new-process-pairs", "none", "--scratch-directory", str(main_hung_once_scratch))
+    status, out, err = run_replay(main_hanging_once_on_ls, scratch, "--per-pair-timeout-seconds",
+                                  PER_PAIR_TIMEOUT_LOAD_CANNOT_REACH, "--new-process-pairs", "none",
+                                  "--scratch-directory", str(main_hung_once_scratch))
     main_rows = json.loads((main_hung_once_scratch / "verdicts-search-file-head.json").read_text())["rows"] \
         if (main_hung_once_scratch / "verdicts-search-file-head.json").exists() else None
     check("a search-file main() that times out on its first reading of `ls -la` and answers on the second: "
@@ -935,11 +946,13 @@ try:
 
     # The same gap for the per-pair timeout: raised there, PairTimedOut left the lock held, and the wait() in
     # subprocess.run()'s exit blocked the reading forever. The real per-pair alarm is set past the case's
-    # deadline, so a TIMEOUT can only come from the timeout delivered in the gap and tried again.
+    # deadline, so a TIMEOUT can only come from the timeout delivered in the gap and tried again. The timeout
+    # must wait until subprocess.run() returns: raised inside it, it too gives a TIMEOUT, with the lock held.
     pair_gap_script = signal_in_popen_wait_lock_gap_script("SIGALRM", "raise_pair_timed_out") + (
         "import time\n"
         "def stand_in_reading(guard, command, working_directory, search_file_directory):\n"
         "    subprocess.run([sys.executable, '-c', 'pass'], timeout=600)\n"
+        "    print('subprocess.run returned', flush=True)\n"
         "    time.sleep(1000)\n"
         "replay.GUARDS['stand-in guard'] = stand_in_reading\n"
         "replay.WORKER['timeout'] = 600\n"
@@ -952,12 +965,36 @@ try:
         pair_gap = subprocess.run([sys.executable, "-c", pair_gap_script, str(SCRIPT_PATH)],
                                   capture_output=True, text=True, timeout=30)
         pair_gap_detail = f"exit {pair_gap.returncode}\n{pair_gap.stdout}{pair_gap.stderr}"
-        pair_gap_ok = pair_gap.returncode == 0 and "('TIMEOUT', None) signal delivered True" in pair_gap.stdout
+        pair_gap_ok = (pair_gap.returncode == 0 and "subprocess.run returned" in pair_gap.stdout
+                       and "('TIMEOUT', None) signal delivered True" in pair_gap.stdout)
     except subprocess.TimeoutExpired:
         pair_gap_ok = False
         pair_gap_detail = "the reading was still waiting 30 s after the per-pair timeout landed in Popen._wait()"
     check("a per-pair timeout landing inside subprocess's wait does not hang: the reading is a TIMEOUT",
           pair_gap_ok, pair_gap_detail)
+
+    # A guard whose subprocess call outlasts the per-pair timeout and that answers as soon as the call returns
+    # used to keep its verdict, unless the deferred timeout got in first: which one won was up to the load.
+    # The child sleeps three times the 1 s timeout, so the timeout falls inside the call even on a loaded machine.
+    late_answer_script = signal_in_popen_wait_lock_gap_script("SIGALRM", "raise_pair_timed_out") + (
+        "def stand_in_reading(guard, command, working_directory, search_file_directory):\n"
+        "    subprocess.run([sys.executable, '-c', 'import time; time.sleep(3)'], timeout=600)\n"
+        "    print('subprocess.run returned', flush=True)\n"
+        "    return 'passed', None\n"
+        "replay.GUARDS['stand-in guard'] = stand_in_reading\n"
+        "replay.WORKER['timeout'] = 1\n"
+        "print(replay.guard_readings({'stand-in guard': None}, 'true', '/', '/')['stand-in guard'])\n"
+    )
+    try:
+        late_answer = subprocess.run([sys.executable, "-c", late_answer_script, str(SCRIPT_PATH)],
+                                     capture_output=True, text=True, timeout=60)
+        late_answer_detail = f"exit {late_answer.returncode}\n{late_answer.stdout}{late_answer.stderr}"
+        late_answer_ok = (late_answer.returncode == 0 and "subprocess.run returned" in late_answer.stdout
+                          and "('TIMEOUT', None)" in late_answer.stdout)
+    except subprocess.TimeoutExpired:
+        late_answer_ok, late_answer_detail = False, "the reading was still running 60 s after it started"
+    check("a guard that answers as soon as a subprocess call outlasting the per-pair timeout returns: a TIMEOUT",
+          late_answer_ok, late_answer_detail)
 
     step_deadline_as_written = replay.step_deadline_seconds
     replay.step_deadline_seconds = lambda pair_count, jobs, timeout: 10
