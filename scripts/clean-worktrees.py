@@ -179,6 +179,13 @@ def run_git(repo, *arguments):
 
 FINISHED_WITH_FAILURES_LINE = "clean-worktrees: finished; each failure is named above"
 STOPPED_LINE_START = "clean-worktrees: stopped, because "
+# Only the listing calls raise, so every removal before the stop has already printed its line on stdout.
+WHAT_A_STOPPED_INVOCATION_REMOVED_WITH_REMOVE = (
+    "clean-worktrees removed only the worktrees and branches named on its lines containing "
+    "\": removed\" or \": deleted\", and checked nothing after the git command that failed.")
+WHAT_A_STOPPED_INVOCATION_REMOVED_WITHOUT_REMOVE = (
+    "clean-worktrees removed nothing, since it ran without --remove, and checked nothing after "
+    "the git command that failed.")
 
 def main_checkout_of(repo):
     """Return the primary checkout from the common git directory."""
@@ -510,8 +517,9 @@ def main(argv=None):
     except git_output.GitCommandFailed as error:
         # The cause stays on one line: the handoff-supervisor reports this line alone.
         rerun = shlex.join([sys.executable, str(Path(__file__).resolve()), *given_arguments])
-        print(f"{STOPPED_LINE_START}{' '.join(str(error).split())}; "
-              f"this run checked and did nothing beyond what it printed before this line.\n"
+        removed = (WHAT_A_STOPPED_INVOCATION_REMOVED_WITH_REMOVE if remove
+                   else WHAT_A_STOPPED_INVOCATION_REMOVED_WITHOUT_REMOVE)
+        print(f"{STOPPED_LINE_START}{' '.join(str(error).split())}; {removed}\n"
               + next_step_lines.git_failure_next_step_lines(
                   rerun, "scripts/clean-worktrees.py",
                   text_the_failure_line_contains=STOPPED_LINE_START.strip(),

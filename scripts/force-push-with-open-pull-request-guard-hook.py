@@ -458,6 +458,15 @@ def note_unchecked(reason):
     }}))
 
 
+PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
+    "If the command force-pushed a branch, run this, with the branch it pushed in place of "
+    "<branch>: gh pr list --state open --head <branch>\n"
+    "If that lists a pull request, or fails, tell merge-lane-2 with SendMessage which branch "
+    "you force-pushed.\n"
+    "If it lists nothing, no pull request was affected.\n"
+    "Do not force push again to undo it.")
+
+
 def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
     try:
         payload = json.load(stdin)
@@ -474,7 +483,7 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
         decision, reason = analyze_command_text(command, payload_cwd, guard)
     except shell_reader.ShellParserUnavailable as error:
         print(shell_reader.parser_unavailable_hook_output(
-            "The force-push guard", error))
+            "The force-push guard", error, PARSER_UNAVAILABLE_NEXT_STEP_LINES))
         return 0
     if decision == "deny":
         deny(reason)

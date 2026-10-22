@@ -237,8 +237,10 @@ def build_scratch_repository(scratch):
 
 def run_fast_read(repository, stub_directory, plan, expected_report, target_argument,
                   counter_path, ship_destination=None,
-                  record_clock=FIXED_RECORD_CLOCK_FOR_TESTS, agent_session_id=None):
-    """The read as a subprocess, with the stub agy first on PATH.
+                  record_clock=FIXED_RECORD_CLOCK_FOR_TESTS, agent_session_id=None,
+                  current_directory=None):
+    """The read as a subprocess, with the stub agy first on PATH, run from
+    `current_directory`, by default `repository`.
 
     `expected_report` is where the stub writes -- the path the case expects
     the rule to choose. If the read chooses another, the cell finds no report
@@ -270,6 +272,7 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
         [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py"),
          "--target", str(target_argument)],
         capture_output=True, text=True, check=False, env=environment,
+        cwd=current_directory or repository,
     )
 
 
@@ -643,6 +646,37 @@ with tempfile.TemporaryDirectory() as scratch:
           and "target not found" in result.stderr and launches_counted(counter) == 0
           and "Traceback" not in result.stderr,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    # --- A relative --target is the current directory's file ---------------
+    # Run with the current directory in another checkout, the read must review
+    # that checkout's file, not the one at the same path in its own checkout.
+    repository = build_scratch_repository(scratch)
+    other_relative = "docs/drafts/a-design.md"
+    second_checkout = scratch / "second-checkout"
+    if second_checkout.exists():
+        shutil.rmtree(second_checkout)
+    second_document = second_checkout / other_relative
+    second_document.parent.mkdir(parents=True)
+    second_document.write_text("# A design\n\nThe second checkout's own line.\n", encoding="utf-8")
+    second_checkout = scratch_repository_fixture.commit_seeded_cold_read_scratch_repository(
+        second_checkout)
+    # The record still goes under the script's own checkout's cold-read-records/.
+    second_checkout_report = (repository / "cold-read-records"
+                              / f"a-design-{record_stamp}" / "fast-read.md")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
+        second_checkout_report, other_relative, counter, current_directory=second_checkout,
+    )
+    # A file outside the script's checkout is frozen at its absolute path under target/.
+    frozen = (second_checkout_report.parent / "target"
+              / second_document.resolve().relative_to(second_document.resolve().anchor))
+    check("a relative --target run from another checkout freezes that checkout's file, "
+          "not the one at the same path in the script's checkout",
+          result.returncode == 0 and frozen.is_file()
+          and frozen.read_bytes() == (second_checkout / other_relative).read_bytes()
+          and frozen.read_bytes() != (repository / other_relative).read_bytes(),
+          f"exit {result.returncode}; frozen present={frozen.exists()}; "
+          f"stdout={result.stdout!r}; stderr={result.stderr[-300:]!r}")
 
     # --- The records route freezes the target and ships the record ----------
     # User-ruled 2026-09-07: a record carries the exact bytes reviewed at the

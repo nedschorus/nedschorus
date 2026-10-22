@@ -1017,9 +1017,13 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
     report = sync_with_failing_call(home, "rev-parse --show-toplevel")
     check("a branch sync git failure ends with the next steps, naming the git command to rerun",
           report.endswith(
-              f"If git's error names a lock file, such as .git/index.lock, wait one minute, then "
-              f"run exactly `git -C {home} rev-parse --show-toplevel`; do not delete the lock "
-              f"file yourself.\n"
+              f"If git's error names a lock file, such as .git/index.lock, do not delete the lock "
+              f"file yourself, because a git command still running may hold it; wait up to one "
+              f"minute for git to remove it by running `i=0; while [ -e \"<lock file path>\" ] && "
+              f"[ $i -lt 30 ]; do sleep 2; i=$((i+1)); done` with <lock file path> replaced by the "
+              f"path git's error names, without the quotes git puts around it (Claude Code refuses a "
+              f"plain `sleep 60`), then run exactly "
+              f"`git -C {home} rev-parse --show-toplevel`, whether or not the lock file is gone.\n"
               f"If git's error names no lock file, run exactly `git -C {home} rev-parse "
               f"--show-toplevel` once more.\n"
               "If the rerun prints an error again, stop, do not act on the rest of this prompt, "

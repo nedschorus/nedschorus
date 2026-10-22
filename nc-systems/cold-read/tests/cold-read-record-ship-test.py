@@ -115,12 +115,13 @@ def make_record(root: pathlib.Path, name: str, files: dict) -> pathlib.Path:
     return record
 
 
-def ship(destination, *args, extra_env=None, script=SHIP):
+def ship(destination, *args, extra_env=None, script=SHIP, current_directory=None):
     env = dict(os.environ)
     env[DESTINATION_VARIABLE] = destination
     env.update(extra_env or {})
     return subprocess.run([sys.executable, str(script), *args],
-                          capture_output=True, text=True, check=False, env=env)
+                          capture_output=True, text=True, check=False, env=env,
+                          cwd=current_directory)
 
 
 REPORT_A = "<!-- provenance: runtime=claude model=opus -->\n# A\n\nfinding one\n"
@@ -1346,6 +1347,23 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-overlap-test-") a
           ran.returncode == 0 and ran.stdout.startswith("replaced ")
           and (overlap_store / "x").read_text(encoding="utf-8") == "this shipment\n",
           repr(ran.stdout) + ran.stderr)
+
+# --- A relative record directory means the one under the current directory --
+# Run from a directory outside the shipper's checkout with a relative path:
+# the record under that directory is the one shipped.
+with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-relative-test-") as relative_name:
+    relative_scratch = pathlib.Path(relative_name)
+    relative_store = relative_scratch / "store" / "cold-read-records"
+    relative_record = make_record(relative_scratch / "records", "2026-10-21-relative-path",
+                                  {"a.md": REPORT_A})
+    result = ship(str(relative_store), "records/2026-10-21-relative-path",
+                  current_directory=relative_scratch)
+    check("a relative record directory is shipped from under the current directory, "
+          "not the shipper's checkout",
+          result.returncode == 0 and result.stdout.startswith("shipped:")
+          and (relative_store / relative_record.name / "a.md").read_text(encoding="utf-8")
+          == REPORT_A,
+          result.stdout + result.stderr)
 
 print()
 if failures:

@@ -88,6 +88,10 @@ NED_BOX_CRASH_RESTART_WATCHER_LINE = (
     "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
     "handoff-agent-seat-died-without-session-handoff-restart-watcher.py >> "
     "/home/nedlern/.claude/handoff-agent-seat-died-without-session-handoff-restart-watcher.log 2>&1")
+NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE = (
+    "* * * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/handoff/"
+    "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py >> "
+    "/home/nedlern/.claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log 2>&1")
 MAC_CLEAN_PLIST = {
     "Label": "com.nedschorus.daily-clean-worktrees",
     "ProgramArguments": ["/opt/homebrew/bin/python3",
@@ -248,12 +252,15 @@ check("the Mac's daily worktree cleanup is a launchd job at 06:30, so a run miss
       clean["on"]["mac"]["scheduler"] == "launchd" and mac_clean_plist == MAC_CLEAN_PLIST
       and list(mac_clean_plist) == list(MAC_CLEAN_PLIST), mac_clean_plist)
 check("the table's jobs are the two typed by hand before this program, the daily worktree "
-      "cleanup, ned-box's crash restart watcher, the weekly owner check of the work-snapshot "
-      "hook, the session dialogs refresh and the guarded-file store's daily prune, and no other",
+      "cleanup, ned-box's crash restart watcher, ned-box's Remote Control reconnect watcher, the "
+      "weekly owner check of the work-snapshot hook, the session dialogs refresh and the "
+      "guarded-file store's daily prune, and no other",
       sorted(real_jobs) == ["daily-clean-worktrees", "daily-full-test-run-of-main",
                             "daily-guarded-file-versions-and-approvals-store-removed-checkout-"
                             "copies-prune",
                             "handoff-agent-seat-died-without-session-handoff-restart-watcher",
+                            "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-"
+                            "tmux-typing-watcher",
                             "log-store-session-dialogs-refresh", "transcript-mirror-to-log-store",
                             "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check"],
       sorted(real_jobs))
@@ -276,6 +283,10 @@ mirror_documentation = (REPOSITORY_ROOT / mirror["program"]).read_text(encoding=
 daily_documentation = (REPOSITORY_ROOT / daily["program"]).read_text(encoding="utf-8")
 clean_documentation = (REPOSITORY_ROOT / clean["program"]).read_text(encoding="utf-8")
 watcher_documentation = (REPOSITORY_ROOT / watcher["program"]).read_text(encoding="utf-8")
+remote_control_watcher = real_jobs[
+    "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher"]
+remote_control_watcher_documentation = (
+    REPOSITORY_ROOT / remote_control_watcher["program"]).read_text(encoding="utf-8")
 guarded_file_prune_documentation = (
     REPOSITORY_ROOT / real_jobs["daily-guarded-file-versions-and-approvals-store-removed-"
                                 "checkout-copies-prune"]["program"]).read_text(encoding="utf-8")
@@ -288,18 +299,20 @@ check("the lines each program documents are the table's lines, and each names th
       and f"    {NED_BOX_DAILY_LINE}\n" in daily_documentation
       and f"    {NED_BOX_CLEAN_LINE}\n" in clean_documentation
       and f"    {NED_BOX_CRASH_RESTART_WATCHER_LINE}\n" in watcher_documentation
+      and f"    {NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE}\n" in remote_control_watcher_documentation
       and f"    {NED_BOX_WEEKLY_LIVE_CHECK_LINE}\n" in weekly_live_check_documentation
       and f"    {NED_BOX_GUARDED_FILE_PRUNE_LINE}\n" in guarded_file_prune_documentation
       and all("nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py" in text
               for text in (mirror_documentation, daily_documentation, clean_documentation,
-                           watcher_documentation, weekly_live_check_documentation,
+                           watcher_documentation, remote_control_watcher_documentation,
+                           weekly_live_check_documentation,
                            guarded_file_prune_documentation)))
 
 printed, errors = io.StringIO(), io.StringIO()
 stub = MachineStub()
 with redirect_stdout(printed), redirect_stderr(errors):
     exit_code = installer.main(["--print"], platform="linux", home=Path("/home/nedlern"), run=stub)
-check("--print as ned-box prints ned-box's seven cron lines from the real table and runs nothing",
+check("--print as ned-box prints ned-box's eight cron lines from the real table and runs nothing",
       exit_code == 0 and stub.commands == []
       and printed.getvalue().splitlines() == [
           "machine: ned-box (linux, /home/nedlern)",
@@ -309,6 +322,8 @@ check("--print as ned-box prints ned-box's seven cron lines from the real table 
           "daily-clean-worktrees — cron line:", NED_BOX_CLEAN_LINE,
           "handoff-agent-seat-died-without-session-handoff-restart-watcher — cron line:",
           NED_BOX_CRASH_RESTART_WATCHER_LINE,
+          "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher — "
+          "cron line:", NED_BOX_REMOTE_CONTROL_RECONNECT_WATCHER_LINE,
           "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check — cron line:",
           NED_BOX_WEEKLY_LIVE_CHECK_LINE,
           "daily-guarded-file-versions-and-approvals-store-removed-checkout-copies-prune — cron "
@@ -1039,7 +1054,7 @@ with tempfile.TemporaryDirectory() as temporary:
               "Run `the-rerun` once more, on this machine; it tries this job alone.",
               'If the rerun prints a line containing "FAILED: j" again, stop, and tell '
               "the user, or, if you are a subagent, the agent that dispatched you, word for word, the line containing "
-              '"FAILED: j" from each run.'],
+              '"FAILED: j" from the command that printed this message and from the rerun.'],
           (silent_failure.cause, silent_failure.next_steps("the-rerun", "FAILED: j")))
     stub.print_error_text = b""
     exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
@@ -1052,7 +1067,7 @@ with tempfile.TemporaryDirectory() as temporary:
               "count as the rerun failing.",
               'If the rerun prints a line containing "NOT CHECKED: daily-full-test-run-of-main" '
               "again, stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line "
-              'containing "NOT CHECKED: daily-full-test-run-of-main" from each run.'], (exit_code, errors))
+              'containing "NOT CHECKED: daily-full-test-run-of-main" from the command that printed this message and from the rerun.'], (exit_code, errors))
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
     install_rerun = f"{SCRIPT_PATH.resolve()} --install --job daily-full-test-run-of-main"
     check("--install whose launchctl print fails printing no error ends with the rerun and "
@@ -1061,7 +1076,7 @@ with tempfile.TemporaryDirectory() as temporary:
               f"Run `{install_rerun}` once more, on this machine; it tries this job alone.",
               'If the rerun prints a line containing "FAILED: daily-full-test-run-of-main" again, '
               "stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line "
-              'containing "FAILED: daily-full-test-run-of-main" from each run.'], (exit_code, errors))
+              'containing "FAILED: daily-full-test-run-of-main" from the command that printed this message and from the rerun.'], (exit_code, errors))
     stub.print_error_text = b"Could not print: injected launchctl failure\n"
     before = len(stub.commands)
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)

@@ -119,19 +119,30 @@ def silent(result) -> bool:
     return result.returncode == 0 and result.stdout.strip() == ""
 
 
+LOCK_FILE_WAIT_CLAUSE = (
+    "do not delete the lock file yourself, because a git command still running may hold it; "
+    "wait up to one minute for git to remove it by running "
+    "`i=0; while [ -e \"<lock file path>\" ] && [ $i -lt 30 ]; do sleep 2; i=$((i+1)); done` with "
+    "<lock file path> replaced by the path git's error names, without the quotes git puts around it "
+    "(Claude Code refuses a plain `sleep 60`), then run the command below this paragraph, whether or not the "
+    "lock file is gone")
 GIT_FAILURE_RERUN_LINE = (
     "A later run of this hook checks only the file that run's Edit or Write touched, so check "
-    "{path} by running the next line's command: if git's error above names a lock file, first wait "
-    "one minute, and do not delete the lock file; otherwise run the command now. The command "
+    "{path} by running the command printed on its own line below this paragraph. If git's error above names no lock file, run that "
+    "command now. If git's error names a lock file, "
+    + LOCK_FILE_WAIT_CLAUSE.replace("{", "{{").replace("}", "}}")
+    + ". The command "
     "prints nothing when there is nothing new to tell you about the file. Otherwise it prints JSON "
     "whose hookSpecificOutput.additionalContext field holds one of two texts: this hook's warning, "
     "whose instructions you follow; or, when git fails again, a git-failure message like this one, "
-    "and the line here that begins \"If a line starting\" says what to do then.")
+    "and the last line here says what to do then.")
 GIT_FAILURE_RERUN_FAILS_TOO_LINE = (
-    'If a line starting "obsolete-file-edit-warning-hook:" reports a git failure again when you '
-    "run that command, whether this error or another, tell the user, or, if you are a subagent, "
-    "the agent that dispatched you, word for word, every line of this message and of the new one, "
-    "before you go on. If the check finds no git failure then, this failure needs no report.")
+    "If the command on the line above prints JSON whose hookSpecificOutput.additionalContext "
+    'field starts with "obsolete-file-edit-warning-hook:" and reports a git failure, whether this '
+    "error or another, tell the user, or, if you are a subagent, the agent that dispatched you, "
+    "word for word, every line of this message and of that field, before you go on. If the "
+    "command prints nothing, or JSON whose field reports no git failure, the git failure above "
+    "needs no report.")
 
 
 def named_rerun_command(result, edited_path) -> str:
@@ -558,13 +569,14 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           reported_git_failure(result, "rev-parse", "fatal: shimmed failing-git", edited_file),
           result.stdout + result.stderr)
     rerun_line = (agent_text(result).splitlines() + ["", ""])[1]
-    check("a git failure's rerun line gives the lock-file wait before the run-now instruction",
-          "names a lock file, first wait one minute" in rerun_line
-          and rerun_line.find("lock file") < rerun_line.find("run the command now"), rerun_line)
+    check("a git failure's rerun line says to run the command now when git names no lock file, "
+          "and gives the lock-file wait otherwise",
+          "names no lock file, run that command now. If git's error names a lock file, "
+          + LOCK_FILE_WAIT_CLAUSE + "." in rerun_line, rerun_line)
     check("a git failure's rerun line says what the command prints when git fails again "
           "and points to the closing line",
-          "or, when git fails again, a git-failure message like this one, and the line here that "
-          "begins \"If a line starting\" says what to do then." in rerun_line, rerun_line)
+          "or, when git fails again, a git-failure message like this one, and the last line here "
+          "says what to do then." in rerun_line, rerun_line)
 
     result = run_hook(hook_payload(checkout, edited_file),
                       path_replacement=no_git_directory)

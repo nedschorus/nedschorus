@@ -569,6 +569,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -1165,8 +1166,12 @@ def checkout_top_directory(given):
     top = Path(answer.stdout.strip()).resolve()
     if top != Path(given).resolve():
         raise CouldNotRun(
-            f"{PROGRAM}: not run — {given} is not the top directory of its checkout.\n"
-            f"Pass --checkout {top}")
+            f"{PROGRAM}: not run — {given} is not the top directory of the git checkout "
+            f"that holds {given}.\n"
+            f"Rerun the same command, replacing your --checkout and its value with: "
+            f"--checkout {shlex.quote(str(top))}\n"
+            f"If you leave --checkout out instead, this program tests the checkout that "
+            f"contains run-all-test-suites.py itself, whatever the current directory is.")
     return top
 
 
@@ -1186,7 +1191,8 @@ def suite_sandbox_lists_read_from_checkout_under_test(top):
         return own, (f"{Path(__file__).resolve()}, since the checkout has no "
                      f"{source_file.relative_to(top)}")
     except (OSError, UnicodeDecodeError) as error:
-        restore = f"git -C {top} checkout -- {source_file.relative_to(top)}"
+        restore = (f"git -C {shlex.quote(str(top))} checkout -- "
+                   f"{shlex.quote(str(source_file.relative_to(top)))}")
         rerun = "Once the step for your case succeeds, rerun the command you ran.\n"
         tell_the_user = ("this same error appears again after you rerun, stop and tell the user, "
                          "quoting this message; a subagent tells the agent that dispatched it "
@@ -1205,10 +1211,11 @@ def suite_sandbox_lists_read_from_checkout_under_test(top):
             f"{PROGRAM}: not run — {source_file} could not be read "
             f"({type(error).__name__}: {error}), so which sandbox each suite runs in is unknown.\n"
             f"If you lack permission to read the file, grant yourself read permission, such as "
-            f"with: chmod u+r {source_file}\n"
+            f"with: chmod u+r {shlex.quote(str(source_file))}\n"
             f"If a directory or anything else that is not a regular file stands at that path, "
             f"move it aside and restore the file with: "
-            f"mv {source_file} {source_file}.moved-aside && {restore}\n"
+            f"mv {shlex.quote(str(source_file))} {shlex.quote(f'{source_file}.moved-aside')} "
+            f"&& {restore}\n"
             f"{rerun}"
             f"If neither case fits, a step fails, or {tell_the_user}")
     try:
@@ -2657,7 +2664,7 @@ def signal_sandbox_refusal(error, program=PROGRAM):
             f"the user the suites were not run and why, and ask the user to run "
             f"the same command from an ordinary shell on this machine.\n"
             f"On Linux, if this run is not inside another sandbox, check that "
-            f"`bwrap {' '.join(TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE)} true` "
+            f"`{shlex.join(('bwrap', *TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE, 'true'))}` "
             f"works on this machine, and report what it prints to the user.\n"
             f"On macOS, report the reason above to the user: the suites need "
             f"{SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC} to refuse their signals to "
