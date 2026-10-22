@@ -372,6 +372,16 @@ check("a redirection followed by 512,000 words is read in less than 2.5 times th
       isinstance(timed, list) and timed[0][0] < 30 and timed[0][0] < 2.5 * timed[0][1]
       and timed[1][0] == [512001, ["tmux", "kill-server"]] and timed[1][1] == [512001, ["tmux", "kill-server"]],
       timed)
+# The ratio above divides out a slowdown in reading plain words, so plain words are counted alone.
+# Copying the command's text once per word, byte by byte, runs about 16 times the reader's lines
+# at four times the words; read in place, about 4 times.
+counted = reader_lines_run_counted_in_a_child(
+    "def read(n):\n found = r.simple_commands('echo' + ' a' * n + '\\ntmux kill-server')\n"
+    " return [len(found[0]), list(found[-1])]", [500, 2000])
+check("2,000 plain words are read in less than 5 times the reader's lines run for 500, inside a guard's "
+      "30 s, and the command after them is read",
+      isinstance(counted, list) and 1 <= counted[0][0] and counted[0][1] < 5 * counted[0][0]
+      and counted[1] == [[501, ["tmux", "kill-server"]], [2001, ["tmux", "kill-server"]]], counted)
 found = words_of("cat <<EOF\n$(echo a \\ #x; rm y\n)\nEOF\n")
 check("a # after an escaped space in a substitution in a here-document body is part of its word, "
       "so the commands after it in the substitution are read",
