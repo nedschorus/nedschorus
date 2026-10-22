@@ -741,11 +741,14 @@ def shortened(value):
 
 def timed_out_readings_read_again_line(step, read_again, passed_again):
     """The stderr line for a step that read read_again timed-out readings again, of which passed_again got a verdict."""
-    return (f"{step}: {read_again} readings timed out and were read again, one at a time, after the parallel pass "
-            f"(a reading is one Bash guard's verdict on one recorded command); {passed_again} got a verdict on the "
-            f"second reading"
-            + (f"; the other {read_again - passed_again} did not and count as failed readings, so this replay will "
-               f"exit 2 when it finishes" if read_again > passed_again else "")
+    failed_again = read_again - passed_again
+    return (f"{step}: {read_again} {'reading' if read_again == 1 else 'readings'} timed out and "
+            f"{'was' if read_again == 1 else 'were'} read again, one at a time, after the step's other readings had "
+            f"finished (a reading is one Bash guard's verdict on one recorded command); {passed_again} got a verdict "
+            f"on the second reading"
+            + ((f"; the other one did not get a verdict and counts as a failed reading" if failed_again == 1 else
+                f"; the other {failed_again} did not get a verdict and count as failed readings")
+               + ", so this replay will exit 2 when it finishes" if failed_again > 0 else "")
             + ".")
 
 

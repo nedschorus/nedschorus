@@ -150,25 +150,31 @@ def run_replay(head_ref, scratch, *extra, base_ref="HEAD", scratch_directory=Tru
     return status, printed.getvalue(), errors.getvalue()
 
 
-class ReplayRanPastTheTestsDeadline(Exception):
-    pass
+def run_replay_within(deadline_seconds, head_ref, scratch, *extra, base_ref="HEAD", pairs=FIXTURE_PAIRS):
+    """run_replay() in a process of its own, stopped by this process after deadline_seconds.
 
-
-def run_replay_within(deadline_seconds, head_ref, scratch, *extra, **keywords):
-    """run_replay(), stopped after deadline_seconds.
-
-    The stop is raised inside the replay, whose own handler reports it as REPLAY FAILED with exit 2, and
-    run_step_in_child()'s cleanup kills the step's process group on the way out.
+    The deadline is kept from outside: an exception that a signal handler raises inside the replay can land
+    while subprocess holds its wait lock, and the replay's cleanup then waits on that lock forever. On expiry
+    the replay gets SIGTERM, which makes it stop its steps and remove its checkouts, then SIGKILL if it is
+    still running; the status returned is then None.
     """
-    def stop(*_):
-        raise ReplayRanPastTheTestsDeadline(f"the replay ran past this test's deadline of {deadline_seconds} s")
-    previous = signal.signal(signal.SIGALRM, stop)
-    signal.alarm(deadline_seconds)
+    pairs_file = Path(scratch) / "fixture-pairs.json"
+    pairs_file.write_text(json.dumps(pairs))
+    arguments = ["--repository", str(TEST_REPOSITORY), "--base-ref", base_ref, "--head-ref", head_ref,
+                 "--pairs-file", str(pairs_file), "--jobs", "2", *extra]
+    process = subprocess.Popen([sys.executable, str(SCRIPT_PATH), *arguments], stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True)
     try:
-        return run_replay(head_ref, scratch, *extra, **keywords)
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, previous)
+        out, err = process.communicate(timeout=deadline_seconds)
+        return process.returncode, out, err
+    except subprocess.TimeoutExpired:
+        process.terminate()
+        try:
+            out, err = process.communicate(timeout=REPLAY_STOP_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            out, err = process.communicate()
+        return None, out, err + f"\nthe replay ran past this test's deadline of {deadline_seconds} s"
 
 
 def stopped_by_sigterm(*_):
@@ -179,6 +185,8 @@ def stopped_by_sigterm(*_):
 # that kept the hung child would time out each later pair on that guard and each reading again, at least
 # 9 more timeouts (180 s), so this deadline fails it by name with room for a loaded machine's slower readings.
 HUNG_CHILD_CASE_DEADLINE_SECONDS = 150
+# Long enough for a stopped replay to stop its steps and remove its checkouts.
+REPLAY_STOP_SECONDS = 60
 signal.signal(signal.SIGTERM, stopped_by_sigterm)
 scratch = tempfile.mkdtemp(prefix="bash-guards-replay-test-")
 # The test's checkouts are registered in a clone of its own inside the scratch directory, never in the
@@ -338,17 +346,30 @@ try:
           status == 2 and "EXCEPTION RuntimeError" in out and calls == 1 and "read again" not in err,
           f"status {status}; calls {calls}\n{out}\n{err}")
 
-    check("the read-again line counts the readings that got no verdict on the second reading",
-          replay.timed_out_readings_read_again_line("new-process, base", 3, 1)
-          == "new-process, base: 3 readings timed out and were read again, one at a time, after the parallel pass "
-             "(a reading is one Bash guard's verdict on one recorded command); 1 got a verdict on the second reading; "
-             "the other 2 did not and count as failed readings, so this replay will exit 2 when it finishes.",
-          replay.timed_out_readings_read_again_line("new-process, base", 3, 1))
-    check("the read-again line says nothing about failed readings when every second reading got a verdict",
-          replay.timed_out_readings_read_again_line("in-process, head", 2, 2)
-          == "in-process, head: 2 readings timed out and were read again, one at a time, after the parallel pass "
-             "(a reading is one Bash guard's verdict on one recorded command); 2 got a verdict on the second reading.",
-          replay.timed_out_readings_read_again_line("in-process, head", 2, 2))
+    read_again_lines = {
+        ("new-process, base", 5, 2):
+            "new-process, base: 5 readings timed out and were read again, one at a time, after the step's other "
+            "readings had finished (a reading is one Bash guard's verdict on one recorded command); 2 got a verdict on "
+            "the second reading; the other 3 did not get a verdict and count as failed readings, so this replay will "
+            "exit 2 when it finishes.",
+        ("in-process, head", 2, 2):
+            "in-process, head: 2 readings timed out and were read again, one at a time, after the step's other "
+            "readings had finished (a reading is one Bash guard's verdict on one recorded command); 2 got a verdict on "
+            "the second reading.",
+        ("in-process, head", 1, 0):
+            "in-process, head: 1 reading timed out and was read again, one at a time, after the step's other "
+            "readings had finished (a reading is one Bash guard's verdict on one recorded command); 0 got a verdict on "
+            "the second reading; the other one did not get a verdict and counts as a failed reading, so this replay "
+            "will exit 2 when it finishes.",
+        ("search-file main(), head", 1, 1):
+            "search-file main(), head: 1 reading timed out and was read again, one at a time, after the step's other "
+            "readings had finished (a reading is one Bash guard's verdict on one recorded command); 1 got a verdict on "
+            "the second reading.",
+    }
+    for arguments, expected in read_again_lines.items():
+        check(f"the read-again line for {arguments[1]} read again, {arguments[2]} with a verdict, says so in words",
+              replay.timed_out_readings_read_again_line(*arguments) == expected,
+              replay.timed_out_readings_read_again_line(*arguments))
     check("the step deadline covers every reading timing out in the parallel pass and again alone",
           replay.step_deadline_seconds(9, 3, 7)
           == (3 + 9) * (len(replay.GUARDS) + 1) * 7 + replay.STEP_DEADLINE_MARGIN_SECONDS,
