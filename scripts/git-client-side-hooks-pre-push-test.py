@@ -17,6 +17,7 @@ the temporary directory:
     <layout>/scripts/git-client-side-hooks/pre-push
     <layout>/scripts/git-client-side-hooks-pre-push-conflict-check.py
     <layout>/scripts/branch-conflict-check.py
+    <layout>/scripts/branch-reverts-a-file-to-an-older-main-version-check.py
     <layout>/scripts/git-client-side-hooks-pre-push-selective-test-run.py
     <layout>/scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py
     <layout>/scripts/run-all-test-suites.py, always a fake that passes
@@ -59,6 +60,7 @@ CONFLICT_CHECK_RUNNER = SCRIPTS_DIRECTORY / "git-client-side-hooks-pre-push-conf
 MUTATION_TESTING_WORKTREE_CHECK = (SCRIPTS_DIRECTORY / "git-client-side-hooks-pre-push-mutation-"
                                    "testing-worktree-push-refusal.py")
 REAL_CONFLICT_CHECK = SCRIPTS_DIRECTORY / "branch-conflict-check.py"
+REAL_REVERT_CHECK = SCRIPTS_DIRECTORY / "branch-reverts-a-file-to-an-older-main-version-check.py"
 SELECTIVE_TEST_RUN_CHECK = SCRIPTS_DIRECTORY / "git-client-side-hooks-pre-push-selective-test-run.py"
 OPEN_PULL_REQUEST_BRANCH_CHECK = (SCRIPTS_DIRECTORY / "git-client-side-hooks-pre-push-open-pull-"
                                   "request-branch-non-fast-forward-or-deletion-refusal.py")
@@ -347,7 +349,7 @@ def make_layout(parent, name, conflict_check=REAL_CONFLICT_CHECK,
                 test_suites_runner_text=None, include_test_suites_runner=True,
                 selective_test_run_check_text=None, include_selective_test_run_check=True,
                 open_pull_request_branch_check_text=None,
-                include_open_pull_request_branch_check=True):
+                include_open_pull_request_branch_check=True, revert_check=REAL_REVERT_CHECK):
     """A copy of this checkout's hooks, laid out as the hook expects.
 
     conflict_check is a Path to copy, a string of fake check source, or None
@@ -355,7 +357,9 @@ def make_layout(parent, name, conflict_check=REAL_CONFLICT_CHECK,
     for the conflict check. test_suites_runner_text replaces the fake
     run-all-test-suites.py that passes, and selective_test_run_check_text the
     selective test run check, and open_pull_request_branch_check_text the check
-    for rewrites and deletions of open pull requests' head branches. Returns the hooks directory, for core.hooksPath.
+    for rewrites and deletions of open pull requests' head branches. revert_check,
+    like conflict_check, is a Path to copy, fake source, or None for no file.
+    Returns the hooks directory, for core.hooksPath.
     """
     scripts = parent / name / "scripts"
     hooks = scripts / HOOK_DIRECTORY_NAME
@@ -393,6 +397,10 @@ def make_layout(parent, name, conflict_check=REAL_CONFLICT_CHECK,
         shutil.copy2(SCRIPTS_DIRECTORY.parent / GIT_OUTPUT_MODULE_RELATIVE_PATH, module)
     elif isinstance(conflict_check, str):
         (scripts / REAL_CONFLICT_CHECK.name).write_text(conflict_check)
+    if isinstance(revert_check, Path):
+        shutil.copy2(revert_check, scripts / REAL_REVERT_CHECK.name)
+    elif isinstance(revert_check, str):
+        (scripts / REAL_REVERT_CHECK.name).write_text(revert_check)
     return hooks
 
 
@@ -729,6 +737,15 @@ def run_unit_cases():
                   completed.stderr)
     finally:
         shutil.rmtree(layout_parent, ignore_errors=True)
+
+    sha = "a" * 40
+    stream = io.StringIO()
+    reverts = runner.check_reverts([("late", sha)], time.monotonic() - 1, 7, stream)
+    check("a branch left with no time budget is not sent to the revert check, and the push "
+          "goes ahead with a message",
+          reverts == [] and REVERT_NOT_CHECKED % (
+              "late", "the 7-second time budget was used up") in stream.getvalue()
+          and revert_hand_check_line(sha) in stream.getvalue(), stream.getvalue())
 
 
 # --- Push cases ------------------------------------------------------------
@@ -1762,6 +1779,107 @@ def run_open_pull_request_branch_cases(scratch):
           raised is not None and "exited 128" in raised, raised)
 
 
+# --- Files set back to a version main has replaced --------------------------
+
+REVERT_REFUSAL_HEADER = ("pre-push: branch %s sets a file back to a version that "
+                         "origin/main has replaced; this push is refused.")
+REVERT_NOT_CHECKED = ("pre-push: branch %s was not checked for files set back to a version "
+                      "that origin/main has replaced, because %s; this push goes ahead.")
+
+
+def revert_hand_check_line(commit):
+    return ("Check it by hand from your worktree: python3 scripts/branch-reverts-a-file-to-an-"
+            "older-main-version-check.py --head %s" % commit[:SHORT_COMMIT_LENGTH])
+
+
+FAKE_REVERT_CHECK_NO_ANSWER = FAKE_CHECK_PREAMBLE + """\
+print("fake revert check: git failed", file=sys.stderr)
+sys.exit(2)
+"""
+
+FAKE_REVERT_CHECK_FOUND_WITHOUT_VERDICT = FAKE_CHECK_PREAMBLE + """\
+print("no verdict line here")
+sys.exit(1)
+"""
+
+FAKE_REVERT_CHECK_HANGS = FAKE_CHECK_HANGS
+
+
+def squash_by_soft_reset(scenario, branch):
+    """Cut a branch before main's last change to shared.txt, then squash it onto main.
+
+    The squash keeps the old index, so the branch sets shared.txt back."""
+    scenario.git(scenario.clone, "switch", "--quiet", "-c", branch, scenario.base)
+    scenario.commit("squashed-work.txt", "work\n", "Work before the squash")
+    scenario.git(scenario.clone, "reset", "--soft", "origin/main")
+    scenario.git(scenario.clone, "commit", "--quiet", "-m", "Squashed work")
+    return scenario.head(branch)
+
+
+def run_revert_check_cases(scratch):
+    real = make_layout(scratch, "layout-revert-real")
+    scenario = Scenario(scratch, "revert-real", real)
+    commit = squash_by_soft_reset(scenario, "squashed")
+    result = scenario.push("origin", "squashed")
+    check("a branch squashed by soft reset onto a newer main is refused",
+          was_refused(result), result.describe())
+    check("and never reaches origin", scenario.origin_ref("squashed") is None,
+          repr(scenario.origin_ref("squashed")))
+    check("the refusal names the branch and passes on the check's verdict, file and commit",
+          REVERT_REFUSAL_HEADER % "squashed" in result.stderr
+          and "VERDICT: REVERTS-MAIN-CHANGE" in result.stderr
+          and "shared.txt: back to its version before %s (Main side)"
+          % scenario.head("origin/main")[:SHORT_COMMIT_LENGTH] in result.stderr,
+          result.describe())
+    check("and does not give the conflict refusal's merge instruction",
+          "Once the merge is committed" not in result.stderr, result.describe())
+
+    result = scenario.push("origin", "clean")
+    check("(control) a clean branch still goes through, with the revert check silent",
+          went_through(result) and conflict_check_said_nothing(result.stderr),
+          result.describe())
+
+    for label, revert_check, reason in (
+            ("is missing", None, None),
+            ("cannot decide", FAKE_REVERT_CHECK_NO_ANSWER,
+             "it could not decide: fake revert check: git failed"),
+            ("exits 1 without a verdict line", FAKE_REVERT_CHECK_FOUND_WITHOUT_VERDICT,
+             "it exited 1 without a VERDICT: REVERTS-MAIN-CHANGE line")):
+        hooks = make_layout(scratch, "layout-revert-" + label.replace(" ", "-"),
+                            revert_check=revert_check)
+        scenario = Scenario(scratch, "revert-" + label.replace(" ", "-"), hooks)
+        commit = squash_by_soft_reset(scenario, "squashed")
+        result = scenario.push("origin", "squashed")
+        if reason is None:
+            reason = "%s is missing" % (hooks.parent / REAL_REVERT_CHECK.name)
+        check("when the revert check %s, the push goes ahead" % label,
+              went_through(result), result.describe())
+        check("and says the branch was not checked, why, and the command to check it by hand",
+              REVERT_NOT_CHECKED % ("squashed", reason) in result.stderr
+              and revert_hand_check_line(commit) in result.stderr, result.describe())
+
+    hooks = make_layout(scratch, "layout-revert-hangs", revert_check=FAKE_REVERT_CHECK_HANGS)
+    scenario = Scenario(scratch, "revert-hangs", hooks)
+    scenario.extra_environment[TIME_BUDGET_VARIABLE] = "3"
+    commit = squash_by_soft_reset(scenario, "squashed")
+    result = scenario.push("origin", "squashed")
+    check("when the revert check hangs past the time budget, the push goes ahead",
+          went_through(result), result.describe())
+    check("and says it was stopped at the budget",
+          REVERT_NOT_CHECKED % ("squashed", "it had not finished when the 3-second time "
+                                "budget ran out, and was stopped") in result.stderr,
+          result.describe())
+
+    hooks = make_layout(scratch, "layout-revert-after-conflict",
+                        conflict_check=FAKE_CHECK_ALWAYS_CONFLICT,
+                        revert_check=FAKE_CHECK_ALWAYS_CONFLICT)
+    scenario = Scenario(scratch, "revert-after-conflict", hooks)
+    result = scenario.push("origin", "clean")
+    check("a branch that conflicts is not sent to the revert check",
+          scenario.fake_check_calls() == ["--head %s" % scenario.head("clean")],
+          repr(scenario.fake_check_calls()))
+
+
 def main():
     run_unit_cases()
     # Resolved, because git and the hooks print resolved paths: on macOS the temporary
@@ -1772,6 +1890,7 @@ def main():
         run_selective_test_run_cases(scratch)
         run_mutation_testing_worktree_cases(scratch)
         run_open_pull_request_branch_cases(scratch)
+        run_revert_check_cases(scratch)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     if failures:
