@@ -223,6 +223,18 @@ def signal_in_popen_wait_lock_gap_script(signal_name, handler_name):
     )
 
 
+
+# Defines run_then_record_return(), which makes a subprocess.run() call and then prints "subprocess.run returned".
+# Its globals are subprocess's, so the per-pair timeout handler, which defers while a frame with those globals
+# runs, cannot fire between the return and the print and drop the print from a correct run on a loaded machine.
+SUBPROCESS_RUN_THEN_RECORD_RETURN = (
+    "exec(" + repr(
+        "def run_then_record_return(*arguments, **options):\n"
+        "    run(*arguments, **options)\n"
+        "    sys.stdout.write('subprocess.run returned\\n')\n"
+        "    sys.stdout.flush()\n") + ", vars(subprocess))\n"
+    "run_then_record_return = subprocess.run_then_record_return\n")
+
 # A guard's code that times its reading out at once, as the replay's per-pair timer firing there would, but only
 # while the replay has that timer set; unset, the reading goes on and the case fails. A wall-clock hang would
 # need a per-pair timeout short enough that a loaded machine also times out the readings meant to pass.
@@ -949,10 +961,10 @@ try:
     # deadline, so a TIMEOUT can only come from the timeout delivered in the gap and tried again. The timeout
     # must wait until subprocess.run() returns: raised inside it, it too gives a TIMEOUT, with the lock held.
     pair_gap_script = signal_in_popen_wait_lock_gap_script("SIGALRM", "raise_pair_timed_out") + (
+        SUBPROCESS_RUN_THEN_RECORD_RETURN +
         "import time\n"
         "def stand_in_reading(guard, command, working_directory, search_file_directory):\n"
-        "    subprocess.run([sys.executable, '-c', 'pass'], timeout=600)\n"
-        "    print('subprocess.run returned', flush=True)\n"
+        "    run_then_record_return([sys.executable, '-c', 'pass'], timeout=600)\n"
         "    time.sleep(1000)\n"
         "replay.GUARDS['stand-in guard'] = stand_in_reading\n"
         "replay.WORKER['timeout'] = 600\n"
@@ -977,9 +989,9 @@ try:
     # used to keep its verdict, unless the deferred timeout got in first: which one won was up to the load.
     # The child sleeps three times the 1 s timeout, so the timeout falls inside the call even on a loaded machine.
     late_answer_script = signal_in_popen_wait_lock_gap_script("SIGALRM", "raise_pair_timed_out") + (
+        SUBPROCESS_RUN_THEN_RECORD_RETURN +
         "def stand_in_reading(guard, command, working_directory, search_file_directory):\n"
-        "    subprocess.run([sys.executable, '-c', 'import time; time.sleep(3)'], timeout=600)\n"
-        "    print('subprocess.run returned', flush=True)\n"
+        "    run_then_record_return([sys.executable, '-c', 'import time; time.sleep(3)'], timeout=600)\n"
         "    return 'passed', None\n"
         "replay.GUARDS['stand-in guard'] = stand_in_reading\n"
         "replay.WORKER['timeout'] = 1\n"
@@ -995,6 +1007,30 @@ try:
         late_answer_ok, late_answer_detail = False, "the reading was still running 60 s after it started"
     check("a guard that answers as soon as a subprocess call outlasting the per-pair timeout returns: a TIMEOUT",
           late_answer_ok, late_answer_detail)
+
+    # A worker reads many pairs in one process, so a timeout deferred in one reading must not time out the next.
+    next_reading_script = signal_in_popen_wait_lock_gap_script("SIGALRM", "raise_pair_timed_out") + (
+        "def late_reading(guard, command, working_directory, search_file_directory):\n"
+        "    subprocess.run([sys.executable, '-c', 'import time; time.sleep(3)'], timeout=600)\n"
+        "    return 'passed', None\n"
+        "def prompt_reading(guard, command, working_directory, search_file_directory):\n"
+        "    return 'passed', None\n"
+        "replay.GUARDS['late guard'] = late_reading\n"
+        "replay.GUARDS['prompt guard'] = prompt_reading\n"
+        "replay.WORKER['timeout'] = 1\n"
+        "print('first', replay.guard_readings({'late guard': None}, 'true', '/', '/')['late guard'])\n"
+        "replay.WORKER['timeout'] = 600\n"
+        "print('next', replay.guard_readings({'prompt guard': None}, 'true', '/', '/')['prompt guard'])\n"
+    )
+    try:
+        next_reading = subprocess.run([sys.executable, "-c", next_reading_script, str(SCRIPT_PATH)],
+                                      capture_output=True, text=True, timeout=60)
+        next_reading_detail = f"exit {next_reading.returncode}\n{next_reading.stdout}{next_reading.stderr}"
+        next_reading_lines = next_reading.stdout.splitlines()
+    except subprocess.TimeoutExpired:
+        next_reading_lines, next_reading_detail = [], "the readings were still running 60 s after they started"
+    check("a reading after one whose timeout was deferred keeps its verdict",
+          next_reading_lines == ["first ('TIMEOUT', None)", "next ('passed', None)"], next_reading_detail)
 
     step_deadline_as_written = replay.step_deadline_seconds
     replay.step_deadline_seconds = lambda pair_count, jobs, timeout: 10
