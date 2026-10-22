@@ -31,7 +31,8 @@ Exit status: 0 when no verdict differs and no added guard refuses a recorded com
 verdict differs or an added guard refuses a recorded command; 2 when the replay itself
 failed, which includes a guard that raised on a recorded command at either ref, or timed out on
 it twice, because that row has no verdict to compare. A reading that runs past the per-pair timeout
-(--per-pair-timeout-seconds, 20 s by default) is read once more, by itself,
+(--per-pair-timeout-seconds, 20 s by default), or whose one-command-per-process shell reader runs past
+its own subprocess timeout, is read once more, by itself,
 after the step's other readings have finished, since a timeout can come from the machine's load rather
 than the guard. A message that differs while its verdict does not is
 printed, and does not change the exit status. The scratch directory is removed after an exit 0
@@ -155,6 +156,17 @@ class PairTimedOut(BaseException):
 
 def raise_pair_timed_out(*_):
     raise PairTimedOut()
+
+
+def failed_reading(error):
+    """Return the (verdict, message) of a reading that raised error, a TIMEOUT when the error is a timeout."""
+    if isinstance(error, PairTimedOut):
+        return "TIMEOUT", None
+    # A one-command-per-process shell reader's own subprocess timeout, which load causes as it causes a
+    # PairTimedOut; the reader's exception class is the checkout's own, so the stdlib cause is what is tested.
+    if isinstance(error.__cause__, subprocess.TimeoutExpired):
+        return "TIMEOUT", str(error)
+    return f"EXCEPTION {type(error).__name__}", str(error)
 
 
 class ShellReaderLongRunningChildProcessDiedMidRequest(BaseException):
@@ -477,12 +489,10 @@ def guard_readings(guards, command, working_directory, search_file_directory):
                 # A message naming a file in the checkout would differ between the base and head checkouts.
                 message = message.replace(WORKER["checkout"], "<checkout>")
             readings[path] = (verdict, message)
-        except PairTimedOut:
-            readings[path] = ("TIMEOUT", None)
-        except (Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
+        except (PairTimedOut, Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
             # A failed reading; is_failed_reading() makes the run exit 2.
             # SystemExit too: one escaping a worker would end that worker.
-            readings[path] = (f"EXCEPTION {type(error).__name__}", str(error))
+            readings[path] = failed_reading(error)
         finally:
             signal.alarm(0)
     return readings
@@ -534,11 +544,9 @@ def worker_search_file_main_rows(pairs):
             if isinstance(message, str):
                 message = message.replace(WORKER["checkout"], "<checkout>")
             row = [verdict, message]
-        except PairTimedOut:
-            row = ["TIMEOUT", None]
-        except (Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
+        except (PairTimedOut, Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
             # A failed reading; is_failed_reading() makes the run exit 2.
-            row = [f"EXCEPTION {type(error).__name__}", str(error)]
+            row = list(failed_reading(error))
         finally:
             signal.alarm(0)
         rows.append(row)
@@ -558,10 +566,8 @@ def smoke_check(checkout, new_process, search_file_directory, timeout, guards_le
         if SEARCH_FILE_GUARD in guards:  # Not at a base ref older than the search-file guard.
             signal.alarm(timeout)
             readings["search-file main()"] = search_file_main_outcome(guards[SEARCH_FILE_GUARD], "true", "/")
-    except PairTimedOut:
-        readings["search-file main()"] = ("TIMEOUT", None)
-    except (Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
-        readings["search-file main()"] = (f"EXCEPTION {type(error).__name__}", str(error))
+    except (PairTimedOut, Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
+        readings["search-file main()"] = failed_reading(error)
     finally:
         signal.alarm(0)
         for sender in senders:
