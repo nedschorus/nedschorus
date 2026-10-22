@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Carry out the user's A, AO, D, O2 or O3 answer to the waiting item of an
+"""Carry out the user's A, AO, D, Z, O2 or O3 answer to the waiting item of an
 open approval-walk: give each text the answered item adds, its `#new` lines, a
-cold-read-fast-read, then record in the walk-minutes that the answer took
-effect.
+cold-read-fast-read, then record the answer in the walk-minutes and set their
+`#next_to_present` line to the next item.
 
 Usage, from the agent-session's checkout:
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check
-      [--obvious | --disapproved | --option N] [--item N]
+      [--obvious | --disapproved | --deferred | --option N] [--item N]
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py close
 
 The answer is an approval, A, unless a flag says otherwise: --obvious for AO,
---disapproved for D, --option 2 or 3 for O2 or O3, which approve the item's
-"Option N" paragraph instead of its recommendation. --item N picks one of the
+--disapproved for D, --deferred for Z, --option 2 or 3 for O2 or O3, which
+approve the item's "Option N" paragraph instead of its recommendation. R, E and
+O decide nothing, so the program takes no flag for them. --item N picks one of the
 waiting items when the `#next_to_present` line names several.
 
 The open approval-walk and its waiting items are found with WALK_FINDER_FILE,
@@ -29,7 +30,9 @@ it saves the text to a scratch file and runs cold-read-fast-read.py --target on
 that file. Then it writes the answer line and one status line per text, or "no
 proposed text marked", into the walk-minutes, and prints the status lines, the
 judgement the agent must make on new reports, and the close step to run. It
-appends one line of counts to the log-store's COUNTS_LOG_FILE_NAME.
+appends one line of counts to the log-store's COUNTS_LOG_FILE_NAME. A deferral
+changes nothing, so CHECK --deferred runs no fast read, logs no counts, and
+writes only the answer line.
 
 A fast read that prints a line opening FAILED, or exits nonzero, ends CHECK
 before the walk-minutes are written: the program prints that line, or a FAILED
@@ -38,10 +41,22 @@ waiting. A counts line that cannot be written is printed as such after the
 rest, with exit 2.
 
 CLOSE reads the last answer line CHECK wrote. When the `#next_to_present` line
-still names that line's items, it records that the answer took effect; when it
-names others, a new item a finding raised is waiting, and the answer is
-recorded as held for it. Either way it prints the lines the agent's next
-message must include, the status lines among them.
+still names that line's items, it records the answer: that it took effect, or,
+for a deferral, that the item moves to just before the summary item, the item
+whose heading's point opens with "summary"; an item deferred a second time
+leaves the walk and stays open. It then writes a `#next_to_present` line as the
+minutes' last line, naming the next item: walking the walk-document's items in
+order, a once-deferred item placed just before the summary item, from the item
+after the answered one, and round again from the first, the first item the
+minutes do not record; `none, closed` when there is none. A minutes line
+records the items it opens with, as in `Item 4 of 9:` or `- Item 4, <date>:`,
+when it says approved, disapproved, accepted, rejected or `<moved on, no
+decision>`; one that says deferred instead records a deferral; CHECK's answer
+lines record nothing. When the `#next_to_present` line names other items than
+the answer line, a new item a finding raised is waiting: the answer is recorded
+as held for it, and the line is written again unchanged as the last line.
+Either way it prints the lines the agent's next message must include, the
+status lines among them.
 
 No open approval-walk, or an item the walk-minutes or the walk-document do not
 let the program find, is a failure: one line on stderr, exit 1.
@@ -50,6 +65,7 @@ Agent-facing messages follow
 docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 """
 import argparse
+import collections
 import datetime
 import importlib.util
 import os
@@ -71,10 +87,10 @@ PROGRAM = "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-clos
 NEW_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*#new\b[:\s]*(.*)$")
 QUOTE_PAIRS = (('"', '"'), ("“", "”"), ("'", "'"))
 ANSWER_LINE = re.compile(r"^(?P<item>items? .+?): the user answered (?P<answered>.+?)(?: #approved_obvious)? "
-                         r"\([^)]*\), which makes its change\. Fast reads:$")
+                         r"\([^)]*\), which makes (?:its change\. Fast reads:|no change\.)$")
 STATUS_LINE_PREFIX = "- "
 OBVIOUS_HASHTAG = " #approved_obvious"
-APPROVED, DISAPPROVED = "approved", "disapproved"
+APPROVED, DISAPPROVED, DEFERRED = "approved", "disapproved", "deferred"
 OUTCOMES = {APPROVED: "<accepted>", DISAPPROVED: "<rejected>"}
 
 NO_PROPOSED_TEXT = "no proposed text marked"
@@ -100,10 +116,22 @@ FAST_READ_FAILED_LINES = (
     "answer the item another way.",
 )
 CHECK_MINUTES = "{item}: the user answered {answered}{obvious} ({date_and_time}), which makes its change. Fast reads:"
+CHECK_DEFERRED_MINUTES = "{item}: the user answered deferred ({date_and_time}), which makes no change."
 CLOSE_TOOK_EFFECT_MINUTES = "{item}: {answered}; every text the change adds has had a fast read. {outcome}"
+CLOSE_DEFERRED_MINUTES = "{item}: deferred; it moves to just before the summary item. <open>"
+CLOSE_DEFERRED_AGAIN_MINUTES = "{item}: deferred a second time, so it leaves the walk and stays open. <open>"
 CLOSE_HELD_MINUTES = "{item}: answer held: {new_item}, raised by a fast-read finding, waits for the user's answer. <open>"
 CLOSE_TOOK_EFFECT_LINES = (
     "{item}'s answer is recorded in the minutes, and its change may now be made.",
+    "Your next message must include these lines, as they are:",
+)
+CLOSE_DEFERRED_LINES = (
+    "{item} is deferred, and the minutes record it; it comes back just before the summary item.",
+    "Your next message must include these lines, as they are:",
+)
+CLOSE_DEFERRED_AGAIN_LINES = (
+    "{item} is deferred a second time, so the minutes record it as open and it leaves the walk.",
+    "Add it to your task list if it is not already a task.",
     "Your next message must include these lines, as they are:",
 )
 CLOSE_HELD_LINES = (
@@ -115,9 +143,17 @@ CLOSE_TOOK_EFFECT_NEXT = (
     "If the change needs nothing more from the user, such as a text he has not yet seen, start it as the "
     "walk-me-through skill's sentence on ready work says; if it edits a file that work you dispatched "
     "earlier is still editing, start it when that earlier work finishes.",
-    "Then move the approval-walk on: to the next item, or after the last item, to the walk-me-through "
-    "skill's closing.",
 )
+CLOSE_NEXT_ITEM = "Then present {next_item}, which the minutes' `#next_to_present` line now names."
+CLOSE_NO_NEXT_ITEM = ("No item is left to present, and the minutes' `#next_to_present` line now reads "
+                      "`none, closed`: go on to the walk-me-through skill's closing.")
+NEXT_MARKER_LINE = "#next_to_present {value}"
+CLOSED_MARKER_VALUE = "none, closed"
+RECORDED_ITEMS = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_]*(items?\s+[^:(]*)", re.I)
+DATE = re.compile(r"\d{4}-\d\d-\d\d")
+DECIDED = re.compile(r"\b(?:dis)?approved\b|\baccepted\b|\brejected\b|<moved on, no decision>", re.I)
+DEFERRED_WORD = re.compile(r"\bdeferred\b", re.I)
+SUMMARY_HEADING = re.compile(r"\bof\s+\d+\b[*_\s:.\-\u2013\u2014]*summary\b", re.I)
 CLOSE_HELD_NEXT = ("Then present {new_item}, and record the user's answer to it in the minutes as "
                    "the outcome of {item} too.")
 
@@ -267,6 +303,8 @@ def answered_word(arguments):
     """The answer as the walk-minutes write it: approved, disapproved, or approved option N."""
     if arguments.disapproved:
         return DISAPPROVED
+    if arguments.deferred:
+        return DEFERRED
     if arguments.option is not None:
         return f"{APPROVED} option {arguments.option}"
     return APPROVED
@@ -279,6 +317,8 @@ def check_flags(arguments):
         flags += " --obvious"
     if arguments.disapproved:
         flags += " --disapproved"
+    if arguments.deferred:
+        flags += " --deferred"
     if arguments.option is not None:
         flags += f" --option {arguments.option}"
     if arguments.item is not None:
@@ -292,6 +332,11 @@ def check(arguments):
     count, numbers, total = waiting_items(walk_finder, value, minutes)
     item, numbers = chosen_item(count, numbers, total, arguments.item, minutes)
     document, lines = item_lines(walk_finder, minutes, numbers, total, item, parser)
+    if arguments.deferred:
+        now = datetime.datetime.now().astimezone()
+        append_to_minutes(minutes, [CHECK_DEFERRED_MINUTES.format(item=item, date_and_time=f"{now:%Y-%m-%d %H:%M}")])
+        print(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve()))
+        return 0
     texts = proposed_texts(lines)
     record_directories = arguments.cold_read_records or [top / RECORDS_DIRECTORY_NAME,
                                                          LOG_STORE / RECORDS_DIRECTORY_NAME]
@@ -344,29 +389,110 @@ def last_answer(minutes):
                     break
                 statuses.append(line[len(STATUS_LINE_PREFIX):])
             return match["item"], match["answered"], statuses
-    raise Failure(f"{minutes} has no line recording an answer that makes a change; run "
+    raise Failure(f"{minutes} has no line recording the user's answer; run "
                   f"`python3 {Path(__file__).resolve()} check` first, with the flag for the user's answer as "
                   f"`--help` lists it.")
 
 
+def walk_document_items(walk_finder, minutes, value, numbers, total, parser):
+    """Return (M, the walk-document's item numbers of total M in order, the summary item's number or None)."""
+    document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
+    try:
+        total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser)
+    except walk_finder.UnusableRange as problem:
+        raise Failure(f"the last `#next_to_present` line in {minutes}, `{value}`: {problem}")
+    text = document.read_text(encoding="utf-8")
+    lines = text.split("\n")
+    order, summary = [], None
+    for unit_numbers, unit_total, _, first, _ in walk_finder.item_unit_spans(text, parser):
+        if unit_total != total:
+            continue
+        order += [number for number in unit_numbers if number not in order]
+        if unit_numbers and SUMMARY_HEADING.search(lines[first]):
+            summary = unit_numbers[0]
+    return total, order, summary
+
+
+def minutes_record(walk_finder, minutes_text, parser):
+    """Return (the item numbers a minutes line decides, a Counter of how many lines defer each item)."""
+    code = walk_finder.code_line_numbers(parser.parse(minutes_text))
+    decided, deferrals = set(), collections.Counter()
+    for number, line in enumerate(minutes_text.split("\n")):
+        if number in code or ANSWER_LINE.match(line):
+            continue
+        match = RECORDED_ITEMS.match(DATE.sub("", line))
+        if not match:
+            continue
+        try:
+            items, _ = walk_finder.parse_items(match[1].strip())
+        except walk_finder.UnusableRange:
+            continue
+        if DECIDED.search(line):
+            decided.update(items)
+        elif DEFERRED_WORD.search(line):
+            for item in items:
+                deferrals[item] += 1
+    return decided, deferrals
+
+
+def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals):
+    """Return the item numbers the `#next_to_present` line must name next, or [] when the minutes record
+    every item.
+
+    Items shown with the answered one that the minutes do not record yet stay waiting. Otherwise the walk
+    goes through the walk-document's items in order, an item deferred once and not decided moved to just
+    before the summary item, or to the end when there is none, and names the first item the minutes do
+    not record. It starts at the last answered item, or, when that item was just deferred, at the first
+    item after it in the walk-document that is not deferred, and goes round once.
+    """
+    recorded = {item for item in order if item in decided or deferrals[item] > 1}
+    still_waiting = [item for item in waiting_numbers if item not in recorded and item not in answered_numbers]
+    if still_waiting:
+        return still_waiting
+    waiting_deferred = [item for item in order if item not in recorded and item in deferrals]
+    in_place = [item for item in order if item not in waiting_deferred]
+    cut = in_place.index(summary) if summary in in_place else len(in_place)
+    walk = in_place[:cut] + waiting_deferred + in_place[cut:]
+    answered = [index for index, item in enumerate(order) if item in answered_numbers]
+    anchors = [item for item in order[answered[-1]:] if item in in_place] if answered else []
+    start = walk.index(anchors[0]) if anchors else 0
+    return [item for item in walk[start:] + walk[:start] if item not in recorded][:1]
+
+
 def close(arguments):
     walk_finder = load_walk_finder()
-    _, minutes, value, _ = the_open_walk(walk_finder, arguments.cwd)
+    _, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
     item, answered, statuses = last_answer(minutes)
-    waiting, waiting_numbers, _ = waiting_items(walk_finder, value, minutes)
+    waiting, waiting_numbers, total = waiting_items(walk_finder, value, minutes)
     try:
         answered_numbers, _ = walk_finder.parse_items(item)
     except walk_finder.UnusableRange as problem:
-        raise Failure(f"the last answer line in {minutes} names `{item}`, which {problem}.")
-    if set(answered_numbers) <= set(waiting_numbers):
-        outcome = OUTCOMES[DISAPPROVED if answered == DISAPPROVED else APPROVED]
-        append_to_minutes(minutes, [CLOSE_TOOK_EFFECT_MINUTES.format(item=item, answered=answered, outcome=outcome)])
-        output = ([line.format(item=item) for line in CLOSE_TOOK_EFFECT_LINES] + statuses
-                  + list(CLOSE_TOOK_EFFECT_NEXT))
-    else:
-        append_to_minutes(minutes, [CLOSE_HELD_MINUTES.format(item=item, new_item=waiting)])
+        raise Failure(f"the last answer line in {minutes}, `{item}`, {problem}.")
+    if not set(answered_numbers) <= set(waiting_numbers):
+        append_to_minutes(minutes, [CLOSE_HELD_MINUTES.format(item=item, new_item=waiting),
+                                    NEXT_MARKER_LINE.format(value=value)])
         output = ([line.format(item=item, new_item=waiting) for line in CLOSE_HELD_LINES] + statuses
                   + [CLOSE_HELD_NEXT.format(item=item, new_item=waiting)])
+        print("\n".join(output))
+        return 0
+    total, order, summary = walk_document_items(walk_finder, minutes, value, waiting_numbers, total, parser)
+    if answered == DEFERRED:
+        _, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
+        again = any(deferrals[number] for number in answered_numbers)
+        recorded = (CLOSE_DEFERRED_AGAIN_MINUTES if again else CLOSE_DEFERRED_MINUTES).format(item=item)
+        lines = CLOSE_DEFERRED_AGAIN_LINES if again else CLOSE_DEFERRED_LINES
+        output = [line.format(item=item) for line in lines] + statuses
+    else:
+        outcome = OUTCOMES[DISAPPROVED if answered == DISAPPROVED else APPROVED]
+        recorded = CLOSE_TOOK_EFFECT_MINUTES.format(item=item, answered=answered, outcome=outcome)
+        output = ([line.format(item=item) for line in CLOSE_TOOK_EFFECT_LINES] + statuses
+                  + list(CLOSE_TOOK_EFFECT_NEXT))
+    append_to_minutes(minutes, [recorded])
+    decided, deferrals = minutes_record(walk_finder, minutes.read_text(encoding="utf-8"), parser)
+    numbers = next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals)
+    named = f"item{'s' if numbers[1:] else ''} {' and '.join(numbers)} of {total}"
+    append_to_minutes(minutes, [NEXT_MARKER_LINE.format(value=named if numbers else CLOSED_MARKER_VALUE)])
+    output.append(CLOSE_NEXT_ITEM.format(next_item=named) if numbers else CLOSE_NO_NEXT_ITEM)
     print("\n".join(output))
     return 0
 
@@ -377,6 +503,7 @@ def main(argv=None):
     answer = parser.add_mutually_exclusive_group()
     answer.add_argument("--obvious", action="store_true", help="check: the answer was AO, approve as obvious")
     answer.add_argument("--disapproved", action="store_true", help="check: the answer was D, disapprove")
+    answer.add_argument("--deferred", action="store_true", help="check: the answer was Z, defer")
     answer.add_argument("--option", type=int, choices=(2, 3),
                         help="check: the answer was O2 or O3, approving the item's \"Option N\" paragraph")
     parser.add_argument("--item", help="check: the one waiting item the answer is for, such as 5 or 4.1")

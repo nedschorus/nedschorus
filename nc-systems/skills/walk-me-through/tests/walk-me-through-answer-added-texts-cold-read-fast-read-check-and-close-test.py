@@ -248,8 +248,7 @@ TOOK_EFFECT_NEXT = [
     "If the change needs nothing more from the user, such as a text he has not yet seen, start it as the "
     "walk-me-through skill's sentence on ready work says; if it edits a file that work you dispatched "
     "earlier is still editing, start it when that earlier work finishes.",
-    "Then move the approval-walk on: to the next item, or after the last item, to the walk-me-through "
-    "skill's closing."]
+    "Then present item 6 of 9, which the minutes' `#next_to_present` line now names."]
 
 
 def test_close_records_that_the_answer_took_effect():
@@ -263,7 +262,8 @@ def test_close_records_that_the_answer_took_effect():
               "Your next message must include these lines, as they are:",
               "no proposed text marked"] + TOOK_EFFECT_NEXT
           and case.minutes.read_text().rstrip().endswith(
-              "item 4 of 9: approved; every text the change adds has had a fast read. <accepted>"),
+              "item 4 of 9: approved; every text the change adds has had a fast read. <accepted>\n"
+              "#next_to_present item 6 of 9"),
           described(result))
 
 
@@ -283,7 +283,7 @@ def test_each_answer_is_recorded_as_its_word():
         minutes = case.minutes.read_text()
         check(f"check {' '.join(flags)} writes \"{first}\" and close writes the matching outcome",
               checked.returncode == 0 and closed.returncode == 0 and f"\nitem 4 of 9: {first}" in minutes
-              and minutes.rstrip().endswith(last), described(checked) + described(closed) + minutes)
+              and minutes.rstrip().endswith(last + "\n#next_to_present item 6 of 9"), described(checked) + described(closed) + minutes)
 
 
 def test_answer_flags_exclude_each_other_and_option_takes_2_or_3():
@@ -305,7 +305,9 @@ def test_item_picks_one_of_the_waiting_items():
     check("close records the one item's answer while the other is still waiting",
           closed.returncode == 0 and closed.stdout.startswith("item 7 of 9's answer is recorded in the minutes")
           and case.minutes.read_text().rstrip().endswith("item 7 of 9: approved; every text the change adds has had "
-                                                         "a fast read. <accepted>"), described(closed))
+                                                         "a fast read. <accepted>\n#next_to_present item 6 of 9")
+          and closed.stdout.rstrip().endswith("Then present item 6 of 9, which the minutes' `#next_to_present` "
+                                              "line now names."), described(closed))
     case = Case(next_to_present="items 6 and 7 of 9")
     result = case.run("check")
     check("without --item, check reads every waiting item",
@@ -342,7 +344,8 @@ def test_close_holds_the_answer_for_a_waiting_new_item():
           and lines[-1] == ("Then present item 5 of 9, and record the user's answer to it in the minutes as "
                             "the outcome of item 3 of 9 too.")
           and case.minutes.read_text().rstrip().endswith(
-              "item 3 of 9: answer held: item 5 of 9, raised by a fast-read finding, waits for the user's answer. <open>"),
+              "item 3 of 9: answer held: item 5 of 9, raised by a fast-read finding, waits for the user's answer. <open>\n"
+              "#next_to_present item 5 of 9"),
           described(result))
 
 
@@ -351,7 +354,7 @@ def test_close_without_a_check_fails():
     result = case.run("close")
     check("close with no answer line in the minutes fails on stderr",
           result.returncode == 1 and result.stdout == "" and result.stderr.startswith(FAILURE_PREFIX + "close: ")
-          and "has no line recording an answer that makes a change" in result.stderr,
+          and "has no line recording the user's answer" in result.stderr,
           described(result))
 
 
@@ -368,6 +371,212 @@ def test_no_open_walk_or_no_item_fails():
     result = case.run("check")
     check("check on a backwards range fails on stderr",
           result.returncode == 1 and result.stderr.startswith(FAILURE_PREFIX + "check: ") and "runs backwards" in result.stderr, described(result))
+
+
+SUMMARY_DOCUMENT = """# A walk with a summary
+
+## Item 1 of 5: one
+
+#new "Text one."
+
+## Item 2 of 5: two
+
+Recommendation: leave it.
+
+## Item 3 of 5: three
+
+Recommendation: leave it.
+
+## Item 4 of 5: four
+
+Recommendation: leave it.
+
+## Item 5 of 5: summary
+
+The walk in short.
+"""
+
+
+def summary_case(next_to_present="item 2 of 5", recorded=""):
+    case = Case(next_to_present=next_to_present, document=SUMMARY_DOCUMENT)
+    case.minutes.write_text(f"# Minutes\n\n{recorded}#next_to_present {next_to_present}\n")
+    return case
+
+
+def marker(case):
+    return case.minutes.read_text().rstrip("\n").split("\n")[-1]
+
+
+def test_a_deferral_is_recorded_and_the_item_comes_back_before_the_summary_item():
+    case = summary_case(next_to_present="item 2 of 5", recorded="- Item 1, 2026-10-20: approved. <accepted>\n")
+    checked = case.run("check", "--deferred")
+    check("check --deferred runs no fast read, logs no counts, and writes the no-change answer line",
+          checked.returncode == 0 and case.calls.read_text() == "" and not case.counts_log.exists()
+          and re.search(r"\nitem 2 of 5: the user answered deferred \(\d{4}-\d\d-\d\d \d\d:\d\d\), which makes no "
+                        r"change\.\n$", case.minutes.read_text()) is not None
+          and checked.stdout.rstrip().endswith("close` and do what it prints."), described(checked))
+    closed = case.run("close")
+    check("close records a deferral as open and names the item after it",
+          closed.returncode == 0
+          and closed.stdout.split("\n")[0] == ("item 2 of 5 is deferred, and the minutes record it; it comes back "
+                                              "just before the summary item.")
+          and "item 2 of 5: deferred; it moves to just before the summary item. <open>\n" in case.minutes.read_text()
+          and marker(case) == "#next_to_present item 3 of 5", described(closed) + case.minutes.read_text())
+    for item in ("3", "4"):
+        case.run("check", "--item", item)
+        case.run("close")
+    check("a deferred item is named again just before the summary item",
+          marker(case) == "#next_to_present item 2 of 5", case.minutes.read_text())
+    case.run("check")
+    closed = case.run("close")
+    check("once the deferred item is decided, the summary item is next",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 5 of 5", described(closed))
+    case.run("check")
+    closed = case.run("close")
+    check("when the minutes record every item, the marker reads `none, closed` and close says to close the walk",
+          closed.returncode == 0 and marker(case) == "#next_to_present none, closed"
+          and closed.stdout.rstrip().split("\n")[-1] == (
+              "No item is left to present, and the minutes' `#next_to_present` line now reads `none, closed`: "
+              "go on to the walk-me-through skill's closing."), described(closed))
+
+
+def test_an_item_deferred_a_second_time_leaves_the_walk():
+    case = summary_case(next_to_present="item 2 of 5",
+                        recorded="item 2 of 5: deferred; it moves to just before the summary item. <open>\n"
+                                 "Item 1 of 5: approved.\nItem 4 of 5: approved.\nItem 5 of 5: approved.\n")
+    case.run("check", "--deferred")
+    closed = case.run("close")
+    check("a second deferral is recorded as open, the agent is told to keep it as a task, and it is not named again",
+          closed.returncode == 0
+          and closed.stdout.split("\n")[:2] == [
+              "item 2 of 5 is deferred a second time, so the minutes record it as open and it leaves the walk.",
+              "Add it to your task list if it is not already a task."]
+          and "item 2 of 5: deferred a second time, so it leaves the walk and stays open. <open>\n"
+          in case.minutes.read_text()
+          and marker(case) == "#next_to_present item 3 of 5", described(closed) + case.minutes.read_text())
+    case.run("check", "--item", "3")
+    case.run("close")
+    check("once every other item is recorded, the twice-deferred item is not named and the walk closes",
+          marker(case) == "#next_to_present none, closed", case.minutes.read_text())
+
+
+def test_an_answer_that_changes_nothing_is_recorded():
+    case = summary_case(next_to_present="item 3 of 5")
+    case.run("check", "--disapproved")
+    closed = case.run("close")
+    check("a D on an item that adds no text is recorded as decided, and the walk goes on",
+          closed.returncode == 0 and "item 3 of 5: disapproved; every text the change adds has had a fast read. "
+          "<rejected>\n" in case.minutes.read_text() and marker(case) == "#next_to_present item 4 of 5",
+          described(closed))
+
+
+def test_the_marker_is_written_as_the_last_line_and_skips_recorded_items():
+    case = summary_case(next_to_present="item 2 of 5",
+                        recorded="Item 3 (three): \"yes\" (user-ruled 2026-10-22) <accepted> approved.\n")
+    with open(case.minutes, "a") as minutes:
+        minutes.write("A note written after the marker.\n")
+    case.run("check")
+    closed = case.run("close")
+    check("close writes the marker as the minutes' last line, below a note written after the old marker",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 4 of 5", case.minutes.read_text())
+    case = summary_case(next_to_present="item 4 of 5",
+                        recorded="Item 2, 2026-10-21: approved.\n- **Item 5 of 5**: the user: \"ok\". <accepted>\n")
+    case.run("check")
+    case.run("close")
+    check("after the last item the minutes do not record, the walk goes round to the first one they do not",
+          marker(case) == "#next_to_present item 1 of 5", case.minutes.read_text())
+
+
+STRAY_TOTALS_DOCUMENT = """# A walk re-planned from 10 and 18 items to 16
+
+## Item 7 of 10: from an older count
+
+## Item 9 of 18: from another older count
+
+## Item 1 of 16: one
+
+## Item 2 of 16: the summary table
+
+## Item 3 of 16: three
+
+## Item 4 of 16: four
+
+## Item 5 of 16: summary
+
+## Item 6 of 16: an appendix
+"""
+
+
+def test_the_summary_item_and_the_walks_total_pick_the_order():
+    case = Case(next_to_present="item 3 of 16", document=STRAY_TOTALS_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n#next_to_present item 3 of 16\n")
+    case.run("check", "--deferred")
+    case.run("close")
+    case.run("check")
+    case.run("close")
+    check("a deferred item comes back before the heading whose point is summary, not before a later item or one "
+          "that only mentions a summary", marker(case) == "#next_to_present item 3 of 16", case.minutes.read_text())
+    case = Case(next_to_present="item 6 of 16", document=STRAY_TOTALS_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n" + "".join(f"Item {n} of 16: approved.\n" for n in range(1, 6))
+                            + "#next_to_present item 6 of 16\n")
+    case.run("check")
+    closed = case.run("close")
+    check("items under another running count's total are not walked",
+          closed.returncode == 0 and marker(case) == "#next_to_present none, closed", case.minutes.read_text())
+
+
+def test_a_deferred_last_item_hands_on_to_the_first_unrecorded_item():
+    case = Case(next_to_present="item 5 of 9")
+    case.run("check", "--deferred")
+    closed = case.run("close")
+    check("deferring the walk-document's last item, with no summary item, names the first item not recorded",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 3 of 9", case.minutes.read_text())
+
+
+def test_items_shown_together_stay_waiting_until_each_is_answered():
+    case = summary_case(next_to_present="items 2, 3 and 4 of 5")
+    case.run("check", "--item", "2")
+    closed = case.run("close")
+    check("answering one of three items shown together leaves the other two named",
+          closed.returncode == 0 and marker(case) == "#next_to_present items 3 and 4 of 5"
+          and closed.stdout.rstrip().endswith("Then present items 3 and 4 of 5, which the minutes' "
+                                              "`#next_to_present` line now names."), described(closed))
+
+
+def test_a_minutes_line_with_an_unusable_item_range_is_skipped():
+    case = summary_case(next_to_present="item 3 of 5",
+                        recorded="Items 4 to 2 of 5: approved.\nItem 4 of 5: approved.\n")
+    case.run("check")
+    closed = case.run("close")
+    check("a minutes line naming a backwards range records nothing, and later lines still count",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 5 of 5", described(closed))
+
+
+def test_the_walk_goes_on_after_the_last_of_several_items_answered_together():
+    case = Case(next_to_present="items 3 and 6 of 9")
+    case.run("check")
+    closed = case.run("close")
+    check("after items answered together, the walk starts after the last of them in the walk-document",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 7 of 9", described(closed))
+
+
+def test_close_without_its_walk_document_fails():
+    case = summary_case(next_to_present="item 2 of 5")
+    case.run("check")
+    (case.checkout / "docs" / "walk" / f"{WALK_NAME}.md").unlink()
+    before = case.minutes.read_text()
+    closed = case.run("close")
+    check("close fails on stderr, writing nothing, when the walk-document is gone",
+          closed.returncode == 1 and closed.stderr.startswith(FAILURE_PREFIX + "close: ")
+          and "does not exist" in closed.stderr and case.minutes.read_text() == before, described(closed))
+
+
+def test_repeat_explain_and_other_options_have_no_flag():
+    case = summary_case(next_to_present="item 2 of 5")
+    for flag in ("--repeat", "--explain", "--other-options"):
+        result = case.run("check", flag)
+        check(f"check {flag} is refused as usage, since R, E and O decide nothing",
+              result.returncode == 2 and "the user answered" not in case.minutes.read_text(), described(result))
 
 
 def main():
