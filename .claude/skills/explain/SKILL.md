@@ -1,6 +1,6 @@
 ---
 name: explain
-description: Use when the user types /explain; says he is confused, lost, or does not understand or follow; asks what a word, name or number means; asks you to explain a message again, go slower, or say the message in plain English; asks what you are proposing; or checks his reading with "I think you are saying…". Re-explains what he could not follow in words that need none of this agent-session's context.
+description: Use when the user says he is confused or did not follow one of your messages, as in "I'm confused", "im confused", "still confused", "dont understand", "I don't get it", or "what do you mean" followed by words from your message, even when a one-line answer seems enough, or his message is short or also disagrees with you; also when he types /explain, says he is lost, asks what a word, name or number means, asks for plain English, asks you to go slower, asks what you are proposing, or checks his reading with "I think you are saying…". Re-explains what he could not follow in words that need none of this agent-session's context.
 ---
 
 # Explain
