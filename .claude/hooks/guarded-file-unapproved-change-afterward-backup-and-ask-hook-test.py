@@ -1420,11 +1420,14 @@ def mac_cases(scratch):
     (directory / "approved").unlink()
     os.mkfifo(directory / "approved")
     claude.write_text("project v5 while the store hangs\n")
-    started = time.monotonic()
     message = world.run()
-    check("with a store whose reads block, the failure is reported before the hook's timeout",
-          "did not run" in message and time.monotonic() - started < 10,
-          (message, time.monotonic() - started))
+    # The FIFO has no writer, so its read blocks for good and only the store deadline, 3 s here,
+    # ends it. The bound is the hook's own 30 s timeout in .claude/settings.json, the limit the
+    # deadline exists to beat, not the 3 s, which a loaded machine stretches.
+    check("with a store whose reads block, the failure is reported when the store deadline passes, "
+          "before the hook's timeout",
+          "did not run" in message and "the store did not answer within 3.0 seconds" in message
+          and world.last_seconds < 30, (message, world.last_seconds))
 
 
 if __name__ == "__main__":

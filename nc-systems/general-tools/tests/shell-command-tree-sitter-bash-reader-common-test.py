@@ -110,27 +110,31 @@ def parses_grow_by_a_constant(counted):
             and counted[1][0] <= counted[0][0] + 2)
 
 
-# For a quadratic that is not a parse, the time at four times the size is compared with the time at
-# the size itself; the smaller size takes a good part of a second, so load does not dominate it.
+# For a quadratic that is not a parse, the reader's CPU time is compared between two reads. CPU
+# time leaves out the time spent waiting for a busy machine's processors; the reads alternate,
+# best of three each, so a burst of load slows both alike.
 READ_TIME_RATIO_CHILD_CODE = (
     "import importlib.util, json, sys, time; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
     "r = importlib.util.module_from_spec(s); s.loader.exec_module(r)\n"
     "exec(sys.argv[2])\n"
-    "timings, outputs = [], []\n"
-    "for n in json.loads(sys.argv[3]):\n"
-    " runs = []\n"
-    " for _ in range(3):\n"
-    "  started = time.monotonic(); output = read(n); runs.append(time.monotonic() - started)\n"
-    " timings.append(min(runs)); outputs.append(output)\n"
-    "print(json.dumps([timings, outputs]))")
+    "arguments = json.loads(sys.argv[3])\n"
+    "runs, outputs = [[] for _ in arguments], [None for _ in arguments]\n"
+    "for _ in range(3):\n"
+    " for index, argument in enumerate(arguments):\n"
+    "  started = time.process_time(); outputs[index] = read(argument)\n"
+    "  runs[index].append(time.process_time() - started)\n"
+    "print(json.dumps([[min(times) for times in runs], outputs]))")
 
 
-def read_times_in_a_child(read_definition, sizes):
-    """Time read(n) at each of sizes, best of three, in a new process; return [timings, outputs] or the error."""
+def read_times_in_a_child(read_definition, arguments):
+    """Time read(argument) for each of arguments in CPU seconds, best of three, in a new process.
+
+    Return [timings, outputs] or the error.
+    """
     try:
         completed = subprocess.run(
             [sys.executable, "-c", READ_TIME_RATIO_CHILD_CODE, str(MODULE_PATH), read_definition,
-             json.dumps(sizes)], timeout=300, check=True, capture_output=True, text=True)
+             json.dumps(arguments)], timeout=300, check=True, capture_output=True, text=True)
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as problem:
         return repr(problem)
     return json.loads(completed.stdout)
@@ -355,15 +359,19 @@ counted = parses_counted_in_a_child("'cat <<EOF\\n' + 'line \\\\ #x\\n' * n + 'E
 check("a 4,000-line here-document whose lines each hold a # after an escaped space is read in at most "
       "two parses more than 1,000 such lines, inside a guard's 30 s, and the command after it is read",
       parses_grow_by_a_constant(counted) and counted[1][2] == ["tmux", "kill-server"], counted)
-# Copying the redirection's text once per target is quadratic, without any parse to count: at
-# 512,000 words it took about 15 s, and reading the text in place takes about 2 s.
+# Copying the redirection's text once per target is quadratic, without any parse to count, so
+# 512,000 words after a redirection are timed against the same words with no redirection. Read
+# in place, the redirection takes 1.1 to 1.2 times as long; copied once per target, 4.7 to 6
+# times, both measured best of three, idle and under load. 512,000 words take 2 to 5 s of CPU.
 timed = read_times_in_a_child(
-    "def read(n):\n found = r.simple_commands('echo >f' + ' a' * n + '\\ntmux kill-server')\n"
-    " return [len(found[0]), list(found[-1])]", [128000, 512000])
-check("a redirection followed by 512,000 words is read in less than 8 times the time of 128,000 words, "
-      "inside a guard's 30 s, and the command after it is read",
-      isinstance(timed, list) and timed[0][1] < 30 and timed[0][1] < 8 * timed[0][0]
-      and timed[1][1] == [512001, ["tmux", "kill-server"]], timed)
+    "def read(argument):\n redirect, n = argument\n"
+    " found = r.simple_commands('echo' + (' >f' if redirect else '') + ' a' * n + '\\ntmux kill-server')\n"
+    " return [len(found[0]), list(found[-1])]", [[True, 512000], [False, 512000]])
+check("a redirection followed by 512,000 words is read in less than 2.5 times the CPU time of the same "
+      "words with no redirection, inside a guard's 30 s, and the command after it is read",
+      isinstance(timed, list) and timed[0][0] < 30 and timed[0][0] < 2.5 * timed[0][1]
+      and timed[1][0] == [512001, ["tmux", "kill-server"]] and timed[1][1] == [512001, ["tmux", "kill-server"]],
+      timed)
 found = words_of("cat <<EOF\n$(echo a \\ #x; rm y\n)\nEOF\n")
 check("a # after an escaped space in a substitution in a here-document body is part of its word, "
       "so the commands after it in the substitution are read",
