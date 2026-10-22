@@ -17,8 +17,8 @@ the file, by committer date, in the 30 days (WINDOW_DAYS) before the
 merge-base. A pull request merged into main counts as its merge commit: the
 report names the merge commit, not the pull request's own commits, and the
 merge commit's hash is the one to name, as `git revert -m 1 <merge>` does. If
-the branch's copy of the file has the same blob ID as the copy one of those
-commits replaced, the branch undoes that commit for the file. Of the commits
+the branch's copy of the file has the same blob ID as the copy that the first
+parent of one of those commits had, the branch undoes that commit for the file. Of the commits
 that match, the newest is the one reported. A file the branch deletes is not
 checked. A branch that means to undo the
 reported commit names it, by at least its first 12 characters

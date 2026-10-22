@@ -191,11 +191,18 @@ def unchecked_lines(branches):
 
 
 def say_no_branch_checked(stream, cause, branches):
+    """The conflict check did not run on any branch, so neither did the revert check."""
     say(stream, MESSAGE_PREFIX + "%s, so this push goes ahead with none of its branches "
         "checked for conflicts with %s: %s." % (cause, BASE_NAME_FOR_MESSAGES,
                                                  branch_list(branches)))
     for line in unchecked_lines(branches):
         say(stream, line)
+    say(stream, "Nor was any of them checked for files set back to a version that %s has "
+        "replaced, because that check runs only on a branch the conflict check finds clean."
+        % BASE_NAME_FOR_MESSAGES)
+    for branch, object_id in branches:
+        say(stream, "Once the hand conflict check of %s prints VERDICT: CLEAN, check it for files set "
+            "back too: %s" % (branch, REVERT_HAND_CHECK_COMMAND % short_commit(object_id)))
     say(stream, TELL_USER_LINE)
 
 
@@ -205,6 +212,11 @@ def say_error_before_branches_read(stream, error_text):
         "branches checked for conflicts with %s." % (error_text, BASE_NAME_FOR_MESSAGES))
     say(stream, "For each branch this push sends to %s, other than main, run from your "
         "worktree: %s" % (CHECKED_REMOTE_NAME, HAND_CHECK_COMMAND % "<branch name>"))
+    say(stream, "Nor was any branch checked for files set back to a version that %s has "
+        "replaced. For each branch this push sends to %s, other than main, once that conflict "
+        "check prints VERDICT: CLEAN, also run: %s"
+        % (BASE_NAME_FOR_MESSAGES, CHECKED_REMOTE_NAME,
+           REVERT_HAND_CHECK_COMMAND % "<branch name>"))
     say(stream, TELL_USER_LINE)
 
 
@@ -223,8 +235,6 @@ def main(argv, pushed_refs_text, stderr, environment):
         say_no_branch_checked(
             stderr, "the pre-push conflict check did not run, because %s is missing"
             % check_path, branches)
-        for branch, local_object_id in branches:
-            say_revert_check_not_run(stderr, branch, local_object_id)
         return EXIT_ALLOW_PUSH
 
     budget = time_budget_seconds(environment)
@@ -325,7 +335,8 @@ def check_reverts(branches, deadline, budget, stderr):
 
 
 def report_unexpected_error(stream, error, argv, pushed_refs_text):
-    """Message 7: name the unchecked branches when the pushed refs were read.
+    """Message 7: name the unchecked branches when the pushed refs were read, and
+    say that the revert check did not run on them either.
 
     Prints nothing when the refs were read and hold no branch the check would
     check, since no check was skipped."""
