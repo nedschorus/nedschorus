@@ -854,9 +854,9 @@ check("the printed recheck, when gh fails again, says so, exits 1, and gives the
       rechecked.stdout + rechecked.stderr)
 check("and says to stop after the rerun fails too, and report both runs' failure lines",
       failure_lines[3:] == [
-          'If the rerun prints a line containing "could not report the titles" again, stop, do not run '
-          "it a third time, and tell the user, or, if you are a subagent, the agent that dispatched you, "
-          'word for word, the line containing "could not report the titles" from each run.',
+          hook._load_failed_command_next_step_lines()
+          .agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+              "could not report the titles", next_step_to_skip_when_the_rerun_fails_too="run it a third time"),
           hook.LINK_TITLES_RECHECK_STOP_MEANS_ONLY_STOP_RERUNNING_LINE],
       rechecked.stdout)
 
@@ -908,8 +908,8 @@ for name, arguments in (("the file flag alone", ["--recheck-link-titles-in-file"
                         ("an unknown flag that sorts after the reply flag", ["--zzz", single_link])):
     result = subprocess.run([sys.executable, str(HOOK_PATH), *arguments], capture_output=True,
                             text=True, timeout=60, env=recheck_titles_environment)
-    check(f"a recheck command line in no accepted form prints the usage and exits 64: {name}",
-          result.returncode == 64 and "--recheck-link-titles-in-reply <link>" in result.stdout,
+    check(f"a recheck command line in no accepted form prints the usage and exits 2: {name}",
+          result.returncode == 2 and "--recheck-link-titles-in-reply <link>" in result.stdout,
           (result.returncode, result.stdout, result.stderr))
 
 result = subprocess.run([sys.executable, str(HOOK_PATH), "--help"], capture_output=True, text=True,

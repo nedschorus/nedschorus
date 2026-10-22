@@ -77,7 +77,7 @@ LINK_TITLES_RECHECK_GH_TIMEOUT_SECONDS, and prints plain text: the hook's
 title note for the links whose text is not the title, exit 0; one line saying
 nothing needs doing, exit 0; or, when gh fails again, the failure and the
 rerun-once-then-stop lines, exit 1. --help prints the two forms and exits 0;
-a command line of any other form prints them and exits 64.
+a command line of any other form prints them and exits 2.
 
 OUTPUT is a note, never a refusal and never a blocked prompt:
 hookSpecificOutput.additionalContext with the hook's event name, listing up to
@@ -123,7 +123,7 @@ GH_TIMEOUT_SECONDS = 5
 LINK_TITLES_RECHECK_GH_TIMEOUT_SECONDS = 30
 LINK_TITLES_RECHECK_IN_FILE_COMMAND_LINE_FLAG = "--recheck-link-titles-in-file"
 LINK_TITLES_RECHECK_IN_REPLY_COMMAND_LINE_FLAG = "--recheck-link-titles-in-reply"
-EXIT_BAD_INVOCATION = 64
+EXIT_BAD_INVOCATION = 2
 GITHUB_REPOSITORY_OWNER = "nedschorus"
 GITHUB_REPOSITORY_NAME = "nedschorus"
 TITLE_ATTEMPT_WORDS_AT_LEAST = 3
