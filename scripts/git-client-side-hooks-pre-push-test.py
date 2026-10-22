@@ -102,8 +102,10 @@ TELL_USER_LINE = ("Tell the user this whole message, including any error printed
                   "the same way.")
 RERUN_VERDICT_LINE = ("If the hand conflict check also prints no VERDICT line, tell the user "
                       "this whole message and what that check printed.")
-NO_BRANCH_CHECKED = ("so this push goes ahead with none of its branches checked for "
-                     "conflicts with origin/main: %s.")
+NO_BRANCH_CHECKED = ("so none of this push's branches was checked for conflicts with "
+                     "origin/main: %s.")
+PUSH_GOES_ON_LINE = ("pre-push: neither the conflict check nor the revert check refuses this "
+                     "push, so it goes on to the selective test run, which can still refuse it.")
 SHORT_COMMIT_LENGTH = 12
 
 
@@ -146,6 +148,22 @@ print("VERDICT: CONFLICT -- fake conflict for the test.")
 print("Merge origin/main into the branch by hand, with the frozen head as first parent.")
 sys.exit(1)
 """
+
+# Answers per branch: no answer for the branch whose commit is "Clean work", a conflict
+# for any other, so one push can mix a skipped branch with a refused one.
+FAKE_CHECK_NO_ANSWER_FOR_CLEAN_CONFLICT_OTHERWISE = FAKE_CHECK_PREAMBLE + """\
+import subprocess
+subject = subprocess.run(["git", "show", "-s", "--format=%s", sys.argv[2]],
+                         capture_output=True, text=True).stdout.strip()
+if subject == "Clean work":
+    print("UNFETCHED: fake no-answer line from the check.")
+    sys.exit(2)
+print("VERDICT: CONFLICT -- fake conflict for the test.")
+sys.exit(1)
+"""
+
+FAKE_CHECK_NO_VERDICT_FOR_CLEAN_CONFLICT_OTHERWISE = (
+    FAKE_CHECK_NO_ANSWER_FOR_CLEAN_CONFLICT_OTHERWISE.replace("sys.exit(2)", "sys.exit(7)"))
 
 FAKE_CHECK_CRASHES = FAKE_CHECK_PREAMBLE + """\
 raise RuntimeError("fake crash inside the conflict check")
@@ -209,7 +227,7 @@ time.sleep(FAKE_HANG_SECONDS)
 # FAKE_TEST_SUITES_RUNNER_LOG_VARIABLE names, so a case can tell whether the
 # selective test run started, and with which arguments.
 
-PUSH_GOES_AHEAD_WITHOUT_CHECK = "; this push goes ahead without that check."
+BRANCH_NOT_CHECKED_END = "."
 # What git itself writes on stderr for a push: the remote's name, one line per ref, and a
 # line when a hook refused the push.
 GIT_PUSH_REMOTE_LINE_START = "To "
@@ -691,6 +709,7 @@ def run_unit_cases():
               hand_check_line("topic", sha),
               hand_check_line("renamed-on-push", other),
               *no_branch_revert_lines([("topic", sha), ("renamed-on-push", other)]),
+              PUSH_GOES_ON_LINE,
               TELL_USER_LINE],
           stream.getvalue())
     stream = io.StringIO()
@@ -699,8 +718,8 @@ def run_unit_cases():
           "conflicts or for files set back",
           stream.getvalue().splitlines() == [
               "pre-push: the pre-push conflict check failed with RuntimeError: boom "
-              "before reading which branches this push sends, so this push goes ahead "
-              "with none of its branches checked for conflicts with origin/main.",
+              "before reading which branches this push sends, so none of them was checked "
+              "for conflicts with origin/main.",
               "For each branch this push sends to origin, other than main, run from "
               "your worktree: python3 scripts/branch-conflict-check.py --head "
               "<branch name>",
@@ -709,6 +728,7 @@ def run_unit_cases():
               "once that conflict check prints VERDICT: CLEAN, also run: python3 "
               "scripts/branch-reverts-a-file-to-an-older-main-version-check.py "
               "--head <branch name>",
+              PUSH_GOES_ON_LINE,
               TELL_USER_LINE],
           stream.getvalue())
     stream = io.StringIO()
@@ -743,6 +763,7 @@ def run_unit_cases():
                                     hand_check_line("renamed-on-push", other),
                                     *no_branch_revert_lines(
                                         [("topic", sha), ("renamed-on-push", other)]),
+                                    PUSH_GOES_ON_LINE,
                                     TELL_USER_LINE],
                   completed.stderr)
             for label, refs_text in (
@@ -764,10 +785,10 @@ def run_unit_cases():
 
     sha = "a" * 40
     stream = io.StringIO()
-    reverts = runner.check_reverts([("late", sha)], time.monotonic() - 1, 7, stream)
-    check("a branch left with no time budget is not sent to the revert check, and the push "
-          "goes ahead with a message",
-          reverts == [] and REVERT_NOT_CHECKED % (
+    reverts, skipped = runner.check_reverts([("late", sha)], time.monotonic() - 1, 7, stream)
+    check("a branch left with no time budget is not sent to the revert check, is reported "
+          "as skipped, and gets a message",
+          reverts == [] and skipped and REVERT_NOT_CHECKED % (
               "late", "the 7-second time budget was used up") in stream.getvalue()
           and revert_hand_check_line(sha) in stream.getvalue(), stream.getvalue())
 
@@ -966,41 +987,69 @@ def run_push_cases(scratch):
     check("check missing: and gives the hand check, says once when to run the revert check, "
           "and then tells the user",
           lines.count(hand) == 1
-          and lines[lines.index(hand):lines.index(hand) + 4]
+          and lines[lines.index(hand):lines.index(hand) + 5]
           == [hand, *no_branch_revert_lines([("conflicting", conflicting_commit)]),
-              TELL_USER_LINE]
+              PUSH_GOES_ON_LINE, TELL_USER_LINE]
           and outcome.stderr.count("files set back") == 2, outcome.describe())
+
+    # A push whose first branch is skipped and whose second conflicts is refused, and no
+    # line says it goes ahead.
+    mixed = make_layout(scratch, "layout-mixed",
+                        conflict_check=FAKE_CHECK_NO_ANSWER_FOR_CLEAN_CONFLICT_OTHERWISE)
+    failing = Scenario(scratch, "mixed", mixed)
+    outcome = failing.push("origin", "clean", "conflicting")
+    check("mixed push, one branch undecided and one conflicting: the push is refused",
+          was_refused(outcome) and failing.origin_ref("clean") is None
+          and failing.origin_ref("conflicting") is None, outcome.describe())
+    check("mixed push: and it names the undecided branch, then refuses for the conflicting one",
+          "pre-push: branch clean was not checked for conflicts with origin/main, because "
+          "scripts/branch-conflict-check.py could not decide, as its report below says"
+          + BRANCH_NOT_CHECKED_END in outcome.stderr.splitlines()
+          and REFUSAL_HEADER % "conflicting" in outcome.stderr, outcome.describe())
+    check("mixed push: and no line says the push goes ahead or goes on",
+          PUSH_GOES_ON_LINE not in outcome.stderr and "goes ahead" not in outcome.stderr,
+          outcome.describe())
+
+    mixed = make_layout(scratch, "layout-mixed-no-verdict",
+                        conflict_check=FAKE_CHECK_NO_VERDICT_FOR_CLEAN_CONFLICT_OTHERWISE)
+    failing = Scenario(scratch, "mixed-no-verdict", mixed)
+    outcome = failing.push("origin", "clean", "conflicting")
+    hook_lines = [line for line in outcome.stderr.splitlines()
+                  if not git_push_output_line(line)]
+    check("mixed push, one branch with no verdict and one conflicting: refused, and the line "
+          "telling the user ends the message, after the refusal",
+          was_refused(outcome) and hook_lines[-1:] == [TELL_USER_LINE]
+          and outcome.stderr.count(TELL_USER_LINE) == 1
+          and PUSH_GOES_ON_LINE not in outcome.stderr, outcome.describe())
 
     def gave_no_verdict(label, outcome, reason):
         lines = outcome.stderr.splitlines()
-        start = ("pre-push: branch conflicting was not checked for conflicts with "
+        first = ("pre-push: branch conflicting was not checked for conflicts with "
                  "origin/main, because scripts/branch-conflict-check.py gave no "
-                 "verdict: %s" % reason)
-        index = next((i for i, line in enumerate(lines) if line.startswith(start)), None)
+                 "verdict: %s" % reason + BRANCH_NOT_CHECKED_END)
+        index = next((i for i, line in enumerate(lines) if line == first), None)
         check("%s: says which branch went unchecked and why" % label,
               index is not None, outcome.describe())
         if index is not None:
             commit = lines[index + 1].rsplit(" ", 1)[-1] if len(lines) > index + 1 else ""
-            check("%s: then the hand check, when to run the revert check, and the line "
-                  "telling the user" % label,
-                  len(lines) > index + 4
-                  and lines[index + 1].startswith(
-                      "Check conflicting by hand from your worktree: python3 "
-                      "scripts/branch-conflict-check.py --head ")
-                  and lines[index + 2:index + 4]
-                  == revert_check_not_run_lines("conflicting", commit).splitlines()
-                  and lines[index + 4] == TELL_USER_LINE,
+            check("%s: then the hand check, when to run the revert check, that the push goes "
+                  "on, and the line telling the user" % label,
+                  lines[index + 1:index + 6]
+                  == [hand_check_line("conflicting", commit),
+                      *revert_check_not_run_lines("conflicting", commit).splitlines(),
+                      PUSH_GOES_ON_LINE, TELL_USER_LINE],
                   outcome.describe())
 
     outcome = failing_check_case("check-crashes", FAKE_CHECK_CRASHES,
                                  "exited 1 without a VERDICT: CONFLICT line")
     gave_no_verdict("check-crashes", outcome,
-                    "it exited 1 without a VERDICT: CONFLICT line")
+                    "it exited 1 without a VERDICT: CONFLICT line: RuntimeError: fake crash "
+                    "inside the conflict check")
     outcome = failing_check_case(
         "check-no-answer", FAKE_CHECK_NO_ANSWER,
         "pre-push: branch conflicting was not checked for conflicts with "
         "origin/main, because scripts/branch-conflict-check.py could not decide, as its "
-        "report below says" + PUSH_GOES_AHEAD_WITHOUT_CHECK)
+        "report below says" + BRANCH_NOT_CHECKED_END)
     check("check-no-answer: and passes on the check's own lines",
           "UNFETCHED: fake no-answer line from the check." in outcome.stderr,
           outcome.describe())
@@ -1031,7 +1080,7 @@ def run_push_cases(scratch):
             "pre-push: branch conflicting was not checked for conflicts with "
             "origin/main, because scripts/branch-conflict-check.py had not finished "
             "when the 1-second time budget ran out, and was stopped"
-            + PUSH_GOES_AHEAD_WITHOUT_CHECK,
+            + BRANCH_NOT_CHECKED_END,
             budget=HANGING_CHECK_BUDGET_SECONDS)
         check("%s: and says to check by hand, when to run the revert check, and to tell "
               "the user only if the hand check fails too" % label,
@@ -1055,14 +1104,14 @@ def run_push_cases(scratch):
     turnless = [branch for branch in ("clean", "clean-second")
                 if "pre-push: branch %s was not checked for conflicts with origin/main, "
                    "because the earlier branches in this push used up the 1-second "
-                   "time budget" % branch + PUSH_GOES_AHEAD_WITHOUT_CHECK in lines]
+                   "time budget" % branch + BRANCH_NOT_CHECKED_END in lines]
     check("budget spent: one branch is named as never getting its turn",
           len(turnless) == 1, outcome.describe())
     if len(turnless) == 1:
         branch = turnless[0]
         line = ("pre-push: branch %s was not checked for conflicts with origin/main, "
                 "because the earlier branches in this push used up the 1-second "
-                "time budget" % branch + PUSH_GOES_AHEAD_WITHOUT_CHECK)
+                "time budget" % branch + BRANCH_NOT_CHECKED_END)
         index = lines.index(line)
         check("budget spent: followed by that branch's hand check, by its commit",
               lines[index + 1:index + 2] == [hand_check_line(branch, spent.head(branch))],
@@ -1134,7 +1183,7 @@ def run_push_cases(scratch):
           "and the line telling the user",
           "\n".join([hand_check_line("conflicting", failing.head("conflicting")),
                      *no_branch_revert_lines([("conflicting", failing.head("conflicting"))]),
-                     TELL_USER_LINE]) in outcome.stderr, outcome.describe())
+                     PUSH_GOES_ON_LINE, TELL_USER_LINE]) in outcome.stderr, outcome.describe())
 
     hooks = make_layout(scratch, "layout-runner-missing",
                         conflict_check=FAKE_CHECK_ALWAYS_CONFLICT, include_runner=False)
@@ -1842,7 +1891,7 @@ def run_open_pull_request_branch_cases(scratch):
 REVERT_REFUSAL_HEADER = ("pre-push: branch %s sets a file back to a version that "
                          "origin/main has replaced; this push is refused.")
 REVERT_NOT_CHECKED = ("pre-push: branch %s was not checked for files set back to a version "
-                      "that origin/main has replaced, because %s; this push goes ahead.")
+                      "that origin/main has replaced, because %s.")
 
 
 def hand_checked_commit(stderr):
@@ -1944,6 +1993,11 @@ def run_revert_check_cases(scratch):
         check("and says the branch was not checked, why, and the command to check it by hand",
               REVERT_NOT_CHECKED % ("squashed", reason) in result.stderr
               and revert_hand_check_line(commit) in result.stderr, result.describe())
+        check("and then, once, that the push goes on to the selective test run",
+              result.stderr.count(PUSH_GOES_ON_LINE) == 1
+              and result.stderr.index(PUSH_GOES_ON_LINE)
+              > result.stderr.index(REVERT_NOT_CHECKED % ("squashed", reason)),
+              result.describe())
 
     hooks = make_layout(scratch, "layout-revert-hangs", revert_check=FAKE_REVERT_CHECK_HANGS)
     scenario = Scenario(scratch, "revert-hangs", hooks)
