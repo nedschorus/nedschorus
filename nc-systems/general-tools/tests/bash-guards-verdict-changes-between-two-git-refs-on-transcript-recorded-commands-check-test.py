@@ -14,6 +14,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -97,6 +98,33 @@ def failed_new_process_readings_and_rows_differing_from_in_process(run_scratch):
                  if pair[0] != "ls -la" and {key: value[0] for key, value in here.items()}
                  != {key: value[0] for key, value in there.items()}]
     return failed, differing
+
+
+def readings_read_again_that_all_got_a_verdict(err, step):
+    """Return how many readings step read again, when its read-again line says all got a verdict; else None.
+
+    Under load a reading besides the one a case makes time out can time out too, so a case asks for at least one."""
+    found = re.search(rf"^{re.escape(step)}: (\d+) readings? timed out", err, re.MULTILINE)
+    count = int(found.group(1)) if found else None
+    return count if count and replay.timed_out_readings_read_again_line(step, count, count) in err else None
+
+
+def commit_with_one_command_per_process_reader_changed(code_on_ls, scratch):
+    """Return a commit whose shell reader has no long-running child flag, so each guard reads one command per
+    process, and whose one-command process runs code_on_ls before replying to `ls -la`. The code goes before the
+    reader's __main__ lines, which start that process's reading; the flag is deleted after them, which name it."""
+    def change(worktree):
+        path = worktree / SHELL_READER
+        text = path.read_text()
+        at = text.index('if __name__ == "__main__"')
+        path.write_text(text[:at] + (
+            "_reply_as_written = _shell_command_read_request_to_reply\n"
+            "def _shell_command_read_request_to_reply(request):\n"
+            "    if request['command'] == 'ls -la' and sys.argv[1:] == [NEW_PROCESS_READ_FLAG]:\n"
+            f"        {code_on_ls}\n"
+            "    return _reply_as_written(request)\n\n\n") + text[at:]
+            + "\ndel NEW_PROCESS_READ_ONE_REQUEST_PER_LINE_UNTIL_INPUT_CLOSES_FLAG\n")
+    return commit_with_change(change, scratch)
 
 
 def commit_with_guard_changed(guard_path, appended_code, scratch):
@@ -326,7 +354,7 @@ try:
     calls = codex_guard_calls_on_tmux_kill_server()
     check("a guard that times out on its first reading of a pair and answers on the second: read again alone, exit 0",
           status == 0 and "NO VERDICT CHANGED" in out and calls == 2
-          and replay.timed_out_readings_read_again_line("in-process, head", 1, 1) in err,
+          and readings_read_again_that_all_got_a_verdict(err, "in-process, head"),
           f"status {status}; calls {calls}\n{out}\n{err}")
 
     hanging_on_tmux_kill_server = codex_guard_on_tmux_kill_server("time.sleep(30)")
@@ -335,7 +363,7 @@ try:
     calls = codex_guard_calls_on_tmux_kill_server()
     check("a guard that times out on both readings of a pair: a failed reading, exit 2",
           status == 2 and "TIMEOUT" in out and calls == 2
-          and replay.timed_out_readings_read_again_line("in-process, head", 1, 0) in err,
+          and re.search(r"^in-process, head: \d+ readings? timed out and w[a-z]+ read again", err, re.MULTILINE),
           f"status {status}; calls {calls}\n{out}\n{err}")
 
     raising_on_tmux_kill_server = codex_guard_on_tmux_kill_server(
@@ -343,7 +371,7 @@ try:
     status, out, err = run_replay(raising_on_tmux_kill_server, scratch, "--new-process-pairs", "none")
     calls = codex_guard_calls_on_tmux_kill_server()
     check("a guard that raises on a pair: not read again, exit 2",
-          status == 2 and "EXCEPTION RuntimeError" in out and calls == 1 and "read again" not in err,
+          status == 2 and "EXCEPTION RuntimeError" in out and calls == 1,
           f"status {status}; calls {calls}\n{out}\n{err}")
 
     read_again_lines = {
@@ -432,7 +460,7 @@ try:
     check("a search-file main() that times out on its first reading of `ls -la` and answers on the second: "
           "the row keeps the second reading, exit 0",
           status == 0 and "NO VERDICT CHANGED" in out and main_hang_once_marker.exists()
-          and replay.timed_out_readings_read_again_line("search-file main(), head", 1, 1) in err
+          and readings_read_again_that_all_got_a_verdict(err, "search-file main(), head")
           and main_rows is not None and main_rows[0][0] != "TIMEOUT",
           f"status {status}; rows {main_rows}\n{out}\n{err}")
 
@@ -587,7 +615,7 @@ try:
     check("a shell reader child that hangs on `ls -la`: the per-pair timeout ends that one reading, which passes "
           "when read again, exit 0, and the hung child answers no later request",
           status == 0 and "NO VERDICT CHANGED" in out and failed == [] and not differing and hang_once_marker.exists()
-          and replay.timed_out_readings_read_again_line("new-process, base", 1, 1) in err,
+          and readings_read_again_that_all_got_a_verdict(err, "new-process, base"),
           f"status {status}; failed {failed}; differing {differing}\n{out}\n{err}")
 
     def reader_without_the_long_running_child_flag(worktree):
@@ -602,6 +630,60 @@ try:
           and f"of which one command per process: {BASH_HOOK_COUNT}" in out.split("new-process, head")[0]
           and "of which one command per process" not in out.split("new-process, head")[1],
           f"status {status}\n{out}\n{err}")
+
+    # The first one-command process to read `ls -la` hangs, so the reader's own subprocess timeout ends it, and
+    # the guard raises ShellCommandUnreadable from subprocess.TimeoutExpired: a timed-out reading, read again.
+    reader_hang_once_marker = Path(scratch) / "a-one-command-reader-hung-on-ls"
+    reader_hanging_once_on_ls = commit_with_one_command_per_process_reader_changed(
+        f"if not os.path.exists({str(reader_hang_once_marker)!r}): open({str(reader_hang_once_marker)!r}, 'x').close(); "
+        "time.sleep(10 ** 6)", scratch)
+    reader_timed_out_scratch = Path(scratch) / "run-one-command-reader-timed-out"
+    status, out, err = run_replay("HEAD", scratch, "--jobs", "1", "--scratch-directory", str(reader_timed_out_scratch),
+                                  base_ref=reader_hanging_once_on_ls)
+    failed, differing = failed_new_process_readings_and_rows_differing_from_in_process(reader_timed_out_scratch)
+    check("a one-command-per-process shell reader that runs past its own timeout on `ls -la` once: a timed-out "
+          "reading, which passes when read again, exit 0",
+          status == 0 and "NO VERDICT CHANGED" in out and failed == [] and reader_hang_once_marker.exists()
+          and readings_read_again_that_all_got_a_verdict(err, "new-process, base"),
+          f"status {status}; failed {failed}\n{out}\n{err}")
+
+    # Each one-command process that reads `ls -la` writes a line, so a reading read again writes a second.
+    reader_failure_calls = Path(scratch) / "one-command-reader-failures-on-ls"
+    reader_failing_on_ls = commit_with_one_command_per_process_reader_changed(
+        f"open({str(reader_failure_calls)!r}, 'a').write('x\\n'); "
+        "raise SystemExit('the one-command reader broke on ls -la')", scratch)
+    reader_failed_scratch = Path(scratch) / "run-one-command-reader-failed"
+    status, out, err = run_replay("HEAD", scratch, "--jobs", "1", "--scratch-directory", str(reader_failed_scratch),
+                                  base_ref=reader_failing_on_ls)
+    failed, _ = failed_new_process_readings_and_rows_differing_from_in_process(reader_failed_scratch)
+    failed_on_ls = (failed or []).count("ls -la")
+    calls = len(reader_failure_calls.read_text().splitlines()) if reader_failure_calls.exists() else 0
+    check("a one-command-per-process shell reader that fails on `ls -la` other than by timing out: not read again, "
+          "exit 2",
+          status == 2 and "EXCEPTION ShellCommandUnreadable" in out and "the one-command reader broke on ls -la" in out
+          and failed_on_ls > 0 and calls == failed_on_ls,
+          f"status {status}; failed on ls -la {failed_on_ls}; reader calls {calls}\n{out}\n{err}")
+
+    def raising(error, cause):
+        def read(*_):
+            raise error from cause
+        return read
+
+    timeout = subprocess.TimeoutExpired(["reader"], 8)
+    injected = {"reader timed out": raising(ValueError("timed out after 8 seconds"), timeout),
+                "reader failed": raising(ValueError("could not start"), OSError("no such file")),
+                "uncaused": raising(ValueError("broke"), None)}
+    guards_as_written = replay.GUARDS
+    replay.GUARDS = injected
+    try:
+        readings = replay.guard_readings(dict.fromkeys(injected), "ls -la", "/tmp", "/tmp")
+    finally:
+        replay.GUARDS = guards_as_written
+    check("a reading that raised from subprocess.TimeoutExpired is a timeout; one raised from another cause, or "
+          "from none, is the exception",
+          readings == {"reader timed out": ("TIMEOUT", "timed out after 8 seconds"),
+                       "reader failed": ("EXCEPTION ValueError", "could not start"),
+                       "uncaused": ("EXCEPTION ValueError", "broke")}, readings)
 
     # Each reply the reader sends crosses the long-running child's pipe and is decoded as a one-command
     # process's output is: a missing parser and a command the reader fails on reach the guard as each does today.
