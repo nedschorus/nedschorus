@@ -348,23 +348,33 @@ try:
 
     read_again_lines = {
         ("new-process, base", 5, 2):
-            "new-process, base: 5 readings timed out and were read again, one at a time, after the step's other "
-            "readings had finished (a reading is one Bash guard's verdict on one recorded command); 2 got a verdict on "
-            "the second reading; the other 3 did not get a verdict and count as failed readings, so this replay will "
+            "new-process, base: 5 readings timed out and were read again after the step's other readings had "
+            "finished (a reading is one Bash guard's verdict, to allow or to refuse, on one recorded command); 2 "
+            "got a verdict the second time and 3 did not; those count as failed readings, and this replay will "
             "exit 2 when it finishes.",
+        ("new-process, base", 3, 2):
+            "new-process, base: 3 readings timed out and were read again after the step's other readings had "
+            "finished (a reading is one Bash guard's verdict, to allow or to refuse, on one recorded command); 2 "
+            "got a verdict the second time and 1 did not; that one counts as a failed reading, and this replay "
+            "will exit 2 when it finishes.",
+        ("in-process, head", 3, 0):
+            "in-process, head: 3 readings timed out and were read again after the step's other readings had "
+            "finished (a reading is one Bash guard's verdict, to allow or to refuse, on one recorded command); "
+            "none got a verdict the second time, so they count as failed readings, and this replay will exit 2 "
+            "when it finishes.",
         ("in-process, head", 2, 2):
-            "in-process, head: 2 readings timed out and were read again, one at a time, after the step's other "
-            "readings had finished (a reading is one Bash guard's verdict on one recorded command); 2 got a verdict on "
-            "the second reading.",
+            "in-process, head: 2 readings timed out and were read again after the step's other readings had "
+            "finished (a reading is one Bash guard's verdict, to allow or to refuse, on one recorded command); "
+            "all got a verdict the second time.",
         ("in-process, head", 1, 0):
-            "in-process, head: 1 reading timed out and was read again, one at a time, after the step's other "
-            "readings had finished (a reading is one Bash guard's verdict on one recorded command); 0 got a verdict on "
-            "the second reading; the other one did not get a verdict and counts as a failed reading, so this replay "
+            "in-process, head: 1 reading timed out and was read again after the step's other readings had "
+            "finished (a reading is one Bash guard's verdict, to allow or to refuse, on one recorded command); "
+            "it did not get a verdict the second time either, so it counts as a failed reading, and this replay "
             "will exit 2 when it finishes.",
         ("search-file main(), head", 1, 1):
-            "search-file main(), head: 1 reading timed out and was read again, one at a time, after the step's other "
-            "readings had finished (a reading is one Bash guard's verdict on one recorded command); 1 got a verdict on "
-            "the second reading.",
+            "search-file main(), head: 1 reading timed out and was read again after the step's other readings "
+            "had finished (a reading is one Bash guard's verdict, to allow or to refuse, on one recorded "
+            "command); it got a verdict the second time.",
     }
     for arguments, expected in read_again_lines.items():
         check(f"the read-again line for {arguments[1]} read again, {arguments[2]} with a verdict, says so in words",
