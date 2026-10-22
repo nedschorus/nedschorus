@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Find a file that is no longer on disk, across every history this fleet keeps.
+"""Find a file that is no longer on disk, across every history the Mac and ned-box keep.
 
 WHY THIS EXISTS. On 2026-08-23 an agent followed a citation in nedschorus#46 to
 `md-review-records/2026-08-11-ghi-info-agent-design/dispositions.md`, found
@@ -368,6 +368,13 @@ _git_output_spec = importlib.util.spec_from_file_location(
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 FOUND = "FOUND"
 NOT_FOUND = "NOT FOUND"
 UNAVAILABLE = "UNAVAILABLE"
@@ -428,6 +435,7 @@ TIMESHIFT_SNAPSHOT_NAME_FORMAT = "%Y-%m-%d_%H-%M-%S"
 
 # A process whose command line holds this is a run of this script.
 THIS_SCRIPT_NAME = "find-deleted-path-across-backups"
+PROGRAM_PATH = "scripts/find-deleted-path-across-backups.py"
 
 # Bound waits so an ssh to a sleeping box cannot hang recovery.
 SHORT_TIMEOUT_SECONDS = 20
@@ -640,11 +648,15 @@ def running_on_ned_box(hostname=None):
 def run_command(argv, timeout=SHORT_TIMEOUT_SECONDS, cwd=None):
     """Run a command and return (returncode, stdout, stderr)."""
     # Git redirect variables override -C and must not leak into recovery commands.
+    environment = locator.environment_without_git_redirecting_variables()
+    if argv[0] == "git":
+        # _git_top_level reads git's English error text to tell "not a repository" from a failure.
+        environment["LC_ALL"] = "C"
     try:
         completed = subprocess.run(
             argv,
             cwd=cwd,
-            env=locator.environment_without_git_redirecting_variables(),
+            env=environment,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=timeout,
@@ -782,7 +794,9 @@ def _guarded_file_log_script(blob_id, directory):
         'printf "%s\\n" "$files" | while IFS= read -r f; do',
         '  [ -n "$f" ] || continue',
         "  printf 'LOG %s\\n' \"$f\"",
-        "  grep -F -e %s \"$f\" | sed 's/^/LINE /'" % quoted_id,
+        "  lines=$(grep -F -e %s \"$f\"); rc=$?" % quoted_id,
+        '  if [ "$rc" -gt 1 ]; then exit "$rc"; fi',
+        "  [ -z \"$lines\" ] || printf '%s\\n' \"$lines\" | sed 's/^/LINE /'",
         '  copy="$(dirname "$f")"/%s' % quoted_id,
         "  if [ -f \"$copy\" ]; then printf 'COPY %s\\n' \"$copy\"; fi",
         "done",
@@ -915,7 +929,7 @@ def _missing_on_this_machine(path):
 def search_time_machine_after(blob_id, path, seen, runner=run_command, prompt_for_root=False):
     """Open the first Time Machine snapshot taken after the hook saw the version, and print the command that
     copies path from it."""
-    destination = _time_machine_destination(runner)
+    destination, _ = _time_machine_destination(runner)
     if destination is None:
         return SurfaceReport("time machine", UNAVAILABLE, ["no Time Machine destination is configured on this "
                                                            "machine; the version was seen on the Mac, so run this "
@@ -999,7 +1013,7 @@ def search_local_snapshots(wanted, repo, runner=run_command, mount_point=LOCAL_S
             "local snapshots",
             UNAVAILABLE,
             ["could not list the local snapshots of %s — %s" % (MAC_DATA_VOLUME, failure),
-             "this surface is macOS-only; on the box there are none to list and none to search"],
+             "this surface is macOS-only; on ned-box there are none to list and none to search"],
             ["tmutil listlocalsnapshots %s" % MAC_DATA_VOLUME],
         )
     if not snapshots:
@@ -1134,7 +1148,7 @@ def _ended_run_process_id(where, mount_point):
 def _run_of_this_script_is_live(process_id, runner):
     """Return (live, why, ps failed): whether process_id is a run of this script that is still running."""
     code, out, stderr = runner(["ps", "-p", str(process_id), "-o", "command="])
-    if code == 1 and not out.strip():
+    if code == 1 and not out.strip() and not stderr.strip():
         return False, "process %d has ended" % process_id, False
     if code != 0:
         first = stderr.strip().splitlines()[0] if stderr.strip() else "no error text"
@@ -1301,14 +1315,21 @@ def _local_snapshot_probe_path(wanted, repo, runner):
             "git, transcripts and Timeshift do answer a bare filename; re-run with at least one "
             "directory component, or the absolute path, to search this surface too",
         ]
-    code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
-    if code != 0 or not out.strip():
+    try:
+        top_level = _git_top_level(repo, runner)
+    except _GitCommandFailed as failure:
+        return None, [
+            "%r is relative, and git could not give the top level of %s to resolve it against — %s"
+            % (wanted, repo, failure),
+            "re-run with the absolute path, or fix the git failure above",
+        ]
+    if top_level is None:
         return None, [
             "%r is relative and %s is not a git repository, so there is no top level to resolve it "
             "against and no absolute path to test inside a snapshot" % (wanted, repo),
             "re-run with the absolute path, or with --repo pointing at the repository it belongs to",
         ]
-    return _below_data_volume(os.path.join(out.strip(), stripped)), []
+    return _below_data_volume(os.path.join(top_level, stripped)), []
 
 
 def _below_data_volume(path):
@@ -1371,23 +1392,20 @@ def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contai
     if code != 0:
         return SurfaceReport(surface, UNAVAILABLE, ["%s is not a git repository (%s)" % (repo, stderr.strip())])
 
-    wanted, toplevel = _repo_relative_form(wanted, repo, runner)
-    if wanted.startswith("/"):
-        return SurfaceReport(
-            surface,
-            UNAVAILABLE,
-            ["%s is outside %s, so git was not asked for it" % (wanted, toplevel or repo),
-             "re-run with the path relative to the repository, or a trailing fragment of it"],
-        )
-
-    # git pathspecs are relative to -C, but these queries and --name-only results are repo-relative.
-    code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
-    top_level = out.strip() if code == 0 and out.strip() else repo
-
     lines = []
     versions = []
     dates_held = []
     try:
+        wanted, toplevel = _repo_relative_form(wanted, repo, runner)
+        if wanted.startswith("/"):
+            return SurfaceReport(
+                surface,
+                UNAVAILABLE,
+                ["%s is outside %s, so git was not asked for it" % (wanted, toplevel or repo),
+                 "re-run with the path relative to the repository, or a trailing fragment of it"],
+            )
+        # git pathspecs are relative to -C, but these queries and --name-only results are repo-relative.
+        top_level = _git_top_level(repo, runner) or repo
         paths = _git_candidate_paths(wanted, top_level, runner, revisions)
         if not paths:
             return SurfaceReport(surface, NOT_FOUND, [never_contained_template % (repo, wanted)])
@@ -1413,14 +1431,14 @@ def _search_git_revisions(wanted, repo, runner, surface, revisions, never_contai
 
 
 def _repo_relative_form(wanted, repo, runner=run_command):
-    """Return (normalized query, repository top level or None)."""
-    # git log accepts absolute paths, but cat-file blob addresses require repo-relative paths.
+    """Return (normalized query, repository top level or None); raises _GitCommandFailed when git fails."""
+    # git log accepts absolute paths, but git ls-tree matches repo-relative paths only.
     if not wanted.startswith("/"):
         return wanted, None
-    code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
-    if code != 0 or not out.strip():
+    toplevel = _git_top_level(repo, runner)
+    if toplevel is None:
         return wanted, None
-    toplevel = os.path.realpath(out.strip())
+    toplevel = os.path.realpath(toplevel)
     real = os.path.realpath(wanted)
     if real.startswith(toplevel + "/"):
         return real[len(toplevel) + 1:], toplevel
@@ -1451,7 +1469,20 @@ def _git_candidate_paths(wanted, repo, runner, revisions=GIT_REVISIONS_EVERY_REF
 
 
 class _GitCommandFailed(Exception):
-    """A required git command failed; the exception text is stderr."""
+    """A required git command failed; the exception text carries git's stderr."""
+
+
+def _git_top_level(repo, runner):
+    """Return the top level of the repository holding repo, or None when repo is in no git repository.
+
+    Raises _GitCommandFailed for any other git failure, such as a bare repository or a corrupt one."""
+    code, out, stderr = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
+    if code == 0 and out.strip():
+        return out.strip()
+    if code != 0 and git_output.git_stderr_says_outside_a_repository(stderr):
+        return None
+    raise _GitCommandFailed("git -C %s rev-parse --show-toplevel exited %s — %s"
+                            % (repo, code, stderr.strip() or "no error text"))
 
 
 def _git_newest_commit_holding(path, repo, runner, revisions=GIT_REVISIONS_EVERY_REF,
@@ -1495,8 +1526,11 @@ def _git_newest_commit_holding(path, repo, runner, revisions=GIT_REVISIONS_EVERY
 
 
 def _git_tree_holds(sha, path, repo, runner):
-    code, _, _ = runner(["git", "-C", repo, "cat-file", "-e", "%s:%s" % (sha, path)])
-    return code == 0
+    # git cat-file -e exits 128 both for an absent path and for a git failure; ls-tree tells them apart.
+    code, out, stderr = runner(["git", "-C", repo, "ls-tree", "-z", sha, "--", path])
+    if code != 0:
+        raise _GitCommandFailed(stderr.strip() or "git ls-tree exited %s" % code)
+    return any(entry.path == path for entry in git_output.tree_entries(out))
 
 
 def _git_some_ref_reaches(sha, repo, runner):
@@ -1532,7 +1566,7 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
         where = "this machine"
         code, out, stderr = runner([sys.executable, "-c"] + probe_arguments, timeout=SHORT_TIMEOUT_SECONDS)
     elif box_ssh_host:
-        where = "the box (%s)" % box_ssh_host
+        where = "ned-box (%s)" % box_ssh_host
         code, out, stderr = runner(
             ["ssh", "-o", "ConnectTimeout=%d" % BOX_LOG_STORE_CONNECT_TIMEOUT_SECONDS, "-o", "BatchMode=yes",
              box_ssh_host, "python3 -c " + " ".join(shlex.quote(a) for a in probe_arguments)],
@@ -1543,7 +1577,7 @@ def search_log_store(wanted, log_store_root, box_ssh_host, runner=run_command, s
             return SurfaceReport(
                 "log-store",
                 UNAVAILABLE,
-                ["the box (%s) is unreachable — %s" % (box_ssh_host, first_error or "ssh failed"),
+                ["ned-box (%s) is unreachable — %s" % (box_ssh_host, first_error or "ssh failed"),
                  "see why with `ssh %s true`; once it connects, re-run this search" % box_ssh_host],
             )
     else:
@@ -1724,13 +1758,13 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
         hits = [h for h in out.splitlines() if h.strip()]
         first_error = stderr.strip().splitlines()[0] if stderr.strip() else ""
         if code == 255:
-            lines.append("the box (%s): unreachable — %s" % (box_ssh_host, first_error or "ssh failed"))
+            lines.append("ned-box (%s): unreachable — %s" % (box_ssh_host, first_error or "ssh failed"))
             statuses.append(UNAVAILABLE)
         elif code == BOX_TRANSCRIPTS_DIR_MISSING:
-            lines.append("the box (%s): ~/.claude/projects does not exist there" % box_ssh_host)
+            lines.append("ned-box (%s): ~/.claude/projects does not exist there" % box_ssh_host)
             statuses.append(UNAVAILABLE)
         elif hits:
-            lines.append("the box (%s): %d session transcript(s) mention it" % (box_ssh_host, len(hits)))
+            lines.append("ned-box (%s): %d session transcript(s) mention it" % (box_ssh_host, len(hits)))
             for hit in hits[:5]:
                 lines.append("    " + hit)
             if len(hits) > 5:
@@ -1738,14 +1772,14 @@ def search_transcripts(wanted, transcripts_dir, box_ssh_host, runner=run_command
             recovery.append("ssh %s %s | head" % (box_ssh_host, shlex.quote(_transcript_context_print_command(wanted, hits[0]))))
             statuses.append(FOUND)
         elif code == 1:
-            lines.append("the box (%s): searched ~/.claude/projects, no transcript mentions it" % box_ssh_host)
+            lines.append("ned-box (%s): searched ~/.claude/projects, no transcript mentions it" % box_ssh_host)
             statuses.append(NOT_FOUND)
         else:
-            lines.append("the box (%s): grep over ~/.claude/projects failed (exit %s) — %s"
+            lines.append("ned-box (%s): grep over ~/.claude/projects failed (exit %s) — %s"
                          % (box_ssh_host, code, first_error or "no error text"))
             statuses.append(UNAVAILABLE)
     else:
-        lines.append("the box: not searched — no ssh host given (--skip box, or an empty --box-ssh-host)")
+        lines.append("ned-box: not searched — no ssh host given (--skip box, or an empty --box-ssh-host)")
 
     if FOUND in statuses:
         # The searching session quotes the path too; a lone transcript hit may contain no recovered content.
@@ -1885,7 +1919,7 @@ def search_timeshift(wanted, box_ssh_host, snapshot_root, search_roots, runner=r
         return SurfaceReport(
             "timeshift",
             UNAVAILABLE,
-            ["the box (%s) is unreachable — %s" % (box_ssh_host, first_error or "ssh failed"),
+            ["ned-box (%s) is unreachable — %s" % (box_ssh_host, first_error or "ssh failed"),
              "the snapshots are fine; this machine just cannot see them right now"],
         )
     if code != 0:
@@ -1953,9 +1987,9 @@ def _timeshift_probe_script(wanted, snapshot_root, search_roots):
 
 def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TIME_MACHINE_SNAPSHOT_LIMIT,
                         runner=run_command, prompt_for_root=False):
-    destination = _time_machine_destination(runner)
+    destination, why_none = _time_machine_destination(runner)
     if destination is None:
-        return SurfaceReport("time machine", UNAVAILABLE, ["no Time Machine destination is configured on this Mac"])
+        return SurfaceReport("time machine", UNAVAILABLE, [why_none])
 
     name = destination["name"]
     device, mount_point, attached = _time_machine_volume_state(name, runner)
@@ -2100,9 +2134,15 @@ def _time_machine_manual_recovery(snapshot, device, path_inside=None, clear_firs
 
 
 def _time_machine_destination(runner):
-    code, out, _ = runner(["tmutil", "destinationinfo"])
+    """Return (destination, None), or (None, the line saying why there is none)."""
+    code, out, stderr = runner(["tmutil", "destinationinfo"])
+    if code == 127:
+        # run_command's answer for a missing program; ned-box has no tmutil.
+        return None, ("%s, and Time Machine exists only on macOS, so this machine has no Time Machine "
+                      "backup to search" % stderr.strip())
+    none_configured = "no Time Machine destination is configured on this machine"
     if code != 0:
-        return None
+        return None, none_configured
     destination = {}
     for line in out.splitlines():
         if ":" not in line:
@@ -2114,7 +2154,7 @@ def _time_machine_destination(runner):
             destination["name"] = value
         elif key == "mount point" and value:
             destination["mount_point"] = value
-    return destination if destination.get("name") else None
+    return (destination, None) if destination.get("name") else (None, none_configured)
 
 
 def _time_machine_volume_state(name, runner):
@@ -2257,10 +2297,87 @@ def _time_machine_probe(snapshot, device, wanted, runner, prompt_for_root=False)
 
 
 
-def announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner):
+def git_failure_next_steps(rerun):
+    """The lines that tell an agent what to do after a git failure in a run started as rerun."""
+    return next_step_lines.git_failure_next_step_lines(
+        rerun, PROGRAM_PATH, text_the_failure_line_contains="git's failure:",
+        include_the_misspelt_branch_commit_or_path_line=True)
+
+
+REPO_PLACEHOLDER = "<checkout>"
+
+
+def arguments_without_repo(arguments):
+    """arguments with every --repo option and its value left out; after a -- separator every argument is kept."""
+    kept = []
+    skip_next = False
+    for position, argument in enumerate(arguments):
+        if skip_next:
+            skip_next = False
+        elif argument == "--":
+            return kept + list(arguments[position:])
+        elif argument == "--repo":
+            skip_next = True
+        elif not argument.startswith("--repo="):
+            kept.append(argument)
+    return kept
+
+
+def build_agent_facing_message_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command(repo, named, failure, skip, repo_rerun):
+    """The lines, before the shared next steps, for a git top-level failure; true for whichever git surfaces --skip left in."""
+    git_surfaces = [name for flag, name in (("git", "git"), ("reflog", "git reflog")) if flag not in skip]
+    if len(git_surfaces) == 2:
+        affected = ("The git and git reflog surfaces cannot search, and their result lines will say UNAVAILABLE "
+                    "for this failure.")
+    elif git_surfaces:
+        affected = ("The %s surface cannot search, and its result line will say UNAVAILABLE for this failure; "
+                    "--skip left out the other git surface." % git_surfaces[0])
+    else:
+        affected = ("--skip left out the git and git reflog surfaces, so no surface prints a line for this "
+                    "failure.")
+    found = ("If some surface finds the path, this program exits 0 when this program copied a version, 5 when this "
+             "program copied no version but printed a command that copies one, and 4 otherwise.")
+    if git_surfaces:
+        not_found = "If no surface finds the path, this program exits 3, for an incomplete search."
+    else:
+        not_found = ("If no surface finds the path, this program exits 1, for a search that missed everywhere, when "
+                     "at least one surface ran and every surface that ran reports NOT FOUND, and 3, for an incomplete "
+                     "search, otherwise.")
+    return ("%s: git could not find the top level of the repository at %s. This program searches several "
+            "surfaces, the places a deleted file may survive, such as local snapshots, git, git reflog, the "
+            "log-store, transcripts, Timeshift and Time Machine, and prints one result line per surface. %s Every "
+            "other surface that --skip did not leave out runs as usual, given the absolute path %s unchanged, since "
+            "git could not turn it into a path inside the repository; each such surface matches that path in its "
+            "own way, and its result line reports that surface's own result, which this git failure does not "
+            "affect, though a surface can still be UNAVAILABLE for a reason of its own.\n"
+            "%s %s\n"
+            "git's failure: %s\n"
+            "If --repo names the wrong directory, or was left out and the current directory is not in the path's "
+            "checkout, run %s with %s replaced by a checkout of the repository the path was deleted from."
+            % (THIS_SCRIPT_NAME, repo, affected, named, found, not_found, failure, repo_rerun, REPO_PLACEHOLDER))
+
+
+def rerun_command(arguments):
+    """The command line that runs this program again with arguments, from any directory."""
+    return shlex.join(["python3", os.path.abspath(__file__)] + list(arguments))
+
+
+def announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner, rerun):
     """Speak and return the password request, or return None."""
     # Wait for speech to finish so script exit does not orphan the announcement.
-    sentence = speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner)
+    try:
+        sentence = speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner)
+    except _GitCommandFailed as failure:
+        print("%s did not speak its announcement, through the macOS say command, that a Time Machine backup "
+              "needs your sudo password; the search ran to the end, and the Time Machine lines above still give "
+              "the mount command to run by hand. %s makes that announcement only when it can show that a Time "
+              "Machine snapshot predates the file's deletion, and git could not give the date %s was deleted, "
+              "so %s could not check.\n"
+              "git's failure: %s\n%s"
+              % (THIS_SCRIPT_NAME, THIS_SCRIPT_NAME, wanted, THIS_SCRIPT_NAME, failure,
+                 git_failure_next_steps(rerun)),
+              file=sys.stderr, flush=True)
+        return None
     if sentence is None:
         return None
     runner(["say", sentence])
@@ -2294,12 +2411,16 @@ def speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner
 def _git_deletion_timestamp(wanted, repo, runner):
     """Return the deletion commit's local timestamp as YYYYMMDDhhmmss, or None."""
     # Snapshot names use local time; query from the repo root because wanted is repo-relative.
-    code, out, _ = runner(["git", "-C", repo, "rev-parse", "--show-toplevel"])
-    top_level = out.strip() if code == 0 and out.strip() else repo
-    code, out, _ = runner(["git", "-C", top_level, "log", "--all", "--full-history", "-1",
-                           "--diff-filter=D", "--date=format-local:%Y%m%d%H%M%S",
-                           "--format=%cd", "--", wanted])
-    if code != 0 or not out.strip():
+    top_level = _git_top_level(repo, runner)
+    if top_level is None:
+        return None
+    code, out, stderr = runner(["git", "-C", top_level, "log", "--all", "--full-history", "-1",
+                                "--diff-filter=D", "--date=format-local:%Y%m%d%H%M%S",
+                                "--format=%cd", "--", wanted])
+    if code != 0:
+        raise _GitCommandFailed("git log --diff-filter=D in %s exited %s — %s"
+                                % (top_level, code, stderr.strip() or "no error text"))
+    if not out.strip():
         return None
     stamp = out.strip().splitlines()[0].strip()
     return stamp if len(stamp) == 14 and stamp.isdigit() else None
@@ -2317,7 +2438,7 @@ def _combine(statuses):
 
 def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, search_roots, skip=(),
                  runner=run_command, prompt_for_root=False, log_store_root=DEFAULT_LOG_STORE_ROOT,
-                 on_surface_done=None, on_ned_box=None):
+                 on_surface_done=None, on_ned_box=None, *, rerun):
     if on_ned_box is None:
         on_ned_box = running_on_ned_box()
     reports = []
@@ -2354,12 +2475,12 @@ def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, sea
         finished(search_time_machine(wanted, newest_date_held, runner=runner,
                                      prompt_for_root=prompt_for_root))
     # Assemble the speech decision here so callers that bypass main receive it too.
-    announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner)
+    announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner, rerun)
     return reports
 
 
 def render_header(wanted):
-    return "Searching every history this fleet keeps for: %s" % wanted
+    return "Searching every history the Mac and ned-box keep for: %s" % wanted
 
 
 def render_summary(reports):
@@ -2421,9 +2542,11 @@ def print_surface_as_it_finishes(report):
 
 
 def main(argv=None, runner=run_command):
+    # An abbreviation such as --rep would set --repo yet slip past arguments_without_repo.
     parser = argparse.ArgumentParser(
+        allow_abbrev=False,
         description="Find a deleted path across this Mac's local snapshots, git and its reflog, the log-store, "
-                    "agent transcripts, Timeshift on the box, and Time Machine.",
+                    "agent transcripts, Timeshift on ned-box, and Time Machine.",
     )
     parser.add_argument("path", help="a git blob id of 40 lowercase hexadecimal characters; or a path: "
                                      "repo-relative, absolute, or the path's last whole component or components, "
@@ -2438,11 +2561,11 @@ def main(argv=None, runner=run_command):
     parser.add_argument("--timeshift-snapshot-root", default=os.environ.get("FIND_DELETED_PATH_TIMESHIFT_SNAPSHOT_ROOT", DEFAULT_TIMESHIFT_SNAPSHOT_ROOT))
     parser.add_argument("--log-store-root", default=os.environ.get("FIND_DELETED_PATH_LOG_STORE_ROOT", DEFAULT_LOG_STORE_ROOT),
                         help="the log-store's directory: read in place when it exists on this machine, "
-                             "otherwise on the box over ssh")
+                             "otherwise on ned-box over ssh")
     parser.add_argument("--skip", action="append", default=[],
                         choices=["localsnapshots", "git", "reflog", "logstore", "transcripts", "box", "timeshift",
                                  "timemachine"],
-                        help="skip a surface (repeatable); 'box' skips everything on the box — "
+                        help="skip a surface (repeatable); 'box' skips everything on ned-box — "
                              "its transcripts, Timeshift, and the log-store unless it is on this machine — "
                              "so nothing is sent over ssh")
     parser.add_argument("--found-copies-root",
@@ -2454,6 +2577,7 @@ def main(argv=None, runner=run_command):
                              "password in this terminal, instead of printing the command. Only ever "
                              "pass this by hand: a hook has no terminal to answer a prompt in")
     args = parser.parse_args(argv)
+    rerun = rerun_command(sys.argv[1:] if argv is None else argv)
 
     use_found_copies_folder(FoundCopiesFolder(args.found_copies_root))
     if is_git_blob_id(args.path):
@@ -2469,7 +2593,15 @@ def main(argv=None, runner=run_command):
         named = _plain_path_from_cited_query(args.path)
     except CitedQueryCannotBePlaced as refusal:
         parser.error(str(refusal))
-    wanted, _ = _repo_relative_form(named, args.repo, runner)
+    try:
+        wanted, _ = _repo_relative_form(named, args.repo, runner)
+    except _GitCommandFailed as failure:
+        # The git surfaces report the same failure as UNAVAILABLE; the other surfaces can still search.
+        repo_rerun = rerun_command(["--repo", REPO_PLACEHOLDER]
+                                   + arguments_without_repo(sys.argv[1:] if argv is None else argv))
+        print(build_agent_facing_message_printed_when_git_cannot_find_the_repository_top_level_from_surfaces_skip_left_in_exit_codes_and_repo_rerun_command(args.repo, named, failure, set(args.skip), repo_rerun)
+              + "\n" + git_failure_next_steps(rerun), file=sys.stderr, flush=True)
+        wanted = named
     shown = wanted if wanted == args.path else "%s (given as %s)" % (wanted, args.path)
 
     print(render_header(shown) + "\n", flush=True)
@@ -2485,6 +2617,7 @@ def main(argv=None, runner=run_command):
         prompt_for_root=args.prompt_for_root,
         log_store_root=args.log_store_root,
         on_surface_done=print_surface_as_it_finishes,
+        rerun=rerun,
     )
     print(render_summary(reports), flush=True)
     return exit_status(reports)

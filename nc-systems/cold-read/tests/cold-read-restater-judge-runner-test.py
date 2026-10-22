@@ -236,6 +236,9 @@ if "report" in step:
     report_path.write_text(step["report"], encoding="utf-8")
 if "stdout" in step:
     sys.stdout.write(step["stdout"])
+if step.get("kill_cell"):
+    import signal
+    os.kill(os.getppid(), signal.SIGKILL)
 sys.exit(step.get("exit", 0))
 """
 
@@ -277,7 +280,8 @@ def write_stub_prompt_file(repository, text=STUB_JUDGE_PROMPT):
 
 
 def run_runner(repository, stub_directory, plan, *arguments,
-               cases=THREE_CASES, restater=RESTATER_CLASS, prompt_file=None):
+               cases=THREE_CASES, restater=RESTATER_CLASS, prompt_file=None,
+               current_directory=None):
     stub_directory.mkdir(parents=True, exist_ok=True)
     stub = stub_directory / "claude"
     stub.write_text(STUB_CLAUDE, encoding="utf-8")
@@ -296,7 +300,8 @@ def run_runner(repository, stub_directory, plan, *arguments,
         command += ["--case", *case]
     command += list(arguments)
     return subprocess.run(
-        command, capture_output=True, text=True, check=False, env=environment)
+        command, capture_output=True, text=True, check=False, env=environment,
+        cwd=current_directory or repository)
 
 
 def expected_record_directory(repository, restater=RESTATER_CLASS):
@@ -438,6 +443,25 @@ with tempfile.TemporaryDirectory() as scratch:
     check("with one run there is nothing to compare, and it says so",
           "Only one run was scored, so there is nothing to compare." in combined,
           repr(combined))
+
+    # --- A report beside a nonzero cell exit is not scored -----------------
+    # The judge writes its report and the cell is killed before it can check
+    # and stamp it: the text is there, but the run did not finish.
+    repository = build_scratch_repository(scratch)
+    result = run_runner(
+        repository, stubs,
+        {"run1": {"*": {"report": RUN_REPORT_BASE, "kill_cell": True}},
+         "run2": {"*": {"report": RUN_REPORT_AGREEING}}},
+    )
+    record_dir = expected_record_directory(repository)
+    combined = (record_dir / f"{record_dir.name}--restater-judge-combined.md"
+                ).read_text(encoding="utf-8")
+    check("a run whose cell was killed after its report landed is not scored, and the pair exits 1",
+          result.returncode == 1
+          and combined.startswith("<!-- PARTIAL RESULT: run 1 was not scored — the cell exited -9")
+          and "| 1 | 1 | 3 | 2 | 2.00 |" not in combined
+          and "| 1 | 2 | 3 | 2 | 2.00 |" in combined,
+          f"exit {result.returncode}; combined={combined[:600]!r}")
 
     # --- A report with no case heading is a failed run, not a zero ---------
     repository = build_scratch_repository(scratch)
@@ -640,6 +664,41 @@ with tempfile.TemporaryDirectory() as scratch:
                                   "of the caller's own.")
                   for text in prompts),
           f"exit {result.returncode}; prompts={[text[:80] for text in prompts]!r}")
+
+    # --- Relative paths mean files under the current directory, for both runs --
+    # Run from a directory other than the runner's checkout, holding its own
+    # case files and prompt at the same relative paths: the record directory
+    # is made there, and both judge cells are pointed at that directory's files.
+    repository = build_scratch_repository(scratch)
+    other_directory = scratch / "another-current-directory"
+    for relative_path, text in CASE_FILE_CONTENTS.items():
+        path = other_directory / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    write_stub_prompt_file(other_directory)
+    run1_prompt = scratch / "relative-paths-run1-prompt.txt"
+    run2_prompt = scratch / "relative-paths-run2-prompt.txt"
+    result = run_runner(
+        repository, stubs,
+        {"run1": {"*": {"report": RUN_REPORT_BASE, "dump_prompt": str(run1_prompt)}},
+         "run2": {"*": {"report": RUN_REPORT_AGREEING, "dump_prompt": str(run2_prompt)}}},
+        "--record-dir", "a-record-directory-named-relatively",
+        prompt_file="test-cases/judge-prompt.md", current_directory=other_directory,
+    )
+    check("a relative --record-dir is made under the current directory, not the "
+          "runner's checkout",
+          (other_directory / "a-record-directory-named-relatively").is_dir()
+          and not (repository / "a-record-directory-named-relatively").exists(),
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr[-400:]!r}")
+    prompts = [path.read_text(encoding="utf-8") if path.is_file() else ""
+               for path in (run1_prompt, run2_prompt)]
+    check("both judge cells read the relative --case files the runner checked, "
+          "under the current directory",
+          result.returncode == 0
+          and all(str(other_directory / "test-cases/draft-one.md") in text
+                  and str(repository / "test-cases") not in text for text in prompts),
+          f"exit {result.returncode}; stderr={result.stderr[-400:]!r}; "
+          f"prompts={[text[:200] for text in prompts]!r}")
 
 print()
 if failures:

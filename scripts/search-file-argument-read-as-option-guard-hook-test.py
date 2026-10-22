@@ -503,10 +503,12 @@ try:
     with guard.shell_reader.agent_session_attendance_environment_variables_temporarily_set_for_test(None, None):
         budget_refusal = run_main("grep -l needle */*.jsonl", scratch,
                                   clock=lambda: float(next(ticks)))
-    check("passes when the expansion budget is spent, and says the limit stopped the check",
+    check("passes when the expansion budget is spent, says the limit stopped the check, "
+          "and gives the next step",
           budget_refusal is None
           and len(LET_THROUGH_MESSAGES) == 1
           and "limit is deliberate; nothing failed" in LET_THROUGH_MESSAGES[0]
+          and guard.PARSER_UNAVAILABLE_NEXT_STEP_LINES in LET_THROUGH_MESSAGES[0]
           and "Tell the user" not in LET_THROUGH_MESSAGES[0], LET_THROUGH_MESSAGES)
     real_analyze = guard.analyze_command_text
     for failure, session, attended in [

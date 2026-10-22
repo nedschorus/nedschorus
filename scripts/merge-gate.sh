@@ -6,7 +6,8 @@
 #
 # EXIT CODES. 0 the merge may proceed; 1 the gate REFUSES, a named reason on
 # stderr; 2 the gate COULD NOT RUN -- bad invocation, missing jq or gh,
-# unreadable token, or a read from GitHub that failed or could not be parsed.
+# unreadable token, a read from GitHub that failed or could not be parsed, or a
+# failed run of the description reader.
 # 1 and 2 are distinguished because the fleet's near-miss shape is a gate
 # that could not run being read as a gate that passed.
 #
@@ -156,6 +157,7 @@ command -v jq >/dev/null 2>&1 || cannot "jq is not on PATH. Put jq on PATH, then
   "If jq is not installed on this machine, tell the user this message."
 command -v gh >/dev/null 2>&1 || cannot "gh is not on PATH. Put gh on PATH, then rerun the gate." \
   "If gh is not installed on this machine, tell the user this message."
+DESCRIPTION_DEFECT_LINE_READER="$(dirname "${BASH_SOURCE[0]}")/pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py"
 
 # An abbreviated or malformed EXPECTED used to refuse as "head moved", naming the
 # wrong cause: the head had not moved, the caller had passed a short sha.
@@ -212,10 +214,11 @@ approval=$(jq -s -c \
   "If its review found a defect, do not merge until the defect is fixed and the new head commit is approved." \
   "If its review found no defect, approve the head commit as an account other than the pull request's author: the merge account, or mac-claude when the merge account opened the pull request. Then run the gate again."
 
-approved_sha=$(jq -r '.commit_id' <<<"$approval")
-approval_id=$(jq -r '.id' <<<"$approval")
-approval_at=$(jq -r '.submitted_at' <<<"$approval")
-approver=$(jq -r '.user.login' <<<"$approval")
+APPROVAL_UNPARSABLE="could not parse the approving review"
+approved_sha=$(jq -r '.commit_id' <<<"$approval")    || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+approval_id=$(jq -r '.id' <<<"$approval")            || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+approval_at=$(jq -r '.submitted_at' <<<"$approval")  || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+approver=$(jq -r '.user.login' <<<"$approval")       || cannot "$APPROVAL_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
 [ -n "$approved_sha" ] && [ "$approved_sha" != "null" ] || fail "the approving review https://github.com/$REPO/pull/$PR#pullrequestreview-$approval_id records no commit_id, so the gate cannot tell which commit it approved." \
   "Do not merge. Tell the user this message."
 
@@ -318,37 +321,37 @@ NEW_ACTIVITY_RECORD="When nothing is left open, post a review as the merge accou
 [ "$reviews" -eq 0 ] || fail "$reviews review(s) posted or edited since $SINCE -- read them before merging" \
   "$NEW_ACTIVITY_READ" "$NEW_ACTIVITY_FINDING" "$NEW_ACTIVITY_RECORD"
 
-# The gate checks only that a labelled line is there. Whether the line is true
-# is a reviewer's judgement, not the gate's. The colon-and-period labels still
-# pass because descriptions written before the hashtags carry them.
+# The gate checks only that a defect line is there. Whether the line is true
+# is a reviewer's judgement, not the gate's. Which lines are defect lines, and
+# which link a not-fixed line names, the description reader decides.
+DESCRIPTION_UNPARSABLE="could not parse pull request $PR's description"
 body_read=$(gh pr view "$PR" --repo "$REPO" --json body)
 [ $? -eq 0 ] || cannot "could not read pull request $PR's description; any error gh printed is just above this line." "$RERUN_ONCE_GH"
-has_defect_line=$(jq -r '.body
-  | split("\n")
-  | any(test("^\\s*(?:[-*+]\\s+)?(?:\\*\\*|__)?(?:#(?:root_cause(?:_not_fixed)?|no_defect_fixed)(?!\\w)|Root cause(?: not fixed)?(?:\\*\\*|__)?:|No defect fixed(?:\\*\\*|__)?\\.)"))' <<<"$body_read")
-[ $? -eq 0 ] || cannot "could not parse pull request $PR's description" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
-[ "$has_defect_line" = "true" ] || fail "the pull request's description has no line beginning \"#root_cause\", \"#root_cause_not_fixed\" or \"#no_defect_fixed\", so it does not say whether the pull request fixes a defect and, if it does, whether the change removes the defect's root cause." \
+description=$(jq -er '.body | strings' <<<"$body_read")
+[ $? -eq 0 ] || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+defect_lines=$(python3 "$DESCRIPTION_DEFECT_LINE_READER" <<<"$description")
+[ $? -eq 0 ] || cannot "python3 $DESCRIPTION_DEFECT_LINE_READER exited nonzero when the gate ran it with pull request $PR's description on standard input, so the gate cannot read the description's defect lines; any error python3 or that program printed is just above this line." \
+  "If that error says No such file or directory, that program is missing from the checkout the gate ran from." \
+  "Otherwise that program or python3 cannot run, or that program has a defect, which the text of this description may set off; the cause is not the description's encoding, because GitHub gives the gate descriptions as UTF-8 text." \
+  "Either way a rerun fails the same way: do not run the gate again, and do not repair the checkout, that program or python3 yourself." \
+  "Tell the user every line the gate printed, the error above included, leave pull request https://github.com/$REPO/pull/$PR unmerged, go on with other pull requests meanwhile, and run the gate on this one again only once the user says the cause is fixed."
+[ "$defect_lines" != "[]" ] || fail "the pull request's description has no line beginning \"#root_cause\", \"#root_cause_not_fixed\" or \"#no_defect_fixed\", so it does not say whether the pull request fixes a defect and, if it does, whether the change removes the defect's root cause." \
   "Have the pull request's author add one of these lines to the description, starting the line with the hashtag, which may follow a bullet and may be in bold type: \"#root_cause\" and the root cause the change removes; \"#root_cause_not_fixed\" and the root cause that stays, or that none was found, with the reason; or \"#no_defect_fixed\" when the pull request fixes no defect." \
   "Editing the description needs no new commit. Once the description has the line, run the gate again."
 
 # A not-fixed line, in either form, names after #follow_up the issue or pull
 # request that will fix its cause or look for it, and GitHub must not show that
-# work abandoned. Only the first link after #follow_up is read, cut back to the
-# issue or pull request it names when it carries a #fragment or a sub-path.
-not_fixed=$(jq -c '[.body | split("\n")[] | sub("\r$"; "")
-  | select(test("^\\s*(?:[-*+]\\s+)?(?:\\*\\*|__)?(?:#root_cause_not_fixed(?!\\w)|Root cause not fixed(?:\\*\\*|__)?:)"))
-  | {line: ., link: ((capture("#follow_up(?!\\w).*?(?<url>https?://[^\\s)>\\]`]+)").url // null)
-                     | if . == null then null else sub("[.,;:]+$"; "") end
-                     | if . == null then null else (capture("^(?<item>https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:issues|pull)/[0-9]+)(?:[/#?].*)?$").item // null) end)}]' <<<"$body_read")
-[ $? -eq 0 ] || cannot "could not parse pull request $PR's description" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+# work abandoned.
+not_fixed=$(jq -c '[.[] | select(.kind == "root_cause_not_fixed") | {line, link}]' <<<"$defect_lines")
+[ $? -eq 0 ] || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
 FOLLOW_UP_IF_NO_ISSUE="If no such issue exists, open one with the /ghi-write skill, or link the outside project's issue when the cause is outside this repository."
 FOLLOW_UP_EDIT_ONLY="Editing the description is enough; no new commit is needed."
 FOLLOW_UP_RERUN="Once the description has the link, run the gate again."
 FOLLOW_UP_REPLACE="Replace that link with an open issue or pull request that fixes the cause, or, if the cause is not known, an open issue that looks for it."
-not_fixed_count=$(jq length <<<"$not_fixed")
+not_fixed_count=$(jq length <<<"$not_fixed")                    || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
 for ((line_index = 0; line_index < not_fixed_count; line_index++)); do
-  line=$(jq -r ".[$line_index].line" <<<"$not_fixed")
-  link=$(jq -r ".[$line_index].link // empty" <<<"$not_fixed")
+  line=$(jq -r ".[$line_index].line" <<<"$not_fixed")           || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
+  link=$(jq -r ".[$line_index].link // empty" <<<"$not_fixed")  || cannot "$DESCRIPTION_UNPARSABLE" "$JQ_ERROR_ABOVE" "$RERUN_ONCE_JQ"
   [ -n "$link" ] || fail "the description's line \`$line\` has no \`#follow_up\` followed by a full https://github.com/ link." \
     "Add \`#follow_up <link>\` to the end of that line." \
     "If the cause is known, link the open issue or pull request that fixes it." \

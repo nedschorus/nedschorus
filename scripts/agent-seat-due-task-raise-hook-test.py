@@ -306,13 +306,36 @@ seat = Seat()
 seat.task("42", metadata={"waits_on": [{"pr_merged": 103}]})
 seat.respond({"pr:103": "fail"})
 result = seat.run()
-check("gh failing: silent", silent(result), result)
+GH_COMMAND_103 = "`gh pr view 103 --repo nedschorus/nedschorus --json state,title,url`"
+check("gh failing: reported on stderr with gh's command and error, exit 1, nothing raised",
+      reported(result, "This hook could not ask GitHub whether PR 103 is merged, so no task "
+                       f"waiting on it was raised: {GH_COMMAND_103} exited 1: gh stand-in: "
+                       "failing on purpose. It asks again at the first stop at least 5 minutes "
+                       "from now."), result)
 check("gh failing: it was asked", len(seat.gh_calls()) == 1, seat.gh_calls())
+check("gh failing: the next stop within five minutes is silent and does not ask again",
+      silent(seat.run()) and len(seat.gh_calls()) == 1, seat.gh_calls())
+
+seat = Seat()
+seat.task("40", metadata={"due_utc": PAST_DUE}, subject="Due anyway")
+seat.task("42", metadata={"waits_on": [{"pr_merged": 103}]})
+seat.respond({"pr:103": "fail"})
+result = seat.run()
+text = context_of(result) or ""
+check("gh failing at a stop that raises a due task: exit 0, the raise, then the gh failure "
+      "line for the agent",
+      result.returncode == 0 and text.startswith('Act on task 40 "Due anyway" now')
+      and text.splitlines()[-1].startswith(
+          "This hook could not ask GitHub whether PR 103 is merged, so no task waiting on it "
+          f"was raised: {GH_COMMAND_103} exited 1")
+      and "Act on task 42" not in text, (result, text))
 
 seat = Seat()
 seat.task("43", metadata={"waits_on": [{"pr_merged": 104}]})
 seat.respond({"pr:104": "garbage"})
-check("gh answering unparsable output: silent", silent(seat.run()))
+check("gh answering unparsable output: reported, exit 1",
+      reported(seat.run(), "`gh pr view 104 --repo nedschorus/nedschorus --json "
+                           "state,title,url` exited 0 without printing a JSON object"))
 
 seat = Seat()
 seat.task("44", metadata={"waits_on": [{"pr_merged": 105}]})
@@ -325,7 +348,26 @@ environment = {**seat_session_environment(), "HOME": str(seat.home), "PATH": str
                "CLAUDE_CODE_TASK_LIST_ID": TASK_LIST_ID}
 result = subprocess.run([sys.executable, str(HOOK_SCRIPT)], input=STOP_PAYLOAD,
                         capture_output=True, text=True, env=environment, check=False)
-check("gh not installed: silent", silent(result), result)
+check("gh not installed: reported, exit 1",
+      reported(result, "`gh pr view 105 --repo nedschorus/nedschorus --json state,title,url` "
+                       "could not be run: "), result)
+
+real_subprocess_run = hook.subprocess.run
+
+
+def timing_out_run(command, timeout=None, **keywords):
+    raise subprocess.TimeoutExpired(command, timeout)
+
+
+hook.subprocess.run = timing_out_run
+try:
+    timed_out = hook.GitHubConditionChecker.ask_gh("issue_closed", 9, 8)
+finally:
+    hook.subprocess.run = real_subprocess_run
+check("gh timing out is a gh failure naming the command and its time limit, not an answer",
+      timed_out == {"gh_failure": "`gh issue view 9 --repo nedschorus/nedschorus --json "
+                                  "state,title,url` did not answer within 8 seconds"},
+      timed_out)
 
 seat = Seat()
 seat.task("45", metadata={"waits_on": []})

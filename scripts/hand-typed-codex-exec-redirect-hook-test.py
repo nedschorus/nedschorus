@@ -109,7 +109,8 @@ COMMAND_RUNNING_PREFIX_VALUE_OPTIONS = {
     "caffeinate": ("-t", "-w"), "sandbox-exec": ("-f", "-p", "-D"), "setsid": (),
 }
 SHELL_STRING_RUNNERS = ("bash", "sh", "zsh")
-SHELL_VALUE_OPTIONS = ("-o", "+o", "-O", "+O")
+SHELL_VALUE_LETTERS = "oO"
+SHELL_VALUE_LONG_OPTIONS = ("--rcfile", "--init-file")
 SSH_VALUE_LETTERS = "bceilmopBDEFIJLOPQRSwW"
 
 for option in CODEX_EXEC_VALUE_OPTIONS:
@@ -124,8 +125,13 @@ for prefix, options in COMMAND_RUNNING_PREFIX_VALUE_OPTIONS.items():
             f"{prefix} {option} value{duration} codex exec task"))
 for runner in SHELL_STRING_RUNNERS:
     REFUSED.append((f"codex exec inside {runner} -c, one case per shell", f"{runner} -c 'codex exec task'"))
-for option in SHELL_VALUE_OPTIONS:
-    REFUSED.append((f"codex exec inside bash {option} <value> -c", f"bash {option} pipefail -c 'codex exec task'"))
+for letter in SHELL_VALUE_LETTERS:
+    for sign in "-+":
+        REFUSED.append((f"codex exec inside bash {sign}{letter} <value> -c", f"bash {sign}{letter} pipefail -c 'codex exec task'"))
+    REFUSED.append((f"codex exec inside bash -e{letter} <value> -c, the value letter inside a cluster",
+        f"bash -e{letter} pipefail -c 'codex exec task'"))
+for option in SHELL_VALUE_LONG_OPTIONS:
+    REFUSED.append((f"codex exec inside bash {option} <file> -c", f"bash {option} /dev/null -c 'codex exec task'"))
 for letter in SSH_VALUE_LETTERS:
     REFUSED.append((f"codex exec over ssh -{letter}, whose value is skipped",
         f"ssh -{letter} value ned-box 'codex exec task'"))
@@ -145,11 +151,17 @@ ALLOWED = [
     ("pgrep for codex exec", "pgrep -fl 'git push|codex exec'"),
     ("an ssh command that runs no codex", "ssh -o BatchMode=yes ned-box 'ls ~/codex-exec-notes'"),
     ("an ssh session with no remote command", "ssh -p 22 ned-box"),
+    ("ssh -G, which prints its configuration and runs nothing", "ssh -G ned-box 'codex exec task'"),
+    ("ssh -V, which prints its version and runs nothing", "ssh -V ned-box 'codex exec task'"),
+    ("bash -n -c, which reads the string and runs nothing", "bash -n -c 'codex exec task'"),
+    ("bash -o noexec -c, which runs nothing", "bash -o noexec -c 'codex exec task'"),
     ("bash running a script file", "bash scripts/run.sh codex exec"),
     ("a bash -c that mentions codex exec in quoted text", "bash -c 'echo \"codex exec\"'"),
     ("a heredoc of notes appended over ssh", "ssh ned-box 'cat >> notes.md' <<'EOF'\nNever type `codex exec` by hand.\nEOF"),
     ("an eval that runs no codex", "eval \"$(ssh-agent -s)\""),
     ("a heredoc fed to a bash script file", "bash run.sh <<'EOF'\ncodex exec task\nEOF"),
+    ("a heredoc fed to bash -s -c, which runs the string and not its stdin",
+        "bash -s -c 'echo hi' <<'EOF'\ncodex exec task\nEOF"),
     ("a python heredoc that mentions codex exec", "python3 - <<'EOF'\nprint('codex exec')\nEOF"),
     ("a cold-read cell, which runs Codex itself",
         "python3 nc-systems/cold-read/cold-read-codex-cell.py --prompt-file p.md -o r.md"),
@@ -165,8 +177,10 @@ TABLE_COPIES = {
         {prefix: set(options) for prefix, options in COMMAND_RUNNING_PREFIX_VALUE_OPTIONS.items()},
         {prefix: set(options) for prefix, options in hook.COMMAND_RUNNING_PREFIX_VALUE_OPTIONS.items()}),
     "SHELL_STRING_RUNNERS": (set(SHELL_STRING_RUNNERS), set(hook.SHELL_STRING_RUNNERS)),
-    "SHELL_VALUE_OPTIONS": (set(SHELL_VALUE_OPTIONS), set(hook.SHELL_VALUE_OPTIONS)),
-    "SSH_VALUE_LETTERS": (set(SSH_VALUE_LETTERS), set(hook.SSH_VALUE_LETTERS)),
+    "SHELL_VALUE_LETTERS": (set(SHELL_VALUE_LETTERS), set(hook.shell_reader.SHELL_VALUE_LETTERS)),
+    "SHELL_VALUE_LONG_OPTIONS": (set(SHELL_VALUE_LONG_OPTIONS), set(hook.shell_reader.SHELL_VALUE_LONG_OPTIONS)),
+    "SSH_RUN_NOTHING_LETTERS": (set("GV"), set(hook.shell_reader.SSH_RUN_NOTHING_LETTERS)),
+    "SSH_VALUE_LETTERS": (set(SSH_VALUE_LETTERS), set(hook.shell_reader.SSH_VALUE_LETTERS)),
 }
 for table, (copy, hooks_table) in TABLE_COPIES.items():
     check(f"the test's copy of the hook's {table} has the hook's members, so each member has a case",
@@ -225,6 +239,10 @@ check("without the shell parser the hook exits 0, lets the command through and s
       code == 0 and "permissionDecision" not in output
       and "hand-typed codex exec guard" in output.get("additionalContext", "")
       and "pip: no network" in output.get("additionalContext", ""), repr(output))
+check("without the shell parser the next step names the program by its absolute path and runs no pgrep",
+      f"python3 {hook.RUNNER_PATH} instead" in output.get("additionalContext", "")
+      and hook.RUNNER_PATH.is_absolute()
+      and "pgrep" not in output.get("additionalContext", ""), repr(output))
 
 program_help = subprocess.run(
     [sys.executable, str(HOOK_SCRIPT.with_name("run-codex-task-from-brief.py")), "--help"],

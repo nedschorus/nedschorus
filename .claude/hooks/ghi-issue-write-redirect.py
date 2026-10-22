@@ -544,6 +544,12 @@ def deny(reason):
     }}))
 
 
+PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
+    "If the command wrote to an issue in this repository, tell the user which issue and what "
+    "was written.\n"
+    "Do not edit or delete the issue to undo it.")
+
+
 def main(stdin=sys.stdin):
     try:
         payload = json.load(stdin)
@@ -561,7 +567,7 @@ def main(stdin=sys.stdin):
         refusal = analyze_command_text(command, working_directory)
     except shell_reader.ShellParserUnavailable as error:
         print(shell_reader.parser_unavailable_hook_output(
-            "The GHI write redirect guard", error))
+            "The GHI write redirect guard", error, PARSER_UNAVAILABLE_NEXT_STEP_LINES))
         return 0
     if refusal:
         deny(refusal)

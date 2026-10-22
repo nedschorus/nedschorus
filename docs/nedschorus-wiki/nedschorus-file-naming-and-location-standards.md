@@ -77,3 +77,5 @@ The list does not reach the places for documents pending approval, where agents 
 
 A file with one of the six suffixes above is a log, kept in the log-store and never in git, with two exceptions: a `-draft` or `-candidate` file while it waits for review, in `docs/drafts/` or a queue directory; and a GHI-MD, which is its GHI's substance even when it ends `-report`, such as `docs/issues/142-draft-md-prompt-research-report.md`. The log-store's `README.md`, `nedlern@ned-box:/home/nedlern/nedschorus-logs/README.md`, names the program or skill that owns each of its directories, and that owner names the files.
 
+One more suffix is not a log suffix: `-nbd`, the end of the name of a file whose whole content is nice-but-dirty, just before any extension, such as `scripts/log-store-session-dialogs-refresh-nbd.py`; no file without the suffix holds nice-but-dirty code. The project glossary, `docs/nedschorus-wiki/nedschorus-glossary.md`, defines -nbd and nice-but-dirty.
+

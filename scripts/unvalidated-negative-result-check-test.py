@@ -24,6 +24,7 @@ import io
 import json
 import os
 import pathlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -428,11 +429,11 @@ check("a search fed by a pipe is never re-run over the corpus",
       f"searches files the original never read")
 
 check("the control refuses a command carrying a pipe",
-      check_module.run_control("grep -rn 'a/b' . | head", "a/b", corpus, [])
+      check_module.run_control("grep -rn 'a/b' . | head", "a/b", corpus, [], [])
       is None,
       "only a bare read-only search is ever re-run")
 check("the control refuses a command carrying a redirect",
-      check_module.run_control("grep -rn 'a/b' . > out.txt", "a/b", corpus, [])
+      check_module.run_control("grep -rn 'a/b' . > out.txt", "a/b", corpus, [], [])
       is None)
 check("a path pattern weakens to its last segment",
       ("last path segment", "handoff-supervisor.py") in
@@ -846,6 +847,205 @@ check("two modes at once is a bad invocation, not a silent default",
 code, _out, err = run_program("--replay-fixtures", "/no/such/fixtures")
 check("a fixtures directory that does not exist is a bad invocation",
       code == 2, f"{code} {err!r}")
+
+
+# ------------------------------------------- a search or control that failed
+
+for error_status in (2, 124, 126, 130, 137, 141, 143, 255):
+    check(f"the search's own exit status {error_status} reports an error",
+          "exit-status-reports-an-error-not-an-absence" in
+          judge("grep -rn needle docs/", exit_code=error_status, stdout="").signals)
+check("the search's own exit status 1 is grep's no match, not an error",
+      "exit-status-reports-an-error-not-an-absence" not in
+      judge("grep -rn needle docs/", exit_code=1, stdout="").signals)
+
+REAL_GIT = shutil.which("git")
+STAND_INS = pathlib.Path(tempfile.mkdtemp(prefix="stand-ins-", dir=SUITE_SCRATCH))
+(STAND_INS / "grep").write_text(
+    "#!/bin/sh\n"
+    'printf "%s" "$STAND_IN_GREP_PRINTS"\n'
+    "echo 'grep: a failure this case made' >&2\n"
+    "exit 2\n", encoding="utf-8")
+(STAND_INS / "git").write_text(
+    "#!/bin/sh\n"
+    'for argument in "$@"; do\n'
+    '    if [ "$argument" = "$STAND_IN_GIT_FAILS" ]; then\n'
+    "        echo 'fatal: a failure this case made' >&2; exit 128\n"
+    "    fi\n"
+    "done\n"
+    f'exec {shlex.quote(REAL_GIT)} "$@"\n', encoding="utf-8")
+for stand_in in ("grep", "git"):
+    (STAND_INS / stand_in).chmod(0o755)
+NO_PROGRAMS = SUITE_SCRATCH / "a-directory-holding-no-programs"
+NO_PROGRAMS.mkdir()
+
+
+def judged_with(environment, command, corpus_root):
+    saved = dict(os.environ)
+    os.environ.update(environment)
+    try:
+        return judge(command, exit_code=1, stdout="", control_corpus_root=corpus_root)
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+
+
+failing_corpus = in_a_scratch_corpus({"composed.py": "needle\n"})
+with_stand_ins = {"PATH": f"{STAND_INS}{os.pathsep}{os.environ['PATH']}"}
+failed_control = judged_with(dict(with_stand_ins, STAND_IN_GREP_PRINTS=""),
+                             "grep -rn 'x/needle' .", failing_corpus)
+check("a control search that exits 2 with no match is reported, not read as "
+      "the weakened pattern finding nothing",
+      not failed_control.fires and len(failed_control.control_errors) == 1
+      and "exited 2: grep: a failure this case made" in failed_control.control_errors[0],
+      f"{failed_control.signals} {failed_control.control_errors}")
+matched_control = judged_with(
+    dict(with_stand_ins, STAND_IN_GREP_PRINTS="./composed.py:1:needle\n"),
+    "grep -rn 'x/needle' .", failing_corpus)
+check("a control search that matched and also exits 2 still fires on its match",
+      "weakened-pattern-control-run-found-matches" in matched_control.signals,
+      f"{matched_control.signals} {matched_control.control_errors}")
+unstartable_control = judged_with({"PATH": str(NO_PROGRAMS)},
+                                  "grep -rn 'x/needle' .", failing_corpus)
+check("a control search whose program cannot be started is reported",
+      not unstartable_control.fires
+      and any("could not run" in error for error in unstartable_control.control_errors),
+      f"{unstartable_control.signals} {unstartable_control.control_errors}")
+unfiltered_control = judged_with(dict(
+    with_stand_ins, STAND_IN_GREP_PRINTS="./composed.py:1:needle\n", STAND_IN_GIT_FAILS="check-ignore"),
+    "grep -rn 'x/needle' .", failing_corpus)
+check("a control whose matches git check-ignore cannot filter is reported, not "
+      "taken as a match",
+      not unfiltered_control.fires
+      and any("git check-ignore exited 128" in error
+              for error in unfiltered_control.control_errors),
+      f"{unfiltered_control.signals} {unfiltered_control.control_errors}")
+
+for failing_subcommand in ("init", "check-ignore"):
+    saved_environment = dict(os.environ)
+    os.environ.update(with_stand_ins, STAND_IN_GIT_FAILS=failing_subcommand)
+    try:
+        ignored = check_module.gitignore_rules_ignoring(["composed.py"], failing_corpus)
+        raised = None
+    except check_module.ControlSearchCouldNotRun as error:
+        ignored, raised = None, error
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_environment)
+    check(f"a git {failing_subcommand} that fails is raised, not read as no path ignored",
+          raised is not None and "a failure this case made" in str(raised),
+          f"returned {ignored!r}")
+
+saved_environment = dict(os.environ)
+os.environ["PATH"] = str(NO_PROGRAMS)
+try:
+    ignored = check_module.gitignore_rules_ignoring(["composed.py"], failing_corpus)
+    raised = None
+except check_module.ControlSearchCouldNotRun as error:
+    ignored, raised = None, error
+finally:
+    os.environ.clear()
+    os.environ.update(saved_environment)
+check("a git that cannot be started is raised, not read as no path ignored",
+      raised is not None and "could not run" in str(raised), f"returned {ignored!r}")
+
+
+def run_program_with(environment, *arguments):
+    finished = subprocess.run(
+        [sys.executable, str(CHECK_SCRIPT), *arguments],
+        capture_output=True, text=True, cwd=str(CHECKOUT_ROOT),
+        env=dict(os.environ, **environment))
+    return finished.returncode, finished.stdout, finished.stderr
+
+
+code, out, _err = run_program_with(
+    dict(with_stand_ins, STAND_IN_GREP_PRINTS=""),
+    "--command", "grep -rn 'x/needle' .", "--exit-code", "1", "--run-control",
+    "--control-corpus-root", failing_corpus)
+check("a command whose control search failed exits 2 and says the control could not run",
+      code == 2 and "could not run" in out and "a failure this case made" in out,
+      f"{code} {out!r}")
+failing_fixtures = SUITE_SCRATCH / "fixtures-whose-control-fails"
+failing_fixtures.mkdir()
+(failing_fixtures / "silent.json").write_text(json.dumps({
+    "case": "a quiet search whose control fails", "provenance": "this suite",
+    "command": "grep -rn 'x/needle' .", "exit_code": 1, "stdout": "",
+    "must_fire": False, "control_corpus_root": "."}), encoding="utf-8")
+code, out, _err = run_program_with(
+    dict(with_stand_ins, STAND_IN_GREP_PRINTS=""),
+    "--replay-fixtures", str(failing_fixtures), "--run-control",
+    "--control-corpus-root", failing_corpus)
+check("a fixture replay whose control search failed exits 2 and says so",
+      code == 2 and "could not run" in out, f"{code} {out!r}")
+
+
+# A weakening grep rejects as a regex is the check's own fault: the agent's
+# `\(zzz/qqq\)` is valid, its last segment `qqq\)` is not.
+broken_weakening_corpus = in_a_scratch_corpus({"src/a.txt": "nothing here\n"})
+broken_weakening_command = "grep -rn '\\(zzz/qqq\\)' src"
+broken_weakening = judge(broken_weakening_command, exit_code=1, stdout="",
+                         control_corpus_root=broken_weakening_corpus)
+check("a weakened pattern grep rejects is skipped and said so, not reported as "
+      "the agent's search failing",
+      not broken_weakening.fires and broken_weakening.control_errors == []
+      and len(broken_weakening.control_skips) == 1
+      and "qqq\\)" in broken_weakening.control_skips[0],
+      f"{broken_weakening.signals} errors {broken_weakening.control_errors} "
+      f"skips {broken_weakening.control_skips}")
+code, out, _err = run_program_with(
+    {}, "--command", broken_weakening_command, "--exit-code", "1", "--run-control",
+    "--control-corpus-root", broken_weakening_corpus)
+check("a command whose weakened pattern grep rejects exits 0 and says the "
+      "control was skipped, not that the search is at fault",
+      code == 0 and "was skipped" in out and "not a fault in your search" in out
+      and "not yet evidence of absence" in out and "stands on the signals" not in out,
+      f"{code} {out!r}")
+check("a search with the agent's pattern that cannot be started does not count as "
+      "running, so the weakened search's failure is still reported",
+      not check_module.search_with_the_agents_pattern_runs(
+          [str(NO_PROGRAMS / "grep"), "-rn", "needle", "."], broken_weakening_corpus))
+broken_weakening_fixtures = SUITE_SCRATCH / "fixtures-whose-weakening-grep-rejects"
+broken_weakening_fixtures.mkdir()
+(broken_weakening_fixtures / "skipped.json").write_text(json.dumps({
+    "case": "a quiet search whose weakening grep rejects", "provenance": "this suite",
+    "command": broken_weakening_command, "exit_code": 1, "stdout": "",
+    "must_fire": False, "control_corpus_root": "."}), encoding="utf-8")
+code, out, _err = run_program_with(
+    {}, "--replay-fixtures", str(broken_weakening_fixtures), "--run-control",
+    "--control-corpus-root", broken_weakening_corpus)
+check("a fixture replay whose weakened pattern grep rejects exits 0 and says "
+      "the control was skipped",
+      code == 0 and "was skipped" in out, f"{code} {out!r}")
+
+
+# A search killed by a signal returns a negative code, which is below 2 but is
+# not an answer. The stand-in is killed when its arguments hold the pattern
+# named in KILL_GREP_WHEN, and exits 1 otherwise.
+SIGNAL_STAND_INS = SUITE_SCRATCH / "a-grep-that-a-signal-kills"
+SIGNAL_STAND_INS.mkdir()
+(SIGNAL_STAND_INS / "grep").write_text(
+    "#!/bin/bash\n"
+    'for argument in "$@"; do\n'
+    '  if [ "$KILL_GREP_WHEN" = any ] || [ "$argument" = "$KILL_GREP_WHEN" ]; then kill -TERM $$; fi\n'
+    "done\n"
+    "exit 1\n", encoding="utf-8")
+(SIGNAL_STAND_INS / "grep").chmod(0o755)
+signal_corpus = in_a_scratch_corpus({"src/a.txt": "nothing here\n"})
+with_signal_stand_in = {"PATH": f"{SIGNAL_STAND_INS}{os.pathsep}{os.environ['PATH']}"}
+code, out, _err = run_program_with(
+    dict(with_signal_stand_in, KILL_GREP_WHEN="any"),
+    "--command", "grep -rn 'zzz/qqq' src", "--exit-code", "1", "--run-control",
+    "--control-corpus-root", signal_corpus)
+check("a weakened search and the agent's own search both killed by a signal exit 2, "
+      "not 0 with the weakening skipped",
+      code == 2 and "could not run" in out and "was skipped" not in out, f"{code} {out!r}")
+killed_weakening = judged_with(dict(with_signal_stand_in, KILL_GREP_WHEN="qqq"),
+                               "grep -rn 'zzz/qqq' src", signal_corpus)
+check("a weakened search killed by a signal, while the agent's own search runs, is "
+      "skipped and said so, not read as the weakening finding nothing",
+      killed_weakening.control_errors == [] and len(killed_weakening.control_skips) == 1
+      and "exited -15" in killed_weakening.control_skips[0],
+      f"errors {killed_weakening.control_errors} skips {killed_weakening.control_skips}")
 
 
 # ------------------------------------------------ what a control never runs

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Tests for style-guide-word-checker-markdown-edit-hook.py and the word list
-and scanner in style-guide-word-checker.py.
+"""Tests for style-guide-word-checker-markdown-edit-hook-nbd.py and the word list
+and scanner in style-guide-word-checker-nbd.py.
 
-Run: python3 scripts/style-guide-word-checker-markdown-edit-hook-test.py
+Run: python3 scripts/style-guide-word-checker-markdown-edit-hook-nbd-test.py
 Prints one line per case and exits non-zero if any case fails.
 
 The scanner's cases call the checker directly. The hook's cases run the hook
@@ -40,8 +40,8 @@ _git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixt
 _git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
 _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
 
-HOOK_PATH = Path(__file__).with_name("style-guide-word-checker-markdown-edit-hook.py")
-CHECKER_PATH = Path(__file__).with_name("style-guide-word-checker.py")
+HOOK_PATH = Path(__file__).with_name("style-guide-word-checker-markdown-edit-hook-nbd.py")
+CHECKER_PATH = Path(__file__).with_name("style-guide-word-checker-nbd.py")
 SHARED_GIT_TRACKING_CHECK_RELATIVE_PATH = Path(
     "nc-systems", "general-tools", "edited-file-path-within-checkout-root-and-git-check-ignore-common.py")
 SHARED_GIT_TRACKING_CHECK_PATH = (Path(__file__).resolve().parents[1]
@@ -346,8 +346,13 @@ check("the report's own wording uses no listed word", forms == [], forms)
 # ---------------------------------------------------------------------------
 
 def git(arguments, cwd):
-    return subprocess.run(["git", *arguments], cwd=str(cwd), capture_output=True,
-                          text=True, check=False, env=CLEAN_ENVIRONMENT)
+    """Run a fixture's git step; a step that fails stops the suite, with git's error."""
+    result = subprocess.run(["git", *arguments], cwd=str(cwd), capture_output=True,
+                            text=True, check=False, env=CLEAN_ENVIRONMENT)
+    if result.returncode != 0:
+        raise SystemExit(f"ABORT: fixture step git {' '.join(arguments)} in {cwd} "
+                         f"exited {result.returncode}: {result.stderr.strip()}")
+    return result
 
 
 def run_hook(payload, hook_path=FIXTURE_HOOK_PATH):
@@ -410,7 +415,7 @@ def reported(result, fault_words):
     """A fault: exit 1, no report on stdout, one stderr line naming the hook and the fault."""
     lines = result.stderr.splitlines()
     return (result.returncode == 1 and result.stdout == "" and len(lines) == 1
-            and lines[0].startswith("style-guide-word-checker-markdown-edit-hook: ")
+            and lines[0].startswith("style-guide-word-checker-markdown-edit-hook-nbd: ")
             and fault_words in lines[0])
 
 
@@ -470,10 +475,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     (checkout / "docs" / "committed.md").write_text(COMMITTED_TEXT, encoding="utf-8")
     (checkout / ".gitignore").write_text("ignored-notes/\n", encoding="utf-8")
     git(["add", "-A"], checkout)
-    committed = git(["commit", "-q", "-m", "a committed markdown file"], checkout)
-    if committed.returncode != 0:
-        print(f"ABORT: the scratch commit failed: {committed.stderr}")
-        sys.exit(1)
+    git(["commit", "-q", "-m", "a committed markdown file"], checkout)
     committed_file = checkout / "docs" / "committed.md"
 
     def reset_committed_file():

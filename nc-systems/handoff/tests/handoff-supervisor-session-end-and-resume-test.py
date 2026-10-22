@@ -810,6 +810,19 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
               f"with its error, not hidden behind the printed failure",
               "exited 1" in report and "listing the next worktree broke" in report, report)
 
+    stopped = root / "stopped-by-git-failure-cleaner.py"
+    stopped.write_text(
+        "import sys\n"
+        "print('clean-worktrees: stopped, because git worktree list failed (exit 128: fatal: broken)', file=sys.stderr)\n"
+        "print('If the rerun fails a second time, stop and tell the user', file=sys.stderr)\n"
+        "sys.exit(2)\n", encoding="utf-8")
+    with supervisor_names_replaced(CLEAN_WORKTREES_PATH=stopped):
+        report = supervisor.remove_finished_worktrees_at_handoff(home)
+    check("WORKTREE CLEANUP: a cleaner stopped by a git failure is reported with its "
+          "cause line, not the next-step line printed after it",
+          "exited 2: clean-worktrees: stopped, because git worktree list failed" in report
+          and "fails a second time" not in report, report)
+
     finishing = root / "finishing-with-failure-cleaner.py"
     finishing.write_text(
         "import sys\n"

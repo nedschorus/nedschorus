@@ -2,7 +2,7 @@
 
 This page lists words to avoid in this project and what to write instead. Most of the words below each name several different things here, so a reader cannot tell which one the writer meant; "land" has a project word that replaces it; the pronouns leave a reader who lacks the writer's context guessing what each stands for. A listed word used in its ordinary English meaning stays, as does a word inside code, inside double quotes, or mentioned rather than used, as in the table's first column.
 
-`scripts/style-guide-word-checker.py` reads the table below. After an agent's Edit or Write of a markdown file, `scripts/style-guide-word-checker-markdown-edit-hook.py` reports each listed word in the text just written, and the writer decides whether each hit needs changing. Changing a row changes what the hook reports. A form is also reported with a capital first letter, such as "Seat" at the start of a sentence; besides the forms in the third column, the checker skips code, link targets, paths and text in double quotes.
+`scripts/style-guide-word-checker-nbd.py` reads the table below. After an agent's Edit or Write of a markdown file, `scripts/style-guide-word-checker-markdown-edit-hook-nbd.py` reports each listed word in the text just written, and the writer decides whether each hit needs changing. Changing a row changes what the hook reports. A form is also reported with a capital first letter, such as "Seat" at the start of a sentence; besides the forms in the third column, the checker skips code, link targets, paths and text in double quotes.
 
 ## Words to avoid
 

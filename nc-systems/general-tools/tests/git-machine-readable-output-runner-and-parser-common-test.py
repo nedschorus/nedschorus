@@ -325,6 +325,29 @@ def stand_in_git_cases(parent):
                   raised is not None and raised.returncode == 128, result)
 
 
+def second_loaded_copy_cases(parent):
+    """A program can reach two copies of the helper through the modules it
+    loads; an except naming one copy's GitCommandFailed must catch an error
+    raised through the other."""
+    second_copy_spec = importlib.util.spec_from_file_location(
+        "git_machine_readable_output_runner_and_parser_common",
+        Path(__file__).resolve().parents[1] / "git-machine-readable-output-runner-and-parser-common.py")
+    second_copy = importlib.util.module_from_spec(second_copy_spec)
+    second_copy_spec.loader.exec_module(second_copy)
+    check("second copy: it is a module object of its own", second_copy is not git_output)
+    try:
+        second_copy.run_git(parent, ["no-such-git-subcommand"])
+    except git_output.GitCommandFailed as failure:
+        check("second copy: the first copy's except catches its failure",
+              failure.returncode == 1, f"returncode {failure.returncode}")
+    except Exception as error:
+        check("second copy: the first copy's except catches its failure", False,
+              f"{type(error).__module__}.{type(error).__name__} escaped: {error}")
+    else:
+        check("second copy: the first copy's except catches its failure", False,
+              "git accepted no-such-git-subcommand")
+
+
 def python_3_9_cases():
     # The Mac's system Python is 3.9: an annotation written X | None is
     # evaluated when a NamedTuple class is made, unless annotations are deferred.
@@ -356,6 +379,7 @@ def main():
         merge_tree_cases(parent)
         failure_cases(parent)
         stand_in_git_cases(parent)
+        second_loaded_copy_cases(parent)
     python_3_9_cases()
     if failures:
         print(f"{len(failures)} case(s) failed")

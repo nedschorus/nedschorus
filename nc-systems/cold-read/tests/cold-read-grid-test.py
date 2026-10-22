@@ -381,7 +381,10 @@ def write_target(repository, relative_path):
 
 
 def run_grid(repository, stub_directory, environment_overrides=None,
-             target_relative_path=TARGET_RELATIVE_PATH, extra_arguments=()):
+             target_relative_path=TARGET_RELATIVE_PATH, extra_arguments=(),
+             current_directory=None):
+    """The grid in `repository` as a subprocess, run from `current_directory`,
+    by default `repository`."""
     stub_directory.mkdir(parents=True, exist_ok=True)
     for runtime_name in ("claude", "codex"):
         stub = stub_directory / runtime_name
@@ -406,6 +409,7 @@ def run_grid(repository, stub_directory, environment_overrides=None,
         [sys.executable, str(repository / "nc-systems" / "cold-read" / "cold-read-grid.py"),
          "--target", target_relative_path, *extra_arguments],
         capture_output=True, text=True, check=False, env=environment,
+        cwd=current_directory or repository,
     )
 
 
@@ -1622,6 +1626,28 @@ with tempfile.TemporaryDirectory() as scratch:
           (repository / TARGET_RELATIVE_PATH).resolve() not in logged_resolved,
           f"logged {sorted(logged_resolved)!r}")
 
+    # --- A relative --target is the current directory's file ---------------
+    # Run with the current directory in another checkout, the cells must be
+    # handed that checkout's file, not the one at the same path in the grid's
+    # own checkout.
+    repository = build_scratch_repository(scratch, "checkout-grid-run-from-elsewhere")
+    current_checkout = build_scratch_repository(scratch, "checkout-current-directory")
+    current_checkout_text = "# Target\n\nThe current directory's checkout's own line.\n"
+    (current_checkout / TARGET_RELATIVE_PATH).write_text(current_checkout_text, encoding="utf-8")
+    target_log = scratch / "relative-target-from-elsewhere-targets.log"
+    result = run_grid(repository, stubs,
+                      {"COLD_READ_GRID_TEST_STUB_TARGET_LOG": str(target_log)},
+                      current_directory=current_checkout)
+    logged = target_log.read_text(encoding="utf-8").splitlines() if target_log.is_file() else []
+    given_texts = {Path(path).read_text(encoding="utf-8") if Path(path).is_file() else None
+                   for path in logged}
+    check("a relative --target run from another checkout hands every cell that checkout's file, "
+          "not the one at the same path in the grid's checkout",
+          result.returncode == 0 and len(logged) == 6
+          and given_texts == {current_checkout_text},
+          f"exit {result.returncode}; {len(logged)} logged; texts {given_texts!r}; "
+          f"stderr={result.stderr[-300:]!r}")
+
     # --- Relative references resolve from the original's directory ----------
     # Only the document is copied into the record, so a link it makes to a
     # sibling -- `../issues/x.md` -- reaches nothing beside the copy. Both
@@ -1948,6 +1974,44 @@ with tempfile.TemporaryDirectory() as scratch:
     check("with a find that has no -printf, the records are still counted and a fourth run refused",
           result.returncode == 2 and "refusing cold-read-full-run 4" in result.stderr,
           f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
+
+    # A git that fails on the document's checkout is not "outside any
+    # repository" and not "no origin/main": the run goes ahead uncounted and
+    # says why. A stand-in git fails one query run on the document's
+    # directory and passes every other call to the real git.
+    real_git = shutil.which("git")
+    for failing_query, case_slug in (
+            (["rev-parse", "--show-toplevel"], "full-run-count-toplevel-git-fails"),
+            (["rev-parse", "--verify", "--quiet", "origin/main"],
+             "full-run-count-origin-main-git-fails")):
+        repository = build_scratch_repository(scratch, case_slug)
+        for day in ("2026-09-01", "2026-09-02", "2026-09-03"):
+            seed_log_store_record(repository, f"cold-read-grid-test-target-{day}",
+                                  ["claude-hunt-deep.md"])
+        git_stub_directory = stubs / case_slug
+        git_stub_directory.mkdir(parents=True, exist_ok=True)
+        # The program may pass the directory resolved: on the Mac the scratch
+        # directory is under /var, a link to /private/var.
+        failing_directory = os.path.realpath(repository / Path(TARGET_RELATIVE_PATH).parent)
+        (git_stub_directory / "git").write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            "arguments = sys.argv[1:]\n"
+            "if (arguments[:1] == ['-C'] and len(arguments) > 1\n"
+            f"        and os.path.realpath(arguments[1]) == {failing_directory!r}\n"
+            f"        and arguments[2:] == {failing_query!r}):\n"
+            "    sys.stderr.write('fatal: index file corrupt\\n')\n"
+            "    sys.exit(128)\n"
+            f"os.execv({real_git!r}, [{real_git!r}, *sys.argv[1:]])\n",
+            encoding="utf-8")
+        (git_stub_directory / "git").chmod(0o755)
+        result = run_grid(repository, git_stub_directory)
+        check(f"a failed `git {' '.join(failing_query)}` runs the review uncounted and names git's failure",
+              "EARLIER COLD-READ-FULL-RUNS NOT COUNTED" in result.stdout
+              and f"git {' '.join(failing_query)} in " in result.stdout
+              and "index file corrupt" in result.stdout
+              and "refusing cold-read-full-run" not in result.stderr,
+              f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
     # A change merged from a topic branch lands at the merge, not at the
     # topic's commit: runs between the two reviewed that change and do not count.

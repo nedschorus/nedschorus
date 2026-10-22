@@ -394,6 +394,39 @@ def run_cases(scratch: Path):
                             for line in EXPECTED_REFUSAL_LINES],
           refusal_lines)
 
+    # --- git var failing: the hook says the identity went unchecked. -----
+    # Run directly, not by git commit, because git puts its own exec-path
+    # ahead of PATH, which would hide the stand-in git.
+    stand_in_directory = scratch / "stand-in-git"
+    stand_in_directory.mkdir()
+    real_git = shutil.which("git")
+    stand_in = stand_in_directory / "git"
+    stand_in.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = var ] && [ "$2" = GIT_AUTHOR_IDENT ]; then\n'
+        '    echo "fatal: injected git var failure" >&2\n'
+        "    exit 128\n"
+        "fi\n"
+        f'exec "{real_git}" "$@"\n')
+    stand_in.chmod(0o755)
+    for label, committer_email, expect_refused in (
+            ("a seat committer", "seat-g@nedschorus.invalid", False),
+            ("the user's address as committer", "ned@lerner1.com", True)):
+        repository = ThrowawayRepository(scratch, "git-var-fails-" + committer_email)
+        environment = repository.environment({
+            **FAKE_SESSION, **SEAT_IDENTITY, "GIT_COMMITTER_EMAIL": committer_email,
+            "PATH": f"{stand_in_directory}{os.pathsep}{os.environ.get('PATH', '')}"})
+        completed = subprocess.run(
+            ["sh", str(HOOK_DIRECTORY / "pre-commit")], cwd=str(repository.root),
+            env=environment, capture_output=True, text=True, timeout=30)
+        check(f"when git var fails for the author, with {label}, the hook says the author "
+              f"was not checked, shows git's error, and still checks the committer",
+              "pre-commit: git var GIT_AUTHOR_IDENT failed, so this commit's author was not "
+              "checked" in completed.stderr
+              and "fatal: injected git var failure" in completed.stderr
+              and (refused(completed) if expect_refused else completed.returncode == 0),
+              (completed.returncode, completed.stderr))
+
 
 def main():
     scratch = Path(tempfile.mkdtemp(prefix="pre-commit-hook-test-"))

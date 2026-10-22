@@ -7,7 +7,7 @@ next action: the user walks this design with merge-lane-2, one open question of 
 
 # Seat mailboxes across machines and runtimes
 
-One agent-seat sends a message to another, on either machine, in either runtime, and the recipient acts on it without the user relaying anything. That is the whole job. This document extends `docs/cross-project/comms-bridge-spec.md`, the user's append-only log-pair design adopted verbatim 2026-07-20; everything below that is not marked NEW is that spec, applied to ten seats instead of two.
+One agent-seat sends a message to another, on either machine, in either runtime, and the recipient acts on it without the user relaying anything. That is the whole job. This document extends [comms-bridge-spec.md](https://github.com/nedschorus/nedschorus/blob/295c9f35/docs/cross-project/comms-bridge-spec.md), the user's append-only log-pair design adopted verbatim 2026-07-20; everything below that is not marked NEW is that spec, applied to ten seats instead of two.
 
 ## Why the fleet needs it
 

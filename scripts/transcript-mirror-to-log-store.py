@@ -51,8 +51,11 @@ no-overwrite rule nc-systems/cold-read/cold-read-record-ship.py applies to cold-
 records does not apply here. Two things rsync meets on a live tree are
 expected and not failures: files that vanish between its listing and its
 transfer (a scratch project directory removed by a session ending; exit 24
-from GNU rsync on ned-box, exit 23 from the Mac's openrsync -- told apart by
-rsync_vanished_exit_code) and files that change while being read. A run
+from GNU rsync on ned-box) and files that change while being read. The Mac's
+openrsync exits 23 for vanished files, and 23 is also its exit for every
+other partial transfer, so rsync_vanished_exit_code gives openrsync no
+vanished code: on the Mac a file vanishing mid-run is a FAILED line, with
+openrsync's stderr, for that one run. A run
 that overlaps a slow earlier run -- the first pass moves about a gigabyte --
 exits quietly on the lock rather than racing it.
 
@@ -75,12 +78,7 @@ every ssh it opens, rsync's included, gives up about a minute after ned-box
 stops answering (ServerAliveInterval 15, ServerAliveCountMax 4), as when the
 Mac sleeps mid-run, and rsync's --timeout ends a transfer that stops moving.
 The run then ends and frees the lock, and a directory preparation or rsync
-that ended that way prints its FAILED line. One gap: openrsync's exit 23 is
-taken as files vanishing, so on the Mac any other partial transfer openrsync
-reports with 23 is silent too, its stderr dropped with the rest. The Mac's
-hourly log held no exit-23 run and no line from openrsync in 461 runs
-(measured 2026-09-30), so there is no sample to tell the two apart by their
-text.
+that ended that way prints its FAILED line.
 
 WHEN IT LAST COMPLETED A PASS, SEEN FROM NED-BOX. A run in which every
 source mirrored ends by writing the UTC time that pass started, as one line
@@ -193,7 +191,6 @@ SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
 RSYNC_IO_TIMEOUT_SECONDS = "300"
 # Vanishing files are expected in a live transcript tree.
 RSYNC_EXIT_VANISHED_GNU = 24
-RSYNC_EXIT_VANISHED_OPENRSYNC = 23
 LOCK_FILE_NAME = ".transcript-mirror.lock"
 # The backup search on ned-box reads this file beside the Mac copy's projects/.
 MIRROR_PASS_STAMP_FILE_NAME = "last-complete-mirror-pass-utc.txt"
@@ -204,12 +201,12 @@ EXIT_LOCKED = 3
 
 
 @functools.lru_cache(maxsize=None)
-def rsync_vanished_exit_code() -> int:
-    """Return the installed rsync’s exit code for vanished source files."""
-    # GNU uses 24; openrsync uses 23, which can also hide other partial-transfer errors.
+def rsync_vanished_exit_code():
+    """Return the installed rsync's exit code that means only that source files vanished, or None for openrsync."""
+    # openrsync's 23 means vanished files and every other partial transfer alike.
     completed = subprocess.run(["rsync", "--version"], capture_output=True, text=True, check=False)
     first_line = completed.stdout.partition("\n")[0]
-    return RSYNC_EXIT_VANISHED_OPENRSYNC if first_line.startswith("openrsync") else RSYNC_EXIT_VANISHED_GNU
+    return None if first_line.startswith("openrsync") else RSYNC_EXIT_VANISHED_GNU
 
 
 def split_destination(destination: str):
@@ -273,10 +270,13 @@ def count_files_in_store(host, path: pathlib.PurePosixPath, files=None):
     paths = [path] if files is None else [path / file for file in files]
     if host is None:
         return sum(count_files_local(pathlib.Path(p)) for p in paths)
+    # Without pipefail a failed find still counts what it found, and the pipe exits 0.
     completed = subprocess.run(
-        SSH_COMMAND + [host, f"find {' '.join(shlex.quote(str(p)) for p in paths)} -type f | wc -l"],
+        SSH_COMMAND + [host, f"set -o pipefail; "
+                             f"find {' '.join(shlex.quote(str(p)) for p in paths)} -type f | wc -l"],
         capture_output=True, text=True, check=False)
     if completed.returncode != 0:
+        sys.stderr.write(completed.stderr)
         return None
     try:
         return int(completed.stdout.strip())

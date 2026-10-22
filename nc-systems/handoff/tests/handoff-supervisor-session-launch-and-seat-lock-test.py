@@ -180,7 +180,11 @@ def run_process_identity_cases(workspace: Path):
     line, answered = supervisor.read_process_command_line(os.getpid())
     check("the real reader reads this process's own command line",
           answered and line is not None and "python" in line.lower(), (answered, line))
-    line, answered = supervisor.read_process_command_line(99999999)
+    # A child that has exited and been reaped names no process, on Linux and on
+    # macOS alike; a made-up id like 99999999 is refused on macOS as too large.
+    reaped = subprocess.Popen([sys.executable, "-c", "pass"])
+    reaped.wait()
+    line, answered = supervisor.read_process_command_line(reaped.pid)
     check("the real reader says ps ANSWERED for a process that is not there",
           answered and line is None, (answered, line))
     real_search_path = os.environ.get("PATH", "")
@@ -221,6 +225,26 @@ def run_process_identity_cases(workspace: Path):
           supervisor.PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS == 15,
           supervisor.PROCESS_COMMAND_LINE_READ_TIMEOUT_SECONDS)
 
+    # A ps that runs and fails exits 1 with an error, which is not the empty
+    # exit 1 ps gives for a process that is not there.
+    failing_ps_directory = workspace / "failing-ps"
+    failing_ps_directory.mkdir()
+    failing_ps = failing_ps_directory / "ps"
+    failing_ps.write_text("#!/bin/sh\necho 'ps: stub failure' >&2\nexit 1\n", encoding="utf-8")
+    failing_ps.chmod(0o755)
+    complaint = io.StringIO()
+    try:
+        os.environ["PATH"] = f"{failing_ps_directory}:{real_search_path}"
+        with contextlib.redirect_stderr(complaint):
+            line, answered = supervisor.read_process_command_line(os.getpid())
+    finally:
+        os.environ["PATH"] = real_search_path
+    check("a ps that fails with an error is reported as not having answered, not as "
+          "'no such process'", not answered and line is None, (answered, line))
+    check("and the reader prints ps's error, after the ps command exactly as it ran",
+          f"ps -ww -p {os.getpid()} -o args= exited 1: ps: stub failure"
+          in complaint.getvalue(), complaint.getvalue())
+
     alive, detail = supervisor.process_is_supervisor_for_agent(
         99999999, "x", read_command_line=ps_says_no_such_process)
     check("ps answering 'no such process' means not a supervisor",
@@ -260,7 +284,8 @@ def run_process_identity_cases(workspace: Path):
     try:
         with contextlib.redirect_stderr(complaints):
             alive, detail = supervisor.process_is_supervisor_for_agent(
-                unidentifiable.pid, "x", read_command_line=ps_could_not_run)
+                unidentifiable.pid, "x", read_command_line=ps_could_not_run,
+                lock_path=Path("/handoffs/x-supervisor.lock"))
         check("a live but unidentifiable process IS assumed to be the supervisor",
               alive, detail)
         check("and it says it cannot tell, rather than claiming the process is gone",
@@ -269,8 +294,12 @@ def run_process_identity_cases(workspace: Path):
               "could not identify" in complaints.getvalue()
               and "ps could not be run" in complaints.getvalue(),
               complaints.getvalue())
-        check("and names the way out, since whoever asked is now stuck on an assumption",
-              "lock is removed" in complaints.getvalue(), complaints.getvalue())
+        check("and names the way out, since whoever asked is now stuck on an assumption: "
+              "the user checks with the ps command the program ran, then removes the named lock file",
+              f"the user runs `ps -ww -p {unidentifiable.pid} -o args=`" in complaints.getvalue()
+              and "ps has still not answered, so the lock stays" in complaints.getvalue()
+              and "the user removes the supervisor lock /handoffs/x-supervisor.lock"
+              in complaints.getvalue(), complaints.getvalue())
         check("and does not claim a consequence only one of the callers has",
               "this seat will not start" not in complaints.getvalue(),
               complaints.getvalue())
