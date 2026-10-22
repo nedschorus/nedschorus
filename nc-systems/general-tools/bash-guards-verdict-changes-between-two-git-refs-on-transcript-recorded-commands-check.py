@@ -33,6 +33,8 @@ failed, which includes a guard that raised on a recorded command at either ref, 
 it twice, because that row has no verdict to compare. A reading that runs past the per-pair timeout
 (--per-pair-timeout-seconds, 20 s by default), or whose one-command-per-process shell reader runs past
 its own subprocess timeout, is read once more, by itself, after the step's other readings have finished.
+A per-pair timeout that falls while the guard is inside a subprocess call takes effect when the call
+returns, so the reading times out even when the guard then answers.
 At a ref whose shell reader is older than the shell reader child each pool worker keeps running
 (step 3), each guard reads each command in a new process of its own, a one-command-per-process shell
 reader, and the guard stops waiting for that process after 8 s. Either kind of timed-out reading is
@@ -158,6 +160,7 @@ class PairTimedOut(BaseException):
 
 # How soon a per-pair timeout that fell inside a subprocess call is tried again.
 PAIR_TIMEOUT_DEFERRED_SECONDS = 0.05
+PAIR_TIMEOUT_STATE = {"deferred": False}
 
 
 def raise_pair_timed_out(_, frame):
@@ -166,10 +169,28 @@ def raise_pair_timed_out(_, frame):
     # makes would block forever. So while a subprocess call runs, the timeout is tried again shortly.
     while frame is not None:
         if frame.f_globals is vars(subprocess):
+            PAIR_TIMEOUT_STATE["deferred"] = True
             signal.setitimer(signal.ITIMER_REAL, PAIR_TIMEOUT_DEFERRED_SECONDS)
             return
         frame = frame.f_back
     raise PairTimedOut()
+
+
+def read_within_pair_timeout(timeout, read, *arguments):
+    """Return read(*arguments), or raise PairTimedOut when it runs past timeout seconds.
+
+    A reading that returns after its timeout was deferred is timed out too, so whether a late reading
+    keeps its verdict does not depend on how soon after its subprocess call it returns.
+    """
+    PAIR_TIMEOUT_STATE["deferred"] = False
+    signal.alarm(timeout)
+    try:
+        result = read(*arguments)
+    finally:
+        signal.alarm(0)
+    if PAIR_TIMEOUT_STATE["deferred"]:
+        raise PairTimedOut()
+    return result
 
 
 def failed_reading(error):
@@ -497,8 +518,9 @@ def guard_readings(guards, command, working_directory, search_file_directory):
     readings = {}
     for path in guards:
         try:
-            signal.alarm(WORKER.get("timeout", DEFAULT_PER_PAIR_TIMEOUT_SECONDS))
-            verdict, message = GUARDS[path](guards[path], command, working_directory, search_file_directory)
+            verdict, message = read_within_pair_timeout(WORKER.get("timeout", DEFAULT_PER_PAIR_TIMEOUT_SECONDS),
+                                                        GUARDS[path], guards[path], command, working_directory,
+                                                        search_file_directory)
             if isinstance(message, str) and WORKER.get("checkout"):
                 # A message naming a file in the checkout would differ between the base and head checkouts.
                 message = message.replace(WORKER["checkout"], "<checkout>")
@@ -507,8 +529,6 @@ def guard_readings(guards, command, working_directory, search_file_directory):
             # A failed reading; is_failed_reading() makes the run exit 2.
             # SystemExit too: one escaping a worker would end that worker.
             readings[path] = failed_reading(error)
-        finally:
-            signal.alarm(0)
     return readings
 
 
@@ -552,17 +572,15 @@ def worker_search_file_main_rows(pairs):
     rows = []
     for command, working_directory in pairs:
         try:
-            signal.alarm(WORKER["timeout"])
-            verdict, message = search_file_main_outcome(WORKER["guards"][SEARCH_FILE_GUARD], command,
-                                                         working_directory)
+            verdict, message = read_within_pair_timeout(WORKER["timeout"], search_file_main_outcome,
+                                                        WORKER["guards"][SEARCH_FILE_GUARD], command,
+                                                        working_directory)
             if isinstance(message, str):
                 message = message.replace(WORKER["checkout"], "<checkout>")
             row = [verdict, message]
         except (PairTimedOut, Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
             # A failed reading; is_failed_reading() makes the run exit 2.
             row = list(failed_reading(error))
-        finally:
-            signal.alarm(0)
         rows.append(row)
     return rows, WORKER["switched"]
 
@@ -578,12 +596,11 @@ def smoke_check(checkout, new_process, search_file_directory, timeout, guards_le
     readings = guard_readings(guards, "true", "/", search_file_directory)
     try:
         if SEARCH_FILE_GUARD in guards:  # Not at a base ref older than the search-file guard.
-            signal.alarm(timeout)
-            readings["search-file main()"] = search_file_main_outcome(guards[SEARCH_FILE_GUARD], "true", "/")
+            readings["search-file main()"] = read_within_pair_timeout(
+                timeout, search_file_main_outcome, guards[SEARCH_FILE_GUARD], "true", "/")
     except (PairTimedOut, Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
         readings["search-file main()"] = failed_reading(error)
     finally:
-        signal.alarm(0)
         for sender in senders:
             sender.close()  # Before the pool starts, so no worker inherits the child's pipes.
     for key, (verdict, detail) in readings.items():
