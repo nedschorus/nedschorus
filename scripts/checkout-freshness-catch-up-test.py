@@ -1552,6 +1552,12 @@ with tempfile.TemporaryDirectory() as merge_scratch:
           "carries 1 merge commit(s) from main" in agent_text(conflict_result),
           conflict_result.stdout)
 
+    # --- a merge of main is told how a conflict is cleared ------------------
+    check("the merge note sends a conflict to a new pull request from current main",
+          "If it conflicts with main, run scripts/branch-conflict-check.py and do what its "
+          "report says: the pull request is replaced by a new one cut from current main."
+          in agent_text(clean_result), agent_text(clean_result))
+
     # --- a merge of another branch is not a merge from main -----------------
     other_origin, other_seat = seat_on_main("merge-of-another-branch")
     git(["checkout", "-q", "-b", "side"], other_seat)

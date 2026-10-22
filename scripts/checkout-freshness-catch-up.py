@@ -1278,7 +1278,10 @@ def catch_up_session_checkout(checkout: Path, interval_seconds: int) -> None:
              f"rebasing it onto main, not by merging main into it. If the branch was "
              f"never pushed, rebase it onto origin/main. If it was pushed, leave its "
              f"history and tell the agent-seat merge-lane-2, with SendMessage, which "
-             f"merge commits it carries.", kind=NOTE_KIND_MERGES_FROM_MAIN)
+             f"merge commits it carries. If it conflicts with main, run "
+             f"scripts/branch-conflict-check.py and do what its report says: the pull "
+             f"request is replaced by a new one cut from current main.",
+             kind=NOTE_KIND_MERGES_FROM_MAIN)
     if "rewritten_head" in found and found["rewritten_head"] != last_found.get(
             "rewritten_head"):
         head, remote = found["rewritten_head"]
