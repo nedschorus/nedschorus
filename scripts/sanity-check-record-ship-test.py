@@ -90,9 +90,9 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
     local_destination = str(store / "cold-read-records")
     records = scratch / "sanity-check-records"
     record = make_record(records, "2026-09-17-design-to-main-state-machine-design", {
-        "cut-claude.md": CUT_REPORT,
-        "mechanization-codex.md": MECHANIZATION_REPORT,
-        "scratch/cut-claude/notes.md": "working notes\n",
+        "cut-adversarial-prompt-claude.md": CUT_REPORT,
+        "mechanization-adversarial-prompt-codex.md": MECHANIZATION_REPORT,
+        "scratch/cut-adversarial-prompt-claude/notes.md": "working notes\n",
     })
     result = ship(local_destination, str(record))
     shipped_dir = store / "sanity-check-records" / record.name
@@ -100,11 +100,11 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
           result.returncode == 0 and result.stdout.startswith("shipped: "),
           f"exit {result.returncode}: {result.stdout}{result.stderr}")
     check("it lands under sanity-check-records/ in the store, not cold-read-records/",
-          (shipped_dir / "cut-claude.md").is_file()
+          (shipped_dir / "cut-adversarial-prompt-claude.md").is_file()
           and not (store / "cold-read-records" / record.name).exists(),
           sorted(p.name for p in store.iterdir()))
     check("a cell's scratch directory ships with the reports",
-          (shipped_dir / "scratch" / "cut-claude" / "notes.md").is_file(),
+          (shipped_dir / "scratch" / "cut-adversarial-prompt-claude" / "notes.md").is_file(),
           sorted(str(p.relative_to(shipped_dir)) for p in shipped_dir.rglob("*")))
     check("the store's README lists this kind with this program as its owner",
           "- `sanity-check-records/` -- " in (store / "README.md").read_text(encoding="utf-8")
@@ -139,7 +139,7 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
     # cold-read-records, and a sanity-check record lives under
     # sanity-check-records, where the command must look.
     triaged = make_record(records, "2026-09-23-triage-replacement", {
-        "cut-claude.md": CUT_REPORT, "triage.md": "# triage\n"})
+        "cut-adversarial-prompt-claude.md": CUT_REPORT, "triage.md": "# triage\n"})
     ship(local_destination, str(triaged))
     (triaged / "triage.md").write_text("# triage\n\nrevised\n", encoding="utf-8")
     result = ship(local_destination, str(triaged))
@@ -173,7 +173,7 @@ with tempfile.TemporaryDirectory(prefix="sanity-check-record-ship-test-") as scr
     scratch_ship = scratch_repo / "scripts" / SHIP.name
     all_store = str(scratch / "all-store" / "cold-read-records")
     good = make_record(scratch_repo / "sanity-check-records", "2026-09-10-good",
-                       {"cut-claude.md": CUT_REPORT})
+                       {"cut-adversarial-prompt-claude.md": CUT_REPORT})
     make_record(scratch_repo / "sanity-check-records", "2026-09-11-empty", {})
     # A cold-read record beside it must not be swept up by this program's --all.
     make_record(scratch_repo / "cold-read-records", "2026-09-10-not-this-kind",

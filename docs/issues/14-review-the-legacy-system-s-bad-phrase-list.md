@@ -26,7 +26,7 @@ The legacy system's list failed as text alone. The legacy page records that "und
    - "or" without saying which "or" is meant.
    - six words that each carry several project meanings, with the name the user approved for each meaning in the approval-walk glossary-names-for-ambiguous-project-words-2026-10-01; written bare, each word keeps only its ordinary English meaning. An entry of this kind does not forbid the word: it reminds the writer which name each meaning takes.
      - "home": agent-home for the directory an agent-seat works in; canonical location for the one place a document or fact is kept.
-     - "draft": -draft for the filename suffix; "pending approval" for text that waits for the user's approval; "the `draft` label" for the GitHub label; `docs/drafts/` for the directory.
+     - "draft": -draft for the filename suffix; "pending approval" for text that waits for the user's approval; `queue-drain-candidate` for the GitHub label; `docs/drafts/` for the directory.
      - "walk": approval-walk for the event; walk-document for the file `docs/walk/<name>.md`; approved-by-walk for the result; "put to the user in an approval-walk" for the act.
      - "seat": agent-seat for the identity; agent-session for one running conversation; "the agent-seat's name" for the name of an agent-seat; working directory for where an agent-session works; cold-read-cell for one reviewer in a cold-read-full-run.
      - "head": head commit for a pull request's newest commit; frozen-head for a head commit once pushed; `HEAD`, in capitals, for what a Git checkout has checked out.

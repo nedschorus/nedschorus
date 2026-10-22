@@ -288,6 +288,18 @@ class LaunchHarness:
                 for block in calls.read_text(encoding="utf-8").split(
                     "=== call boundary ===\n") if block.strip()]
 
+    def boot_programs_fail(self):
+        """Make the python3 stub fail clean-worktrees.py and
+        checkout-freshness-catch-up.py the way a broken run does: a line on
+        stderr naming the program, then exit 2."""
+        python3 = self.stubs / "python3"
+        python3.write_text(python3.read_text(encoding="utf-8").replace(
+            'case "${1:-}" in (*' + UPDATE_LOCK_HELPER_NAME + ')',
+            'case "${1:-}" in (*clean-worktrees.py|*checkout-freshness-catch-up.py) '
+            'echo "stand-in failure of ${1##*/}" >&2; exit 2;; esac\n'
+            'case "${1:-}" in (*' + UPDATE_LOCK_HELPER_NAME + ')', 1),
+            encoding="utf-8")
+
     def write_seat_token(self, account: str, token: str,
                          trailing_newline: bool = True) -> Path:
         """Put a token file for one account in the sandbox HOME, which stands
@@ -1156,6 +1168,41 @@ def main() -> int:
               and not harness.prepare_ran() and result["tmux_argv"] == "",
               (result["replay"].returncode, result["replay"].stdout[:200],
                harness.prepare_ran()))
+
+        # --- 19. the launch-time worktree report and fast-forward fail on
+        # ned-box: each failure's own error and lines saying the launch goes
+        # on reach stderr, and the seat is still prepared and started.
+        harness = LaunchHarness(root / "boot-programs-fail")
+        harness.boot_programs_fail()
+        result = harness.run(["seat-f", "--no-attach"])
+        check("boot programs fail: the remote side exits 0, prepares the seat and starts tmux",
+              result["replay"].returncode == 0 and harness.prepare_ran()
+              and result["tmux_argv"] != "",
+              (result["replay"].returncode, result["replay"].stderr[:400]))
+        for program, step in (("clean-worktrees.py", "worktree report"),
+                              ("checkout-freshness-catch-up.py", "fast-forward")):
+            check(f"boot programs fail: {program}'s own error reaches stderr",
+                  f"stand-in failure of {program}" in result["replay"].stderr,
+                  result["replay"].stderr)
+            lines = result["replay"].stderr.splitlines()
+            first = [index for index, line in enumerate(lines)
+                     if line.startswith(f"launch-claude-ubuntu: the launch-time {step}")
+                     and "failed with exit 2" in line and "the launch goes on" in line]
+            check(f"boot programs fail: stderr says the {step} failed with exit 2, "
+                  "that the launch goes on, where its error is, and who acts",
+                  len(first) == 1
+                  and (lines + ["", ""])[first[0] + 1].startswith(f"launch-claude-ubuntu: any error the ")
+                  and "if none is there" in (lines + ["", ""])[first[0] + 1]
+                  and (lines + ["", "", ""])[first[0] + 2].startswith(f"launch-claude-ubuntu: if you are an agent that ran this launch, tell the user")
+                  and (lines + ["", "", ""])[first[0] + 3].startswith(f"launch-claude-ubuntu: if you are the user, run the command in the first of these lines")
+                  and "if it fails and prints nothing, ask an agent" in (lines + ["", "", ""])[first[0] + 3],
+                  result["replay"].stderr)
+        harness = LaunchHarness(root / "boot-programs-succeed")
+        result = harness.run(["seat-g", "--no-attach"])
+        check("boot programs succeed: no line says the launch goes on after a failure",
+              result["replay"].returncode == 0
+              and "the launch goes on" not in result["replay"].stderr,
+              (result["replay"].returncode, result["replay"].stderr[:300]))
 
     print()
     if failures:

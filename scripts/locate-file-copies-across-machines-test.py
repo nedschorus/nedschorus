@@ -101,7 +101,7 @@ parser.add_argument("path")
 parser.add_argument("--skip", action="append", default=[])
 arguments = parser.parse_args()
 mode = os.environ.get("FAKE_BACKUP_SEARCH_MODE", "not-found")
-print("Searching every history this fleet keeps for: " + arguments.path)
+print("Searching every history the Mac and ned-box keep for: " + arguments.path)
 print(flush=True)
 if mode == "killed":
     os.kill(os.getpid(), signal.SIGKILL)
@@ -616,7 +616,7 @@ with scratch() as directory:
                "/")], runs)
     order = [stdout.find(marker) for marker in (
         "\nTook ", "do not say the file does not exist", BACKUP_SEARCH_HEADER,
-        "Searching every history this fleet keeps for: nothing-anywhere.md",
+        "Searching every history the Mac and ned-box keep for: nothing-anywhere.md",
         "No surface that could be searched has it.")]
     check("the backup search's output follows this program's whole answer, "
           "closing lines included, and ends with its summary line",
@@ -686,7 +686,7 @@ with scratch() as directory:
           "the path and finishes",
           code == 1 and [one["argv"] for one in runs]
           == [[*skips, "-dash-led-never-anywhere.md"]]
-          and "Searching every history this fleet keeps for: "
+          and "Searching every history the Mac and ned-box keep for: "
               "-dash-led-never-anywhere.md" in output
           and "No surface that could be searched has it." in output
           and "did not finish" not in output, (runs, output))

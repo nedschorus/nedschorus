@@ -13,11 +13,12 @@ re-posted with the same path, line and body counts once. A review's stated **Blo
 checked against its own marked comments, or, when it has none, against those of the later reviews,
 which then re-post its blockers.
 
-Without --check: refuse when the pull request's head has moved past the frozen-head, else print
-the brief: the frozen-head, each blocking finding word for word, the round's rules, and the
---check command to finish with.
+Without --check, run in the author's checkout: refuse when the pull request's head has moved past
+the frozen-head, else print the brief: the frozen-head, each blocking finding word for word, how to
+dispatch the fix-round subagent in a git worktree of its own and push from it, the round's rules,
+and the --check command to finish with, which names the answers file in the author's checkout.
 
-With --check, run in the author's checkout: the commits from the frozen-head to --commit (default
+With --check, run in the worktree or checkout that holds the round's commit: the commits from the frozen-head to --commit (default
 HEAD) must be none, or one non-merge commit, or with --after-conflict-merge a merge of origin/main
 followed by at most one non-merge commit. The answers file holds one entry per blocking finding,
 each starting "<n>. " on its own line; by default it is ANSWERS_FILE_NAME_FORMAT inside the
@@ -33,6 +34,7 @@ import argparse
 import importlib.util
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -53,6 +55,39 @@ PROGRAM = "scripts/" + Path(__file__).name
 ANSWERS_FILE_NAME_FORMAT = "fix-round-answers-pull-request-{number}.md"
 PRE_PUSH_TEST_COMMAND = ("python3 scripts/run-all-test-suites.py "
                          "--only-suites-whose-recorded-inputs-changed-since origin/main")
+WORKTREE_DISPATCH_INSTRUCTION = (
+    "For the author: dispatch the fix-round subagent with the Agent tool, as a fork (subagent_type: "
+    "\"fork\") with isolation: \"worktree\" and run_in_background: true, so that it works in a git "
+    "worktree of its own and its commit cannot pick up edits you make in your checkout while it "
+    "works. Give it this whole brief, and tell it that the two paragraphs starting \"For the "
+    "author\", indented lines included, are yours, not its.")
+# The review's id keeps two rounds on the same frozen-head apart: git will not switch a second
+# worktree to a branch an earlier round's worktree still has checked out, and the agent harness
+# may keep that worktree locked.
+LOCAL_BRANCH_NAME_FORMAT = "fix-round-pull-request-{number}-review-{review_id}"
+# The subagent works on a local branch, not a detached HEAD: .claude/hooks/session-location-write-guard.py
+# refuses every Edit or Write to a tracked file while HEAD is detached.
+WORKTREE_REMOVAL_INSTRUCTION = (
+    "For the author, when the subagent has finished: remove its worktree, and then the local branch "
+    "{local_branch}, which the subagent makes in step 0 of the rules below. <path> is the worktree's "
+    "path, which the Agent tool reports when the subagent finishes.\n"
+    "   1. Run: git worktree remove <path>\n"
+    "      If git refuses because the worktree is locked and the lock reason starts with \"claude agent\", "
+    "the agent harness holds the lock: run step 1 again once git worktree list no longer shows the "
+    "worktree as locked. If git worktree list still shows it locked when you end your turn, tell the user the "
+    "worktree's path and the lock reason, and go no further.\n"
+    "      If git refuses because the worktree holds changed or untracked files, list them with "
+    "git -C <path> status --short and read them. Copy out of the worktree any file that is work to "
+    "keep, such as a fix the subagent did not push, and tell merge-lane-2 about it with SendMessage. "
+    "Then run: git worktree remove --force <path>\n"
+    "      If git refuses because the worktree is locked for any other reason, the lock reason names "
+    "who locked it. If whoever it names may still be using the worktree, tell the user the worktree's "
+    "path and the lock reason, and go no further. Otherwise list its changed or untracked files with "
+    "git -C <path> status --short, read them, copy out any that is work to keep and tell merge-lane-2 "
+    "about it with SendMessage. Then run: git worktree remove --force --force <path> (the second --force removes a "
+    "locked worktree).\n"
+    "   2. Once the worktree is removed, run: git branch -D {local_branch}")
+PULL_REQUEST_FIELDS = ("url", "headRefOid", "headRefName")
 
 
 class Refused(Exception):
@@ -108,11 +143,24 @@ def is_ancestor(ancestor, descendant):
 
 
 def pull_request(number):
+    arguments = ["pr", "view", str(number), "--json", ",".join(PULL_REQUEST_FIELDS)]
+    command = "gh " + " ".join(arguments)
+    rerun = (f" Run {command} yourself: if it now prints an object with all three fields filled in, "
+             f"run {shlex.join(['python3', *sys.argv])} again.")
+    output = gh(arguments)
     try:
-        facts = json.loads(gh(["pr", "view", str(number), "--json", "url,headRefOid"]))
-        return facts["url"], facts["headRefOid"]
-    except (json.JSONDecodeError, KeyError, TypeError) as error:
-        raise StepFailed(f"gh pr view {number} gave no url and headRefOid: {error!r}") from None
+        facts = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise StepFailed(f"{command} printed output that is not JSON; Python's JSON parser said: "
+                         f"{error}. The output began: {output[:200]!r}." + rerun) from None
+    if not isinstance(facts, dict):
+        raise StepFailed(f"{command} printed JSON that is not an object with named fields: {facts!r}."
+                         + rerun)
+    missing = [field for field in PULL_REQUEST_FIELDS if not facts.get(field)]
+    if missing:
+        raise StepFailed(f"{command} printed JSON in which these fields are missing or empty: "
+                         f"{', '.join(missing)}." + rerun)
+    return tuple(facts[field] for field in PULL_REQUEST_FIELDS)
 
 
 def round_reviews(number, reviewer_login):
@@ -204,17 +252,18 @@ def finding_place(comment):
 
 
 def round_facts(number, reviewer_login):
-    url, head = pull_request(number)
+    url, head, branch = pull_request(number)
     reviews = round_reviews(number, reviewer_login)
     review = reviews[0]
     frozen_head = review.get("commit_id")
     if not frozen_head:
         raise StepFailed(f"merge-lane-2's review {review.get('html_url')} carries no commit_id")
-    return url, head, review_links(reviews), frozen_head, blocking_findings(number, reviews)
+    return (url, head, branch, review_links(reviews), review.get("id"), frozen_head,
+            blocking_findings(number, reviews))
 
 
 def print_brief(number, reviewer_login):
-    url, head, review_link, frozen_head, findings = round_facts(number, reviewer_login)
+    url, head, branch, review_link, review_id, frozen_head, findings = round_facts(number, reviewer_login)
     if head != frozen_head:
         raise Refused(f"Pull request {url} has head {head}, but merge-lane-2 reviewed {frozen_head}; "
                       "a commit was pushed after the review, so this fix-round has already pushed.\n"
@@ -231,10 +280,17 @@ def print_brief(number, reviewer_login):
         lines += ["", f"{index}. {finding_place(finding)} ({finding.get('html_url')})",
                   (finding.get("body") or "").strip()]
     answers_path = default_answers_path(number)
-    check_command = f"python3 {PROGRAM} {number} --check"
+    local_branch = LOCAL_BRANCH_NAME_FORMAT.format(number=number, review_id=review_id)
+    # --answers names the file in this checkout's git directory, which the subagent's own
+    # worktree does not hold by default.
+    check_command = f"python3 {PROGRAM} {number} --check --answers {shlex.quote(answers_path)}"
     lines += [
         "",
-        "Rules of the round, in order:",
+        WORKTREE_DISPATCH_INSTRUCTION,
+        WORKTREE_REMOVAL_INSTRUCTION.format(local_branch=local_branch),
+        "",
+        "For the subagent, the rules of the round, in order, run in your own worktree:",
+        f"0. Make a local branch at the frozen-head and switch to it: git fetch origin && git switch -C {local_branch} {frozen_head}",
         f"1. Before changing anything, run: python3 scripts/branch-conflict-check.py --pull-request {number}",
         "   If it reports VERDICT: CONFLICT, do what its report says.",
         "2. Check each finding against the code. Fix each one that holds, root cause included, "
@@ -255,7 +311,8 @@ def print_brief(number, reviewer_login):
         "   adding --after-conflict-merge if step 1's report had you merge origin/main. If it refuses, change the "
         "answers file or the unpushed commit as it says (git commit --amend is allowed before the "
         "push) and run the check again.",
-        "8. When it passes with a commit not yet pushed, push once and run the same check command "
+        f"8. When it passes with a commit not yet pushed, push once, with: git push origin HEAD:{shlex.quote(branch)}",
+        "   Then run the same check command "
         "again. When it passes and prints a message for merge-lane-2, which it does at once if you "
         "made no commit, send that message to merge-lane-2 with SendMessage.",
         "9. If anything fails after the push, do not push again or rewrite the branch: tell "
@@ -363,7 +420,7 @@ def unnamed_files(base, fix_commit, findings):
 
 
 def check_round(number, reviewer_login, answers_path, commit_name, after_conflict_merge):
-    url, head, review_link, frozen_head, findings = round_facts(number, reviewer_login)
+    url, head, _branch, review_link, _review_id, frozen_head, findings = round_facts(number, reviewer_login)
     answers = read_answers(answers_path or default_answers_path(number), len(findings))
     commit = git(["rev-parse", "--verify", f"{commit_name}^{{commit}}"]).strip()
     git(["cat-file", "-e", f"{frozen_head}^{{commit}}"])
@@ -428,10 +485,11 @@ def main(argv=None):
         return 1
     except StepFailed as failure:
         print(f"FAILED: {failure}\n"
-              "If it names a commit or ref this checkout does not have, run git fetch origin and "
-              "run this again.\n"
+              "This program stopped there: it printed no brief and checked no round.\n"
+              "If the failure above names a commit or ref this checkout does not have, run git "
+              "fetch origin and run this again.\n"
               "If gh is not logged in, tell the user: only the user can log gh in.\n"
-              "Otherwise, tell the user this message.", file=sys.stderr)
+              "Otherwise, tell the user this whole message.", file=sys.stderr)
         return 2
     return 0
 

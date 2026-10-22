@@ -377,6 +377,62 @@ def run_cases(scratch: Path):
               "commit as it is and tell the user this whole message."],
           repr(completed.stderr))
 
+    # A message file grep cannot read is a failed stamp, not an empty message.
+    repository = ThrowawayRepository(scratch, "unreadable-message")
+    unreadable = scratch / "unreadable-message-file"
+    unreadable.write_text("Real subject\n")
+    unreadable.chmod(0)
+    try:
+        completed = subprocess.run(
+            [str(HOOK_SCRIPT), str(unreadable), "message"], cwd=str(repository.root),
+            env=repository.environment(FAKE_SESSION),
+            capture_output=True, text=True, timeout=30)
+    finally:
+        unreadable.chmod(0o644)
+    check("a message file grep cannot read exits 0 and says the trailer may be missing, "
+          "naming grep and its status",
+          completed.returncode == 0
+          and ('prepare-commit-msg: grep could not read the commit message file %s '
+               '(status 2), so the trailer "%s" may be missing' % (unreadable, trailer))
+          in completed.stderr
+          and "grep's error is just above this line." in completed.stderr,
+          repr(completed.stderr))
+
+    # git config failing for core.commentChar, other than unset (1), is reported;
+    # the hook goes on with '#', so the trailer is still added.
+    stand_in_directory = scratch / "stand-in-git"
+    stand_in_directory.mkdir()
+    stand_in = stand_in_directory / "git"
+    stand_in.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = config ] && [ "$3" = core.commentChar ]; then\n'
+        '    echo "error: injected config failure" >&2\n'
+        "    exit 3\n"
+        "fi\n"
+        f'exec "{shutil.which("git")}" "$@"\n')
+    stand_in.chmod(0o755)
+    for label, path_prefix, expected_line in (
+            ("fails", f"{stand_in_directory}{os.pathsep}",
+             "prepare-commit-msg: git config --get core.commentChar exited with status 3, "
+             "so this hook takes '#' as the comment character"),
+            ("finds the key unset", "", None)):
+        repository = ThrowawayRepository(scratch, "comment-char-" + label.replace(" ", "-"))
+        message_file = scratch / ("comment-char-message-" + label.replace(" ", "-"))
+        message_file.write_text("Real subject\n")
+        environment = repository.environment(FAKE_SESSION)
+        environment["PATH"] = path_prefix + environment.get("PATH", "")
+        completed = subprocess.run(
+            [str(HOOK_SCRIPT), str(message_file), "message"], cwd=str(repository.root),
+            env=environment, capture_output=True, text=True, timeout=30)
+        said = (expected_line in completed.stderr
+                and "error: injected config failure" in completed.stderr
+                if expected_line else completed.stderr == "")
+        check(f"when git config for core.commentChar {label}, the hook "
+              + ("says so and still stamps" if expected_line else "says nothing and stamps"),
+              completed.returncode == 0 and said
+              and trailer in message_file.read_text(),
+              (completed.returncode, completed.stderr, message_file.read_text()))
+
     check("the hook is executable, or git would silently skip it",
           os.access(HOOK_SCRIPT, os.X_OK), str(HOOK_SCRIPT))
 

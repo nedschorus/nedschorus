@@ -73,7 +73,7 @@ The defect is in the test's fake bwrap only. The real bwrap is a compiled progra
 
 The cause is fixed on main, but the test case under "Done when" is not written. Commit `9f5cbf47`, merged to main in PR [Test sandbox, phase 2: runs overlap, admission by free CPU and memory, per-suite records](https://github.com/nedschorus/nedschorus/pull/1427) at 2026-10-15T09:05:57Z, changed the fake bwrap's first line to `#!/bin/bash`, the first of the two fixes this GHI-MD proposed; the commit does not name this issue. Each of the nine failing merge commits above lacks `9f5cbf47` (`git merge-base --is-ancestor 9f5cbf47 <commit>` fails for each of the three from PRs 1265, 1311 and 1372). In the records searched above, 187 head test runs started after that merge ran this suite, and none failed. On main at `21af2b5c`, `grep -n 'dup2\|status-fd 12' scripts/run-all-test-suites-signal-sandbox-test.py` finds nothing, so no case runs the fake bwrap with a two-digit descriptor.
 
-Two names quoted above have changed on main: the suite the test copies is now `scripts/mac-request-from-ned-box-forced-command-test.py` (renamed in `cbd02c16`), and the case is now "with the sandbox on, report.txt says each suite runs in its own test sandbox, named by the bwrap program".
+Two names quoted above have changed on main: the suite the test copies is now `scripts/mac-request-from-ned-box-forced-command-test.py` (renamed in `cbd02c16`), and the case is now "with the sandbox on, test-run-report.txt says each suite runs in its own test sandbox, named by the bwrap program".
 
 ## Next action
 

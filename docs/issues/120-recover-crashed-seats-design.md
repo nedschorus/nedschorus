@@ -22,10 +22,10 @@ the agent stops without handing off. A **handoff** is the file a session writes
 when it passes its work to a successor; it carries a **restart-counter**, which
 the supervisor compares with the last counter it consumed to tell a new handoff
 from one already acted on. **Boot-ignition** is the supervisor's first-launch
-path that starts a session from a handoff found waiting. A **dialog extract** is
-the condensed dialog
+path that starts a session from a handoff found waiting. A **conversation-tail** is
+the verbatim tail of a session's dialog, `~/.claude/handoffs/<seat>-dialog-NNNN.md`, which
 [`scripts/handoff-extract-conversation.py`](../../scripts/handoff-extract-conversation.py)
-produces from a transcript.
+extracts from a transcript.
 
 This tool covers one case: a seat whose session died **with no handoff acted
 on** — a crash, a killed tmux server, a machine reboot. That case is what
@@ -116,7 +116,7 @@ the last check and the launch:
   Not covered: a successor whose launch failed before the harness wrote its
   transcript, where the retired parent is still the newest transcript.
 - **No usable transcript** → ignite: launch fresh, with a first prompt pointing
-  at the newest dialog extract.
+  at the newest conversation-tail.
 
 **Then it launches.** On the Mac it runs
 [`launch-claude-mac`](../../scripts/launch-claude-mac) `<seat> --no-attach`,
@@ -133,12 +133,12 @@ Every non-dry run appends its decision to
 ## The command line
 
 ```
-recover-crashed-seats.py <seat-name>... [--dry-run] [--ignite-fallback]
-recover-crashed-seats.py --all [--dry-run] [--ignite-fallback]
+recover-crashed-seats.py <seat-name>... [--dry-run] [--fresh-session-from-conversation-tail]
+recover-crashed-seats.py --all [--dry-run] [--fresh-session-from-conversation-tail]
 ```
 
-`--dry-run` reports every decision and launches nothing. `--ignite-fallback`
-skips the resume and starts fresh from a dialog extract — for a transcript too
+`--dry-run` reports every decision and launches nothing. `--fresh-session-from-conversation-tail`
+skips the resume and starts fresh from a conversation-tail — for a transcript too
 large to be worth replaying. `--agents-root`, `--handoff-dir` and
 `--projects-root` override the locations.
 
@@ -369,11 +369,11 @@ capability rather than a correction.
 
 A failed resume must not silently become something else. The user's ruling: the
 tool reports that the restart failed and **asks** whether to recreate the seat
-the degraded way — the fresh session that reads a dialog extract and needs no
+the degraded way — the fresh session that reads a conversation-tail and needs no
 handoff — rather than falling back on its own.
 
 Today it does neither. A failed launch returns `LAUNCH FAILED — the seat is still
-down` and stops; `--ignite-fallback` is a flag the operator must pass in advance.
+down` and stops; `--fresh-session-from-conversation-tail` is a flag the operator must pass in advance.
 And the exit code checked is the launcher's, which only starts tmux: if the
 resume fails *inside* the session, the launch still exits zero and recovery
 reports success. Both halves — verify the seat actually came up, then offer the
@@ -450,10 +450,10 @@ which works because iTerm parses its command shell-style and keeps a quoted
 - Rides on PR [open-iterm-window-running-command: run the command under a login shell](https://github.com/nedschorus/nedschorus/pull/235),
   merged 2026-09-02: its login-shell wrapper is what stops the window dying at
   the launcher's own `command -v tmux` check with nothing printed.
-- `--dry-run` prints the command and opens no window. `--ignite-fallback`
-  combines with the flag: the window opens either way, and `--ignite-fallback`
+- `--dry-run` prints the command and opens no window. `--fresh-session-from-conversation-tail`
+  combines with the flag: the window opens either way, and `--fresh-session-from-conversation-tail`
   decides whether the seat inside it resumes the transcript or starts fresh from
-  the dialog extract.
+  the conversation-tail.
 
 **What it does not change:** seat selection, the deadness checks, the transcript
 choice, or the resume decision.

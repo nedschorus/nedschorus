@@ -657,7 +657,7 @@ with tempfile.TemporaryDirectory() as place:
         real = subprocess.run(["bash", "-c", f"{wrappers} pwd"], capture_output=True,
                               text=True, env={**os.environ, "HOME": f"{place}/home"}, cwd=place)
         if real.returncode != 0:
-            print(f"SKIP  {wrappers}: this env refuses it ({real.stderr.strip()[:80]})")
+            print(f"SKIP  [this machine cannot run it] {wrappers}: this env refuses it ({real.stderr.strip()[:80]})")
             continue
         saved_home = os.environ.get("HOME")
         os.environ["HOME"] = f"{place}/home"

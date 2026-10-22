@@ -33,7 +33,7 @@ mac_window = importlib.util.module_from_spec(_mac_window_spec)
 _mac_window_spec.loader.exec_module(mac_window)
 mac_forced_command = mac_window.load_forced_command_module()
 
-PROGRAM = "seat-task-list-read"
+PROGRAM = "seat-task-list-read-nbd"
 
 DEFAULT_STORE = Path.home() / ".claude" / "tasks"
 STORE_UNDER_HOME = Path(".claude") / "tasks"
@@ -569,7 +569,7 @@ def main(argv=None, runner=None):
     store = DEFAULT_STORE if arguments.store is None else arguments.store
 
     with tempfile.TemporaryDirectory(
-            prefix="seat-task-list-read-") as scratch:
+            prefix="seat-task-list-read-nbd-") as scratch:
         locations, problems, machines_read = read_task_lists(
             machines, store, Path(scratch), runner)
         try:

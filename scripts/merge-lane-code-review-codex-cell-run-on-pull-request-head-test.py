@@ -106,24 +106,24 @@ def main():
                                      "--json", "body", "--jq", ".body"], "gh_token": TOKEN}],
               json.dumps(gh_calls))
         check("the description is saved under cx/pr<n>-<base>",
-              (outputs / "description.md").read_text() == DESCRIPTION, detail)
+              (outputs / "pull-request-description.md").read_text() == DESCRIPTION, detail)
         check("main's review runs on wt/pr<n>-head from the base commit, with main's "
               "PR reviewer instructions",
               cell_calls and cell_calls[0]["argv"] == [
                   "--base", BASE, "--repo", str(helpers / "wt" / "pr7-head"),
                   "--instructions-file", str(instructions),
-                  "--pull-request-description-file", str(outputs / "description.md"),
-                  "--output", str(outputs / "report.md")], json.dumps(cell_calls))
+                  "--pull-request-description-file", str(outputs / "pull-request-description.md"),
+                  "--output", str(outputs / "codex-code-review-report.md")], json.dumps(cell_calls))
         check("neither GIT_DIR nor the token reaches the review",
               cell_calls and cell_calls[0]["git_dir"] is None
               and cell_calls[0]["gh_token"] is None, json.dumps(cell_calls))
         check("the review's stdout, stderr and report are kept under cx/pr<n>-<base>",
               (outputs / "stdout").read_text() == "cell stdout\n"
               and (outputs / "stderr").read_text() == "cell stderr\n"
-              and (outputs / "report.md").read_text() == "the report\n", detail)
+              and (outputs / "codex-code-review-report.md").read_text() == "the report\n", detail)
         check("one line names the exit code and the report, and the program exits 0",
               completed.returncode == 0 and completed.stdout ==
-              f"PR 7 codex cell (base 01234567) exit 0; report {outputs / 'report.md'}\n",
+              f"PR 7 codex cell (base 01234567) exit 0; report {outputs / 'codex-code-review-report.md'}\n",
               detail)
 
         completed, _, _ = run_program(scratch, helpers, {"MERGE_LANE_CODEX_TEST_CELL_EXIT": "3"})

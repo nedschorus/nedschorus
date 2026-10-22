@@ -189,7 +189,7 @@ def write_stub_prompt_file(repository, text=STUB_JUDGE_PROMPT):
 
 def run_judge_cell(repository, stub_directory, plan, report_path, *arguments,
                    cases=THREE_CASES, restater=RESTATER_CLASS,
-                   prompt_file=None):
+                   prompt_file=None, current_directory=None):
     stub_directory.mkdir(parents=True, exist_ok=True)
     stub = stub_directory / "claude"
     stub.write_text(STUB_CLAUDE, encoding="utf-8")
@@ -210,7 +210,8 @@ def run_judge_cell(repository, stub_directory, plan, report_path, *arguments,
         command += ["--case", *case]
     command += list(arguments)
     return subprocess.run(
-        command, capture_output=True, text=True, check=False, env=environment)
+        command, capture_output=True, text=True, check=False, env=environment,
+        cwd=current_directory or repository)
 
 
 def provenance_stamp_of(report):
@@ -319,7 +320,7 @@ with tempfile.TemporaryDirectory() as scratch:
          str(repository / "nc-systems" / "cold-read" / "cold-read-restater-judge-cell.py"),
          "--restater", RESTATER_CLASS, "--report", str(report),
          "--case", *THREE_CASES[0]],
-        capture_output=True, text=True, check=False, env=environment)
+        capture_output=True, text=True, check=False, env=environment, cwd=repository)
     check("omitting --prompt-file altogether is refused with exit 64, the way "
           "any missing required flag is",
           omitted.returncode == 64 and "--prompt-file" in omitted.stderr,
@@ -456,6 +457,29 @@ with tempfile.TemporaryDirectory() as scratch:
           result.returncode == 0 and " effort=high " in stamp
           and argv[argv.index("--effort") + 1] == "high",
           f"exit {result.returncode}; stamp={stamp!r}; argv={argv!r}")
+
+    # --- A relative --case path means the file under the current directory --
+    # Run from a directory other than the cell's checkout, holding its own
+    # files at the same relative paths: the judge must be pointed at those.
+    repository = build_scratch_repository(scratch)
+    other_directory = scratch / "another-current-directory"
+    for relative_path, text in CASE_FILE_CONTENTS.items():
+        path = other_directory / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"OTHER DIRECTORY COPY {text}", encoding="utf-8")
+    report = report_path_for(repository, "relative-case-path")
+    prompt_dump = scratch / "relative-case-path-prompt.txt"
+    result = run_judge_cell(
+        repository, stubs,
+        {"*": {"report": STUB_JUDGE_REPORT, "dump_prompt": str(prompt_dump)}},
+        report, current_directory=other_directory,
+    )
+    judged = prompt_dump.read_text(encoding="utf-8") if prompt_dump.is_file() else ""
+    check("a relative --case path is read under the current directory, not the cell's checkout",
+          result.returncode == 0
+          and str(other_directory / "test-cases/draft-one.md") in judged
+          and str(repository / "test-cases") not in judged,
+          f"exit {result.returncode}; stderr={result.stderr[-400:]!r}; prompt={judged[:300]!r}")
 
 print()
 if failures:

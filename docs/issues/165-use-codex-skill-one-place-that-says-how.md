@@ -6,19 +6,18 @@ issue: "[use-codex skill: one place that says how this project invokes Codex hea
 
 ## Problem
 
-This project invokes Codex (the `codex` CLI, `codex exec`) as a second model family for reviews and audits, and does it often. Every launch has to get the same things right, and today the knowledge of what those things are lives only inside three scripts. An agent that needs a Codex read for anything else — a research question, a source read, a one-off review — reproduces the flags by hand from those scripts, or gets them wrong. On 2026-08-25 the MD-skills seat did exactly that (a read of the openai/codex source for what Codex parses from markdown frontmatter): it copied the flags out of `scripts/code-review-codex-cell.py`, and that copying is the sign the skill is missing. The user directed the issue the same day: "We need to invoke codex regularly."
+This project invokes Codex (the `codex` CLI, `codex exec`) as a second model family for reviews and audits, and does it often. Every launch has to get the same things right, and when this issue was filed the knowledge of what those things are lived only inside three scripts. An agent that needs a Codex read for anything else — a research question, a source read, a one-off review — reproduces the flags by hand from those scripts, or gets them wrong. On 2026-08-25 the MD-skills seat did exactly that (a read of the openai/codex source for what Codex parses from markdown frontmatter): it copied the flags out of `scripts/code-review-codex-cell.py`, and that copying is the sign the skill is missing. The user directed the issue the same day: "We need to invoke codex regularly."
 
-## What exists (verified on main, 2026-08-25)
+## What exists (verified on main, 2026-10-21)
 
-Three launch sites, each carrying the same hard-won facts:
+Four programs launch `codex exec` themselves:
 
-- `scripts/md-review-codex-cell.py` — the md-review grid's Codex cells; tiers good = `gpt-5.6-sol`, floor = `gpt-5.6-luna`, both at reasoning effort `xhigh`.
-- `scripts/code-review-codex-cell.py` — `codex exec review` for the merge lane; `CODEX_MODEL = "gpt-5.6-sol"`, `REASONING_EFFORT = "xhigh"` (user-picked 2026-08-03; xhigh "OK for codex" the same day). Its docstring is the fullest record of why each flag is there.
-- `scripts/sanity-check-attacks.py` — the audit prompts' Codex runtime, same model and effort.
+- `scripts/run-codex-task-from-brief.py` — the one program an agent uses to hand Codex a task: it reads the prompt from a brief file, closes Codex's stdin, writes a run log, stops Codex at a deadline, and runs it under a permission profile that denies credential files, with Codex's memory store off; options widen network access, writable folders and web search, and model and effort are options too. PR [Run Codex tasks through one program, with network, writable folders and web search; refuse a hand-typed codex exec](https://github.com/nedschorus/nedschorus/pull/1246) added it, merged as f3a170c5, together with `scripts/hand-typed-codex-exec-redirect-hook.py`, which refuses a `codex exec` typed into a Bash command and points the agent at `run-codex-task-from-brief.py`.
+- `nc-systems/cold-read/cold-read-codex-cell.py` — the cold-read grid's Codex cells, formerly `scripts/md-review-codex-cell.py`, renamed when md-review became cold-read; tiers `deep` = `gpt-6.1-sol`, `second-strongest-model` = `gpt-6-luna`, both at reasoning effort `xhigh`. Its shared code, which `run-codex-task-from-brief.py` also loads, is `nc-systems/cold-read/cold-read-cell-common.py`, formerly `scripts/md-review-cell-common.py`.
+- `scripts/code-review-codex-cell.py` — `codex exec review` for the merge lane, which runs it through `scripts/merge-lane-code-review-codex-cell-run-on-pull-request-head.py`; `CODEX_MODEL = "gpt-6.1-sol"`, `REASONING_EFFORT = "xhigh"` (effort user-picked 2026-08-03; xhigh "OK for codex" the same day). Its docstring is the fullest record of why each flag is there.
+- `scripts/sanity-check-adversarial-prompts.py` — the /sanity-check skill's Codex runtime, formerly `scripts/sanity-check-attacks.py`; same model and effort.
 
-A fourth, `scripts/md-review-cell-common.py`, is on branch `MD-skills` (git-infra's report-to-file fix, not yet on main).
-
-The facts they share: `--sandbox read-only` at the parent level (the nested `review` parser rejects it); `--disable memories` so a cell is naive and carries no earlier session's reviews; the prompt on stdin (`-`) or as a file, never inline; the answer taken out through `--output-last-message <path>`, the path cleared before the run so that a file present afterwards is provably this run's and an absent file is read as failure; stderr captured, not discarded, because on failure its tail is the only explanation; a timeout.
+The facts they share: a read-only sandbox, today a permission profile extending Codex's `:read-only` that also denies every credential file, built by `codex_credential_denying_permission_profile_arguments` in `cold-read-cell-common.py`; `--disable memories` so a cell is naive and carries no earlier session's reviews; the prompt from stdin (`-`) or a file, never typed on the command line; the answer taken out through `--output-last-message <path>`, the path cleared before the run so that a file present afterwards is provably this run's and an absent file is read as failure; stderr captured, not discarded, because on failure its tail is the only explanation; a timeout.
 
 One fact none of them states, measured 2026-08-25 at launch: Codex loads `~/.codex/AGENTS.md` (296 words on this Mac, an OpenAI-docs preamble) and lists `~/.codex/skills/` at startup, so a "naive" cell is not fully naive — it carries whatever the machine's Codex home injects. A skill has to say what Codex reads at start and how a launcher keeps a cell clean, or state that it cannot.
 
@@ -38,12 +37,12 @@ The skill goes through a cold read before it lands.
 
 ## Next action
 
-Draft the skill from the three scripts' docstrings and the 2026-08-25 measurement; md-review it; land it on main by the interim lane (a fresh branch from main, this one topic). Then update GHI [run-agent: one CLI to invoke a Claude or Codex agent headlessly from any caller (Python, shell, either runtime)](https://github.com/nedschorus/nedschorus/issues/41) to name this skill as the instruction layer over the primitive it will build.
+Draft the skill from the four programs' docstrings and the 2026-08-25 measurement; md-review it; land it on main by the interim lane (a fresh branch from main, this one topic). Then update GHI [run-agent: one CLI to invoke a Claude or Codex agent headlessly from any caller (Python, shell, either runtime)](https://github.com/nedschorus/nedschorus/issues/41) to name this skill as the instruction layer over the primitive it will build.
 
 ## Relations
 
 - GHI [run-agent: one CLI to invoke a Claude or Codex agent headlessly from any caller (Python, shell, either runtime)](https://github.com/nedschorus/nedschorus/issues/41) — the CLI primitive; this skill is its instruction text and its first consumer once built.
-- GHI [Deferred: pr-merge-decision-codex — machine merge-decision review; revisit after code-review-codex-cell accrues lane experience](https://github.com/nedschorus/nedschorus/issues/105) — the ruling that per-script wrappers stay small; this skill documents them, it does not consolidate them.
+- GHI [Deferred: pr-merge-decision-codex — machine merge-decision review; revisit after code-review-codex-cell accrues lane experience](https://github.com/nedschorus/nedschorus/issues/105) — the ruling that per-script wrappers stay small; GHI 105 is closed as not planned. `scripts/run-codex-task-from-brief.py` is now the one program for a Codex task an agent hands off; the three cell scripts still launch Codex themselves, and this skill documents all four, it does not consolidate them.
 - GHI [md-review-grid reports eight reviews saved when eight cells produced nothing](https://github.com/nedschorus/nedschorus/issues/164) — the md-review empty-report defect; the absence-as-failure rule this skill carries is the fix's shape.
 
 ## Provisional additions (not yet vetted by the user)

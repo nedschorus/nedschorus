@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cases for scripts/seat-task-list-read.py.
+"""Cases for scripts/seat-task-list-read-nbd.py.
 
 Every case builds its own store under a temporary directory and passes it in
 with --store, or hands the program a fake ssh runner, so nothing here reads or
@@ -60,7 +60,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True  # never run a stale copy of the program
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PROGRAM = REPO_ROOT / "scripts" / "seat-task-list-read.py"
+PROGRAM = REPO_ROOT / "scripts" / "seat-task-list-read-nbd.py"
 
 spec = importlib.util.spec_from_file_location("seat_task_list_read", PROGRAM)
 reader = importlib.util.module_from_spec(spec)

@@ -108,14 +108,19 @@ def fast_read_targets(text):
     targets = []
     for line in text.split("\n"):
         if line.startswith(FAST_READ_COMMAND_PREFIX):
-            words = shlex.split(line)
+            try:
+                words = shlex.split(line)
+            except ValueError:
+                words = []  # An unquoted target can leave a quote unclosed.
             targets.append(Path(words[-1]) if len(words) == 4 else None)
     return targets
 
 
 def file_text(path):
-    """The file's text, or None when the file is missing, so a removed target
-    fails its case instead of stopping the run."""
+    """The file's text, or None when the file is missing or fast_read_targets()
+    could not read a target, so either fails its case instead of stopping the run."""
+    if path is None:
+        return None
     try:
         return path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -172,8 +177,9 @@ REMINDER_INSTRUCTION_LINES = (
 )
 
 with tempfile.TemporaryDirectory() as temporary:
-    # A space and a quote in the temporary directory's name: each command must shell-quote its target.
-    hook_temporary_directory = Path(temporary) / "hook tmp's"
+    # A space, an apostrophe, a dollar sign, a backtick and a double quote in the temporary directory's
+    # name: each command must shell-quote its target, and double quotes would leave $, ` and " live.
+    hook_temporary_directory = Path(temporary) / "hook tmp's $HOME `id` \"q\""
     hook_temporary_directory.mkdir()
     repository = Path(temporary) / "repository"
     repository.mkdir()
@@ -236,7 +242,9 @@ with tempfile.TemporaryDirectory() as temporary:
           and file_text(first_targets[0]) == "second, reworded\n", first_targets)
 
     reset()
-    existing_target = targets[0] if targets else Path(temporary) / "none"
+    existing_target = targets[0] if targets and targets[0] is not None else Path(temporary) / "none"
+    if not existing_target.parent.is_dir():
+        existing_target = Path(temporary) / "none"  # A misquoted target names no real directory; the case then fails.
     existing_target.write_text("left by an earlier run\n", encoding="utf-8")
     edit_then_run(repository, program, COMMITTED_SOURCE, '"first message to the agent"',
                   '"first message, reworded"')

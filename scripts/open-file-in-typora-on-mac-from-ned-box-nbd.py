@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Open a file from ned-box in Typora on the user's Mac.
 
-Usage, on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box.py <path>
+Usage, on ned-box: scripts/open-file-in-typora-on-mac-from-ned-box-nbd.py <path>
 
-for example `scripts/open-file-in-typora-on-mac-from-ned-box.py docs/nedschorus-wiki/nedschorus-glossary.md`.
+for example `scripts/open-file-in-typora-on-mac-from-ned-box-nbd.py docs/nedschorus-wiki/nedschorus-glossary.md`.
 The path may be relative to the current directory. It must name a file under
 /home/nedlern, because the Mac sees ned-box's home through its mount
 /Volumes/nedhome and nothing else on ned-box.
@@ -27,7 +27,7 @@ import os
 import sys
 from pathlib import Path
 
-PROGRAM = "open-file-in-typora-on-mac-from-ned-box"
+PROGRAM = "open-file-in-typora-on-mac-from-ned-box-nbd"
 WINDOW_SENDER_PATH = Path(__file__).with_name("open-mac-window-from-ned-box.py")
 
 

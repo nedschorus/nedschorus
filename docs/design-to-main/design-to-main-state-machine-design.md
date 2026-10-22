@@ -563,6 +563,7 @@ This design's own open decisions are under "Deferred-decisions"; decisions anoth
 - #not_in_this_run A second agent-binary for acceptance-checks. #reason merge-lane-2's review adds a Codex reviewer to the code pull requests it reviews at full depth, the gate's pull request among them. #revisit_before merge-lane-2 stops reviewing the gate's pull requests.
 - #not_in_this_run Mutation testing of the changed lines inside the run. #reason merge-lane-2's review runs it on the gate's pull request, and a surviving mutant comes back as a gate-rejection. #revisit_before merge-lane-2 stops reviewing the gate's pull requests.
 - #not_in_this_run The environment `test-suite-executing` runs a suite in, and whether a test runner held by another checkout's lock is `could-not-run`. #reason the test runner already runs each suite in its own sandbox and queues on its lock; the first runs are watched by hand. #revisit_before the machine runs a component nobody is watching.
+- #not_in_this_run **How merge-lane-2's hold on a misread message reaches a run.** #reason the first runs are watched by hand, and the agent-seat whose conversation started the run answers merge-lane-2 as the pull request's author. #revisit_before the machine runs a component nobody is watching.
 
 ### Decided elsewhere
 

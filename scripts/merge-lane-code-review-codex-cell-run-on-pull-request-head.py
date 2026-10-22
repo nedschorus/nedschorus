@@ -7,13 +7,15 @@ Usage:
 
 The base commit is the merge base for a first review, or the head commit
 reviewed before for a fix-round. Saves the pull request's description from
-GitHub to cx/pr<n>-<first 8 characters of the base>/description.md under the
-worktrees and outputs directory, then runs --review-tools-worktree-at-main's
-scripts/code-review-codex-cell.py, not the pull request's, on wt/pr<n>-head
-from the base commit, with --review-tools-worktree-at-main's
-docs/agents/pr-reviewer-instructions.md as the rules the review applies, so a
-pull request cannot change the rules its own review is held to. The report,
-stdout and stderr go to the same directory.
+GitHub to
+cx/pr<n>-<first 8 characters of the base>/pull-request-description.md under
+the worktrees and outputs directory, then runs
+--review-tools-worktree-at-main's scripts/code-review-codex-cell.py, not the
+pull request's, on wt/pr<n>-head from the base commit, with
+--review-tools-worktree-at-main's docs/agents/pr-reviewer-instructions.md as
+the rules the review applies, so a pull request cannot change the rules its
+own review is held to. The report, codex-code-review-report.md, and stdout
+and stderr go to the same directory.
 gh reads the description with the merge account's token, the one file every
 merge-lane helper and merge-gate.sh read.
 
@@ -81,7 +83,7 @@ def main(argv=None):
               f"description: {description.stderr.strip()}\n"
               f"Run this again once; if it fails the same way, tell the user this message.")
         return 2
-    (outputs / "description.md").write_text(description.stdout)
+    (outputs / "pull-request-description.md").write_text(description.stdout)
     del environment["GH_TOKEN"]
 
     with open(outputs / "stdout", "w") as stdout, open(outputs / "stderr", "w") as stderr:
@@ -90,11 +92,11 @@ def main(argv=None):
              "--base", base, "--repo", str(helpers / "wt" / f"pr{number}-head"),
              "--instructions-file",
              str(review_tools_worktree / PULL_REQUEST_REVIEWER_INSTRUCTIONS),
-             "--pull-request-description-file", str(outputs / "description.md"),
-             "--output", str(outputs / "report.md")],
+             "--pull-request-description-file", str(outputs / "pull-request-description.md"),
+             "--output", str(outputs / "codex-code-review-report.md")],
             env=environment, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
     print(f"PR {number} codex cell (base {base[:8]}) exit {review.returncode}; "
-          f"report {outputs / 'report.md'}")
+          f"report {outputs / 'codex-code-review-report.md'}")
     return review.returncode
 
 

@@ -101,8 +101,10 @@ WHAT IS PINNED HERE.
     NO `-dirty` when only untracked files are present -- this project's seats
     routinely carry untracked drafts, so a mark on every stamp would say
     nothing. A cell that ran where there is no checkout at all omits the
-    field and still writes its report. `target=` stays the last field in
-    every one of those cases.
+    field and still writes its report; one whose git fails on the checkout
+    is stamped `checkout=unknown-git-exited-<code>`, not stamped as if there
+    were no checkout. `target=` stays the last field in every one of those
+    cases.
 
   - The runtime's stderr survives a successful run. It used to be passed
     straight through to the log nc-systems/cold-read/cold-read-grid.py deletes on success,
@@ -141,6 +143,7 @@ WHAT IS PINNED HERE.
 Run: python3 nc-systems/cold-read/tests/cold-read-cell-common-test.py
 """
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -369,10 +372,10 @@ def run_cell_launcher(repository, stub_directory, plan, report_path, *arguments,
     environment.update(environment_overrides or {})
     return subprocess.run(
         [sys.executable, str(repository / "nc-systems" / "cold-read" / f"cold-read-{runtime}-cell.py"),
-         "--cell", cell, "--tier", "second",
+         "--cell", cell, "--tier", "second-strongest-model",
          "--target", TARGET_RELATIVE_PATH, "--report", str(report_path),
          *arguments],
-        capture_output=True, text=True, check=False, env=environment,
+        capture_output=True, text=True, check=False, env=environment, cwd=repository,
     )
 
 
@@ -392,7 +395,7 @@ def run_codex_cell(repository, stub_directory, plan, report_path, *arguments,
 
 def report_path_for(repository, case_slug, runtime):
     """A report path shaped exactly as the grid names one: a record directory
-    of its own, and inside it the bare cell name, `<runtime>-hunt-second.md`
+    of its own, and inside it the bare cell name, `<runtime>-hunt-second-strongest-model.md`
     (user-ruled 2026-09-18: the directory carries the record's name, the
     files inside say only which agent ran which attack).
 
@@ -405,7 +408,7 @@ def report_path_for(repository, case_slug, runtime):
     """
     record_directory_name = f"{case_slug}-2026-08-25-aaaaaaa"
     return (repository / "cold-read-records" / record_directory_name
-            / f"{runtime}-hunt-second.md")
+            / f"{runtime}-hunt-second-strongest-model.md")
 
 
 def near_miss_directory_of(report):
@@ -436,7 +439,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # detector the delta is empty and nothing is printed.
     repository = build_scratch_repository(scratch)
     dirty_the_target(repository)
-    report = repository / "cold-read-records" / "run-a" / "claude-restate-second.md"
+    report = repository / "cold-read-records" / "run-a" / "claude-restate-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"report": "STUB REVIEW: one restatement\n",
@@ -471,7 +474,7 @@ with tempfile.TemporaryDirectory() as scratch:
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     dirty_the_target(repository)
-    report = repository / "cold-read-records" / "run-b" / "claude-restate-second.md"
+    report = repository / "cold-read-records" / "run-b" / "claude-restate-second-strongest-model.md"
     created_relative_path = "docs/drafts/cold-read-cell-common-test-created.md"
     result = run_claude_cell(
         repository, stubs,
@@ -490,7 +493,7 @@ with tempfile.TemporaryDirectory() as scratch:
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     dirty_the_target(repository)
-    report = repository / "cold-read-records" / "run-c" / "claude-restate-second.md"
+    report = repository / "cold-read-records" / "run-c" / "claude-restate-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
     )
@@ -553,7 +556,7 @@ with tempfile.TemporaryDirectory() as scratch:
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
     renamed_relative_path = "docs/drafts/cold-read-cell-common-test-renamed.md"
-    report = repository / "cold-read-records" / "run-rename" / "claude-restate-second.md"
+    report = repository / "cold-read-records" / "run-rename" / "claude-restate-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"report": "STUB REVIEW: one restatement\n",
@@ -648,6 +651,28 @@ with tempfile.TemporaryDirectory() as scratch:
             stamped_report, runtime="claude", model="m", effort="e", cell="c",
             tier="t", target_argument=missing_target, duration_s=0)
         unreadable_stamp = stamped_report.read_text(encoding="utf-8").split("\n", 1)[0]
+    # The launcher resolves a relative --target against the current directory, so the stamp must hash that file.
+    # The path also exists under the repository root, with other bytes, so hashing that copy fails the case.
+    relative_target = "nc-systems/cold-read/cold-read-grid.py"
+    elsewhere_target_bytes = b"the current directory's copy, not the repository's\n"
+    expected_sha256 = hashlib.sha256(elsewhere_target_bytes).hexdigest()
+    cwd_before = os.getcwd()
+    with tempfile.TemporaryDirectory() as elsewhere:
+        (Path(elsewhere) / relative_target).parent.mkdir(parents=True)
+        (Path(elsewhere) / relative_target).write_bytes(elsewhere_target_bytes)
+        relative_report = Path(elsewhere) / "report.md"
+        relative_report.write_text("review\n", encoding="utf-8")
+        os.chdir(elsewhere)
+        try:
+            common_module.stamp_provenance(
+                relative_report, runtime="claude", model="m", effort="e", cell="c",
+                tier="t", target_argument=relative_target, duration_s=0)
+        finally:
+            os.chdir(cwd_before)
+        relative_stamp = relative_report.read_text(encoding="utf-8").split("\n", 1)[0]
+    check("a relative target run from another directory is hashed as the launcher resolved it",
+          f"target_sha256={expected_sha256} target={relative_target} -->" in relative_stamp,
+          repr(relative_stamp))
     check("a stamp whose reviewed file cannot be read names its hash as unreadable",
           f"target_sha256=unreadable target={missing_target} -->" in unreadable_stamp,
           repr(unreadable_stamp))
@@ -753,11 +778,11 @@ with tempfile.TemporaryDirectory() as scratch:
     # in the log the grid reads, in the form the grid parses.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-cause-a" / "claude-restate-second.md"
+    report = repository / "cold-read-records" / "run-cause-a" / "claude-restate-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs,
         {"claude-fable-5-1": {"exit": 1, "stdout": FABLE_LIMIT_LINE + "\n"}},
-        report, "--tier", "second",
+        report, "--tier", "second-strongest-model",
     )
     check("a Claude cell that hit the Fable limit prints cause: model-limit — Fable",
           result.returncode == 1
@@ -771,7 +796,7 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(result.stderr))
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-cause-b" / "codex-restate-second.md"
+    report = repository / "cold-read-records" / "run-cause-b" / "codex-restate-second-strongest-model.md"
     result = run_codex_cell(
         repository, stubs,
         {"*": {"exit": 1, "stdout": SESSION_LIMIT_LINE + "\n"}},
@@ -782,7 +807,7 @@ with tempfile.TemporaryDirectory() as scratch:
           repr(result.stderr))
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-cause-c" / "claude-restate-second.md"
+    report = repository / "cold-read-records" / "run-cause-c" / "claude-restate-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"stdout": "STUB CHAT: wrote nothing\n", "exit": 0}},
@@ -799,7 +824,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # a file that is still there and carries no provenance stamp.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-e" / "claude-restate-second.md"
+    report = repository / "cold-read-records" / "run-e" / "claude-restate-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"report": "FINDINGS: 1. something real\nclean sections: none\n",
@@ -824,7 +849,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # must reach the log the grid keeps on failure.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-h" / "claude-restate-second.md"
+    report = repository / "cold-read-records" / "run-h" / "claude-restate-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"stdout": "STUB CHAT: I read the document and then wrote nothing.\n",
@@ -876,7 +901,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # nc-systems/cold-read/tests/cold-read-grid-test.py pins the other end of that contract.
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-f" / "claude-restate-second.md"
+    report = repository / "cold-read-records" / "run-f" / "claude-restate-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
         environment_overrides={"GIT_DIR": str(scratch / "no-such-git-directory")},
@@ -888,7 +913,7 @@ with tempfile.TemporaryDirectory() as scratch:
 
     shutil.rmtree(repository)
     repository = build_scratch_repository(scratch)
-    report = repository / "cold-read-records" / "run-g" / "claude-restate-second.md"
+    report = repository / "cold-read-records" / "run-g" / "claude-restate-second-strongest-model.md"
     result = run_claude_cell(
         repository, stubs,
         {"*": {"report": "STUB REVIEW: one restatement\n",
@@ -999,7 +1024,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # THE CASE THE RECOVERY MUST REFUSE (user-ruled 2026-08-25, the rule
     # re-cut 2026-09-18). A second cold-read run, going on at the same time
     # in the same checkout, writes its own report for the same cell while
-    # this attempt runs. Both files are `codex-hunt-second.md`, and a search
+    # this attempt runs. Both files are `codex-hunt-second-strongest-model.md`, and a search
     # that went by name alone would recover the other run's correctly placed
     # report: this run would then hold a review of the wrong document under
     # its stamp, and the other run would lose the review it produced. From
@@ -1222,6 +1247,58 @@ with tempfile.TemporaryDirectory() as scratch:
           "Traceback" not in result.stderr, repr(result.stderr))
     check("target= is still the last field when checkout= is absent",
           stamp.endswith(f"target={TARGET_RELATIVE_PATH} -->"), repr(stamp))
+
+    # A checkout git fails on is not "no checkout": the field names the
+    # failure instead of being dropped. A stand-in git, first on PATH, fails
+    # one of the two stamp queries and passes every other call to the real git.
+    real_git = shutil.which("git")
+    for failing_query, case_slug in ((["rev-parse", "--short", "HEAD"], "checkout-git-fails-commit"),
+                                     (["status", "--porcelain", "--untracked-files=no"],
+                                      "checkout-git-fails-status")):
+        shutil.rmtree(repository)
+        repository = build_scratch_repository(scratch)
+        failing_git_directory = scratch / f"{case_slug}-git"
+        failing_git_directory.mkdir(exist_ok=True)
+        failing_git = failing_git_directory / "git"
+        failing_git.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys\n"
+            f"if sys.argv[-{len(failing_query)}:] == {failing_query!r}:\n"
+            "    sys.stderr.write('fatal: index file corrupt\\n')\n"
+            "    sys.exit(128)\n"
+            f"os.execv({real_git!r}, [{real_git!r}, *sys.argv[1:]])\n",
+            encoding="utf-8")
+        failing_git.chmod(0o755)
+        report = report_path_for(repository, case_slug, "claude")
+        result = run_claude_cell(
+            repository, stubs, {"*": {"report": "STUB REVIEW: one restatement\n"}}, report,
+            environment_overrides={
+                "PATH": f"{failing_git_directory}{os.pathsep}{stubs}{os.pathsep}"
+                        f"{os.environ.get('PATH', '')}"},
+        )
+        stamp = provenance_stamp_of(report)
+        check(f"a cell whose `git {' '.join(failing_query)}` fails still writes its report",
+              result.returncode == 0 and stamp.startswith("<!-- provenance:"),
+              f"exit {result.returncode}; stamp={stamp!r}; stderr={result.stderr!r}")
+        check(f"a failed `git {' '.join(failing_query)}` is stamped as git's failure, "
+              "not dropped as if there were no checkout",
+              " checkout=unknown-git-exited-128 " in stamp, repr(stamp))
+
+    # A git that times out or does not start has no exit code to stamp.
+    stamp_common_spec = importlib.util.spec_from_file_location(
+        "cold_read_cell_common_for_the_stamp", SYSTEM_DIRECTORY / "cold-read-cell-common.py")
+    stamp_common = importlib.util.module_from_spec(stamp_common_spec)
+    stamp_common_spec.loader.exec_module(stamp_common)
+    stamp_git = stamp_common.git_machine_readable_output
+
+    def git_that_does_not_finish(directory, arguments, **_options):
+        raise stamp_git.GitCommandFailed(arguments, directory, None, "did not finish within 10 s")
+
+    stamp_git.run_git = git_that_does_not_finish
+    check("a git that does not finish is stamped as no answer, not as no checkout",
+          stamp_common.checkout_commit_for_provenance_stamp(repository)
+          == "unknown-git-did-not-answer",
+          repr(stamp_common.checkout_commit_for_provenance_stamp(repository)))
 
     # --- The Claude cell denies Bash; the Codex `deep` tier runs at xhigh ----
     # Both settled 2026-09-15 on the union analysis in the log-store at
@@ -1685,9 +1762,9 @@ with tempfile.TemporaryDirectory() as scratch:
     )
     received_prompt = (received_prompt_path.read_text(encoding="utf-8")
                        if received_prompt_path.is_file() else "")
-    # Compared with both paths blanked out: the cell resolves the target
-    # through the repository root, so on a temporary directory behind a
-    # symlink (macOS /var) its path is spelled differently from the test's.
+    # Compared with both paths blanked out: the cell resolves the target and
+    # the report, so on a temporary directory behind a symlink (macOS /var)
+    # their paths are spelled differently from the test's.
     shared_terminology_template = (
         (scratch_prompts / "terminology.md").read_text(encoding="utf-8")
         .replace("{TARGET_PATH}", "<path>").replace("{REPORT_PATH}", "<path>"))
@@ -1695,6 +1772,7 @@ with tempfile.TemporaryDirectory() as scratch:
         received_prompt
         .replace(str((repository / TARGET_RELATIVE_PATH).resolve()), "<path>")
         .replace(str(repository / TARGET_RELATIVE_PATH), "<path>")
+        .replace(str(report.resolve()), "<path>")
         .replace(str(report), "<path>"))
     check("the Claude cell reads that same shared terminology.md",
           result.returncode == 0 and "CODEX COPY MARKER" not in received_prompt

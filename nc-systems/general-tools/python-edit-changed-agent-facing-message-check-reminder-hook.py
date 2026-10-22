@@ -228,14 +228,22 @@ def messages_not_at_head(entries, file_path: Path):
     return changed
 
 
-def fast_read_target_path(relative_path: str, text: str) -> Path:
-    """The file for one message's text; its name becomes the cold-read-record's
-    name. The text's digest keeps checkouts sharing the temporary directory, and
-    source paths sharing a slug, from reading each other's texts."""
+def fast_read_target_file_name(relative_path: str, text: str) -> str:
+    """The name of the file for one message's text; it becomes the
+    cold-read-record's name. The text's digest keeps checkouts sharing the
+    temporary directory, and source paths sharing a slug, from reading each
+    other's texts. It needs no temporary directory, so it is known even when no
+    temporary directory can be found."""
     slug = re.sub(r"[^A-Za-z0-9]+", "-", relative_path.removesuffix(".py")).strip("-")
     digest = hashlib.sha256(text.encode()).hexdigest()[:16]
+    return f"{slug}-{digest}-agent-facing-message.md"
+
+
+def fast_read_target_path(relative_path: str, text: str) -> Path:
+    """The file for one message's text. tempfile.gettempdir() raises an OSError
+    when no temporary directory is usable."""
     return (Path(tempfile.gettempdir()) / FAST_READ_TARGET_DIRECTORY_NAME
-            / f"{slug}-{digest}-agent-facing-message.md")
+            / fast_read_target_file_name(relative_path, text))
 
 
 def cold_read_fast_read_review_command_line_for_target_file(target: Path) -> str:

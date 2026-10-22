@@ -88,21 +88,39 @@ The mutation section reruns named cases against a mutated COPY of the gate in a
 scratch directory, one mutation per fix, and requires each to go red. The file
 under test is never modified, so no revert can discard uncommitted work. Each
 mutation asserts that its replacement text was found. An unmutated copy is run
-after all mutations as the control.
+after all mutations as the control. Each copy has a copy of the description
+reader, pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py, beside
+it, because the gate runs the reader from its own directory; the reader's
+patterns are mutation-checked by the reader's own test.
 
 F7, UNSTABLE on the merge-state allow-list, has no case by the user's ruling.
 
 THE DESCRIPTION CASES. The gate refuses a pull request whose description has no
-line beginning "Root cause:", "Root cause not fixed:" or "No defect fixed.". The
+line beginning "#root_cause", "#root_cause_not_fixed" or "#no_defect_fixed", or
+one of the colon-and-period labels "Root cause:", "Root cause not fixed:" or
+"No defect fixed.", which descriptions written before the hashtags carry. The
 stand-in serves the description read, `gh pr view --json body`, from the route
 "body"; a case that arranges none is served the 1364 capture, a description
 with a plain "Root cause:" line, so every other case reaches its own point. Each
 description is captured from a nedschorus pull request, merged unless said: 1364
 plain, 1360 "Root cause not fixed:", 1278 an indented bullet, 1320 (open when
-captured) bold type, 1298 two labelled lines, 1363 no label at all, and 1279
-"Root cause:" only in the middle of lines. No capture carries "No defect
-fixed.", and none carries a label without its colon or period, so those cases
-append a line to the 1363 capture.
+captured) bold type, 1363 no label at all, 1279 "Root cause:" only in the
+middle of lines, and 1298 and 1360 a "Root cause not fixed:" line with no
+"#follow_up" link, which the gate refuses. No capture carries "No defect
+fixed." or a hashtag, and none carries a label without its colon or period, so
+those cases append a line to the 1363 capture.
+
+THE FOLLOW-UP CASES. A not-fixed line, in either form, must carry "#follow_up"
+and then a link to a GitHub issue or pull request, and the gate refuses when
+GitHub shows that issue closed as not planned or that pull request closed
+without merging. The stand-in serves each link's lookup, `gh api
+repos/<owner>/<repo>/issues/<n>`, from the route "link <endpoint>", one capture
+per state: 1154 an open issue, 1585 an issue closed as completed, 735 one
+closed as not planned, 1636 an open pull request, 1724 a merged one, 1639 one
+closed without merging, and 999999 a number GitHub does not find. A link with a
+#fragment or a sub-path is read as the issue or pull request it names. The gate
+refuses a link to the pull request being merged before any lookup, and a
+/pull/<n> link whose lookup shows an issue.
 
 Run: python3 scripts/merge-gate-test.py
 """
@@ -110,6 +128,7 @@ Run: python3 scripts/merge-gate-test.py
 import datetime
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -117,23 +136,29 @@ import tempfile
 from pathlib import Path
 
 GATE = Path(__file__).with_name("merge-gate.sh")
+DESCRIPTION_DEFECT_LINE_READER = Path(__file__).with_name(
+    "pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py")
 FIXTURES = Path(__file__).with_name("merge-gate-test-captured-github-responses")
 BASH = shutil.which("bash")
 TEST_TOKEN = "merge-gate-test-token-not-a-credential"
 CHAIN_GATE_LINE = ('bash walk-ledgers/merge-gate.sh "$PR" "$HEAD" "$SINCE" '
                    '|| { echo "GATE REFUSED; not merging"; exit 1; }')
 
+LINK_LOOKUP = re.compile(r"repos/[^/]+/[^/]+/issues/[0-9]+")
+
 failures = []
 scratch = Path(tempfile.mkdtemp(prefix="merge-gate-test-"))
 
 GH_STAND_IN = r'''#!/usr/bin/env python3
-import json, os, sys
+import json, os, re, sys
 argv = sys.argv[1:]
 with open(os.environ["MERGE_GATE_TEST_GH_CALL_LOG"], "a") as log:
     log.write(json.dumps({"argv": argv, "gh_token": os.environ.get("GH_TOKEN")}) + "\n")
 routes = json.load(open(os.environ["MERGE_GATE_TEST_GH_ROUTES"]))
 if argv[:2] == ["pr", "view"]:
     key = "body" if argv[argv.index("--json") + 1] == "body" else "state"
+elif argv[:1] == ["api"] and re.fullmatch(r"repos/[^/]+/[^/]+/issues/[0-9]+", argv[1]):
+    key = "link " + argv[1]
 elif argv[:1] == ["api"]:
     endpoint = argv[1]
     channel = ("reviews" if endpoint.endswith("/reviews") else
@@ -269,8 +294,43 @@ class Run:
                 f"stdout {self.stdout.strip()[:300]!r}, stderr {self.stderr.strip()[:300]!r}")
 
 
+# A stand-in jq that fails when one of its arguments is the case's filter, and
+# runs the real jq for every other call.
+JQ_STAND_IN = """#!/usr/bin/env bash
+for argument in "$@"; do
+  if [ "$argument" = "$MERGE_GATE_TEST_JQ_FAILING_FILTER" ]; then
+    echo "jq: error: injected failure" >&2
+    exit 5
+  fi
+done
+exec "$MERGE_GATE_TEST_REAL_JQ" "$@"
+"""
+
+# A stand-in python3 that fails when it is asked to run the description reader,
+# and runs the real python3 for every other call, such as the gh stand-in's.
+PYTHON3_STAND_IN = """#!/usr/bin/env bash
+case "$1" in
+  */pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py)
+    echo "python3: injected failure" >&2
+    exit 5 ;;
+esac
+exec "$MERGE_GATE_TEST_REAL_PYTHON3" "$@"
+"""
+
+
+def gate_copy(text):
+    """A copy of the gate holding `text`, in a directory of its own beside a copy
+    of the description reader, which the gate runs from its own directory."""
+    directory = Path(tempfile.mkdtemp(dir=scratch))
+    shutil.copyfile(DESCRIPTION_DEFECT_LINE_READER, directory / DESCRIPTION_DEFECT_LINE_READER.name)
+    copy = directory / "merge-gate.sh"
+    copy.write_text(text)
+    return copy
+
+
 def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=None,
-             wrapper=None, arguments=None):
+             wrapper=None, arguments=None, jq_failing_filter=None, description_reader_fails=False,
+             cwd=None):
     case_dir = Path(tempfile.mkdtemp(dir=scratch))
     home = case_dir / "home"
     token_dir = home / ".config" / "nedschorus"
@@ -282,6 +342,12 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
     stand_in = stand_in_dir / "gh"
     stand_in.write_text(GH_STAND_IN)
     stand_in.chmod(0o755)
+    if jq_failing_filter is not None:
+        (stand_in_dir / "jq").write_text(JQ_STAND_IN)
+        (stand_in_dir / "jq").chmod(0o755)
+    if description_reader_fails:
+        (stand_in_dir / "python3").write_text(PYTHON3_STAND_IN)
+        (stand_in_dir / "python3").chmod(0o755)
     routes = dict(routes)
     routes.setdefault("body", {"stdout_file": str(captured(DESCRIPTION_WITH_ROOT_CAUSE))})
     routes_file = case_dir / "routes.json"
@@ -295,6 +361,11 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
         f"{stand_in_dir}{os.pathsep}{os.environ['PATH']}",
         MERGE_GATE_TEST_GH_ROUTES=str(routes_file),
         MERGE_GATE_TEST_GH_CALL_LOG=str(call_log))
+    if jq_failing_filter is not None:
+        environment.update(MERGE_GATE_TEST_JQ_FAILING_FILTER=jq_failing_filter,
+                           MERGE_GATE_TEST_REAL_JQ=shutil.which("jq"))
+    if description_reader_fails:
+        environment.update(MERGE_GATE_TEST_REAL_PYTHON3=shutil.which("python3"))
     if arguments is None:
         arguments = [str(pr), expected, since]
     if wrapper:
@@ -306,15 +377,20 @@ def run_gate(gate, pr, expected, since, routes, token=TEST_TOKEN, path_override=
     else:
         command = [BASH, str(gate), *arguments]
     completed = subprocess.run(command, capture_output=True, text=True, env=environment,
-                               timeout=120)
+                               timeout=120, cwd=cwd)
     calls = [json.loads(line) for line in call_log.read_text().splitlines() if line]
     return Run(completed, calls, home)
 
 
+def is_link_lookup(call):
+    return call["argv"][:1] == ["api"] and LINK_LOOKUP.fullmatch(call["argv"][1]) is not None
+
+
 def reached_gh_honestly(run, pr):
-    """The stand-in was called, only for this pull request, with the case's token."""
+    """The stand-in was called, only for this pull request apart from the lookups of
+    the links a description names, and always with the case's token."""
     return (bool(run.calls)
-            and all(pr in " ".join(call["argv"]) for call in run.calls)
+            and all(pr in " ".join(call["argv"]) for call in run.calls if not is_link_lookup(call))
             and all(call["gh_token"] == TEST_TOKEN for call in run.calls))
 
 
@@ -367,6 +443,12 @@ def passed_pinned_to(run, pr, sha):
 # Cases. Each returns (ok, detail) for the gate at the path it is given, so the
 # mutation section can rerun it against a mutated copy.
 # ---------------------------------------------------------------------------
+
+def case_gate_run_from_another_directory_finds_its_reader(gate):
+    elsewhere = Path(tempfile.mkdtemp(dir=scratch))
+    run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(), cwd=elsewhere)
+    return run.code == 0 and "gate passed" in run.stdout, run.summary()
+
 
 def case_a1_pass_control(gate):
     run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes())
@@ -981,13 +1063,13 @@ def case_fa_chain_line_stops_when_the_gate_could_not_run(gate):
 
 DESCRIPTION_REFUSAL_LINES = (
     f"GATE REFUSED (#{BASE_PR}): the pull request's description has no line beginning "
-    "\"Root cause:\", \"Root cause not fixed:\" or \"No defect fixed.\", so it does not say whether "
+    "\"#root_cause\", \"#root_cause_not_fixed\" or \"#no_defect_fixed\", so it does not say whether "
     "the pull request fixes a defect and, if it does, whether the change removes the defect's "
     "root cause.\n",
     "\nHave the pull request's author add one of these lines to the description, starting the "
-    "line with the label, which may follow a bullet and may be in bold type: \"Root cause:\" and "
-    "the root cause the change removes; \"Root cause not fixed:\" and the root cause that stays, "
-    "or that none was found, with the reason; or \"No defect fixed.\" when the pull request fixes "
+    "line with the hashtag, which may follow a bullet and may be in bold type: \"#root_cause\" and "
+    "the root cause the change removes; \"#root_cause_not_fixed\" and the root cause that stays, "
+    "or that none was found, with the reason; or \"#no_defect_fixed\" when the pull request fixes "
     "no defect.\n",
     "\nEditing the description needs no new commit. Once the description has the line, run the "
     "gate again.\n")
@@ -1011,8 +1093,274 @@ def description_refused(gate, body_file):
     return refused_with(run, BASE_PR, *DESCRIPTION_REFUSAL_LINES), run.summary()
 
 
+FOLLOW_UP_LINK = "https://github.com/nedschorus/nedschorus/issues/1154"
+LINK_STATES = {
+    "open issue": "nedschorus-nedschorus-1154-issue-view-open-issue.json",
+    "issue closed as completed": "nedschorus-nedschorus-1585-issue-view-issue-closed-completed.json",
+    "issue closed as not planned": "nedschorus-nedschorus-735-issue-view-issue-closed-not-planned.json",
+    "open pull request": "nedschorus-nedschorus-1636-issue-view-open-pull-request.json",
+    "merged pull request": "nedschorus-nedschorus-1724-issue-view-merged-pull-request.json",
+    "pull request closed unmerged": "nedschorus-nedschorus-1639-issue-view-pull-request-closed-unmerged.json",
+    "not found": "nedschorus-nedschorus-999999-issue-view-not-found.json",
+}
+
+
+def link_route(state, endpoint="repos/nedschorus/nedschorus/issues/1154"):
+    capture = captured(LINK_STATES[state])
+    record = capture_record_entry(capture.name)
+    return {f"link {endpoint}": {"stdout_file": str(capture), "exit": record["exit_code"],
+                                 "stderr": record["stderr"]}}
+
+
+def description_with_lines_run(gate, lines, links):
+    description = json.loads(captured("nedschorus-nedschorus-1363-pr-view-body.json").read_text())
+    description["body"] += "\n\n" + "\n".join(lines)
+    routes = base_routes()
+    routes["body"] = {"stdout_file": str(scratch_file("-body.json", json.dumps(description)))}
+    for link in links:
+        routes.update(link)
+    return run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], routes)
+
+
+def follow_up_passes(gate, lines, *links):
+    run = description_with_lines_run(gate, lines, links)
+    return (passed_pinned_to(run, BASE_PR, BASE_APPROVAL["commit_id"])
+            and sum(is_link_lookup(call) for call in run.calls) == len(links)), run.summary()
+
+
+def follow_up_refusal_lines(line):
+    return (f"GATE REFUSED (#{BASE_PR}): the description's line `{line}` has no `#follow_up` "
+            "followed by a full https://github.com/ link.\n",
+            "\nAdd `#follow_up <link>` to the end of that line.\n"
+            "If the cause is known, link the open issue or pull request that fixes it.\n"
+            "If the cause is not known, link an open issue that looks for it.\n"
+            "If no such issue exists, open one with the /ghi-write skill, or link the outside "
+            "project's issue when the cause is outside this repository.\n"
+            "Editing the description is enough; no new commit is needed.\n"
+            "Once the description has the link, run the gate again.\n")
+
+
+def follow_up_refused(gate, refused_line, lines, *links):
+    run = description_with_lines_run(gate, lines, links)
+    return refused_with(run, BASE_PR, *follow_up_refusal_lines(refused_line)), run.summary()
+
+
+def abandoned_link_refused(gate, line, link, route, what):
+    run = description_with_lines_run(gate, [line], [route])
+    return refused_with(
+        run, BASE_PR,
+        f"GATE REFUSED (#{BASE_PR}): the description's line `{line}` names after `#follow_up` "
+        f"{link}, {what}\n",
+        "\nReplace that link with an open issue or pull request that fixes the cause, or, if the "
+        "cause is not known, an open issue that looks for it.\n"
+        "If no such issue exists, open one with the /ghi-write skill",
+        "Editing the description is enough; no new commit is needed.\n"
+        "Once the description has the link, run the gate again.\n"), run.summary()
+
+
+NOT_FIXED_WITH_FOLLOW_UP = f"Root cause not fixed: the harness drops the variable. #follow_up {FOLLOW_UP_LINK}"
+
+
 def case_description_root_cause_not_fixed_line(gate):
-    return description_passes(gate, captured("nedschorus-nedschorus-1360-pr-view-body.json"))
+    return follow_up_passes(gate, [NOT_FIXED_WITH_FOLLOW_UP], link_route("open issue"))
+
+
+def case_follow_up_captured_not_fixed_line_without_it(gate):
+    line = ("Root cause not fixed: PR #1299 changed what the notice is without updating the glossary "
+            "entry that defines the notice; nothing ties a glossary definition to the code it describes.")
+    run = description_run(gate, captured("nedschorus-nedschorus-1360-pr-view-body.json"))
+    return refused_with(run, BASE_PR, *follow_up_refusal_lines(line)), run.summary()
+
+
+def case_follow_up_missing_beside_a_root_cause_line(gate):
+    line = ("Root cause not fixed: the test finds messages through a naming convention that nothing "
+            "enforces. Those 19 constants belong to other hooks and owners, so this PR fixes only "
+            "this hook's.")
+    run = description_run(gate, captured("nedschorus-nedschorus-1298-pr-view-body.json"))
+    return refused_with(run, BASE_PR, *follow_up_refusal_lines(line)), run.summary()
+
+
+def case_follow_up_missing_on_an_outage_hashtag_line(gate):
+    line = "#root_cause_not_fixed the outage had to end first; the cause is not yet known."
+    return follow_up_refused(gate, line, [line])
+
+
+def case_follow_up_link_to_a_commit(gate):
+    line = ("#root_cause_not_fixed the harness drops the variable. #follow_up "
+            "https://github.com/nedschorus/nedschorus/commit/40ad4f50c38e")
+    return follow_up_refused(gate, line, [line])
+
+
+def case_follow_up_link_without_the_hashtag(gate):
+    line = f"#root_cause_not_fixed the harness drops the variable; see {FOLLOW_UP_LINK}"
+    return follow_up_refused(gate, line, [line])
+
+
+def case_follow_up_hashtag_with_a_markdown_citation(gate):
+    return follow_up_passes(
+        gate, ["#root_cause_not_fixed the harness drops the variable. #follow_up GHI "
+               f"[Ask for the root cause at the moments a defect is fixed]({FOLLOW_UP_LINK})."],
+        link_route("open issue"))
+
+
+def case_follow_up_bare_link_ending_a_sentence(gate):
+    return follow_up_passes(
+        gate, [f"#root_cause_not_fixed the harness drops the variable. #follow_up {FOLLOW_UP_LINK}."],
+        link_route("open issue"))
+
+
+def case_follow_up_line_ending_in_carriage_return(gate):
+    line = "#root_cause_not_fixed the outage had to end first."
+    return follow_up_refused(gate, line, [line + "\r", "#root_cause the hook read a file it never checked."])
+
+
+def case_follow_up_second_not_fixed_line_without_it(gate):
+    line = "Root cause not fixed: a second cause stays."
+    return follow_up_refused(gate, line, [NOT_FIXED_WITH_FOLLOW_UP, line], link_route("open issue"))
+
+
+def case_follow_up_link_states_that_pass(gate):
+    numbers = {"issue closed as completed": 1585, "open pull request": 1636, "merged pull request": 1724}
+    lines, links = [], []
+    for state, number in numbers.items():
+        kind = "pull" if "pull request" in state else "issues"
+        lines.append(f"Root cause not fixed: cause {number} stays. #follow_up "
+                     f"https://github.com/nedschorus/nedschorus/{kind}/{number}")
+        links.append(link_route(state, f"repos/nedschorus/nedschorus/issues/{number}"))
+    return follow_up_passes(gate, lines, *links)
+
+
+def case_follow_up_issue_closed_as_not_planned(gate):
+    return abandoned_link_refused(
+        gate, NOT_FIXED_WITH_FOLLOW_UP, FOLLOW_UP_LINK, link_route("issue closed as not planned"),
+        "an issue closed as not planned, so no work is planned on the cause the line leaves in place.")
+
+
+def case_follow_up_pull_request_closed_unmerged(gate):
+    link = "https://github.com/nedschorus/nedschorus/pull/1639"
+    return abandoned_link_refused(
+        gate, f"#root_cause_not_fixed the harness drops the variable. #follow_up {link}", link,
+        link_route("pull request closed unmerged", "repos/nedschorus/nedschorus/issues/1639"),
+        "a pull request closed without merging, so it will not fix the cause the line leaves in place.")
+
+
+def case_follow_up_link_not_found(gate):
+    line = ("#root_cause_not_fixed the harness drops the variable. #follow_up "
+            "https://github.com/nedschorus/nedschorus/issues/999999")
+    run = description_with_lines_run(
+        gate, [line], [link_route("not found", "repos/nedschorus/nedschorus/issues/999999")])
+    return could_not_run_after_gh(
+        run, BASE_PR,
+        "GATE COULD NOT RUN: could not read https://github.com/nedschorus/nedschorus/issues/999999, "
+        f"which the description's line `{line}` names after `#follow_up`; any error gh printed is "
+        "just above this line.\n",
+        "\nIf gh's error says Not Found, the link names no issue or pull request the merge account "
+        "can see: have the pull request's author correct the link in the description, then run "
+        "the gate again.\nOtherwise run the gate again once; if it fails the same way, tell the "
+        "user this message and gh's error.\n"), run.summary()
+
+
+def case_follow_up_link_with_a_fragment(gate):
+    return follow_up_passes(
+        gate, [f"#root_cause_not_fixed the harness drops the variable. #follow_up {FOLLOW_UP_LINK}#issuecomment-1"],
+        link_route("open issue"))
+
+
+def case_follow_up_link_with_a_sub_path(gate):
+    return follow_up_passes(
+        gate, ["#root_cause_not_fixed the harness drops the variable. #follow_up "
+               "https://github.com/nedschorus/nedschorus/pull/1636/files"],
+        link_route("open pull request", "repos/nedschorus/nedschorus/issues/1636"))
+
+
+def self_link_refused(gate, link, normalised_link):
+    line = f"#root_cause_not_fixed the harness drops the variable. #follow_up {link}"
+    run = description_with_lines_run(gate, [line], [])
+    return (refused_with(
+        run, BASE_PR,
+        f"GATE REFUSED (#{BASE_PR}): the description's line `{line}` names after `#follow_up` "
+        f"{normalised_link}, which is this pull request; a pull request cannot be the follow-up for "
+        "a cause it leaves in place.\n",
+        "\nReplace that link with an open issue or pull request that fixes the cause, or, if the "
+        "cause is not known, an open issue that looks for it.\n"
+        "If no such issue exists, open one with the /ghi-write skill",
+        "\nIf this pull request does remove the cause, replace the whole line with a \"#root_cause\" "
+        "line that names the cause it removes, and link nothing.\n"
+        "Editing the description is enough; no new commit is needed.\n"
+        "Once the description has the link, run the gate again.\n")
+            and not any(is_link_lookup(call) for call in run.calls)), run.summary()
+
+
+def case_follow_up_link_to_this_pull_request(gate):
+    link = f"https://github.com/nedschorus/nedschorus/pull/{BASE_PR}"
+    return self_link_refused(gate, link + "/files", link)
+
+
+def case_follow_up_issue_form_link_to_this_pull_request_in_other_letter_case(gate):
+    link = f"https://github.com/Nedschorus/nedschorus/issues/{BASE_PR}"
+    return self_link_refused(gate, link, link)
+
+
+def case_follow_up_pull_request_link_whose_number_is_an_issue(gate):
+    link = "https://github.com/nedschorus/nedschorus/pull/1154"
+    line = f"#root_cause_not_fixed the harness drops the variable. #follow_up {link}"
+    run = description_with_lines_run(gate, [line], [link_route("open issue")])
+    return refused_with(
+        run, BASE_PR,
+        f"GATE REFUSED (#{BASE_PR}): the description's line `{line}` names after `#follow_up` "
+        f"{link}, a pull-request link, but 1154 in nedschorus/nedschorus is an issue, not a pull "
+        "request.\n",
+        "\nIf that issue is the follow-up, change the link to "
+        "https://github.com/nedschorus/nedschorus/issues/1154.\n"
+        "If you meant a pull request, link it as "
+        "https://github.com/<owner>/<repository>/pull/<its number>.\n"
+        "Editing the description is enough; no new commit is needed.\n"
+        "Once the description has the link, run the gate again.\n"), run.summary()
+
+
+def case_follow_up_lookup_unparsable(gate):
+    route = {"link repos/nedschorus/nedschorus/issues/1154": {
+        "stdout_file": str(captured("nedschorus-nedschorus-665-inline-channel-paginated.json"))}}
+    run = description_with_lines_run(gate, [NOT_FIXED_WITH_FOLLOW_UP], [route])
+    return could_not_run_after_gh(
+        run, BASE_PR, f"GATE COULD NOT RUN: could not parse what GitHub returned for {FOLLOW_UP_LINK}\n",
+        JQ_ERROR_ABOVE, f"\n{RERUN_ONCE_JQ}\n"), run.summary()
+
+
+APPROVAL_FIELD_FILTERS = (".commit_id", ".id", ".submitted_at", ".user.login")
+
+
+def case_approval_field_read_fails(gate):
+    # jq can read the approval, so only a failing jq makes these reads fail; read
+    # unchecked, an empty .user.login let the gate pass naming no approver.
+    details = []
+    for field_filter in APPROVAL_FIELD_FILTERS:
+        run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(),
+                       jq_failing_filter=field_filter)
+        if not could_not_run_after_gh(run, BASE_PR, "GATE COULD NOT RUN: could not parse the approving review\n",
+                                      JQ_ERROR_ABOVE, f"\n{RERUN_ONCE_JQ}\n"):
+            details.append(f"{field_filter}: {run.summary()}")
+    return not details, "; ".join(details)
+
+
+NOT_FIXED_LINE_FILTERS = ("length", ".[0].line", ".[0].link // empty")
+
+
+def case_not_fixed_line_read_fails(gate):
+    # Read unchecked, an empty count skipped the loop, so a not-fixed line without
+    # #follow_up passed.
+    details = []
+    for line_filter in NOT_FIXED_LINE_FILTERS:
+        description = json.loads(captured("nedschorus-nedschorus-1363-pr-view-body.json").read_text())
+        description["body"] += "\n\nRoot cause not fixed: a cause stays."
+        routes = base_routes()
+        routes["body"] = {"stdout_file": str(scratch_file("-body.json", json.dumps(description)))}
+        run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], routes,
+                       jq_failing_filter=line_filter)
+        if not could_not_run_after_gh(run, BASE_PR, f"GATE COULD NOT RUN: could not parse pull request {BASE_PR}'s description\n",
+                                      JQ_ERROR_ABOVE, f"\n{RERUN_ONCE_JQ}\n"):
+            details.append(f"{line_filter}: {run.summary()}")
+    return not details, "; ".join(details)
 
 
 def case_description_label_after_an_indented_bullet(gate):
@@ -1024,7 +1372,9 @@ def case_description_label_in_bold_type(gate):
 
 
 def case_description_with_two_labelled_lines(gate):
-    return description_passes(gate, captured("nedschorus-nedschorus-1298-pr-view-body.json"))
+    return follow_up_passes(
+        gate, ["Root cause: the hook read a file it never checked exists.", NOT_FIXED_WITH_FOLLOW_UP],
+        link_route("open issue"))
 
 
 def unlabelled_description_with_line(line):
@@ -1046,6 +1396,36 @@ def case_description_no_defect_fixed_without_its_period(gate):
     return description_refused(gate, unlabelled_description_with_line("No defect fixed"))
 
 
+def case_description_root_cause_hashtag_line(gate):
+    return description_passes(
+        gate, unlabelled_description_with_line("#root_cause the hook read a file it never checked exists."))
+
+
+def case_description_root_cause_not_fixed_hashtag_line(gate):
+    return follow_up_passes(
+        gate, [f"#root_cause_not_fixed the harness drops the variable. #follow_up {FOLLOW_UP_LINK}"],
+        link_route("open issue"))
+
+
+def case_description_no_defect_fixed_hashtag_line(gate):
+    return description_passes(gate, unlabelled_description_with_line("#no_defect_fixed"))
+
+
+def case_description_hashtag_in_bold_after_a_bullet(gate):
+    return description_passes(
+        gate, unlabelled_description_with_line("- **#root_cause** the hook read a file it never checked."))
+
+
+def case_description_hashtag_run_on_into_a_longer_word(gate):
+    return description_refused(
+        gate, unlabelled_description_with_line("#root_causes the hook read a file it never checked."))
+
+
+def case_description_hashtag_only_mid_line(gate):
+    return description_refused(
+        gate, unlabelled_description_with_line("This pull request has no #root_cause line."))
+
+
 def case_description_without_a_label(gate):
     return description_refused(gate, captured("nedschorus-nedschorus-1363-pr-view-body.json"))
 
@@ -1063,6 +1443,29 @@ def case_description_read_fails(gate):
                 run, BASE_PR,
                 f"GATE COULD NOT RUN: could not read pull request {BASE_PR}'s description; any "
                 "error gh printed is just above this line.\n", f"\n{RERUN_ONCE_GH}\n")), run.summary()
+
+
+def case_description_reader_fails(gate):
+    run = run_gate(gate, BASE_PR, BASE_HEAD, BASE_APPROVAL["submitted_at"], base_routes(),
+                   description_reader_fails=True)
+    reader = gate.parent / DESCRIPTION_DEFECT_LINE_READER.name
+    return (could_not_run_after_gh(
+        run, BASE_PR,
+        f"GATE COULD NOT RUN: python3 {reader} exited nonzero when the gate ran it with pull request {BASE_PR}'s "
+        "description on standard input, so the gate cannot read the description's defect lines; any error "
+        "python3 or that program printed is just above this line.\n"
+        "If that error says No such file or directory, that program is missing from the checkout the gate "
+        "ran from.\n"
+        "Otherwise that program or python3 cannot run, or that program has a defect, which the text of this "
+        "description may set off; the cause is not the description's encoding, because GitHub gives the gate "
+        "descriptions as UTF-8 text.\n"
+        "Either way a rerun fails the same way: do not run the gate again, and do not repair the checkout, "
+        "that program or python3 yourself.\n"
+        "Tell the user every line the gate printed, the error above included, leave pull request "
+        f"https://github.com/nedschorus/nedschorus/pull/{BASE_PR} unmerged, go on with other pull requests "
+        "meanwhile, and run the gate on this one again only once the user says the cause is fixed.\n")
+            and "not UTF-8" not in run.stderr), run.summary()
+
 
 
 def case_description_unparsable(gate):
@@ -1129,6 +1532,7 @@ CASES = [
     ("E7 inline comments after the approval refuse", case_e7_new_inline_comments),
     ("E10 a comment stamped exactly reviewed-since is not new", case_e10_stamped_exactly_since_is_not_new),
     ("E8 a pull request state jq cannot read could not run", case_e8_state_unparsable),
+    ("E8 an approving review jq cannot read could not run", case_approval_field_read_fails),
     ("E9 gh failing on the pull request state read could not run", case_e9_state_read_fails),
     ("E9 gh failing on a channel read could not run", case_e9_gh_fails),
     ("E9 the inline comment channel failing after its first page could not run",
@@ -1144,9 +1548,20 @@ CASES = [
     ("G1 a description whose label follows an indented bullet passes",
      case_description_label_after_an_indented_bullet),
     ("G1 a description whose label is in bold type passes", case_description_label_in_bold_type),
-    ("G1 a description with two labelled lines passes", case_description_with_two_labelled_lines),
+    ("G1 a description with a root-cause line and a not-fixed line with #follow_up passes", case_description_with_two_labelled_lines),
     ("G1 a description with a \"No defect fixed.\" line passes", case_description_no_defect_fixed_line),
+    ("G1 a description with a \"#root_cause\" line passes", case_description_root_cause_hashtag_line),
+    ("G1 a description with a \"#root_cause_not_fixed\" line passes",
+     case_description_root_cause_not_fixed_hashtag_line),
+    ("G1 a description with a \"#no_defect_fixed\" line passes",
+     case_description_no_defect_fixed_hashtag_line),
+    ("G1 a description whose hashtag is in bold type after a bullet passes",
+     case_description_hashtag_in_bold_after_a_bullet),
     ("G2 a description with no labelled line refuses", case_description_without_a_label),
+    ("G2 a description whose hashtag runs on into a longer word refuses",
+     case_description_hashtag_run_on_into_a_longer_word),
+    ("G2 a description with \"#root_cause\" only in the middle of lines refuses",
+     case_description_hashtag_only_mid_line),
     ("G2 a description with \"Root cause:\" only in the middle of lines refuses",
      case_description_with_the_label_only_mid_line),
     ("G2 a description with \"Root cause\" but no colon refuses",
@@ -1155,6 +1570,41 @@ CASES = [
      case_description_no_defect_fixed_without_its_period),
     ("G3 gh failing on the description read could not run", case_description_read_fails),
     ("G3 a description jq cannot read could not run", case_description_unparsable),
+    ("G3 the description reader failing could not run", case_description_reader_fails),
+    ("G3 the gate run from a directory other than its own finds the description reader",
+     case_gate_run_from_another_directory_finds_its_reader),
+    ("H1 a not-fixed hashtag line whose #follow_up link is a Markdown citation passes",
+     case_follow_up_hashtag_with_a_markdown_citation),
+    ("H1 a #follow_up link that ends a sentence passes", case_follow_up_bare_link_ending_a_sentence),
+    ("H1 links to an issue closed as completed, an open pull request and a merged one pass",
+     case_follow_up_link_states_that_pass),
+    ("H2 captured PR 1360's not-fixed line without #follow_up refuses",
+     case_follow_up_captured_not_fixed_line_without_it),
+    ("H2 captured PR 1298's not-fixed line without #follow_up refuses beside its root-cause line",
+     case_follow_up_missing_beside_a_root_cause_line),
+    ("H2 an outage's not-fixed hashtag line without #follow_up refuses",
+     case_follow_up_missing_on_an_outage_hashtag_line),
+    ("H2 a #follow_up link to a commit refuses", case_follow_up_link_to_a_commit),
+    ("H2 an issue link without #follow_up refuses", case_follow_up_link_without_the_hashtag),
+    ("H2 a not-fixed line ending in a carriage return is quoted without it",
+     case_follow_up_line_ending_in_carriage_return),
+    ("H2 a second not-fixed line without #follow_up refuses after a first that has it",
+     case_follow_up_second_not_fixed_line_without_it),
+    ("H3 a #follow_up link to an issue closed as not planned refuses",
+     case_follow_up_issue_closed_as_not_planned),
+    ("H3 a #follow_up link to a pull request closed without merging refuses",
+     case_follow_up_pull_request_closed_unmerged),
+    ("H4 a #follow_up link GitHub does not find could not run", case_follow_up_link_not_found),
+    ("H4 a link lookup jq cannot read could not run", case_follow_up_lookup_unparsable),
+    ("H4 a not-fixed line jq cannot read could not run", case_not_fixed_line_read_fails),
+    ("H5 a #follow_up link with a #fragment passes", case_follow_up_link_with_a_fragment),
+    ("H5 a #follow_up link with a sub-path passes", case_follow_up_link_with_a_sub_path),
+    ("H6 a #follow_up link to the pull request being merged refuses before any lookup",
+     case_follow_up_link_to_this_pull_request),
+    ("H6 an /issues/ link to the pull request being merged, owner in capitals, refuses",
+     case_follow_up_issue_form_link_to_this_pull_request_in_other_letter_case),
+    ("H7 a /pull/ #follow_up link whose number is an issue refuses",
+     case_follow_up_pull_request_link_whose_number_is_an_issue),
 ]
 
 
@@ -1288,29 +1738,61 @@ MUTATIONS = [
      [case_e2_head_moved]),
     ("without the pin-is-head check", [('[ "$approved_sha" = "$head" ] ||', "true ||")],
      [case_e3_approval_covers_another_commit]),
-    ("without the description check", [('[ "$has_defect_line" = "true" ] ||', "true ||")],
+    ("without the description check", [('[ "$defect_lines" != "[]" ] ||', "true ||")],
      [case_description_without_a_label]),
-    ("the label allowed anywhere in a line", [('any(test("^', 'any(test("')],
-     [case_description_with_the_label_only_mid_line]),
-    ("no bullet allowed before the label", [("(?:[-*+]\\\\s+)?", "")],
-     [case_description_label_after_an_indented_bullet]),
-    ("no bold type allowed around the label", [("(?:\\\\*\\\\*|__)?", "")],
-     [case_description_label_in_bold_type]),
-    ("\"Root cause not fixed:\" not accepted", [("(?: not fixed)?", "")],
-     [case_description_root_cause_not_fixed_line]),
-    ("\"No defect fixed.\" not accepted", [("|No defect fixed(?:", "|No defect fixed never(?:")],
-     [case_description_no_defect_fixed_line]),
-    ("the colon after \"Root cause\" made optional", [("(?:\\\\*\\\\*|__)?:|No", "(?:\\\\*\\\\*|__)?:?|No")],
-     [case_description_root_cause_without_its_colon]),
-    ("the period after \"No defect fixed\" dropped", [("(?:\\\\*\\\\*|__)?\\\\.)", "(?:\\\\*\\\\*|__)?)")],
-     [case_description_no_defect_fixed_without_its_period]),
+    ("the description reader found from the working directory",
+     [('DESCRIPTION_DEFECT_LINE_READER="$(dirname "${BASH_SOURCE[0]}")/', 'DESCRIPTION_DEFECT_LINE_READER="scripts/')],
+     [case_gate_run_from_another_directory_finds_its_reader]),
+    ("without the description reader's check",
+     [('[ $? -eq 0 ] || cannot "python3 $DESCRIPTION_DEFECT_LINE_READER exited nonzero',
+       'true || cannot "python3 $DESCRIPTION_DEFECT_LINE_READER exited nonzero')],
+     [case_description_reader_fails]),
+    ("no line read as a not-fixed line",
+     [('select(.kind == "root_cause_not_fixed")', "select(false)")],
+     [case_follow_up_captured_not_fixed_line_without_it]),
+    ("without the #follow_up check", [('[ -n "$link" ] || fail', "true || fail")],
+     [case_follow_up_captured_not_fixed_line_without_it, case_follow_up_link_to_a_commit]),
+    ("only the first not-fixed line checked", [("line_index < not_fixed_count", "line_index < 1")],
+     [case_follow_up_second_not_fixed_line_without_it]),
+    ("an issue closed as not planned not refused",
+     [("    issue-closed-not-planned) fail", "    issue-closed-not-planned-never) fail")],
+     [case_follow_up_issue_closed_as_not_planned]),
+    ("a pull request closed without merging not refused",
+     [("    pull-request-closed-unmerged) fail", "    pull-request-closed-unmerged-never) fail")],
+     [case_follow_up_pull_request_closed_unmerged]),
+    ("without the link lookup check",
+     [('[ $? -eq 0 ] || cannot "could not read $link', ': || cannot "could not read $link')],
+     [case_follow_up_link_not_found]),
+    ("without the link lookup parse check",
+     [('[ $? -eq 0 ] || cannot "could not parse what GitHub returned', ': || cannot "could not parse what GitHub returned')],
+     [case_follow_up_lookup_unparsable]),
+    ("a link to the pull request being merged not refused",
+     [('[ "$link_number" != "$PR" ] || fail', 'true || fail')],
+     [case_follow_up_link_to_this_pull_request,
+      case_follow_up_issue_form_link_to_this_pull_request_in_other_letter_case]),
+    ("the link's owner and repository compared in their own letter case",
+     [("\"$(tr '[:upper:]' '[:lower:]' <<<\"$link_repo\")\"", '"$link_repo"')],
+     [case_follow_up_issue_form_link_to_this_pull_request_in_other_letter_case]),
+    ("a /pull/ link whose number is an issue read as live",
+     [('then "issue-at-a-pull-request-link"', 'then "live"')],
+     [case_follow_up_pull_request_link_whose_number_is_an_issue]),
     ("without the description read check",
      [('[ $? -eq 0 ] || cannot "could not read pull request $PR\'s description',
        ': || cannot "could not read pull request $PR\'s description')],
      [case_description_read_fails]),
+    ("without the approving review's parse checks",
+     [('|| cannot "$APPROVAL_UNPARSABLE"', '|| : "$APPROVAL_UNPARSABLE"')],
+     [case_approval_field_read_fails]),
+    ("without the not-fixed lines' parse checks",
+     [('|| cannot "$DESCRIPTION_UNPARSABLE"', '|| : "$DESCRIPTION_UNPARSABLE"')],
+     [case_not_fixed_line_read_fails]),
+    ("without the not-fixed count check",
+     [('not_fixed_count=$(jq length <<<"$not_fixed")                    || cannot',
+       'not_fixed_count=$(jq length <<<"$not_fixed")                    || true || cannot')],
+     [case_not_fixed_line_read_fails]),
     ("without the description parse check",
-     [('[ $? -eq 0 ] || cannot "could not parse pull request $PR\'s description',
-       ': || cannot "could not parse pull request $PR\'s description')],
+     [('<<<"$body_read")\n[ $? -eq 0 ] || cannot "$DESCRIPTION_UNPARSABLE"',
+       '<<<"$body_read")\n: || cannot "$DESCRIPTION_UNPARSABLE"')],
      [case_description_unparsable]),
 ]
 
@@ -1336,8 +1818,7 @@ def run_mutations():
             mutated = mutated.replace(old, new)
         if not applied:
             continue
-        mutated_gate = Path(tempfile.mkdtemp(dir=scratch)) / "merge-gate.sh"
-        mutated_gate.write_text(mutated)
+        mutated_gate = gate_copy(mutated)
         for target in targets:
             ok, detail = target(mutated_gate)
             check(f"mutation '{mutation_name}' turns red: {case_name_of(target)}", not ok,
@@ -1366,8 +1847,7 @@ def main():
     first = run_cases(GATE, "")
     run_mutations()
     # The control: an unmutated copy, run after every mutation.
-    control_gate = Path(tempfile.mkdtemp(dir=scratch)) / "merge-gate.sh"
-    shutil.copyfile(GATE, control_gate)
+    control_gate = gate_copy(GATE.read_text())
     control = run_cases(control_gate, "control after mutations: ")
     open_after = open_file_descriptor_count()
     check("no file descriptor is left open by the cases and mutations",

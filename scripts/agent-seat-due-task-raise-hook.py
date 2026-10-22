@@ -56,9 +56,11 @@ GITHUB, and only for waits_on. A condition is checked with `gh pr view` or
 uses its keyring login, stdin closed, each call bounded by
 GH_CALL_TIMEOUT_SECONDS and all of a run's calls together by
 GH_CALLS_TOTAL_BUDGET_SECONDS. A condition checked within
-CONDITION_RECHECK_INTERVAL_SECONDS is answered from the state file. A failed,
-timed-out or unparsable check is "not met", recorded with its time so it too
-waits the interval, and is never reported. No condition is checked for a
+CONDITION_RECHECK_INTERVAL_SECONDS is answered from the state file. A check
+gh could not answer, because gh is missing, failed, timed out or printed no
+JSON object, is not an answer: no task waiting on it is raised, it is
+recorded as a failure with its time so it too waits the interval, and the
+stop that asked reports it, as OUTPUT says. No condition is checked for a
 task already raised for its current waits_on, or held by blockedBy, so an
 agent-seat whose tasks have no waits_on makes no network call. The same call
 fetches the title and URL the raise line cites; a condition gh never
@@ -69,13 +71,16 @@ OUTPUT. Something to raise: one JSON object,
 which Claude Code delivers to the model as non-error feedback while the
 conversation continues. No `decision` field and no `systemMessage`: the text
 is for the agent. The text is one instruction per due task, then the
-instruction for a task that cannot be acted on yet. Nothing to raise:
-nothing printed, exit 0. A fault, such as a payload that is not a JSON
-object, a state file that cannot be written or any exception: one line on
-stderr naming the hook and the fault, nothing on stdout, exit 1. The line for
-a failed state write says how many due tasks went unraised, or that none was
-due, and that the first stop after the state file can be written raises them;
-the line for any other fault says no task was checked. Claude Code
+instruction for a task that cannot be acted on yet, then one line per
+condition gh could not answer at this stop. Nothing to raise: nothing
+printed, exit 0. A fault, such as a payload that is not a JSON object, a
+state file that cannot be written, a condition gh could not answer at a
+stop with nothing to raise, or any exception: one line on stderr naming the
+hook and the fault, nothing on stdout, exit 1. The line for a failed state
+write says how many due tasks went unraised, or that none was due, and that
+the first stop after the state file can be written raises them; the line
+for a condition gh could not answer quotes gh's failure; the line for any
+other fault says no task was checked. Claude Code
 records a Stop hook's exit 1 as a non-blocking error and still ends the turn.
 Exit 2 and additionalContext would both continue the conversation, and a
 fault that recurs at every stop would then never let the agent stop.
@@ -293,6 +298,7 @@ class GitHubConditionChecker:
         self.now_epoch = now_epoch
         self.started = time.monotonic()
         self.changed = False
+        self.gh_failures = []
 
     def answer(self, kind: str, number: int) -> dict:
         key = condition_key(kind, number)
@@ -308,6 +314,8 @@ class GitHubConditionChecker:
             # run checks it.
             return {"met": False}
         fresh = self.ask_gh(kind, number, min(GH_CALL_TIMEOUT_SECONDS, remaining))
+        if "gh_failure" in fresh:
+            self.gh_failures.append((kind, number, fresh["gh_failure"]))
         fresh["checked_at_epoch"] = self.now_epoch
         previous = cached if isinstance(cached, dict) else {}
         for citation_field in ("title", "url"):
@@ -319,25 +327,31 @@ class GitHubConditionChecker:
 
     @staticmethod
     def ask_gh(kind: str, number: int, timeout_seconds: float) -> dict:
+        """Return {"met": ..., "title": ..., "url": ...}, or {"gh_failure": <cause>} when gh did not answer."""
         subcommand, met_state, _, _ = CONDITION_KINDS[kind]
         environment = dict(os.environ)
         environment.pop("GH_TOKEN", None)
+        command = ["gh", subcommand, "view", str(number), "--repo", GITHUB_REPOSITORY,
+                   "--json", "state,title,url"]
+        command_text = f"`{' '.join(command)}`"
         try:
             completed = subprocess.run(
-                ["gh", subcommand, "view", str(number), "--repo", GITHUB_REPOSITORY,
-                 "--json", "state,title,url"],
-                stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                command, stdin=subprocess.DEVNULL, capture_output=True, text=True,
                 timeout=timeout_seconds, env=environment, check=False)
-        except (OSError, subprocess.SubprocessError):
-            return {"met": False}
+        except subprocess.TimeoutExpired:
+            return {"gh_failure": f"{command_text} did not answer within "
+                                  f"{timeout_seconds:g} seconds"}
+        except (OSError, subprocess.SubprocessError) as error:
+            return {"gh_failure": f"{command_text} could not be run: {error}"}
         if completed.returncode != 0:
-            return {"met": False}
+            return {"gh_failure": f"{command_text} exited {completed.returncode}: "
+                                  f"{single_line(completed.stderr) or 'with nothing on stderr'}"}
         try:
             answer = json.loads(completed.stdout)
         except ValueError:
-            return {"met": False}
+            answer = None
         if not isinstance(answer, dict):
-            return {"met": False}
+            return {"gh_failure": f"{command_text} exited 0 without printing a JSON object"}
         result = {"met": answer.get("state") == met_state}
         for citation_field in ("title", "url"):
             if isinstance(answer.get(citation_field), str):
@@ -354,6 +368,16 @@ def condition_citation(kind: str, number: int, answer: dict) -> str:
     return f"{id_type} {number} is {met_word}"
 
 
+def gh_failure_line(kind: str, number: int, cause: str) -> str:
+    _, _, id_type, met_word = CONDITION_KINDS[kind]
+    return (f"This hook could not ask GitHub whether {id_type} {number} is {met_word}, so no "
+            f"task waiting on it was raised: {cause}. It asks again at the first stop at least "
+            f"{CONDITION_RECHECK_INTERVAL_SECONDS // 60} minutes from now. If gh's error says "
+            f"{id_type} {number} does not exist, correct the metadata.waits_on that names it "
+            f"with TaskUpdate. If it says gh is not logged in or its credentials are bad, ask "
+            f"the user to run `gh auth login` on this machine.")
+
+
 def raise_line(task: dict, due_text, met_citations) -> str:
     reasons = []
     if due_text is not None:
@@ -364,8 +388,8 @@ def raise_line(task: dict, due_text, met_citations) -> str:
             f"now: {', and '.join(reasons)}.")
 
 
-def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> "tuple[list, bool]":
-    """The raise lines for this run, and whether the state changed.
+def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> "tuple[list, bool, list]":
+    """The raise lines for this run, whether the state changed, and the gh failures met.
 
     Mutates `state` to record every raise it returns and to prune entries
     for tasks and conditions that no longer need them.
@@ -428,7 +452,8 @@ def due_task_lines(tasks: dict, directory: Path, state: dict, now: datetime) -> 
         if key not in conditions_still_named:
             del state["checks"][key]
             state_changed = True
-    return lines, state_changed or checker.changed
+    return lines, state_changed or checker.changed, [
+        gh_failure_line(kind, number, cause) for kind, number, cause in checker.gh_failures]
 
 
 class HookFault(Exception):
@@ -453,7 +478,7 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
     tasks = read_tasks(directory)
     state_path = state_file_path(home, directory.name)
     state = read_state(state_path)
-    lines, state_changed = due_task_lines(tasks, directory, state, now)
+    lines, state_changed, gh_failure_lines = due_task_lines(tasks, directory, state, now)
     if state_changed:
         try:
             write_state_atomically(state_path, state)
@@ -467,11 +492,13 @@ def run(stdin_text: str, environment, home: Path, now: datetime) -> "str | None"
                             f"Make {state_path.parent} a directory this user can write to: "
                             f"{error}") from error
     if not lines:
+        if gh_failure_lines:
+            raise HookFault(" ".join(gh_failure_lines))
         return None
     return json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "Stop",
-            "additionalContext": "\n".join(lines + [DEFER_INSTRUCTION]),
+            "additionalContext": "\n".join(lines + [DEFER_INSTRUCTION] + gh_failure_lines),
         }
     }, ensure_ascii=False)
 

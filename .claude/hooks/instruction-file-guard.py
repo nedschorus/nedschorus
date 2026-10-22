@@ -21,7 +21,7 @@ from pathlib import Path
 
 # Resolve the sibling import from this file, independent of the caller's working directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from guard_approval_marker import consume_approval_marker  # noqa: E402
+from guard_approval_marker import consume_approval_marker, read_marker_approval  # noqa: E402
 
 PROTECTED_BASENAMES = ("CLAUDE.md", "CLAUDE.local.md")
 PROTECTED_DIRECTORY = ".claude"
@@ -73,36 +73,69 @@ COLD_READ_BEFORE_ASKING_SENTENCES = (
     "obvious error `CLAUDE.md` lets you fix without asking."
 )
 
-REUSABLE_PROMPT_DENY_MESSAGE = (
-    "Before modifying {path}, get the user's approval on your change: a reusable prompt, "
-    "a file named -prompt.md or -instructions.md in a checkout, changes only through the "
-    "user's walk. " + COLD_READ_BEFORE_ASKING_SENTENCES + " State the proposed change to the user and walk it with him. If he has "
-    "already approved this exact change, quote his exact approval words into {marker} at "
-    "the root of your session's own checkout, then resubmit your write or edit — the marker "
-    "is consumed by the one call it approves. Create {marker} with the Write tool, not a "
-    "shell command. If this session sits in the machine's reference checkout, another "
-    "guard refuses that Write and the edit itself: make the change from your own "
-    "worktree, and put {marker} at that worktree's root. If the prompt is a one-off, "
-    "write it outside "
-    "the checkout, in your scratchpad. If it is a draft for his walk, write it in a queue "
-    "directory or docs/drafts/."
-) + OBVIOUS_FIX_MARKER_LINES + ROUTE_AROUND_LINES
+APPROVAL_PAGE_PATH = "docs/nedschorus-wiki/nedschorus-which-changes-need-the-users-approval.md"
+PRE_APPROVED_CHANGE_MARKER_FIRST_LINE = "#pre_approved_change"
+PRE_APPROVED_CHANGE_MARKER_SECOND_LINE = (
+    "words naming the exception on the approval page that the change falls under, such as "
+    "`cosmetic-change`, or `on neither list` when the change is neither on the page's list nor "
+    "one of its exceptions")
 
-REVIEWED_DOCUMENT_DENY_MESSAGE = (
-    "Get the user's approval before you change {path}; he reviews every change to a file here.\n"
-    + COLD_READ_BEFORE_ASKING_SENTENCES + "\n"
-    "If he has approved this exact change, quote his exact approval words into {marker} at "
-    "the root of your session's own checkout, then resubmit; the marker is used up by the "
-    "one call it approves.\n"
-    "Create {marker} with the Write tool, not a shell command.\n"
-    "If this session sits in the machine's reference checkout, another guard refuses that "
-    "Write and the edit itself: make the change from your own worktree, and put {marker} "
-    "at that worktree's root.\n"
-    "If he has not, show him the change and wait for his answer; if you are a subagent, "
-    "report the change to the agent that dispatched you instead.\n"
-    "If this is a first draft, write it in docs/drafts/ or in a queue directory such as "
-    "docs/issues/queue/, docs/agents/queue/ or docs/nedschorus-wiki/queue/ instead."
-) + OBVIOUS_FIX_MARKER_LINES + ROUTE_AROUND_LINES
+PRE_APPROVED_CHANGE_MARKER_STEP = (
+    "If the change needs no approval, write `" + PRE_APPROVED_CHANGE_MARKER_FIRST_LINE + "` as the "
+    "first line of {marker} at the root of your session's own checkout and, as its second line, "
+    + PRE_APPROVED_CHANGE_MARKER_SECOND_LINE + "; then resubmit."
+)
+
+
+def guarded_write_deny_message(guarded_kind: str, draft_lines: str = "") -> str:
+    """The refusal of a guarded write, for the kind of guarded file named."""
+    return (
+        "Before you change {path}, check whether the change needs the user's approval: it does "
+        "only when the approval page lists it and it is none of the page's exceptions.\n"
+        "The approval page is " + APPROVAL_PAGE_PATH + ". This guard refuses every write to "
+        + guarded_kind + " until {marker} says the change may go ahead.\n"
+        "If the change needs his approval and he has approved this exact change, quote his exact "
+        "approval words into {marker} at the root of your session's own checkout, then resubmit; "
+        "the marker is used up by the one call it approves.\n"
+        + PRE_APPROVED_CHANGE_MARKER_STEP + "\n"
+        + COLD_READ_BEFORE_ASKING_SENTENCES + "\n"
+        "If the change needs his approval, or you cannot tell whether it does, and he has not "
+        "approved it, show him the change and wait for his answer; if you are a subagent, report "
+        "the change to the agent that dispatched you instead.\n"
+        "Create {marker} with the Write tool, not a shell command.\n"
+        "If this session sits in the machine's reference checkout, another guard refuses that "
+        "Write and the edit itself: make the change from your own worktree, and put {marker} "
+        "at that worktree's root."
+        + draft_lines
+    ) + OBVIOUS_FIX_MARKER_LINES + ROUTE_AROUND_LINES
+
+
+REUSABLE_PROMPT_DENY_MESSAGE = guarded_write_deny_message(
+    "a reusable prompt, a file named -prompt.md or -instructions.md in a checkout,",
+    "\nIf the prompt is a one-off, write it outside the checkout, in your scratchpad.\n"
+    "If it is a draft for the user's approval-walk, write it in a queue directory or "
+    "docs/drafts/.")
+
+REVIEWED_DOCUMENT_DENY_MESSAGE = guarded_write_deny_message(
+    "a document the user reviews,",
+    "\nIf this is a first draft, write it in docs/drafts/ or in a queue directory such as "
+    "docs/issues/queue/, docs/agents/queue/ or docs/nedschorus-wiki/queue/ instead.")
+
+DENY_MESSAGE = guarded_write_deny_message(
+    "an instruction file, which CLAUDE.md, a CLAUDE.local.md identity file and .claude/ "
+    "machinery are,")
+
+PRE_APPROVED_CHANGE_MARKER_WITHOUT_REASON_DENY_MESSAGE = (
+    "Refusing to modify {path}: {marker_path} has `" + PRE_APPROVED_CHANGE_MARKER_FIRST_LINE
+    + "` as its first line but no second line saying why the change needs no approval, so it "
+    "approves nothing; this guard left it in place.\n"
+    "If the change needs no approval, rewrite {marker_path} with the Write tool: keep `"
+    + PRE_APPROVED_CHANGE_MARKER_FIRST_LINE + "` as its first line and put on its second line "
+    + PRE_APPROVED_CHANGE_MARKER_SECOND_LINE + "; then resubmit. The approval page is "
+    + APPROVAL_PAGE_PATH + ".\n"
+    "If the change needs the user's approval, delete {marker_path} and resubmit; the refusal "
+    "that follows gives the steps for asking him."
+)
 
 MEMORY_WRITE_DENY_MESSAGE = (
     "Refusing to write {path}: it is in a Claude Code memory directory, where nothing "
@@ -118,19 +151,25 @@ MEMORY_WRITE_DENY_MESSAGE = (
     "for this."
 )
 
-DENY_MESSAGE = (
-    "Before modifying {path}, get the user's approval on your change: instruction files "
-    "(CLAUDE.md, CLAUDE.local.md identity files, and .claude/ machinery) change only "
-    "through the user's walk, however clearly the edit would help. "
-    + COLD_READ_BEFORE_ASKING_SENTENCES + " State the proposed "
-    "change to the user and walk it with him. If he has already approved this exact "
-    "change, quote his exact approval words into {marker} at the root of your session's "
-    "own checkout, then resubmit your write or edit — the marker is consumed by the one "
-    "call it approves. Create {marker} with the Write tool, not a shell command. If this "
-    "session sits in the machine's reference checkout, another guard refuses that Write "
-    "and the edit itself: make the change from your own worktree, and put {marker} at "
-    "that worktree's root."
-) + OBVIOUS_FIX_MARKER_LINES + ROUTE_AROUND_LINES
+
+def is_pre_approved_change_marker(marker_words) -> bool:
+    """Whether the marker words' first line begins with the pre-approved-change marker's word."""
+    if not marker_words:
+        return False
+    first_line_words = marker_words.splitlines()[0].split()
+    return bool(first_line_words) and first_line_words[0] == PRE_APPROVED_CHANGE_MARKER_FIRST_LINE
+
+
+def pre_approved_change_marker_gives_no_reason(marker_words) -> bool:
+    """Whether the marker words take the pre-approved-change form without the exception alone on
+    their second line."""
+    if not is_pre_approved_change_marker(marker_words):
+        return False
+    lines = marker_words.splitlines()
+    # A reason on the first line would make the marker pass as the user's quoted words elsewhere.
+    if lines[0].strip() != PRE_APPROVED_CHANGE_MARKER_FIRST_LINE:
+        return True
+    return len(lines) < 2 or not lines[1].strip()
 
 
 def enclosing_repository_root(path: Path):
@@ -181,12 +220,20 @@ def is_in_draft_or_working_place(directory_parts) -> bool:
                for prefix in PROMPT_EXEMPT_DIRECTORY_PREFIXES)
 
 
+def is_in_review_record_directory(path: Path) -> bool:
+    """A review record holds frozen copies of the documents it read, named as the originals
+    are, such as cold-read-records/<record>/target/CLAUDE.local.md; no agent takes
+    instructions from a copy."""
+    directory_parts = checkout_directory_parts(path)
+    return bool(directory_parts) and directory_parts[0] in REVIEW_RECORD_DIRECTORY_NAMES
+
+
 def is_reusable_prompt(file_path: str) -> bool:
     path = Path(file_path)
     if not path.name.endswith(REUSABLE_PROMPT_SUFFIXES):
         return False
     directory_parts = checkout_directory_parts(path)
-    if directory_parts is None:
+    if directory_parts is None or is_in_review_record_directory(path):
         return False
     return not is_in_draft_or_working_place(directory_parts)
 
@@ -196,9 +243,8 @@ def is_reviewed_document(file_path: str) -> bool:
     if not path.name.endswith(REVIEWED_DOCUMENT_SUFFIX):
         return False
     directory_parts = checkout_directory_parts(path)
-    if directory_parts is None or is_in_draft_or_working_place(directory_parts):
-        return False
-    if directory_parts[:1] and directory_parts[0] in REVIEW_RECORD_DIRECTORY_NAMES:
+    if (directory_parts is None or is_in_draft_or_working_place(directory_parts)
+            or is_in_review_record_directory(path)):
         return False
     # Test designs and contracts follow design-to-main acceptance, even in reviewed homes.
     if path.name.endswith(UNREVIEWED_DOCUMENT_SUFFIXES):
@@ -211,6 +257,8 @@ def is_reviewed_document(file_path: str) -> bool:
 
 def is_protected(file_path: str) -> bool:
     path = Path(file_path)
+    if is_in_review_record_directory(path):
+        return False
     if path.name in PROTECTED_BASENAMES:
         return True
     parts = path.resolve().parts
@@ -286,8 +334,14 @@ def main() -> int:
         return 2
 
     root = marker_root(payload, file_path)
-    if root is not None and consume_approval_marker(root / APPROVAL_MARKER_NAME):
-        return 0
+    if root is not None:
+        marker_path = root / APPROVAL_MARKER_NAME
+        if pre_approved_change_marker_gives_no_reason(read_marker_approval(marker_path)):
+            print(PRE_APPROVED_CHANGE_MARKER_WITHOUT_REASON_DENY_MESSAGE.format(
+                path=file_path, marker_path=marker_path), file=sys.stderr)
+            return 2
+        if consume_approval_marker(marker_path):
+            return 0
 
     if reusable_prompt:
         deny_message = REUSABLE_PROMPT_DENY_MESSAGE
