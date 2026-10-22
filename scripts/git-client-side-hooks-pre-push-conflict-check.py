@@ -186,6 +186,13 @@ def revert_after_hand_conflict_check_line(branch, object_id):
         branch, REVERT_HAND_CHECK_COMMAND % short_commit(object_id))
 
 
+def say_branch_not_checked(stream, branch, because):
+    """The first line of each per-branch skip message; it says the push goes ahead, since a
+    reader who is not told so takes the push as refused."""
+    say(stream, MESSAGE_PREFIX + "branch %s was not checked for conflicts with %s, because %s; "
+        "this push goes ahead without that check." % (branch, BASE_NAME_FOR_MESSAGES, because))
+
+
 def say_revert_check_not_run(stream, branch, object_id):
     """Said before any line telling the agent to tell the user, so that line ends the message."""
     say(stream, "Nor was %s checked for files set back to a version that %s has replaced, "
@@ -252,9 +259,9 @@ def main(argv, pushed_refs_text, stderr, environment):
     for branch, local_object_id in branches:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            say(stderr, MESSAGE_PREFIX + "branch %s was not checked for conflicts with "
-                "%s, because the earlier branches in this push used up the %g-second "
-                "time budget." % (branch, BASE_NAME_FOR_MESSAGES, budget))
+            say_branch_not_checked(
+                stderr, branch, "the earlier branches in this push used up the %g-second "
+                "time budget" % budget)
             say(stderr, hand_check_line(branch, local_object_id))
             say_revert_check_not_run(stderr, branch, local_object_id)
             continue
@@ -264,9 +271,9 @@ def main(argv, pushed_refs_text, stderr, environment):
         elif result.kind == "clean":
             clean_branches.append((branch, local_object_id))
         elif result.kind == "no answer":
-            say(stderr, MESSAGE_PREFIX + "branch %s was not checked for conflicts with "
-                "%s, because scripts/%s could not decide; its report follows."
-                % (branch, BASE_NAME_FOR_MESSAGES, CONFLICT_CHECK_FILE_NAME))
+            say_branch_not_checked(
+                stderr, branch, "scripts/%s could not decide, as its report below says"
+                % CONFLICT_CHECK_FILE_NAME)
             for line in result.lines:
                 say(stderr, line)
             say(stderr, "Follow the report, then check %s again by hand from your "
@@ -274,17 +281,16 @@ def main(argv, pushed_refs_text, stderr, environment):
             say_revert_check_not_run(stderr, branch, local_object_id)
             say(stderr, RERUN_VERDICT_LINE)
         elif result.kind == "timed out":
-            say(stderr, MESSAGE_PREFIX + "branch %s was not checked for conflicts with "
-                "%s, because scripts/%s had not finished when the %g-second time budget "
-                "ran out, and was stopped."
-                % (branch, BASE_NAME_FOR_MESSAGES, CONFLICT_CHECK_FILE_NAME, budget))
+            say_branch_not_checked(
+                stderr, branch, "scripts/%s had not finished when the %g-second time budget "
+                "ran out, and was stopped" % (CONFLICT_CHECK_FILE_NAME, budget))
             say(stderr, hand_check_line(branch, local_object_id))
             say_revert_check_not_run(stderr, branch, local_object_id)
             say(stderr, RERUN_VERDICT_LINE)
         elif result.kind == "no verdict":
-            say(stderr, MESSAGE_PREFIX + "branch %s was not checked for conflicts with "
-                "%s, because scripts/%s gave no verdict: %s."
-                % (branch, BASE_NAME_FOR_MESSAGES, CONFLICT_CHECK_FILE_NAME, result.reason))
+            say_branch_not_checked(
+                stderr, branch, "scripts/%s gave no verdict: %s"
+                % (CONFLICT_CHECK_FILE_NAME, result.reason))
             say(stderr, hand_check_line(branch, local_object_id))
             say_revert_check_not_run(stderr, branch, local_object_id)
             say(stderr, TELL_USER_LINE)

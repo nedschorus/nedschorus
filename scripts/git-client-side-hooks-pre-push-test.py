@@ -43,6 +43,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -208,6 +209,12 @@ time.sleep(FAKE_HANG_SECONDS)
 # FAKE_TEST_SUITES_RUNNER_LOG_VARIABLE names, so a case can tell whether the
 # selective test run started, and with which arguments.
 
+PUSH_GOES_AHEAD_WITHOUT_CHECK = "; this push goes ahead without that check."
+# What git itself writes on stderr for a push: the remote's name, one line per ref, and a
+# line when a hook refused the push.
+GIT_PUSH_REMOTE_LINE_START = "To "
+GIT_PUSH_FAILED_LINE_START = "error: failed to push some refs to "
+GIT_PUSH_REF_LINE = re.compile(r"^ [ +\-*!=] ")
 SELECTIVE_TEST_RUN_STARTING = "pre-push: starting the selective test run on "
 SELECTIVE_TEST_RUN_PASSED = "pre-push: the selective test run passed. "
 SELECTIVE_TEST_RUN_REFUSED = ("pre-push: a test suite failed in the selective test run, so this "
@@ -597,10 +604,17 @@ def stop_leftover_process(pid):
         pass
 
 
+def git_push_output_line(line):
+    return (line.startswith((GIT_PUSH_REMOTE_LINE_START, GIT_PUSH_FAILED_LINE_START))
+            or bool(GIT_PUSH_REF_LINE.match(line)))
+
+
 def conflict_check_said_nothing(stderr):
-    """True when every pre-push line is the selective test run's own start or pass line."""
+    """True when every stderr line is the selective test run's own start or pass line or git's
+    own push output, so a line the conflict or revert check adds fails it, whatever it starts
+    with."""
     return all(line.startswith((SELECTIVE_TEST_RUN_STARTING, SELECTIVE_TEST_RUN_PASSED))
-               for line in stderr.splitlines() if line.startswith("pre-push:"))
+               or git_push_output_line(line) for line in stderr.splitlines())
 
 
 def went_through(result):
@@ -797,6 +811,12 @@ def run_push_cases(scratch):
           CLOSING_INSTRUCTION in result.stderr, result.describe())
     check("and does not offer --no-verify", "--no-verify" not in result.stderr,
           result.describe())
+    lines = result.stderr.splitlines()
+    header = REFUSAL_HEADER % "conflicting"
+    outside = (lines[:lines.index(header)] + lines[lines.index(CLOSING_INSTRUCTION) + 1:]
+               if header in lines and CLOSING_INSTRUCTION in lines else lines)
+    check("and the hook says nothing outside the refusal",
+          all(git_push_output_line(line) for line in outside), result.describe())
 
     # A branch already on origin: the refused push must leave it where it was.
     scenario.git(scenario.clone, "switch", "--quiet", "-c", "pushed-then-conflicting",
@@ -979,8 +999,8 @@ def run_push_cases(scratch):
     outcome = failing_check_case(
         "check-no-answer", FAKE_CHECK_NO_ANSWER,
         "pre-push: branch conflicting was not checked for conflicts with "
-        "origin/main, because scripts/branch-conflict-check.py could not decide; "
-        "its report follows.")
+        "origin/main, because scripts/branch-conflict-check.py could not decide, as its "
+        "report below says" + PUSH_GOES_AHEAD_WITHOUT_CHECK)
     check("check-no-answer: and passes on the check's own lines",
           "UNFETCHED: fake no-answer line from the check." in outcome.stderr,
           outcome.describe())
@@ -1010,7 +1030,8 @@ def run_push_cases(scratch):
             label, source,
             "pre-push: branch conflicting was not checked for conflicts with "
             "origin/main, because scripts/branch-conflict-check.py had not finished "
-            "when the 1-second time budget ran out, and was stopped.",
+            "when the 1-second time budget ran out, and was stopped"
+            + PUSH_GOES_AHEAD_WITHOUT_CHECK,
             budget=HANGING_CHECK_BUDGET_SECONDS)
         check("%s: and says to check by hand, when to run the revert check, and to tell "
               "the user only if the hand check fails too" % label,
@@ -1034,14 +1055,14 @@ def run_push_cases(scratch):
     turnless = [branch for branch in ("clean", "clean-second")
                 if "pre-push: branch %s was not checked for conflicts with origin/main, "
                    "because the earlier branches in this push used up the 1-second "
-                   "time budget." % branch in lines]
+                   "time budget" % branch + PUSH_GOES_AHEAD_WITHOUT_CHECK in lines]
     check("budget spent: one branch is named as never getting its turn",
           len(turnless) == 1, outcome.describe())
     if len(turnless) == 1:
         branch = turnless[0]
         line = ("pre-push: branch %s was not checked for conflicts with origin/main, "
                 "because the earlier branches in this push used up the 1-second "
-                "time budget." % branch)
+                "time budget" % branch + PUSH_GOES_AHEAD_WITHOUT_CHECK)
         index = lines.index(line)
         check("budget spent: followed by that branch's hand check, by its commit",
               lines[index + 1:index + 2] == [hand_check_line(branch, spent.head(branch))],
