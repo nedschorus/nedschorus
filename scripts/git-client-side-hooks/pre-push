@@ -1,8 +1,9 @@
 #!/bin/sh
 # Refuses a push from a mutation-testing worktree, a push that rewrites or
 # deletes the head branch of an open pull request, a push of a branch that
-# conflicts with main, and a push whose selective test run has a failing suite;
-# lets every other push through. The work is done by four Python files,
+# conflicts with main or sets a file back to a version main has replaced, and a
+# push whose selective test run has a failing suite; lets every other push
+# through. The work is done by four Python files,
 # scripts/git-client-side-hooks-pre-push-mutation-testing-worktree-push-refusal.py,
 # scripts/git-client-side-hooks-pre-push-open-pull-request-branch-non-fast-forward-or-deletion-refusal.py,
 # scripts/git-client-side-hooks-pre-push-conflict-check.py and

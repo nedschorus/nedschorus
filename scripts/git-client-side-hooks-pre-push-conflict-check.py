@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Refuse pushes to origin branches only when the conflict check gives a trustworthy conflict."""
+"""Refuse pushes to origin branches only when a check gives a trustworthy verdict against them.
+
+Each branch goes to scripts/branch-conflict-check.py. A branch it finds clean
+then goes to scripts/branch-reverts-a-file-to-an-older-main-version-check.py,
+which finds a file the branch sets back to a version main has since replaced,
+as a squash by `git reset --soft` onto a newer main does; git merges such a
+branch cleanly, so the conflict check cannot see it. A branch the conflict
+check gives no verdict on is not sent to the revert check, which relies on the
+conflict check's fetch; the push goes ahead with a line saying so and the
+command to run the revert check by hand."""
 # Fail open: a missed conflict is caught in review, but a wrongly blocked push stops work.
 # Keep Git’s environment so the check sees the repository actually being pushed.
 
@@ -22,6 +31,11 @@ CHECK_EXIT_CLEAN = 0
 CHECK_EXIT_CONFLICT = 1
 CHECK_EXIT_NO_ANSWER = 2
 CONFLICT_VERDICT_PREFIX = "VERDICT: CONFLICT"
+
+REVERT_CHECK_FILE_NAME = "branch-reverts-a-file-to-an-older-main-version-check.py"
+REVERT_CHECK_EXIT_REVERTED = 1
+REVERT_VERDICT_PREFIX = "VERDICT: BRANCH-REVERTS-A-FILE-TO-AN-OLDER-MAIN-VERSION"
+REVERT_HAND_CHECK_COMMAND = "python3 scripts/%s --head %%s" % REVERT_CHECK_FILE_NAME
 
 DEFAULT_TIME_BUDGET_SECONDS = 60.0
 TIME_BUDGET_ENVIRONMENT_VARIABLE = "NEDSCHORUS_PRE_PUSH_CONFLICT_CHECK_SECONDS"
@@ -97,7 +111,18 @@ class CheckResult:
         self.reason = reason
 
 
-def run_conflict_check(check_path, local_object_id, seconds_left, budget):
+def run_conflict_check(check_path, local_object_id, seconds_left):
+    return run_check(check_path, local_object_id, seconds_left, CHECK_EXIT_CONFLICT,
+                     CONFLICT_VERDICT_PREFIX, "conflict")
+
+
+def run_revert_check(check_path, local_object_id, seconds_left):
+    return run_check(check_path, local_object_id, seconds_left, REVERT_CHECK_EXIT_REVERTED,
+                     REVERT_VERDICT_PREFIX, "reverted")
+
+
+def run_check(check_path, local_object_id, seconds_left, found_status, verdict_prefix,
+              found_kind):
     try:
         process = subprocess.Popen(
             [sys.executable, check_path, "--head", local_object_id],
@@ -113,21 +138,21 @@ def run_conflict_check(check_path, local_object_id, seconds_left, budget):
         return CheckResult("timed out")
     lines = stdout.splitlines()
     status = process.returncode
-    has_conflict_verdict = any(line.startswith(CONFLICT_VERDICT_PREFIX) for line in lines)
-    if status == CHECK_EXIT_CONFLICT and has_conflict_verdict:
-        return CheckResult("conflict", lines)
+    last_error_line = next(
+        (line.strip() for line in reversed(stderr.splitlines()) if line.strip()), "")
+    has_found_verdict = any(line.startswith(verdict_prefix) for line in lines)
+    if status == found_status and has_found_verdict:
+        return CheckResult(found_kind, lines)
     if status == CHECK_EXIT_CLEAN:
         return CheckResult("clean", lines)
     if status == CHECK_EXIT_NO_ANSWER:
-        return CheckResult("no answer", lines)
+        return CheckResult("no answer", lines, reason=last_error_line)
     if status is not None and status < 0:
         reason = "it was killed by signal %d" % -status
-    elif status == CHECK_EXIT_CONFLICT:
-        reason = "it exited 1 without a %s line" % CONFLICT_VERDICT_PREFIX
+    elif status == found_status:
+        reason = "it exited %d without a %s line" % (found_status, verdict_prefix)
     else:
         reason = "it exited %s" % status
-    last_error_line = next(
-        (line.strip() for line in reversed(stderr.splitlines()) if line.strip()), "")
     if last_error_line:
         reason = "%s: %s" % (reason, last_error_line)
     return CheckResult("no verdict", reason=reason)
@@ -150,6 +175,14 @@ def branch_list(branches):
 def hand_check_line(branch, object_id):
     return "Check %s by hand from your worktree: %s" % (
         branch, HAND_CHECK_COMMAND % short_commit(object_id))
+
+
+def say_revert_check_not_run(stream, branch, object_id):
+    say(stream, MESSAGE_PREFIX + "branch %s was not checked for files set back to a version "
+        "that %s has replaced either, because that check runs only on a branch the "
+        "conflict check finds clean." % (branch, BASE_NAME_FOR_MESSAGES))
+    say(stream, "Check it by hand from your worktree, after `git fetch %s`: %s"
+        % (CHECKED_REMOTE_NAME, REVERT_HAND_CHECK_COMMAND % short_commit(object_id)))
 
 
 def unchecked_lines(branches):
@@ -190,11 +223,14 @@ def main(argv, pushed_refs_text, stderr, environment):
         say_no_branch_checked(
             stderr, "the pre-push conflict check did not run, because %s is missing"
             % check_path, branches)
+        for branch, local_object_id in branches:
+            say_revert_check_not_run(stderr, branch, local_object_id)
         return EXIT_ALLOW_PUSH
 
     budget = time_budget_seconds(environment)
     deadline = time.monotonic() + budget
     conflicts = []
+    clean_branches = []
     for branch, local_object_id in branches:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -202,10 +238,13 @@ def main(argv, pushed_refs_text, stderr, environment):
                 "%s, because the earlier branches in this push used up the %g-second "
                 "time budget." % (branch, BASE_NAME_FOR_MESSAGES, budget))
             say(stderr, hand_check_line(branch, local_object_id))
+            say_revert_check_not_run(stderr, branch, local_object_id)
             continue
-        result = run_conflict_check(check_path, local_object_id, remaining, budget)
+        result = run_conflict_check(check_path, local_object_id, remaining)
         if result.kind == "conflict":
             conflicts.append((branch, result))
+        elif result.kind == "clean":
+            clean_branches.append((branch, local_object_id))
         elif result.kind == "no answer":
             say(stderr, MESSAGE_PREFIX + "branch %s was not checked for conflicts with "
                 "%s, because scripts/%s could not decide; its report follows."
@@ -230,16 +269,59 @@ def main(argv, pushed_refs_text, stderr, environment):
                 % (branch, BASE_NAME_FOR_MESSAGES, CONFLICT_CHECK_FILE_NAME, result.reason))
             say(stderr, hand_check_line(branch, local_object_id))
             say(stderr, TELL_USER_LINE)
+        if result.kind not in ("conflict", "clean"):
+            say_revert_check_not_run(stderr, branch, local_object_id)
 
-    if not conflicts:
+    reverts = check_reverts(clean_branches, deadline, budget, stderr)
+    if not conflicts and not reverts:
         return EXIT_ALLOW_PUSH
     for branch, result in conflicts:
         say(stderr, MESSAGE_PREFIX + "branch %s conflicts with %s; this push is refused."
             % (branch, BASE_NAME_FOR_MESSAGES))
         for line in result.lines:
             say(stderr, line)
-    say(stderr, "Once the merge is committed, push again.")
+    if conflicts:
+        say(stderr, "Once the merge is committed, push again.")
+    for branch, result in reverts:
+        say(stderr, MESSAGE_PREFIX + "branch %s sets a file back to a version that %s has "
+            "replaced; this push is refused." % (branch, BASE_NAME_FOR_MESSAGES))
+        for line in result.lines:
+            say(stderr, line)
     return EXIT_REFUSE_PUSH
+
+
+def check_reverts(branches, deadline, budget, stderr):
+    """Return (branch, result) for each branch the revert check finds setting a file back.
+
+    Any other outcome lets the branch through, with one message."""
+    check_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), REVERT_CHECK_FILE_NAME)
+    reverts = []
+    for branch, local_object_id in branches:
+        remaining = deadline - time.monotonic()
+        if not os.path.isfile(check_path):
+            reason = "%s is missing" % check_path
+        elif remaining <= 0:
+            reason = "the %g-second time budget was used up" % budget
+        else:
+            result = run_revert_check(check_path, local_object_id, remaining)
+            if result.kind == "reverted":
+                reverts.append((branch, result))
+                continue
+            if result.kind == "clean":
+                continue
+            reason = {"timed out": "it had not finished when the %g-second time budget "
+                                   "ran out, and was stopped" % budget,
+                      "no answer": "it could not decide: %s" % result.reason,
+                      }.get(result.kind, result.reason)
+        say(stderr, MESSAGE_PREFIX + "branch %s was not checked for files set back to a "
+            "version that %s has replaced, because %s; this push goes ahead."
+            % (branch, BASE_NAME_FOR_MESSAGES, reason))
+        say(stderr, "Check it by hand from your worktree: %s"
+            % (REVERT_HAND_CHECK_COMMAND % short_commit(local_object_id)))
+        say(stderr, "If that run prints no VERDICT line, tell the user this whole message "
+            "and what that run printed.")
+    return reverts
 
 
 def report_unexpected_error(stream, error, argv, pushed_refs_text):
