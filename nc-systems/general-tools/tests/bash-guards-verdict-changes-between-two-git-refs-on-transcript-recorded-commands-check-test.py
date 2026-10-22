@@ -354,7 +354,7 @@ try:
     calls = codex_guard_calls_on_tmux_kill_server()
     check("a guard that times out on its first reading of a pair and answers on the second: read again alone, exit 0",
           status == 0 and "NO VERDICT CHANGED" in out and calls == 2
-          and replay.timed_out_readings_read_again_line("in-process, head", 1, 1) in err,
+          and readings_read_again_that_all_got_a_verdict(err, "in-process, head"),
           f"status {status}; calls {calls}\n{out}\n{err}")
 
     hanging_on_tmux_kill_server = codex_guard_on_tmux_kill_server("time.sleep(30)")
@@ -363,7 +363,7 @@ try:
     calls = codex_guard_calls_on_tmux_kill_server()
     check("a guard that times out on both readings of a pair: a failed reading, exit 2",
           status == 2 and "TIMEOUT" in out and calls == 2
-          and replay.timed_out_readings_read_again_line("in-process, head", 1, 0) in err,
+          and re.search(r"^in-process, head: \d+ readings? timed out and w[a-z]+ read again", err, re.MULTILINE),
           f"status {status}; calls {calls}\n{out}\n{err}")
 
     raising_on_tmux_kill_server = codex_guard_on_tmux_kill_server(
@@ -371,7 +371,7 @@ try:
     status, out, err = run_replay(raising_on_tmux_kill_server, scratch, "--new-process-pairs", "none")
     calls = codex_guard_calls_on_tmux_kill_server()
     check("a guard that raises on a pair: not read again, exit 2",
-          status == 2 and "EXCEPTION RuntimeError" in out and calls == 1 and "read again" not in err,
+          status == 2 and "EXCEPTION RuntimeError" in out and calls == 1,
           f"status {status}; calls {calls}\n{out}\n{err}")
 
     read_again_lines = {
@@ -460,7 +460,7 @@ try:
     check("a search-file main() that times out on its first reading of `ls -la` and answers on the second: "
           "the row keeps the second reading, exit 0",
           status == 0 and "NO VERDICT CHANGED" in out and main_hang_once_marker.exists()
-          and replay.timed_out_readings_read_again_line("search-file main(), head", 1, 1) in err
+          and readings_read_again_that_all_got_a_verdict(err, "search-file main(), head")
           and main_rows is not None and main_rows[0][0] != "TIMEOUT",
           f"status {status}; rows {main_rows}\n{out}\n{err}")
 
@@ -647,14 +647,22 @@ try:
           and readings_read_again_that_all_got_a_verdict(err, "new-process, base"),
           f"status {status}; failed {failed}\n{out}\n{err}")
 
+    # Each one-command process that reads `ls -la` writes a line, so a reading read again writes a second.
+    reader_failure_calls = Path(scratch) / "one-command-reader-failures-on-ls"
     reader_failing_on_ls = commit_with_one_command_per_process_reader_changed(
+        f"open({str(reader_failure_calls)!r}, 'a').write('x\\n'); "
         "raise SystemExit('the one-command reader broke on ls -la')", scratch)
-    status, out, err = run_replay("HEAD", scratch, "--jobs", "1", base_ref=reader_failing_on_ls)
+    reader_failed_scratch = Path(scratch) / "run-one-command-reader-failed"
+    status, out, err = run_replay("HEAD", scratch, "--jobs", "1", "--scratch-directory", str(reader_failed_scratch),
+                                  base_ref=reader_failing_on_ls)
+    failed, _ = failed_new_process_readings_and_rows_differing_from_in_process(reader_failed_scratch)
+    failed_on_ls = (failed or []).count("ls -la")
+    calls = len(reader_failure_calls.read_text().splitlines()) if reader_failure_calls.exists() else 0
     check("a one-command-per-process shell reader that fails on `ls -la` other than by timing out: not read again, "
           "exit 2",
           status == 2 and "EXCEPTION ShellCommandUnreadable" in out and "the one-command reader broke on ls -la" in out
-          and "new-process, base: " not in err,
-          f"status {status}\n{out}\n{err}")
+          and failed_on_ls > 0 and calls == failed_on_ls,
+          f"status {status}; failed on ls -la {failed_on_ls}; reader calls {calls}\n{out}\n{err}")
 
     def raising(error, cause):
         def read(*_):

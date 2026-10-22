@@ -32,10 +32,12 @@ verdict differs or an added guard refuses a recorded command; 2 when the replay 
 failed, which includes a guard that raised on a recorded command at either ref, or timed out on
 it twice, because that row has no verdict to compare. A reading that runs past the per-pair timeout
 (--per-pair-timeout-seconds, 20 s by default), or whose one-command-per-process shell reader runs past
-its own subprocess timeout, is read once more, by itself,
-after the step's other readings have finished, since a timeout can come from the machine's load rather
-than the guard. A message that differs while its verdict does not is
-printed, and does not change the exit status. The scratch directory is removed after an exit 0
+its own subprocess timeout, is read once more, by itself, after the step's other readings have finished.
+At a ref whose shell reader is older than the shell reader child each pool worker keeps running
+(step 3), each guard reads each command in a new process of its own, a one-command-per-process shell
+reader, and the guard stops waiting for that process after 8 s. Either kind of timed-out reading is
+read again because a timeout can come from the machine's load rather than the guard; a reading that
+raised for any other reason is not read again. A message that differs while its verdict does not is printed, and does not change the exit status. The scratch directory is removed after an exit 0
 unless --scratch-directory named it; after an exit 1 or 2 it is kept, and its path is printed.
 """
 
