@@ -238,8 +238,10 @@ def main(argv, pushed_refs_text, stderr, environment):
             % (branch, BASE_NAME_FOR_MESSAGES))
         for line in result.lines:
             say(stderr, line)
-    say(stderr, "Once the conflict is cleared as the lines above say, push the "
-        "branch they name.")
+    say(stderr, "Once the conflict is cleared as the lines above say, push: if "
+        "this branch was never pushed, push it after rebasing it onto current "
+        "%s; otherwise push only the new topic branch cut from current %s, "
+        "never this one." % (BASE_NAME_FOR_MESSAGES, BASE_NAME_FOR_MESSAGES))
     return EXIT_REFUSE_PUSH
 
 

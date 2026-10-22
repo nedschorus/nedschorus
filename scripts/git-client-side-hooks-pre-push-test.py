@@ -91,8 +91,10 @@ HANGING_CHECK_BUDGET_SECONDS = "1"
 HANGING_CASE_WALL_CLOCK_LIMIT_SECONDS = 15
 
 REFUSAL_HEADER = "pre-push: branch %s conflicts with origin/main; this push is refused."
-CLOSING_INSTRUCTION = ("Once the conflict is cleared as the lines above say, push the "
-                       "branch they name.")
+CLOSING_INSTRUCTION = ("Once the conflict is cleared as the lines above say, push: if "
+                       "this branch was never pushed, push it after rebasing it onto "
+                       "current origin/main; otherwise push only the new topic branch "
+                       "cut from current origin/main, never this one.")
 # The hooks' own texts, copied here rather than imported, so a change to a
 # text fails a case.
 TELL_USER_LINE = ("Tell the user this whole message, including any error printed "

@@ -216,8 +216,12 @@ status, lines = run(fake_runner(merge_tree_status=128))
 case("a no-answer status says the run gave no verdict",
      lines[0].startswith("UNANSWERED:"))
 case("a no-answer status tells the agent not to act on it",
-     "Do not act on this result: open no new pull request and close none."
-     in lines)
+     "Do not act on this result until a rerun prints a VERDICT line: open no "
+     "new pull request and close none." in lines)
+case("a no-answer status ends by telling the agent to tell the user if no "
+     "rerun answers",
+     lines[-1] == "If none of these applies, or the rerun prints UNANSWERED "
+     "again, tell the user this whole report.")
 
 # GitHub is not consulted when git could not answer: the run returns before the
 # pull-request branch, so no gh call is made and no verdict can overrule a
@@ -440,12 +444,15 @@ case("UNANSWERED text is one instruction per line, naming both commits",
      lines == [
     "UNANSWERED: git merge-tree exited 128 merging %s into %s; do not act on "
     "it as a conflict or as clean." % (HEAD_LABEL, BASE_LABEL),
-    "Do not act on this result: open no new pull request and close none.",
+    "Do not act on this result until a rerun prints a VERDICT line: open no "
+    "new pull request and close none.",
     "If either commit is missing from this checkout, fetch it, then rerun.",
     "If the two commits share no history, check that --head and --base name "
     "the right commits, then rerun.",
     "If the object database is not writable, run from a checkout where it "
     "is, then rerun.",
+    "If none of these applies, or the rerun prints UNANSWERED again, tell the "
+    "user this whole report.",
 ])
 
 status, lines = run(fake_runner(merge_tree_status=0))
@@ -639,8 +646,11 @@ GIT_ANSWERS = (
 GITHUB_FAILED = "GITHUB: could not be asked (gh failed) -- git's answer stands"
 GITHUB_DECIDES = (
     "DISCLOSURE: git finds no conflict but GitHub reports CONFLICTING; GitHub "
-    "decides whether the merge is allowed, so the pull request still needs "
-    "replacing with a new one cut from current main.")
+    "decides whether the merge is allowed, so the pull request is replaced as "
+    "the lines above say. git names no conflicting file, so run git log "
+    "--oneline HEAD..origin/main instead of the per-file command above, to see "
+    "what origin/main changed. If GitHub reports the new pull request "
+    "CONFLICTING too, tell the user.")
 NOT_ONE_TO_ATTEMPT = (
     "DISCLOSURE: git finds a conflict but GitHub reports MERGEABLE; treating "
     "it as a conflict, because a merge that git cannot do is not one to "
@@ -907,13 +917,14 @@ FIND_DELETING_COMMIT = (
     "If a deleting commit is not named above, find it with git log "
     "--diff-filter=D origin/main -- <file>.")
 CLOSE_NAMING_DELETION = (
-    "If the branch has a pull request, close it with a comment naming the "
-    "commit that deleted each file.")
+    "Then, if the branch has a pull request, close it with a comment naming "
+    "the commit that deleted each file and linking the new pull request, if "
+    "there is one.")
 CARRY_WHAT_MAIN_LACKS = (
     "If origin/main still lacks any of the branch's work, including what its "
     "change to each deleted file was for, carry that work on a new topic "
-    "branch cut from current origin/main, in a new pull request that names the "
-    "closed one.")
+    "branch cut from current origin/main, in a new pull request whose "
+    "description links the old one, if the branch has one.")
 REAPPLY_ALSO_CONFLICTS = (
     "On the new topic branch, start each ALSO CONFLICTS file from "
     "origin/main's version and reapply the branch's change to it by hand.")
@@ -931,27 +942,48 @@ FIND_OUT_EACH = (
     "after \"possibly\" on its line, and do each RENAME CHECK that names it. "
     "A file with no \"possibly\" on its line and no RENAME CHECK naming it was "
     "deleted.")
-DO_NOT_PUSH_AGAIN = (
-    "Do not merge origin/main into this branch, and do not push this branch "
-    "again: a conflicting pull request is replaced by a new one cut from "
-    "current origin/main.")
+DO_NOT_MERGE_INTO_BRANCH = "Do not merge origin/main into this branch."
+REBASE_IF_NEVER_PUSHED = (
+    "If this branch has never been pushed, rebase it onto current origin/main, "
+    "carrying the branch's change to each renamed file onto its new name, "
+    "keeping only what origin/main still lacks of its change to each deleted "
+    "file, and resolving any ALSO CONFLICTS file, rerun the test suites for "
+    "what the change touches, and push it; the lines below do not apply.")
+REPLACED_IF_PUSHED = (
+    "If it has been pushed, do not push it again: its pull request is "
+    "replaced by a new one cut from current origin/main, as the lines below "
+    "say.")
 NEW_PULL_REQUEST_IF_EVERY_RENAMED = (
     "If every file marked DELETED ON or DELETED OR RENAMED was renamed, cut a "
     "new topic branch from current origin/main and apply this branch's change "
     "to it, carrying the change to each file onto its new name and resolving "
     "any ALSO CONFLICTS file too; rerun the test suites for what the change "
     "touches, push the new branch once, open a new pull request from it whose "
-    "description links the old one, and close the old one with a comment "
-    "linking the new one.")
-CLOSE_IF_ANY_DELETED = (
-    "If any file marked DELETED ON or DELETED OR RENAMED was deleted, close "
-    "the pull request with a comment naming the commit that "
-    "deleted it, and carry what origin/main still lacks on a new topic branch "
-    "cut from current origin/main, in a new pull request that names the "
-    "closed one; on that branch, carry the branch's change to each renamed "
-    "file onto its new name.")
-RENAME_BLOCK = [RENAME_NOT_PAIRED, FIND_OUT_EACH, DO_NOT_PUSH_AGAIN,
-                NEW_PULL_REQUEST_IF_EVERY_RENAMED, CLOSE_IF_ANY_DELETED]
+    "description links the old one, and then close the old one with a "
+    "comment linking the new one.")
+
+
+def new_pull_request_if_any_deleted(also_conflicts=""):
+    return (
+        "If any file marked DELETED ON or DELETED OR RENAMED was deleted, carry "
+        "what origin/main still lacks of this branch's work on a new topic "
+        "branch cut from current origin/main; on that branch, carry the "
+        "branch's change to each renamed file onto its new name%s; rerun the "
+        "test suites for what the change touches, push the new branch once, "
+        "open a new pull request from it whose description links the old one, "
+        "and then close the old one with a comment that links the new one and "
+        "names the commit that deleted each file." % also_conflicts)
+
+
+CLOSE_IF_ANY_DELETED = new_pull_request_if_any_deleted()
+CLOSE_ONLY_IF_MAIN_LACKS_NONE = (
+    "If origin/main lacks none of this branch's work, open no new pull "
+    "request: close the old one with a comment naming the commit that deleted "
+    "each file.")
+RENAME_BLOCK = [RENAME_NOT_PAIRED, FIND_OUT_EACH, DO_NOT_MERGE_INTO_BRANCH,
+                REBASE_IF_NEVER_PUSHED, REPLACED_IF_PUSHED,
+                NEW_PULL_REQUEST_IF_EVERY_RENAMED, CLOSE_IF_ANY_DELETED,
+                CLOSE_ONLY_IF_MAIN_LACKS_NONE]
 # Lines the one block replaced; none may print beside it.
 OLD_CLOSE_LINES = [DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION,
                    CARRY_WHAT_MAIN_LACKS]
@@ -983,8 +1015,8 @@ case("a file the base deleted, its commit not found, is still named, with "
          "VERDICT: CONFLICT -- %s conflicts with origin/main, and origin/main "
          "deleted 1 file(s) the branch changes." % HEAD_LABEL,
          "DELETED ON origin/main: gone, by a commit this run could not find",
-         DO_NOT_MERGE_DELETED, FIND_DELETING_COMMIT, CLOSE_NAMING_DELETION,
-         CARRY_WHAT_MAIN_LACKS,
+         DO_NOT_MERGE_DELETED, FIND_DELETING_COMMIT, CARRY_WHAT_MAIN_LACKS,
+         CLOSE_NAMING_DELETION,
      ])
 case("the deleting commit is looked up only among commits the branch lacks",
      ["git", "log", "-1", "--format=%H", "--diff-filter=D",
@@ -1028,7 +1060,7 @@ case("a rename beside a real deletion gets the one block, whose close line "
          "possibly a2.txt" % DELETING_COMMIT[:12] in lines
      and "DELETED ON origin/main: b.txt, by commit %s" % DELETING_COMMIT[:12]
          in lines
-     and lines[-5:] == RENAME_BLOCK
+     and lines[-len(RENAME_BLOCK):] == RENAME_BLOCK
      and not any(line in OLD_CLOSE_LINES for line in lines))
 
 status, lines = run(with_deleting_diff(
@@ -1041,7 +1073,7 @@ case("a deleting commit whose files git cannot list is reported, and the one "
          in lines
      and any(line.startswith("RENAME CHECK: git could not list the files")
              for line in lines)
-     and lines[-5:] == RENAME_BLOCK)
+     and lines[-len(RENAME_BLOCK):] == RENAME_BLOCK)
 
 # main renamed a.txt to a2.txt in one commit and a2.txt to a3.txt in a later
 # one, so a2.txt is not on the base: the name the base holds is the candidate.
@@ -1131,7 +1163,7 @@ case("a git log that cannot list a candidate's later deletions is reported "
          "--diff-filter=D %s..%s -- a2.txt."
          % (DELETING_COMMIT[:12], DELETING_COMMIT[:12], RESOLVED_BASE[:12])
          in lines
-     and lines[-5:] == RENAME_BLOCK)
+     and lines[-len(RENAME_BLOCK):] == RENAME_BLOCK)
 
 def with_b_unlisted(**fake):
     inner = fake_runner(**fake)
@@ -1150,7 +1182,7 @@ status, lines = run(with_b_unlisted(merge_tree_status=1,
                                     merge_tree_output=TWO_DELETED))
 case("a RENAME CHECK beside a renamed file gets the one block, and no line says "
      "the DELETED ON file was surely deleted",
-     lines[-5:] == RENAME_BLOCK
+     lines[-len(RENAME_BLOCK):] == RENAME_BLOCK
      and not any(line in OLD_CLOSE_LINES for line in lines)
      and any(line.startswith("RENAME CHECK: git could not list the files "
                              "commit %s added, so b.txt" % LATER_COMMIT[:12])
@@ -1164,7 +1196,7 @@ case("a candidate git cannot look up at the base is reported on a RENAME CHECK "
      and "RENAME CHECK: git could not tell whether origin/main holds a2.txt, so "
          "a.txt may have been renamed to it; check with git ls-tree --full-tree "
          "--name-only %s -- a2.txt." % RESOLVED_BASE[:12] in lines
-     and lines[-5:] == RENAME_BLOCK)
+     and lines[-len(RENAME_BLOCK):] == RENAME_BLOCK)
 
 status, lines = run(with_deleting_diff(
     (0, "R020\0a.txt\0a2.txt\0"), merge_tree_status=1,
@@ -1173,9 +1205,9 @@ status, lines = run(with_deleting_diff(
 case("with an ALSO CONFLICTS file, the one block's close line also restarts it "
      "from main's version", status == CHECK.EXIT_CONFLICT
      and "ALSO CONFLICTS: o.py" in lines
-     and lines[-1] == CLOSE_IF_ANY_DELETED[:-1] + ", and start each ALSO "
-         "CONFLICTS file from origin/main's version and reapply the branch's "
-         "change to it by hand."
+     and lines[-2] == new_pull_request_if_any_deleted(
+         ", and start each ALSO CONFLICTS file from origin/main's version and "
+         "reapply the branch's change to it by hand")
      and REAPPLY_ALSO_CONFLICTS not in lines)
 
 # A name can come back: p.txt became b.txt, then a.txt, then b.txt again, then
@@ -1542,7 +1574,7 @@ def real_repository_cases(root):
              "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
              "origin/main deleted 1 file(s) the branch changes." % deleted_label,
              "DELETED ON origin/main: d, by %s" % deleting_label,
-             DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
+             DO_NOT_MERGE_DELETED, CARRY_WHAT_MAIN_LACKS, CLOSE_NAMING_DELETION,
          ])
 
     # The branch renamed old.py to new.py and main deleted old.py: merge-tree
@@ -1555,7 +1587,7 @@ def real_repository_cases(root):
              "VERDICT: CONFLICT -- %s conflicts with origin/main, and "
              "origin/main deleted 1 file(s) the branch changes." % renamed_label,
              "DELETED ON origin/main: old.py, by %s" % renamed_deleting_label,
-             DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
+             DO_NOT_MERGE_DELETED, CARRY_WHAT_MAIN_LACKS, CLOSE_NAMING_DELETION,
          ])
 
     # The other direction: main renamed moved.py and the branch deleted it.
@@ -1569,7 +1601,7 @@ def real_repository_cases(root):
              % main_renamed_label,
              "DELETED ON origin/main: d, by %s" % deleting_label,
              "ALSO CONFLICTS: moved-on-main.py",
-             DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
+             DO_NOT_MERGE_DELETED, CARRY_WHAT_MAIN_LACKS, CLOSE_NAMING_DELETION,
              REAPPLY_ALSO_CONFLICTS,
          ])
 
@@ -1584,7 +1616,7 @@ def real_repository_cases(root):
              % directory_rename_label,
              "DELETED ON origin/main: d, by %s" % deleting_label,
              "ALSO CONFLICTS: dir2/new",
-             DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
+             DO_NOT_MERGE_DELETED, CARRY_WHAT_MAIN_LACKS, CLOSE_NAMING_DELETION,
              REAPPLY_ALSO_CONFLICTS,
          ])
 
@@ -1633,7 +1665,7 @@ def real_repository_cases(root):
                           "deleted-beside-addition topic"),
              "DELETED ON origin/main: doomed-notes.txt, by %s"
              % deleted_beside_addition_label,
-             DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
+             DO_NOT_MERGE_DELETED, CARRY_WHAT_MAIN_LACKS, CLOSE_NAMING_DELETION,
          ])
 
     # Both kinds at once: the deletion decides, and the ordinary conflict is
@@ -1647,7 +1679,7 @@ def real_repository_cases(root):
              "origin/main deleted 1 file(s) the branch changes." % mixed_label,
              "DELETED ON origin/main: d, by %s" % deleting_label,
              "ALSO CONFLICTS: f",
-             DO_NOT_MERGE_DELETED, CLOSE_NAMING_DELETION, CARRY_WHAT_MAIN_LACKS,
+             DO_NOT_MERGE_DELETED, CARRY_WHAT_MAIN_LACKS, CLOSE_NAMING_DELETION,
              REAPPLY_ALSO_CONFLICTS,
          ])
 
@@ -1672,8 +1704,8 @@ def real_repository_cases(root):
     case("real: unrelated histories are UNANSWERED, with no conflict "
          "instructions",
          bool(lines) and lines[0].startswith("UNANSWERED: git merge-tree exited ")
-         and "Do not act on this result: open no new pull request and close "
-         "none." in lines
+         and "Do not act on this result until a rerun prints a VERDICT line: "
+         "open no new pull request and close none." in lines
          and not any("cut a new topic branch" in line for line in lines))
 
     # A local branch is not moved by fetching origin: refused while fetching,
