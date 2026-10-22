@@ -99,8 +99,8 @@ CLOSING_INSTRUCTION = "Once the merge is committed, push again."
 TELL_USER_LINE = ("Tell the user this whole message, including any error printed "
                   "just above it: the next push on this machine may go unchecked "
                   "the same way.")
-RERUN_VERDICT_LINE = ("If that run also prints no VERDICT line, tell the user this "
-                      "whole message and what that run printed.")
+RERUN_VERDICT_LINE = ("If the hand conflict check also prints no VERDICT line, tell the user "
+                      "this whole message and what that check printed.")
 NO_BRANCH_CHECKED = ("so this push goes ahead with none of its branches checked for "
                      "conflicts with origin/main: %s.")
 SHORT_COMMIT_LENGTH = 12
@@ -924,10 +924,11 @@ def run_push_cases(scratch):
         else:
             check("%s: and says why it did not check" % label,
                   expected_text in outcome.stderr, outcome.describe())
-            check("%s: and says the revert check did not run either, with its hand check"
-                  % label,
-                  revert_check_not_run_lines("conflicting", failing.head("conflicting"))
-                  in outcome.stderr, outcome.describe())
+            check("%s: and says once that the revert check did not run either, with when "
+                  "to run it" % label,
+                  outcome.stderr.count(revert_check_not_run_lines(
+                      "conflicting", failing.head("conflicting"))) == 1,
+                  outcome.describe())
         return outcome
 
     missing = make_layout(scratch, "layout-check-missing", conflict_check=None)
@@ -940,11 +941,15 @@ def run_push_cases(scratch):
           "branch-conflict-check.py is missing, "
           + NO_BRANCH_CHECKED % branch_entry("conflicting", conflicting_commit)
           in outcome.stderr, outcome.describe())
-    check("check missing: and gives the hand check, says when to run the revert check, and "
-          "then tells the user",
-          "\n".join([hand_check_line("conflicting", conflicting_commit),
-                     *no_branch_revert_lines([("conflicting", conflicting_commit)]),
-                     TELL_USER_LINE]) in outcome.stderr, outcome.describe())
+    lines = outcome.stderr.splitlines()
+    hand = hand_check_line("conflicting", conflicting_commit)
+    check("check missing: and gives the hand check, says once when to run the revert check, "
+          "and then tells the user",
+          lines.count(hand) == 1
+          and lines[lines.index(hand):lines.index(hand) + 4]
+          == [hand, *no_branch_revert_lines([("conflicting", conflicting_commit)]),
+              TELL_USER_LINE]
+          and outcome.stderr.count("files set back") == 2, outcome.describe())
 
     def gave_no_verdict(label, outcome, reason):
         lines = outcome.stderr.splitlines()
@@ -955,12 +960,16 @@ def run_push_cases(scratch):
         check("%s: says which branch went unchecked and why" % label,
               index is not None, outcome.describe())
         if index is not None:
-            check("%s: then the hand check and the line telling the user" % label,
-                  len(lines) > index + 2
+            commit = lines[index + 1].rsplit(" ", 1)[-1] if len(lines) > index + 1 else ""
+            check("%s: then the hand check, when to run the revert check, and the line "
+                  "telling the user" % label,
+                  len(lines) > index + 4
                   and lines[index + 1].startswith(
                       "Check conflicting by hand from your worktree: python3 "
                       "scripts/branch-conflict-check.py --head ")
-                  and lines[index + 2] == TELL_USER_LINE,
+                  and lines[index + 2:index + 4]
+                  == revert_check_not_run_lines("conflicting", commit).splitlines()
+                  and lines[index + 4] == TELL_USER_LINE,
                   outcome.describe())
 
     outcome = failing_check_case("check-crashes", FAKE_CHECK_CRASHES,
@@ -979,9 +988,13 @@ def run_push_cases(scratch):
     follow = next((i for i, line in enumerate(no_answer_lines) if line.startswith(
         "Follow the report, then check conflicting again by hand from your "
         "worktree: python3 scripts/branch-conflict-check.py --head ")), None)
-    check("check-no-answer: and ends with the rerun and when to tell the user",
+    check("check-no-answer: and ends with the rerun, when to run the revert check, and when "
+          "to tell the user",
           follow is not None
-          and no_answer_lines[follow + 1:follow + 2] == [RERUN_VERDICT_LINE],
+          and no_answer_lines[follow + 1:follow + 4]
+          == [*revert_check_not_run_lines(
+              "conflicting", no_answer_lines[follow].rsplit(" ", 1)[-1]).splitlines(),
+              RERUN_VERDICT_LINE],
           outcome.describe())
     outcome = failing_check_case("check-unexpected-status", FAKE_CHECK_UNEXPECTED_STATUS,
                                  "it exited 7")
@@ -999,9 +1012,10 @@ def run_push_cases(scratch):
             "origin/main, because scripts/branch-conflict-check.py had not finished "
             "when the 1-second time budget ran out, and was stopped.",
             budget=HANGING_CHECK_BUDGET_SECONDS)
-        check("%s: and says to check by hand, telling the user only if that fails too"
-              % label,
-              ("\n" + RERUN_VERDICT_LINE + "\n") in ("\n" + outcome.stderr)
+        check("%s: and says to check by hand, when to run the revert check, and to tell "
+              "the user only if the hand check fails too" % label,
+              ("\n" + revert_check_not_run_lines("conflicting", hand_checked_commit(outcome.stderr))
+               + "\n" + RERUN_VERDICT_LINE + "\n") in ("\n" + outcome.stderr)
               and TELL_USER_LINE not in outcome.stderr,
               outcome.describe())
         check("%s: and the push is not held for long" % label,
@@ -1810,14 +1824,21 @@ REVERT_NOT_CHECKED = ("pre-push: branch %s was not checked for files set back to
                       "that origin/main has replaced, because %s; this push goes ahead.")
 
 
+def hand_checked_commit(stderr):
+    """The commit named by the first hand conflict check line in a push's stderr."""
+    return next((line.rsplit(" ", 1)[-1] for line in stderr.splitlines()
+                 if " by hand from your worktree: python3 scripts/branch-conflict-check.py "
+                 in line), "")
+
+
 def revert_check_not_run_lines(branch, commit):
-    """The two lines that say a branch never reached the revert check, and how to run it."""
-    return ("pre-push: branch %s was not checked for files set back to a version that "
-            "origin/main has replaced either, because that check runs only on a branch the "
-            "conflict check finds clean.\n"
-            "Check it by hand from your worktree, after `git fetch origin`: python3 "
-            "scripts/branch-reverts-a-file-to-an-older-main-version-check.py --head %s"
-            % (branch, commit[:SHORT_COMMIT_LENGTH]))
+    """The two lines that say a branch never reached the revert check, and when to run it."""
+    return ("Nor was %s checked for files set back to a version that origin/main has "
+            "replaced, because that check runs only on a branch the conflict check finds "
+            "clean.\n"
+            "Once the hand conflict check of %s prints VERDICT: CLEAN, check it for files set "
+            "back too: python3 scripts/branch-reverts-a-file-to-an-older-main-version-check.py "
+            "--head %s" % (branch, branch, commit[:SHORT_COMMIT_LENGTH]))
 
 
 def no_branch_revert_lines(branches):

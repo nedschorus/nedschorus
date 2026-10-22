@@ -46,6 +46,10 @@ SHORT_COMMIT_LENGTH = 12
 HAND_CHECK_COMMAND = "python3 scripts/%s --head %%s" % CONFLICT_CHECK_FILE_NAME
 TELL_USER_LINE = ("Tell the user this whole message, including any error printed just "
                   "above it: the next push on this machine may go unchecked the same way.")
+REVERT_AFTER_HAND_CONFLICT_CHECK_LINE = ("Once the hand conflict check of %s prints VERDICT: "
+                                         "CLEAN, check it for files set back too: %s")
+RERUN_VERDICT_LINE = ("If the hand conflict check also prints no VERDICT line, tell the user "
+                      "this whole message and what that check printed.")
 
 
 def branches_to_check(pushed_refs_text):
@@ -177,12 +181,17 @@ def hand_check_line(branch, object_id):
         branch, HAND_CHECK_COMMAND % short_commit(object_id))
 
 
+def revert_after_hand_conflict_check_line(branch, object_id):
+    return REVERT_AFTER_HAND_CONFLICT_CHECK_LINE % (
+        branch, REVERT_HAND_CHECK_COMMAND % short_commit(object_id))
+
+
 def say_revert_check_not_run(stream, branch, object_id):
-    say(stream, MESSAGE_PREFIX + "branch %s was not checked for files set back to a version "
-        "that %s has replaced either, because that check runs only on a branch the "
-        "conflict check finds clean." % (branch, BASE_NAME_FOR_MESSAGES))
-    say(stream, "Check it by hand from your worktree, after `git fetch %s`: %s"
-        % (CHECKED_REMOTE_NAME, REVERT_HAND_CHECK_COMMAND % short_commit(object_id)))
+    """Said before any line telling the agent to tell the user, so that line ends the message."""
+    say(stream, "Nor was %s checked for files set back to a version that %s has replaced, "
+        "because that check runs only on a branch the conflict check finds clean."
+        % (branch, BASE_NAME_FOR_MESSAGES))
+    say(stream, revert_after_hand_conflict_check_line(branch, object_id))
 
 
 def unchecked_lines(branches):
@@ -201,8 +210,7 @@ def say_no_branch_checked(stream, cause, branches):
         "replaced, because that check runs only on a branch the conflict check finds clean."
         % BASE_NAME_FOR_MESSAGES)
     for branch, object_id in branches:
-        say(stream, "Once the hand conflict check of %s prints VERDICT: CLEAN, check it for files set "
-            "back too: %s" % (branch, REVERT_HAND_CHECK_COMMAND % short_commit(object_id)))
+        say(stream, revert_after_hand_conflict_check_line(branch, object_id))
     say(stream, TELL_USER_LINE)
 
 
@@ -263,24 +271,23 @@ def main(argv, pushed_refs_text, stderr, environment):
                 say(stderr, line)
             say(stderr, "Follow the report, then check %s again by hand from your "
                 "worktree: %s" % (branch, HAND_CHECK_COMMAND % short_commit(local_object_id)))
-            say(stderr, "If that run also prints no VERDICT line, tell the user this "
-                "whole message and what that run printed.")
+            say_revert_check_not_run(stderr, branch, local_object_id)
+            say(stderr, RERUN_VERDICT_LINE)
         elif result.kind == "timed out":
             say(stderr, MESSAGE_PREFIX + "branch %s was not checked for conflicts with "
                 "%s, because scripts/%s had not finished when the %g-second time budget "
                 "ran out, and was stopped."
                 % (branch, BASE_NAME_FOR_MESSAGES, CONFLICT_CHECK_FILE_NAME, budget))
             say(stderr, hand_check_line(branch, local_object_id))
-            say(stderr, "If that run also prints no VERDICT line, tell the user this "
-                "whole message and what that run printed.")
+            say_revert_check_not_run(stderr, branch, local_object_id)
+            say(stderr, RERUN_VERDICT_LINE)
         elif result.kind == "no verdict":
             say(stderr, MESSAGE_PREFIX + "branch %s was not checked for conflicts with "
                 "%s, because scripts/%s gave no verdict: %s."
                 % (branch, BASE_NAME_FOR_MESSAGES, CONFLICT_CHECK_FILE_NAME, result.reason))
             say(stderr, hand_check_line(branch, local_object_id))
-            say(stderr, TELL_USER_LINE)
-        if result.kind not in ("conflict", "clean"):
             say_revert_check_not_run(stderr, branch, local_object_id)
+            say(stderr, TELL_USER_LINE)
 
     reverts = check_reverts(clean_branches, deadline, budget, stderr)
     if not conflicts and not reverts:
