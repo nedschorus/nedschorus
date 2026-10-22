@@ -165,6 +165,9 @@ HELPER_PRINTER_FORMS_NOT_RECOGNIZED = (
     ("a string after a starred argument", SAY + 'say(*streams, "starred text")\n'),
     ("a string passed to a parameter that hides a helper printer's name",
      SAY + 'def run(say=None):\n    say(sys.stderr, "hidden text")\n'),
+    ("a string passed to a function whose parameter hides a helper printer's name",
+     'def say(text):\n    print(text)\ndef route(say, payload):\n    say(payload)\n'
+     'route(lambda p: None, {"key": "value"})\n'),
     ("a print keyword that names where to print, not what",
      'def show(text, out):\n    print(text, file=out)\nshow(None, out="file text")\n'),
 )

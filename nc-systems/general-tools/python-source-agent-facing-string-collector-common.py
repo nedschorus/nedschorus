@@ -13,16 +13,19 @@ them followed by S; the value, in a dict literal, of one of
 AGENT_FACING_HOOK_OUTPUT_KEYS, the keys through which a Claude Code hook's JSON
 output reaches the agent, when that value is a string, an f-string or a name
 assigned a string once at module level; and the module docstring of a file
-that mentions __doc__, which argparse prints for --help. A message built with + is one message,
+whose source holds the text __doc__ anywhere, comments and strings included,
+since argparse prints __doc__ for --help. A message built with + is one message,
 its literal pieces joined and each other operand shown as {source}; an f-string
 field in the chain keeps its conversion and format spec, {x!r} and {x:.1f}, as ast.unparse writes
 the field of a standalone f-string. Each entry also holds literal_text, the message's literal
 pieces alone, outside every {...} placeholder. A message held in a
 local variable, or built any other way, is not found. Nor is one passed to a
 helper printer that is a method, is defined in another module or more than
-once, is called under another name, sits after a *starred argument, or reaches
-the printed text only through a call, such as json.dumps(payload); and a helper
-printer's name is not followed where an enclosing function's parameter hides it. "systemMessage" is not
+once, or is called under another name; nor one that comes after a *starred
+argument in the call; nor one whose parameter the helper prints only through a
+call, such as json.dumps(payload); nor one passed where an enclosing function's
+parameter hides the helper printer's name; nor one that fills a helper's
+*args or **kwargs, as in warn("text") for def warn(*parts): print(*parts). "systemMessage" is not
 among the keys: Claude Code shows that text to the user, not to the agent.
 
 A test file's strings are not agent-facing-messages: a test's copy of an
@@ -186,10 +189,13 @@ def helper_printers_in_tree(tree):
             positional = [argument.arg for argument in
                           [*function.args.posonlyargs, *function.args.args]]
             parameters = function_parameter_names(function)
+            # A parameter named like a helper printer hides it inside this function.
+            visible_helper_printers = {name: entry for name, entry in helper_printers.items()
+                                       if name not in parameters}
             printed = set()
             for node in ast.walk(function):
                 if isinstance(node, ast.Call):
-                    for argument in printed_arguments(node, helper_printers, parameters):
+                    for argument in printed_arguments(node, visible_helper_printers, parameters):
                         printed.update(name for name in names_outside_calls(argument)
                                        if name in parameters)
             if not printed:
