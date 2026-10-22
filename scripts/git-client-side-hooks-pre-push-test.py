@@ -692,7 +692,7 @@ def run_unit_cases():
               "<branch name>",
               "Nor was any branch checked for files set back to a version that origin/main "
               "has replaced. For each branch this push sends to origin, other than main, "
-              "once that hand check prints VERDICT: CLEAN, also run: python3 "
+              "once that conflict check prints VERDICT: CLEAN, also run: python3 "
               "scripts/branch-reverts-a-file-to-an-older-main-version-check.py "
               "--head <branch name>",
               TELL_USER_LINE],
@@ -1825,7 +1825,7 @@ def no_branch_revert_lines(branches):
     hand conflict check lines and before TELL_USER_LINE."""
     return ["Nor was any of them checked for files set back to a version that origin/main has "
             "replaced, because that check runs only on a branch the conflict check finds clean.",
-            *("Once the hand check of %s prints VERDICT: CLEAN, check it for files set back "
+            *("Once the hand conflict check of %s prints VERDICT: CLEAN, check it for files set back "
               "too: python3 scripts/branch-reverts-a-file-to-an-older-main-version-check.py "
               "--head %s" % (branch, commit[:SHORT_COMMIT_LENGTH])
               for branch, commit in branches)]

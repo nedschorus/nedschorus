@@ -85,7 +85,7 @@ if [ "$remote_name" = "$checked_remote" ]; then
         fi
         branch_list="$branch_list$branch ($commit)"
         unchecked_lines="${unchecked_lines}Check $branch by hand from your worktree: python3 scripts/branch-conflict-check.py --head $commit$newline"
-        revert_lines="${revert_lines}Once the hand check of $branch prints VERDICT: CLEAN, check it for files set back too: python3 scripts/branch-reverts-a-file-to-an-older-main-version-check.py --head $commit$newline"
+        revert_lines="${revert_lines}Once the hand conflict check of $branch prints VERDICT: CLEAN, check it for files set back too: python3 scripts/branch-reverts-a-file-to-an-older-main-version-check.py --head $commit$newline"
     done
     set +f
     IFS=$old_ifs

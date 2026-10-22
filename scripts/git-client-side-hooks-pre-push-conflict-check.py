@@ -201,7 +201,7 @@ def say_no_branch_checked(stream, cause, branches):
         "replaced, because that check runs only on a branch the conflict check finds clean."
         % BASE_NAME_FOR_MESSAGES)
     for branch, object_id in branches:
-        say(stream, "Once the hand check of %s prints VERDICT: CLEAN, check it for files set "
+        say(stream, "Once the hand conflict check of %s prints VERDICT: CLEAN, check it for files set "
             "back too: %s" % (branch, REVERT_HAND_CHECK_COMMAND % short_commit(object_id)))
     say(stream, TELL_USER_LINE)
 
@@ -213,7 +213,7 @@ def say_error_before_branches_read(stream, error_text):
     say(stream, "For each branch this push sends to %s, other than main, run from your "
         "worktree: %s" % (CHECKED_REMOTE_NAME, HAND_CHECK_COMMAND % "<branch name>"))
     say(stream, "Nor was any branch checked for files set back to a version that %s has "
-        "replaced. For each branch this push sends to %s, other than main, once that hand "
+        "replaced. For each branch this push sends to %s, other than main, once that conflict "
         "check prints VERDICT: CLEAN, also run: %s"
         % (BASE_NAME_FOR_MESSAGES, CHECKED_REMOTE_NAME,
            REVERT_HAND_CHECK_COMMAND % "<branch name>"))
