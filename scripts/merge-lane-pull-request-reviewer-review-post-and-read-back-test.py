@@ -9,7 +9,8 @@ review id 42, and answers the read-back with the event's state and the posted
 commit unless FAKE_GH_READ_BACK_STATE or FAKE_GH_READ_BACK_COMMIT replaces
 one. FAKE_GH_POST_REPLY and FAKE_GH_READ_BACK_REPLY replace the whole reply
 to the post or the read-back. FAKE_GH_FAILS names the call that fails:
-author, post or read-back.
+author, post or read-back. FAKE_GH_KILLED names the call whose gh prints its
+usual reply and is then killed by a signal.
 
 Run: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back-test.py
 """
@@ -26,7 +27,7 @@ PROGRAM = Path(__file__).with_name("merge-lane-pull-request-reviewer-review-post
 HEAD = "0123456789abcdef0123456789abcdef01234567"
 TOKEN = "stand-in-mac-claude-token-value"
 FAKE_GH = """#!/usr/bin/env python3
-import json, os, sys
+import json, os, signal, sys
 from pathlib import Path
 state = Path(os.environ["FAKE_GH_STATE"])
 arguments = sys.argv[1:]
@@ -52,6 +53,9 @@ else:
     print(json.dumps({"id": 42,
                       "state": os.environ.get("FAKE_GH_READ_BACK_STATE", states[posted["event"]]),
                       "commit_id": os.environ.get("FAKE_GH_READ_BACK_COMMIT", posted["commit_id"])}))
+if os.environ.get("FAKE_GH_KILLED") == call:
+    sys.stdout.flush()
+    os.kill(os.getpid(), signal.SIGTERM)
 """
 
 failures = []
@@ -74,7 +78,8 @@ class Run:
                        f"\ncalls: {calls}")
 
 
-def run_program(scratch, review_text, token=TOKEN, **fake_gh_environment):
+def run_program(scratch, review_text, token=TOKEN, arguments=("--pull-request", "7", "--head-commit", HEAD),
+                **fake_gh_environment):
     case = Path(tempfile.mkdtemp(dir=scratch))
     home, state, fake_gh_directory = case / "home", case / "state", case / "fake-gh"
     for directory in (home, state, fake_gh_directory):
@@ -88,8 +93,7 @@ def run_program(scratch, review_text, token=TOKEN, **fake_gh_environment):
     if review_text is not None:
         review_file.write_text(review_text)
     completed = subprocess.run(
-        [sys.executable, str(PROGRAM), "--pull-request", "7", "--head-commit", HEAD,
-         str(review_file)],
+        [sys.executable, str(PROGRAM), *arguments, str(review_file)],
         capture_output=True, text=True,
         env={**os.environ, "HOME": str(home), "FAKE_GH_STATE": str(state),
              "PATH": f"{fake_gh_directory}{os.pathsep}{os.environ.get('PATH', '')}",
@@ -139,6 +143,11 @@ def main():
               and result.posted["body"] == "REQUEST_CHANGES\n\nThe review body."
               and result.posted["comments"] == [], result.detail)
 
+        result = run_program(scratch, review("#approve"), FAKE_GH_AUTHOR="ubuntu-claude")
+        check("an approval on a pull request opened by an account whose name sorts after "
+              "ned-review-merge is posted with event COMMENT", result.code == 0
+              and result.posted is not None and result.posted["event"] == "COMMENT", result.detail)
+
         result = run_program(scratch, review("#request_changes"), FAKE_GH_AUTHOR="ned-review-merge")
         check("a request for changes on a pull request ned-review-merge opened is posted with "
               "event REQUEST_CHANGES", result.code == 0 and result.posted is not None
@@ -154,6 +163,17 @@ def main():
         check("a read-back commit other than the head commit exits 2 and names the commit",
               result.code == 2 and f"commit_id is '{'f' * 40}', not '{HEAD}'" in result.stderr,
               result.detail)
+
+        result = run_program(scratch, review("#approve"), FAKE_GH_READ_BACK_COMMIT="0" * 40)
+        check("a read-back commit that sorts before the head commit exits 2 and names the commit",
+              result.code == 2 and f"commit_id is '{'0' * 40}', not '{HEAD}'" in result.stderr,
+              result.detail)
+
+        for missing, arguments in (("--pull-request", ("--head-commit", HEAD)),
+                                   ("--head-commit", ("--pull-request", "7"))):
+            result = run_program(scratch, review("#approve"), arguments=arguments)
+            check(f"a command without {missing} exits 2, names the option, and calls no gh",
+                  result.code == 2 and missing in result.stderr and not result.calls, result.detail)
 
         result = run_program(scratch, None)
         check("a missing review file exits 2 before any gh call",
@@ -195,6 +215,11 @@ def main():
         check("a failed read-back exits 2, says review 42 was posted, and names gh's error",
               result.code == 2 and "review 42 was posted, but reading it back failed: "
               "gh exited 1: gh: HTTP 502" in result.stderr, result.detail)
+        result = run_program(scratch, review("#approve"), FAKE_GH_KILLED="author")
+        check("an author lookup whose gh is killed by a signal after printing its reply exits 2 "
+              "and posts nothing", result.code == 2
+              and "review not posted: reading the pull request's author failed: gh exited -15"
+              in result.stderr and result.posted is None, result.detail)
         result = run_program(scratch, review("#approve"), FAKE_GH_POST_REPLY="{}")
         check("a post reply without a review id exits 2 and says the review may be posted",
               result.code == 2 and "review may or may not be posted: posting the review failed: "
