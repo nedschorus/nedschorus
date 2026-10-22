@@ -158,15 +158,6 @@ make it crossable, and they only work together.
     and a password prompt with no terminal behind it can only hang until
     something kills it.
 
-WHEN A HUMAN REALLY IS NEEDED, THIS MAC SAYS SO OUT LOUD. On 2026-08-31 this
-script reported that Time Machine "needs your password"; the agent reading that
-relayed it four paragraphs into a long message, and the user never saw it. The
-channel worked exactly as built and still failed him. So a run that hits the
-wall also speaks one short sentence through macOS `say`, which is the one
-channel here that does not depend on an agent choosing to pass anything on. It
-is gated hard so that it stays rare: speech_line_when_root_password_is_needed
-holds the four conditions and what each of them is protecting against.
-
 NO HARDCODED DEVICE NODES. `/dev/disk5s2` was the backup volume on 2026-08-23;
 device numbers reshuffle across replugs. Everything resolves at runtime from the
 destination name that `tmutil destinationinfo` reports. The local-snapshot
@@ -413,8 +404,6 @@ DEFAULT_TIME_MACHINE_SNAPSHOT_LIMIT = 4
 TIME_MACHINE_READONLY_MOUNT_POINT = "/private/tmp/nedschorus-backup-readonly-mount"
 
 TIME_MACHINE_SNAPSHOT_NAME_PREFIX = "com.apple.TimeMachine."
-
-SPOKEN_TOOL_NAME = "find deleted path across backups"
 
 # The Data volume holds user files; snapshots of / hold only system updates.
 MAC_DATA_VOLUME = "/System/Volumes/Data"
@@ -2083,7 +2072,7 @@ def search_time_machine(wanted, newest_date_held=None, snapshot_limit=DEFAULT_TI
 
 
 def _time_machine_root_wall(snapshots, candidates, dated_by_git, device, refusal, unsearched):
-    """Return an UNAVAILABLE report marked as requiring a root credential."""
+    """Return the UNAVAILABLE report for a mount that sudo refused for want of a password."""
     # Only the mount's sudo refusal proves this; sudo -n true does not test the mount's NOPASSWD rule.
     lines = [
         "%d snapshots present, %s .. %s — enumerated fine, but the mount was refused: %s"
@@ -2097,11 +2086,8 @@ def _time_machine_root_wall(snapshots, candidates, dated_by_git, device, refusal
         lines.append("could not search %s — %s" % (snapshot, reason))
     lines.append(_candidate_line(candidates[0], dated_by_git))
     lines.append(_alternative_line(snapshots, candidates[0], dated_by_git))
-    wall = SurfaceReport("time machine", UNAVAILABLE, lines,
+    return SurfaceReport("time machine", UNAVAILABLE, lines,
                          _time_machine_manual_recovery(candidates[0], device))
-    wall.root_credential_needed = True
-    wall.snapshots_enumerated = list(snapshots)
-    return wall
 
 
 def _is_sudo_non_interactive_refusal(stderr):
@@ -2362,71 +2348,6 @@ def rerun_command(arguments):
     return shlex.join(["python3", os.path.abspath(__file__)] + list(arguments))
 
 
-def announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner, rerun):
-    """Speak and return the password request, or return None."""
-    # Wait for speech to finish so script exit does not orphan the announcement.
-    try:
-        sentence = speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner)
-    except _GitCommandFailed as failure:
-        print("%s did not speak its announcement, through the macOS say command, that a Time Machine backup "
-              "needs your sudo password; the search ran to the end, and the Time Machine lines above still give "
-              "the mount command to run by hand. %s makes that announcement only when it can show that a Time "
-              "Machine snapshot predates the file's deletion, and git could not give the date %s was deleted, "
-              "so %s could not check.\n"
-              "git's failure: %s\n%s"
-              % (THIS_SCRIPT_NAME, THIS_SCRIPT_NAME, wanted, THIS_SCRIPT_NAME, failure,
-                 git_failure_next_steps(rerun)),
-              file=sys.stderr, flush=True)
-        return None
-    if sentence is None:
-        return None
-    runner(["say", sentence])
-    return sentence
-
-
-def speech_line_when_root_password_is_needed(wanted, reports, repo, skip, runner):
-    """Return a password request only when mounting a backup can help recovery."""
-    # No deletion timestamp means no proof a backup predates deletion; never-committed paths stay silent.
-    wall = next((r for r in reports if getattr(r, "root_credential_needed", False)), None)
-    if wall is None:
-        return None
-    if any(r.status == FOUND for r in reports):
-        return None
-    stripped = _strip_dot_slash(wanted)
-    if "/" not in stripped:
-        return None
-    if "git" in skip:
-        # Do not query git when the caller skipped that surface.
-        return None
-    deleted_at = _git_deletion_timestamp(stripped, repo, runner)
-    if deleted_at is None:
-        return None
-    stamps = [_snapshot_timestamp(s) for s in getattr(wall, "snapshots_enumerated", [])]
-    if not any(stamp is not None and stamp <= deleted_at for stamp in stamps):
-        return None
-    return "%s needs your password to search Time Machine for %s" % (
-        SPOKEN_TOOL_NAME, os.path.basename(stripped))
-
-
-def _git_deletion_timestamp(wanted, repo, runner):
-    """Return the deletion commit's local timestamp as YYYYMMDDhhmmss, or None."""
-    # Snapshot names use local time; query from the repo root because wanted is repo-relative.
-    top_level = _git_top_level(repo, runner)
-    if top_level is None:
-        return None
-    code, out, stderr = runner(["git", "-C", top_level, "log", "--all", "--full-history", "-1",
-                                "--diff-filter=D", "--date=format-local:%Y%m%d%H%M%S",
-                                "--format=%cd", "--", wanted])
-    if code != 0:
-        raise _GitCommandFailed("git log --diff-filter=D in %s exited %s — %s"
-                                % (top_level, code, stderr.strip() or "no error text"))
-    if not out.strip():
-        return None
-    stamp = out.strip().splitlines()[0].strip()
-    return stamp if len(stamp) == 14 and stamp.isdigit() else None
-
-
-
 def _combine(statuses):
     """Return FOUND for any hit, otherwise UNAVAILABLE for any unsearched part."""
     if FOUND in statuses:
@@ -2438,7 +2359,7 @@ def _combine(statuses):
 
 def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, search_roots, skip=(),
                  runner=run_command, prompt_for_root=False, log_store_root=DEFAULT_LOG_STORE_ROOT,
-                 on_surface_done=None, on_ned_box=None, *, rerun):
+                 on_surface_done=None, on_ned_box=None):
     if on_ned_box is None:
         on_ned_box = running_on_ned_box()
     reports = []
@@ -2474,8 +2395,6 @@ def build_report(wanted, repo, transcripts_dir, box_ssh_host, snapshot_root, sea
     if "timemachine" not in skip:
         finished(search_time_machine(wanted, newest_date_held, runner=runner,
                                      prompt_for_root=prompt_for_root))
-    # Assemble the speech decision here so callers that bypass main receive it too.
-    announce_root_password_wall_by_speech(wanted, reports, repo, skip, runner, rerun)
     return reports
 
 
@@ -2617,7 +2536,6 @@ def main(argv=None, runner=run_command):
         prompt_for_root=args.prompt_for_root,
         log_store_root=args.log_store_root,
         on_surface_done=print_surface_as_it_finishes,
-        rerun=rerun,
     )
     print(render_summary(reports), flush=True)
     return exit_status(reports)
