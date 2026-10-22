@@ -181,8 +181,8 @@ def run_replay(head_ref, scratch, *extra, base_ref="HEAD", scratch_directory=Tru
 def run_replay_within(deadline_seconds, head_ref, scratch, *extra, base_ref="HEAD", pairs=FIXTURE_PAIRS):
     """run_replay() in a process of its own, stopped by this process after deadline_seconds.
 
-    The deadline is kept from outside: an exception that a signal handler raises inside the replay can land
-    while subprocess holds its wait lock, and the replay's cleanup then waits on that lock forever. On expiry
+    The deadline is kept from outside, so a replay that hangs, whatever hangs it, fails its case and does not
+    stop the suite. On expiry
     the replay gets SIGTERM, which makes it stop its steps and remove its checkouts, then SIGKILL if it is
     still running; the status returned is then None.
     """
@@ -203,6 +203,24 @@ def run_replay_within(deadline_seconds, head_ref, scratch, *extra, base_ref="HEA
             process.kill()
             out, err = process.communicate()
         return None, out, err + f"\nthe replay ran past this test's deadline of {deadline_seconds} s"
+
+
+def signal_in_popen_wait_lock_gap_script(signal_name, handler_name):
+    """Return the start of a script that loads the replay from its first argument, handles signal_name with the
+    replay's handler_name, and defines profiler, which, once sys.setprofile() installs it, delivers that signal
+    once, just after Popen._wait() acquires its lock and before its try, and records the delivery in fired."""
+    return (
+        "import importlib.util, os, signal, subprocess, sys\n"
+        "spec = importlib.util.spec_from_file_location('replay', sys.argv[1])\n"
+        "replay = importlib.util.module_from_spec(spec); spec.loader.exec_module(replay)\n"
+        f"signal.signal(signal.{signal_name}, replay.{handler_name})\n"
+        "fired = []\n"
+        "def profiler(frame, event, arg):\n"
+        "    if (event == 'c_return' and not fired and frame.f_code is subprocess.Popen._wait.__code__\n"
+        "            and getattr(arg, '__name__', '') == 'acquire'):\n"
+        "        fired.append(1)\n"
+        f"        signal.raise_signal(signal.{signal_name})\n"
+    )
 
 
 def stopped_by_sigterm(*_):
@@ -887,17 +905,7 @@ try:
     # SystemExit raised by the stop handler between Popen._wait()'s lock acquire and its try used to leave
     # the lock held, so the next wait() on that process blocked forever. The signal is delivered at exactly
     # that point, in a child process so a hang is a timeout and not a stuck test.
-    gap_script = (
-        "import importlib.util, os, signal, subprocess, sys\n"
-        "spec = importlib.util.spec_from_file_location('replay', sys.argv[1])\n"
-        "replay = importlib.util.module_from_spec(spec); spec.loader.exec_module(replay)\n"
-        "signal.signal(signal.SIGHUP, replay.raise_terminated)\n"
-        "fired = []\n"
-        "def profiler(frame, event, arg):\n"
-        "    if (event == 'c_return' and not fired and frame.f_code is subprocess.Popen._wait.__code__\n"
-        "            and getattr(arg, '__name__', '') == 'acquire'):\n"
-        "        fired.append(1)\n"
-        "        signal.raise_signal(signal.SIGHUP)\n"
+    gap_script = signal_in_popen_wait_lock_gap_script("SIGHUP", "raise_terminated") + (
         "replay.__file__ = sys.argv[2]\n"
         "sys.setprofile(profiler)\n"
         "try:\n"
@@ -924,6 +932,32 @@ try:
             subprocess.run(["pkill", "-f", str(gap_directory / "stand-in-step.py")])
         check(f"a stop signal landing inside subprocess's wait during the {gap_call} call does not hang: exit 2",
               gap_ok, gap_detail)
+
+    # The same gap for the per-pair timeout: raised there, PairTimedOut left the lock held, and the wait() in
+    # subprocess.run()'s exit blocked the reading forever. The real per-pair alarm is set past the case's
+    # deadline, so a TIMEOUT can only come from the timeout delivered in the gap and tried again.
+    pair_gap_script = signal_in_popen_wait_lock_gap_script("SIGALRM", "raise_pair_timed_out") + (
+        "import time\n"
+        "def stand_in_reading(guard, command, working_directory, search_file_directory):\n"
+        "    subprocess.run([sys.executable, '-c', 'pass'], timeout=600)\n"
+        "    time.sleep(1000)\n"
+        "replay.GUARDS['stand-in guard'] = stand_in_reading\n"
+        "replay.WORKER['timeout'] = 600\n"
+        "sys.setprofile(profiler)\n"
+        "readings = replay.guard_readings({'stand-in guard': None}, 'true', '/', '/')\n"
+        "sys.setprofile(None)\n"
+        "print(readings['stand-in guard'], 'signal delivered', bool(fired))\n"
+    )
+    try:
+        pair_gap = subprocess.run([sys.executable, "-c", pair_gap_script, str(SCRIPT_PATH)],
+                                  capture_output=True, text=True, timeout=30)
+        pair_gap_detail = f"exit {pair_gap.returncode}\n{pair_gap.stdout}{pair_gap.stderr}"
+        pair_gap_ok = pair_gap.returncode == 0 and "('TIMEOUT', None) signal delivered True" in pair_gap.stdout
+    except subprocess.TimeoutExpired:
+        pair_gap_ok = False
+        pair_gap_detail = "the reading was still waiting 30 s after the per-pair timeout landed in Popen._wait()"
+    check("a per-pair timeout landing inside subprocess's wait does not hang: the reading is a TIMEOUT",
+          pair_gap_ok, pair_gap_detail)
 
     step_deadline_as_written = replay.step_deadline_seconds
     replay.step_deadline_seconds = lambda pair_count, jobs, timeout: 10

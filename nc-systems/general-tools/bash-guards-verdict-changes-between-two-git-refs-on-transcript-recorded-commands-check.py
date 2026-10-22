@@ -156,7 +156,19 @@ class PairTimedOut(BaseException):
     """
 
 
-def raise_pair_timed_out(*_):
+# How soon a per-pair timeout that fell inside a subprocess call is tried again.
+PAIR_TIMEOUT_DEFERRED_SECONDS = 0.05
+
+
+def raise_pair_timed_out(_, frame):
+    # Raised inside subprocess's own code, such as between Popen._wait()'s lock acquire and its try, the
+    # timeout would leave the lock held, and the wait() that subprocess.run() or the sender's close() then
+    # makes would block forever. So while a subprocess call runs, the timeout is tried again shortly.
+    while frame is not None:
+        if frame.f_globals is vars(subprocess):
+            signal.setitimer(signal.ITIMER_REAL, PAIR_TIMEOUT_DEFERRED_SECONDS)
+            return
+        frame = frame.f_back
     raise PairTimedOut()
 
 
