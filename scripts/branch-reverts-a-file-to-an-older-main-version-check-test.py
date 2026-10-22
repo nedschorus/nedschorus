@@ -269,7 +269,10 @@ def run_cases(scratch):
           and "could not tell whether this branch sets a file back to a version main has "
           "replaced, because `git rev-parse --verify no-such-branch^{commit}` exited 128"
           in done.stderr
-          and done.stderr.rstrip().endswith("fix what git reports and run this check again."),
+          and done.stderr.rstrip().endswith(
+              "fix what git reports, then run this check again from your worktree: python3 "
+              "scripts/branch-reverts-a-file-to-an-older-main-version-check.py "
+              "--head no-such-branch --base main"),
           done.stdout + done.stderr)
 
     done = repository.run_check("--base", "main", path=str(scratch / "no-git-here"))

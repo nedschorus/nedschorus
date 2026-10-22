@@ -14,21 +14,24 @@ merge-base, so neither the conflict check nor a merge notices.
 For each file whose content the branch adds or changes against its merge-base
 with the base, the check looks at the base's first-parent commits that changed
 the file, by committer date, in the 30 days (WINDOW_DAYS) before the
-merge-base; a pull request merged into main counts as its merge commit, which
-is the commit `git revert -m 1` names. If the branch's copy of the file has the
-same blob ID as the copy one of those commits replaced, the branch undoes that
-commit for the file. Of the commits that match, the newest is the one reported.
-A file the branch deletes is not checked. A branch that means to undo the
+merge-base. A pull request merged into main counts as its merge commit: the
+report names the merge commit, not the pull request's own commits, and the
+merge commit's hash is the one to name, as `git revert -m 1 <merge>` does. If
+the branch's copy of the file has the same blob ID as the copy one of those
+commits replaced, the branch undoes that commit for the file. Of the commits
+that match, the newest is the one reported. A file the branch deletes is not
+checked. A branch that means to undo the
 reported commit names it, by at least its first 12 characters
 (SHORT_COMMIT_LENGTH), anywhere in a commit message between the merge-base and
 the branch, as `git revert` does; the check then accepts that file and looks no
 further back in its history.
 
-It does not fetch: run `git fetch origin` first, as
-scripts/git-client-side-hooks-pre-push-conflict-check.py does before it runs
-this. It does not see an undo older than the window, or an undo of part of a
-file, such as a branch that keeps main's new lines in one place and an old copy
-of them in another.
+It does not fetch: run `git fetch origin` first.
+scripts/git-client-side-hooks-pre-push-conflict-check.py runs this only on a
+branch that scripts/branch-conflict-check.py, which fetches origin first, has
+just found clean. It does not see an undo older than the window, or an undo
+of part of a file, such as a branch that keeps main's new lines in one place and
+an old copy of them in another.
 
 Exit 0 when no file is set back, printing a `VERDICT: CLEAN` line on stdout.
 Exit 1 when one is, printing on stdout a
@@ -190,7 +193,9 @@ def main(argv=None):
     except GitFailed as error:
         print("branch-reverts-a-file-to-an-older-main-version-check: could not tell "
               "whether this branch sets a file back to a version %s has replaced, because "
-              "%s; fix what git reports and run this check again." % (args.base, error),
+              "%s; fix what git reports, then run this check again from your worktree: "
+              "python3 scripts/branch-reverts-a-file-to-an-older-main-version-check.py "
+              "--head %s --base %s" % (args.base, error, args.head, args.base),
               file=sys.stderr)
         return EXIT_NO_ANSWER
     for line in lines:
