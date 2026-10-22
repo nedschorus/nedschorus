@@ -914,6 +914,10 @@ def run_push_cases(scratch):
         else:
             check("%s: and says why it did not check" % label,
                   expected_text in outcome.stderr, outcome.describe())
+            check("%s: and says the revert check did not run either, with its hand check"
+                  % label,
+                  revert_check_not_run_lines("conflicting", failing.head("conflicting"))
+                  in outcome.stderr, outcome.describe())
         return outcome
 
     missing = make_layout(scratch, "layout-check-missing", conflict_check=None)
@@ -929,6 +933,9 @@ def run_push_cases(scratch):
     check("check missing: and gives the hand check and tells the user",
           hand_check_line("conflicting", conflicting_commit) + "\n" + TELL_USER_LINE
           in outcome.stderr, outcome.describe())
+    check("check missing: and says the revert check did not run either, with its hand check",
+          revert_check_not_run_lines("conflicting", conflicting_commit) in outcome.stderr,
+          outcome.describe())
 
     def gave_no_verdict(label, outcome, reason):
         lines = outcome.stderr.splitlines()
@@ -1015,6 +1022,11 @@ def run_push_cases(scratch):
         index = lines.index(line)
         check("budget spent: followed by that branch's hand check, by its commit",
               lines[index + 1:index + 2] == [hand_check_line(branch, spent.head(branch))],
+              outcome.describe())
+        check("budget spent: then that the revert check did not run either, with its "
+              "hand check",
+              "\n".join(lines[index + 2:index + 4])
+              == revert_check_not_run_lines(branch, spent.head(branch)),
               outcome.describe())
 
     log = scratch / "check-hangs-with-child-fake-check-log.txt"
@@ -1787,6 +1799,16 @@ REVERT_NOT_CHECKED = ("pre-push: branch %s was not checked for files set back to
                       "that origin/main has replaced, because %s; this push goes ahead.")
 
 
+def revert_check_not_run_lines(branch, commit):
+    """The two lines that say a branch never reached the revert check, and how to run it."""
+    return ("pre-push: branch %s was not checked for files set back to a version that "
+            "origin/main has replaced either, because that check runs only on a branch the "
+            "conflict check finds clean.\n"
+            "Check it by hand from your worktree, after `git fetch origin`: python3 "
+            "scripts/branch-reverts-a-file-to-an-older-main-version-check.py --head %s"
+            % (branch, commit[:SHORT_COMMIT_LENGTH]))
+
+
 def revert_hand_check_line(commit):
     return ("Check it by hand from your worktree: python3 scripts/branch-reverts-a-file-to-an-"
             "older-main-version-check.py --head %s" % commit[:SHORT_COMMIT_LENGTH])
@@ -1827,7 +1849,7 @@ def run_revert_check_cases(scratch):
           repr(scenario.origin_ref("squashed")))
     check("the refusal names the branch and passes on the check's verdict, file and commit",
           REVERT_REFUSAL_HEADER % "squashed" in result.stderr
-          and "VERDICT: REVERTS-MAIN-CHANGE" in result.stderr
+          and "VERDICT: BRANCH-REVERTS-A-FILE-TO-AN-OLDER-MAIN-VERSION" in result.stderr
           and "shared.txt: back to its version before %s (Main side)"
           % scenario.head("origin/main")[:SHORT_COMMIT_LENGTH] in result.stderr,
           result.describe())
@@ -1844,7 +1866,8 @@ def run_revert_check_cases(scratch):
             ("cannot decide", FAKE_REVERT_CHECK_NO_ANSWER,
              "it could not decide: fake revert check: git failed"),
             ("exits 1 without a verdict line", FAKE_REVERT_CHECK_FOUND_WITHOUT_VERDICT,
-             "it exited 1 without a VERDICT: REVERTS-MAIN-CHANGE line")):
+             "it exited 1 without a VERDICT: BRANCH-REVERTS-A-FILE-TO-AN-OLDER-MAIN-VERSION "
+             "line")):
         hooks = make_layout(scratch, "layout-revert-" + label.replace(" ", "-"),
                             revert_check=revert_check)
         scenario = Scenario(scratch, "revert-" + label.replace(" ", "-"), hooks)
@@ -1868,6 +1891,17 @@ def run_revert_check_cases(scratch):
     check("and says it was stopped at the budget",
           REVERT_NOT_CHECKED % ("squashed", "it had not finished when the 3-second time "
                                 "budget ran out, and was stopped") in result.stderr,
+          result.describe())
+
+    hooks = make_layout(scratch, "layout-revert-conflict-no-answer",
+                        conflict_check=FAKE_CHECK_NO_ANSWER)
+    scenario = Scenario(scratch, "revert-conflict-no-answer", hooks)
+    commit = squash_by_soft_reset(scenario, "squashed")
+    result = scenario.push("origin", "squashed")
+    check("a squashed branch the conflict check cannot decide on goes ahead",
+          went_through(result), result.describe())
+    check("and the push says the revert check did not run on it, with the command to run it",
+          revert_check_not_run_lines("squashed", commit) in result.stderr,
           result.describe())
 
     hooks = make_layout(scratch, "layout-revert-after-conflict",

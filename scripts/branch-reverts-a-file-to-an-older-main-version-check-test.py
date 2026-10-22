@@ -127,7 +127,8 @@ def run_cases(scratch):
     check("a branch squashed by soft reset onto a newer main exits 1",
           done.returncode == 1, done.stdout + done.stderr)
     check("its first line is the verdict",
-          done.stdout.startswith("VERDICT: REVERTS-MAIN-CHANGE -- "), done.stdout)
+          done.stdout.startswith("VERDICT: BRANCH-REVERTS-A-FILE-TO-AN-OLDER-MAIN-VERSION -- "),
+          done.stdout)
     check("it names the file, which holds a space, and main's commit it undoes",
           "  shared file.txt: back to its version before %s (Main changes the file)"
           % replaced[:12] in done.stdout.splitlines(), done.stdout)
@@ -166,6 +167,53 @@ def run_cases(scratch):
     check("a file set back to a version main replaced twice is named once, with the newer commit",
           lines == ["  a.txt: back to its version before %s (Main changes a again)" % newest[:12]],
           done.stdout)
+
+    repository = Repository(scratch / "twice-named")
+    repository.commit({"a.txt": "old\n"}, "Base", 10)
+    repository.commit({"a.txt": "new\n"}, "Main changes a", 8)
+    repository.commit({"a.txt": "old\n"}, "Main changes a back", 7)
+    newest = repository.commit({"a.txt": "new\n"}, "Main changes a again", 6)
+    repository.git("switch", "--quiet", "-c", "work")
+    repository.git("revert", "--no-edit", newest)
+    done = repository.run_check("--base", "main")
+    check("a named undo of main's newest change is clean, though an older change "
+          "replaced the same version", done.returncode == 0, done.stdout + done.stderr)
+
+    repository = Repository(scratch / "merge-revert")
+    repository.commit({"a.txt": "old\n"}, "Base", 10)
+    repository.git("switch", "--quiet", "-c", "topic")
+    repository.commit({"a.txt": "new\n"}, "Topic changes a", 6)
+    repository.git("switch", "--quiet", "main")
+    repository.commit({"other.txt": "other\n"}, "Main moves on", 5)
+    repository.git("merge", "--quiet", "--no-ff", "-m", "Merge pull request from topic",
+                   "topic")
+    merge = repository.git("rev-parse", "HEAD")
+    repository.git("switch", "--quiet", "-c", "work")
+    repository.git("revert", "--no-edit", "-m", "1", merge)
+    done = repository.run_check("--base", "main")
+    check("a branch made with `git revert -m 1` of a merge on main is clean",
+          done.returncode == 0, done.stdout + done.stderr)
+    repository.git("switch", "--quiet", "-c", "squashed", "main~2")
+    repository.commit({"work.txt": "work\n"}, "Work", 0)
+    repository.git("reset", "--soft", "main")
+    repository.commit({}, "Squashed work", 0)
+    done = repository.run_check("--base", "main")
+    check("a squash that undoes a merged change names main's merge commit, as "
+          "`git revert -m 1` would",
+          done.returncode == 1
+          and "  a.txt: back to its version before %s (Merge pull request from topic)"
+          % merge[:12] in done.stdout.splitlines(), done.stdout + done.stderr)
+
+    repository = Repository(scratch / "mode-only")
+    repository.commit({"tool.sh": "old\n"}, "Base", 10)
+    repository.commit({"tool.sh": "new\n"}, "Main changes the tool", 8)
+    repository.commit({"tool.sh": "old\n"}, "Main changes the tool back", 7)
+    repository.git("switch", "--quiet", "-c", "work")
+    repository.git("update-index", "--chmod=+x", "tool.sh")
+    repository.commit({}, "Work makes the tool executable", 0)
+    done = repository.run_check("--base", "main")
+    check("a branch that only changes a file's mode is clean",
+          done.returncode == 0, done.stdout + done.stderr)
 
     repository = Repository(scratch / "git-revert")
     repository.commit({"a.txt": "old\n"}, "Base", 10)
@@ -218,13 +266,36 @@ def run_cases(scratch):
     done = repository.run_check("--head", "no-such-branch", "--base", "main")
     check("a head that is not a commit exits 2 with git's error and no verdict",
           done.returncode == 2 and done.stdout == ""
-          and "no verdict, because `git rev-parse --verify no-such-branch^{commit}` exited "
-          "128" in done.stderr, done.stdout + done.stderr)
+          and "could not tell whether this branch sets a file back to a version main has "
+          "replaced, because `git rev-parse --verify no-such-branch^{commit}` exited 128"
+          in done.stderr
+          and done.stderr.rstrip().endswith("fix what git reports and run this check again."),
+          done.stdout + done.stderr)
 
     done = repository.run_check("--base", "main", path=str(scratch / "no-git-here"))
     check("when git cannot be started, it exits 2 and says so",
           done.returncode == 2 and done.stdout == ""
           and "could not be started" in done.stderr, done.stdout + done.stderr)
+
+    repository = Repository(scratch / "subject-fails")
+    squashed_branch(repository)
+    wrapper_directory = scratch / "git-failing-on-subject"
+    wrapper_directory.mkdir()
+    wrapper = wrapper_directory / "git"
+    wrapper.write_text("#!/bin/sh\n"
+                       "for argument; do\n"
+                       "  [ \"$argument\" = \"--format=%%s\" ] && "
+                       "{ echo 'fatal: subject lookup failed' >&2; exit 128; }\n"
+                       "done\n"
+                       "exec %s \"$@\"\n" % shutil.which("git"))
+    wrapper.chmod(0o755)
+    done = repository.run_check("--base", "main",
+                                path="%s:%s" % (wrapper_directory, os.environ["PATH"]))
+    check("when git fails while the report reads a commit's subject, it exits 2 with "
+          "git's error and no verdict",
+          done.returncode == 2 and done.stdout == ""
+          and "because `git log -1 --format=%s" in done.stderr
+          and "subject lookup failed" in done.stderr, done.stdout + done.stderr)
 
 
 if __name__ == "__main__":

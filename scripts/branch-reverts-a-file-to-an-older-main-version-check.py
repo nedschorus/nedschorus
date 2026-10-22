@@ -1,28 +1,41 @@
 #!/usr/bin/env python3
 """Report the files a branch sets back to a version main has since replaced.
 
+Usage: branch-reverts-a-file-to-an-older-main-version-check.py [--head REF]
+[--base REF]. The branch is --head, HEAD by default; the base is --base,
+origin/main by default.
+
 A branch squashed with `git reset --soft origin/main` after main moved keeps
 its old index, so the squashed commit quietly undoes every change main made in
 between to a file the branch's old base had at another version. Git merges such
 a branch cleanly, because main has not changed the file since the new
 merge-base, so neither the conflict check nor a merge notices.
 
-For each file the branch changes against its merge-base with the base, the
-check looks at main's commits that changed the file in the WINDOW_DAYS before
-the merge-base. If the branch's version of the file, or its absence, is the
-version one of those commits replaced, the branch undoes that commit for the
-file. A branch that means to undo such a commit names it in one of its own
-commit messages, by at least its first SHORT_COMMIT_LENGTH characters, as
-`git revert` does, and the check then accepts that file.
+For each file whose content the branch adds or changes against its merge-base
+with the base, the check looks at the base's first-parent commits that changed
+the file, by committer date, in the 30 days (WINDOW_DAYS) before the
+merge-base; a pull request merged into main counts as its merge commit, which
+is the commit `git revert -m 1` names. If the branch's copy of the file has the
+same blob ID as the copy one of those commits replaced, the branch undoes that
+commit for the file. Of the commits that match, the newest is the one reported.
+A file the branch deletes is not checked. A branch that means to undo the
+reported commit names it, by at least its first 12 characters
+(SHORT_COMMIT_LENGTH), anywhere in a commit message between the merge-base and
+the branch, as `git revert` does; the check then accepts that file and looks no
+further back in its history.
 
-It does not fetch: run `git fetch origin` first, as the pre-push conflict
-check does before it runs this. It does not see an undo older than the window,
-or an undo of part of a file, such as a branch that keeps main's new lines in
-one place and an old copy of them in another.
+It does not fetch: run `git fetch origin` first, as
+scripts/git-client-side-hooks-pre-push-conflict-check.py does before it runs
+this. It does not see an undo older than the window, or an undo of part of a
+file, such as a branch that keeps main's new lines in one place and an old copy
+of them in another.
 
-Exit 0 when no file is set back, 1 when one is, with a
-`VERDICT: REVERTS-MAIN-CHANGE` line, and 2 when git fails, so no verdict can be
-given; the reason goes to stderr."""
+Exit 0 when no file is set back, printing a `VERDICT: CLEAN` line on stdout.
+Exit 1 when one is, printing on stdout a
+`VERDICT: BRANCH-REVERTS-A-FILE-TO-AN-OLDER-MAIN-VERSION` line, then one line
+per file naming the base's commit it undoes, then what to do. Exit 2 when git
+fails, so no verdict can be given, printing nothing on stdout and, on stderr,
+the failed git command and its error."""
 
 import argparse
 import re
@@ -40,7 +53,7 @@ EXIT_NOTHING_REVERTED = 0
 EXIT_REVERTED = 1
 EXIT_NO_ANSWER = 2
 
-REVERTS_VERDICT_PREFIX = "VERDICT: REVERTS-MAIN-CHANGE"
+REVERTS_VERDICT_PREFIX = "VERDICT: BRANCH-REVERTS-A-FILE-TO-AN-OLDER-MAIN-VERSION"
 HEX_WORD = re.compile(r"\b[0-9a-f]{%d,40}\b" % SHORT_COMMIT_LENGTH)
 
 
@@ -67,7 +80,7 @@ def resolve_commit(rev):
 
 
 def changed_paths(merge_base, head):
-    """Return {path: head's blob ID} for every path the branch adds or changes."""
+    """Return {path: head's blob ID} for every path whose content the branch adds or changes."""
     output = run_git(["diff", "--raw", "-z", "--no-abbrev", "--no-renames",
                       merge_base, head])
     fields = output.split("\0")
@@ -76,13 +89,14 @@ def changed_paths(merge_base, head):
         meta, path = fields[index].split(), fields[index + 1]
         # A deletion is left out: a branch that deletes or renames a file main
         # added recently would look like an undo of the commit that added it.
-        if meta[4] != "D":
+        # A mode-only change keeps main's current content, so it undoes nothing.
+        if meta[4] != "D" and meta[2] != meta[3]:
             states[path] = meta[3]
     return states
 
 
 def commits_changing(path, merge_base, since_seconds):
-    output = run_git(["log", "--format=%H", "--no-renames",
+    output = run_git(["log", "--format=%H", "--no-renames", "--first-parent",
                       "--since=@%d" % since_seconds, merge_base, "--", path])
     return output.split()
 
@@ -124,19 +138,19 @@ def find_reverted_files(head, base):
              for commit in commits_changing(path, merge_base, since_seconds)]
     prefixes = named_commit_prefixes(merge_base, head_hash)
     reverted = []
+    decided_paths = set()
+    # Newest first, so a named undo of main's newest change settles the file.
     for (commit, path), before in zip(pairs, states_before(pairs)):
-        if any(found_path == path for found_path, _ in reverted):
+        if path in decided_paths or before != head_states[path]:
             continue
-        if before == head_states[path] and not is_named(commit, prefixes):
+        decided_paths.add(path)
+        if not is_named(commit, prefixes):
             reverted.append((path, commit))
     return head_hash, reverted
 
 
 def commit_subject(commit):
-    try:
-        return run_git(["log", "-1", "--format=%s", commit]).strip()
-    except GitFailed:
-        return ""
+    return run_git(["log", "-1", "--format=%s", commit]).strip()
 
 
 def report_lines(head_hash, base, reverted):
@@ -172,11 +186,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         head_hash, reverted = find_reverted_files(args.head, args.base)
+        lines = report_lines(head_hash, args.base, reverted)
     except GitFailed as error:
-        print("branch-reverts-a-file-to-an-older-main-version-check: no verdict, "
-              "because %s" % error, file=sys.stderr)
+        print("branch-reverts-a-file-to-an-older-main-version-check: could not tell "
+              "whether this branch sets a file back to a version %s has replaced, because "
+              "%s; fix what git reports and run this check again." % (args.base, error),
+              file=sys.stderr)
         return EXIT_NO_ANSWER
-    for line in report_lines(head_hash, args.base, reverted):
+    for line in lines:
         print(line)
     return EXIT_REVERTED if reverted else EXIT_NOTHING_REVERTED
 
