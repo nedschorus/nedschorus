@@ -181,7 +181,7 @@ CONFLICT_CHECK = (Path(__file__).resolve().parents[3]
 found = [entry["text"] for entry in entries(CONFLICT_CHECK.read_text(encoding="utf-8"))]
 for line in ("Once the merge is committed, push again.",
              "the pre-push conflict check did not run, because %s is missing",
-             "Check it by hand from your worktree, after `git fetch %s`: %s"):
+             "Follow the report, then check %s again by hand from your worktree: %s"):
     check(f"the pre-push conflict check's helper-printed line {line!r} is found", line in found,
           found)
 
