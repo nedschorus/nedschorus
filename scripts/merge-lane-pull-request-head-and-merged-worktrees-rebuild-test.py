@@ -189,6 +189,14 @@ def main():
               in completed.stdout
               and "back to its author" in completed.stdout,
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+        check("the no-conflict line names this program and its arguments, rebuilt against "
+              "current origin/main",
+              "python3 scripts/merge-lane-pull-request-head-and-merged-worktrees-rebuild.py "
+              f"9 {conflicting_head} \"$(git rev-parse origin/main)\" "
+              f"--merge-lane-worktrees-and-outputs-directory {helpers} "
+              f"--review-tools-worktree-at-main {checkout}" in completed.stdout
+              and f"cd {checkout} && git fetch -q origin && " in completed.stdout,
+              completed.stdout)
         confirmed = run_printed_conflict_check(completed.stdout, scratch)
         check("the printed branch-conflict-check command, run as printed, reports the conflict",
               confirmed is not None and confirmed.returncode != 0

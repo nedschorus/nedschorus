@@ -472,21 +472,24 @@ def replacement_pull_request_lines(base):
         "by a merge." % (base, base),
         "If this branch has never been pushed, rebase it onto current %s, "
         "resolving the conflict, rerun the test suites for what the change "
-        "touches, and push it." % base,
+        "touches, and push it; the lines below do not apply." % base,
         "If it has been pushed, do not push it again: its pull request is "
-        "replaced by a new one cut from current %s. First see what the "
-        "conflict is with." % base,
-        "If %s has already replaced this branch's work, close the pull request "
-        "with a comment naming the commit or pull request on %s that replaced "
-        "it, and open a new pull request only for what %s still lacks."
-        % (base, base, base),
-        "Otherwise, cut a new topic branch from current %s and apply this "
-        "branch's change to it, resolving the conflict." % base,
+        "closed, and replaced by a new one only if %s still lacks some of its "
+        "work. To see which commits on %s changed each conflicting file, run "
+        "git log --oneline HEAD..%s -- <file>." % (base, base, base),
+        "If %s already holds all of this branch's work, close the pull request "
+        "with a comment naming the commit or pull request on %s that holds it, "
+        "and open no new pull request." % (base, base),
+        "Otherwise, cut a new topic branch from current %s and apply to it the "
+        "part of this branch's change that %s lacks, resolving the conflict."
+        % (base, base),
         "Before pushing the new branch, rerun the test suites for what the "
         "change touches.",
         "Push the new branch once, and open a new pull request from it whose "
         "description links the old pull request.",
-        "Close the old pull request with a comment linking the new one.",
+        "Then close the old pull request with one comment that links the new "
+        "pull request and names any commit or pull request on %s that already "
+        "holds part of the work." % base,
     ]
 
 
