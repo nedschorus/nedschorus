@@ -15,7 +15,7 @@ which Claude Code records as a non-blocking error.
 import json
 import sys
 
-PROGRAM = "what-do-you-think-prompt-asks-for-advisor-hook"
+PROGRAM = "what-do-you-think-prompt-call-advisor-tool-reminder-hook"
 PHRASE = "what do you think"
 ADVISOR_REQUEST = (
     "The user asked what you think. He wants the advisor's view as well as yours.\n"

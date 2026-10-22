@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for what-do-you-think-prompt-asks-for-advisor-hook.py.
+"""Tests for nc-systems/general-tools/what-do-you-think-prompt-call-advisor-tool-reminder-hook.py.
 
-Run: python3 scripts/what-do-you-think-prompt-asks-for-advisor-hook-test.py
+Run: python3 nc-systems/general-tools/tests/what-do-you-think-prompt-call-advisor-tool-reminder-hook-test.py
 Prints one line per case and exits non-zero if any case fails. Every case runs
 the hook as Claude Code does, as a subprocess reading a payload on stdin.
 """
@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOOK_PATH = Path(__file__).resolve().with_name("what-do-you-think-prompt-asks-for-advisor-hook.py")
+HOOK_PATH = Path(__file__).resolve().parents[1] / "what-do-you-think-prompt-call-advisor-tool-reminder-hook.py"
 
 failures = []
 
@@ -55,7 +55,7 @@ for stdin_text, case_name in (("not json", "input that is not JSON"),
     result = run_hook(stdin_text)
     check(f"{case_name} is reported as a non-blocking error",
           result.returncode == 1 and result.stdout == ""
-          and result.stderr.startswith("what-do-you-think-prompt-asks-for-advisor-hook: ")
+          and result.stderr.startswith("what-do-you-think-prompt-call-advisor-tool-reminder-hook: ")
           and "call the advisor tool before you answer" in result.stderr,
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 

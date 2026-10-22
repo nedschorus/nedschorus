@@ -43,7 +43,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/what-do-you-think-prompt-asks-for-advisor-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/nc-systems/general-tools/what-do-you-think-prompt-call-advisor-tool-reminder-hook.py",
             "timeout": 10
           }
         ]
