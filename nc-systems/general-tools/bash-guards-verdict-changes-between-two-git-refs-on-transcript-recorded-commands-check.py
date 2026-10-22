@@ -30,9 +30,10 @@ Steps:
 Exit status: 0 when no verdict differs and no added guard refuses a recorded command; 1 when a
 verdict differs or an added guard refuses a recorded command; 2 when the replay itself
 failed, which includes a guard that raised on a recorded command at either ref, or timed out on
-it twice, because that row has no verdict to compare. A reading that times out is read once more,
-alone, after the step's other readings have finished, since a timeout can come from the machine's
-load rather than the guard. A message that differs while its verdict does not is
+it twice, because that row has no verdict to compare. A reading that runs past the per-pair timeout
+(--per-pair-timeout-seconds, 20 s by default) is read once more, by itself,
+after the step's other readings have finished, since a timeout can come from the machine's load rather
+than the guard. A message that differs while its verdict does not is
 printed, and does not change the exit status. The scratch directory is removed after an exit 0
 unless --scratch-directory named it; after an exit 1 or 2 it is kept, and its path is printed.
 """
@@ -738,6 +739,16 @@ def shortened(value):
     return text if len(text) <= PRINTED_TEXT_LENGTH else text[:PRINTED_TEXT_LENGTH] + "…"
 
 
+def timed_out_readings_read_again_line(step, read_again, passed_again):
+    """The stderr line for a step that read read_again timed-out readings again, of which passed_again got a verdict."""
+    return (f"{step}: {read_again} readings timed out and were read again, one at a time, after the parallel pass "
+            f"(a reading is one Bash guard's verdict on one recorded command); {passed_again} got a verdict on the "
+            f"second reading"
+            + (f"; the other {read_again - passed_again} did not and count as failed readings, so this replay will "
+               f"exit 2 when it finishes" if read_again > passed_again else "")
+            + ".")
+
+
 def print_rows(title, items, limit):
     print(f"{title}: {len(items)}")
     for key, count in sorted(collections.Counter(item[1] for item in items).items()):
@@ -873,10 +884,11 @@ def replay_with_sigterm_handled(arguments):
                 mode_failed.extend(failed)
                 all_failed.extend((pair, f"{mode}, {key}", at, reading) for pair, key, at, reading in failed)
                 one_command_per_process = written["shell_readers_reading_one_command_per_process"]
-                if written["timed_out_readings_read_again"]:
-                    print(f"{mode}, {label}: timed-out readings read again, alone: "
-                          f"{written['timed_out_readings_read_again']}; passed on the second reading: "
-                          f"{written['timed_out_readings_passed_on_the_second_reading']}", file=sys.stderr)
+                read_again = written["timed_out_readings_read_again"]
+                passed_again = written["timed_out_readings_passed_on_the_second_reading"]
+                if read_again:
+                    print(timed_out_readings_read_again_line(f"{mode}, {label}", read_again, passed_again),
+                          file=sys.stderr)
                 print(f"{mode}, {label}: {len(rows[label])} rows in {time.monotonic() - started:.0f}s; "
                       f"shell readers in a new process: {written['shell_readers_in_a_new_process']}"
                       + (f", of which one command per process: {one_command_per_process}"
