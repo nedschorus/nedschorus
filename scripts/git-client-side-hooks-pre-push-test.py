@@ -668,18 +668,22 @@ def run_unit_cases():
     error = RuntimeError("boom")
     stream = io.StringIO()
     runner.report_unexpected_error(stream, error, ["origin", "url"], pushed)
-    check("an error after the pushed refs were read names each unchecked branch",
+    check("an error after the pushed refs were read names each unchecked branch, and says "
+          "the revert check did not run on it either",
           stream.getvalue().splitlines() == [
               "pre-push: the pre-push conflict check failed with RuntimeError: boom, "
               + NO_BRANCH_CHECKED % ", ".join(
                   [branch_entry("topic", sha), branch_entry("renamed-on-push", other)]),
               hand_check_line("topic", sha),
               hand_check_line("renamed-on-push", other),
-              TELL_USER_LINE],
+              TELL_USER_LINE,
+              *revert_check_not_run_lines("topic", sha).splitlines(),
+              *revert_check_not_run_lines("renamed-on-push", other).splitlines()],
           stream.getvalue())
     stream = io.StringIO()
     runner.report_unexpected_error(stream, error, ["origin", "url"], None)
-    check("an error before the pushed refs were read says no branch was checked",
+    check("an error before the pushed refs were read says no branch was checked, for "
+          "conflicts or for files set back",
           stream.getvalue().splitlines() == [
               "pre-push: the pre-push conflict check failed with RuntimeError: boom "
               "before reading which branches this push sends, so this push goes ahead "
@@ -687,6 +691,10 @@ def run_unit_cases():
               "For each branch this push sends to origin, other than main, run from "
               "your worktree: python3 scripts/branch-conflict-check.py --head "
               "<branch name>",
+              "Nor was any branch checked for files set back to a version that origin/main "
+              "has replaced; for each such branch also run, after `git fetch origin`: "
+              "python3 scripts/branch-reverts-a-file-to-an-older-main-version-check.py "
+              "--head <branch name>",
               TELL_USER_LINE],
           stream.getvalue())
     stream = io.StringIO()

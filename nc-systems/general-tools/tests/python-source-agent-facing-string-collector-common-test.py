@@ -121,6 +121,67 @@ for case_name, source in NOT_RECOGNIZED_FORMS:
     found = texts(source)
     check(f"not recognized: {case_name}", found == [], found)
 
+SAY = 'def say(stream, text):\n    stream.write(text + "\\n")\n'
+HELPER_PRINTER_FORMS = (
+    ("a string passed to a helper that writes its parameter to a stream parameter",
+     SAY + 'say(sys.stderr, "said text")\n', [("said text", "say()")]),
+    ("a string passed by keyword to a helper printer",
+     SAY + 'say(sys.stderr, text="keyword text")\n', [("keyword text", "say()")]),
+    ("a string passed to a helper's keyword-only parameter that it prints",
+     'def warn(*, message):\n    print(message)\nwarn(message="keyword-only text")\n',
+     [("keyword-only text", "warn()")]),
+    ("a string passed to a helper that prints its parameter",
+     'def warn(message):\n    print("warning: " + message)\nwarn("warned text")\n',
+     [("warning: {message}", "print in warn()"), ("warned text", "warn()")]),
+    ("a string passed to a helper that writes its parameter to sys.stderr in an f-string",
+     'import sys\ndef fail(reason):\n    sys.stderr.write(f"failed: {reason}")\nfail("reason text")\n',
+     [("f'failed: {reason}'", "sys.stderr.write in fail()"), ("reason text", "fail()")]),
+    ("a string passed to a helper that hands its parameter to another helper printer",
+     SAY + 'def refuse(stream, cause):\n    say(stream, cause + ", so refused")\n'
+     'refuse(sys.stderr, "cause text")\n',
+     [("{cause}, so refused", "say() in refuse()"), ("cause text", "refuse()")]),
+    ("a string passed to a helper that hands its parameter to a helper printer defined after it",
+     'def refuse(stream, cause):\n    say(stream, cause + ", so refused")\n' + SAY
+     + 'refuse(sys.stderr, "cause text")\n',
+     [("{cause}, so refused", "say() in refuse()"), ("cause text", "refuse()")]),
+    ("a string built with % for a helper printer, inside a function",
+     SAY + 'def main():\n    say(sys.stderr, "branch %s failed" % name)\n',
+     [("branch %s failed", "say() in main()")]),
+)
+for case_name, source, expected in HELPER_PRINTER_FORMS:
+    found = [(entry["text"], entry["label"]) for entry in entries(source)]
+    check(f"recognized: {case_name}", found == expected, found)
+
+HELPER_PRINTER_FORMS_NOT_RECOGNIZED = (
+    ("the stream argument of a helper printer, which is not printed", SAY + 'say("stream text", x)\n'),
+    ("a string a helper prints only through a call",
+     'import json\ndef emit(payload):\n    print(json.dumps(payload))\nemit({"key": "dumped text"})\n'),
+    ("a string a helper writes to a file it opens itself",
+     'def save(text):\n    with open("f") as handle:\n        handle.write(text)\nsave("saved text")\n'),
+    ("a string passed to a helper defined twice",
+     SAY + SAY + 'say(sys.stderr, "twice text")\n'),
+    ("a string passed to a method named like a helper printer",
+     'class C:\n    def say(self, text):\n        print(text)\nC().say("method text")\n'),
+    ("a string after a starred argument", SAY + 'say(*streams, "starred text")\n'),
+    ("a string passed to a parameter that hides a helper printer's name",
+     SAY + 'def run(say=None):\n    say(sys.stderr, "hidden text")\n'),
+    ("a print keyword that names where to print, not what",
+     'def show(text, out):\n    print(text, file=out)\nshow(None, out="file text")\n'),
+)
+for case_name, source in HELPER_PRINTER_FORMS_NOT_RECOGNIZED:
+    found = [entry["text"] for entry in entries(source)
+             if entry["label"].split(" in ")[0] not in ("print", "sys.stderr.write")]
+    check(f"not recognized: {case_name}", found == [], found)
+
+CONFLICT_CHECK = (Path(__file__).resolve().parents[3]
+                  / "scripts" / "git-client-side-hooks-pre-push-conflict-check.py")
+found = [entry["text"] for entry in entries(CONFLICT_CHECK.read_text(encoding="utf-8"))]
+for line in ("Once the merge is committed, push again.",
+             "the pre-push conflict check did not run, because %s is missing",
+             "Check it by hand from your worktree, after `git fetch %s`: %s"):
+    check(f"the pre-push conflict check's helper-printed line {line!r} is found", line in found,
+          found)
+
 check("source that does not parse yields no entries", texts('print("unclosed\n') == [])
 check("no source yields no entries", texts(None) == [])
 
