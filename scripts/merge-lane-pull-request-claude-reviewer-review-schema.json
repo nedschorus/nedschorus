@@ -1,7 +1,7 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["verdict", "body", "comments"],
+  "required": ["verdict", "body", "comments", "note"],
   "properties": {
     "verdict": {"enum": ["APPROVE", "REQUEST_CHANGES", "COULD_NOT_REVIEW"]},
     "body": {"type": "string", "minLength": 1},
@@ -17,6 +17,7 @@
           "body": {"type": "string", "minLength": 1}
         }
       }
-    }
+    },
+    "note": {"type": "string"}
   }
 }

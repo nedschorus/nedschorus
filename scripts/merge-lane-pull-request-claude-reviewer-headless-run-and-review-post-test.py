@@ -65,7 +65,8 @@ subprocess.run(["git", "worktree", "add", "-q", "--detach",
                check=True, capture_output=True)
 mode = os.environ["FAKE_CLAUDE_MODE"]
 answer = {"verdict": "APPROVE", "body": "Looks right.",
-          "comments": [{"path": "scripts/thing.py", "line": 2, "body": "A remark."}]}
+          "comments": [{"path": "scripts/thing.py", "line": 2, "body": "A remark."}],
+          "note": os.environ.get("FAKE_CLAUDE_NOTE", "")}
 output = {"type": "result", "subtype": "success", "is_error": False, "session_id": "session-77",
           "result": "The reviewer's text answer.", "structured_output": answer,
           "permission_denials": [{"tool_name": "Bash",
@@ -73,10 +74,15 @@ output = {"type": "result", "subtype": "success", "is_error": False, "session_id
 if mode == "null":
     output["structured_output"] = None
 elif mode == "invalid":
-    output["structured_output"] = {"verdict": "MAYBE", "body": "b", "comments": []}
+    output["structured_output"] = {"verdict": "MAYBE", "body": "b", "comments": [], "note": ""}
+elif mode == "no-note":
+    del answer["note"]
+elif mode == "note-not-text":
+    answer["note"] = 5
 elif mode == "could-not-review":
     output["structured_output"] = {"verdict": "COULD_NOT_REVIEW",
-                                   "body": "Bash was refused, so nothing ran.", "comments": []}
+                                   "body": "Bash was refused, so nothing ran.", "comments": [],
+                                   "note": os.environ.get("FAKE_CLAUDE_NOTE", "")}
 elif mode == "nonzero":
     print("claude: API error 529", file=sys.stderr)
     sys.exit(3)
@@ -298,14 +304,32 @@ def main():
         check("another pull request's reviewer worktrees, pr70 and pr8, survive the cleanup",
               case.code == 0 and not case.reviewer_worktree_left()
               and all(str(other) in listed for other in others), case.detail + "\n" + listed)
+        check("an answer with an empty note says there was none, and note.txt is empty",
+              "PR 7: the reviewer left no note for merge-lane-2." in case.stdout
+              and (case.record() / "note.txt").read_text() == "", case.detail)
         case.run("valid")
         check("a second run on the same head keeps the first run's records and writes -2",
               case.code == 0 and (case.record() / "review.json").exists()
               and (case.record("-2") / "review.json").exists(), case.detail)
 
+        note = "The retry loop in thing.py hides a design question for the user."
+        case = Case(scratch).run("valid", FAKE_CLAUDE_NOTE=note)
+        check("the reviewer's note is printed for merge-lane-2 and saved, and reaches neither "
+              "review.json nor any gh call",
+              case.code == 0 and case.posted()
+              and f"PR 7: the reviewer's note for merge-lane-2, not posted, also saved in "
+                  f"{case.record() / 'note.txt'}:\n{note}\n" in case.stdout
+              and (case.record() / "note.txt").read_text() == note + "\n"
+              and note not in (case.record() / "review.json").read_text()
+              and not any(note in call["stdin"] or note in " ".join(call["arguments"])
+                          for call in case.gh_calls), case.detail)
+
         for mode, expected in (
                 ("null", "the reviewer finished without an answer the review schema accepts"),
                 ("invalid", "the reviewer's answer is not a valid review: its verdict 'MAYBE'"),
+                ("no-note", "its keys are ['body', 'comments', 'verdict'], not verdict, body, "
+                            "comments and note"),
+                ("note-not-text", "the reviewer's answer is not a valid review: its note is not text"),
                 ("could-not-review", "the reviewer could not finish the review"),
                 ("nonzero", "claude exited 3: claude: API error 529"),
                 ("not-json", "claude printed no JSON output"),
@@ -317,6 +341,12 @@ def main():
                   and "PR 7: Claude review not posted: " in case.stdout
                   and "Nothing was posted on GitHub." in case.stdout
                   and not case.reviewer_worktree_left(), case.detail)
+        case = Case(scratch).run("could-not-review", FAKE_CLAUDE_NOTE="Bash needs allowing.")
+        check("a COULD_NOT_REVIEW answer's note is still printed and saved, and nothing is posted",
+              case.code == 1 and not case.posted()
+              and "not posted, also saved in" in case.stdout
+              and (case.record() / "note.txt").read_text() == "Bash needs allowing.\n",
+              case.detail)
         check("a COULD_NOT_REVIEW answer's reason is printed",
               Case(scratch).run("could-not-review").stdout.count(
                   "Bash was refused, so nothing ran.") == 1, "")
@@ -383,7 +413,8 @@ def main():
         check("the schema file's verdicts and fields are the ones the step checks",
               schema["properties"]["verdict"]["enum"] == ["APPROVE", "REQUEST_CHANGES",
                                                           "COULD_NOT_REVIEW"]
-              and schema["required"] == ["verdict", "body", "comments"]
+              and schema["required"] == ["verdict", "body", "comments", "note"]
+              and schema["properties"]["note"] == {"type": "string"}
               and schema["properties"]["comments"]["items"]["required"] == ["path", "line", "body"])
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

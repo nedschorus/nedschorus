@@ -8,11 +8,14 @@ Usage:
   scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py
       --pull-request N --head-commit SHA <review file>
 
-The review file is the reviewer's answer, one JSON object in the shape of
-merge-lane-pull-request-claude-reviewer-review-schema.json: "verdict", APPROVE
-or REQUEST_CHANGES; "body", the review's text; and "comments", a list of inline
-comments, each with "path", "line" and "body". A COULD_NOT_REVIEW verdict is
-refused: nothing is posted for a review that did not finish.
+The review file is the reviewer's answer without its "note", which is for
+merge-lane-2 and never posted: one JSON object in the shape of
+merge-lane-pull-request-claude-reviewer-review-schema.json less "note", with
+"verdict", APPROVE or REQUEST_CHANGES; "body", the review's text; and
+"comments", a list of inline comments, each with "path", "line" and "body". A
+file that still carries "note" is refused, like any other extra key. A
+COULD_NOT_REVIEW verdict is refused: nothing is posted for a review that did
+not finish.
 
 GitHub refuses a whole review when one inline comment is on a line outside the
 pull request's diff, so each comment whose path and line are not on the new

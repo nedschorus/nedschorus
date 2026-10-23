@@ -43,9 +43,14 @@ of its own, and a review of a moved checkout is not of this head.
 Each run's records are kept in claude-reviews/pr<n>-<head commit>/ under the
 worktrees and outputs directory, or -2, -3 and on for later runs on the same
 head: run.json, claude's whole output; run-stderr.txt; resume.txt, the session
-id and the directory the run started in; review.json, the answer posted; and
-posted.txt, what the posting script printed. A follow-up question to the
-reviewer is asked with the claude -p --resume command this prints.
+id and the directory the run started in; note.txt, the answer's note for
+merge-lane-2; review.json, the answer posted, without its note; and posted.txt,
+what the posting script printed. A follow-up question to the reviewer is asked
+with the claude -p --resume command this prints.
+
+The answer's "note" is what the reviewer wants merge-lane-2 to know outside the
+review. It is printed and saved whenever the answer is valid, even when nothing
+is posted, as for COULD_NOT_REVIEW, and never reaches the posting script.
 
 The answer is posted by merge-lane-pull-request-reviewer-review-post-and-read-back.py,
 which alone reads mac-claude's token, after the reviewer's process has ended.
@@ -144,8 +149,10 @@ def answer_problems(answer):
     if not isinstance(answer, dict):
         return [f"the answer is {type(answer).__name__}, not an object"]
     problems = []
-    if set(answer) != {"verdict", "body", "comments"}:
-        problems.append(f"its keys are {sorted(answer)}, not verdict, body and comments")
+    if set(answer) != {"verdict", "body", "comments", "note"}:
+        problems.append(f"its keys are {sorted(answer)}, not verdict, body, comments and note")
+    if not isinstance(answer.get("note"), str):
+        problems.append("its note is not text")
     if answer.get("verdict") not in VERDICTS:
         problems.append(f"its verdict {answer.get('verdict')!r} is not one of "
                         f"{', '.join(VERDICTS)}")
@@ -161,6 +168,16 @@ def answer_problems(answer):
             for comment in comments):
         problems.append("its comments are not a list of path, line and body")
     return problems
+
+
+def hand_over_note(note, record, number):
+    note_file = record / "note.txt"
+    note_file.write_text(note + "\n" if note.strip() else "")
+    if note.strip():
+        print(f"PR {number}: the reviewer's note for merge-lane-2, not posted, also saved in "
+              f"{note_file}:\n{note}", flush=True)
+    else:
+        print(f"PR {number}: the reviewer left no note for merge-lane-2.", flush=True)
 
 
 def record_directory(helpers, number, head):
@@ -324,6 +341,8 @@ def review_and_post(arguments, number, head, brief, schema_text, head_worktree, 
         reason = (f"the head worktree {head_worktree} moved to "
                   f"{at.stdout.strip() or at.stderr.strip()} during the review, so the review "
                   f"is not of the head commit {head}")
+    if isinstance(answer, dict) and not answer_problems(answer):
+        hand_over_note(answer["note"], record, number)
     if reason is not None:
         last = (answer.get("body") if isinstance(answer, dict) else None) or output.get("result")
         print(NOT_FINISHED.format(number=number, reason=reason, record=record), flush=True)
@@ -331,7 +350,8 @@ def review_and_post(arguments, number, head, brief, schema_text, head_worktree, 
         return EXIT_NOT_DONE
 
     review_file = record / "review.json"
-    review_file.write_text(json.dumps(answer, indent=2) + "\n")
+    review = {key: answer[key] for key in ("verdict", "body", "comments")}
+    review_file.write_text(json.dumps(review, indent=2) + "\n")
     try:
         posted = subprocess.run(
             [sys.executable, str(here / POST_SCRIPT_NAME), "--pull-request", str(number),
