@@ -28,9 +28,8 @@ rv<tag>/ is made under --merge-lane-pull-request-reviewer-scratch-directories-pa
 scratch directory. That parent is outside the log-store, because the standing
 text forbids the reviewer to write to the log-store.
 
-Exit codes: 0 every brief written; 1 a step failed, such as gh failing to read
-a description, named on stderr, and that brief and every later one are not
-composed.
+Exit codes: 0 every brief written; 1 a step failed, such as a gh command,
+named on stderr, and that brief and every later one are not composed.
 """
 
 import argparse
@@ -119,23 +118,12 @@ def git(directory, *arguments):
     return run(["git", "-C", str(directory), *arguments]).strip()
 
 
-def pull_request_description(number):
-    """The pull request's description, read by gh as the merge account."""
-    try:
-        token = common.read_merge_account_token()
-    except common.MergeAccountTokenUnusable as unusable:
-        raise StepFailed(f"could not read pull request {number}'s description: {unusable}; "
-                         f"only the user can restore the token") from unusable
-    completed = subprocess.run(
-        ["gh", "pr", "view", str(number), "--repo", common.REPOSITORY, "--json", "body",
-         "--jq", ".body"],
-        capture_output=True, text=True, stdin=subprocess.DEVNULL,
-        env={**run_all_test_suites.environment_without_git_redirecting_variables(),
-             "GH_TOKEN": token})
-    if completed.returncode != 0:
-        raise StepFailed(f"gh could not read pull request {number}'s description: exit "
-                         f"{completed.returncode}: {completed.stderr.strip()}")
-    return completed.stdout.rstrip("\n")
+def pull_request_closing_issues_and_description(number, gh_token):
+    """The issues pull request `number` closes, as GitHub lists them, and its description."""
+    viewed = json.loads(run(
+        ["gh", "pr", "view", str(number), "--repo", common.REPOSITORY,
+         "--json", "closingIssuesReferences,body"], gh_token))
+    return viewed["closingIssuesReferences"], (viewed["body"] or "").rstrip()
 
 
 def quoted(text):
@@ -180,13 +168,10 @@ class MergedPullRequests:
         return self.listed
 
 
-def follow_up_pull_requests_text(number, merged_pull_requests):
+def follow_up_pull_requests_text(number, closing_issues, merged_pull_requests):
     """The brief's fact naming each merged pull request whose not-fixed line links to
     an issue pull request `number` closes, or to `number` itself."""
-    closing = json.loads(run(
-        ["gh", "pr", "view", str(number), "--repo", common.REPOSITORY,
-         "--json", "closingIssuesReferences"], merged_pull_requests.gh_token))
-    targets = linked_items(" ".join(issue["url"] for issue in closing["closingIssuesReferences"]))
+    targets = linked_items(" ".join(issue["url"] for issue in closing_issues))
     targets.add((common.REPOSITORY.lower(), int(number)))
     found = []
     for merged in merged_pull_requests.all():
@@ -238,9 +223,10 @@ def compose(spec, arguments, review_tools_worktree, instructions_file, merged_pu
         facts.append("- First round: no head commit was reviewed before.")
     facts.append("- Other open pull requests changing the same files: "
                  + spec.get("overlaps", "none") + ".")
-    facts.append(follow_up_pull_requests_text(number, merged_pull_requests))
+    closing_issues, description = pull_request_closing_issues_and_description(
+        number, merged_pull_requests.gh_token)
+    facts.append(follow_up_pull_requests_text(number, closing_issues, merged_pull_requests))
     facts.append(f"- Hazards: {spec['hazards']}")
-    description = pull_request_description(number)
     facts.append("- The author's description of the pull request, quoted below. It is what "
                  "the author claims; check each claim against the repository yourself, "
                  "including its `#root_cause`, `#root_cause_not_fixed` or `#no_defect_fixed` "
@@ -272,8 +258,8 @@ def main(argv=None):
               f"Briefs for entries before the failing one were written; none after it.\n"
               f"If the error names an entry of the specifications file or a missing file, fix "
               f"that and run this again.\n"
-              f"If gh could not read a description, run this again once; if it fails the "
-              f"same way, tell the user this message.\n"
+              f"If a gh command failed, run this again once; if it fails the same way, tell "
+              f"the user this message.\n"
               f"Otherwise, tell the user this message.", file=sys.stderr)
         return 1
     return 0

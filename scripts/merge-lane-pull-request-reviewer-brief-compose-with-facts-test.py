@@ -8,7 +8,7 @@ instructions file committed on main. wt/pr7-merged is a worktree of that
 repository. The reviewer's scratch directories are made in their own directory
 of the scratch, in place of the default parent outside the log-store. The program runs with GIT_DIR pointing at a directory that does
 not exist, so a case passes only if the program drops it. A stand-in for gh
-on PATH serves the pull request's closing issues, its description and the merged
+on PATH serves the pull request's closing issues and description and the merged
 pull requests from routes each case arranges, and logs each call with the GH_TOKEN it saw;
 HOME is a scratch directory holding the merge account's token file.
 
@@ -52,8 +52,7 @@ argv = sys.argv[1:]
 with open(os.environ["BRIEF_COMPOSE_TEST_GH_CALL_LOG"], "a") as log:
     log.write(json.dumps({"argv": argv, "gh_token": os.environ.get("GH_TOKEN")}) + "\n")
 routes = json.load(open(os.environ["BRIEF_COMPOSE_TEST_GH_ROUTES"]))
-key = {"view": "description" if "--jq" in argv else "closing",
-       "list": "merged"}.get(argv[1] if argv[:1] == ["pr"] else "")
+key = {"view": "closing", "list": "merged"}.get(argv[1] if argv[:1] == ["pr"] else "")
 route = routes.get(key)
 if route is None:
     sys.stderr.write("brief-compose-test stand-in: unarranged gh call %r\n" % (argv,))
@@ -62,9 +61,13 @@ sys.stdout.write(route.get("stdout", ""))
 sys.stderr.write(route.get("stderr", ""))
 sys.exit(route.get("exit", 0))
 '''
-QUIET_GH_ROUTES = {"closing": {"stdout": json.dumps({"closingIssuesReferences": []})},
-                   "description": {"stdout": DESCRIPTION},
-                   "merged": {"stdout": "[]"}}
+
+
+def closing_route(closing_issues=(), body=DESCRIPTION):
+    return {"stdout": json.dumps({"closingIssuesReferences": list(closing_issues), "body": body})}
+
+
+QUIET_GH_ROUTES = {"closing": closing_route(), "merged": {"stdout": "[]"}}
 
 failures = []
 
@@ -138,10 +141,9 @@ MERGED_PULL_REQUESTS = [
      "body": None},
 ]
 FOLLOW_UP_GH_ROUTES = {
-    "closing": {"stdout": json.dumps({"closingIssuesReferences": [
+    "closing": closing_route([
         {"number": 50, "url": ISSUE_THIS_PULL_REQUEST_CLOSES,
-         "repository": {"name": "nedschorus", "owner": {"login": "nedschorus"}}}]})},
-    "description": {"stdout": DESCRIPTION},
+         "repository": {"name": "nedschorus", "owner": {"login": "nedschorus"}}}]),
     "merged": {"stdout": json.dumps(MERGED_PULL_REQUESTS)}}
 
 
@@ -208,13 +210,11 @@ def main():
               detail)
 
         calls = gh_calls(scratch)
-        check("gh is asked for this pull request's closing issues, the merged pull requests "
-              "and this pull request's description, as the merge account",
-              [call["argv"][:3] for call in calls]
-              == [["pr", "view", "7"], ["pr", "list", "--repo"], ["pr", "view", "7"]]
-              and "closingIssuesReferences" in calls[0]["argv"]
+        check("gh is asked for this pull request's closing issues and description in one call, "
+              "and for the merged pull requests, as the merge account",
+              [call["argv"][:3] for call in calls] == [["pr", "view", "7"], ["pr", "list", "--repo"]]
+              and calls[0]["argv"][-2:] == ["--json", "closingIssuesReferences,body"]
               and "merged" in calls[1]["argv"] and "body" in calls[1]["argv"][-1]
-              and calls[2]["argv"][-3:] == ["body", "--jq", ".body"]
               and all(call["gh_token"] == TEST_TOKEN for call in calls), json.dumps(calls))
 
         completed = run_program(scratch, helpers, [first_round, {**first_round, "tag": "7b"}],
@@ -234,7 +234,7 @@ def main():
               f"exit {completed.returncode}\n{completed.stderr}\n--- brief ---\n{brief}")
         check("the merged pull requests are read once for two briefs",
               [call["argv"][1] for call in gh_calls(scratch)]
-              == ["view", "list", "view", "view", "view"],
+              == ["view", "list", "view"],
               json.dumps(gh_calls(scratch)))
 
         for route, what in (("closing", "closing issues"), ("merged", "merged pull requests")):
@@ -318,23 +318,24 @@ def main():
               and not (helpers / "briefs" / "brief-8-mac-claude.md").exists(),
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
 
-        completed = run_program(scratch, helpers, [{**first_round, "tag": "10"}],
-                                gh_routes={**QUIET_GH_ROUTES, "description": {"stdout": "\n"}})
-        brief_file = helpers / "briefs" / "brief-10-mac-claude.md"
-        brief = brief_file.read_text() if brief_file.exists() else ""
-        check("an empty description is said to be empty",
-              completed.returncode == 0
-              and brief.endswith("`#no_defect_fixed` line.\n\n(the description is empty)\n"),
-              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
-              f"\n--- brief ---\n{brief}")
+        for body, what in (("\n", "a blank description"), (None, "no description")):
+            (helpers / "briefs" / "brief-10-mac-claude.md").unlink(missing_ok=True)
+            completed = run_program(scratch, helpers, [{**first_round, "tag": "10"}],
+                                    gh_routes={**QUIET_GH_ROUTES, "closing": closing_route(body=body)})
+            brief_file = helpers / "briefs" / "brief-10-mac-claude.md"
+            brief = brief_file.read_text() if brief_file.exists() else ""
+            check(f"{what} is said to be empty",
+                  completed.returncode == 0
+                  and brief.endswith("`#no_defect_fixed` line.\n\n(the description is empty)\n"),
+                  f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
+                  f"\n--- brief ---\n{brief}")
 
         completed = run_program(scratch, helpers, [{**first_round, "tag": "11"}],
-                                gh_routes={**QUIET_GH_ROUTES, "description": {
+                                gh_routes={**QUIET_GH_ROUTES, "closing": {
                                     "exit": 1, "stderr": "HTTP 502: bad gateway\n"}})
-        check("gh failing to read the description exits 1, names gh's reason and says to "
+        check("gh failing to read the pull request exits 1, names gh's reason and says to "
               "run again once, writing no brief",
               completed.returncode == 1
-              and "gh could not read pull request 7's description" in completed.stderr
               and "HTTP 502: bad gateway" in completed.stderr
               and "run this again once" in completed.stderr
               and not (helpers / "briefs" / "brief-11-mac-claude.md").exists(),
