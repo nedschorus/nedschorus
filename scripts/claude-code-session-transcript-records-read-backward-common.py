@@ -4,9 +4,11 @@ reads only the last turn, not the whole file, which grows to tens of megabytes.
 
 records_newest_first(path) yields each line's JSON object, last line first. A line that is not
 JSON, such as the partial line Claude Code is still writing, or JSON that is not an object, is
-skipped, as a whole-file read that skips the same lines would. A line holding bytes that are not
-UTF-8 raises UnicodeDecodeError when it is reached, and an unreadable file raises OSError; lines
-before the stopping point are never read, so a bad byte there raises nothing.
+skipped. The text after the file's last newline is decoded with undecodable bytes replaced,
+because a partial line can end partway through a multi-byte character. Any other line holding
+bytes that are not UTF-8 raises UnicodeDecodeError when it is reached, and an unreadable file
+raises OSError; lines before the stopping point are never read, so a bad byte there raises
+nothing.
 
 records_from_newest_boundary_to_end(path, *is_boundary) returns, oldest first, the records from the newest one each
 predicate matches to the end of the file, so the newest record every predicate matches is in
@@ -38,8 +40,11 @@ def _lines_newest_first(path):
 
 
 def records_newest_first(path):
+    # _lines_newest_first yields the text after the last newline first.
+    errors = "replace"
     for line in _lines_newest_first(path):
-        text = line.decode("utf-8")
+        text = line.decode("utf-8", errors)
+        errors = "strict"
         try:
             record = json.loads(text)
         except ValueError:

@@ -106,6 +106,7 @@ recorded nowhere, so a fault reported that way would read as "no bare numbers".
 
 # Agent-facing messages follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 
+import functools
 import importlib.util
 import json
 import os
@@ -677,6 +678,7 @@ def markdown_edit_note(payload: dict):
 
 COMPACT_BOUNDARY_SUBTYPE = "compact_boundary"
 
+@functools.lru_cache(maxsize=None)
 def _load_claude_code_session_transcript_records_read_backward_common():
     specification = importlib.util.spec_from_file_location(
         "claude_code_session_transcript_records_read_backward_common",
@@ -686,6 +688,7 @@ def _load_claude_code_session_transcript_records_read_backward_common():
     return module
 
 
+@functools.lru_cache(maxsize=None)
 def _load_absence_claim_hook():
     specification = importlib.util.spec_from_file_location(
         "absence_claim_locator_reminder_hook",

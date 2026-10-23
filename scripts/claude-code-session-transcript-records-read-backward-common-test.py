@@ -7,14 +7,15 @@ Prints one line per case and exits non-zero if any case fails.
 
 The reader cases check the line splitting at block edges, with a block size of a few bytes so
 that every line and one multi-byte character cross an edge, and the skipping a whole-file read
-does: a partial last line, a blank line, JSON that is not an object, a CRLF line end.
+does: a partial last line, one ending partway through a multi-byte character, a blank line, JSON
+that is not an object, a CRLF line end.
 
 The equivalence cases run each hook's turn reader twice on the same transcript: once as it is,
 reading from the end, and once with the reader swapped for a whole-file read, which is what each
 hook did before. Both must give the same answer on every fixture transcript: several turns,
 mid-turn prompts, peer and task-notification messages, a compaction, subagent hand-backs, tool
 results, a partial last line and a turn with no prompt before it. When the machine holds real
-transcripts under ~/.claude/projects/, the five largest are compared too.
+transcripts under ~/.claude/projects/, copies of the five largest are compared too.
 
 The early-stop case writes a transcript of about 20 MB whose first line holds bytes that are not
 UTF-8: a whole-file read raises on it, so a hook that reads only the last turn shows it stopped
@@ -23,6 +24,7 @@ before the first line by not raising.
 
 import importlib.util
 import json
+import shutil
 import sys
 import tempfile
 import time
@@ -130,6 +132,14 @@ FIXTURES = {
         assistant("m2", text("answered the peer, PR #3")),
         user("<task-notification>", isMeta=True, origin={"kind": "task-notification"}),
         assistant("m3", text("noted the task")), turn_ends("task_notification"),
+    ],
+    # The running turn starts at a task notification and has written no turnOrigin yet, so the
+    # newest turnOrigin, "human", is in the turn before it; a read that stops at the turn's
+    # start alone misses it.
+    "a running turn opened by a task notification, after a turn the user opened": [
+        user("go"), assistant("m1", text("done")), turn_ends("human"),
+        user("<task-notification>", isMeta=True, origin={"kind": "task-notification"}),
+        assistant("m2", text("noting the task, Item 3 of 9")),
     ],
     "a compaction inside the transcript": [
         user("before"), assistant("m1", text("old reply")), turn_ends("human"),
@@ -260,6 +270,15 @@ def run_reader_cases(directory):
     check("a predicate no record matches returns every record, oldest first",
           [record["n"] for record in found] == list(range(1, 10)), repr(found))
 
+    split_character = Path(directory) / "split-character.jsonl"
+    split_character.write_bytes(b'{"n": 1}\n{"n": "caf\xc3')
+    try:
+        found = list(reader.records_newest_first(split_character))
+    except UnicodeDecodeError as error:
+        found = error
+    check("a partial last line that ends partway through a multi-byte character is skipped",
+          found == [{"n": 1}], repr(found))
+
     bad_last = Path(directory) / "bad-last.jsonl"
     bad_last.write_bytes(b'{"n": 1}\n{"n": "\xff"}\n')
     try:
@@ -284,7 +303,11 @@ def run_equivalence_cases(directory):
     if not real:
         print("SKIP  no real transcripts under ~/.claude/projects/ to compare")
     for path in real:
-        compare(f"real transcript {path.name} ({path.stat().st_size // 1_000_000} MB)", path)
+        # A live transcript grows between the two reads compare makes, so compare a copy.
+        copy = Path(directory) / f"real-{path.name}"
+        shutil.copyfile(path, copy)
+        compare(f"real transcript {path.name} ({copy.stat().st_size // 1_000_000} MB)", copy)
+        copy.unlink()
 
 
 def run_early_stop_case(directory):
