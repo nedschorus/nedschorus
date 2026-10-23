@@ -25,11 +25,11 @@ Anthropic's Citations feature returns each quote with its source: the quoted tex
 
 ## What the check does
 
-A new program, proposed name `scripts/quoted-text-citation-check.py`, reads Markdown files named on its command line, or the text of a reply on standard input. A quote is text of at least eight words inside straight or curly double quotes, or a block quote line. Fenced code is skipped. The program does three checks.
+A new program, proposed name `scripts/quoted-text-citation-check.py`, reads Markdown files named on its command line, or the text of a reply on standard input. A quote is text of at least eight words inside straight or curly double quotes, or a block quote line. Fenced code is skipped. Three checks are described below; the program does checks 1 and 2, and check 3 is not built now.
 
 1. **A quote that names its file is checked against that file.** The quote is paired with the nearest path before it in the sentence, or, failing that, the nearest after it. The quote must appear in the file once whitespace is collapsed and straight and curly quotes are made equal; Markdown emphasis is also removed when the file is Markdown. "…" or "..." inside a quote stands for cut text, so each piece must appear, in order. With `path:line`, the quote must start near that line. A miss is reported with the passage of the file that comes closest.
 2. **A quote that names no file is compared with the files near it.** The program searches the files the document or reply names, the text files of the checkout, and `docs/walk/`, which git ignores. An exact match passes: the quote is right, and only its path is missing. A near match is reported, showing the file, the line and the words that differ, as "lands" against "is merged". No match passes: the user's own words and newly written text match no file. Item 4's misquote is caught this way. A near match can also be a deliberate change, when proposed text edits a file's sentence; the report then shows the change, and the agent checks it is the one meant.
-3. **In a walk-document or a design, a quote presented as a file's words but naming no file is reported.** A walk-document is a file under `docs/walk/`; a design is a file whose name ends in `-design.md`. The cue is a phrase naming a document, such as "the design says" or "in this sentence:", with no path. This warns the author to add the path, so that check 1 can run.
+3. **In a walk-document or a design, a quote presented as a file's words but naming no file is reported.** A walk-document is a file under `docs/walk/`; a design is a file whose name ends in `-design.md`. The cue is a phrase naming a document, such as "the design says" or "in this sentence:", with no path. This would warn the author to add the path, so that check 1 can run. Check 3 is not built now; it is added only if a misquote turns up that checks 1 and 2 miss.
 
 Item 6's misquote is not caught: its quote named no file, and the comment exists only in git history, which the program does not search. Had the draft named the file it meant, check 1 would have reported it.
 
@@ -39,21 +39,23 @@ Item 6's misquote is not caught: its quote named no file, and the comment exists
 - **The agent's reply, at UserPromptSubmit**, as the bare-number hook does. The user has already read that reply; the warning reaches the agent with the user's answer, in time to correct the record before the change is made.
 - **Markdown under `docs/` changed by a push**: the program takes the base to diff against, as `scripts/dangling-path-citation-check.py` does, and the push reminder names it as a third program.
 
+The first pull request builds the Edit and Write site; the reply site and the push site come in later pull requests.
+
 Like the bare-number hook, it warns and never blocks. A failure of the program itself, such as an unreadable file, is reported in its output and lets the edit, the reply or the push go on.
 
 ## Test
 
 The test that reproduces the failure is item 4's: a walk-document line quoting "A change to a prompt is tested before it lands, on two documents" with no path, beside a draft holding "is tested before it is merged, on two documents", must be reported by check 2, and by check 1 when the line names the draft's path. Each check also gets passing cases: an exact quote, a quote with "…", and a quote of the user's words.
 
-## Decisions for the user
+## Decisions
 
-1. **Check 2.** A: build it, so a misquote is caught with no change to how agents write, at the cost of a slower hook and a report on each deliberate edit of a quoted sentence. D: build checks 1 and 3 only, and rely on the rule to make agents name files. Recommendation: A, since check 2 alone catches the item 4 misquote as it was written.
-2. **Check 3.** A: build it, with a list of cue phrases that will miss some quotes and flag some wrongly. D: leave it out. Recommendation: D for the first pull request, since check 2 covers the same case without the phrase list; revisit if a misquote check 2 cannot see turns up.
-3. **Where the work is recorded.** A: its own GHI. D: a section of GHI [Reference-integrity checker: links resolve and cited revision-paths exist — pure-code review check (and the home for what-else-can-code-check)](https://github.com/nedschorus/nedschorus/issues/42), which collects checks that code can do. Recommendation: A, since this check has its own build and its own next action.
+1. **Check 2 is built**, so a misquote is caught with no change to how agents write, at the cost of a slower hook and a report on each deliberate edit of a quoted sentence. (user-ruled 2026-10-22)
+2. **Check 3 is left out of the first pull request**, and is added only if a misquote turns up that checks 1 and 2 miss. (user-ruled 2026-10-22)
+3. **The work is its own GitHub issue**, not a section of GHI [Reference-integrity checker: links resolve and cited revision-paths exist — pure-code review check (and the home for what-else-can-code-check)](https://github.com/nedschorus/nedschorus/issues/42), which collects checks that code can do; it links to that issue. (user-ruled 2026-10-22)
 
 ## Next action
 
-The user rules on the three decisions in an approval-walk. Then the GHI is filed, and the program is built in its own pull request, starting with check 1 and the Edit and Write site.
+The GHI-MD gets a cold-read-full-run; a finding that would change a decision goes back to the user in a new approval-walk, and the others are fixed in the GHI-MD before it is filed. Then it is filed with `scripts/ghi-issue-write.py create docs/issues/quoted-text-credited-to-a-file-checked-against-that-file.md`. Then the first pull request builds `scripts/quoted-text-citation-check.py` with checks 1 and 2, run as a Claude Code PostToolUse hook on Edit and Write of a Markdown file; the reply site and the push site come in later pull requests.
 
 ## Relations
 
