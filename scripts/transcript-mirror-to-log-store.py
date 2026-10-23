@@ -23,19 +23,19 @@ same way it is found locally, apart from the seat-briefs, which go to
 `seat-briefs/` because `~/.claude/agents/` is Claude Code's own directory of
 subagent definitions:
 
-  /home/nedlern/nedschorus-logs/claude-code-files-mirror-per-machine/mac/projects/<project-key>/<session-id>.jsonl
-  /home/nedlern/nedschorus-logs/claude-code-files-mirror-per-machine/mac/handoffs/<file>
-  /home/nedlern/nedschorus-logs/claude-code-files-mirror-per-machine/mac/tasks/<list-name>/<task-id>.json
-  /home/nedlern/nedschorus-logs/claude-code-files-mirror-per-machine/mac/seat-briefs/<seat>/CLAUDE.local.md
-  /home/nedlern/nedschorus-logs/claude-code-files-mirror-per-machine/mac/CLAUDE.md
-  /home/nedlern/nedschorus-logs/claude-code-files-mirror-per-machine/ned-box/projects/...
+  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/projects/<project-key>/<session-id>.jsonl
+  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/handoffs/<file>
+  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/tasks/<list-name>/<task-id>.json
+  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/seat-briefs/<seat>/CLAUDE.local.md
+  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/CLAUDE.md
+  /home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box/projects/...
 
 `mac` and `ned-box` are the names CLAUDE.md uses for the two machines; this
 program tells them apart by hostname. On ned-box the copy is local -- its
 transcripts are already on that disk inside Timeshift's coverage, and the
 copy makes the store the one place to look for any session from either
 machine. A file there is cited with its host in scp form, like everything in
-the store: `nedlern@ned-box:/home/nedlern/nedschorus-logs/claude-code-files-mirror-per-machine/mac/handoffs/<file>`.
+the store: `nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/handoffs/<file>`.
 
 HOW. `rsync -a` of each source into its place, over ssh in batch mode with a
 connect timeout from the Mac, never `--delete`: a transcript that vanishes
@@ -130,7 +130,7 @@ Cron's environment has no ssh agent; the Mac's key to ned-box carries no
 passphrase, checked 2026-09-07 with `env -i HOME=/Users/el PATH=/usr/bin:/bin
 ssh -o BatchMode=yes nedlern@ned-box true`.
 
-THE DESTINATION IS ONE CONSTANT, LOG_STORE_CLAUDE_CODE_FILES_MIRROR_DESTINATION, the same
+THE DESTINATION IS ONE CONSTANT, LOG_STORE_AGENT_SESSION_FILES_DESTINATION, the same
 shape as the record shipper's; TRANSCRIPT_MIRROR_DESTINATION in the
 environment overrides it for the tests, which point it at a scratch
 directory (local mode, real rsync) or at the real string with stub rsync and
@@ -151,7 +151,7 @@ import time
 
 PROGRAM = "transcript-mirror-to-log-store"
 
-LOG_STORE_CLAUDE_CODE_FILES_MIRROR_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/claude-code-files-mirror-per-machine"
+LOG_STORE_AGENT_SESSION_FILES_DESTINATION = "nedlern@ned-box:/home/nedlern/nedschorus-logs/agent-session-files-by-machine"
 LOG_STORE_HOSTNAME = "ned-box"
 MACHINE_NAME_ON_STORE_HOST = "ned-box"
 MACHINE_NAME_ELSEWHERE = "mac"
@@ -229,7 +229,7 @@ def destination_for_this_machine():
     if override:
         host, path = split_destination(override)
     else:
-        host, path = split_destination(LOG_STORE_CLAUDE_CODE_FILES_MIRROR_DESTINATION)
+        host, path = split_destination(LOG_STORE_AGENT_SESSION_FILES_DESTINATION)
         if this_machine_name() == MACHINE_NAME_ON_STORE_HOST:
             host = None
     return host, path / this_machine_name()

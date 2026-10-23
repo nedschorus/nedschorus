@@ -152,7 +152,7 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     check("the README lists all twelve kinds",
           all(f"- `{kind}/` -- " in readme_text
               for kind in ("cold-read-records", "sanity-check-records", "walk",
-                           "claude-code-files-mirror-per-machine", "session-dialogs", "seats", "analysis",
+                           "agent-session-files-by-machine", "session-dialogs", "seats", "analysis",
                            "daily-full-test-runs", "pull-request-head-test-runs",
                            "daily-memory-review-marks",
                            "handoff-agent-seat-died-without-session-handoff-restart-watcher",

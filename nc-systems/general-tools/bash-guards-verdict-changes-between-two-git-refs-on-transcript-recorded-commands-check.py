@@ -62,11 +62,19 @@ from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
+_transcript_mirror_spec = importlib.util.spec_from_file_location(
+    "transcript_mirror_to_log_store",
+    Path(__file__).resolve().parents[2] / "scripts" / "transcript-mirror-to-log-store.py")
+_transcript_mirror = importlib.util.module_from_spec(_transcript_mirror_spec)
+_transcript_mirror_spec.loader.exec_module(_transcript_mirror)
+_, _AGENT_SESSION_FILES = _transcript_mirror.split_destination(
+    _transcript_mirror.LOG_STORE_AGENT_SESSION_FILES_DESTINATION)
+
 DEFAULT_TRANSCRIPT_DIRECTORIES = [
     str(Path.home() / ".claude" / "projects"),
-    "/home/nedlern/nedschorus-logs/claude-code-files-mirror-per-machine/mac/projects",
-    "/home/nedlern/nedschorus-logs/claude-code-files-mirror-per-machine/ned-box",
-    "/home/nedlern/nedschorus-logs/claude-code-files-mirror-per-machine/recovered",
+    str(_AGENT_SESSION_FILES / _transcript_mirror.MACHINE_NAME_ELSEWHERE / "projects"),
+    str(_AGENT_SESSION_FILES / _transcript_mirror.MACHINE_NAME_ON_STORE_HOST),
+    str(_AGENT_SESSION_FILES / "recovered"),
 ]
 
 DEFAULT_PER_PAIR_TIMEOUT_SECONDS = 20

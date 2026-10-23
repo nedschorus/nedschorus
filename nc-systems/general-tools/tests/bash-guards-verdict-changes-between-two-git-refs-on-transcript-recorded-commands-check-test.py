@@ -1237,6 +1237,14 @@ finally:
     # The test's checkouts are registered only in its own clone, which goes with the scratch directory.
     check_scratch_directory_removed(scratch)
 
+check("the default transcript folders are this machine's and the three copies the mirror keeps on ned-box",
+      replay.DEFAULT_TRANSCRIPT_DIRECTORIES == [
+          str(Path.home() / ".claude" / "projects"),
+          "/home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/projects",
+          "/home/nedlern/nedschorus-logs/agent-session-files-by-machine/ned-box",
+          "/home/nedlern/nedschorus-logs/agent-session-files-by-machine/recovered"],
+      replay.DEFAULT_TRANSCRIPT_DIRECTORIES)
+
 if failures:
     print(f"{len(failures)} failed")
     sys.exit(1)
