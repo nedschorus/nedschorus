@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -162,7 +163,7 @@ def test_missing_fast_reads_are_run_and_reported():
           and lines[1].startswith('`#new` text 2, "Each row names the mistake it prevents.": '
                                   "fast read had to be run (")
           and "Read each fast-read report named above as had to be run." in lines
-          and "close` and do what it prints." in lines[-1],
+          and f"close --cwd {shlex.quote(str(case.checkout.resolve()))}` and do what it prints." in lines[-1],
           described(result))
     check("a #new line inside a fence or in another item is not a proposed text",
           case.calls.read_text() == ("The page lists one poem per job an agent does.\n"
@@ -414,7 +415,8 @@ def test_a_deferral_is_recorded_and_the_item_comes_back_before_the_summary_item(
           checked.returncode == 0 and case.calls.read_text() == "" and not case.counts_log.exists()
           and re.search(r"\nitem 2 of 5: the user answered deferred \(\d{4}-\d\d-\d\d \d\d:\d\d\), which makes no "
                         r"change\.\n$", case.minutes.read_text()) is not None
-          and checked.stdout.rstrip().endswith("close` and do what it prints."), described(checked))
+          and checked.stdout.rstrip().endswith(f"close --cwd {shlex.quote(str(case.checkout.resolve()))}` and do what "
+                                               "it prints."), described(checked))
     closed = case.run("close")
     check("close records a deferral as open and names the item after it",
           closed.returncode == 0

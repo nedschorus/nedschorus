@@ -50,7 +50,7 @@ order, a once-deferred item placed just before the summary item, from the item
 after the answered one, and round again from the first, the first item the
 minutes do not record; `none, closed` when there is none. A minutes line
 records the items it opens with, after any date or timestamp, as in `Item 4 of
-9:`, `- Item 4, <date>:` or `- 2026-10-21T21:23:41Z Item 4 <rejected>`,
+9:`, `- Item 4, <date>:` or `- <timestamp> Item 4 <rejected>`,
 when it says approved, disapproved, accepted, rejected or `<moved on, no
 decision>`; one that says deferred instead records a deferral; CHECK's answer
 lines record nothing. When the `#next_to_present` line names other items than
@@ -71,6 +71,7 @@ import datetime
 import importlib.util
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -106,7 +107,7 @@ CHECK_JUDGEMENT_LINES = (
     "says, and set the minutes' `#next_to_present` line to the new item; "
     "the close step says when to present it.",
 )
-CHECK_CLOSE_LINE = "Then run `python3 {program} close` and do what it prints."
+CHECK_CLOSE_LINE = "Then run `python3 {program} close --cwd {top}` and do what it prints."
 COUNTS_NOT_LOGGED = (
     "The fast-read counts were not logged to {log}: {error}.",
     "Include this line in your next message to the user, and carry on as the lines above say.",
@@ -336,7 +337,7 @@ def check(arguments):
     if arguments.deferred:
         now = datetime.datetime.now().astimezone()
         append_to_minutes(minutes, [CHECK_DEFERRED_MINUTES.format(item=item, date_and_time=f"{now:%Y-%m-%d %H:%M}")])
-        print(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve()))
+        print(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
         return 0
     texts = proposed_texts(lines)
     record_directories = arguments.cold_read_records or [top / RECORDS_DIRECTORY_NAME,
@@ -363,7 +364,7 @@ def check(arguments):
     output = list(statuses)
     if had_to_be_run:
         output += [line.format(document=document, item=item) for line in CHECK_JUDGEMENT_LINES]
-    output.append(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve()))
+    output.append(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
     log = arguments.counts_log or LOG_STORE / COUNTS_LOG_FILE_NAME
     try:
         with open(log, "a", encoding="utf-8") as file:
