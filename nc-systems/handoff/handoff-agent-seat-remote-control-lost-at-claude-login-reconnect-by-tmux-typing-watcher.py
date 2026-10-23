@@ -32,6 +32,12 @@ Otherwise it types nothing and tries again on the next run. Typing only on the
 disconnect line matters: while Remote Control is on, the same command opens
 its menu instead, whose choices include "Disconnect this session".
 
+Each run reads a transcript only from where the run before stopped: the place
+reached, the bytes just before it and the disconnect line found by then are
+saved per transcript in TRANSCRIPT_READ_POSITIONS_FILE_NAME in LOG_DIRECTORY. A transcript
+whose bytes before that place no longer match is read whole, and so is every
+transcript when the saved file is missing or unreadable.
+
 It does not check afterwards that Remote Control came back. A failure it meets
 in one agent-seat, such as a session record it cannot read or a tmux command
 that fails or times out, is written to decisions.jsonl in LOG_DIRECTORY and
@@ -110,6 +116,9 @@ TMUX_TIMEOUT_SECONDS = 30
 # Longer than the opener's own ssh time limit, so the opener reports its timeout itself.
 MAC_WINDOW_OPENER_TIMEOUT_SECONDS = 90
 PANE_IN_MODE = "1"
+TRANSCRIPT_READ_POSITIONS_FILE_NAME = "transcript-read-positions.json"
+# Enough to tell a transcript rewritten in place from the one an earlier run read.
+BYTES_COMPARED_BEFORE_SAVED_OFFSET = 4096
 CRON_LOG = Path.home() / ".claude" / f"{PROGRAM}.log"
 
 SHOW_NOTICE_CLOSE_PROMPT = "Press Enter to close this window."
@@ -155,6 +164,8 @@ class Run:
             text = ""
         self.entries = [json.loads(line) for line in text.splitlines() if line.strip()]
         self.failed = False
+        self.saved_read_positions = transcript_read_positions_load(log_directory)
+        self.transcript_read_positions = {}
 
     def log(self, seat, decision, **details):
         entry = {"at": datetime.now(timezone.utc).isoformat(), "seat": seat, "decision": decision,
@@ -271,19 +282,35 @@ def running_agent_seats(table):
     return sorted(seats)
 
 
-def latest_unanswered_disconnect(transcript: Path):
-    """Return the disconnect line after which Remote Control was not turned back on, or None."""
-    latest = None
+def latest_unanswered_disconnect(transcript: Path, transcript_read_positions=None):
+    """Return the disconnect line after which Remote Control was not turned back on, or None.
+
+    transcript_read_positions maps a transcript's path to where an earlier run stopped reading it and
+    what it had found by then; reading resumes there, and the entry is updated. A transcript
+    whose bytes just before that place differ from the ones saved, as when it was replaced,
+    shrank or was rewritten, is read whole.
+    """
+    transcript_read_positions = {} if transcript_read_positions is None else transcript_read_positions
+    key = str(transcript)
     try:
         stream = transcript.open("rb")
     except FileNotFoundError:
         # Claude Code writes the transcript only from the session's first message on.
+        transcript_read_positions.pop(key, None)
         return None
     with stream:
+        saved = transcript_read_positions.get(key)
+        offset, latest = 0, None
+        if isinstance(saved, dict) and isinstance(saved.get("offset"), int) and saved["offset"] > 0:
+            stream.seek(saved["offset"] - len(bytes.fromhex(saved.get("bytes_before", ""))))
+            if stream.read(saved["offset"] - stream.tell()).hex() == saved.get("bytes_before"):
+                offset, latest = saved["offset"], saved.get("latest")
+        stream.seek(offset)
         for raw in stream:
             if not raw.endswith(b"\n"):
                 # The line Claude Code is still writing; the next run reads it whole.
                 break
+            offset += len(raw)
             # Most lines are large and unrelated; parse only the ones that can matter.
             if b'"bridge_status"' not in raw and b"Remote Control disconnected" not in raw:
                 continue
@@ -294,7 +321,40 @@ def latest_unanswered_disconnect(transcript: Path):
                 latest = None
             elif str(entry.get("content", "")).startswith(DISCONNECT_TEXT):
                 latest = entry
+        stream.seek(max(0, offset - BYTES_COMPARED_BEFORE_SAVED_OFFSET))
+        bytes_before = stream.read(offset - stream.tell())
+    transcript_read_positions[key] = {"offset": offset, "bytes_before": bytes_before.hex(), "latest": latest}
     return latest
+
+
+def transcript_read_positions_load(log_directory: Path):
+    """Return the saved read positions; a missing or unreadable file means reading every transcript whole."""
+    path = log_directory / TRANSCRIPT_READ_POSITIONS_FILE_NAME
+    try:
+        positions = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as error:
+        print(f"{PROGRAM}: the saved read positions {path} could not be read ({type(error).__name__}: "
+              f"{error}); this run reads every transcript whole and saves new positions.", file=sys.stderr)
+        return {}
+    if not isinstance(positions, dict):
+        print(f"{PROGRAM}: the saved read positions {path} are not a JSON object; this run reads "
+              "every transcript whole and saves new positions.", file=sys.stderr)
+        return {}
+    return positions
+
+
+def transcript_read_positions_save(log_directory: Path, positions):
+    """Save the read positions; when that fails, say so, and the next run reads every transcript whole."""
+    path = log_directory / TRANSCRIPT_READ_POSITIONS_FILE_NAME
+    temporary = path.with_name(path.name + ".new")
+    try:
+        temporary.write_text(json.dumps(positions, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        os.replace(temporary, path)
+    except OSError as error:
+        print(f"{PROGRAM}: the read positions were not saved to {path} ({error}); the next run reads "
+              "every transcript whole.", file=sys.stderr)
 
 
 def prompt_line_is_empty(pane_text: str) -> bool:
@@ -333,7 +393,9 @@ def check_seat(run: Run, seat, pid, age, session_records_directory: Path, projec
         return
     transcript = (project_directory_module.project_directory_for_seat(
         Path(working_directory), projects_directory) / f"{session_id}.jsonl")
-    disconnect = latest_unanswered_disconnect(transcript)
+    if str(transcript) in run.saved_read_positions:
+        run.transcript_read_positions.setdefault(str(transcript), run.saved_read_positions[str(transcript)])
+    disconnect = latest_unanswered_disconnect(transcript, run.transcript_read_positions)
     if disconnect is None:
         return
     event = {"session_id": session_id, "disconnect": disconnect.get("uuid")}
@@ -365,7 +427,7 @@ def check_seat(run: Run, seat, pid, age, session_records_directory: Path, projec
         skip(run, seat, event, "its prompt line is not empty, or no prompt line is shown")
         return
     # Remote Control may have come back on by itself while this run read the pane.
-    if latest_unanswered_disconnect(transcript) is None:
+    if latest_unanswered_disconnect(transcript, run.transcript_read_positions) is None:
         return
     for number, arguments in enumerate((("-l", f"/remote-control {seat}"), ("Enter",))):
         if number:
@@ -424,6 +486,7 @@ def run_once(environment) -> int:
             run = Run(log_directory)
             for seat, pid, age in running_agent_seats(process_table(process_table_directory)):
                 check_seat(run, seat, pid, age, session_records_directory, projects_directory)
+            transcript_read_positions_save(log_directory, run.transcript_read_positions)
         except Exception as error:  # noqa: BLE001 - a failed run must reach the user, not only cron's log
             report_run_failure(log_directory, f"{type(error).__name__}: {error}")
             raise
