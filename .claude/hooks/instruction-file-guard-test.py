@@ -567,7 +567,8 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     cold_read_sentences = (
         "Before you put the change to the user, write the changed text to a file in your "
         "session's scratchpad and give it the cold read that step 2 of the /cold-read skill "
-        "names for it, a fast read for a change of one sentence; revise the text from the "
+        "names for it, a fast read for a change that leaves unchanged what the file tells "
+        "agents to do; revise the text from the "
         "findings once, then put the change to him. Skip this when the change only fixes an "
         "obvious error `CLAUDE.md` lets you fix without asking.")
     asking_words = "If the change needs his approval, or you cannot tell whether it does"
