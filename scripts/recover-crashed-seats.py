@@ -285,21 +285,46 @@ def tmux_session_alive_anywhere(name: str):
     return False, ""
 
 
-def processes_rooted_in_seat_directory(seat_directory: Path,
-                                       require_a_complete_listing=False):
-    """Return (process_ids, detail), with process_ids None when vacancy is unproven."""
+# Each process's working directory is a link there on Linux; macOS has no /proc and uses lsof.
+PROCESS_TABLE_DIRECTORY = Path("/proc")
+
+
+def working_directories_from_process_table(process_table_directory: Path):
+    """Return (pairs, problem): (process id, working directory) for every process whose
+    working directory could be read, and what made the listing incomplete, or ""."""
+    pairs = []
+    problem = ""
+    for entry in process_table_directory.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            pairs.append((int(entry.name), os.readlink(entry / "cwd")))
+        except (FileNotFoundError, ProcessLookupError):
+            # The process ended while the table was read; it occupies nothing.
+            continue
+        except PermissionError:
+            # Another user's process, or one of this user's that is not dumpable, such as ssh-agent;
+            # lsof run as this user cannot read either.
+            continue
+        except OSError as error:
+            problem = (f"the occupancy check ({process_table_directory}) could not read the working "
+                       f"directory of process {entry.name}: {error}; vacancy unproven")
+    return pairs, problem
+
+
+def working_directories_from_lsof():
+    """Return (pairs, problem) from lsof, as working_directories_from_process_table does;
+    a pair's process id is None where lsof gave none usable."""
     if shutil.which("lsof") is None:
-        return None, "lsof is not installed, so the seat cannot be proven vacant"
+        return [], "lsof is not installed, so the seat cannot be proven vacant"
     try:
         listing = subprocess.run(
             ["lsof", "-a", "-d", "cwd", "-F", "pn"],
             capture_output=True, text=True, timeout=30, check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return None, "the occupancy check (lsof) could not be run"
-    prefix = str(seat_directory.resolve())
-    rooted = []
-    reported = 0
+        return [], "the occupancy check (lsof) could not be run"
+    pairs = []
     process_id = None
     for line in listing.stdout.splitlines():
         if line.startswith("p"):
@@ -308,20 +333,37 @@ def processes_rooted_in_seat_directory(seat_directory: Path,
             except ValueError:
                 process_id = None
         elif line.startswith("n"):
-            reported += 1
-            cwd = line[1:]
-            if cwd == prefix or cwd.startswith(prefix + "/"):
-                if process_id is None:
-                    return None, (f"the occupancy check (lsof) named {prefix} without a "
-                                  "usable process id; vacancy unproven")
-                rooted.append(process_id)
+            pairs.append((process_id, line[1:]))
+    problem = ""
+    if listing.returncode != 0:
+        problem = f"the occupancy check (lsof) exited {listing.returncode}; vacancy unproven"
+    return pairs, problem
+
+
+def processes_rooted_in_seat_directory(seat_directory: Path,
+                                       require_a_complete_listing=False):
+    """Return (process_ids, detail), with process_ids None when vacancy is unproven."""
+    if (PROCESS_TABLE_DIRECTORY / "self" / "cwd").exists():
+        pairs, problem = working_directories_from_process_table(PROCESS_TABLE_DIRECTORY)
+        check_name = str(PROCESS_TABLE_DIRECTORY)
+    else:
+        pairs, problem = working_directories_from_lsof()
+        check_name = "lsof"
+    prefix = str(seat_directory.resolve())
+    rooted = []
+    for process_id, cwd in pairs:
+        if cwd == prefix or cwd.startswith(prefix + "/"):
+            if process_id is None:
+                return None, (f"the occupancy check ({check_name}) named {prefix} without a "
+                              "usable process id; vacancy unproven")
+            rooted.append(process_id)
     # A partial listing proves presence, but cannot prove that only the excused panes remain.
     if rooted and not require_a_complete_listing:
         return rooted, ""
-    if listing.returncode != 0:
-        return None, f"the occupancy check (lsof) exited {listing.returncode}; vacancy unproven"
-    if reported == 0:
-        return None, "the occupancy check (lsof) reported no working directories at all"
+    if problem:
+        return None, problem
+    if not pairs:
+        return None, f"the occupancy check ({check_name}) reported no working directories at all"
     return rooted, ""
 
 
@@ -347,7 +389,7 @@ LEFTOVER_IDLE_SHELL_PANE_COMMANDS = (
 
 def tmux_session_is_a_leftover_idle_shell(name: str, seat_directory: Path):
     """Return (proven_idle, pane_process_ids, detail) for every session holding the name."""
-    # The launcher execs the leftover shell, preserving the pane PID for the lsof check.
+    # The launcher execs the leftover shell, preserving the pane PID for the occupancy check.
     pane_process_ids = []
     sockets_holding = []
     for socket_name in dict.fromkeys((name, "default")):

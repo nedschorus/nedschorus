@@ -361,6 +361,188 @@ def case_partial_last_line(namespace):
         fixture.close()
 
 
+def case_saved_read_positions():
+    """Each read resumes where the last stopped, and always gives what a whole-file read gives."""
+    root = Path(tempfile.mkdtemp(prefix="rcw-positions-"))
+    try:
+        transcript = root / "session.jsonl"
+        unrelated = json.dumps({"type": "assistant", "message": {"content": "work " * 2000}}) + "\n"
+        transcript.write_text(unrelated * 3, encoding="utf-8")
+        positions = {}
+
+        def both():
+            return (watcher.latest_unanswered_disconnect(transcript, positions),
+                    watcher.latest_unanswered_disconnect(transcript))
+
+        def append(text):
+            with transcript.open("a", encoding="utf-8") as stream:
+                stream.write(text)
+
+        resumed, whole = both()
+        check("POSITIONS: a transcript with no Remote Control line reads as no disconnect, and its end is saved",
+              resumed is None and whole is None
+              and positions[str(transcript)]["offset"] == transcript.stat().st_size, positions)
+        append(json.dumps(disconnect_line()) + "\n")
+        resumed, whole = both()
+        check("POSITIONS: an appended disconnect is found by reading only what was added",
+              resumed == whole and resumed["uuid"] == DISCONNECT_UUID, (resumed, whole))
+        append(unrelated)
+        resumed, whole = both()
+        check("POSITIONS: the disconnect found earlier is kept when later lines are unrelated",
+              resumed == whole and resumed["uuid"] == DISCONNECT_UUID, (resumed, whole))
+        append(json.dumps(reconnect_line()) + "\n")
+        resumed, whole = both()
+        check("POSITIONS: an appended reconnection answers the disconnect", resumed is None and whole is None,
+              (resumed, whole))
+        append(json.dumps(disconnect_line("d0000000-0000-4000-8000-000000000009")) + "\n"
+               + '{"type":"system","subtype":"bridge_status","con')
+        resumed, whole = both()
+        check("POSITIONS: a last line still being written is not read, and the saved end stops before it",
+              resumed == whole and resumed["uuid"] == "d0000000-0000-4000-8000-000000000009"
+              and positions[str(transcript)]["offset"] < transcript.stat().st_size, (resumed, positions))
+        append('tent":"/remote-control is active"}\n')
+        resumed, whole = both()
+        check("POSITIONS: once that line is whole, the next read reads it from its start",
+              resumed is None and whole is None, (resumed, whole))
+        saved = positions[str(transcript)]
+        fake = {"type": "system", "uuid": "only-in-the-saved-positions"}
+        positions[str(transcript)] = dict(saved, latest=fake)
+        check("POSITIONS: a read with nothing new answers from the saved positions, without rereading",
+              watcher.latest_unanswered_disconnect(transcript, positions) == fake, positions)
+        replacement = root / "replacement.jsonl"
+        replacement.write_text(unrelated, encoding="utf-8")
+        positions[str(transcript)] = dict(saved, latest=fake)
+        os.replace(replacement, transcript)
+        resumed, whole = both()
+        check("POSITIONS: a transcript replaced by another file is read whole", resumed is None and whole is None,
+              (resumed, whole))
+        transcript.write_text(json.dumps(disconnect_line()) + "\n" + unrelated * 3, encoding="utf-8")
+        watcher.latest_unanswered_disconnect(transcript, positions)
+        positions[str(transcript)]["latest"] = fake
+        with transcript.open("r+b") as stream:
+            stream.truncate(len(unrelated))
+        resumed, whole = both()
+        check("POSITIONS: a transcript that shrank is read whole", resumed == whole and resumed["uuid"] != fake["uuid"],
+              (resumed, whole))
+        transcript.write_text(unrelated * 3, encoding="utf-8")
+        watcher.latest_unanswered_disconnect(transcript, positions)
+        positions[str(transcript)]["latest"] = fake
+        text = transcript.read_bytes()
+        with transcript.open("r+b") as stream:
+            stream.seek(len(text) - 10)
+            stream.write(b"X")
+        resumed, whole = both()
+        check("POSITIONS: a transcript rewritten in place, same size, is read whole",
+              resumed is None and whole is None, (resumed, whole))
+        transcript.unlink()
+        resumed, whole = both()
+        check("POSITIONS: a transcript gone is no disconnect, and its saved end is dropped",
+              resumed is None and str(transcript) not in positions, positions)
+
+        logs = root / "logs"
+        logs.mkdir()
+        errors = io.StringIO()
+        with redirect_stderr(errors):
+            missing = watcher.transcript_read_positions_load(logs)
+        check("POSITIONS: no saved positions yet means reading every transcript whole, silently",
+              missing == {} and errors.getvalue() == "", (missing, errors.getvalue()))
+        for text, name in (("{not json", "not JSON"), ("[1, 2]", "not an object")):
+            (logs / watcher.TRANSCRIPT_READ_POSITIONS_FILE_NAME).write_text(text, encoding="utf-8")
+            errors = io.StringIO()
+            with redirect_stderr(errors):
+                loaded = watcher.transcript_read_positions_load(logs)
+            check(f"POSITIONS: saved positions that are {name} mean reading every transcript whole, and say so",
+                  loaded == {} and "reads every transcript whole" in errors.getvalue(),
+                  (loaded, errors.getvalue()))
+        watcher.transcript_read_positions_save(logs, {"a": {"offset": 1}})
+        check("POSITIONS: saved positions read back as saved",
+              watcher.transcript_read_positions_load(logs) == {"a": {"offset": 1}},
+              (logs / watcher.TRANSCRIPT_READ_POSITIONS_FILE_NAME).read_text(encoding="utf-8"))
+        errors = io.StringIO()
+        with redirect_stderr(errors):
+            saved_ok = watcher.transcript_read_positions_save(root / "no-such-directory", {"a": {"offset": 1}})
+        check("POSITIONS: positions that cannot be saved are reported, and the save says it failed",
+              saved_ok is False and "were not saved" in errors.getvalue(), errors.getvalue())
+
+        class ShrinksAfterScan(io.BytesIO):
+            # Stands in for a transcript truncated between the scan and the read of the bytes before its end.
+            def __next__(self):
+                try:
+                    return super().__next__()
+                except StopIteration:
+                    self.truncate(0)
+                    raise
+
+        class ShrinkingTranscript:
+            def __init__(self, data):
+                self.data = data
+
+            def open(self, mode):
+                return ShrinksAfterScan(self.data)
+
+            def __str__(self):
+                return "shrinking-transcript"
+
+        shrunk = {"shrinking-transcript": {"offset": 5, "bytes_before": "00", "latest": None}}
+        watcher.latest_unanswered_disconnect(ShrinkingTranscript(unrelated.encode() * 2), shrunk)
+        check("POSITIONS: a transcript that shrinks after the scan has no saved end, so the next run reads it whole",
+              "shrinking-transcript" not in shrunk, shrunk)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def case_two_runs_read_on_from_saved_positions(namespace):
+    fixture = Fixture("two-runs", namespace)
+    try:
+        fixture.add_seat_processes()
+        fixture.write_record()
+        fixture.write_transcript(disconnect_line())
+        fixture.start_pane()
+        first_exit, first_errors = fixture.run()
+        fixture.typed()
+        first_end = json.loads((fixture.logs / watcher.TRANSCRIPT_READ_POSITIONS_FILE_NAME)
+                               .read_text(encoding="utf-8"))[str(fixture.transcript)]["offset"]
+        fixture.append_transcript(reconnect_line())
+        fixture.append_transcript(disconnect_line("d0000000-0000-4000-8000-000000000007"))
+        handed = []
+        reader = watcher.latest_unanswered_disconnect
+
+        def spy(transcript, transcript_read_positions=None):
+            entry = (transcript_read_positions or {}).get(str(transcript))
+            handed.append(entry["offset"] if isinstance(entry, dict) else None)
+            return reader(transcript, transcript_read_positions)
+
+        watcher.latest_unanswered_disconnect = spy
+        try:
+            second_exit, second_errors = fixture.run()
+        finally:
+            watcher.latest_unanswered_disconnect = reader
+        saved = json.loads((fixture.logs / watcher.TRANSCRIPT_READ_POSITIONS_FILE_NAME).read_text(encoding="utf-8"))
+        check("two runs: the second reads on from the first's saved end and types for the new disconnect",
+              first_exit == 0 and second_exit == 0 and fixture.decisions() == ["typed", "typed"]
+              and saved[str(fixture.transcript)]["offset"] == fixture.transcript.stat().st_size,
+              (first_errors, second_errors, fixture.entries(), saved))
+        check("two runs: the second run's first read starts at the first run's saved end, not at the file's start",
+              handed[:1] == [first_end] and first_end > 0, (handed, first_end))
+    finally:
+        fixture.close()
+
+
+def case_positions_not_saved_exits_nonzero(namespace):
+    fixture = Fixture("positions-unsaved", namespace)
+    try:
+        fixture.add_seat_processes()
+        fixture.write_record()
+        fixture.write_transcript()
+        fixture.logs.mkdir(parents=True, exist_ok=True)
+        (fixture.logs / watcher.TRANSCRIPT_READ_POSITIONS_FILE_NAME).mkdir()
+        exit_code, errors = fixture.run()
+        check("read positions that cannot be saved: the run says so on stderr, for cron's log, and exits 1",
+              exit_code == 1 and "were not saved" in errors, (exit_code, errors))
+    finally:
+        fixture.close()
+
+
 def case_draft(namespace):
     box = [EMPTY_BOX[0], "❯\xa0yes, merge it", RULE]
     fixture = lost_seat("draft", namespace, box_lines=box)
@@ -770,6 +952,9 @@ def main():
         case_no_disconnect(namespace)
         case_no_transcript_yet(namespace)
         case_partial_last_line(namespace)
+        case_saved_read_positions()
+        case_two_runs_read_on_from_saved_positions(namespace)
+        case_positions_not_saved_exits_nonzero(namespace)
         case_draft(namespace)
         case_dialog_open(namespace)
         case_record_missing(namespace)

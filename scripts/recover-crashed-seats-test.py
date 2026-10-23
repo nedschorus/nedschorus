@@ -5179,6 +5179,9 @@ with tempfile.TemporaryDirectory() as temporary:
     seat = str(workspace.seat_directory.resolve())
     real_subprocess_run = recovery.subprocess.run
     real_shutil_which = recovery.shutil.which
+    real_process_table_directory = recovery.PROCESS_TABLE_DIRECTORY
+    # The lsof reader is the one used where /proc is missing, as on the Mac.
+    recovery.PROCESS_TABLE_DIRECTORY = root / "no-process-table"
 
     def lsof_prints(text, returncode=0):
         class Listing:
@@ -5225,10 +5228,85 @@ with tempfile.TemporaryDirectory() as temporary:
               == (True, "the occupancy check (lsof) exited 1; vacancy unproven"),
               recovery.seat_directory_occupied(workspace.seat_directory,
                                                apart_from_process_ids=[27178]))
+
+        # The /proc reader, used wherever /proc exists, as on ned-box: each
+        # numbered entry's cwd is a link to that process's working directory.
+        recovery.PROCESS_TABLE_DIRECTORY = process_table = root / "process-table"
+        (process_table / "self").mkdir(parents=True)
+        (process_table / "self" / "cwd").symlink_to("/")
+        recovery.subprocess.run = lambda *arguments, **keywords: (_ for _ in ()).throw(
+            AssertionError("the /proc reader ran a program"))
+
+        def process_in(process_id, working_directory=None, cwd_is_a_link=True):
+            entry = process_table / str(process_id)
+            entry.mkdir()
+            if working_directory is not None:
+                if cwd_is_a_link:
+                    (entry / "cwd").symlink_to(working_directory)
+                else:
+                    (entry / "cwd").write_text("not a link")
+            return entry
+
+        process_in(21, "/elsewhere")
+        process_in(22, seat)
+        process_in(23, f"{seat}/worktree")
+        process_in(24, f"{seat}-other")
+        check("PROC READER: names every process rooted in the seat, and no other",
+              sorted(recovery.processes_rooted_in_seat_directory(workspace.seat_directory)[0])
+              == [22, 23],
+              recovery.processes_rooted_in_seat_directory(workspace.seat_directory))
+        # A process that ends while the table is read leaves its entry without a cwd.
+        process_in(25)
+        unreadable = process_in(26, seat)
+        unreadable.chmod(0)
+        try:
+            readable_anyway = os.access(unreadable / "cwd", os.F_OK)
+            answer, why = recovery.processes_rooted_in_seat_directory(
+                workspace.seat_directory, require_a_complete_listing=True)
+            check("PROC READER: an ended process and an unreadable one do not hide the live one",
+                  answer is not None and 22 in answer and 23 in answer and why == "",
+                  (answer, why))
+            if not readable_anyway:
+                check("PROC READER: an unreadable process is skipped, as lsof skips it",
+                      26 not in answer, answer)
+        finally:
+            unreadable.chmod(0o755)
+        process_in(27, cwd_is_a_link=False, working_directory="x")
+        answer, why = recovery.processes_rooted_in_seat_directory(
+            workspace.seat_directory, require_a_complete_listing=True)
+        check("PROC READER: another read failure leaves a complete listing unproven",
+              answer is None and "process 27" in why and "vacancy unproven" in why,
+              (answer, why))
+        answer, why = recovery.processes_rooted_in_seat_directory(workspace.seat_directory)
+        check("PROC READER: but a process found in the seat is still positive evidence",
+              answer is not None and sorted(answer)[:2] == [22, 23], (answer, why))
+        for entry in list(process_table.iterdir()):
+            if entry.name.isdigit():
+                for child in entry.iterdir():
+                    child.unlink()
+                entry.rmdir()
+        process_in(21, "/elsewhere")
+        check("PROC READER: a table naming no process in the seat is a vacant seat",
+              recovery.processes_rooted_in_seat_directory(workspace.seat_directory) == ([], ""),
+              recovery.processes_rooted_in_seat_directory(workspace.seat_directory))
+        (process_table / "21" / "cwd").unlink()
+        (process_table / "21").rmdir()
+        answer, why = recovery.processes_rooted_in_seat_directory(workspace.seat_directory)
+        check("PROC READER: a table whose working directories could not be read proves nothing",
+              answer is None and "no working directories at all" in why, (answer, why))
+        process_in(31, seat)
+        check("PROC READER: the occupancy check treats a process found there as occupying the seat",
+              recovery.seat_directory_occupied(workspace.seat_directory)[0] is True
+              and recovery.seat_directory_occupied(
+                  workspace.seat_directory, apart_from_process_ids=[31]) == (False, ""),
+              (recovery.seat_directory_occupied(workspace.seat_directory),
+               recovery.seat_directory_occupied(workspace.seat_directory,
+                                                apart_from_process_ids=[31])))
     finally:
         patch("run_tmux", real_run_tmux)
         recovery.subprocess.run = real_subprocess_run
         recovery.shutil.which = real_shutil_which
+        recovery.PROCESS_TABLE_DIRECTORY = real_process_table_directory
         recovery.resupervise.retire_seat_tmux_session = real_retire_seat_tmux_session
         patch("processes_rooted_in_seat_directory", real_processes_rooted_in_seat_directory)
         patch("seat_directory_occupied", real_seat_directory_occupied)
