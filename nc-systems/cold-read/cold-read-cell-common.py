@@ -37,7 +37,7 @@ PROMPTS_DIR = REPO_ROOT / ".claude" / "skills" / "cold-read" / "prompts"
 
 CELL_CHOICES = ["restate", "defect-hunt", "fast-clarify", "terminology"]
 # The judge reads four files per case and needs its own prompt and fixed tier.
-TIER_CHOICES = ["deep", "second", "fast"]
+TIER_CHOICES = ["deep", "second-strongest-model", "fast"]
 
 # Draft prompts need free labels; labels become report filename tokens.
 PROMPT_FILE_CELL_LABEL_PATTERN = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -161,7 +161,7 @@ def build_argument_parser(
     parser.add_argument("--tier", required=True, choices=list(tier_choices))
     parser.add_argument(
         "--target", required=True,
-        help="document path, relative to the repo root or absolute",
+        help="document path, relative to the current directory or absolute",
     )
     parser.add_argument(
         "--target-origin", metavar="PATH",
@@ -169,7 +169,7 @@ def build_argument_parser(
              "copy; the prompt then tells the reviewer to resolve the "
              "document's relative references from this file's directory, "
              "since nothing else was copied beside the target. Relative to "
-             "the repo root or absolute; not required to exist, so a retry "
+             "the current directory or absolute; not required to exist, so a retry "
              "still runs after the original moved.",
     )
     parser.add_argument(
@@ -194,7 +194,7 @@ def build_argument_parser(
              "cell's own, .claude/skills/cold-read/prompts/<cell>.md, "
              "with the same "
              "{TARGET_PATH} and {REPORT_PATH} substitution; relative to the "
-             "repository root unless absolute. --cell is still required and "
+             "current directory unless absolute. --cell is still required and "
              "still names the report. This is how a draft prompt is trialled "
              "through the ordinary launcher: on 2026-09-04, 24 trial cells "
              "exited 64 because the only template a cell would read was the "
@@ -219,10 +219,13 @@ def validate_cell(cell: str, prompt_file_argument) -> None:
             "hyphens, like terminology-v9")
 
 
+def absolute_path_from_command_line_argument(path_argument: str) -> pathlib.Path:
+    """The argument as an absolute path, a relative one taken from the current directory."""
+    return pathlib.Path(path_argument).resolve()
+
+
 def resolve_target(target_argument: str) -> pathlib.Path:
-    target = pathlib.Path(target_argument)
-    if not target.is_absolute():
-        target = REPO_ROOT / target
+    target = absolute_path_from_command_line_argument(target_argument)
     if not target.is_file():
         raise CellRefusal(f"target not found: {target}")
     return target
@@ -231,9 +234,7 @@ def resolve_target(target_argument: str) -> pathlib.Path:
 def resolve_report_path(report_argument: str) -> pathlib.Path:
     """Return an absolute report path with any previous report removed."""
     # A stale report would make a run that wrote nothing appear successful.
-    report = pathlib.Path(report_argument)
-    if not report.is_absolute():
-        report = REPO_ROOT / report
+    report = absolute_path_from_command_line_argument(report_argument)
     if report.exists() and not report.is_file():
         raise CellRefusal(f"report path is not a file: {report}")
     report.parent.mkdir(parents=True, exist_ok=True)
@@ -242,9 +243,7 @@ def resolve_report_path(report_argument: str) -> pathlib.Path:
 
 
 def resolve_prompt_file(prompt_file_argument: str) -> pathlib.Path:
-    prompt_file = pathlib.Path(prompt_file_argument)
-    if not prompt_file.is_absolute():
-        prompt_file = REPO_ROOT / prompt_file
+    prompt_file = absolute_path_from_command_line_argument(prompt_file_argument)
     if not prompt_file.is_file():
         raise CellRefusal(f"prompt file not found: {prompt_file}")
     return prompt_file
@@ -255,8 +254,7 @@ def resolve_target_origin(target_origin_argument) -> typing.Optional[pathlib.Pat
     # The origin only resolves references; moving the original must not prevent a retry.
     if not target_origin_argument:
         return None
-    origin = pathlib.Path(target_origin_argument)
-    return origin if origin.is_absolute() else REPO_ROOT / origin
+    return absolute_path_from_command_line_argument(target_origin_argument)
 
 
 def target_origin_paragraph(target: pathlib.Path, target_origin: pathlib.Path) -> str:
@@ -537,28 +535,33 @@ CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS = 10
 
 
 def checkout_commit_for_provenance_stamp(checkout: pathlib.Path) -> str:
-    """Return the checkout commit, with -dirty for tracked changes, or an empty string on failure."""
+    """Return the checkout commit, with -dirty for tracked changes; an empty
+    string when the checkout is in no git repository; `no-commits-yet` when
+    HEAD names a branch with no commits; and `unknown-git-exited-<code>`, or
+    `unknown-git-did-not-answer` when git timed out or did not start, when
+    git failed."""
     # Untracked drafts are routine and do not make the provenance stamp dirty.
-    # Do not print failures: the grid parses stderr as cell status.
-    def git_output(*arguments):
-        """Return git stdout, or None if git cannot answer."""
-        try:
-            completed = subprocess.run(
-                ["git", "-C", str(checkout), *arguments],
-                capture_output=True, text=True, check=False,
-                timeout=CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        return completed.stdout if completed.returncode == 0 else None
-
-    commit = (git_output("rev-parse", "--short", "HEAD") or "").strip()
-    if not commit:
-        return ""
-    tracked_changes = git_output("status", "--porcelain", "--untracked-files=no")
-    if tracked_changes is None:
-        return ""
-    return commit + ("-dirty" if tracked_changes.strip() else "")
+    # Do not print failures: the grid parses stderr as cell status. The stamp
+    # is split on whitespace, so the failure value carries no space.
+    try:
+        # With -q --verify, git exits 1 with no output when HEAD has no commit
+        # yet, and 128 for a real failure.
+        commit = git_machine_readable_output.run_git_unless_outside_a_repository(
+            checkout, ["rev-parse", "-q", "--verify", "--short", "HEAD"],
+            accepted_exit_codes=(0, 1),
+            timeout_seconds=CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS)
+        if commit is None:
+            return ""
+        if not commit.strip():
+            return "no-commits-yet"
+        tracked_changes = git_machine_readable_output.run_git(
+            checkout, ["status", "--porcelain", "--untracked-files=no"],
+            timeout_seconds=CHECKOUT_COMMIT_GIT_TIMEOUT_SECONDS)
+    except git_machine_readable_output.GitCommandFailed as failure:
+        if failure.returncode is None:
+            return "unknown-git-did-not-answer"
+        return f"unknown-git-exited-{failure.returncode}"
+    return os.fsdecode(commit).strip() + ("-dirty" if tracked_changes.strip() else "")
 
 
 def stamp_provenance(
@@ -577,7 +580,7 @@ def stamp_provenance(
         f"prompt_file={prompt_file_argument} " if prompt_file_argument else "")
     # The hash names the exact bytes reviewed, which outlives an edit to the original.
     try:
-        target_sha256 = hashlib.sha256(pathlib.Path(target_argument).read_bytes()).hexdigest()
+        target_sha256 = hashlib.sha256(absolute_path_from_command_line_argument(target_argument).read_bytes()).hexdigest()
     except OSError:
         target_sha256 = "unreadable"
     stamp = (

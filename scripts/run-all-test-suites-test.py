@@ -617,7 +617,7 @@ with tempfile.TemporaryDirectory() as scratch:
     result = run(root, checkout=repo / "sub")
     check("a subdirectory of a checkout is refused, exit 2, naming the top directory",
           result.returncode == 2
-          and f"Pass --checkout {repo.resolve()}" in result.stderr and ran(root) == [],
+          and f"and its value with: --checkout {shlex.quote(str(repo.resolve()))}\n" in result.stderr and ran(root) == [],
           (result.returncode, result.stderr))
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
@@ -953,10 +953,15 @@ with tempfile.TemporaryDirectory() as scratch:
           and "SELECTED reads-nothing-else-test.py: no recording of its inputs on this "
               "machine yet" in lines(result.stdout), (ran(root), result.stdout))
 
+    # The runner reads its suite sandbox lists from the checkout's copy, so that copy assigns them.
+    runner_copy_lists = "".join(f"{name} = {{}}\n"
+                                for name in module.SUITE_SANDBOX_LIST_NAMES_READ_FROM_CHECKOUT_UNDER_TEST)
     for changed in ("scripts/run-all-test-suites.py", ".claude/hooks/a-hook.py",
                     ".claude/settings.json"):
         base = git(repo, "rev-parse", "HEAD").stdout.strip()
-        commit_files(repo, {changed: f"# {changed}\n"}, f"change {changed}")
+        commit_files(repo, {changed: f"# {changed}\n"
+                            + (runner_copy_lists if changed.endswith("run-all-test-suites.py")
+                               else "")}, f"change {changed}")
         result = selective_run(root, base)
         check(f"a change to {changed} runs every suite, saying why",
               ran(root) == sorted(RECORDING_SUITES)
@@ -996,6 +1001,101 @@ def select_since(root, since, environment_extra=None):
 def head(repo):
     return git(repo, "rev-parse", "HEAD").stdout.strip()
 
+
+# git failing is told apart from git's answer: no commit, detached HEAD, untracked files.
+def stand_in_git_failing_on(root, words):
+    """A PATH whose git fails, exit 128, when its arguments, joined by spaces, include words."""
+    bin_dir = root / "bin-git-failing-on"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "git").write_text(
+        "#!/bin/sh\n"
+        f"case \"$*\" in *{shlex.quote(words)}*)\n"
+        "    echo \"fatal: injected git failure\" >&2\n"
+        "    exit 128 ;;\n"
+        "esac\n"
+        f"exec {shlex.quote(shutil.which('git'))} \"$@\"\n")
+    (bin_dir / "git").chmod(0o755)
+    return {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"a-test.py": PASSES})
+    result = run(root, environment_extra=stand_in_git_failing_on(root, "rev-list --max-parents=0"))
+    check("when git cannot list HEAD's root commits, the run exits 2 before any suite runs, "
+          "rather than filing recordings under no-commit",
+          result.returncode == 2 and ran(root) == []
+          and "git could not list the root commits of HEAD" in result.stderr
+          and result.stderr.endswith(
+              "\n" + module.git_failure_next_step_lines("run-all-test-suites.py") + "\n")
+          and "fatal: injected git failure" in result.stderr
+          and not (root / "recordings" / "no-commit").exists(),
+          (result.returncode, ran(root), result.stderr))
+
+with tempfile.TemporaryDirectory() as scratch:
+    root = pathlib.Path(scratch)
+    repo = make_repo(root, {"a-test.py": PASSES})
+    since = head(repo)
+    (repo / "untracked-test.py").write_text(SUITE_PREAMBLE + PASSES)
+    result = select_since(root, since, stand_in_git_failing_on(
+        root, "ls-files --others --exclude-standard -z"))
+    check("when git cannot list untracked files, a selective run exits 2 before any suite "
+          "runs, rather than selecting without them",
+          result.returncode == 2 and ran(root) == []
+          and "git ls-files --others failed" in result.stderr
+          and result.stderr.endswith(
+              "\n" + module.git_failure_next_step_lines("run-all-test-suites.py") + "\n")
+          and "fatal: injected git failure" in result.stderr,
+          (result.returncode, ran(root), result.stderr))
+
+
+def git_answering(answers):
+    """A stand-in for the program's git(): the first answer whose words are all in the call."""
+    def stand_in(checkout, *arguments):
+        for words, status, output, error in answers:
+            if all(word in arguments for word in words):
+                return subprocess.CompletedProcess(arguments, status, output, error)
+        raise AssertionError(f"unexpected git call {arguments}")
+    return stand_in
+
+
+real_program_git = module.git
+try:
+    for label, answers, expected in [
+            ("HEAD resolves", [(("rev-parse",), 0, "abc123\n", ""), (("status",), 0, "", "")],
+             "abc123"),
+            ("the branch has no commit yet", [(("rev-parse",), 1, "", ""),
+                                              (("status",), 0, "", "")], "no commit"),
+            ("git rev-parse fails", [(("rev-parse",), 128, "", "fatal: injected\n"),
+                                     (("status",), 0, "", "")],
+             "commit unknown (git rev-parse HEAD exited 128: fatal: injected)")]:
+        module.git = git_answering(answers)
+        commit, _ = module.commit_and_state(pathlib.Path("/nowhere"))
+        check(f"commit_and_state records the commit when {label}: {expected}",
+              commit == expected, commit)
+    for label, answers, expected in [
+            ("on a branch", [(("symbolic-ref",), 0, "topic\n", "")], "topic"),
+            ("detached", [(("symbolic-ref",), 1, "", "")], "HEAD"),
+            ("git symbolic-ref fails", [(("symbolic-ref",), 128, "", "fatal: injected\n")],
+             "branch unknown (git symbolic-ref HEAD exited 128: fatal: injected)")]:
+        module.git = git_answering(answers)
+        branch = module.branch_of_checkout(pathlib.Path("/nowhere"))
+        check(f"branch_of_checkout records the branch when {label}: {expected}",
+              branch == expected, branch)
+    module.git = git_answering([(("rev-parse",), 1, "", "")])
+    check("recordings_directory_for files a checkout with no commit yet under no-commit",
+          module.recordings_directory_for("/store", pathlib.Path("/nowhere"))
+          == pathlib.Path("/store/no-commit"))
+    module.git = git_answering([(("rev-parse",), 128, "", "fatal: injected\n")])
+    try:
+        module.recordings_directory_for("/store", pathlib.Path("/nowhere"))
+        refused = None
+    except module.CouldNotRun as refusal:
+        refused = str(refusal)
+    check("recordings_directory_for refuses when git cannot resolve HEAD",
+          refused is not None and "fatal: injected" in refused, refused)
+finally:
+    module.git = real_program_git
 
 # A recording made on another branch. The store is shared by every worktree
 # and clone on a machine, so the recording selection reads may have been
@@ -1295,6 +1395,14 @@ def start_writer(root, checkout, name, store, shadow, markers, shared_temporary=
                             text=True, env=environment, stdin=subprocess.DEVNULL)
 
 
+def release_barrier(markers, name, word):
+    """Release the run held as `name` with `word`, "go" or "fail"."""
+    # Renamed into place, since the barrier reads the word as soon as the file exists.
+    temporary = markers / f".go-{name}.tmp"
+    temporary.write_text(word)
+    os.replace(temporary, markers / f"go-{name}")
+
+
 def wait_for(path, seconds=60):
     deadline = time.monotonic() + seconds
     while not path.exists():
@@ -1401,10 +1509,10 @@ def overlap_publishing_in_turn(shared_temporary, prefill):
         # Released only once the reader is polling, and the reader polls once more after
         # the stop, so its reads span both publications however slowly it started.
         seen["reader polling before release"] = wait_for(reader_polling, 60)
-        (markers / "go-first").write_text("go")
+        release_barrier(markers, "first", "go")
         wait_for(markers / "renamed-first", 30)
         seen["after first"] = published(store)
-        (markers / "go-second").write_text("go")
+        release_barrier(markers, "second", "go")
         wait_for(markers / "renamed-second", 30)
         seen["after second"] = published(store)
         seen["exits"] = {name: writer.wait(timeout=120) for name, writer in writers.items()}
@@ -1436,9 +1544,9 @@ def overlap_second_fails_after_first_publishes(prefill):
         writers = {name: start_writer(root, checkout, name, store, shadow, markers)
                    for name, checkout in (("first", repo), ("second", other))}
         held = all(wait_for(markers / f"written-{name}") for name in writers)
-        (markers / "go-first").write_text("go")
+        release_barrier(markers, "first", "go")
         wait_for(markers / "renamed-first", 30)
-        (markers / "go-second").write_text("fail")
+        release_barrier(markers, "second", "fail")
         failed_at = time.monotonic()
         exits = {name: writer.wait(timeout=120) for name, writer in writers.items()}
         after_failure = time.monotonic() - failed_at
@@ -1468,9 +1576,9 @@ def overlap_first_publishes_while_second_checks():
                                       hold_check=(name == "second"))
                    for name, checkout in (("first", repo), ("second", other))}
         held = all(wait_for(markers / f"written-{name}") for name in writers)
-        (markers / "go-second").write_text("fail")
+        release_barrier(markers, "second", "fail")
         checking = wait_for(markers / "checking-second", 30)
-        (markers / "go-first").write_text("go")
+        release_barrier(markers, "first", "go")
         published_during_check = wait_for(markers / "renamed-first", 3)
         (markers / "go-check-second").touch()
         exits = {name: writer.wait(timeout=120) for name, writer in writers.items()}
@@ -1552,7 +1660,7 @@ with tempfile.TemporaryDirectory() as scratch:
     run(root)
     stored = next((root / "recordings").glob("*/a-test.py.json"))
     shadow, markers = publication_barrier(root)
-    (markers / "go-alone").write_text("fail")
+    release_barrier(markers, "alone", "fail")
     started = time.monotonic()
     result = run(root, environment_extra={
         "PYTHONPATH": str(shadow), BARRIER_VARIABLE: str(markers),
@@ -1577,7 +1685,7 @@ with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
     repo = make_repo(root, {"a-test.py": PASSES})
     shadow, markers = publication_barrier(root)
-    (markers / "go-alone").write_text("fail")
+    release_barrier(markers, "alone", "fail")
     started = time.monotonic()
     result = run(root, environment_extra={
         "PYTHONPATH": str(shadow), BARRIER_VARIABLE: str(markers),
@@ -1592,23 +1700,62 @@ with tempfile.TemporaryDirectory() as scratch:
               for line in lines(result.stdout))
           and not list((root / "recordings").glob("*/a-test.py.json")), result.stdout)
 
-# A recorded run that skipped cases recorded nothing for them.
+# A recorded run that skipped cases recorded nothing for them, unless the machine itself
+# is what each skip names.
+MARKER = module.SKIPPED_CASE_THIS_MACHINE_CANNOT_RUN_MARKER
 with tempfile.TemporaryDirectory() as scratch:
     root = pathlib.Path(scratch)
-    repo = make_repo(root, {"skips-one-test.py": "print('SKIP  a case this fixture skips')\n",
-                            "passes-test.py": PASSES})
+    repo = make_repo(root, {
+        "skips-one-test.py": "print('SKIP  a case this fixture skips')\n",
+        "marked-only-test.py": f"print('SKIP  {MARKER} a macOS case: macOS only')\n"
+                               f"print('SKIP {MARKER} an rg case: rg is not on PATH')\n",
+        "both-test.py": f"print('SKIP  {MARKER} a macOS case: macOS only')\n"
+                        "print('SKIP  a tmux case: the tmux server did not start')\n",
+        "marker-later-test.py": f"print('SKIP  a case: {MARKER}')\n",
+        "passes-test.py": PASSES})
     base = head(repo)
-    run(root)
+    first = run(root)
+    check("a marked skip is still counted beside its suite and printed with the skipped cases",
+          any(line.startswith("PASS marked-only-test.py (") and line.endswith(", 2 skipped)")
+              for line in lines(first.stdout))
+          and f"marked-only-test.py: SKIP  {MARKER} a macOS case: macOS only" in lines(first.stdout)
+          and f"both-test.py: SKIP  {MARKER} a macOS case: macOS only" in lines(first.stdout)
+          and "both-test.py: SKIP  a tmux case: the tmux server did not start"
+              in lines(first.stdout), first.stdout)
     result = select_since(root, base)
-    check("a suite whose recorded run skipped cases is selected again, and says why",
-          ran(root) == ["skips-one-test.py"]
-          and "SELECTED skips-one-test.py: its last recorded run skipped 1 case(s), so it "
-              "recorded only what the cases that ran read" in lines(result.stdout),
+    check("a suite whose recorded run skipped only marked cases is not selected again; one "
+          "with an unmarked skip is, beside marked ones too, and the mark counts only right "
+          "after SKIP",
+          ran(root) == ["both-test.py", "marker-later-test.py", "skips-one-test.py"],
           (ran(root), result.stdout))
-    stored = next((root / "recordings").glob("*/skips-one-test.py.json"))
-    recorded = json.loads(stored.read_text())
-    recorded.pop("skipped_cases")
-    stored.write_text(json.dumps(recorded))
+    check("a suite whose recorded run skipped cases is selected again, and says why",
+          "SELECTED skips-one-test.py: its last recorded run skipped 1 case(s) without the mark "
+          f"{MARKER}, so it recorded only what the cases that ran read" in lines(result.stdout)
+          and "SELECTED both-test.py: its last recorded run skipped 1 case(s) without the mark "
+          f"{MARKER}, so it recorded only what the cases that ran read" in lines(result.stdout),
+          result.stdout)
+
+    def recording_of(suite):
+        return next((root / "recordings").glob(f"*/{suite}.json"))
+
+    def rewrite_recording(suite, change):
+        stored = recording_of(suite)
+        recorded = json.loads(stored.read_text())
+        change(recorded)
+        stored.write_text(json.dumps(recorded))
+
+    rewrite_recording("marked-only-test.py",
+                      lambda recorded: recorded.pop("skipped_cases_this_machine_cannot_run"))
+    rewrite_recording("skips-one-test.py",
+                      lambda recorded: recorded.update(skipped_cases_this_machine_cannot_run=True))
+    result = select_since(root, base)
+    check("a recording that does not say how many of its skips were marked counts none as marked",
+          "SELECTED marked-only-test.py: its last recorded run skipped 2 case(s) without the mark "
+          f"{MARKER}, so it recorded only what the cases that ran read" in lines(result.stdout)
+          and "SELECTED skips-one-test.py: its last recorded run skipped 1 case(s) without the "
+          f"mark {MARKER}, so it recorded only what the cases that ran read" in lines(result.stdout),
+          result.stdout)
+    rewrite_recording("skips-one-test.py", lambda recorded: recorded.pop("skipped_cases"))
     result = select_since(root, base)
     check("and so is one whose recording does not say how many cases it skipped",
           "SELECTED skips-one-test.py: its last recorded run skipped an unrecorded number "

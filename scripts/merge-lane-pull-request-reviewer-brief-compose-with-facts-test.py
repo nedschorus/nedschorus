@@ -7,10 +7,10 @@ copy of this directory's compose-pull-request-reviewer-brief.py and an
 instructions file committed on main. wt/pr7-merged is a worktree of that
 repository. The reviewer's scratch directories are made in their own directory
 of the scratch, in place of the default parent outside the log-store. The program runs with GIT_DIR pointing at a directory that does
-not exist, so a case passes only if the program drops it. A fake gh first on
-PATH prints the file FAKE_GH_BODY_FILE names as the description, or fails when
-FAKE_GH_FAIL is set, and records its arguments and GH_TOKEN; HOME is a scratch
-directory holding the merge account's token file.
+not exist, so a case passes only if the program drops it. A stand-in for gh
+on PATH serves the pull request's closing issues, its description and the merged
+pull requests from routes each case arranges, and logs each call with the GH_TOKEN it saw;
+HOME is a scratch directory holding the merge account's token file.
 
 Run: python3 scripts/merge-lane-pull-request-reviewer-brief-compose-with-facts-test.py
 """
@@ -43,17 +43,28 @@ GIT_ENVIRONMENT = {
 STANDING_TEXT = "Review pull request <N>.\n<<PR-REVIEWER-INSTRUCTIONS>>\nEnd of standing text.\n"
 INSTRUCTIONS = "The reviewing instructions.\n"
 ADDENDUM = "The ned-box addendum.\n"
-TOKEN = "merge-account-token-for-the-test"
 DESCRIPTION = "The author's description.\n\n#no_defect_fixed\n"
-FAKE_GH = """#!/bin/sh
-printf '%s\\n' "$*" > "$FAKE_GH_RECORD"
-printf '%s\\n' "$GH_TOKEN" >> "$FAKE_GH_RECORD"
-if [ -n "$FAKE_GH_FAIL" ]; then
-  echo "HTTP 502: bad gateway" >&2
-  exit 1
-fi
-cat "$FAKE_GH_BODY_FILE"
-"""
+
+TEST_TOKEN = "brief-compose-test-token-not-a-credential"
+GH_STAND_IN = r'''#!/usr/bin/env python3
+import json, os, sys
+argv = sys.argv[1:]
+with open(os.environ["BRIEF_COMPOSE_TEST_GH_CALL_LOG"], "a") as log:
+    log.write(json.dumps({"argv": argv, "gh_token": os.environ.get("GH_TOKEN")}) + "\n")
+routes = json.load(open(os.environ["BRIEF_COMPOSE_TEST_GH_ROUTES"]))
+key = {"view": "description" if "--jq" in argv else "closing",
+       "list": "merged"}.get(argv[1] if argv[:1] == ["pr"] else "")
+route = routes.get(key)
+if route is None:
+    sys.stderr.write("brief-compose-test stand-in: unarranged gh call %r\n" % (argv,))
+    sys.exit(97)
+sys.stdout.write(route.get("stdout", ""))
+sys.stderr.write(route.get("stderr", ""))
+sys.exit(route.get("exit", 0))
+'''
+QUIET_GH_ROUTES = {"closing": {"stdout": json.dumps({"closingIssuesReferences": []})},
+                   "description": {"stdout": DESCRIPTION},
+                   "merged": {"stdout": "[]"}}
 
 failures = []
 
@@ -79,10 +90,20 @@ def commit_file(repository, path, text, message):
     return git(repository, "rev-parse", "HEAD")
 
 
-def run_program(scratch, helpers, specs, *extra, description=DESCRIPTION, gh_fails=False):
+def run_program(scratch, helpers, specs, *extra, gh_routes=None, token=TEST_TOKEN):
     specs_file = scratch / "brief-specs.json"
     specs_file.write_text(json.dumps(specs))
-    (scratch / "description.md").write_text(description)
+    stand_in_directory = scratch / "gh-stand-in"
+    stand_in_directory.mkdir(exist_ok=True)
+    (stand_in_directory / "gh").write_text(GH_STAND_IN)
+    (stand_in_directory / "gh").chmod(0o755)
+    (scratch / "gh-routes.json").write_text(json.dumps(QUIET_GH_ROUTES if gh_routes is None else gh_routes))
+    (scratch / "gh-calls.jsonl").write_text("")
+    home = scratch / "home"
+    shutil.rmtree(home, ignore_errors=True)
+    (home / ".config" / "nedschorus").mkdir(parents=True)
+    if token is not None:
+        (home / ".config" / "nedschorus" / "ned-review-merge.token").write_text(token + "\n")
     return subprocess.run(
         [sys.executable, str(PROGRAM), str(specs_file),
          "--merge-lane-worktrees-and-outputs-directory", str(helpers),
@@ -91,11 +112,37 @@ def run_program(scratch, helpers, specs, *extra, description=DESCRIPTION, gh_fai
          "--ned-box-reviewer-brief-environment-addendum-file", str(scratch / "addendum.md"),
          "--merge-lane-pull-request-reviewer-scratch-directories-parent-directory", str(scratch / "reviewer-scratch"), *extra],
         capture_output=True, text=True,
-        env={**GIT_ENVIRONMENT, "GIT_DIR": str(scratch / "no-such-git-directory"),
-             "PATH": f"{scratch / 'fake-bin'}{os.pathsep}{os.environ['PATH']}",
-             "HOME": str(scratch / "home"), "FAKE_GH_RECORD": str(scratch / "gh-record"),
-             "FAKE_GH_BODY_FILE": str(scratch / "description.md"),
-             **({"FAKE_GH_FAIL": "1"} if gh_fails else {})})
+        env={**GIT_ENVIRONMENT, "GIT_DIR": str(scratch / "no-such-git-directory"), "HOME": str(home),
+             "PATH": f"{stand_in_directory}{os.pathsep}{os.environ['PATH']}",
+             "BRIEF_COMPOSE_TEST_GH_ROUTES": str(scratch / "gh-routes.json"),
+             "BRIEF_COMPOSE_TEST_GH_CALL_LOG": str(scratch / "gh-calls.jsonl")})
+
+
+def gh_calls(scratch):
+    return [json.loads(line) for line in (scratch / "gh-calls.jsonl").read_text().splitlines()]
+
+
+ISSUE_THIS_PULL_REQUEST_CLOSES = "https://github.com/nedschorus/nedschorus/issues/50"
+MERGED_PULL_REQUESTS = [
+    {"number": 101, "title": "Kept a workaround", "url": "https://github.com/nedschorus/nedschorus/pull/101",
+     "body": f"Fixes a hang.\r\n\r\n- #root_cause_not_fixed the harness drops it. #follow_up {ISSUE_THIS_PULL_REQUEST_CLOSES}\r\n"},
+    {"number": 102, "title": "Kept another", "url": "https://github.com/nedschorus/nedschorus/pull/102",
+     "body": "**Root cause not fixed:** the cause stays until https://github.com/NedSchorus/nedschorus/pull/7 merges."},
+    {"number": 103, "title": "Links elsewhere", "url": "https://github.com/nedschorus/nedschorus/pull/103",
+     "body": "#root_cause_not_fixed it stays. #follow_up https://github.com/nedschorus/nedschorus/issues/51"},
+    {"number": 104, "title": "A root-cause line", "url": "https://github.com/nedschorus/nedschorus/pull/104",
+     "body": f"#root_cause the hook read a file. See {ISSUE_THIS_PULL_REQUEST_CLOSES}"},
+    {"number": 105, "title": "Another repository's issue 50", "url": "https://github.com/nedschorus/nedschorus/pull/105",
+     "body": "#root_cause_not_fixed it stays. #follow_up https://github.com/cli/cli/issues/50"},
+    {"number": 106, "title": "No description", "url": "https://github.com/nedschorus/nedschorus/pull/106",
+     "body": None},
+]
+FOLLOW_UP_GH_ROUTES = {
+    "closing": {"stdout": json.dumps({"closingIssuesReferences": [
+        {"number": 50, "url": ISSUE_THIS_PULL_REQUEST_CLOSES,
+         "repository": {"name": "nedschorus", "owner": {"login": "nedschorus"}}}]})},
+    "description": {"stdout": DESCRIPTION},
+    "merged": {"stdout": json.dumps(MERGED_PULL_REQUESTS)}}
 
 
 def main():
@@ -119,12 +166,6 @@ def main():
         merged_tree = git(helpers / "wt" / "pr7-merged", "rev-parse", "HEAD^{tree}")
         (scratch / "standing.md").write_text(STANDING_TEXT)
         (scratch / "addendum.md").write_text(ADDENDUM)
-        (scratch / "fake-bin").mkdir()
-        (scratch / "fake-bin" / "gh").write_text(FAKE_GH)
-        (scratch / "fake-bin" / "gh").chmod(0o755)
-        (scratch / "home" / ".config" / "nedschorus").mkdir(parents=True)
-        (scratch / "home" / ".config" / "nedschorus" / "ned-review-merge.token").write_text(
-            TOKEN + "\n")
 
         first_round = {"tag": "7", "number": 7, "title": "A title", "author": "an author",
                        "head": first_head, "main": main_commit,
@@ -146,6 +187,8 @@ def main():
             "- Test files the change touches: `scripts/thing-test.py`.\n"
             "- First round: no head commit was reviewed before.\n"
             "- Other open pull requests changing the same files: none.\n"
+            "- Merged pull requests whose not-fixed line links to an issue this pull request "
+            "closes, or to this pull request: none.\n"
             "- Hazards: Check the thing.\n"
             "- The author's description of the pull request, quoted below. It is what the "
             "author claims; check each claim against the repository yourself, including its "
@@ -160,13 +203,57 @@ def main():
               "not in the worktrees and outputs directory",
               (scratch / "reviewer-scratch" / "rv7").is_dir()
               and not (helpers / "rv7").exists(), detail)
-        check("gh reads the pull request's description as the merge account",
-              (scratch / "gh-record").read_text()
-              == f"pr view 7 --repo nedschorus/nedschorus --json body --jq .body\n{TOKEN}\n",
-              (scratch / "gh-record").read_text())
         check("the output names the brief and its word count",
               completed.stdout == f"composed {brief_file} {len(expected.split())} words\n",
               detail)
+
+        calls = gh_calls(scratch)
+        check("gh is asked for this pull request's closing issues, the merged pull requests "
+              "and this pull request's description, as the merge account",
+              [call["argv"][:3] for call in calls]
+              == [["pr", "view", "7"], ["pr", "list", "--repo"], ["pr", "view", "7"]]
+              and "closingIssuesReferences" in calls[0]["argv"]
+              and "merged" in calls[1]["argv"] and "body" in calls[1]["argv"][-1]
+              and calls[2]["argv"][-3:] == ["body", "--jq", ".body"]
+              and all(call["gh_token"] == TEST_TOKEN for call in calls), json.dumps(calls))
+
+        completed = run_program(scratch, helpers, [first_round, {**first_round, "tag": "7b"}],
+                                gh_routes=FOLLOW_UP_GH_ROUTES)
+        brief_file = helpers / "briefs" / "brief-7-mac-claude.md"
+        brief = brief_file.read_text() if brief_file.exists() else ""
+        check("the brief lists the merged pull requests whose not-fixed line links to an issue "
+              "this pull request closes or to this pull request, in either form",
+              completed.returncode == 0
+              and ("- Merged pull requests whose not-fixed line links to an issue this pull "
+                   "request closes, or to this pull request: #101 \"Kept a workaround\" "
+                   "(https://github.com/nedschorus/nedschorus/pull/101), whose line is "
+                   f"`- #root_cause_not_fixed the harness drops it. #follow_up {ISSUE_THIS_PULL_REQUEST_CLOSES}`; "
+                   "#102 \"Kept another\" (https://github.com/nedschorus/nedschorus/pull/102), whose "
+                   "line is `**Root cause not fixed:** the cause stays until "
+                   "https://github.com/NedSchorus/nedschorus/pull/7 merges.`.\n") in brief,
+              f"exit {completed.returncode}\n{completed.stderr}\n--- brief ---\n{brief}")
+        check("the merged pull requests are read once for two briefs",
+              [call["argv"][1] for call in gh_calls(scratch)]
+              == ["view", "list", "view", "view", "view"],
+              json.dumps(gh_calls(scratch)))
+
+        for route, what in (("closing", "closing issues"), ("merged", "merged pull requests")):
+            failing = {**QUIET_GH_ROUTES, route: {"exit": 1, "stderr": "HTTP 502: Bad Gateway\n"}}
+            (helpers / "briefs" / "brief-10-mac-claude.md").unlink(missing_ok=True)
+            completed = run_program(scratch, helpers, [{**first_round, "tag": "10"}], gh_routes=failing)
+            check(f"gh failing on the {what} exits 1, naming gh's error, and writes no brief",
+                  completed.returncode == 1 and "brief not composed: StepFailed" in completed.stderr
+                  and "HTTP 502: Bad Gateway" in completed.stderr
+                  and not (helpers / "briefs" / "brief-10-mac-claude.md").exists(),
+                  f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+
+        completed = run_program(scratch, helpers, [{**first_round, "tag": "11"}], token=None)
+        check("a missing merge account token exits 1, naming the token file, and asks gh nothing",
+              completed.returncode == 1
+              and "brief not composed: MergeAccountTokenUnusable" in completed.stderr
+              and "ned-review-merge.token" in completed.stderr and not gh_calls(scratch)
+              and not (helpers / "briefs" / "brief-11-mac-claude.md").exists(),
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
 
         program_spec = importlib.util.spec_from_file_location("brief_compose", PROGRAM)
         program = importlib.util.module_from_spec(program_spec)
@@ -232,7 +319,7 @@ def main():
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
 
         completed = run_program(scratch, helpers, [{**first_round, "tag": "10"}],
-                                description="\n")
+                                gh_routes={**QUIET_GH_ROUTES, "description": {"stdout": "\n"}})
         brief_file = helpers / "briefs" / "brief-10-mac-claude.md"
         brief = brief_file.read_text() if brief_file.exists() else ""
         check("an empty description is said to be empty",
@@ -242,7 +329,8 @@ def main():
               f"\n--- brief ---\n{brief}")
 
         completed = run_program(scratch, helpers, [{**first_round, "tag": "11"}],
-                                gh_fails=True)
+                                gh_routes={**QUIET_GH_ROUTES, "description": {
+                                    "exit": 1, "stderr": "HTTP 502: bad gateway\n"}})
         check("gh failing to read the description exits 1, names gh's reason and says to "
               "run again once, writing no brief",
               completed.returncode == 1
@@ -252,17 +340,6 @@ def main():
               and not (helpers / "briefs" / "brief-11-mac-claude.md").exists(),
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
 
-        token_file = scratch / "home" / ".config" / "nedschorus" / "ned-review-merge.token"
-        token_file.unlink()
-        completed = run_program(scratch, helpers, [{**first_round, "tag": "12"}])
-        check("a missing merge account token exits 1, says only the user can restore it, "
-              "writing no brief",
-              completed.returncode == 1
-              and "could not read pull request 7's description" in completed.stderr
-              and "only the user can restore the token" in completed.stderr
-              and not (helpers / "briefs" / "brief-12-mac-claude.md").exists(),
-              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
-        token_file.write_text(TOKEN + "\n")
 
         (scratch / "standing.md").write_text("A standing text with no instructions line.\n")
         completed = run_program(scratch, helpers, [{**first_round, "tag": "9"}])

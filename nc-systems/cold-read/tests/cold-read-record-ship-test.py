@@ -115,12 +115,13 @@ def make_record(root: pathlib.Path, name: str, files: dict) -> pathlib.Path:
     return record
 
 
-def ship(destination, *args, extra_env=None, script=SHIP):
+def ship(destination, *args, extra_env=None, script=SHIP, current_directory=None):
     env = dict(os.environ)
     env[DESTINATION_VARIABLE] = destination
     env.update(extra_env or {})
     return subprocess.run([sys.executable, str(script), *args],
-                          capture_output=True, text=True, check=False, env=env)
+                          capture_output=True, text=True, check=False, env=env,
+                          cwd=current_directory)
 
 
 REPORT_A = "<!-- provenance: runtime=claude model=opus -->\n# A\n\nfinding one\n"
@@ -786,6 +787,81 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
           "REPLACED" in result.stderr and stored_triage_digest in result.stderr,
           result.stderr)
 
+    # --- A FAILED ssh IS SAID, NOT READ AS AN ANSWER -------------------------
+    # This stub `ssh` answers the inventory with a digest for a.md that is not
+    # the local one, fails `head -n 1` and `rm -rf` as a dropped link does, and
+    # passes everything else to the recorder. The stub `rsync` exits as
+    # RECORD_SHIP_TEST_RSYNC_EXIT says.
+    failing_ssh_stubs = scratch / "stub-bin-ssh-failing-reads-and-removals"
+    failing_ssh_stubs.mkdir()
+    (failing_ssh_stubs / "ssh").write_text(STUB_RECORDER.replace(
+        "import json, os, sys\n", "import json, os, sys\n"
+        "script = sys.argv[-1]\n"
+        "if script.startswith('head -n 1 ') or script.startswith('rm -rf '):\n"
+        "    with open(os.environ['RECORD_SHIP_TEST_ARGV_LOG'], 'a') as log:\n"
+        "        log.write(json.dumps(sys.argv) + '\\n')\n"
+        "    sys.stderr.write('Connection closed by remote host\\n')\n"
+        "    sys.exit(255)\n"
+        "if 'sha256sum' in script and os.environ.get('RECORD_SHIP_TEST_STORE_HOLDS_OTHER_A'):\n"
+        "    print('0' * 64 + '  ./a.md')\n"
+        "    sys.exit(0)\n", 1), encoding="utf-8")
+    (failing_ssh_stubs / "ssh").chmod(0o755)
+    (failing_ssh_stubs / "rsync").write_text(
+        "#!/usr/bin/env python3\nimport os, sys\n"
+        "sys.exit(int(os.environ.get('RECORD_SHIP_TEST_RSYNC_EXIT', '0')))\n", encoding="utf-8")
+    (failing_ssh_stubs / "rsync").chmod(0o755)
+    failing_ssh_path = f"{failing_ssh_stubs}{os.pathsep}{os.environ.get('PATH', '')}"
+
+    unread_record = make_record(records, "2026-09-21-store-copy-unread", {"a.md": REPORT_A})
+    result = ship(RULED_DESTINATION, str(unread_record), extra_env={
+        "PATH": failing_ssh_path,
+        "RECORD_SHIP_TEST_ARGV_LOG": str(scratch / "argv-store-copy-unread.jsonl"),
+        "RECORD_SHIP_TEST_STORE_HOLDS_OTHER_A": "1"})
+    check("a store copy whose first line ssh could not read is REFUSED saying so, "
+          "not described as having no provenance comment",
+          result.returncode == 2 and result.stdout.startswith("REFUSED:")
+          and "store: (could not be read: ssh exit 255: Connection closed by remote host)"
+          in result.stdout
+          and f"local: {REPORT_A.splitlines()[0]}" in result.stdout,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+
+    left_record = make_record(records, "2026-09-21-staging-left", {"a.md": REPORT_A})
+    left_log = scratch / "argv-staging-left.jsonl"
+    result = ship(RULED_DESTINATION, str(left_record), extra_env={
+        "PATH": failing_ssh_path, "RECORD_SHIP_TEST_ARGV_LOG": str(left_log),
+        "RECORD_SHIP_TEST_RSYNC_EXIT": "23"})
+    removal_calls = [json.loads(line) for line in left_log.read_text().splitlines()
+                     if '"rm -rf ' in line]
+    staging_named = (shlex.split(removal_calls[0][-1])[-1] if removal_calls else "")
+    check("a failed copy whose staging directory ssh could not remove names that "
+          "directory and why on the FAILED line",
+          result.returncode == 1 and result.stdout.startswith("FAILED:")
+          and "rsync exit 23 during the copy" in result.stdout
+          and ".ship-staging-2026-09-21-staging-left-" in staging_named
+          and f"the staging directory nedlern@ned-box:{staging_named}, if the copy made it, "
+              f"could not be removed (ssh exit 255: Connection closed by remote host)"
+          in result.stdout
+          and f"if {staging_named} is there, delete it" in result.stderr,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}; removals={removal_calls}")
+
+    # The local legs, in process: a first line that cannot be read, and a
+    # staging path that cannot be removed.
+    local_spec = importlib.util.spec_from_file_location("cold_read_record_ship_local_legs", SHIP)
+    local_legs = importlib.util.module_from_spec(local_spec)
+    local_spec.loader.exec_module(local_legs)
+    missing_report = scratch / "no-such-report.md"
+    described = local_legs.described_provenance_comment(local_legs.local_first_line, missing_report)
+    check("a local first line that cannot be read is described as unreadable",
+          described.startswith("(could not be read: ") and str(missing_report) in described,
+          described)
+    not_a_directory = scratch / "a-file-where-a-staging-directory-was-expected"
+    not_a_directory.write_text("x\n", encoding="utf-8")
+    check("a local staging path that cannot be removed returns why",
+          local_legs.remove_staging_directory(None, not_a_directory) is not None,
+          "returned None")
+    check("a local staging directory that is already gone is not a failure",
+          local_legs.remove_staging_directory(None, scratch / "never-made") is None)
+
     # --- IN-PROCESS: on ned-box the copy is local, the citation is not ------
     # Loaded in this process so socket.gethostname can be patched; the
     # override is removed so the constant decides, as it does in production.
@@ -1271,6 +1347,23 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-overlap-test-") a
           ran.returncode == 0 and ran.stdout.startswith("replaced ")
           and (overlap_store / "x").read_text(encoding="utf-8") == "this shipment\n",
           repr(ran.stdout) + ran.stderr)
+
+# --- A relative record directory means the one under the current directory --
+# Run from a directory outside the shipper's checkout with a relative path:
+# the record under that directory is the one shipped.
+with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-relative-test-") as relative_name:
+    relative_scratch = pathlib.Path(relative_name)
+    relative_store = relative_scratch / "store" / "cold-read-records"
+    relative_record = make_record(relative_scratch / "records", "2026-10-21-relative-path",
+                                  {"a.md": REPORT_A})
+    result = ship(str(relative_store), "records/2026-10-21-relative-path",
+                  current_directory=relative_scratch)
+    check("a relative record directory is shipped from under the current directory, "
+          "not the shipper's checkout",
+          result.returncode == 0 and result.stdout.startswith("shipped:")
+          and (relative_store / relative_record.name / "a.md").read_text(encoding="utf-8")
+          == REPORT_A,
+          result.stdout + result.stderr)
 
 print()
 if failures:

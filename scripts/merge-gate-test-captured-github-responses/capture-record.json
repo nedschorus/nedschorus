@@ -877,6 +877,97 @@
       "stderr": "",
       "gh_version": "gh version 2.102.0 (2026-09-30)",
       "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-1154-issue-view-open-issue.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/issues/1154"
+      ],
+      "captured_at_utc": "2026-10-20T17:12:29Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-1585-issue-view-issue-closed-completed.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/issues/1585"
+      ],
+      "captured_at_utc": "2026-10-20T17:12:29Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-735-issue-view-issue-closed-not-planned.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/issues/735"
+      ],
+      "captured_at_utc": "2026-10-20T17:12:30Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-1636-issue-view-open-pull-request.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/issues/1636"
+      ],
+      "captured_at_utc": "2026-10-20T17:12:30Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-1724-issue-view-merged-pull-request.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/issues/1724"
+      ],
+      "captured_at_utc": "2026-10-20T17:12:30Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-1639-issue-view-pull-request-closed-unmerged.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/issues/1639"
+      ],
+      "captured_at_utc": "2026-10-20T17:12:31Z",
+      "exit_code": 0,
+      "stderr": "",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
+    },
+    {
+      "file": "nedschorus-nedschorus-999999-issue-view-not-found.json",
+      "command": [
+        "gh",
+        "api",
+        "repos/nedschorus/nedschorus/issues/999999"
+      ],
+      "captured_at_utc": "2026-10-20T17:12:31Z",
+      "exit_code": 1,
+      "stderr": "gh: Not Found (HTTP 404)\n",
+      "gh_version": "gh version 2.102.0 (2026-09-30)",
+      "machine": "ned-box"
     }
   ]
 }

@@ -644,6 +644,12 @@ def run_check_mode(arguments, runner=subprocess.run, clock=time.monotonic, out=s
     return CHECK_MODE_EXIT_DETACHED
 
 
+PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
+    "If the command sent keys to a tmux pane or typed through osascript, tell the user where "
+    "the keys went, a pane or an application, and what was sent.\n"
+    "Do not send more keys to correct it.")
+
+
 def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
     try:
         payload = json.load(stdin)
@@ -659,7 +665,7 @@ def main(stdin=sys.stdin, runner=subprocess.run, clock=time.monotonic):
         reason = analyze_command_text(command, None, False, guard)
     except shell_reader.ShellParserUnavailable as error:
         print(shell_reader.parser_unavailable_hook_output(
-            "The synthetic keystroke guard", error))
+            "The synthetic keystroke guard", error, PARSER_UNAVAILABLE_NEXT_STEP_LINES))
         return 0
     if reason:
         deny(reason)

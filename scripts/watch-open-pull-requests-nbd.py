@@ -244,16 +244,16 @@ def parse_arguments(argv):
 def main(argv=None):
     arguments = parse_arguments(argv)
     if arguments.poll_seconds <= 0:
-        warn("watch-open-pull-requests: --poll-seconds must be > 0")
+        warn("watch-open-pull-requests-nbd: --poll-seconds must be > 0")
         return 2
     owner, slash, name = arguments.repo.partition("/")
     if not (owner and slash and name) or "/" in name:
-        warn(f"watch-open-pull-requests: --repo must be OWNER/NAME, "
+        warn(f"watch-open-pull-requests-nbd: --repo must be OWNER/NAME, "
              f"not {arguments.repo!r}")
         return 2
     token, reason = read_token(Path(arguments.token_file).expanduser())
     if reason is not None:
-        warn(f"watch-open-pull-requests: {reason}")
+        warn(f"watch-open-pull-requests-nbd: {reason}")
         return 2
     SECRETS_TO_REDACT.append(token)
 

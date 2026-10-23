@@ -761,7 +761,7 @@ def main(argv=None) -> int:
         f"reincarnate it. The handoff is written at {handoff_path}; nothing will act on it by itself. "
         "Tell the user: to seat a supervised successor, run "
         f"`scripts/resupervise-seat.py {agent} --machine {machine}` — it clears this seat's stale "
-        "tmux session and relaunches, and the supervisor ignites from the handoff. Relaunching "
+        "tmux session and relaunches, and the supervisor starts a fresh agent-session from the handoff. Relaunching "
         "`claude` by hand instead produces another unsupervised seat. Until then, keep working."
     )
     return 1

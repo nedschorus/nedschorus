@@ -1,22 +1,14 @@
 # nedschorus
 
-A system in which one human and a small number of AI agents build and improve the software-development system they themselves run on — a fresh minimal system succeeding the nedlern project. nedschorus is not a rebuild of nedlern: it starts from its own requirements, and cherry-picks from nedlern only the pieces that earn entry through the checkpoint. nedlern keeps running during the founding and then quiesces into a read-only legacy reference.
-
-## Why this project exists
-
-Its predecessor (nedlern, at `~/Projects/nedlern`) grew a working but heavy system: multi-agent messaging with delivery lifecycles, an eleven-state PR pipeline, layered enforcement hooks, a large doctrine corpus. Examined closely, most of that complexity was organizational — the cost of coordinating many agents, plus accumulated patches — not essential to the work being done. Re-derived from actual requirements with the minimal set of actors, each subsystem turned out small: messaging between agents became a pair of append-only log files; session continuity became one numbered handoff file plus its committed transcript; the path from change to production became a single writing agent and four states. Each re-derivation is specified under `docs/cross-project/`.
-
-nedschorus keeps it that way: start from the simple system that works, cherry-pick from the legacy system only what earns entry, and let complexity be earned — never assumed.
+A system in which one human and a small number of AI agents build and improve the software-development system they themselves run on.
 
 ## Founding principles
 
-1. **Re-derive from the requirement; never inherit machinery by default.** Ask what is needed and no more; the old system's mechanisms are reference. Anything deliberately taken from them crosses the entry checkpoint (principle 6) — importing is a chosen act, never a migration habit.
+1. **Re-derive from the requirement; never inherit machinery by default.** Ask what is needed and no more.
 2. **Complexity is earned, step by step:** manual → script the human runs → automation. Each step admitted on evidence, by the human.
 3. **Behavior belongs in code wherever it can be expressed there** — testable, versionable, inert until called. Prose is for judgment only. When it is a choice between python and a prompt, python; between bash and python, python — bash only for one-liners not worth a file.
 4. **Durable artifacts are written for a fresh reader** — an agent with repository access, the project instructions, and the document itself, but no conversation history — and tested by handing them to exactly such an agent.
-5. **One gate to main.** The main-gatekeeper program holds the project's only push-capable credential; every check-in, by any agent, goes through it, and every mechanical check runs there from day one. Agents — all of them — edit in their own working copies, invoke the gatekeeper directly, and never push themselves.
-6. **The old system is legacy:** read-only reference, freely read. Content that enters this repository from it is an import, recorded in the importing commit itself (the gatekeeper's import trailer, browsable via its `imports` query); the mechanism is defined once, in the main-gatekeeper specification ([main-gatekeeper-design.md](nc-systems/main-gatekeeper/main-gatekeeper-design.md)).
-7. **Present-tense truth.** Documents state what is; git history holds what was. The built system is the source of truth — a design page carries the date on which it described that truth, and newer code and open issues may have advanced past it.
+5. **Present-tense truth.** Documents state what is; git history holds what was. The built system is the source of truth — a design page carries the date on which it described that truth, and newer code and open issues may have advanced past it.
 
 ## The actors
 
@@ -36,12 +28,10 @@ Two kinds of agent, each defined in the glossary, `docs/nedschorus-wiki/nedschor
 |---|---|
 | `docs/nedschorus-wiki/` | Standing knowledge, kept current (Obsidian vault). |
 | `docs/issues/<n>-<slug>.md` | Working documents, one per GitHub issue, disposed when the issue closes. |
-| `docs/cross-project/` | Specifications and plans both systems read. |
 | `~/.claude/handoffs/` | Session handoffs, one file per agent-seat, on each machine only and never committed. |
 | `nc-queue/` | User-requested notes awaiting their initial walk — verbatim, unreviewed, 90-day TTL; dispersed to durable homes at the walk. |
 | `docs/nedschorus-wiki/queue/`, `docs/issues/queue/` | Destination-rooted queues: wiki-bound doctrine and GHI-MD-bound documents awaiting the user's drain (promote / edit / demote / drop). |
 | `nc-systems/` | The project's built systems, one directory each with its program, design document and tests: `handoff/` (session reincarnation, the handoff-supervisor and the handoff writer) and `main-gatekeeper/` (the program meant to be the only way a change reaches main, dormant until activated). |
-| `entry-manifest.md` | The founding-era record of the six files migrated from the legacy system; no longer appended. |
 | Issues labeled `queue-drain-candidate` | Issues awaiting the user's drain — same format as every issue, walkable; no work ever waits on one, and nothing requiring the user's admission takes effect without it. |
 
 ## Working in a fresh clone
@@ -56,4 +46,4 @@ The local `user.name` and `user.email` are what stop a commit being authored as 
 
 ## Status
 
-Founding phase, retired. The current architecture and working plan: [docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md](docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md). The boot-up plan's record: `git show 615a230:docs/cross-project/nedschorus-founding-plan.md`.
+The project's objective: [docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md](docs/nedschorus-wiki/nedschorus-ai-native-software-development-objective.md).

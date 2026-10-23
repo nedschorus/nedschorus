@@ -50,6 +50,7 @@ not be made, or a suite fails or cannot be launched on the unmutated head),
 
 import argparse
 import contextlib
+import hashlib
 import importlib.util
 import json
 import shlex
@@ -296,6 +297,13 @@ def raise_when_a_test_sandbox_did_not_start(sandbox_did_not_start_file, path, st
         f"what it names, then run this again.")
 
 
+def scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(*paths):
+    """A 64-byte file-name stem unique to these repository paths.
+
+    Repository paths here run long, so a name built from whole paths passes the 255-byte limit."""
+    return hashlib.sha256("\0".join(paths).encode()).hexdigest()
+
+
 def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
                            arguments, environment, sandbox_prefix=(),
                            suites_outside_sandbox=(), nice_prefix=(), started_proofs=None):
@@ -304,7 +312,7 @@ def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
     nice_prefix goes before each cosmic-ray command, so the suites it runs inherit it.
     started_proofs maps each suite in a test sandbox to its proof file, as test_command_for
     takes it; a sandbox that did not start stops the run."""
-    name = path.replace("/", "__")
+    name = scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(path)
     config = scratch / f"{name}.toml"
     session = scratch / f"{name}.sqlite"
     baseline_session = scratch / f"{name}.baseline.sqlite"
@@ -423,9 +431,18 @@ def main(argv=None):
                 f"If it adds no commits of its own, there is nothing to test.")
         files = changed_python_files_to_mutate(checkout, merge_base, head,
                                                environment)
-        recordings_directory = runner.recordings_directory_for(
-            arguments.recorded_inputs_directory
-            or runner.DEFAULT_RECORDED_INPUTS_DIRECTORY, checkout)
+        try:
+            recordings_directory = runner.recordings_directory_for(
+                arguments.recorded_inputs_directory
+                or runner.DEFAULT_RECORDED_INPUTS_DIRECTORY, checkout)
+        except runner.CouldNotRun as refusal:
+            # The runner's first line says what failed; the lines after it name the runner's
+            # own command, so this program's next steps replace them.
+            what_failed = str(refusal).splitlines()[0].replace(f"{runner.PROGRAM}:",
+                                                               f"{PROGRAM}:", 1)
+            raise CouldNotRun(what_failed + "\n"
+                              + runner.git_failure_next_step_lines(Path(__file__).name)) \
+                from refusal
         suites_listed_at_head = suites_at_head(checkout, head, environment)
 
         try:
@@ -514,7 +531,7 @@ def main(argv=None):
                         started_proofs = {}
                         if in_test_sandboxes:
                             for suite in suites:
-                                proof = scratch / f"{path.replace('/', '__')}.{suite.replace('/', '__')}.started"
+                                proof = scratch / f"{scratch_file_name_stem_under_255_bytes_unique_to_repository_paths(path, suite)}.started"
                                 proof.touch()
                                 started_proofs[suite] = proof
                         with admitted:

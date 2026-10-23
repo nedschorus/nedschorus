@@ -73,7 +73,7 @@ def linux_only_cases_run_here(cases):
     """
     if sys.platform.startswith("linux"):
         return True
-    print(f"SKIP  {cases}: test sandboxes, bwrap and /proc exist only on Linux")
+    print(f"SKIP  [this machine cannot run it] {cases}: test sandboxes, bwrap and /proc exist only on Linux")
     return False
 
 
@@ -227,6 +227,12 @@ check("the report line for a run without the sandbox says so and why",
       and "bwrap is not on PATH" in runner.signal_sandbox_line((), "bwrap is not on PATH"))
 check("the refusal names the program that refused",
       runner.signal_sandbox_refusal("x", "some-program").startswith("some-program: not run"))
+_bwrap_arguments = runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE
+runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE = ("--ro-bind", "/a b", "/a b")
+_bwrap_check = runner.signal_sandbox_refusal("x").split("check that `", 1)[1].split("`", 1)[0]
+runner.TEST_SANDBOX_BWRAP_ARGUMENTS_SHARED_BY_EVERY_SUITE = _bwrap_arguments
+check("the bwrap command the refusal says to try keeps a path holding a space as one argument",
+      shlex.split(_bwrap_check) == ["bwrap", "--ro-bind", "/a b", "/a b", "true"], _bwrap_check)
 
 # --- The runner refuses when bwrap is on PATH but broken ---------------------
 
@@ -279,6 +285,14 @@ def scratch_checkout(scratch, suites):
         subprocess.run(["git", "-C", str(repository), *git_arguments],
                        capture_output=True, check=True)
     return repository
+
+
+def printed_command(text, prefix):
+    """The arguments a shell gives the command printed after prefix, up to the end of its line."""
+    for line in text.splitlines():
+        if prefix in line:
+            return shlex.split(line.split(prefix, 1)[1])
+    return None
 
 
 def run_runner(scratch, repository, path):
@@ -356,6 +370,125 @@ if linux_only_cases_run_here("the report's sandbox lines"):
               f"{OUTSIDE_SUITE} runs WITHOUT the signal sandbox: "
               f"{runner.SUITES_RUN_WITHOUT_ANY_SANDBOX[OUTSIDE_SUITE]}" in report,
               report[-600:])
+        check("a checkout without scripts/run-all-test-suites.py gets the runner's own "
+              "suite sandbox lists, and the report says so",
+              f"{runner.SUITE_SANDBOX_LISTS_SOURCE_LINE_PREFIX}{RUNNER_PATH}, since the "
+              f"checkout has no scripts/run-all-test-suites.py" in report, report[-600:])
+
+        # A pull request renames a suite that runs without any sandbox, and its entry in the
+        # list with it; the runner that tests the merged tree is main's, which lists the old path.
+        renamed = "scripts/renamed-by-the-pull-request-test.py"
+        marking_bin = scratch / "marking-bin"
+        marking_bin.mkdir()
+        (marking_bin / "bwrap").write_text(
+            (fake_bin / "bwrap").read_text().replace(
+                'exec "$@"\n', 'export RAN_UNDER_THE_STAND_IN_BWRAP=1\nexec "$@"\n'))
+        (marking_bin / "bwrap").chmod(0o755)
+        renaming = scratch / "renaming"
+        renaming.mkdir()
+        repository = scratch_checkout(renaming, ["a-test.py", renamed])
+        (repository / renamed).write_text(
+            "import os, sys\n"
+            "sys.exit('ran under bwrap' if os.environ.get('RAN_UNDER_THE_STAND_IN_BWRAP') "
+            "else 0)\n")
+        (repository / "scripts" / "run-all-test-suites.py").write_text(
+            RUNNER_PATH.read_text().replace(OUTSIDE_SUITE, renamed))
+        subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(repository), "-c", "user.name=t", "-c",
+                        "user.email=t@t", "commit", "-qm", "the rename"], check=True)
+        completed, report = run_runner(
+            renaming, repository, f"{marking_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+        check("a suite the checkout's own scripts/run-all-test-suites.py lists to run without "
+              "any sandbox, under a path the runner's own list lacks, runs without it, and "
+              "the report says so and names that file as the lists' source",
+              completed.returncode == 0
+              and f"{renamed} runs WITHOUT the signal sandbox: " in report
+              and (f"{runner.SUITE_SANDBOX_LISTS_SOURCE_LINE_PREFIX}"
+                   f"{repository / 'scripts' / 'run-all-test-suites.py'}\n") in report,
+              (completed.returncode, completed.stderr[-600:], report[-1200:]))
+
+        # Each way the checkout's lists cannot be read refuses the run, exit 2.
+        lists_unreadable_cases = (
+            ("is a directory", None, "could not be read (IsADirectoryError"),
+            ("is not UTF-8", b"\xff\n", "is not UTF-8 text (UnicodeDecodeError"),
+            ("is not valid Python", "SUITES_RUN_WITHOUT_ANY_SANDBOX = {\n",
+             "is not valid Python"),
+            ("lacks one list", "SUITES_RUN_WITHOUT_ANY_SANDBOX = {}\n"
+             "SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK = {}\n",
+             "does not assign "
+             "SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY a literal"),
+            ("builds a list by a call", "SUITES_RUN_WITHOUT_ANY_SANDBOX = dict(a='b')\n"
+             "SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY = {}\n"
+             "SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK = {}\n",
+             "does not assign SUITES_RUN_WITHOUT_ANY_SANDBOX a literal"),
+            ("assigns a list that is not a dict", "SUITES_RUN_WITHOUT_ANY_SANDBOX = ['a-test.py']\n"
+             "SUITES_GIVEN_A_COPY_ON_WRITE_OVERLAY_OF_THE_REPOSITORY_GIT_DIRECTORY = {}\n"
+             "SUITES_WHOSE_TEST_SANDBOX_SHARES_THE_MACHINE_NETWORK = {}\n",
+             "does not assign SUITES_RUN_WITHOUT_ANY_SANDBOX a literal"),
+        )
+        for number, (how, source, refusal) in enumerate(lists_unreadable_cases):
+            # The space shows that each path in a printed shell command stays one argument.
+            case_scratch = scratch / f"unreadable {number}"
+            case_scratch.mkdir()
+            repository = scratch_checkout(case_scratch, ["a-test.py"])
+            lists_file = repository / "scripts" / "run-all-test-suites.py"
+            lists_file.parent.mkdir(exist_ok=True)
+            if source is None:
+                lists_file.mkdir()
+                (lists_file / "kept-test.txt").write_text("so git keeps the directory\n")
+            elif isinstance(source, bytes):
+                lists_file.write_bytes(source)
+            else:
+                lists_file.write_text(source)
+            subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
+            subprocess.run(["git", "-C", str(repository), "-c", "user.name=t", "-c",
+                            "user.email=t@t", "commit", "-qm", how], check=True)
+            completed, report = run_runner(
+                case_scratch, repository, f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+            check(f"when the checkout's scripts/run-all-test-suites.py {how}, the run refuses "
+                  f"with exit 2, names the file, says to rerun the command, and runs no suite",
+                  completed.returncode == runner.EXIT_COULD_NOT_RUN
+                  and f"not run — {lists_file} " in completed.stderr
+                  and refusal in completed.stderr
+                  and "rerun the command you ran." in completed.stderr
+                  and not (case_scratch / "logs" / "a-test.py.log").exists(),
+                  (completed.returncode, completed.stderr[-600:]))
+            restore = ["git", "-C", str(repository), "checkout", "--",
+                       "scripts/run-all-test-suites.py"]
+            if how == "is a directory":
+                check("when the checkout's scripts/run-all-test-suites.py is a directory, the "
+                      "refusal says how to grant read permission and how to move the directory "
+                      "aside and restore the file, each command keeping the checkout path, "
+                      "which holds a space, as one argument, and when to stop and tell the user",
+                      printed_command(completed.stderr, "such as with: ")
+                      == ["chmod", "u+r", str(lists_file)]
+                      and printed_command(completed.stderr, "restore the file with: ")
+                      == ["mv", str(lists_file), f"{lists_file}.moved-aside", "&&", *restore]
+                      and "If neither case fits, a step fails, or this same error appears "
+                          "again after you rerun, stop and tell the user" in completed.stderr
+                      and "UTF-8" not in completed.stderr,
+                      completed.stderr[-1200:])
+            if how == "is not UTF-8":
+                check("when the checkout's scripts/run-all-test-suites.py is not UTF-8, the "
+                      "refusal says to restore it from git, keeping the checkout path, which "
+                      "holds a space, as one argument, or re-save it as UTF-8, and when to "
+                      "stop and tell the user, and gives none of the OSError steps",
+                      printed_command(completed.stderr, "restore it with: ") == restore
+                      and "re-save it as UTF-8, keeping that change.\n" in completed.stderr
+                      and "If a step fails, or this same error appears again after you rerun, "
+                          "stop and tell the user" in completed.stderr
+                      and "chmod" not in completed.stderr and "mv " not in completed.stderr,
+                      completed.stderr[-1200:])
+
+        try:
+            runner.checkout_top_directory(str(repository / "scripts"))
+        except runner.CouldNotRun as error:
+            not_top = str(error)
+        else:
+            not_top = ""
+        check("a --checkout below the checkout's top is refused with the top to pass, kept as "
+              "one argument although its path holds a space",
+              printed_command(not_top, "and its value with: ") == ["--checkout", str(repository)], not_top)
 
 # --- The mutation script's test command --------------------------------------
 
@@ -836,7 +969,7 @@ MACOS_PROBE = (
     "print(' '.join(results))\n")
 
 if sys.platform != "darwin":
-    print("SKIP  the end-to-end sandbox-exec case: sandbox-exec exists only on macOS")
+    print("SKIP  [this machine cannot run it] the end-to-end sandbox-exec case: sandbox-exec exists only on macOS")
 # Inside an inherited sandbox, the probe signals the process outside it that the
 # runner named, and this file's own process, which shares the sandbox, is allowed.
 MACOS_INHERITED_SANDBOX_PROBE = (
@@ -897,7 +1030,7 @@ if sys.platform == "darwin" and os.environ.get(runner.SIGNAL_SANDBOX_INSIDE_VARI
     check("on macOS, inside the runner's sandbox-exec, a signal to the runner outside it is "
           "refused, while the probe stops its own child", passed, detail)
 elif sys.platform == "darwin" and not os.path.isfile(runner.SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC):
-    print(f"SKIP  the end-to-end sandbox-exec case: {runner.SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC} "
+    print(f"SKIP  [this machine cannot run it] the end-to-end sandbox-exec case: {runner.SIGNAL_SANDBOX_MACOS_SANDBOX_EXEC} "
           f"is not on this Mac")
 elif sys.platform == "darwin":
     # Not confined yet: a process in a fresh sandbox-exec may signal neither this

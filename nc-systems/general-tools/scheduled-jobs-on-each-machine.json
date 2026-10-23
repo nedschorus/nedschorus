@@ -72,6 +72,15 @@
       }
     },
     {
+      "name": "handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher",
+      "program": "nc-systems/handoff/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.py",
+      "arguments": [],
+      "output": ".claude/handoff-agent-seat-remote-control-lost-at-claude-login-reconnect-by-tmux-typing-watcher.log",
+      "on": {
+        "ned-box": {"scheduler": "cron", "schedule": "* * * * *"}
+      }
+    },
+    {
       "name": "weekly-uncommitted-work-snapshot-hook-real-claude-session-owner-check",
       "program": "nc-systems/handoff/uncommitted-work-snapshot-hook-real-claude-session-weekly-owner-check.py",
       "arguments": [],

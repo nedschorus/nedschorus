@@ -15,10 +15,14 @@ Each brief is three parts: the standing text, composed by --review-tools-worktre
 scripts/compose-pull-request-reviewer-brief.py with the reviewing
 instructions inserted; the ned-box environment addendum; and a section of
 facts, which git reads in --review-tools-worktree-at-main and in the worktrees
-and outputs directory's wt/pr<n>-merged, ending with the pull request's
-description, which gh reads with the merge account's token and the brief quotes
-as the author's claims. The reviewer runs with no GitHub login, so the brief is
-where it reads the description. The brief is written to
+and outputs directory's wt/pr<n>-merged, and gh reads from GitHub as the merge
+account. Among the facts are the merged pull requests whose not-fixed line, in
+either form, links to an issue the pull request closes, as GitHub lists them,
+or to the pull request itself: the reviewer judges whether this pull request
+makes useless a case fix or workaround they kept. The facts end with the pull
+request's description, which the brief quotes as the author's claims. The
+reviewer runs with no GitHub login, so the brief is where it reads the
+description. The brief is written to
 briefs/brief-<tag>-mac-claude.md under the worktrees and outputs directory, and
 rv<tag>/ is made under --merge-lane-pull-request-reviewer-scratch-directories-parent-directory as the reviewer's
 scratch directory. That parent is outside the log-store, because the standing
@@ -32,6 +36,7 @@ composed.
 import argparse
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -56,10 +61,21 @@ _git_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
+_defect_line_reader_spec = importlib.util.spec_from_file_location(
+    "pull_request_description_defect_line_root_cause_status_and_follow_up_link_reader",
+    Path(__file__).resolve().with_name("pull-request-description-defect-line-root-cause-status-and-follow-up-link-reader.py"))
+defect_line_reader = importlib.util.module_from_spec(_defect_line_reader_spec)
+_defect_line_reader_spec.loader.exec_module(defect_line_reader)
 
 
 class StepFailed(Exception):
     pass
+
+
+GITHUB_ISSUE_OR_PULL_REQUEST_LINK = re.compile(
+    r"https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/(?:issues|pull)/([0-9]+)")
+# Far above the merged count, so gh lists them all.
+MERGED_PULL_REQUESTS_LIMIT = "100000"
 
 
 def parse_arguments(argv):
@@ -87,10 +103,12 @@ def parse_arguments(argv):
     return common.resolve_path_options(parser.parse_args(argv))
 
 
-def run(command):
+def run(command, gh_token=None):
+    environment = run_all_test_suites.environment_without_git_redirecting_variables()
+    if gh_token is not None:
+        environment["GH_TOKEN"] = gh_token
     completed = subprocess.run(
-        command, capture_output=True, text=True, stdin=subprocess.DEVNULL,
-        env=run_all_test_suites.environment_without_git_redirecting_variables())
+        command, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=environment)
     if completed.returncode != 0:
         raise StepFailed(f"{' '.join(command)} exited {completed.returncode}: "
                          f"{completed.stderr.strip()}")
@@ -139,7 +157,50 @@ def files_touched_text(review_tools_worktree, base, head):
     return ", ".join(texts)
 
 
-def compose(spec, arguments, review_tools_worktree, instructions_file):
+def linked_items(text):
+    """The issues and pull requests a text links to, as (owner/repository, number):
+    a repository numbers its issues and pull requests in one sequence."""
+    return {(repository.lower(), int(number))
+            for repository, number in GITHUB_ISSUE_OR_PULL_REQUEST_LINK.findall(text)}
+
+
+class MergedPullRequests:
+    """The repository's merged pull requests, read from GitHub once per run."""
+
+    def __init__(self, gh_token):
+        self.gh_token = gh_token
+        self.listed = None
+
+    def all(self):
+        if self.listed is None:
+            self.listed = json.loads(run(
+                ["gh", "pr", "list", "--repo", common.REPOSITORY, "--state", "merged",
+                 "--limit", MERGED_PULL_REQUESTS_LIMIT, "--json", "number,title,url,body"],
+                self.gh_token))
+        return self.listed
+
+
+def follow_up_pull_requests_text(number, merged_pull_requests):
+    """The brief's fact naming each merged pull request whose not-fixed line links to
+    an issue pull request `number` closes, or to `number` itself."""
+    closing = json.loads(run(
+        ["gh", "pr", "view", str(number), "--repo", common.REPOSITORY,
+         "--json", "closingIssuesReferences"], merged_pull_requests.gh_token))
+    targets = linked_items(" ".join(issue["url"] for issue in closing["closingIssuesReferences"]))
+    targets.add((common.REPOSITORY.lower(), int(number)))
+    found = []
+    for merged in merged_pull_requests.all():
+        for defect_line in defect_line_reader.pull_request_description_defect_lines(merged["body"] or ""):
+            line = defect_line["line"]
+            if (defect_line["kind"] == defect_line_reader.ROOT_CAUSE_NOT_FIXED
+                    and linked_items(line) & targets):
+                found.append(f"#{merged['number']} \"{merged['title']}\" ({merged['url']}), "
+                             f"whose line is `{line.strip()}`")
+    return ("- Merged pull requests whose not-fixed line links to an issue this pull request "
+            "closes, or to this pull request: " + ("; ".join(found) or "none") + ".")
+
+
+def compose(spec, arguments, review_tools_worktree, instructions_file, merged_pull_requests):
     tag, number = spec["tag"], spec["number"]
     head, main = spec["head"], spec["main"]
     helpers = arguments.merge_lane_worktrees_and_outputs_directory
@@ -177,6 +238,7 @@ def compose(spec, arguments, review_tools_worktree, instructions_file):
         facts.append("- First round: no head commit was reviewed before.")
     facts.append("- Other open pull requests changing the same files: "
                  + spec.get("overlaps", "none") + ".")
+    facts.append(follow_up_pull_requests_text(number, merged_pull_requests))
     facts.append(f"- Hazards: {spec['hazards']}")
     description = pull_request_description(number)
     facts.append("- The author's description of the pull request, quoted below. It is what "
@@ -200,10 +262,12 @@ def main(argv=None):
     instructions_file = (arguments.instructions_file
                          or review_tools_worktree / "docs" / "agents" / "pr-reviewer-instructions.md")
     try:
+        merged_pull_requests = MergedPullRequests(common.read_merge_account_token())
         specs = json.loads(arguments.brief_specifications_file.read_text())
         for spec in specs:
-            compose(spec, arguments, review_tools_worktree, instructions_file)
-    except (StepFailed, OSError, ValueError, KeyError) as failure:
+            compose(spec, arguments, review_tools_worktree, instructions_file, merged_pull_requests)
+    except (StepFailed, OSError, ValueError, KeyError,
+            common.MergeAccountTokenUnusable) as failure:
         print(f"brief not composed: {type(failure).__name__}: {failure}\n"
               f"Briefs for entries before the failing one were written; none after it.\n"
               f"If the error names an entry of the specifications file or a missing file, fix "

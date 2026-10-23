@@ -15,6 +15,7 @@ import json
 import os
 import pathlib
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -54,7 +55,7 @@ def linux_only_cases_run_here(cases):
     """
     if sys.platform.startswith("linux"):
         return True
-    print(f"SKIP  {cases}: test sandboxes, bwrap and /proc exist only on Linux")
+    print(f"SKIP  [this machine cannot run it] {cases}: test sandboxes, bwrap and /proc exist only on Linux")
     return False
 
 
@@ -601,26 +602,36 @@ with tempfile.TemporaryDirectory() as scratch_name:
           == [("PASS", "first case", ""), ("FAIL", "second case", "it broke"),
               ("PASS", "third case", "")], cases)
     check("a case's seconds run from the case line before it, as the lines arrive",
-          len(cases) == 3 and cases[1]["seconds"] >= 0.35 and cases[0]["seconds"] < 0.35,
-          [case["seconds"] for case in cases])
+          len(cases) == 3 and cases[0]["began"] == 0.0
+          and all(case["began"] == before["ended"] for before, case in zip(cases, cases[1:]))
+          and all(case["seconds"] == case["ended"] - case["began"] for case in cases)
+          and cases[1]["seconds"] >= 0.35, cases)
     check("the suite's output still reaches its log whole",
           "a detail line" in result["log"].read_text(), result["log"].read_text())
 
     leaver = repository / "leaves-a-writer-test.py"
     leaver.write_text(
         "import subprocess, sys\n"
-        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+        "import pathlib\n"
+        "writer = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+        "pathlib.Path('writer-pid').write_text(str(writer.pid))\n"
         "print('PASS  started a writer')\n")
     original_drain = runner.TEST_SUITE_OUTPUT_DRAIN_SECONDS
     runner.TEST_SUITE_OUTPUT_DRAIN_SECONDS = 1
-    began = time.monotonic()
     leaver_result = runner.run_one_suite(repository, sys.executable, leaver.name,
                                          log_dir, platform="linux")
     runner.TEST_SUITE_OUTPUT_DRAIN_SECONDS = original_drain
+    writer_pid = int((repository / "writer-pid").read_text())
+    # ps, not kill -0: a writer that has exited may stay a zombie until it is reaped.
+    writer_state = subprocess.run(["ps", "-o", "stat=", "-p", str(writer_pid)],
+                                  capture_output=True, text=True, timeout=60).stdout.strip()
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(writer_pid, signal.SIGKILL)
     check("a process the suite leaves holding its output open does not hold up the run, "
           "and the result says so",
-          time.monotonic() - began < 10 and leaver_result["output_note"] is not None
-          and leaver_result["exit"] == 0, leaver_result)
+          writer_state and not writer_state.startswith("Z")
+          and leaver_result["output_note"] is not None and leaver_result["exit"] == 0,
+          (writer_state, leaver_result))
 
     # A log that cannot be written while the suite runs, such as on a full disk.
     class LogThatFillsUp:
@@ -743,7 +754,11 @@ with tempfile.TemporaryDirectory() as scratch_name:
               scoped["cpu_seconds"] is not None and scoped["peak_memory_bytes"]
               and scoped["exit"] == 1, scoped)
     else:
-        print(f"SKIP  the cgroup scope case: {cgroup_unavailable}")
+        # A trial that timed out or could not start may be a disturbed run, so is not marked.
+        machine = (cgroup_unavailable.endswith(" is not on PATH")
+                   or "Failed to connect to user scope bus" in cgroup_unavailable)
+        print(f"SKIP  {'[this machine cannot run it] ' if machine else ''}the cgroup scope case: "
+              f"{cgroup_unavailable}")
 
     # --- On the Mac, the suite's output goes straight to its log, as it always did ---
     mac_result = runner.run_one_suite(repository, sys.executable, "timed-test.py", log_dir,
@@ -1073,9 +1088,11 @@ with tempfile.TemporaryDirectory() as scratch_name:
             # The line is said at most once per interval, so each report comes after one.
             clock.sleep(runner.TEST_SUITE_ADMISSION_WAIT_REPORT_INTERVAL_SECONDS)
             admission.report_waiting(suite, "the machine is busy")
-        check(f"with {len(suites)} suite(s) waiting, the waiting line says \"{verb}\"",
+        check(f"with {len(suites)} suite(s) waiting, the waiting line says \"{verb}\", and that "
+              f"the wait ends by itself",
               said[-1:] == [f"{len(suites)} suite{'s' if len(suites) != 1 else ''} of this run "
-                            f"{verb} to start: the machine is busy"], said)
+                            f"{verb} to start: the machine is busy. Each suite starts by itself "
+                            f"once the reason it waits for clears."], said)
 
 print(f"{len(failures)} failed" if failures else "all cases passed")
 sys.exit(1 if failures else 0)

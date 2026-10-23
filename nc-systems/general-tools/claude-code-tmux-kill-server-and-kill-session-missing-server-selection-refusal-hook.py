@@ -12,7 +12,10 @@ every simple command: tmux is found wherever it stands in the command, so
 prefixes (env, sudo, timeout, xargs) and assignments before it do not hide it. A simple command that starts with echo or printf is data.
 tmux's options are read the way tmux's getopt reads them, grouped flags
 included, and every command of a tmux command sequence is
-checked. Commands run by ssh, bash -c, eval or a script file are outside this
+checked. The command string of bash, sh or zsh -c, and the remote command of
+ssh, are read and checked the same way, nested ones included; a kill found in
+an ssh remote command gets no suggested command, since its socket path would be
+the remote machine's. Commands run by eval or a script file are outside this
 guard's scope.
 """
 
@@ -137,9 +140,31 @@ def private_socket_path(tmux_tmpdir):
     return f"{directory.rstrip('/')}/tmux-{os.getuid()}/default"
 
 
-def refusal_for(command):
+def command_string_run_by(words):
+    """Return (command string, runs on a remote machine) for bash -c or ssh, or None."""
+    index, _ = shell_reader.simple_command_program_index_skipping_wrappers(words)
+    if index is None:
+        return None
+    program, arguments = words[index], words[index + 1:]
+    if is_program(program, "ssh"):
+        inner = shell_reader.ssh_remote_command(arguments)
+        return (inner, True) if inner is not None else None
+    if any(is_program(program, runner) for runner in shell_reader.SHELL_STRING_RUNNERS):
+        inner = shell_reader.shell_command_string(arguments)
+        return (inner, False) if inner is not None else None
+    return None
+
+
+def refusal_for(command, remote=False):
     for words in shell_reader.simple_commands(command):
-        invocation = find_tmux_invocation(list(words))
+        words = list(words)
+        inner = command_string_run_by(words)
+        if inner is not None:
+            inner_command, runs_remotely = inner
+            reason = refusal_for(inner_command, remote or runs_remotely)
+            if reason:
+                return reason
+        invocation = find_tmux_invocation(words)
         if invocation is None:
             continue
         arguments, tmux_tmpdir = invocation
@@ -149,7 +174,7 @@ def refusal_for(command):
         # The one exact command offered names the private server TMUX_TMPDIR
         # points at, for a single tmux command; a command aimed at the
         # agent-seat's own server is never offered.
-        socket_path = private_socket_path(tmux_tmpdir)
+        socket_path = None if remote else private_socket_path(tmux_tmpdir)
         if (socket_path and not any(word.endswith(";") for word in arguments)
                 and not any(SHELL_EXPANSION_PATTERN.search(word) for word in arguments)):
             suggested = " ".join(["tmux", "-S", shlex.quote(socket_path)]
@@ -158,6 +183,12 @@ def refusal_for(command):
                 kill=f"tmux {kill_word}", tmpdir=tmux_tmpdir, command=suggested)
         return REFUSAL_WITHOUT_COMMAND_MESSAGE
     return None
+
+
+PARSER_UNAVAILABLE_NEXT_STEP_LINES = (
+    "If the command ran tmux kill-server or kill-session without -L or -S, tell the user which "
+    "command ran.\n"
+    "Do not restart a server or agent-seat yourself.")
 
 
 def main(stdin=sys.stdin):
@@ -174,7 +205,7 @@ def main(stdin=sys.stdin):
         reason = refusal_for(command)
     except shell_reader.ShellParserUnavailable as error:
         print(shell_reader.parser_unavailable_hook_output(
-            "The tmux kill guard", error))
+            "The tmux kill guard", error, PARSER_UNAVAILABLE_NEXT_STEP_LINES))
         return 0
     if reason:
         deny(reason)

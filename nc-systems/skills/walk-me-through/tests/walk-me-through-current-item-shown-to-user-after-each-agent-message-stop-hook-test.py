@@ -46,7 +46,7 @@ The poem page goes in the wiki, next to the glossary and the style guide, so tha
 
 ## Item 4.1 of 9: how a poem row reads
 
-One row per job an agent is about to do, written "to do X, use Y", with one example call and the mistake it prevents, so an agent reading the row can act on it without opening anything else. SUB_STEP_EXTRA
+One row per job an agent is about to do, written "to do X, use Y", with one example call and the mistake it prevents, so an agent reading the row can act on it without opening anything else.
 
 ## Item 5 of 9: the hook
 
@@ -84,8 +84,6 @@ The page lists the components an agent uses before writing its own, one row per 
 
 The strongest case for N: the old opening is shorter. Recommendation: Y.
 """
-SUB_STEP_EXTRA = " ".join(["Each row also names the default component where two could do the job."] * 8)
-WALK_DOCUMENT = WALK_DOCUMENT.replace("SUB_STEP_EXTRA", SUB_STEP_EXTRA)
 
 ITEM_2_REPLY = """Recorded your answer to item 1.
 
@@ -220,6 +218,37 @@ def test_every_text_of_the_turn_counts():
         {"type": "assistant", "message": {"id": "m4", "content": [{"type": "text", "text": "Recorded."}]}}]
     case.transcript.write_text("".join(json.dumps(record) + "\n" for record in shown_before_answer))
     check_reminded("an item named before the user typed into the turn does not count after it", case.run())
+    shown_in_earlier_turn = [USER_PROMPT, {"type": "assistant", "message": {"id": "m1", "content": [
+        {"type": "text", "text": ITEM_2_REPLY}]}}, USER_PROMPT,
+        {"type": "assistant", "message": {"id": "m2", "content": [{"type": "text", "text": "Recorded."}]}}]
+    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in shown_in_earlier_turn))
+    check_reminded("an item named in an earlier turn does not count in the next one", case.run())
+
+
+# The two records Claude Code writes when it compacts a conversation, in the shape of a real
+# transcript: the summary is a user record that is not isMeta, and its content is a string.
+COMPACT_BOUNDARY = {"type": "system", "subtype": "compact_boundary", "content": "Conversation compacted",
+                    "isMeta": False, "level": "info", "parentUuid": None,
+                    "compactMetadata": {"trigger": "auto", "preTokens": 276544}}
+COMPACT_SUMMARY = {"type": "user", "isCompactSummary": True, "isVisibleInTranscriptOnly": True,
+                   "promptId": "p1", "turnPosition": {"promptIndex": 1, "turnIndex": 76},
+                   "message": {"role": "user", "content":
+                               "This session is being continued from a previous conversation that ran out "
+                               "of context. The summary below covers the earlier portion of the conversation."}}
+
+
+def test_a_compaction_does_not_start_a_turn():
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    recorded = {"type": "assistant", "message": {"id": "m4", "content": [{"type": "text", "text": "Recorded."}]}}
+    shown = {"type": "assistant", "message": {"id": "m1", "content": [{"type": "text", "text": ITEM_2_REPLY}]}}
+    compacted_mid_turn = [USER_PROMPT, shown, TOOL_CALL, TOOL_RESULT, COMPACT_BOUNDARY, COMPACT_SUMMARY, recorded]
+    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in compacted_mid_turn))
+    check_silent("an item shown before a compaction in the same turn still counts", case.run())
+    compacted_between_turns = [USER_PROMPT, shown, COMPACT_BOUNDARY, COMPACT_SUMMARY, USER_PROMPT, recorded]
+    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in compacted_between_turns))
+    check_reminded("an item shown in the turn before a compaction does not count in the turn after it",
+                   case.run())
 
 
 def test_an_ended_walk_is_closed_by_the_line_the_reminder_gives():

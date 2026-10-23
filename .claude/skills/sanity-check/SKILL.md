@@ -1,6 +1,6 @@
 ---
 name: sanity-check
-description: Give a design, a specification, a skill or a plan its sanity-check, the project's deliberate and expensive second review, which tests what the document does rather than how it reads, after its /cold-read has passed. Three sanity-check-adversarial-prompts, each run by two fresh sanity-check-cells, ask what should be cut, which English instructions should be code, and what an independent designer would build from a solution-free statement of the problem. Run it by deliberate decision, never automatically, and only on a document that directs work, never on one that only reports what happened.
+description: 'Use when you or the user have deliberately decided that a design, a specification, a skill or a plan whose full /cold-read has run, with its changes committed, gets its sanity-check, the project''s deliberate and expensive second review, which tests what the document does rather than how it reads. Three sanity-check-adversarial-prompts, each run by two fresh sanity-check-cells, ask what should be cut, which English instructions should be code, and what an independent designer would build from a solution-free statement of the problem. Never run it automatically, and run it only on a document that directs work, never on one that only reports what happened.'
 ---
 
 # sanity-check

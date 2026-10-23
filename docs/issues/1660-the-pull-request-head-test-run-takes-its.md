@@ -37,8 +37,12 @@ The trade-off this accepts: a pull request can now add a suite to `SUITES_RUN_WI
 
 ## Not affected
 
-`scripts/run-suite-in-signal-sandbox.py` and `scripts/pull-request-mutation-testing-survivors.py` also read `SUITES_RUN_WITHOUT_ANY_SANDBOX`. Neither has this defect in merge-lane-2's work, because none of merge-lane-2's steps runs them from main on a merged tree. Those steps are the four in `STEPS` of `scripts/merge-lane-pull-request-worktrees-reviewer-brief-codex-review-and-head-tests-run-without-merge.py`. Each of the two programs reads the list from the runner in its own checkout.
+`scripts/run-suite-in-signal-sandbox.py` and `scripts/pull-request-mutation-testing-survivors.py` also read `SUITES_RUN_WITHOUT_ANY_SANDBOX`. Neither has this defect in merge-lane-2's work, because none of merge-lane-2's steps runs them from main on a merged tree. Those steps are the ones in `STEPS` of `scripts/merge-lane-pull-request-worktrees-reviewer-brief-codex-review-and-head-tests-run-without-merge.py`. Each of the two programs reads the list from the runner in its own checkout.
 
 ## Next action
 
 prime-intellect opens a pull request that changes `scripts/run-all-test-suites.py` as the fix section says. Its tests, in `scripts/run-all-test-suites-signal-sandbox-test.py`, reproduce pull request 1577: a scratch checkout's own `scripts/run-all-test-suites.py` lists a suite under a path the runner's list lacks, and the runner must run that suite without the sandbox. They also cover the fallback when the file is absent and each refusal. merge-lane-2 reviews the pull request. Once it merges, a head test run on a pull request that renames a listed suite reports that suite as run without any sandbox.
+
+## Outcome
+
+Fixed by pull request [run-all-test-suites.py reads its suite sandbox lists from the checkout under test, so a head test run honours a pull request's renamed unsandboxed suite](https://github.com/nedschorus/nedschorus/pull/1682), merged 2026-10-21 as commit 295c9f35a. `scripts/run-all-test-suites.py` now reads its suite sandbox lists from the checkout under test, falling back to its own when that checkout's copy is absent; the rest of the runner stays main's. A follow-up pull request simplifies the refusal message for an unreadable copy in the checkout under test.

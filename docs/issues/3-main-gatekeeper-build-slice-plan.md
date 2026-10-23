@@ -1128,7 +1128,7 @@ not redone:
    means the test plan above is hand-written, as it currently is.
 3. **Does this build own the check battery?** Two documents disagree, and
    the disagreement is why nobody noticed the work was skipped.
-   [nc-python-toolchain-plan.md](../cross-project/nc-python-toolchain-plan.md)
+   [nc-python-toolchain-plan.md](https://github.com/nedschorus/nedschorus/blob/295c9f35/docs/cross-project/nc-python-toolchain-plan.md)
    § Phase 1 is headed "First pass (built with the gatekeeper, step 7)" and
    specifies `nc-checkin-quality-gate` — gitleaks plus `ruff check`,
    `ruff format --check`, `mypy` and `pytest`, run full-repo on every

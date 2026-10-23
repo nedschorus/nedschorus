@@ -110,8 +110,8 @@ GIT_MODULE_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
 STOP_HOOKS_STAY_SILENT_RULE_FILE = (
     REPOSITORY_TOP / "nc-systems" / "general-tools"
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
-# The hard-wrap hook already installs the pinned markdown-it-py when it is missing; its parser is reused.
-MARKDOWN_PARSER_MODULE_FILE = REPOSITORY_TOP / "scripts" / "markdown-edit-hard-wrapped-paragraph-reminder-hook.py"
+MARKDOWN_PARSER_MODULE_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
+                               / "markdown-commonmark-parser-with-tables-common.py")
 CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 WALK_DIRECTORY = Path("docs") / "walk"
 MINUTES_SUFFIX = "-minutes.md"
@@ -209,7 +209,9 @@ def turn_start(records):
     """Return the index of the record that starts the transcript's last turn, or None."""
     for index in range(len(records) - 1, -1, -1):
         record = records[index]
-        if record.get("type") != "user":
+        # A compaction's summary is a user record without isMeta, but Claude Code writes it, not
+        # a prompt, so it opens no turn.
+        if record.get("type") != "user" or record.get("isCompactSummary"):
             continue
         content = record.get("message", {}).get("content")
         if (isinstance(content, list) and content
@@ -283,7 +285,7 @@ def checkout_top(directory):
 
 
 def markdown_parser():
-    return load_module("markdown_edit_hard_wrapped_paragraph_reminder_hook",
+    return load_module("markdown_commonmark_parser_with_tables_common",
                        MARKDOWN_PARSER_MODULE_FILE).markdown_parser()
 
 

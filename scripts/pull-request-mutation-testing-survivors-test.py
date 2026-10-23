@@ -802,6 +802,48 @@ def run_cases():
               free_at_worktree_removal == {"after a run": True, "after a failed step": True},
               free_at_worktree_removal)
 
+    # The runner's refusal to name the recordings directory is this program's refusal, exit 2.
+    with tempfile.TemporaryDirectory() as scratch_name:
+        repository, base, head = scratch_repository(scratch_name, HEAD_FILES)
+        venv, control = fake_venv(scratch_name, {"dump": []})
+        spec = importlib.util.spec_from_file_location(
+            "pull_request_mutation_testing_survivors", str(SCRIPT))
+        survivors_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(survivors_module)
+        load_runner_for_refusal = survivors_module.load_test_suite_runner
+
+        def runner_that_cannot_name_the_recordings_directory():
+            loaded_runner = load_runner_for_refusal()
+
+            def refuse(given, top):
+                raise loaded_runner.CouldNotRun(
+                    f"{loaded_runner.PROGRAM}: not run — injected root-commit failure")
+            loaded_runner.recordings_directory_for = refuse
+            return loaded_runner
+
+        survivors_module.load_test_suite_runner = runner_that_cannot_name_the_recordings_directory
+        os.environ[CONTROL_DIRECTORY_VARIABLE] = str(control)
+        printed = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(printed):
+                status = survivors_module.main([
+                    "--checkout", str(repository),
+                    "--recorded-inputs-directory", str(control / "recordings"),
+                    "--lock-file", str(control / "machine.lock"),
+                    "--head", head, "--base", base, "--cosmic-ray-venv", str(venv)])
+        except Exception as error:  # A crash is this case's failure, not the suite's.
+            status = repr(error)
+        finally:
+            del os.environ[CONTROL_DIRECTORY_VARIABLE]
+        check("when the runner cannot name the recordings directory, the run exits 2 with "
+              "the runner's reason under this program's name",
+              status == survivors_module.EXIT_COULD_NOT_RUN
+              and printed.getvalue() == (
+                  "pull-request-mutation-testing-survivors: not run — injected root-commit "
+                  "failure\n" + survivors_module.load_test_suite_runner()
+                  .git_failure_next_step_lines("pull-request-mutation-testing-survivors.py")
+                  + "\n"), (status, printed.getvalue()))
+
     # ------------------------------------------------------------------
     # The signal sandbox, driven through a fake bwrap on PATH. The variable
     # that marks a run already inside the sandbox is dropped, since this
@@ -909,6 +951,37 @@ def run_cases():
                   f"--ro-bind {standard_library} {standard_library}" in config
                   and f"--ro-bind {home_python} {home_python}" in config,
                   f"rc={completed.returncode} out={completed.stdout[-600:]} config={config[:1500]}")
+
+        # Repository paths longer than a file name may be: each file named in the scratch
+        # directory, the suite's proof included, stays within the 255-byte limit.
+        long_directory = "/".join(["d" * 80] * 3)
+        long_source = f"{long_directory}/{'s' * 100}.py"
+        long_suite = f"{long_directory}/{'s' * 100}-test.py"
+        with tempfile.TemporaryDirectory() as scratch_name:
+            repository, base, head = scratch_repository(scratch_name, {
+                long_source: "def double(x):\n    return x + x\n",
+                long_suite: "import sys\nsys.exit(0)\n"})
+            venv, control = fake_venv(scratch_name, {"dump": []})
+            fake_bin = Path(scratch_name) / "bin"
+            fake_bin.mkdir()
+            (fake_bin / "bwrap").write_text("#!/bin/sh\nexit 0\n")
+            (fake_bin / "bwrap").chmod(0o755)
+            completed = run_script(repository, control, "--head", head, "--base", base,
+                                   "--cosmic-ray-venv", str(venv),
+                                   path_override=f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+                                   dropped_variables=(inside_variable,))
+            config = ((control / "config.toml").read_text()
+                      if (control / "config.toml").exists() else "")
+            proofs = re.findall(r"\S+\.started", config)
+            check("with paths longer than a file name may be, the run goes to its summary",
+                  completed.returncode == 0 and "SUMMARY:" in completed.stdout
+                  and "File name too long" not in completed.stderr,
+                  f"rc={completed.returncode} out={completed.stdout[-600:]} "
+                  f"err={completed.stderr[-600:]}")
+            check("with paths longer than a file name may be, the suite's proof file name is "
+                  "within 255 bytes",
+                  proofs and all(len(Path(proof.strip("'")).name.encode()) <= 255
+                                 for proof in proofs), proofs)
     else:
         print("SKIP  the signal sandbox cases: bwrap is used only on Linux")
 
@@ -949,6 +1022,16 @@ def run_cases():
             check(f"{label}: the run {'stops, naming the suite' if named else 'goes on'}",
                   (raised is not None and "a-test.py" in raised and "did not start" in raised)
                   if named else raised is None, raised)
+    stem_for = survivors.scratch_file_name_stem_under_255_bytes_unique_to_repository_paths
+    long_path = "/".join(["é" * 120] * 3) + ".py"
+    stems = [stem_for(long_path, long_path), stem_for(long_path, long_path),
+             stem_for("a/x.py", "a/x-test.py"), stem_for("b/x.py", "a/x-test.py")]
+    check("a scratch file name stem stays within 255 bytes with its longest suffix, "
+          "whatever the paths' length",
+          len((stems[0] + ".test-sandbox-did-not-start").encode()) <= 255, stems[0])
+    check("a scratch file name stem is the same for the same paths and differs for paths "
+          "that differ only before the last name",
+          stems[0] == stems[1] and stems[2] != stems[3], stems)
     with tempfile.TemporaryDirectory() as scratch_name:
         repository, base, head = scratch_repository(scratch_name, {
             "scripts/tést.py": "VALUE = 1\n",

@@ -28,7 +28,14 @@ mechanical checks all pass:
                 trace of it that lives outside a process.
 
 Uncommitted, untracked and ignored files do NOT keep a done worktree: they
-are removed with it. The files are listed after the other checks, each file
+are removed with it. The one exception is the records whose home is the
+log-store: before --remove removes a done worktree, it ships each non-empty
+record directory under the worktree's cold-read-records/ and
+sanity-check-records/ to the log-store, with the shipper of that kind
+(LOG_STORE_RECORD_SHIPPERS), and keeps the worktree when any record is
+refused or fails to ship, printing the shipper's line. The shippers are
+add-only, so a record already in the store ships as "nothing new". The report
+modes name the records and ship nothing. The files are listed after the other checks, each file
 inside an untracked or ignored directory named on its own; the report names
 them, and --remove names them twice: before each removal, as files it will
 discard, and after a removal succeeds, as files discarded with it. A removal
@@ -83,7 +90,10 @@ Modes:
                each removal also deletes the worktree's fully-merged branch
                (git branch -d, which refuses anything unmerged). Removal is
                `git worktree remove --force`, which removes untracked and
-               modified files and still refuses a locked worktree. Orphaned branch refs are deleted the same way, and
+               modified files and still refuses a locked worktree. Before
+               the removal it ships the worktree's cold-read-records and
+               sanity-check records to the log-store, and keeps the
+               worktree when one does not ship. Orphaned branch refs are deleted the same way, and
                a refusal there is a failure rather than a silence.
 
 SCHEDULED. --remove runs once a day on both machines, from the reference
@@ -103,12 +113,14 @@ the next day.
 Usage:
   scripts/clean-worktrees.py [--only-done | --remove] [--repo PATH]
 
-Exit codes: 0 ok, 1 a removal, a ref deletion, or a work-snapshot listing or
-deletion failed, 2 bad invocation.
+Exit codes: 0 ok, 1 a removal, a record's shipment, a ref deletion, or a
+work-snapshot listing or deletion failed, 2 bad invocation, or git could not
+list the worktrees or the branches, which stops the run where it failed.
 """
 
 import importlib.util
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -130,10 +142,24 @@ _git_output_spec = importlib.util.spec_from_file_location(
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
 
+_next_step_lines_spec = importlib.util.spec_from_file_location(
+    "failed_command_agent_facing_message_rerun_once_then_stop_and_report_lines_common",
+    REPO_ROOT / "nc-systems" / "general-tools"
+    / "failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py")
+next_step_lines = importlib.util.module_from_spec(_next_step_lines_spec)
+_next_step_lines_spec.loader.exec_module(next_step_lines)
+
 # Regenerable junk is left out of the list of files a removal discards.
 DISPOSABLE_JUNK_BASENAMES = (".DS_Store", "__pycache__")
 
 DISCARDED_FILES_NAMED_AT_MOST = 10
+
+# Gitignored directories whose records belong in the log-store, each with the program that ships one
+# record of that kind. The reference clone's shippers, not the worktree's possibly older copies.
+LOG_STORE_RECORD_SHIPPERS = (
+    ("cold-read-records", REPO_ROOT / "nc-systems" / "cold-read" / "cold-read-record-ship.py"),
+    ("sanity-check-records", REPO_ROOT / "scripts" / "sanity-check-record-ship.py"),
+)
 
 # lsof scans all processes and can be slow under load; a timeout must keep worktrees.
 VACANCY_CHECK_TIMEOUT_SECONDS = 120
@@ -151,6 +177,16 @@ def run_git(repo, *arguments):
     )
 
 
+FINISHED_WITH_FAILURES_LINE = "clean-worktrees: finished; each failure is named above"
+STOPPED_LINE_START = "clean-worktrees: stopped, because "
+# Only the listing calls raise, so every removal before the stop has already printed its line on stdout.
+WHAT_A_STOPPED_INVOCATION_REMOVED_WITH_REMOVE = (
+    "clean-worktrees removed only the worktrees and branches named on its lines containing "
+    "\": removed\" or \": deleted\", and checked nothing after the git command that failed.")
+WHAT_A_STOPPED_INVOCATION_REMOVED_WITHOUT_REMOVE = (
+    "clean-worktrees removed nothing, since it ran without --remove, and checked nothing after "
+    "the git command that failed.")
+
 def main_checkout_of(repo):
     """Return the primary checkout from the common git directory."""
     common = run_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -160,10 +196,11 @@ def main_checkout_of(repo):
 
 
 def list_worktrees(repo, main_checkout):
-    """Return (path, branch-or-None) pairs excluding the primary checkout."""
-    listing = run_git(repo, "worktree", "list", "--porcelain", "-z")
+    """Return (path, branch-or-None) pairs excluding the primary checkout; raise
+    git_output.GitCommandFailed when git cannot list them."""
+    listing = git_output.run_git(repo, ["worktree", "list", "--porcelain", "-z"])
     worktrees = []
-    for record in git_output.worktree_records(listing.stdout):
+    for record in git_output.worktree_records(listing):
         path = Path(record.path)
         if path.resolve() == main_checkout.resolve():
             continue
@@ -177,29 +214,28 @@ def list_worktrees(repo, main_checkout):
 
 
 def dead_worktree_registrations(repo):
-    """Return (path, git reason) for unlocked prunable registrations."""
+    """Return (path, git reason) for unlocked prunable registrations; raise
+    git_output.GitCommandFailed when git cannot list them."""
     # A prunable directory can still exist and hold work; report git's reason without inferring absence.
-    listing = run_git(repo, "worktree", "list", "--porcelain", "-z")
+    listing = git_output.run_git(repo, ["worktree", "list", "--porcelain", "-z"])
     return [(record.path, record.prunable_reason or "no reason given")
-            for record in git_output.worktree_records(listing.stdout)
+            for record in git_output.worktree_records(listing)
             if record.prunable_reason is not None]
 
 
 def branch_refs_with_no_worktree_fully_on_main(repo):
-    listing = run_git(repo, "worktree", "list", "--porcelain", "-z")
-    if listing.returncode != 0:
-        return []
+    """Return the local branches no worktree holds that carry nothing beyond origin/main;
+    raise git_output.GitCommandFailed when git cannot list either."""
+    listing = git_output.run_git(repo, ["worktree", "list", "--porcelain", "-z"])
     attached = {
         record.branch[len("refs/heads/"):]
-        for record in git_output.worktree_records(listing.stdout)
+        for record in git_output.worktree_records(listing)
         if record.branch is not None and record.branch.startswith("refs/heads/")
     }
     # Use lstrip=2: :short can return heads/<name> when a same-named tag shadows a branch.
-    landed = run_git(repo, "for-each-ref", "--format=%(refname:lstrip=2)",
-                     "--merged", "origin/main", "refs/heads/")
-    if landed.returncode != 0:
-        return []
-    return [branch for branch in landed.stdout.splitlines()
+    landed = git_output.run_git(repo, ["for-each-ref", "--format=%(refname:lstrip=2)",
+                                       "--merged", "origin/main", "refs/heads/"])
+    return [branch for branch in os.fsdecode(landed).splitlines()
             if branch not in attached]
 
 
@@ -296,6 +332,43 @@ def discarded_files_text(paths):
     return named + (f" and {more} more" if more > 0 else "")
 
 
+def log_store_records_in(worktree):
+    """Return (shipper, record directory) for each non-empty record directory the worktree holds."""
+    records = []
+    for directory_name, shipper in LOG_STORE_RECORD_SHIPPERS:
+        records_directory = worktree / directory_name
+        if not records_directory.is_dir():
+            continue
+        for record in sorted(records_directory.iterdir()):
+            if record.is_dir() and any(record.iterdir()):
+                records.append((shipper, record))
+    return records
+
+
+def ship_log_store_records(worktree):
+    """Ship every record the worktree holds, printing a line for each; return the shipper lines of those that did not ship."""
+    unshipped = []
+    for shipper, record in log_store_records_in(worktree):
+        shipment = subprocess.run([sys.executable, str(shipper), str(record)],
+                                  capture_output=True, text=True, check=False)
+        sys.stderr.write(shipment.stderr)
+        # One record directory, so the shipper prints at most one line.
+        line = shipment.stdout.strip()
+        if not line:
+            last_error = shipment.stderr.strip().splitlines()[-1:]
+            line = (f"the shipper printed nothing (exit {shipment.returncode})"
+                    + (f": {last_error[0]}" if last_error else ""))
+        if shipment.returncode:
+            # Printed now, not after the loop: a later shipment can hang until the handoff's timeout kills this run.
+            # The shipper's line appears only inside this FAILED line, so a reader counts it once.
+            print(f"{worktree.name}: record shipment FAILED, worktree kept — removing it would delete "
+                  f"a record the log-store does not hold: {record.relative_to(worktree)} ({line})")
+            unshipped.append(line)
+        else:
+            print(f"{worktree.name}: {line}")
+    return unshipped
+
+
 def classify(worktree, branch, main_checkout):
     """Return (done, reason, discarded paths) for a worktree."""
     managed_area = (main_checkout / ".claude" / "worktrees").resolve()
@@ -321,15 +394,33 @@ def classify(worktree, branch, main_checkout):
     discarded, listing_error = files_a_removal_discards(worktree)
     if discarded is None:
         return False, f"git cannot list its files ({listing_error})", []
+    records = log_store_records_in(worktree)
+    shipped_first = (f"; --remove first ships its {len(records)} record(s) to the log-store "
+                     f"and keeps it if one does not ship: "
+                     + ", ".join(str(record.relative_to(worktree)) for _, record in records)
+                     if records else "")
     if discarded:
         return True, (f"landed and vacant; removing it discards {len(discarded)} "
                       f"uncommitted, untracked or ignored file(s): "
-                      f"{discarded_files_text(discarded)}"), discarded
-    return True, "landed and vacant", []
+                      f"{discarded_files_text(discarded)}{shipped_first}"), discarded
+    return True, "landed and vacant" + shipped_first, []
 
 
 def remove_worktree(worktree, branch, repo, discarded):
-    """Remove a done worktree and its merged branch; return success."""
+    """Ship its log-store records, then remove a done worktree and its merged branch; return success."""
+    unshipped = ship_log_store_records(worktree)
+    if unshipped:
+        # No next-step line may contain FAILED: the handoff-supervisor counts each such line as a failure.
+        if any(line.startswith("REFUSED:") for line in unshipped):
+            print(f"{worktree.name}: for each record whose line starts REFUSED:, rename its directory "
+                  f"as that line says; the next scripts/clean-worktrees.py --remove then ships it "
+                  f"and removes the worktree")
+        if not all(line.startswith("REFUSED:") for line in unshipped):
+            print(f"{worktree.name}: for each record whose line does not start REFUSED:, do nothing "
+                  f"now: the next scripts/clean-worktrees.py --remove, daily or at a handoff, "
+                  f"ships the record again; "
+                  f"if the record fails the same way there, fix the cause its line names")
+        return False
     # Named before the removal too: a removal that fails or is killed partway may already have deleted some.
     if discarded:
         print(f"{worktree.name}: removing it will discard {len(discarded)} uncommitted, "
@@ -353,34 +444,9 @@ def remove_worktree(worktree, branch, repo, discarded):
     return True
 
 
-def main(argv=None):
-    # The daily job writes to a log without -u; a run killed mid-removal must still show what it announced.
-    sys.stdout.reconfigure(line_buffering=True)
-    arguments = sys.argv[1:] if argv is None else list(argv)
-    if arguments in (["--help"], ["-h"]):
-        print(__doc__)
-        return 0
-    repo = REPO_ROOT
-    if "--repo" in arguments:
-        flag_position = arguments.index("--repo")
-        try:
-            repo = Path(arguments[flag_position + 1])
-        except IndexError:
-            print("clean-worktrees: --repo needs a path", file=sys.stderr)
-            return 2
-        del arguments[flag_position:flag_position + 2]
-    only_done = "--only-done" in arguments
-    remove = "--remove" in arguments
-    leftover = [a for a in arguments if a not in ("--only-done", "--remove")]
-    if leftover or (only_done and remove):
-        print(__doc__, file=sys.stderr)
-        return 2
-
-    main_checkout = main_checkout_of(repo)
-    if main_checkout is None:
-        print(f"clean-worktrees: {repo} is not a git repository", file=sys.stderr)
-        return 2
-
+def clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done):
+    """Report or remove the worktrees and orphaned branch refs, and report dead registrations;
+    return the number of failures, or raise git_output.GitCommandFailed when git cannot list them."""
     failures = 0
     for worktree, branch in list_worktrees(repo, main_checkout):
         done, reason, discarded = classify(worktree, branch, main_checkout)
@@ -414,11 +480,61 @@ def main(argv=None):
               + ", ".join(f"{path} ({reason})" for path, reason in dead_registrations)
               + " — remove with: git worktree prune")
 
+    return failures
+
+
+def main(argv=None):
+    # The daily job writes to a log without -u; a run killed mid-removal must still show what it announced.
+    sys.stdout.reconfigure(line_buffering=True)
+    arguments = sys.argv[1:] if argv is None else list(argv)
+    given_arguments = list(arguments)
+    if arguments in (["--help"], ["-h"]):
+        print(__doc__)
+        return 0
+    repo = REPO_ROOT
+    if "--repo" in arguments:
+        flag_position = arguments.index("--repo")
+        try:
+            repo = Path(arguments[flag_position + 1])
+        except IndexError:
+            print("clean-worktrees: --repo needs a path", file=sys.stderr)
+            return 2
+        del arguments[flag_position:flag_position + 2]
+    only_done = "--only-done" in arguments
+    remove = "--remove" in arguments
+    leftover = [a for a in arguments if a not in ("--only-done", "--remove")]
+    if leftover or (only_done and remove):
+        print(__doc__, file=sys.stderr)
+        return 2
+
+    main_checkout = main_checkout_of(repo)
+    if main_checkout is None:
+        print(f"clean-worktrees: {repo} is not a git repository", file=sys.stderr)
+        return 2
+
+    try:
+        failures = clean_worktrees_and_branch_refs(repo, main_checkout, remove, only_done)
+    except git_output.GitCommandFailed as error:
+        # The cause stays on one line: the handoff-supervisor reports this line alone.
+        rerun = shlex.join([sys.executable, str(Path(__file__).resolve()), *given_arguments])
+        removed = (WHAT_A_STOPPED_INVOCATION_REMOVED_WITH_REMOVE if remove
+                   else WHAT_A_STOPPED_INVOCATION_REMOVED_WITHOUT_REMOVE)
+        print(f"{STOPPED_LINE_START}{' '.join(str(error).split())}; {removed}\n"
+              + next_step_lines.git_failure_next_step_lines(
+                  rerun, "scripts/clean-worktrees.py",
+                  text_the_failure_line_contains=STOPPED_LINE_START.strip(),
+                  include_the_misspelt_branch_commit_or_path_line=False),
+              file=sys.stderr)
+        return 2
+
     # The handoff-supervisor records each agent-seat's first listings in its handoff directory.
     failures += work_snapshots.clean_leftover_work_snapshots(
         repo, remove=remove, only_due=only_done,
         handoff_directory=Path.home() / ".claude" / "handoffs")
 
+    # Printed only by a run that got this far, so a reader can tell a finished run from one that aborted.
+    if failures:
+        print(FINISHED_WITH_FAILURES_LINE)
     return 1 if failures else 0
 
 

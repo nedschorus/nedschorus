@@ -124,8 +124,8 @@ def run_offline_cases(workspace: Path):
     # A state file written before 2026-09-21 carries the field under the bare
     # name "session_id". A supervisor reading one must come away with the same
     # value under the new name, or carry_over_to_successor sees no retiring
-    # session and the seat ignites dialog-less -- losing the conversation tail
-    # of every live seat on the fleet's first restart after the rename.
+    # session and the seat starts a fresh agent-session without its conversation-tail, as
+    # every live seat would on the fleet's first restart after the rename.
     legacy_state_path = workspace / "legacy-key-supervisor-state.json"
     legacy_state_path.write_text(
         json.dumps({"consumed_counter": 2, "session_id": "written-before-the-rename",
@@ -436,7 +436,7 @@ def run_multi_line_next_step_cases(workspace: Path, recent: str):
     legacy.write_text("written-at: " + recent + "\nnext-step: do the old thing\n", encoding="utf-8")
     legacy_prompt = supervisor.build_ignition_prompt(
         Path("/tmp/d.md"), supervisor.parse_handoff_file(legacy))
-    check("a handoff with no block still ignites from next-step",
+    check("a handoff with no block still starts a fresh agent-session from next-step",
           "do the old thing" in legacy_prompt, repr(legacy_prompt))
 
     # End to end: what the writer wrote is what the reader hands over.
@@ -600,7 +600,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     check("the boot-recovery prompt is exactly its next step, the recovery note, and the branch-state line",
           boot_recovery_prompt == (
               "finish the supervisor\n\n(Recovered at supervisor boot: the previous "
-              "session's dialog extract is unavailable; this next-step and the "
+              "session's conversation-tail is unavailable; this next-step and the "
               "repository are your whole context.) branch sync: fixture-branch is 3 "
               "commit(s) behind main — If this branch has never been pushed, rebase "
               "it onto origin/main before your first substantive action and rerun the "
@@ -862,6 +862,23 @@ def run_branch_sync_cases(workspace: Path):
           report)
     home_index.write_bytes(saved_index)
 
+    # A git directory git cannot read is reported, never raised: the supervisor
+    # calls this between sessions and must go on to relaunch the seat.
+    catch_up = supervisor.checkout_freshness_catch_up
+    real_git_directory = catch_up.git_directory
+
+    def git_directory_fails(checkout):
+        raise catch_up.git_output.GitCommandFailed(
+            ["rev-parse", "--absolute-git-dir"], checkout, 128, "fatal: injected")
+    catch_up.git_directory = git_directory_fails
+    try:
+        report = supervisor.sync_working_branch_with_main(home)
+    finally:
+        catch_up.git_directory = real_git_directory
+    check("an unreadable git directory leaves the checkout as it is, with git's error",
+          report.startswith("branch sync: agent-branch left as is — git directory unreadable")
+          and "fatal: injected" in report, report)
+
     # A detached checkout with an untracked file is fast-forwarded too: an
     # agent-seat's own checkout sits detached.
     detached_home = root / "detached-agent-home"
@@ -933,6 +950,161 @@ def run_branch_sync_cases(workspace: Path):
     report = supervisor.sync_working_branch_with_main(home)
     check("a branch ahead of main with all of main reports nothing to pull",
           "nothing to pull" in report, report)
+
+    no_remote = root / "no-remote"
+    git_in(["init", "--quiet", "--initial-branch=main", str(no_remote)], root)
+    git_in(["config", "user.name", "agent"], no_remote)
+    git_in(["config", "user.email", "agent@nedschorus.invalid"], no_remote)
+    git_in(["commit", "--quiet", "--allow-empty", "-m", "alone"], no_remote)
+    report = supervisor.sync_working_branch_with_main(no_remote)
+    check("a checkout with no origin/main reports that, not a failure",
+          report.startswith("branch sync: no origin/main to sync with"), report)
+
+    # A checkout made with git init and given origin/main, before its first commit.
+    unborn = root / "unborn-home"
+    git_in(["init", "--quiet", "--initial-branch=topic", str(unborn)], root)
+    git_in(["remote", "add", "origin", str(remote)], unborn)
+    git_in(["fetch", "--quiet", "origin"], unborn)
+    report = supervisor.sync_working_branch_with_main(unborn)
+    check("a checkout with no commits yet is reported as such, not as a git failure",
+          report.startswith("branch sync: topic has no commits yet, so not compared with main"),
+          report)
+
+    run_branch_sync_git_failure_cases(root, remote, seed)
+
+
+def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
+    """Each git call the branch sync reads an answer from, failing with exit 128,
+    is reported with git's error, never read as one of the answers."""
+    real_git = shutil.which("git")
+    stub_directory = root / "git-failing-on-one-call"
+    stub_directory.mkdir()
+    stub_git = stub_directory / "git"
+    stub_git.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        '  *"$FAIL_GIT_CALL_CONTAINING"*)\n'
+        '    echo "${FAIL_GIT_STDERR:-fatal: stub failure}" >&2; exit 128 ;;\n'
+        "esac\n"
+        f'exec "{real_git}" "$@"\n',
+        encoding="utf-8")
+    stub_git.chmod(0o755)
+
+    def sync_with_failing_call(checkout, call, stderr="fatal: stub failure"):
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{stub_directory}{os.pathsep}{original_path}"
+        os.environ["FAIL_GIT_CALL_CONTAINING"] = call
+        os.environ["FAIL_GIT_STDERR"] = stderr
+        try:
+            return supervisor.sync_working_branch_with_main(checkout)
+        finally:
+            os.environ["PATH"] = original_path
+            del os.environ["FAIL_GIT_CALL_CONTAINING"]
+            del os.environ["FAIL_GIT_STDERR"]
+
+    def main_moves(message):
+        (seed / "README.md").write_text(f"{message}\n", encoding="utf-8")
+        git_in(["add", "-A"], seed)
+        git_in(["commit", "--quiet", "-m", message], seed)
+        git_in(["pull", "--quiet", "--rebase", "origin", "main"], seed)
+        git_in(["push", "--quiet", "origin", "main"], seed)
+
+    home = root / "failing-git-home"
+    git_in(["clone", "--quiet", str(remote), str(home)], root)
+    git_in(["config", "user.name", "agent"], home)
+    git_in(["config", "user.email", "agent@nedschorus.invalid"], home)
+
+    report = sync_with_failing_call(home, "rev-parse --show-toplevel")
+    check("a branch sync git failure ends with the next steps, naming the git command to rerun",
+          report.endswith(
+              f"If git's error names a lock file, such as .git/index.lock, do not delete the lock "
+              f"file yourself, because a git command still running may hold it; wait up to one "
+              f"minute for git to remove it by running `i=0; while [ -e \"<lock file path>\" ] && "
+              f"[ $i -lt 30 ]; do sleep 2; i=$((i+1)); done` with <lock file path> replaced by the "
+              f"path git's error names, without the quotes git puts around it (Claude Code refuses a "
+              f"plain `sleep 60`), then run exactly "
+              f"`git -C {home} rev-parse --show-toplevel`, whether or not the lock file is gone.\n"
+              f"If git's error names no lock file, run exactly `git -C {home} rev-parse "
+              f"--show-toplevel` once more.\n"
+              "If the rerun prints an error again, stop, do not act on the rest of this prompt, "
+              "and tell the user word for word, the branch sync line in this prompt and the "
+              "error the rerun printed."), report)
+    plan = supervisor.DialogIgnitionPlan(root / "extract.md", {})
+    for shape, prompt in (
+            ("dialog", plan.compose(report)),
+            ("boot-recovery", supervisor.BootRecoveryIgnitionPlan("next").compose(report))):
+        check(f"after a branch sync git failure, the {shape} prompt gives the next steps and "
+              "no rebase instruction, which would contradict their stop",
+              report in prompt and supervisor.BRANCH_STATE_INSTRUCTION not in prompt, prompt)
+        check(f"in the {shape} prompt, the git failure's report stands as its own paragraph",
+              f"\n\n{report}\n\n" in prompt, prompt)
+
+    class SpacedFailure:
+        directory = Path("/tmp/checkout with spaces")
+        arguments = ["rev-parse", "HEAD"]
+    check("the rerun command quotes a checkout path that holds a space",
+          "`git -C '/tmp/checkout with spaces' rev-parse HEAD`"
+          in supervisor.branch_sync_git_failure_next_steps(SpacedFailure()),
+          supervisor.branch_sync_git_failure_next_steps(SpacedFailure()))
+    check("a failed --show-toplevel is reported with git's error, not as no checkout",
+          report.startswith("branch sync: could not tell whether this is a git checkout")
+          and "fatal: stub failure" in report, report)
+
+    for call, wrong_answer in (
+            ("rev-parse --verify --quiet origin/main", "no origin/main"),
+            ("rev-parse --verify --quiet HEAD", "no commits yet"),
+            ("rev-parse --abbrev-ref HEAD", "current with main"),
+            ("merge-base --is-ancestor origin/main HEAD", " ahead of main"),
+            ("rev-list --count origin/main..HEAD", "current with main")):
+        report = sync_with_failing_call(home, call)
+        check(f"a failed `git {call}` on a level branch is reported with git's error",
+              " left as is — " in report and "fatal: stub failure" in report
+              and f"If git's error names no lock file, run exactly `git -C {home} {call}" in report
+              and wrong_answer not in report, report)
+
+    main_moves("main moves past the failing-git home")
+    head_before = git_in(["rev-parse", "HEAD"], home).stdout.strip()
+    try:
+        report = sync_with_failing_call(home, "rev-parse --absolute-git-dir")
+    except Exception as error:
+        report = f"raised {type(error).__name__}: {error}"
+    check("a git directory git cannot read is reported, and the checkout is not moved",
+          report.startswith("branch sync: main left as is — ")
+          and git_in(["rev-parse", "HEAD"], home).stdout.strip() == head_before, report)
+    # git_directory answers None when git calls the checkout no repository,
+    # which after --show-toplevel answered means its git directory has gone.
+    report = sync_with_failing_call(
+        home, "rev-parse --absolute-git-dir",
+        stderr="fatal: not a git repository (or any of the parent directories): .git")
+    check("a git directory that is gone after --show-toplevel answered is reported, and "
+          "the checkout is not moved",
+          report.startswith("branch sync: main left as is — git directory unreadable")
+          and git_in(["rev-parse", "HEAD"], home).stdout.strip() == head_before, report)
+    head_before = git_in(["rev-parse", "HEAD"], home).stdout.strip()
+    report = sync_with_failing_call(home, "merge-base --is-ancestor HEAD origin/main")
+    check("a failed `git merge-base --is-ancestor HEAD origin/main` is reported, and "
+          "the checkout is not moved",
+          " left as is — " in report and "fatal: stub failure" in report
+          and " behind" not in report
+          and git_in(["rev-parse", "HEAD"], home).stdout.strip() == head_before, report)
+
+    report = sync_with_failing_call(home, "rev-parse --short HEAD")
+    check("a fast-forward whose new commit cannot be read says it fast-forwarded, "
+          "with git's error in place of the commit",
+          "fast-forwarded to main (its new commit could not be read" in report
+          and "fatal: stub failure" in report
+          and f"If git's error names no lock file, run exactly `git -C {home} rev-parse --short HEAD`" in report, report)
+
+    (home / "agent-note.txt").write_text("own work\n", encoding="utf-8")
+    git_in(["add", "-A"], home)
+    git_in(["commit", "--quiet", "-m", "the agent's own work"], home)
+    main_moves("main moves again, so the failing-git home diverges")
+    for call in ("rev-list --count origin/main..HEAD", "rev-list --count HEAD..origin/main"):
+        report = sync_with_failing_call(home, call)
+        check(f"a failed `git {call}` on a diverged branch is reported with git's error, "
+              "not counted as ?",
+              " left as is — " in report and "fatal: stub failure" in report
+              and "?" not in report, report)
 
 
 # The overview-refresh-due instruction, word for word. A template: the
@@ -1288,7 +1460,13 @@ def run_overview_refresh_due_cases(workspace: Path):
 
     # A read of one system's overview that hangs. aardvark sorts before widget,
     # so ending the loop there would lose widget's line.
-    commit({"nc-systems/aardvark/aardvark.py": "print('aardvark')\n"}, "the aardvark lands")
+    # The zebra has no overview, so nothing is said of it.
+    aardvark_landed = commit({"nc-systems/aardvark/aardvark.py": "print('aardvark')\n",
+                              "nc-systems/zebra/zebra.py": "print('zebra')\n"},
+                             "the aardvark and the zebra land")
+    commit({"docs/nedschorus-wiki/nedschorus-aardvark-architecture-overview.md":
+            "# The aardvark: an overview\n\n" + checked_line(aardvark_landed) + "\n"},
+           "the aardvark's overview, checked")
     main = publish()
     expected = expected_widget_overview_refresh_due_line(grown, main, 1, git_in(["rev-parse", main], repository).stdout.strip())
     real_git = shutil.which("git")
@@ -1314,9 +1492,9 @@ def run_overview_refresh_due_cases(workspace: Path):
             return getattr(subprocess, name)
 
         def run(self, arguments, *positional, **keywords):
-            if "timeout" in keywords and not any(
+            if "timeout" in keywords and not ("show" in arguments and any(
                     "nedschorus-aardvark-architecture-overview.md" in str(argument)
-                    for argument in arguments):
+                    for argument in arguments)):
                 keywords["timeout"] = 60
             return subprocess.run(arguments, *positional, **keywords)
 
@@ -1344,6 +1522,36 @@ def run_overview_refresh_due_cases(workspace: Path):
     check("the system passed over is named on the console with the cause",
           "handoff-supervisor: overview check for aardvark passed over: TimeoutExpired"
           in console.getvalue(), console.getvalue())
+
+    # git show exits 128 for an absent path too; a present overview it cannot
+    # read is a failure, named on the console, not a system with no overview.
+    failing_stub_directory = root / "git-that-fails-on-one-overview"
+    failing_stub_directory.mkdir()
+    failing_stub_git = failing_stub_directory / "git"
+    failing_stub_git.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        '  *"show "*":docs/nedschorus-wiki/nedschorus-aardvark-architecture-overview.md"*)\n'
+        "    echo 'fatal: stub failure' >&2; exit 128 ;;\n"
+        "esac\n"
+        f'exec "{real_git}" "$@"\n',
+        encoding="utf-8")
+    failing_stub_git.chmod(0o755)
+    console = io.StringIO()
+    os.environ["PATH"] = f"{failing_stub_directory}{os.pathsep}{original_path}"
+    try:
+        with contextlib.redirect_stdout(console):
+            due = overview_refresh_due_or_missing(repository)
+    finally:
+        os.environ["PATH"] = original_path
+    check("a present overview git show cannot read passes over that system only",
+          due == (expected,), f"{due!r}\nexpected: {expected!r}\n{console.getvalue()}")
+    check("and the failure is named on the console with git's error",
+          "handoff-supervisor: overview check for aardvark passed over: "
+          "OverviewCheckGitFailure: git show " in console.getvalue()
+          and "fatal: stub failure" in console.getvalue(), console.getvalue())
+    check("a system with no overview is passed over in silence",
+          "zebra" not in console.getvalue(), console.getvalue())
 
 
 def run_overview_refresh_unusable_system_name_cases(workspace: Path):
@@ -2054,11 +2262,11 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
           "branch-state line and the overview-refresh-due line, exactly",
           boot_recovery_prompt == (
               "finish the supervisor\n\n(Recovered at supervisor boot: the previous "
-              "session's dialog extract is unavailable; this next-step and the "
+              "session's conversation-tail is unavailable; this next-step and the "
               "repository are your whole context.) " + branch_state_line + " " + line),
           repr(boot_recovery_prompt))
 
-    # End to end: a supervisor igniting agent-instructions-editor, the one
+    # End to end: a supervisor starting a fresh agent-session for agent-instructions-editor, the one
     # agent-seat given overview-refresh lines, in a checkout with a system due
     # hands the successor the line, after the branch-state instruction, and
     # prints it on its console.
@@ -2112,7 +2320,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
         env={**os.environ,
              "PATH": f"{no_open_pull_requests}{os.pathsep}{os.environ.get('PATH', '')}"})
     launched = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
-    check("an ignited successor of agent-instructions-editor is given the "
+    check("a successor started as a fresh agent-session of agent-instructions-editor is given the "
           "overview-refresh-due line after the branch-state instruction",
           expected in launched and "already pushed." in launched
           and launched.index("already pushed.") < launched.index(expected),
@@ -2120,7 +2328,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     check("the supervisor prints the overview-refresh-due line on its console",
           f"handoff-supervisor: {expected}" in result.stdout, result.stdout[-900:])
 
-    # Any other agent-seat, igniting in the same checkout with the same system
+    # Any other agent-seat, started as a fresh agent-session in the same checkout with the same system
     # due: the overview check is never run, so its successor gets no
     # overview-refresh line and the console shows none.
     other_seat_directory = workspace / "overview-refresh-other-seat-handoffs"
@@ -2156,7 +2364,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
         supervisor.supervise_sessions(other_seat_settings)
     check("an agent-seat other than agent-instructions-editor never runs the overview check",
           overview_check_calls == [], repr(overview_check_calls))
-    check("an ignited successor of an agent-seat other than agent-instructions-editor "
+    check("a successor started as a fresh agent-session of an agent-seat other than agent-instructions-editor "
           "is given no overview-refresh line",
           len(other_seat_launched_prompts) == 1
           and other_seat_launched_prompts[0].startswith("resume the audit")
@@ -2204,7 +2412,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
                      f"{os.pathsep}{os.environ.get('PATH', '')}"})
     launched = (unread_record_path.read_text(encoding="utf-8")
                 if unread_record_path.is_file() else "")
-    check("an ignited successor whose reminder marks cannot be read is given the "
+    check("a successor started as a fresh agent-session whose reminder marks cannot be read is given the "
           "overview-refresh-due line and, after it, the line saying the marks could "
           "not be read, with the error, and the instruction to tell the user",
           expected in launched and REMINDER_MARKS_UNREAD_LINE_OPENING in launched
@@ -2574,9 +2782,9 @@ def run_memory_review_due_prompt_cases(workspace: Path):
         plan_prompt = "compose takes no memory review line"
     check("MEMORY REVIEW: the dialog plan hands its memory review line to the prompt it "
           "composes", plan_prompt == prompt and prompt != "", repr(plan_prompt))
-    recovery_note = ("\n\n(Recovered at supervisor boot: the previous session's dialog "
-                     "extract is unavailable; this next-step and the repository are your "
-                     "whole context.) ")
+    recovery_note = ("\n\n(Recovered at supervisor boot: the previous session's "
+                     "conversation-tail is unavailable; this next-step and the repository "
+                     "are your whole context.) ")
     try:
         boot_recovery_prompt = supervisor.BootRecoveryIgnitionPlan("finish the review").compose(
             branch_sync_report, (overview_line,), (memory_line,))
@@ -2588,7 +2796,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
                                    + " " + overview_line + " " + memory_line),
           repr(boot_recovery_prompt))
 
-    # Through the launch site: a supervisor igniting from an unconsumed handoff
+    # Through the launch site: a supervisor starting a fresh agent-session from an unconsumed handoff
     # at noon Pacific, with the real check against fixture stores, hands the
     # successor the line after the overview line and prints it on its console.
     root = workspace / "memory-review-due-launch"
@@ -2632,7 +2840,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
             memory_review_due_lines=at_noon,
             stdin_isatty=False), contextlib.redirect_stdout(console):
         supervisor.supervise_sessions(settings)
-    check("MEMORY REVIEW: an ignited successor's prompt carries the line after the "
+    check("MEMORY REVIEW: a successor started as a fresh agent-session's prompt carries the line after the "
           "branch-state line and the overview line, exactly",
           launched_prompts == ["resume the audit" + recovery_note + branch_state_line
                                + " " + overview_line + " " + launched_memory_line],
@@ -2643,7 +2851,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
 
 
 def run_boot_ignition_case(workspace: Path):
-    """A fresh boot that finds an unconsumed handoff ignites from it directly.
+    """A fresh boot that finds an unconsumed handoff starts a fresh agent-session from it directly.
     Launching first and letting the wait loop find the file would kill the
     just-born session for a handoff that predates it (observed 2026-08-14 in
     the crash-restart window)."""
@@ -2681,12 +2889,15 @@ def run_boot_ignition_case(workspace: Path):
     )
     check("boot with an unconsumed handoff exits cleanly after the ignition session",
           result.returncode == 0, result.stderr[-300:])
-    check("the boot says it is igniting from the unconsumed handoff",
-          "igniting from an unconsumed handoff" in result.stdout, result.stdout[-400:])
+    check("the boot says it is starting a fresh agent-session from the unconsumed handoff",
+          "starting a fresh agent-session from an unconsumed handoff" in result.stdout, result.stdout[-400:])
+    check("and says the next step is the prompt because the recorded session's dialog could not be extracted",
+          "with its next step as the prompt; there is no conversation-tail because session "
+          "no-such-session's dialog could not be extracted" in result.stdout, result.stdout[-400:])
     launched = record_path.read_text(encoding="utf-8") if record_path.is_file() else ""
     check("the initial agent instructions carry the handoff's next step",
           "resume the audit" in launched, launched[:200])
-    # The boot-recovery path builds its own prompt: no dialog extract exists,
+    # The boot-recovery path builds its own prompt: no conversation-tail exists,
     # so the next-step and the repository are the successor's whole context.
     # It composes at the launch site through the same threading as the dialog
     # path, which since the user's second round (2026-08-30) carries the
@@ -2713,6 +2924,91 @@ def run_boot_ignition_case(workspace: Path):
           launched[:700])
     state = supervisor.read_supervisor_state(handoff_directory / "bootignite-supervisor-state.json")
     check("boot-ignition consumes the handoff counter", state.get("consumed_counter") == 5, str(state))
+
+
+def run_boot_ignition_without_a_conversation_tail_cases(workspace: Path):
+    """A boot that finds an unconsumed handoff and gets no conversation-tail still
+    starts a fresh agent-session from the handoff's next step, and its console
+    gives the true reason: the session whose extraction it tried, or that no
+    earlier session was recorded. Neither path may say it is not relaunching."""
+
+    def boot(case_name: str, state: dict, written_by_session_line: str):
+        """One in-process boot, with the extractor failing and recording its id."""
+        handoff_directory = workspace / case_name
+        handoff_directory.mkdir(parents=True)
+        settings = supervisor.SupervisorSettings(
+            agent=case_name, working_directory=workspace,
+            handoff_directory=handoff_directory,
+            agent_command="unused-stub-agent", first_prompt="")
+        settings.handoff_path.write_text(
+            "written-at: 2026-10-20T00:00:00Z\nnext-step: resume the audit\n"
+            "restart-counter: 5\n" + written_by_session_line, encoding="utf-8")
+        supervisor.write_supervisor_state(settings.state_path, state)
+        extracted_from, launched_prompts = [], []
+
+        def failing_extract_dialog(session_id, working_directory, output_path):
+            extracted_from.append(session_id)
+            return False
+
+        def launch_recording(agent_command, session_id, working_directory, prompt, **_):
+            launched_prompts.append(prompt)
+            return StubLaunchedSession(0)
+
+        console, errors = io.StringIO(), io.StringIO()
+        with supervisor_names_replaced(
+                extract_dialog=failing_extract_dialog,
+                launch_agent_session=launch_recording,
+                sync_working_branch_with_main=lambda working_directory: "branch sync: stubbed",
+                memory_review_due_lines=lambda: (),
+                stdin_isatty=False), \
+                contextlib.redirect_stdout(console), contextlib.redirect_stderr(errors):
+            supervisor.supervise_sessions(settings)
+        return SimpleNamespace(
+            extracted_from=extracted_from, launched_prompts=launched_prompts,
+            printed=console.getvalue(), errors=errors.getvalue(),
+            state=supervisor.read_supervisor_state(settings.state_path))
+
+    # The handoff's writer is not the session the supervisor tracked, and the
+    # writer's extraction fails: the reason names the writer, whose extraction
+    # was tried, not the tracked session, whose extraction never was.
+    tracked = "tracked-session-aaaa"
+    writer = "writer-session-bbbb"
+    diverged = boot("bootdivergedwriter",
+                    {"consumed_counter": 4, "launched_session_id": tracked, "generation": 4},
+                    f"written-by-session: {writer}\n")
+    check("BOOT WITHOUT A CONVERSATION-TAIL: the extraction tried is the handoff writer's",
+          diverged.extracted_from == [writer], repr(diverged.extracted_from))
+    check("BOOT WITHOUT A CONVERSATION-TAIL: the reason names the writer whose extraction failed, "
+          "not the tracked session",
+          f"there is no conversation-tail because session {writer}'s dialog could not be "
+          "extracted" in diverged.printed
+          and f"session {tracked}'s dialog" not in diverged.printed,
+          diverged.printed[-600:])
+    check("BOOT WITHOUT A CONVERSATION-TAIL: the failed extraction is reported with the writer's id",
+          f"extracting session {writer}'s dialog failed" in diverged.errors,
+          diverged.errors[-400:])
+    check("BOOT WITHOUT A CONVERSATION-TAIL: a failed extraction at boot still starts the successor "
+          "from the next step, and never says it is not relaunching",
+          len(diverged.launched_prompts) == 1
+          and diverged.launched_prompts[0].startswith("resume the audit")
+          and "not relaunching" not in diverged.errors + diverged.printed,
+          f"{diverged.launched_prompts!r}\n{diverged.errors[-400:]}")
+    check("BOOT WITHOUT A CONVERSATION-TAIL: the handoff is consumed",
+          diverged.state.get("consumed_counter") == 5, str(diverged.state))
+
+    # No session was ever recorded: nothing to extract, and the reason says so.
+    unrecorded = boot("bootnosessionrecorded", {"consumed_counter": 4, "generation": 4}, "")
+    check("BOOT WITHOUT A CONVERSATION-TAIL: with no earlier session recorded, no extraction is tried",
+          unrecorded.extracted_from == [], repr(unrecorded.extracted_from))
+    check("BOOT WITHOUT A CONVERSATION-TAIL: the reason is that no earlier session was recorded",
+          "with its next step as the prompt; there is no conversation-tail because no earlier "
+          "session was recorded" in unrecorded.printed,
+          unrecorded.printed[-600:])
+    check("BOOT WITHOUT A CONVERSATION-TAIL: with no earlier session recorded, the successor starts "
+          "from the next step",
+          len(unrecorded.launched_prompts) == 1
+          and unrecorded.launched_prompts[0].startswith("resume the audit"),
+          repr(unrecorded.launched_prompts))
 
 
 def run_spawned_subagent_roster_cases(workspace: Path, recent: str):
@@ -2912,15 +3208,16 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
           in prompt, prompt)
     check("the reincarnation prompt points at the predecessor's subagent transcripts",
           f"{plan.predecessor_session_directory}/subagents/agent-<id>.jsonl" in prompt, prompt)
-    check("the reincarnation prompt still ignites from the next step",
+    check("the reincarnation prompt still starts the fresh agent-session from the next step",
           "keep composing" in prompt, prompt)
 
 
 def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str):
-    """carry_over_to_successor reads the retiring session's id off the handoff.
+    """retiring_session_id_from_handoff_writer_or_tracked_launch reads the retiring
+    session's id off the handoff, and carry_over_to_successor extracts it.
 
-    Both callers pass the id from the supervisor's state file, which names the
-    session this supervisor launched; the handoff's own written-by-session
+    Both callers start from the id in the supervisor's state file, which names
+    the session this supervisor launched; the handoff's own written-by-session
     names the session that wrote it. The divergent case below FAILS against
     code that trusts the state file: it extracts and cites the
     launched session instead of the writer. The two fallback cases — field
@@ -2962,7 +3259,10 @@ def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str)
             supervisor.extract_dialog = recording_extract_dialog
             with contextlib.redirect_stdout(console):
                 successor_id, plan = supervisor.carry_over_to_successor(
-                    settings, tracked_session_id, handoff_fields, generation=5)
+                    settings,
+                    supervisor.retiring_session_id_from_handoff_writer_or_tracked_launch(
+                        tracked_session_id, handoff_fields),
+                    handoff_fields, generation=5)
         finally:
             supervisor.extract_dialog = original_extract_dialog
 
@@ -3025,6 +3325,7 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_memory_review_due_cases(workspace)
     run_memory_review_due_prompt_cases(workspace)
     run_boot_ignition_case(workspace)
+    run_boot_ignition_without_a_conversation_tail_cases(workspace)
     run_first_prompt_file_cases(workspace)
     run_multi_line_next_step_cases(workspace, recent_timestamp)
     run_launch_and_retention_cases(workspace, recent_timestamp)

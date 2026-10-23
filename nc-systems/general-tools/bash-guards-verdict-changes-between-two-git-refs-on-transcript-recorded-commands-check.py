@@ -20,7 +20,7 @@ Steps:
   3. At each ref, run the guards' analysis functions on every pair, with the guards' probes
      of git and gh stubbed so a verdict depends only on the command text and the working directory
      (in-process mode). Run the search-file guard's main() with each pair's own working
-     directory. Then run the analysis again on every pair with the shell reader in new-process
+     directory, at the head only when the head adds the search-file guard. Then run the analysis again on every pair with the shell reader in new-process
      mode, unless --new-process-pairs is none: each pool worker keeps one shell reader child
      process running and sends it one command at a time, through the same JSON conversion a
      hook's new process uses.
@@ -29,9 +29,17 @@ Steps:
 
 Exit status: 0 when no verdict differs and no added guard refuses a recorded command; 1 when a
 verdict differs or an added guard refuses a recorded command; 2 when the replay itself
-failed, which includes a guard that raised or timed out on a recorded command at either ref,
-because that row has no verdict to compare. A message that differs while its verdict does not is
-printed, and does not change the exit status. The scratch directory is removed after an exit 0
+failed, which includes a guard that raised on a recorded command at either ref, or timed out on
+it twice, because that row has no verdict to compare. A reading that runs past the per-pair timeout
+(--per-pair-timeout-seconds, 20 s by default), or whose one-command-per-process shell reader runs past
+its own subprocess timeout, is read once more, by itself, after the step's other readings have finished.
+A per-pair timeout that falls while the guard is inside a subprocess call takes effect when the call
+returns, so the reading times out even when the guard then answers.
+At a ref whose shell reader is older than the shell reader child each pool worker keeps running
+(step 3), each guard reads each command in a new process of its own, a one-command-per-process shell
+reader, and the guard stops waiting for that process after 8 s. Either kind of timed-out reading is
+read again because a timeout can come from the machine's load rather than the guard; a reading that
+raised for any other reason is not read again. A message that differs while its verdict does not is printed, and does not change the exit status. The scratch directory is removed after an exit 0
 unless --scratch-directory named it; after an exit 1 or 2 it is kept, and its path is printed.
 """
 
@@ -68,28 +76,63 @@ PAIRS_PER_TASK = 200
 STEP_DEADLINE_MARGIN_SECONDS = 600
 GIT_TIMEOUT_SECONDS = 600
 PRINTED_TEXT_LENGTH = 300
+VERDICT_CHANGED_MESSAGE = (
+    "VERDICT CHANGED: a recorded command gets a different verdict at the head, so this check exits 1.\n"
+    "The pull request's reviewer answers each difference under a \"rows whose verdict differs\" line above, in "
+    "the body of the review the reviewer posts. A difference is one guard, one working directory and one "
+    "command, as one mode lists it. The modes are the ways "
+    "this check reads a command, in-process, search-file main() and new-process, and each labels its own lines "
+    "above. Each entry gets its own answer, naming the guard as that entry names it, so a difference two modes "
+    "list gets two answers, even where the two modes name the same guard differently. When a \"rows whose verdict differs\" line counts more differences than it "
+    "lists, or an entry's command is cut short, every difference is in full in the scratch directory whose path "
+    "this check printed first: in differences-in-process.json, differences-search-file.json and, when the "
+    "new-process mode ran, differences-new-process.json, under the \"verdict\" key. Each difference there is a "
+    "list of four items: [command, working directory]; the guard; the base's reading; and the head's reading. "
+    "Each reading is a list whose first item is the verdict and whose second is the message the guard gave.\n"
+    "Where the head's verdict is the one the pull request means to give, the answer is a line of its own:\n"
+    "  verdict change intended: <guard> | <working directory> | <command>\n"
+    "copying from the difference's entry the guard, as the entry's first line names it before \"  in \" (a guard "
+    "file's path, or, in the search-file main() mode, the literal text search-file main(), which stands for the "
+    "search-file guard), the working directory, which follows \"  in \", and the command, the command last, in quotes as the entry prints it, which is how Python's repr() writes it. A "
+    "JSON file stores the command without those quotes: write it as repr() would. The quotes make a | inside the command part of the command. On the next line, write in one line why the head's verdict is right. "
+    "Where the head's verdict is not the one meant, the answer is a finding instead, and the author fixes the "
+    "guard. When some differences are meant and others are not, each still gets its own answer: its line, or "
+    "a finding.\n"
+    "The answers go in the review of the head commit being merged; after a fix-round, that is the review of "
+    "the fix-round's head; answers in a review of an earlier head do not count, so the review of the fix-round's head repeats them.\n"
+    "merge-lane-2 holds the merge until every difference that this check, run on the head commit being merged, "
+    "finds has its \"verdict change intended\" line. When no NEW GUARD REFUSES block follows, merge-lane-2 then "
+    "merges despite the exit 1; when one follows, its refused commands need their \"refusal right\" lines too, "
+    "as that block says. A difference answered with a finding holds the merge until the author's fix makes this "
+    "check no longer find it.")
 NEW_GUARD_REFUSES_MESSAGE = (
     "NEW GUARD REFUSES RECORDED COMMANDS: a guard the head adds refuses each numbered command listed above "
     "under a \"new guard ... would refuse\" line, so this check exits 1. Agents ran each of those commands, "
     "and a guard that refuses a command agents need stops their work.\n"
-    "The pull request's reviewer answers each refused command in the review. A refused command is one guard, "
-    "one working directory and one command; when the in-process and the new-process modes both list it, it is "
-    "still one refused command, with one answer.\n"
+    "The pull request's reviewer answers each refused command in the body of the review the reviewer posts. "
+    "A refused command is one guard, "
+    "one working directory and one command, and gets one answer. The modes are the ways this check reads a "
+    "command, in-process, search-file main() and new-process, and each labels its own lines above. Every mode "
+    "names an added guard by its file path, so a command two modes refuse in the same working directory is one "
+    "refused command.\n"
     "Where the refusal is right, the answer is a line of its own:\n"
     "  refusal right: <guard file> | <working directory> | <command>\n"
     "copying the guard file's path from its \"new guard\" line and the working directory and the command from "
-    "the numbered entry, the command last, quotes included, so a | inside it is part of the command; for "
+    "the numbered entry, the command last, in the quotes the numbered entry prints around it, so a | inside it is part of the command; for "
     "example, with a made-up guard path: refusal right: scripts/example-guard-hook.py | /tmp | 'tmux kill-server'.\n"
     "Where the refusal is wrong, the answer is a finding instead, and the author then narrows the guard so that "
-    "it lets that command through. The other refused commands still each get their \"refusal right\" line.\n")
+    "it lets that command through. The other refused commands still each get their \"refusal right\" line.\n"
+    "The answers go in the review of the head commit being merged; after a fix-round, that is the review of "
+    "the fix-round's head; answers in a review of an earlier head do not count, so the review of the fix-round's head repeats them.\n")
 NEW_GUARD_REFUSES_ONLY_ENDING = (
-    "merge-lane-2 holds the merge until every refused command this check lists, run at the head commit being "
-    "merged, has its \"refusal right\" line, and then merges despite the exit 1. A refusal answered with a "
+    "merge-lane-2 holds the merge until every refused command that this check, run on the head commit being "
+    "merged, lists has its \"refusal right\" line, and then merges despite the exit 1. A refusal answered with a "
     "finding holds the merge until the author's narrowed guard no longer refuses that command, so the check "
     "no longer lists it.")
 NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING = (
-    "The VERDICT CHANGED line above blocks the merge on its own: \"refusal right\" lines do not clear it, "
-    "so the merge also waits until each verdict difference is explained and intended.")
+    "The VERDICT CHANGED block above holds the merge on its own: \"refusal right\" lines do not clear it. "
+    "merge-lane-2 merges despite the exit 1 only once every refused command has its \"refusal right\" line "
+    "and every difference has its \"verdict change intended\" line.")
 
 # Copied from the parent, never inherited: a git variable would point the checkouts' git at
 # another repository, and the attendance variables change the guards' messages.
@@ -115,8 +158,50 @@ class PairTimedOut(BaseException):
     """
 
 
-def raise_pair_timed_out(*_):
+# How soon a per-pair timeout that fell inside a subprocess call is tried again.
+PAIR_TIMEOUT_DEFERRED_SECONDS = 0.05
+PAIR_TIMEOUT_STATE = {"deferred": False}
+
+
+def raise_pair_timed_out(_, frame):
+    # Raised inside subprocess's own code, such as between Popen._wait()'s lock acquire and its try, the
+    # timeout would leave the lock held, and the wait() that subprocess.run() or the sender's close() then
+    # makes would block forever. So while a subprocess call runs, the timeout is tried again shortly.
+    while frame is not None:
+        if frame.f_globals is vars(subprocess):
+            PAIR_TIMEOUT_STATE["deferred"] = True
+            signal.setitimer(signal.ITIMER_REAL, PAIR_TIMEOUT_DEFERRED_SECONDS)
+            return
+        frame = frame.f_back
     raise PairTimedOut()
+
+
+def read_within_pair_timeout(timeout, read, *arguments):
+    """Return read(*arguments), or raise PairTimedOut when it runs past timeout seconds.
+
+    A reading that returns after its timeout was deferred is timed out too, so whether a late reading
+    keeps its verdict does not depend on how soon after its subprocess call it returns.
+    """
+    PAIR_TIMEOUT_STATE["deferred"] = False
+    signal.alarm(timeout)
+    try:
+        result = read(*arguments)
+    finally:
+        signal.alarm(0)
+    if PAIR_TIMEOUT_STATE["deferred"]:
+        raise PairTimedOut()
+    return result
+
+
+def failed_reading(error):
+    """Return the (verdict, message) of a reading that raised error, a TIMEOUT when the error is a timeout."""
+    if isinstance(error, PairTimedOut):
+        return "TIMEOUT", None
+    # A one-command-per-process shell reader's own subprocess timeout, which load causes as it causes a
+    # PairTimedOut; the reader's exception class is the checkout's own, so the stdlib cause is what is tested.
+    if isinstance(error.__cause__, subprocess.TimeoutExpired):
+        return "TIMEOUT", str(error)
+    return f"EXCEPTION {type(error).__name__}", str(error)
 
 
 class ShellReaderLongRunningChildProcessDiedMidRequest(BaseException):
@@ -433,20 +518,17 @@ def guard_readings(guards, command, working_directory, search_file_directory):
     readings = {}
     for path in guards:
         try:
-            signal.alarm(WORKER.get("timeout", DEFAULT_PER_PAIR_TIMEOUT_SECONDS))
-            verdict, message = GUARDS[path](guards[path], command, working_directory, search_file_directory)
+            verdict, message = read_within_pair_timeout(WORKER.get("timeout", DEFAULT_PER_PAIR_TIMEOUT_SECONDS),
+                                                        GUARDS[path], guards[path], command, working_directory,
+                                                        search_file_directory)
             if isinstance(message, str) and WORKER.get("checkout"):
                 # A message naming a file in the checkout would differ between the base and head checkouts.
                 message = message.replace(WORKER["checkout"], "<checkout>")
             readings[path] = (verdict, message)
-        except PairTimedOut:
-            readings[path] = ("TIMEOUT", None)
-        except (Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
+        except (PairTimedOut, Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
             # A failed reading; is_failed_reading() makes the run exit 2.
             # SystemExit too: one escaping a worker would end that worker.
-            readings[path] = (f"EXCEPTION {type(error).__name__}", str(error))
-        finally:
-            signal.alarm(0)
+            readings[path] = failed_reading(error)
     return readings
 
 
@@ -490,19 +572,15 @@ def worker_search_file_main_rows(pairs):
     rows = []
     for command, working_directory in pairs:
         try:
-            signal.alarm(WORKER["timeout"])
-            verdict, message = search_file_main_outcome(WORKER["guards"][SEARCH_FILE_GUARD], command,
-                                                         working_directory)
+            verdict, message = read_within_pair_timeout(WORKER["timeout"], search_file_main_outcome,
+                                                        WORKER["guards"][SEARCH_FILE_GUARD], command,
+                                                        working_directory)
             if isinstance(message, str):
                 message = message.replace(WORKER["checkout"], "<checkout>")
             row = [verdict, message]
-        except PairTimedOut:
-            row = ["TIMEOUT", None]
-        except (Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
+        except (PairTimedOut, Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
             # A failed reading; is_failed_reading() makes the run exit 2.
-            row = [f"EXCEPTION {type(error).__name__}", str(error)]
-        finally:
-            signal.alarm(0)
+            row = list(failed_reading(error))
         rows.append(row)
     return rows, WORKER["switched"]
 
@@ -517,14 +595,12 @@ def smoke_check(checkout, new_process, search_file_directory, timeout, guards_le
     WORKER["timeout"] = timeout
     readings = guard_readings(guards, "true", "/", search_file_directory)
     try:
-        signal.alarm(timeout)
-        readings["search-file main()"] = search_file_main_outcome(guards[SEARCH_FILE_GUARD], "true", "/")
-    except PairTimedOut:
-        readings["search-file main()"] = ("TIMEOUT", None)
-    except (Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
-        readings["search-file main()"] = (f"EXCEPTION {type(error).__name__}", str(error))
+        if SEARCH_FILE_GUARD in guards:  # Not at a base ref older than the search-file guard.
+            readings["search-file main()"] = read_within_pair_timeout(
+                timeout, search_file_main_outcome, guards[SEARCH_FILE_GUARD], "true", "/")
+    except (PairTimedOut, Exception, SystemExit, ShellReaderLongRunningChildProcessDiedMidRequest) as error:
+        readings["search-file main()"] = failed_reading(error)
     finally:
-        signal.alarm(0)
         for sender in senders:
             sender.close()  # Before the pool starts, so no worker inherits the child's pipes.
     for key, (verdict, detail) in readings.items():
@@ -537,7 +613,8 @@ def smoke_check(checkout, new_process, search_file_directory, timeout, guards_le
 
 def ref_verdicts(checkout, pairs, jobs, new_process, search_file_directory, search_file_main, timeout,
                  guards_left_out=()):
-    """Return (rows, shell readers switched to a new process, how many of them read one command per process)."""
+    """Return (rows, shell readers switched to a new process, how many of them read one command per process,
+    how many timed-out readings were read again, how many of those passed on the second reading)."""
     switched, one_command_per_process = smoke_check(checkout, new_process, search_file_directory, timeout,
                                                     guards_left_out)
     tasks = [pairs[start:start + PAIRS_PER_TASK] for start in range(0, len(pairs), PAIRS_PER_TASK)]
@@ -557,6 +634,21 @@ def ref_verdicts(checkout, pairs, jobs, new_process, search_file_directory, sear
                 continue
             rows.extend(task_rows)
             workers_switched.add(worker_switched)
+        read_again, passed_again = 0, 0
+        # One pair at a time, after the parallel pass, so the other jobs' load is gone. Not after a worker
+        # died: rows then no longer line up with pairs.
+        for index, row in enumerate(rows if not not_read else []):
+            readings = row if isinstance(row, dict) else {None: row}  # A search-file main() row is one reading.
+            timed_out = [key for key, reading in readings.items() if reading[0] == "TIMEOUT"]
+            if not timed_out:
+                continue
+            (again,), _ = executor.submit(read, [pairs[index]]).result()
+            again = again if isinstance(again, dict) else {None: again}
+            for key in timed_out:
+                readings[key] = again[key]
+                passed_again += not is_failed_reading(again[key][0])
+            read_again += len(timed_out)
+            rows[index] = readings if isinstance(row, dict) else readings[None]
     finally:
         # Without waiting: the step then exits, and run_step_in_child() stops its process group.
         executor.shutdown(wait=False, cancel_futures=True)
@@ -568,7 +660,7 @@ def ref_verdicts(checkout, pairs, jobs, new_process, search_file_directory, sear
     if workers_switched - {switched}:
         raise ReplayFailed(f"the workers at {checkout} switched {sorted(workers_switched)} shell readers to a new "
                            f"process, where the check before them switched {switched}")
-    return rows, switched, one_command_per_process
+    return rows, switched, one_command_per_process, read_again, passed_again
 
 
 # ---------------------------------------------------------------- step 4: compare
@@ -598,9 +690,16 @@ def refuses(verdict):
 
 
 def added_guard_refusals(pairs, head_rows, added_guards):
-    """Return each (pair, guard, head reading) where a guard the head adds refuses the pair."""
-    return [(pair, guard, row[guard]) for pair, row in zip(pairs, head_rows) if isinstance(row, dict)
-            for guard in added_guards if refuses(row[guard][0])]
+    """Return each (pair, guard, head reading) where a guard the head adds refuses the pair.
+
+    A row that is not a dict is search-file main()'s reading, which belongs to the search-file guard."""
+    refusals = []
+    for pair, row in zip(pairs, head_rows):
+        if isinstance(row, dict):
+            refusals.extend((pair, guard, row[guard]) for guard in added_guards if refuses(row[guard][0]))
+        elif SEARCH_FILE_GUARD in added_guards and refuses(row[0]):
+            refusals.append((pair, SEARCH_FILE_GUARD, row))
+    return refusals
 
 
 def failed_readings(pairs, rows, label):
@@ -638,9 +737,10 @@ STOP_CHECK_INTERVAL_SECONDS = 0.2  # How soon a stop signal received during a st
 
 
 def step_deadline_seconds(pair_count, jobs, timeout):
-    """The longest one step can take if every reading of every pair runs to its timeout."""
+    """The longest one step can take if every reading of every pair runs to its timeout, and then every pair
+    is read again alone and every reading runs to its timeout again."""
     readings_per_pair = len(GUARDS) + 1  # The guards, or search-file main(); plus the smoke check's share.
-    return -(-pair_count // jobs) * readings_per_pair * timeout + STEP_DEADLINE_MARGIN_SECONDS
+    return (-(-pair_count // jobs) + pair_count) * readings_per_pair * timeout + STEP_DEADLINE_MARGIN_SECONDS
 
 
 def run_step_in_child(arguments, log_path, deadline_seconds):
@@ -674,6 +774,26 @@ def run_step_in_child(arguments, log_path, deadline_seconds):
 def shortened(value):
     text = str(value)
     return text if len(text) <= PRINTED_TEXT_LENGTH else text[:PRINTED_TEXT_LENGTH] + "…"
+
+
+def timed_out_readings_read_again_line(step, read_again, passed_again):
+    """The stderr line for a step that read read_again timed-out readings again, of which passed_again got a verdict."""
+    failed_again = read_again - passed_again
+    one = read_again == 1
+    if failed_again == 0:
+        outcome = "it got a verdict the second time" if one else "all got a verdict the second time"
+    else:
+        if passed_again == 0:
+            outcome = ("it did not get a verdict the second time either, so it counts as a failed reading" if one else
+                       "none got a verdict the second time, so they count as failed readings")
+        else:
+            outcome = (f"{passed_again} got a verdict the second time and {failed_again} did not; "
+                       + ("that one counts as a failed reading" if failed_again == 1 else
+                          "those count as failed readings"))
+        outcome += ", and this replay will exit 2 when it finishes"
+    return (f"{step}: {read_again} {'reading' if one else 'readings'} timed out and {'was' if one else 'were'} read "
+            f"again after the step's other readings had finished (a reading is one Bash guard's verdict, to allow or to "
+            f"refuse, on one recorded command); {outcome}.")
 
 
 def print_rows(title, items, limit):
@@ -789,7 +909,12 @@ def replay_with_sigterm_handled(arguments):
         for mode, pairs_name, new_process, search_file_main in modes:
             rows, mode_failed = {}, []
             mode_pairs = json.loads((scratch / pairs_name).read_text())
+            # search-file main() is the search-file guard alone, so when the head adds that guard the
+            # base has no main() to run, and every refusal at the head is the added guard's.
+            main_at_head_only = search_file_main and SEARCH_FILE_GUARD in added_guards
             for label, checkout in checkouts.items():
+                if main_at_head_only and label == "base":
+                    continue
                 out = scratch / f"verdicts-{mode.split()[0]}-{label}.json"
                 started = time.monotonic()
                 run_step_in_child(["--step", "verdicts", str(checkout), str(scratch / pairs_name), str(out),
@@ -806,12 +931,18 @@ def replay_with_sigterm_handled(arguments):
                 mode_failed.extend(failed)
                 all_failed.extend((pair, f"{mode}, {key}", at, reading) for pair, key, at, reading in failed)
                 one_command_per_process = written["shell_readers_reading_one_command_per_process"]
+                read_again = written["timed_out_readings_read_again"]
+                passed_again = written["timed_out_readings_passed_on_the_second_reading"]
+                if read_again:
+                    print(timed_out_readings_read_again_line(f"{mode}, {label}", read_again, passed_again),
+                          file=sys.stderr)
                 print(f"{mode}, {label}: {len(rows[label])} rows in {time.monotonic() - started:.0f}s; "
                       f"shell readers in a new process: {written['shell_readers_in_a_new_process']}"
                       + (f", of which one command per process: {one_command_per_process}"
                          if one_command_per_process else "")
                       + f"; failed readings: {len(failed)}")
-            differences, message_differences = verdict_differences(mode_pairs, rows["base"], rows["head"])
+            differences, message_differences = ([], []) if main_at_head_only else \
+                verdict_differences(mode_pairs, rows["base"], rows["head"])
             print_rows(f"{mode}: rows whose verdict differs", differences, arguments.show)
             print_rows(f"{mode}: rows whose message differs and verdict does not", message_differences, arguments.show)
             refusals = added_guard_refusals(mode_pairs, rows["head"], added_guards)
@@ -838,8 +969,7 @@ def replay_with_sigterm_handled(arguments):
             status = 2
         elif verdict_changed or added_guard_refused:
             if verdict_changed:
-                print("VERDICT CHANGED: a recorded command gets a different verdict at the head; the merge is blocked "
-                      "until each difference above is explained and intended.")
+                print(VERDICT_CHANGED_MESSAGE)
             if added_guard_refused:
                 print(NEW_GUARD_REFUSES_MESSAGE + (NEW_GUARD_REFUSES_AND_VERDICT_CHANGED_ENDING if verdict_changed
                                                    else NEW_GUARD_REFUSES_ONLY_ENDING))
@@ -866,11 +996,13 @@ def replay_with_sigterm_handled(arguments):
 def verdicts_step(checkout, pairs_path, out_path, jobs, new_process, search_file_main, search_file_directory,
                   timeout, guards_left_out):
     pairs = json.loads(Path(pairs_path).read_text())
-    rows, switched, one_command_per_process = ref_verdicts(
+    rows, switched, one_command_per_process, read_again, passed_again = ref_verdicts(
         checkout, pairs, int(jobs), new_process == "1", search_file_directory, search_file_main == "1", int(timeout),
         json.loads(guards_left_out))
     Path(out_path).write_text(json.dumps({"rows": rows, "shell_readers_in_a_new_process": switched,
-                                          "shell_readers_reading_one_command_per_process": one_command_per_process}))
+                                          "shell_readers_reading_one_command_per_process": one_command_per_process,
+                                          "timed_out_readings_read_again": read_again,
+                                          "timed_out_readings_passed_on_the_second_reading": passed_again}))
     return 0
 
 
@@ -894,7 +1026,8 @@ def main(argv=None):
         parser.add_argument("--scratch-directory", help="kept after the run; by default a temporary directory, "
                                                         "removed when no verdict changed")
         parser.add_argument("--per-pair-timeout-seconds", type=int, default=DEFAULT_PER_PAIR_TIMEOUT_SECONDS,
-                            help="how long one guard may take on one command before the reading counts as failed")
+                            help="how long one guard may take on one command before the reading is read again, "
+                                 "and then before it counts as failed")
         parser.add_argument("--show", type=int, default=20, help="how many rows to print per list")
         return replay(parser.parse_args(argv))
     except ReplayFailed as error:
