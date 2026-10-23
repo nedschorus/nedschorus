@@ -763,9 +763,516 @@ def run_subprocess_cases():
               "\n".join(lines))
 
 
+# ----------------------------------------------------------------------
+# --track-who-each-open-pull-request-waits-on
+# ----------------------------------------------------------------------
+
+NOW_TEXT = "2026-10-22T12:00:00Z"
+MINUTE = 60.0
+
+
+def queue_node(number, head_sha, title="a title", draft=False, author="nedlern",
+               created="2026-10-22T11:00:00Z", committed="2026-10-22T11:10:00Z",
+               mergeable="MERGEABLE", comments=0, reviews=()):
+    """A GraphQL node as QUEUE_QUERY returns it; reviews are (login, state, submitted, commit)."""
+    return {"number": number, "title": title, "isDraft": draft,
+            "headRefOid": head_sha, "author": {"login": author},
+            "createdAt": created, "mergeable": mergeable,
+            "comments": {"totalCount": comments},
+            "reviews": {"totalCount": len(reviews), "nodes": [
+                {"state": state, "submittedAt": submitted,
+                 "author": {"login": login}, "commit": {"oid": commit}}
+                for login, state, submitted, commit in reviews]},
+            "commits": {"nodes": [{"commit": {"committedDate": committed}}]}}
+
+
+def queue_pull_request(*arguments, **keywords):
+    pull_request, reason = watcher_module.queue_pull_request_from_node(
+        queue_node(*arguments, **keywords))
+    assert reason is None, reason
+    return pull_request
+
+
+class StopDriving(Exception):
+    pass
+
+
+class FakeClock:
+    """Stands in for the time module: sleep advances time; the answers running out ends the loop."""
+
+    def __init__(self, start, answers, step):
+        self.now = start
+        self.answers = list(answers)
+        self.step = step
+
+    def time(self):
+        return self.now
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += self.step if self.step is not None else seconds
+        if not self.answers:
+            raise StopDriving()
+
+    def fetch(self, *_arguments, **_keywords):
+        return self.answers.pop(0)
+
+
+def drive_queue_monitor(answers, scratch, extra_flags=(), start=None, step=None,
+                        state_file=None, hold_file=None):
+    """Run run_queue_monitor in this process over the given fetch answers; return (lines, exit code or None)."""
+    start = start if start is not None else watcher_module.github_time_seconds(NOW_TEXT)
+    clock = FakeClock(start, answers, step)
+    lines = []
+    saved = (watcher_module.time, watcher_module.emit,
+             watcher_module.fetch_open_pull_requests)
+    watcher_module.time = clock
+    watcher_module.emit = lines.append
+    watcher_module.fetch_open_pull_requests = clock.fetch
+    arguments = watcher_module.parse_arguments([
+        "--track-who-each-open-pull-request-waits-on", "--poll-seconds", "60",
+        "--who-each-open-pull-request-waits-on-state-file",
+        str(state_file or scratch / "state.json"),
+        "--merge-holds-pull-request-list-file",
+        str(hold_file or scratch / "merge-holds.md"), *extra_flags])
+    exit_code = None
+    try:
+        exit_code = watcher_module.run_queue_monitor(arguments, "tok")
+    except StopDriving:
+        pass
+    finally:
+        (watcher_module.time, watcher_module.emit,
+         watcher_module.fetch_open_pull_requests) = saved
+    return lines, exit_code
+
+
+def run_who_each_waits_on_cases():
+    waiting_state = watcher_module.waiting_state
+    head = "a" * 40
+    old_head = "b" * 40
+    reviewer = "ned-review-merge"
+
+    def state_of(*arguments, hold=None, **keywords):
+        return waiting_state(queue_pull_request(*arguments, **keywords), hold, reviewer)
+
+    # ------------------------------------------------------------------
+    # Who a pull request waits on, from GitHub state and the holds.
+    # ------------------------------------------------------------------
+    result = state_of(1, head)
+    check("no review on the head commit: waits on merge-lane-2, since the head commit",
+          result[:2] == ("merge-agent-seat", "merge-lane-2")
+          and "no approving or changes-requested review" in result[2]
+          and result[3] == "2026-10-22T11:10:00Z", str(result))
+    result = state_of(1, head, created="2026-10-22T11:30:00Z")
+    check("a head commit older than the pull request: since the pull request opened",
+          result[3] == "2026-10-22T11:30:00Z", str(result))
+    result = state_of(1, head, reviews=[
+        (reviewer, "CHANGES_REQUESTED", "2026-10-22T11:20:00Z", head)])
+    check("changes requested on the head commit: waits on the author, since the review",
+          result[:2] == ("author", "the author, GitHub account nedlern")
+          and result[3] == "2026-10-22T11:20:00Z", str(result))
+    result = state_of(1, head, committed="2026-10-22T11:40:00Z", reviews=[
+        (reviewer, "CHANGES_REQUESTED", "2026-10-22T11:20:00Z", old_head)])
+    check("a push after changes were requested: waits on merge-lane-2 for the fix-round",
+          result[0] == "merge-agent-seat" and "fix-round" in result[2]
+          and result[3] == "2026-10-22T11:40:00Z", str(result))
+    result = state_of(1, head, reviews=[
+        (reviewer, "APPROVED", "2026-10-22T11:20:00Z", head),
+        (reviewer, "COMMENTED", "2026-10-22T11:30:00Z", head)])
+    check("approved on the head commit, a later comment review aside: merge-lane-2 merges it",
+          result[0] == "merge-agent-seat" and "merge it" in result[2]
+          and result[3] == "2026-10-22T11:20:00Z", str(result))
+    result = state_of(1, head, reviews=[
+        ("mac-claude", "CHANGES_REQUESTED", "2026-10-22T11:20:00Z", head)])
+    check("another account's review does not decide a pull request nedlern opened",
+          result[0] == "merge-agent-seat" and "no approving" in result[2], str(result))
+    result = state_of(1, head, author=reviewer, reviews=[
+        ("mac-claude", "APPROVED", "2026-10-22T11:20:00Z", head)])
+    check("on the reviewer account's own pull request another account's approval decides",
+          result[0] == "merge-agent-seat" and "mac-claude approved" in result[2],
+          str(result))
+    result = state_of(1, head, author=reviewer, reviews=[
+        ("zz-reviewer", "CHANGES_REQUESTED", "2026-10-22T11:20:00Z", head)])
+    check("any account other than the reviewer account decides its pull request",
+          result[0] == "author", str(result))
+    result = state_of(1, head, author=reviewer, reviews=[
+        (reviewer, "COMMENTED", "2026-10-22T11:20:00Z", head)])
+    check("and the reviewer account's own review of it decides nothing",
+          "no approving" in result[2], str(result))
+    result = state_of(1, head, draft=True)
+    check("a draft waits on its author", result[0] == "author"
+          and "draft" in result[2] and result[3] == "", str(result))
+    result = state_of(1, head, mergeable="CONFLICTING", reviews=[
+        (reviewer, "APPROVED", "2026-10-22T11:20:00Z", head)])
+    check("a branch that conflicts with main waits on its author, approved or not",
+          result[0] == "author" and "conflicts" in result[2], str(result))
+    result = state_of(1, head, mergeable="UNKNOWN")
+    check("mergeable UNKNOWN, which GitHub reports while computing, is not a conflict",
+          result[0] == "merge-agent-seat", str(result))
+    result = state_of(1, head, draft=True, hold=("user", "his words on item 3"))
+    check("a hold naming the user wins over GitHub state",
+          result == ("user", "the user", "held: his words on item 3", ""), str(result))
+    result = state_of(1, head, hold=("reboot-test", "reworks it"))
+    check("a hold naming an agent-seat",
+          result == ("agent-seat", "agent-seat reboot-test", "held: reworks it", ""),
+          str(result))
+    result = state_of(1, head, hold=("merge-lane-2", "merge after #2"))
+    check("a hold naming merge-lane-2 itself",
+          result[:2] == ("merge-agent-seat", "merge-lane-2"), str(result))
+
+    # ------------------------------------------------------------------
+    # Reading a node: the extra fields are required, pending reviews dropped.
+    # ------------------------------------------------------------------
+    from_node = watcher_module.queue_pull_request_from_node
+    node = queue_node(5, head, reviews=[
+        (reviewer, "PENDING", None, head), (reviewer, "APPROVED", "2026-10-22T11:20:00Z", head)])
+    pull_request, reason = from_node(node)
+    check("a pending review is dropped, a submitted one kept",
+          reason is None and [review["state"] for review in pull_request["reviews"]]
+          == ["APPROVED"], f"{pull_request} {reason}")
+    node = queue_node(5, head)
+    del node["reviews"]
+    check("a node without reviews is a reason, not a pull request",
+          from_node(node) == (None, "pull request #5 came back without its comment "
+                                    "count, reviews or commits"), str(from_node(node)))
+    node = queue_node(5, head)
+    node["comments"]["totalCount"] = "3"
+    check("a comment count that is not a number is a reason",
+          from_node(node)[0] is None and "wrong JSON type" in from_node(node)[1],
+          str(from_node(node)))
+    node = queue_node(5, head)
+    node["reviews"]["nodes"] = ["not an object"]
+    check("a review that is not an object is a reason",
+          from_node(node)[0] is None and "not a JSON object" in from_node(node)[1],
+          str(from_node(node)))
+    node = queue_node(5, head)
+    node["commits"]["nodes"] = []
+    check("a node with no commits has no head commit time, and is still read",
+          from_node(node)[0] is not None and from_node(node)[0]["head_committed_at"] == "",
+          str(from_node(node)))
+    check("durations read in days and hours, hours and minutes, or minutes",
+          [watcher_module.duration_text(seconds) for seconds in
+           (2 * 86400 + 3 * 3600 + 5 * 60, 3 * 3600 + 7 * 60, 59, -5)]
+          == ["2d3h", "3h7m", "0m", "0m"], "")
+    check("a node the watcher's own reader refuses is refused here too",
+          from_node({"number": 5})[0] is None, str(from_node({"number": 5})))
+
+    # ------------------------------------------------------------------
+    # The merge holds file.
+    # ------------------------------------------------------------------
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch = Path(scratch)
+        holds_file = scratch / "merge-holds.md"
+        check("a missing merge holds file holds nothing and is no problem",
+              watcher_module.read_holds(holds_file) == ({}, []),
+              str(watcher_module.read_holds(holds_file)))
+        holds_file.write_text(
+            "# merge-lane-2: held pull requests\n\nRead this before every merge.\n"
+            "- PR 12 waits on user: his words on item 3\n"
+            "- PR 13 waits on reboot-test: reworks it (task #1)\n"
+            "- PR 14: no waits-on\n"
+            "- PR 12 waits on reboot-test: a second hold\n", encoding="utf-8")
+        holds, problems = watcher_module.read_holds(holds_file)
+        check("well-formed holds are read and prose lines skipped",
+              holds == {12: ("user", "his words on item 3"),
+                        13: ("reboot-test", "reworks it (task #1)")}, str(holds))
+        check("a '- PR' line without 'waits on' is reported, naming its line",
+              any("line 6 is not" in problem and "PR 14" in problem
+                  for problem in problems), str(problems))
+        check("a second hold on one pull request is reported and the first applies",
+              any("line 7 holds #12 a second time" in problem for problem in problems)
+              and len(problems) == 2, str(problems))
+        holds, problems = watcher_module.read_holds(scratch)
+        check("an unreadable merge holds file is reported, and holds nothing",
+              holds == {} and len(problems) == 1
+              and "cannot read the merge holds file" in problems[0], str(problems))
+
+    # ------------------------------------------------------------------
+    # One poll: events, reminders and closings.
+    # ------------------------------------------------------------------
+    queue_poll = watcher_module.queue_poll
+    now = watcher_module.github_time_seconds(NOW_TEXT)
+    unreviewed = queue_pull_request(7, head, title="seven")
+    lines, entries, problems = queue_poll({}, [unreviewed], {}, now, reviewer, True)
+    check("listing every pull request prints IN-QUEUE with who and since when",
+          lines == ['PR #7 IN-QUEUE: "seven"; waits on merge-lane-2 since '
+                    '2026-10-22T11:10Z (50m): head commit aaaaaaaa has no approving '
+                    'or changes-requested review: review it'], str(lines))
+    lines, entries, _ = queue_poll(entries, [unreviewed], {}, now + 10 * MINUTE, reviewer, False)
+    check("an item listed IN-QUEUE counts as reminded for its wait", lines == [], str(lines))
+
+    lines, entries, _ = queue_poll({}, [unreviewed], {}, now, reviewer, False)
+    check("an unseen pull request is OPENED",
+          len(lines) == 1 and lines[0].startswith('PR #7 OPENED: "seven"'), str(lines))
+    opened_entries = entries
+    fresh = queue_pull_request(7, head, title="seven", committed=NOW_TEXT,
+                               created=NOW_TEXT)
+    lines, entries, _ = queue_poll({}, [fresh], {}, now, reviewer, False)
+    lines, entries, _ = queue_poll(entries, [fresh], {}, now + 4 * MINUTE, reviewer, False)
+    check("waiting on merge-lane-2 under 5 minutes: no reminder", lines == [], str(lines))
+    lines, entries, _ = queue_poll(entries, [fresh], {}, now + 5 * MINUTE, reviewer, False)
+    check("waiting on merge-lane-2 for 5 minutes: one STALE line",
+          len(lines) == 1 and "PR #7 STALE, waiting on merge-lane-2 for 5m" in lines[0],
+          str(lines))
+    lines, entries, _ = queue_poll(entries, [fresh], {}, now + 50 * MINUTE, reviewer, False)
+    check("and only once for the same wait", lines == [], str(lines))
+    _, late_entries, _ = queue_poll({}, [fresh], {}, now, reviewer, False)
+    lines, _, _ = queue_poll(late_entries, [fresh], {}, now + 7 * MINUTE, reviewer, False)
+    check("a first poll past the 5 minutes still reminds",
+          len(lines) == 1 and "STALE" in lines[0], str(lines))
+
+    pushed = queue_pull_request(7, old_head, title="seven", comments=2, reviews=[
+        ("mac-claude", "COMMENTED", "2026-10-22T11:59:00Z", old_head)])
+    lines, entries, _ = queue_poll(opened_entries, [pushed], {}, now + MINUTE, reviewer, False)
+    check("a push, a review and a comment in one poll make one line naming all three",
+          len(lines) == 1 and lines[0].startswith(
+              'PR #7 PUSHED bbbbbbbb REVIEWED by mac-claude (COMMENTED) COMMENTED:'),
+          str(lines))
+    reviewed_again = queue_pull_request(7, old_head, title="seven", comments=2, reviews=[
+        ("mac-claude", "COMMENTED", "2026-10-22T11:59:00Z", old_head),
+        (reviewer, "APPROVED", "2026-10-22T12:00:30Z", old_head)])
+    lines, _, _ = queue_poll(entries, [reviewed_again], {}, now + MINUTE, reviewer, False)
+    check("a review line names the newest review",
+          len(lines) == 1 and f"REVIEWED by {reviewer} (APPROVED)" in lines[0], str(lines))
+    lines, entries, _ = queue_poll(entries, [pushed], {}, now + 2 * MINUTE, reviewer, False)
+    check("an unchanged poll after it prints nothing", lines == [], str(lines))
+    lines, entries, _ = queue_poll(entries, [pushed], {}, now + 6 * MINUTE, reviewer, False)
+    check("still waiting on merge-lane-2 5 minutes after the event: one STALE line",
+          len(lines) == 1 and "STALE, waiting on merge-lane-2 for 56m" in lines[0],
+          str(lines))
+
+    changes_requested = queue_pull_request(8, head, title="eight", reviews=[
+        (reviewer, "CHANGES_REQUESTED", NOW_TEXT, head)])
+    _, entries, _ = queue_poll({}, [changes_requested], {}, now, reviewer, True)
+    lines, entries, _ = queue_poll(entries, [changes_requested], {}, now + 29 * MINUTE,
+                                   reviewer, False)
+    check("waiting on the author 29 quiet minutes: no reminder", lines == [], str(lines))
+    lines, entries, _ = queue_poll(entries, [changes_requested], {}, now + 30 * MINUTE,
+                                   reviewer, False)
+    check("waiting on the author 30 quiet minutes: a QUIET line naming the author",
+          len(lines) == 1 and "PR #8 QUIET for 30m, remind the author, GitHub account "
+                              "nedlern" in lines[0], str(lines))
+    lines, entries, _ = queue_poll(entries, [changes_requested], {}, now + 45 * MINUTE,
+                                   reviewer, False)
+    check("no second reminder 15 minutes later", lines == [], str(lines))
+    lines, entries, _ = queue_poll(entries, [changes_requested], {}, now + 60 * MINUTE,
+                                   reviewer, False)
+    check("a second reminder 30 minutes after the first, counting quiet from the review",
+          len(lines) == 1 and "QUIET for 1h0m" in lines[0], str(lines))
+    commented = queue_pull_request(8, head, title="eight", comments=1, reviews=[
+        (reviewer, "CHANGES_REQUESTED", NOW_TEXT, head)])
+    lines, entries, _ = queue_poll(entries, [commented], {}, now + 70 * MINUTE,
+                                   reviewer, False)
+    lines, entries, _ = queue_poll(entries, [commented], {}, now + 99 * MINUTE,
+                                   reviewer, False)
+    check("a comment restarts the quiet time", lines == [], str(lines))
+    lines, entries, _ = queue_poll(entries, [commented], {}, now + 100 * MINUTE,
+                                   reviewer, False)
+    check("which then runs out 30 minutes after the comment",
+          len(lines) == 1 and "QUIET for 30m" in lines[0], str(lines))
+
+    holds = {9: ("reboot-test", "reworks it")}
+    held = queue_pull_request(9, head, title="nine")
+    _, entries, _ = queue_poll({}, [held], holds, now, reviewer, True)
+    lines, entries, _ = queue_poll(entries, [held], holds, now + 31 * MINUTE, reviewer, False)
+    check("a hold on an agent-seat is reminded after 30 quiet minutes, since the hold began",
+          len(lines) == 1 and "remind agent-seat reboot-test" in lines[0]
+          and f"since {NOW_TEXT[:16]}Z" in lines[0], str(lines))
+    lines, entries, _ = queue_poll(entries, [held], {9: ("user", "his words")},
+                                   now + 40 * MINUTE, reviewer, False)
+    check("a changed wait starts its own since", entries["9"]["since"] == now + 40 * MINUTE
+          and entries["9"]["party"] == "the user", str(entries))
+    holds = {9: ("user", "his words")}
+    _, entries, _ = queue_poll({}, [held], holds, now, reviewer, True)
+    lines, entries, _ = queue_poll(entries, [held], holds, now + 600 * MINUTE, reviewer, False)
+    check("a hold on the user is never reminded by this program", lines == [], str(lines))
+
+    lines, entries, problems = queue_poll(entries, [], holds, now, reviewer, False)
+    check("a pull request no longer open is CLOSED, with who it waited on",
+          lines == ['PR #9 CLOSED: "nine" is no longer open (merged or closed); it '
+                    'waited on the user: held: his words'], str(lines))
+    check("a hold on a pull request that is not open is a problem to report",
+          problems == ["#9 is held, but is not an open pull request; remove its line"],
+          str(problems))
+    check("and the closed pull request leaves the state", entries == {}, str(entries))
+
+    summary = watcher_module.queue_summary({
+        "1": {"party": "the user"}, "2": {"party": "merge-lane-2"},
+        "3": {"party": "merge-lane-2"}, "4": {"party": "agent-seat a"}})
+    check("the summary puts the party with most pull requests first, ties by name",
+          summary == "2 wait on merge-lane-2; 1 wait on agent-seat a; 1 wait on the user",
+          summary)
+
+    # ------------------------------------------------------------------
+    # The state file.
+    # ------------------------------------------------------------------
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch = Path(scratch)
+        state_file = scratch / "deeper" / "state.json"
+        _, entries, _ = queue_poll({}, [unreviewed], {}, now, reviewer, True)
+        state = {"version": 1, "pull_requests": entries, "hold_problems": []}
+        check("the state file is written, its directory made",
+              watcher_module.save_queue_state(state_file, state) is None
+              and state_file.is_file(), "")
+        check("and reads back as it was written",
+              watcher_module.load_queue_state(state_file) == (state, None),
+              str(watcher_module.load_queue_state(state_file)))
+        check("a missing state file is no state and no problem",
+              watcher_module.load_queue_state(scratch / "none.json") == (None, None), "")
+        bad = scratch / "bad.json"
+        for label, text in [("not JSON", "{"),
+                            ("another version", json.dumps({**state, "version": 2})),
+                            ("an entry missing a field", json.dumps(
+                                {**state, "pull_requests": {"7": {"title": "x"}}})),
+                            ("a key that is not a number", json.dumps(
+                                {**state, "pull_requests": {"x": entries["7"]}})),
+                            ("hold problems that are not a list", json.dumps(
+                                {**state, "hold_problems": "x"})),
+                            ("JSON that is not an object", "[]")]:
+            bad.write_text(text, encoding="utf-8")
+            loaded, problem = watcher_module.load_queue_state(bad)
+            check(f"a state file holding {label} is a problem, not state",
+                  loaded is None and problem is not None and str(bad) in problem,
+                  f"{loaded} {problem}")
+        loaded, problem = watcher_module.load_queue_state(scratch)
+        check("an unreadable state file is a problem naming it",
+              loaded is None and "cannot read the state file" in (problem or ""),
+              str(problem))
+        blocker = scratch / "a-file"
+        blocker.write_text("", encoding="utf-8")
+        problem = watcher_module.save_queue_state(blocker / "state.json", state)
+        check("a state file that cannot be written is a problem naming it",
+              problem is not None and "cannot write the state file" in problem, str(problem))
+        occupied = scratch / "occupied"
+        (occupied / "inside").mkdir(parents=True)
+        problem = watcher_module.save_queue_state(occupied, state)
+        check("a state file path that is a directory is a problem naming it",
+              problem is not None and "cannot write the state file" in problem, str(problem))
+
+    # ------------------------------------------------------------------
+    # The loop: first invocation, restart, failures and reports.
+    # ------------------------------------------------------------------
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch = Path(scratch)
+        answer = ([queue_pull_request(7, head, title="seven")], None)
+        lines, _ = drive_queue_monitor([answer, answer], scratch)
+        check("a first invocation lists the queue with a summary, then is quiet",
+              lines[0] == "WAITS-ON: 1 open pull requests in nedschorus/nedschorus: "
+                          "1 wait on merge-lane-2"
+              and lines[1].startswith("PR #7 IN-QUEUE") and len(lines) == 2,
+              str(lines))
+        check("and saves its state", (scratch / "state.json").is_file(), "")
+        pushed_answer = ([queue_pull_request(7, old_head, title="seven")], None)
+        lines, _ = drive_queue_monitor([pushed_answer], scratch)
+        check("a restart reports only what changed since the saved state",
+              len(lines) == 1 and lines[0].startswith("PR #7 PUSHED bbbbbbbb"), str(lines))
+
+        lines, exit_code = drive_queue_monitor(
+            [pushed_answer], scratch,
+            extra_flags=["--print-who-each-open-pull-request-waits-on-and-exit"],
+            state_file=scratch / "print-state.json")
+        check("--print-who-each-open-pull-request-waits-on-and-exit lists and exits 0",
+              exit_code == 0 and any("PR #7 IN-QUEUE" in line for line in lines), str(lines))
+        check("and writes no state", not (scratch / "print-state.json").exists(), "")
+        lines, exit_code = drive_queue_monitor(
+            [(None, "HTTP 503")], scratch,
+            extra_flags=["--print-who-each-open-pull-request-waits-on-and-exit"])
+        check("and exits 1 saying why when GitHub cannot be asked",
+              exit_code == 1 and "HTTP 503" in lines[-1], str(lines))
+
+        failure = (None, "gh: HTTP 503")
+        lines, _ = drive_queue_monitor([failure] * 25 + [pushed_answer], scratch)
+        blind_lines = [line for line in lines if "BLIND" in line]
+        check("a failed query says the monitor is BLIND, once at the start",
+              "BLIND until it recovers" in blind_lines[0] and "HTTP 503" in blind_lines[0],
+              str(lines))
+        check("and again every 10 minutes the failures go on",
+              len(blind_lines) == 3 and "still BLIND after 11 failed polls over 10m"
+              in blind_lines[1], str(blind_lines))
+        check("then recovery is reported with the count",
+              any("recovered after 25 failed polls" in line for line in lines), str(lines))
+
+        (scratch / "corrupt.json").write_text("{", encoding="utf-8")
+        lines, _ = drive_queue_monitor([pushed_answer], scratch,
+                                       state_file=scratch / "corrupt.json")
+        check("an unusable state file is reported and the queue listed as on a first invocation",
+              "is not JSON" in lines[0] and any("IN-QUEUE" in line for line in lines),
+              str(lines))
+
+        blocker = scratch / "blocker"
+        blocker.write_text("", encoding="utf-8")
+        lines, _ = drive_queue_monitor([pushed_answer] * 3, scratch,
+                                       state_file=blocker / "state.json")
+        check("a state file that cannot be written is reported once, not every poll",
+              sum("cannot write the state file" in line for line in lines) == 1, str(lines))
+
+        holds_file = scratch / "holds.md"
+        holds_file.write_text("- PR 7: no waits-on\n", encoding="utf-8")
+        lines, _ = drive_queue_monitor([pushed_answer] * 3, scratch,
+                                       state_file=scratch / "holds-state.json",
+                                       hold_file=holds_file)
+        check("a malformed hold is reported once, not every poll",
+              sum("merge holds file:" in line for line in lines) == 1, str(lines))
+        holds_file.write_text("- PR 7 waits on user: his words\n", encoding="utf-8")
+        lines, _ = drive_queue_monitor([pushed_answer], scratch,
+                                       state_file=scratch / "holds-state.json",
+                                       hold_file=holds_file)
+        holds_file.write_text("- PR 7: no waits-on again\n", encoding="utf-8")
+        lines, _ = drive_queue_monitor([pushed_answer], scratch,
+                                       state_file=scratch / "holds-state.json",
+                                       hold_file=holds_file)
+        check("a malformed hold appearing on a later invocation is reported",
+              any("no waits-on again" in line for line in lines), str(lines))
+        holds_file.write_text("- PR 7 waits on user: his words\n", encoding="utf-8")
+        lines, _ = drive_queue_monitor([pushed_answer], scratch,
+                                       state_file=scratch / "holds-state.json",
+                                       hold_file=holds_file)
+        check("its repair is reported too",
+              any("well-formed again" in line for line in lines), str(lines))
+
+    # ------------------------------------------------------------------
+    # The real command line, with the fake gh.
+    # ------------------------------------------------------------------
+    with tempfile.TemporaryDirectory() as scratch:
+        scratch = Path(scratch)
+        token_file = scratch / "fixture.token"
+        token_file.write_text(FIXTURE_TOKEN + "\n", encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(WATCH_SCRIPT), "--token-file", str(token_file),
+             "--print-who-each-open-pull-request-waits-on-and-exit"],
+            capture_output=True, text=True, timeout=15)
+        check("the print flag without the tracking flag exits 2 saying so",
+              result.returncode == 2
+              and "needs --track-who-each-open-pull-request-waits-on" in result.stderr,
+              f"rc={result.returncode} stderr={result.stderr!r}")
+        fake_gh = FakeGitHubCommand(scratch / "fake")
+        fake_gh.answer(json.dumps({"data": {"repository": {"pullRequests": {
+            "nodes": [queue_node(21, head, title="twenty-one")],
+            "pageInfo": {"hasNextPage": False, "endCursor": None}}}}}))
+        watcher = WatcherProcess(
+            "--track-who-each-open-pull-request-waits-on",
+            "--who-each-open-pull-request-waits-on-state-file", str(scratch / "state.json"),
+            "--merge-holds-pull-request-list-file", str(scratch / "holds.md"),
+            environment=fake_gh.environment(), token_file=token_file)
+        listed = watcher.wait_for('PR #21 IN-QUEUE: "twenty-one"; waits on merge-lane-2')
+        fake_gh.answer(stdout="", exit_code=1,
+                       stderr=f"gh: HTTP 503 Bearer {FIXTURE_TOKEN}")
+        blind = watcher.wait_for("WAITS-ON: GitHub query failed")
+        lines = watcher.stop()
+        everything = "\n".join(lines + watcher.error_lines)
+        check("the command line lists the queue through the real gh call path",
+              listed, everything)
+        check("and reports a failed query with the token redacted",
+              blind and FIXTURE_TOKEN not in everything and "[REDACTED]" in everything,
+              everything)
+
+
 if __name__ == "__main__":
     run_unit_cases()
     run_subprocess_cases()
+    run_who_each_waits_on_cases()
     print()
     if failures:
         print(f"{len(failures)} case(s) failed: {', '.join(failures)}")
