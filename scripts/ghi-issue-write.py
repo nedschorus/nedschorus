@@ -1369,14 +1369,16 @@ def ghi_info_files_in_log_store(prefix: str, runner) -> list:
                 if item.is_file() and item.name.startswith(head)
                 and item.name.endswith(".md")]
     # Each file goes out as its name and its base64 text, each ended by a
-    # NUL, so no text can be mistaken for a separator. Only a store with no
-    # directory yet reads as empty: any other failure exits nonzero, so a
-    # store that could not be read is never taken for one holding nothing.
+    # NUL, so no text can be mistaken for a separator. GNU base64 wraps its
+    # lines and macOS's has no -w, so the wraps stay in and b64decode skips
+    # them. Only a store with no directory yet reads as empty: any other
+    # failure exits nonzero, so a store that could not be read is never taken
+    # for one holding nothing.
     quoted = shlex.quote(directory)
     script = (f"[ -e {quoted} ] || exit 0; cd {quoted} || exit 1; "
               f"for f in {shlex.quote(head)}*.md; do "
               "[ -f \"$f\" ] || continue; "
-              "printf '%s\\0' \"$f\" && base64 -w0 \"$f\" && printf '\\0' "
+              "printf '%s\\0' \"$f\" && base64 < \"$f\" && printf '\\0' "
               "|| exit 1; done")
     completed = runner([*GHI_INFO_LOG_STORE_SSH_COMMAND, host, script])
     fields = (completed.stdout or "").split("\0")
