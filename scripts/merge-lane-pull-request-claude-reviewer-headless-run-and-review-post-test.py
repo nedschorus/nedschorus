@@ -9,11 +9,14 @@ no case runs a model or reaches GitHub. The stand-in claude logs its
 arguments, standard input, directory and environment, and answers as
 FAKE_CLAUDE_MODE says: valid, null, invalid, could-not-review, nonzero,
 not-json, hang (it writes its pid, starts a child that also sleeps, and
-writes the child's pid), or move-head (it checks the head worktree out at another commit). Every
+writes the child's pid), leave-child (it starts a sleeping child whose output
+goes to /dev/null, writes the child's pid, and answers validly), or move-head
+(it checks the head worktree out at another commit). Every
 mode first makes a worktree named mac-claude-pr7-mutation, as a reviewer does.
 The stand-in gh answers the author lookup with ned-review-merge, the pull
 request's files with a diff of scripts/thing.py lines 1 to 3, the post with
-review id 42, and the read-back as posted, unless FAKE_GH_FAILS names the post.
+review id 42, and the read-back as posted, unless FAKE_GH_FAILS names the post, or
+FAKE_GH_HANGS names it, when it writes gh-post-started and sleeps.
 
 Run: python3 scripts/merge-lane-pull-request-claude-reviewer-headless-run-and-review-post-test.py
 """
@@ -85,13 +88,17 @@ elif mode == "hang":
     child = subprocess.Popen(["sleep", "60"])
     (state / "child.pid").write_text(str(child.pid))
     time.sleep(60)
+elif mode == "leave-child":
+    child = subprocess.Popen(["sleep", "60"], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+    (state / "child.pid").write_text(str(child.pid))
 elif mode == "move-head":
     subprocess.run(["git", "checkout", "-q", "--detach", "HEAD~1"], check=True)
 print(json.dumps(output))
 '''
 
 FAKE_GH = r'''#!/usr/bin/env python3
-import json, os, sys
+import json, os, sys, time
 from pathlib import Path
 state = Path(os.environ["FAKE_CLAUDE_STATE"])
 arguments = sys.argv[1:]
@@ -100,6 +107,9 @@ with open(state / "gh-calls.jsonl", "a") as log:
     log.write(json.dumps({"arguments": arguments, "stdin": stdin}) + "\n")
 path = next(argument for argument in arguments if argument.startswith("repos/"))
 if "POST" in arguments:
+    if os.environ.get("FAKE_GH_HANGS") == "post":
+        (state / "gh-post-started").write_text("")
+        time.sleep(60)
     if os.environ.get("FAKE_GH_FAILS") == "post":
         print("gh: HTTP 502: Bad Gateway", file=sys.stderr)
         sys.exit(1)
@@ -191,14 +201,14 @@ class Case:
         self.code, self.stdout = completed.returncode, completed.stdout + completed.stderr
         return self.read_calls()
 
-    def interrupt(self, signal_number):
-        """Run in hang mode and send the program signal_number once the reviewer is running."""
+    def interrupt(self, signal_number, mode="hang", started="child.pid", **environment):
+        """Run in mode and send the program signal_number once the state file started exists."""
         process = subprocess.Popen(
             self.command("7a", None, ("--time-limit-seconds", "60")), stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True,
-            env={**self.environment, "FAKE_CLAUDE_MODE": "hang"})
+            env={**self.environment, "FAKE_CLAUDE_MODE": mode, **environment})
         deadline = time.monotonic() + 20
-        while not (self.state / "child.pid").exists() and time.monotonic() < deadline:
+        while not (self.state / started).exists() and time.monotonic() < deadline:
             time.sleep(0.05)
         process.send_signal(signal_number)
         try:
@@ -330,6 +340,24 @@ def main():
                   f"its children, removes its worktree, posts nothing, and exits nonzero",
                   case.code != 0 and not case.posted() and not case.reviewer_processes_alive()
                   and not case.reviewer_worktree_left(), case.detail)
+
+        case = Case(scratch).run("leave-child")
+        time.sleep(0.2)
+        check("a process the reviewer leaves running after it exits normally is killed",
+              case.code == 0 and (case.state / "child.pid").exists()
+              and not running(int((case.state / "child.pid").read_text())), case.detail)
+
+        case = Case(scratch).interrupt(signal.SIGTERM, "valid", "gh-post-started",
+                                       FAKE_GH_HANGS="post")
+        check("SIGTERM during the posting step says the review may or may not have been posted, "
+              "gives the command that shows it, removes the reviewer's worktree and exits nonzero",
+              case.code != 0
+              and "the posting step was interrupted, so the review in" in case.stdout
+              and "may or may not have been posted" in case.stdout
+              and "gh api --paginate 'repos/nedschorus/nedschorus/pulls/7/reviews' --jq "
+                  "'.[] | select(.user.login == \"mac-claude\" and .commit_id == "
+                  f"\"{case.head}\") | [.id, .state, .html_url] | @tsv'" in case.stdout
+              and not case.reviewer_worktree_left(), case.detail)
 
         case = Case(scratch).run("valid", FAKE_GH_FAILS="post")
         check("a failed post exits 1 and passes the posting script's message through",

@@ -54,6 +54,10 @@ Last, whatever happened, every worktree of the clone whose directory name
 starts with mac-claude-pr<n>-, the names the reviewer's standing text gives
 the worktrees it makes, is removed, so a run that crashed leaves none behind.
 A removal that fails is printed, and does not change the exit code.
+
+An interrupt or SIGTERM during the posting step kills the posting script,
+perhaps after its post; this prints that the review may or may not have been
+posted, and the gh api command that shows whether it was.
 """
 
 import argparse
@@ -91,6 +95,16 @@ NOT_FINISHED = ("PR {number}: Claude review not posted: {reason}.\n"
                 "Nothing was posted on GitHub. The run's records are in {record}.\n"
                 "Read the reviewer's last answer below, then run this step again with the "
                 "same arguments, or tell the user if it fails the same way again.")
+
+# The posting script may have posted before it was killed; only it reads mac-claude's
+# token, so the check is left to whoever ran this, with their own gh login.
+POSTING_INTERRUPTED = (
+    "PR {number}: the posting step was interrupted, so the review in {review_file} may or may "
+    "not have been posted.\n"
+    "Check before running this step again, because a second run posts a second review:\n"
+    "  gh api --paginate 'repos/{repository}/pulls/{number}/reviews' --jq "
+    "'.[] | select(.user.login == \"mac-claude\" and .commit_id == \"{head}\") "
+    "| [.id, .state, .html_url] | @tsv'")
 
 
 class Refused(Exception):
@@ -313,10 +327,15 @@ def review_and_post(arguments, number, head, brief, schema_text, head_worktree, 
 
     review_file = record / "review.json"
     review_file.write_text(json.dumps(answer, indent=2) + "\n")
-    posted = subprocess.run(
-        [sys.executable, str(here / POST_SCRIPT_NAME), "--pull-request", str(number),
-         "--head-commit", head, str(review_file)],
-        capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    try:
+        posted = subprocess.run(
+            [sys.executable, str(here / POST_SCRIPT_NAME), "--pull-request", str(number),
+             "--head-commit", head, str(review_file)],
+            capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except BaseException:
+        print(POSTING_INTERRUPTED.format(number=number, head=head, review_file=review_file,
+                                         repository=common.REPOSITORY), flush=True)
+        raise
     (record / "posted.txt").write_text(posted.stdout + posted.stderr)
     sys.stdout.write(posted.stdout + posted.stderr)
     if posted.returncode != 0:
