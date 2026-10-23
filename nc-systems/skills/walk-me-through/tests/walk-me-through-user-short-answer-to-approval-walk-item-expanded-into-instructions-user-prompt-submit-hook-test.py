@@ -158,14 +158,21 @@ def test_retired_letters_o_and_other_prompts_print_nothing():
                   f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}"))
 
 
+CLOSE_END = "then the close command it prints, and do what close prints; write nothing in the minutes by hand."
+
+
+def writes_minutes_by_hand(lines):
+    return any("write the answer in the minutes" in line for line in lines)
+
+
 def test_a_on_an_open_walk_names_the_item_its_recommendation_and_the_check_step():
     case = Case(next_to_present="item 4 of 9 (awaiting answer)")
     lines = case.lines("a")
-    check("A names the waiting item and its recommendation as written, and sends a change to the check step",
+    check("A names the waiting item and its recommendation as written, and sends every A to the check step and close",
           lines == [f"The user answered \"a\" to item 4 of 9 of approval-walk {WALK_NAME}.",
                     "A means approve: the user agrees with the recommendation of item 4 of 9 (leave the filter out). "
                     "Do what the recommendation says.",
-                    f"If that makes a change, first run `{CHECK}` and do what it prints.",
+                    f"Whether or not that makes a change, first run `{CHECK}`, {CLOSE_END}",
                     ONE_QUESTION_LINE], f"lines {lines!r}")
     lines = case.lines("Approved")
     check("approved is A", lines is not None and lines[1].startswith(
@@ -181,9 +188,9 @@ def test_ao_runs_the_check_step_with_obvious():
               lines is not None
               and lines[1].startswith("AO means approve as obvious: the user agrees with the recommendation of "
                                       "item 4 of 9 (leave the filter out), and finds the item obvious.")
-              and f"If that makes a change, first run `{CHECK} --obvious` and do what it prints; the program "
-                  "marks the answer." in lines
-              and any("\"approved #approved_obvious\"" in line for line in lines), f"lines {lines!r}")
+              and f"Whether or not that makes a change, first run `{CHECK} --obvious`, which marks the answer, "
+                  f"{CLOSE_END}" in lines
+              and not writes_minutes_by_hand(lines), f"lines {lines!r}")
     lines = Case().lines("ao")
     check("AO with no approval-walk acts as for A",
           lines is not None and lines[1].endswith("so act exactly as for A."), f"lines {lines!r}")
@@ -203,9 +210,9 @@ def test_aa_in_any_mix_of_capitals_runs_the_check_step_with_after_advisor():
                                       "recommendation of item 4 of 9 (leave the filter out), once the advisor "
                                       "has checked it.")
               and lines[2].startswith("**Aa** approves after an advisor check.") and lines[2] in skill_lines
-              and f"If the approval is recorded and it makes a change, first run `{CHECK} --after-advisor` and do "
-                  "what it prints; the program marks the answer." in lines
-              and any("\"approved #approved_after_advisor\"" in line for line in lines), f"lines {lines!r}")
+              and f"If the advisor's check leaves the approval standing, then whether or not it makes a change, "
+                  f"first run `{CHECK} --after-advisor`, which marks the answer, {CLOSE_END}" in lines
+              and not writes_minutes_by_hand(lines), f"lines {lines!r}")
     lines = Case().lines("aA")
     check("Aa with no approval-walk asks the advisor first, then acts as for A",
           lines is not None and lines[1].startswith("Aa means approve after an advisor check")
@@ -223,14 +230,14 @@ def test_d_does_the_alternative_after_the_check_step():
     for prompt in ("d", "disapproved", "Disapprove"):
         lines = case.lines(prompt)
         word = prompt[:1].upper() + prompt[1:].lower()
-        check(f"{prompt!r} disapproves and does the alternative after the check step",
+        check(f"{prompt!r} disapproves and does the alternative after check --disapproved and close",
               lines is not None
               and lines[1] == (f"{word} means disapprove: the user disagrees with the recommendation of item 4 of 9 "
                                "(leave the filter out).")
               and lines[2] == ("If the item gives no single alternative, ask the user what he wants done instead, "
                                "and act on nothing yet.")
-              and lines[3] == (f"Otherwise do the item's alternative; if it makes a change, first run `{CHECK}` and "
-                               "do what it prints."), f"lines {lines!r}")
+              and lines[3] == (f"Otherwise do the item's alternative; whether or not it makes a change, first run "
+                               f"`{CHECK} --disapproved`, {CLOSE_END}"), f"lines {lines!r}")
 
 
 def test_o_asks_for_option_2_and_option_3_paragraphs():
@@ -276,8 +283,8 @@ def test_o2_and_o3_approve_an_option_through_the_check_step():
                                f"\"Option {option}:\" in the walk-document, not your recommendation. Do what that "
                                "option says.")
               and f"If the item has no \"Option {option}:\" paragraph, ask the user what he means, and act on nothing yet." in lines
-              and f"If the option makes a change, first run `{CHECK} --option {option}` and do what it prints." in lines
-              and f"If it makes no change, write the answer in the minutes as \"approved option {option}\", as the walk-me-through skill says for an approval." in lines,
+              and f"Whether or not the option makes a change, first run `{CHECK} --option {option}`, {CLOSE_END}" in lines
+              and not writes_minutes_by_hand(lines),
               f"lines {lines!r}")
     lines = Case().lines("O2")
     check("O2 with no approval-walk approves option 2 of the last message, with a fast read first",
@@ -301,8 +308,9 @@ def test_a_shared_bold_count_with_no_line_per_item_gives_each_item_the_whole_uni
 def test_z_defer_and_later_defer():
     for prompt in ("Z", "defer", "Later."):
         lines = Case(next_to_present="item 4 of 9").lines(prompt)
-        check(f"{prompt!r} moves the item as the skill says",
-              lines is not None and lines[1] == "Z means defer: move item 4 of 9 as the walk-me-through skill's sentence on Z says.",
+        check(f"{prompt!r} moves the item as the skill says, then runs check --deferred and close",
+              lines is not None and lines[1] == "Z means defer: move item 4 of 9 as the walk-me-through skill's sentence on Z says."
+              and lines[2] == "Then run the check step with --deferred, then close, and do what close prints.",
               f"lines {lines!r}")
 
 

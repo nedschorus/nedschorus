@@ -140,8 +140,9 @@ CHECK_COMMAND = "`python3 {checkout}/nc-systems/skills/walk-me-through/{program}
 MEANINGS = {
     "A": (("{word} means approve: the user agrees with the recommendation of {item}{recommended}. "
            "Do what the recommendation says.",
-           "If that makes a change, first run "
-           "`python3 {checkout}/nc-systems/skills/walk-me-through/{program} check` and do what it prints."),
+           "Whether or not that makes a change, first run "
+           "`python3 {checkout}/nc-systems/skills/walk-me-through/{program} check`, "
+           "then the close command it prints, and do what close prints; write nothing in the minutes by hand."),
           ("{word} means approve: the user agrees with your last recommendation or proposal. Do what it says.",
            "If that makes a change, first save each text the change adds that has not had a fast read to a "
            "scratch file, run `python3 {checkout}/nc-systems/cold-read/cold-read-fast-read.py --target "
@@ -154,22 +155,18 @@ MEANINGS = {
     "AO": (("AO means approve as obvious: the user agrees with the recommendation of {item}{recommended}, "
             "and finds the item obvious. Act as for A, with one difference: the minutes must mark the "
             "answer as obvious.",
-            "If that makes a change, first run "
-            "`python3 {checkout}/nc-systems/skills/walk-me-through/{program} check --obvious` and do what it "
-            "prints; the program marks the answer.",
-            "If it makes no change, write the answer in the minutes as \"approved #approved_obvious\", the "
-            "hashtag right after the word, as the walk-me-through skill says."),
+            "Whether or not that makes a change, first run "
+            "`python3 {checkout}/nc-systems/skills/walk-me-through/{program} check --obvious`, which marks the "
+            "answer, then the close command it prints, and do what close prints; write nothing in the minutes by hand."),
            ("AO means approve as obvious: the user agrees with your last recommendation or proposal, and "
             "finds it obvious. With no approval-walk open there are no minutes to mark, so act exactly as "
             "for A.",)),
     "AA": (("Aa means approve after an advisor check: the user agrees with the recommendation of {item}{recommended}, "
             "once the advisor has checked it. The walk-me-through skill's text for Aa says what to do:",
             "{aa_skill_text}",
-            "If the approval is recorded and it makes a change, first run "
-            "`python3 {checkout}/nc-systems/skills/walk-me-through/{program} check --after-advisor` and do what it "
-            "prints; the program marks the answer.",
-            "If the approval is recorded and it makes no change, write the answer in the minutes as "
-            "\"approved #approved_after_advisor\", the hashtag right after the word."),
+            "If the advisor's check leaves the approval standing, then whether or not it makes a change, first run "
+            "`python3 {checkout}/nc-systems/skills/walk-me-through/{program} check --after-advisor`, which marks "
+            "the answer, then the close command it prints, and do what close prints; write nothing in the minutes by hand."),
            ("Aa means approve after an advisor check: the user agrees with your last recommendation or proposal, "
             "once the advisor has checked it.",
             "Write in the conversation, for the advisor, the question whether anything it sees would change what "
@@ -181,8 +178,9 @@ MEANINGS = {
     "D": (("{word} means disapprove: the user disagrees with the recommendation of {item}{recommended}.",
            "If the item gives no single alternative, ask the user what he wants done instead, and act on "
            "nothing yet.",
-           "Otherwise do the item's alternative; if it makes a change, first run "
-           "`python3 {checkout}/nc-systems/skills/walk-me-through/{program} check` and do what it prints."),
+           "Otherwise do the item's alternative; whether or not it makes a change, first run "
+           "`python3 {checkout}/nc-systems/skills/walk-me-through/{program} check --disapproved`, "
+           "then the close command it prints, and do what close prints; write nothing in the minutes by hand."),
           ("{word} means disapprove: the user disagrees with your last recommendation or proposal. Do not "
            "act on it.",
            "If he has said what he wants instead, do that, with a fast read first of any text it adds, as "
@@ -204,7 +202,8 @@ MEANINGS = {
            "In each paragraph say what the option is, how it differs from your recommendation, and its pluses "
            "and minuses.",
            "End with this line: \"Answer O2 or O3 to take that option; A still takes the recommendation.\"")),
-    "Z": (("Z means defer: move {item} as the walk-me-through skill's sentence on Z says.",),
+    "Z": (("Z means defer: move {item} as the walk-me-through skill's sentence on Z says.",
+           "Then run the check step with --deferred, then close, and do what close prints."),
           ("Z means defer: postpone your last question or proposal and record it as a task.",)),
     "R": (("{word} asks to see {item} again: show it in full, word for word as the walk-document "
            "has it, and wait for his answer.",),
@@ -218,11 +217,9 @@ OPTION_TAKEN_LINES = (
     ("O{option} means the user approves option {option} of {item}: the paragraph \"Option {option}:\" in the "
      "walk-document, not your recommendation. Do what that option says.",
      "If the item has no \"Option {option}:\" paragraph, ask the user what he means, and act on nothing yet.",
-     "If the option makes a change, first run "
-     "`python3 {checkout}/nc-systems/skills/walk-me-through/{program} check --option {option}` and do what it "
-     "prints.",
-     "If it makes no change, write the answer in the minutes as \"approved option {option}\", as the "
-     "walk-me-through skill says for an approval."),
+     "Whether or not the option makes a change, first run "
+     "`python3 {checkout}/nc-systems/skills/walk-me-through/{program} check --option {option}`, "
+     "then the close command it prints, and do what close prints; write nothing in the minutes by hand."),
     ("O{option} means the user approves option {option} of your last message, not your recommendation. Do what "
      "that option says.",
      "If your last message had no option {option}, ask the user what he means, and act on nothing yet.",
