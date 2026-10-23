@@ -485,6 +485,13 @@ def test_the_marker_is_written_as_the_last_line_and_skips_recorded_items():
     case.run("close")
     check("after the last item the minutes do not record, the walk goes round to the first one they do not",
           marker(case) == "#next_to_present item 1 of 5", case.minutes.read_text())
+    case = summary_case(next_to_present="item 4 of 5",
+                        recorded="- 2026-10-21T21:23:41Z Item 1 <rejected> (D): the user: \"no\".\n"
+                                 "- 2026-10-22 00:40 Item 2 <accepted> (A).\n- Item 5, 2026-10-21: approved.\n")
+    case.run("check")
+    case.run("close")
+    check("a minutes line that opens with a timestamp records its item",
+          marker(case) == "#next_to_present item 3 of 5", case.minutes.read_text())
 
 
 STRAY_TOTALS_DOCUMENT = """# A walk re-planned from 10 and 18 items to 16

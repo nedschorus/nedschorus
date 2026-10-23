@@ -49,7 +49,8 @@ minutes' last line, naming the next item: walking the walk-document's items in
 order, a once-deferred item placed just before the summary item, from the item
 after the answered one, and round again from the first, the first item the
 minutes do not record; `none, closed` when there is none. A minutes line
-records the items it opens with, as in `Item 4 of 9:` or `- Item 4, <date>:`,
+records the items it opens with, after any date or timestamp, as in `Item 4 of
+9:`, `- Item 4, <date>:` or `- 2026-10-21T21:23:41Z Item 4 <rejected>`,
 when it says approved, disapproved, accepted, rejected or `<moved on, no
 decision>`; one that says deferred instead records a deferral; CHECK's answer
 lines record nothing. When the `#next_to_present` line names other items than
@@ -150,7 +151,7 @@ CLOSE_NO_NEXT_ITEM = ("No item is left to present, and the minutes' `#next_to_pr
 NEXT_MARKER_LINE = "#next_to_present {value}"
 CLOSED_MARKER_VALUE = "none, closed"
 RECORDED_ITEMS = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_]*(items?\s+[^:(]*)", re.I)
-DATE = re.compile(r"\d{4}-\d\d-\d\d")
+DATE = re.compile(r"\d{4}-\d\d-\d\d(?:[T ]\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:?\d\d)?)?")
 DECIDED = re.compile(r"\b(?:dis)?approved\b|\baccepted\b|\brejected\b|<moved on, no decision>", re.I)
 DEFERRED_WORD = re.compile(r"\bdeferred\b", re.I)
 SUMMARY_HEADING = re.compile(r"\bof\s+\d+\b[*_\s:.\-\u2013\u2014]*summary\b", re.I)
