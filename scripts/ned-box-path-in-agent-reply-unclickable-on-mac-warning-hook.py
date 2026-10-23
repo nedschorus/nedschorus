@@ -274,9 +274,9 @@ def previous_reply_note(payload, environment):
     transcript_file = Path(transcript_path).expanduser()
     if not transcript_file.exists():
         return None
-    records = hook.transcript_records(transcript_file)
     reply, message_id = hook.previous_reply(
-        records, hook._load_absence_claim_hook().is_human_or_parent_message)
+        hook.previous_turn_records(transcript_file),
+        hook._load_absence_claim_hook().is_human_or_parent_message)
     if not reply.strip():
         return None
     record_path = note_record_path_for(payload.get("session_id"))

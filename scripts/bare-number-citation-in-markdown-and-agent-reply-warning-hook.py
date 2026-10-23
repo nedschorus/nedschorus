@@ -675,6 +675,17 @@ def markdown_edit_note(payload: dict):
 
 # --- UserPromptSubmit: the agent's previous reply -----------------------------
 
+COMPACT_BOUNDARY_SUBTYPE = "compact_boundary"
+
+def _load_claude_code_session_transcript_records_read_backward_common():
+    specification = importlib.util.spec_from_file_location(
+        "claude_code_session_transcript_records_read_backward_common",
+        Path(__file__).resolve().with_name("claude-code-session-transcript-records-read-backward-common.py"))
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
 def _load_absence_claim_hook():
     specification = importlib.util.spec_from_file_location(
         "absence_claim_locator_reminder_hook",
@@ -684,22 +695,28 @@ def _load_absence_claim_hook():
     return module
 
 
-def transcript_records(transcript_path: Path):
-    records = []
-    with open(transcript_path, encoding="utf-8") as transcript:
+def previous_turn_records(transcript_path: Path):
+    """The transcript's records from the previous turn's start to its end, read from the end."""
+    return _load_claude_code_session_transcript_records_read_backward_common().records_from_newest_boundary_to_end(
+        transcript_path, _load_absence_claim_hook().is_human_or_parent_message)
+
+
+def compaction_count(transcript_path: Path) -> int:
+    count = 0
+    with open(transcript_path, "rb") as transcript:
         for line in transcript:
+            # Only a line naming the subtype can be a compaction record, so the rest of a file of
+            # tens of megabytes is never parsed. Claude Code writes the subtype unescaped.
+            if COMPACT_BOUNDARY_SUBTYPE.encode() not in line:
+                continue
             try:
-                record = json.loads(line)
+                record = json.loads(line.decode("utf-8"))
             except ValueError:
                 continue
-            if isinstance(record, dict):
-                records.append(record)
-    return records
-
-
-def compaction_count(records) -> int:
-    return sum(1 for record in records
-               if record.get("type") == "system" and record.get("subtype") == "compact_boundary")
+            if (isinstance(record, dict) and record.get("type") == "system"
+                    and record.get("subtype") == COMPACT_BOUNDARY_SUBTYPE):
+                count += 1
+    return count
 
 
 def previous_reply(records, is_turn_start):
@@ -772,8 +789,8 @@ def previous_reply_note(payload: dict, environment):
     transcript_file = Path(transcript_path).expanduser()
     if not transcript_file.exists():
         return None
-    records = transcript_records(transcript_file)
-    reply, message_id = previous_reply(records, _load_absence_claim_hook().is_human_or_parent_message)
+    reply, message_id = previous_reply(previous_turn_records(transcript_file),
+                                       _load_absence_claim_hook().is_human_or_parent_message)
     if not reply.strip():
         return None
     record_path = note_record_path_for(payload.get("session_id"))
@@ -785,7 +802,7 @@ def previous_reply_note(payload: dict, environment):
                                 link_title_mismatches_in(reply))
     if not references and not sections:
         return None
-    compactions = compaction_count(records)
+    compactions = compaction_count(transcript_file)
     full_note_sent = record.get("full_note_sent_after_compactions") == compactions
     failures = []
     if record_path is not None:
