@@ -49,11 +49,11 @@ TIMESHIFT_SNAPSHOT_DIRECTORY = Path(
     os.environ.get("NEDSCHORUS_TIMESHIFT_SNAPSHOT_DIRECTORY",
                    "/mnt/backup/timeshift/snapshots"))
 
-# Allow a late hourly run without hiding a stopped scheduler beyond two cycles.
-MAXIMUM_LOG_AGE_SECONDS = 90 * 60
+# /etc/cron.d/timeshift-hourly runs Timeshift every three hours; this allows one late run.
+MAXIMUM_LOG_AGE_SECONDS = 4 * 60 * 60 + 30 * 60
 
 # Manual snapshots can take the hourly tag and legitimately delay the next scheduled snapshot.
-MAXIMUM_SNAPSHOT_AGE_SECONDS = 3 * 60 * 60
+MAXIMUM_SNAPSHOT_AGE_SECONDS = 9 * 60 * 60
 
 
 def format_age(seconds: float) -> str:
@@ -133,7 +133,7 @@ def diagnose():
     log_age = newest_run_log_age(TIMESHIFT_LOG_DIRECTORY)
     if log_age is None or log_age > MAXIMUM_LOG_AGE_SECONDS:
         age_text = format_age(log_age) if log_age is not None else "never"
-        detail.append(f"Timeshift last ran {age_text} ago; it should run hourly.")
+        detail.append(f"Timeshift last ran {age_text} ago; it should run every three hours.")
         detail.append("The scheduler is not firing. Check /etc/cron.d/timeshift-hourly "
                       "and whether cron is running.")
         return f"BACKUP STALLED {age_text}", detail
