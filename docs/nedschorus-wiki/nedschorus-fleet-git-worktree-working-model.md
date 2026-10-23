@@ -238,7 +238,7 @@ carry no stamp; directory basenames are not globally unique across machines
 *first* handoff is written by its provisioner from elsewhere, the guard
 correctly refuses, and `--claim` is the sanctioned path.
 
-**R10. Agent-instructions files change only when approved-by-walk —
+**R10. Whether a change to an agent-instructions file needs the user's approval is set by the [approval page](nedschorus-which-changes-need-the-users-approval.md) —
 built-live (root-resolution fixed by PR [guards: markers resolve from the session's own checkout, and the backup override lane is removed](https://github.com/nedschorus/nedschorus/pull/86)).**
 `.claude/hooks/instruction-file-guard.py`: CLAUDE.md, per-seat
 `CLAUDE.local.md`, `.claude/` (minus `worktrees/`, `jobs/` and `handoffs/`),
@@ -460,7 +460,7 @@ rulings; listed here to keep the numbering complete.
 | R6+R7 | No writes into the reference | block | built, PR [session-location guard: writes landing in the reference checkout are refused from any seat](https://github.com/nedschorus/nedschorus/pull/91) |
 | R8 | One live session per directory | — | waits on detection; build nothing |
 | R9 | One name = one agent-seat | default + block | built-live, PR [handoff: the agent name defaults to the seat's directory, and a foreign claim is refused](https://github.com/nedschorus/nedschorus/pull/72) |
-| R10 | Instruction files must be approved-by-walk | block | built-live; shell gap ruled unguarded |
+| R10 | The approval page sets which agent-instructions changes need approval | block | built-live; shell gap ruled unguarded |
 | R11 | Backups read-only to agents | block (no lane) | built-live; lane removed |
 | R12 | Agents never push to main | impossible (account tier) + text (agent tier) | partial; required reviews live 2026-08-20; C2 pending |
 | R13 | PR process + deputization | text (process) | built-live; deputization recorded at R13, PR [CLAUDE.md lane text: deputization recorded as the interim lane's exception](https://github.com/nedschorus/nedschorus/pull/93) |
