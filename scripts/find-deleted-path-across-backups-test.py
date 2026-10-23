@@ -1027,7 +1027,7 @@ check("... and without waiting on a date hint from git, which they take none of"
       str(order_probe.calls))
 
 mac_transcripts_copy_under_log_store = os.path.join(
-    *getattr(finder, "MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE", ("transcripts", "mac", "projects")))
+    *getattr(finder, "MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE", ("claude-code-files-mirror-per-machine", "mac", "projects")))
 check("the two cases above name the Mac and a log-store root that exists on neither machine, "
       "so on ned-box neither reaches the log-store or its copy of the Mac's transcripts",
       not mac_transcripts_copies_walked
@@ -2252,7 +2252,7 @@ with tempfile.TemporaryDirectory() as tmp:
           == ["ned-box: searched %s, no transcript mentions it" % Path(box, ".claude", "projects"),
               "the Mac: not searched — a run on ned-box cannot search the Mac; run the locator on the Mac, which searches both machines",
               "the Mac's log-store copy, %s, does not exist, so it was not searched either"
-              % Path(NO_LOG_STORE_ON_THIS_MACHINE, "transcripts", "mac", "projects")],
+              % Path(NO_LOG_STORE_ON_THIS_MACHINE, "claude-code-files-mirror-per-machine", "mac", "projects")],
           str(by_surface["transcripts"].lines))
     summary = finder.render_summary(reports)
     check("on the box: nothing found still exits 3, and the summary names transcripts alone, for the Mac",
@@ -2337,7 +2337,7 @@ with tempfile.TemporaryDirectory() as tmp:
     box_projects.mkdir(parents=True)
     Path(box_projects, "quiet.jsonl").write_text('{"text": "nothing relevant"}\n')
     store = Path(tmp, "store")
-    copy = Path(store, "transcripts", "mac", "projects")
+    copy = Path(store, "claude-code-files-mirror-per-machine", "mac", "projects")
     mac_session = Path(copy, "-Users-el-agents-x", "mac-session.jsonl")
     mac_session.parent.mkdir(parents=True)
     mac_session.write_text('{"text": "wrote mac/only.md here"}\n')
@@ -2368,7 +2368,7 @@ with tempfile.TemporaryDirectory() as tmp:
     age_line = ("the copy's newest transcript was last written on the Mac at %s UTC, 10 min before this search; "
                 "a Mac transcript written after the copy's last mirror pass is not in it"
                 % time.strftime("%Y-%m-%d %H:%M", time.gmtime(written)))
-    stamp = Path(store, "transcripts", "mac", "last-complete-mirror-pass-utc.txt")
+    stamp = Path(store, "claude-code-files-mirror-per-machine", "mac", "last-complete-mirror-pass-utc.txt")
     no_stamp_line = ("the Mac's mirror has left no pass-time stamp at %s, so when the Mac's mirror last completed "
                      "a pass is not known on ned-box" % stamp)
     check("on the box: a copy grepped in full and empty is NOT FOUND, with the copy's measured age",
@@ -2413,7 +2413,7 @@ with tempfile.TemporaryDirectory() as tmp:
           "exit %s\n%s" % (finder.exit_status(reports), finder.render_summary(reports)))
 
     empty_store = Path(tmp, "empty-store")
-    empty_copy = Path(empty_store, "transcripts", "mac", "projects")
+    empty_copy = Path(empty_store, "claude-code-files-mirror-per-machine", "mac", "projects")
     Path(empty_copy, "p").mkdir(parents=True)
     Path(empty_copy, "p", "notes.txt").write_text("a mention outside any transcript: nowhere/c.md\n")
     reports = run_as_if_on(True, "nowhere/c.md", box, RunsBashAndGrepHere([], box), skip=ONLY_TRANSCRIPTS,
@@ -2455,8 +2455,8 @@ mirror_spec = importlib.util.spec_from_file_location(
 mirror = importlib.util.module_from_spec(mirror_spec)
 mirror_spec.loader.exec_module(mirror)
 copy_parts = getattr(finder, "MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE", None)
-_, mirror_transcripts_root = mirror.split_destination(mirror.LOG_STORE_TRANSCRIPTS_DESTINATION)
-check("the Mac's copy is where the mirror writes it: <log-store>/transcripts/<the Mac's name>/<projects' name>",
+_, mirror_transcripts_root = mirror.split_destination(mirror.LOG_STORE_CLAUDE_CODE_FILES_MIRROR_DESTINATION)
+check("the Mac's copy is where the mirror writes it: <log-store>/claude-code-files-mirror-per-machine/<the Mac's name>/<projects' name>",
       copy_parts is not None and len(copy_parts) == 3
       and str(mirror_transcripts_root) == os.path.join(finder.DEFAULT_LOG_STORE_ROOT, copy_parts[0])
       and copy_parts[1] == mirror.MACHINE_NAME_ELSEWHERE
@@ -3572,7 +3572,7 @@ with tempfile.TemporaryDirectory() as tmp:
           str(report.lines))
 
     store = Path(tmp, "store")
-    copy_session = Path(store, "transcripts", "mac", "projects", "-Users-el-x", "copy-session.jsonl")
+    copy_session = Path(store, "claude-code-files-mirror-per-machine", "mac", "projects", "-Users-el-x", "copy-session.jsonl")
     copy_session.parent.mkdir(parents=True)
     copy_session.write_text('{"text": "the Mac wrote -notes.md"}\n')
     on_box = RunsBashAndGrepHere([], box_home)

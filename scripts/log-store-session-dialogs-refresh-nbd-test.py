@@ -44,7 +44,7 @@ def run(store_root, *arguments, script_path=SCRIPT_PATH):
 
 
 def write_transcript(store_root, machine, project_key, session_id, records):
-    path = Path(store_root) / "transcripts" / machine / "projects" / project_key / f"{session_id}.jsonl"
+    path = Path(store_root) / "claude-code-files-mirror-per-machine" / machine / "projects" / project_key / f"{session_id}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
     return path
@@ -155,7 +155,7 @@ with tempfile.TemporaryDirectory() as workspace:
           (backwards.returncode, backwards.stdout))
 
     # A machine directory without projects/, and a file other than a transcript, are passed over quietly.
-    (store / "transcripts" / "recovered").mkdir()
+    (store / "claude-code-files-mirror-per-machine" / "recovered").mkdir()
     (mac_transcript.parent / "settings.json").write_text("{}", encoding="utf-8")
     quiet = run(store)
     check("a machine directory with no projects/ and a non-.jsonl file in a project are passed over, exit 0",
@@ -267,7 +267,7 @@ with tempfile.TemporaryDirectory() as workspace:
           (lock_failed.returncode, lock_failed.stdout, lock_failed.stderr))
 
     # A project directory that cannot be listed is a failure, not a pass with nothing in it.
-    hidden_project = store / "transcripts" / "mac" / "projects" / "-Users-hidden-project"
+    hidden_project = store / "claude-code-files-mirror-per-machine" / "mac" / "projects" / "-Users-hidden-project"
     write_transcript(store, "mac", "-Users-hidden-project", "s-hidden", conversation("hidden project"))
     hidden_project.chmod(0)
     try:
@@ -283,7 +283,7 @@ with tempfile.TemporaryDirectory() as workspace:
               (unlistable.returncode, unlistable.stdout, unlistable.stderr))
 
     # A directory that can be listed but not searched, at each level, and a machine directory with no access.
-    mac_directory = store / "transcripts" / "mac"
+    mac_directory = store / "claude-code-files-mirror-per-machine" / "mac"
     for blocked_path, mode, named in (
             (mac_directory, 0o000, mac_directory / "projects"),
             (mac_directory, 0o644, mac_directory / "projects"),
@@ -432,7 +432,7 @@ with tempfile.TemporaryDirectory() as workspace:
           sixth.returncode == 1 and "FAILED: no " in sixth.stdout, (sixth.returncode, sixth.stdout))
 
     unpreparable = Path(workspace) / "store-with-a-file-for-session-dialogs"
-    (unpreparable / "transcripts").mkdir(parents=True)
+    (unpreparable / "claude-code-files-mirror-per-machine").mkdir(parents=True)
     (unpreparable / "session-dialogs").write_text("not a directory", encoding="utf-8")
     seventh = run(unpreparable, "--failures-only")
     check("a session-dialogs directory that cannot be prepared is FAILED, exit 1",
