@@ -269,3 +269,41 @@ Settle the questions above that are still open with the user, then build the sec
 ## Provisional additions (not yet vetted by the user)
 
 - **prime-intellect, 2026-10-15: open tasks and open walk items that should be GHIs but are not.** The user asked prime-intellect on 2026-10-15 to "go through all your tasks and current walk items for stuff that should be a GHI, but isn't", and to "add a similar request to the regular maint GHI and the handoff". Proposed as part of the eighth job, or as a job of its own: each day, besides matching open tasks to open issues, list the open tasks, and the open items of every agent-seat's open approval-walks, that match no open issue but are work headed for a pull request or otherwise suited to an issue, by the routing rule of `.claude/skills/ghi-write/SKILL.md`; ask ghi-info about them in one batched question, at most 25 items to a question, as ghi-info advised on 2026-10-15; and show the user one line per item proposed for filing. This conflicts with the eighth job's sentence "A task that matches no open issue stays a task, and no new issue is filed for it.", so the user decides which holds. prime-intellect's own first pass is at `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/prime-intellect/tasks-that-should-be-ghis-review-2026-10-15.md`.
+
+The three jobs below were proposed by merge-lane-2 and approved by the user on 2026-10-23 at about 04:35Z in merge-lane-2's window: he answered "1y 2y" to the throwaway disk use job and the rulings job, and asked for the structured output job in his words: "structured output - I'm suggestion we occassionally review the repo for systems (new systems in particular) that should use structured output, perhaps once a week." How often each runs, beyond his "perhaps once a week" for the third, and how each fits the design in "How a daily job is handed to the user and tracked (decided)" are not yet put to him.
+
+### Throwaway disk use: checkouts and scratch directories left by finished pull requests
+
+Throwaway directories pile up until they slow ned-box. On 2026-10-22 merge-lane-2's pull-request checkouts under `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/merge-helpers/wt/` held 556 checkouts, about 377,000 files and 8.4 GB. ned-box's hourly Timeshift snapshot hard-links every file in the log-store, and the 18:00 snapshot ran for 2.5 hours and blocked the next two, by MD-skills' measurement from the logs `/var/log/timeshift/2026-10-22_18-00-0*_backup.log` and `/var/log/timeshift/2026-10-22_19-00-0*_backup.log` on ned-box. The user removed 550 of the checkouts on 2026-10-23 at about 04:05Z, leaving 207 MB. On 2026-10-23 at about 00:20Z, `/tmp` on ned-box also held 35 `bash-guards-replay-*` directories, 4.8 GB in all.
+
+What it reads: the log-store, `/home/nedlern/nedschorus-logs/`, `/tmp`, and the agent-homes on both machines, the Mac's through the read-only helpers of "How a daily job reads the Mac (decided)"; and GitHub, for whether each directory's pull request is open, merged or closed.
+
+What it does: it lists each checkout or scratch directory left by a pull request that has merged or closed, with its kind, such as a merge-lane-2 pull-request checkout or a `bash-guards-replay-*` directory, its size and its file count. It removes those of a kind the user has approved as removable, and only those. Claude Code's auto-mode classifier, the check that decides whether an agent running in auto mode may run a command without asking the user, refused an agent's bulk removal of such directories as "Irreversible Local Destruction". So the removal is proposed to be done by a program the scheduled job runs, not by an agent's command, and the program removes only kinds listed in a file of approved kinds that only the user's answer adds to; the file's path and format are for the build to choose, and it starts empty. A kind not yet on that list is shown to the user, with its sizes, as a proposal to add it.
+
+What the user sees: the space removed, each new kind proposed for removal, and the log-store's growth since the last run in files and GB.
+
+When it cannot check a place, such as the Mac asleep, GitHub unreachable or a directory it cannot read, it says which place it did not check and why, and never reports that nothing was left behind.
+
+### Rulings merged on the author's word: checking them against the Mac transcript mirror
+
+When a pull request cites a user ruling that merge-lane-2 cannot yet find in the Mac transcript mirror, merge-lane-2 merges on the authoring agent-seat's word and keeps a task to check the ruling after the next mirror copy, as the section "Rulings a pull request cites" of merge-lane-2's seat-brief says. Nothing reminds it to do the check: seven such checks had piled up unchecked on merge-lane-2's task list since 2026-10-11.
+
+What it reads: each pending check, with the pull request and the ruling it cites; and the mirror, the copy of the Mac's transcripts at `nedlern@ned-box:/home/nedlern/nedschorus-logs/transcripts/mac/projects`, searched with `scripts/locate-user-approval-by-question-subject.py`, which also searches the walk-minutes, ned-box's transcripts, commit messages and pull requests.
+
+What it does: for each pending check, it searches for the ruling. A ruling found as the pull request cited it closes the check. A ruling found but different from what the pull request cited is a mismatch. A ruling not found stays pending until the next run.
+
+What the user sees: only the mismatches, each with the pull request, the ruling as cited and the ruling as found. On a run with no mismatch he sees nothing, unless a check could not be made.
+
+When the search program exits 1, because a place could not be searched or was searched only in part, the job says which ruling it could not check and what the program printed, and never counts that ruling as checked.
+
+### Structured output, weekly: programs that parse an agent's prose
+
+A program that reads an agent's free-text answer with regular expressions or prefixes breaks when the agent words its answer differently. The three runtimes the project uses can each constrain an agent's final answer to a schema: `claude -p --json-schema`, `codex exec --output-schema`, and `agy --json-schema`.
+
+What it reads: the repository at main, new systems in particular, meaning programs added since the last run; and the last run's list of candidates.
+
+What it does: it finds each program that launches an agent and parses its prose answer where a schema-constrained final answer would do, with the commits and issues that record a misparse there, and leaves out a program whose agent is interactive or whose output no program parses. A first survey, made on 2026-10-23, found seven candidates, among them ghi-info's answers in `scripts/ghi-info-ask.py` and the cold-read restater judge: `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/merge-lane-2/research/structured-output-candidates-2026-10-23.md`.
+
+What the user sees: each new candidate, with the program, the lines that parse the answer, the failures recorded there, and the runtime option that fits; and each candidate where a user ruling stands in the way, such as his ruling that the Codex review cell uses Codex's built-in review and never a custom prompt.
+
+When it could not read a file or launch its search, it says which part of the repository it did not review and why, and never reports that no candidate was found.
