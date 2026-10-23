@@ -112,6 +112,8 @@ STOP_HOOKS_STAY_SILENT_RULE_FILE = (
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
 MARKDOWN_PARSER_MODULE_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
                                / "markdown-commonmark-parser-with-tables-common.py")
+TRANSCRIPT_READER_FILE = (REPOSITORY_TOP / "scripts"
+                          / "claude-code-session-transcript-records-read-backward-common.py")
 CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
 WALK_DIRECTORY = Path("docs") / "walk"
 MINUTES_SUFFIX = "-minutes.md"
@@ -193,35 +195,32 @@ def load_module(name, path):
 
 
 def transcript_records(transcript_path):
-    records = []
-    with open(transcript_path, encoding="utf-8") as transcript:
-        for line in transcript:
-            try:
-                record = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(record, dict):
-                records.append(record)
-    return records
+    """The records from the newest one that opens a turn, and the newest one holding a
+    `turnOrigin`, to the transcript's end: all that turn_reply_text and turn_answers_user read."""
+    reader = load_module("claude_code_session_transcript_records_read_backward_common",
+                         TRANSCRIPT_READER_FILE)
+    return reader.records_from_newest_boundary_to_end(transcript_path, is_turn_start, lambda record: "turnOrigin" in record)
+
+
+def is_turn_start(record):
+    # A compaction's summary is a user record without isMeta, but Claude Code writes it, not
+    # a prompt, so it opens no turn.
+    if record.get("type") != "user" or record.get("isCompactSummary"):
+        return False
+    content = record.get("message", {}).get("content")
+    if (isinstance(content, list) and content
+            and all(isinstance(block, dict) and block.get("type") == "tool_result"
+                    for block in content)):
+        return False
+    origin_kind = (record.get("origin") or {}).get("kind")
+    return not (record.get("isMeta") and origin_kind not in TURN_STARTING_ORIGIN_KINDS)
 
 
 def turn_start(records):
     """Return the index of the record that starts the transcript's last turn, or None."""
     for index in range(len(records) - 1, -1, -1):
-        record = records[index]
-        # A compaction's summary is a user record without isMeta, but Claude Code writes it, not
-        # a prompt, so it opens no turn.
-        if record.get("type") != "user" or record.get("isCompactSummary"):
-            continue
-        content = record.get("message", {}).get("content")
-        if (isinstance(content, list) and content
-                and all(isinstance(block, dict) and block.get("type") == "tool_result"
-                        for block in content)):
-            continue
-        origin_kind = (record.get("origin") or {}).get("kind")
-        if record.get("isMeta") and origin_kind not in TURN_STARTING_ORIGIN_KINDS:
-            continue
-        return index
+        if is_turn_start(records[index]):
+            return index
     return None
 
 
