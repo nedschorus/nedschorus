@@ -73,7 +73,7 @@ def build_store(root):
     write(root / "session-dialogs" / "ned-box" / key / "s1-dialog-complete.md",
           "# Complete session dialog\n\n## Agent\n\nShall we start the heron plan?\n",
           mtime=DIALOG_IMPORTED_AT)
-    write(root / "transcripts" / "ned-box" / "projects" / key / "s1.jsonl",
+    write(root / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / key / "s1.jsonl",
           transcript_records(agent("Shall we start the heron plan?", "2026-09-28T09:00:00Z"),
                              typed("go with the heron plan", "2026-09-28T09:01:00Z"),
                              agent("Done.", "2026-10-05T10:00:00Z")),
@@ -81,10 +81,10 @@ def build_store(root):
     mac_key = "-Users-el-agents-fleet-restart-at-login"
     write(root / "session-dialogs" / "mac" / mac_key / "s2-dialog-complete.md",
           "## User\n\nheron plan on the Mac\n", mtime=DIALOG_IMPORTED_AT)
-    write(root / "transcripts" / "mac" / "projects" / mac_key / "s2.jsonl",
+    write(root / "claude-code-files-mirror-per-machine" / "mac" / "projects" / mac_key / "s2.jsonl",
           transcript_records(typed("heron plan on the Mac", "2026-10-07T08:00:00Z")),
           mtime=epoch("2026-10-07"))
-    write(root / "transcripts" / "mac" / "projects" / mac_key / "s2" / "subagents" / "agent-x.jsonl",
+    write(root / "claude-code-files-mirror-per-machine" / "mac" / "projects" / mac_key / "s2" / "subagents" / "agent-x.jsonl",
           transcript_records(typed("heron plan inside a subagent", "2026-10-07T08:00:00Z")))
 
 
@@ -150,7 +150,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("--since leaves out a session dialog whose transcript ended before it, whatever the dialog's modification time",
           result.returncode == 1 and not hit_headers(result.stdout), result.stdout)
 
-    long_tail = root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-z" / "s8.jsonl"
+    long_tail = root / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / "-home-nedlern-agents-z" / "s8.jsonl"
     write(long_tail, transcript_records(agent("heron plan tail", "2026-10-04T00:00:00Z"),
                                         {"type": "summary", "summary": "x" * 300000}))
     write(root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-z" / "s8-dialog-complete.md",
@@ -164,7 +164,7 @@ with tempfile.TemporaryDirectory() as scratch:
           in finding.stdout, finding.stdout)
 
     turns_key = "-home-nedlern-agents-turns"
-    turns_transcript = root / "transcripts" / "ned-box" / "projects" / turns_key / "s20.jsonl"
+    turns_transcript = root / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / turns_key / "s20.jsonl"
     write(turns_transcript, transcript_records(
         agent("We keep one egret seat for the egret work.", "2026-09-10T08:00:00Z"),
         typed("yes, egret", "2026-09-10T08:01:00Z"),
@@ -201,7 +201,7 @@ with tempfile.TemporaryDirectory() as scratch:
             {"type": "tool_use", "id": "write-1", "name": "Write", "input": {"content": text}}]}}
 
     ibis_key = "-home-nedlern-agents-ibis"
-    ibis_transcript = root / "transcripts" / "ned-box" / "projects" / ibis_key / "s21.jsonl"
+    ibis_transcript = root / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / ibis_key / "s21.jsonl"
     write(ibis_transcript, transcript_records(
         tool_result("- [PR 7: the ibis plan](https://example.invalid/7)", "2026-09-01T08:00:00Z"),
         tool_use("The ibis draft says yes.", "2026-09-02T08:00:00Z"),
@@ -236,7 +236,7 @@ import importlib.util
 spec = importlib.util.spec_from_file_location("search", {str(PROGRAM)!r})
 search = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(search)
-print(search.dialog_line_turn_times({str(root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-prime-intellect" / "s1.jsonl")!r},
+print(search.dialog_line_turn_times({str(root / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / "-home-nedlern-agents-prime-intellect" / "s1.jsonl")!r},
                                     {str(Path(scratch) / "no-such-dialog.md")!r}, [3]))
 """], capture_output=True, text=True)
     broken_tracker = subprocess.run([sys.executable, "-c", f"""
@@ -262,7 +262,7 @@ sys.exit(search.main(["start the heron plan", "--kind", "session-dialogs", "--jo
           and "2026-09-28T09:00:00Z  session-dialogs" not in broken_tracker.stdout,
           broken_tracker.stdout + broken_tracker.stderr)
     egret_key = "-home-nedlern-agents-written-while-broken"
-    egret_transcript = write(root / "transcripts" / "ned-box" / "projects" / egret_key / "s22.jsonl", transcript_records(
+    egret_transcript = write(root / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / egret_key / "s22.jsonl", transcript_records(
         agent("the stork plan", "2026-09-01T08:00:00Z"),
         agent("the stork plan", "2026-09-02T08:00:00Z")))
     left_out_section = ("## Subagent tasks and reports left out\n\nThe subagent tracker, "
@@ -320,7 +320,7 @@ print(x.render_complete_dialog_of_transcript_as_markdown(pathlib.Path({str(egret
           "line says so",
           "prime-intellect" in own.stdout and "could not be identified" in own.stdout, own.stdout)
 
-    s1 = root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-prime-intellect" / "s1.jsonl"
+    s1 = root / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / "-home-nedlern-agents-prime-intellect" / "s1.jsonl"
     s1_text = s1.read_text()
     compaction = {"type": "system", "subtype": "compact_boundary", "content": "Conversation compacted",
                   "timestamp": "2026-09-28T09:00:30Z"}
@@ -373,9 +373,9 @@ print(x.render_complete_dialog_of_transcript_as_markdown(pathlib.Path({str(egret
     check("a walk file named like the running agent-session is not taken for its record",
           "walk file named like the session" in own.stdout, own.stdout)
     write(live, s1_text)
-    (root / "transcripts").chmod(0)
+    (root / "claude-code-files-mirror-per-machine").chmod(0)
     own = run(root, "heron plan", "--kind", "walk", environment={"CLAUDE_CODE_SESSION_ID": "s1"})
-    (root / "transcripts").chmod(0o755)
+    (root / "claude-code-files-mirror-per-machine").chmod(0o755)
     check("a live transcript is used without listing the log-store's transcripts",
           own.returncode == 0 and "could not list" not in own.stderr and "shows no compaction" in own.stdout,
           own.stdout + own.stderr)
@@ -434,7 +434,7 @@ print(x.render_complete_dialog_of_transcript_as_markdown(pathlib.Path({str(egret
           result.returncode == 0 and "sha256" not in result.stdout and "Traceback" not in result.stderr,
           result.stdout + result.stderr)
 
-    answered = root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s7.jsonl"
+    answered = root / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s7.jsonl"
     write(answered, transcript_records(agent("Ship it?", "2026-10-03T00:00:00Z"),
                                        typed("yes", "2026-10-03T00:01:00Z")))
     result = run(root, "^yes$", "--kind", "user-messages")
@@ -442,7 +442,7 @@ print(x.render_complete_dialog_of_transcript_as_markdown(pathlib.Path({str(egret
     check("a pattern anchored to a whole message finds that message in the transcripts",
           result.returncode == 0 and "USER: yes" in result.stdout, result.stdout + result.stderr)
 
-    spoken = root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s10.jsonl"
+    spoken = root / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s10.jsonl"
     write(spoken, transcript_records(agent("heron words of the agent", "2026-10-03T00:00:00Z"),
                                      typed("heron words of the user", "2026-10-03T00:01:00Z")))
     finding = run(root, "heron words", "--kind", "user-messages")
@@ -451,7 +451,7 @@ print(x.render_complete_dialog_of_transcript_as_markdown(pathlib.Path({str(egret
           finding.returncode == 0 and "USER: heron words of the user" in finding.stdout
           and "of the agent" not in finding.stdout, finding.stdout + finding.stderr)
 
-    escaped = root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s11.jsonl"
+    escaped = root / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s11.jsonl"
     write(escaped, transcript_records(typed("merge it\nplease now", "2026-10-03T00:02:00Z"),
                                       typed('say "hi" to the\tgatekeeper', "2026-10-03T00:03:00Z"),
                                       typed("path C:\\logs here", "2026-10-03T00:04:00Z")))
@@ -464,8 +464,8 @@ print(x.render_complete_dialog_of_transcript_as_markdown(pathlib.Path({str(egret
               finding.returncode == 0 and f"USER: {expected}" in finding.stdout, finding.stdout + finding.stderr)
     escaped.unlink()
 
-    for locked_directory in (root / "transcripts" / "mac" / "projects",
-                             root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-prime-intellect"):
+    for locked_directory in (root / "claude-code-files-mirror-per-machine" / "mac" / "projects",
+                             root / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / "-home-nedlern-agents-prime-intellect"):
         locked_directory.chmod(0)
         finding = run(root, r"heron\s+plan", "--kind", "user-messages")
         locked_directory.chmod(0o755)
@@ -473,7 +473,7 @@ print(x.render_complete_dialog_of_transcript_as_markdown(pathlib.Path({str(egret
               finding.returncode == 2 and f"could not list the transcripts in {locked_directory}" in finding.stderr,
               finding.stderr)
 
-    late = root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s12.jsonl"
+    late = root / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / "-home-nedlern-agents-y" / "s12.jsonl"
     write(late, transcript_records(typed("heron from the future", "2026-10-09T00:00:00Z")), mtime=epoch("2026-10-02"))
     finding = run(root, "heron from the future", "--kind", "user-messages", "--since", "2026-10-01")
     late.unlink()
@@ -481,7 +481,7 @@ print(x.render_complete_dialog_of_transcript_as_markdown(pathlib.Path({str(egret
           finding.returncode == 2 and "after its modification time" in finding.stderr, finding.stderr)
 
     hidden = root / "session-dialogs" / "ned-box" / "-home-nedlern-agents-prime-intellect" / "s1-dialog-complete.md"
-    hidden_transcript = root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-prime-intellect" / "s1.jsonl"
+    hidden_transcript = root / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / "-home-nedlern-agents-prime-intellect" / "s1.jsonl"
     hidden_transcript.chmod(0)
     finding = run(root, "start the heron plan", "--kind", "session-dialogs")
     hidden_transcript.chmod(0o644)
@@ -588,12 +588,12 @@ print(failures)
         day = f"2026-07-{1 + number % 28:02d}"
         stamp = f"{day}T10:{number:02d}:00.500Z"
         touched = epoch(day) - 2 * 3600 + number * 60 if number != 7 else epoch("2026-07-30")
-        write(many / "transcripts" / "ned-box" / "projects" / f"-home-nedlern-agents-seat{number % 3}"
+        write(many / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / f"-home-nedlern-agents-seat{number % 3}"
               / f"t{number}.jsonl",
               transcript_records(typed(f"heron plan number {number}", stamp),
                                  typed(f"heron plan again {number}", stamp.replace(".500Z", ".900Z"))),
               mtime=touched)
-    write(many / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-seat0" / "t7.jsonl",
+    write(many / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / "-home-nedlern-agents-seat0" / "t7.jsonl",
           transcript_records(typed("heron plan from long ago", "2026-06-01T00:00:00Z"),
                              typed("heron plan newest of all", "2026-07-29T23:00:00Z")),
           mtime=epoch("2026-07-30"))
@@ -617,7 +617,7 @@ print(failures)
           "heron plan newest of all" in paged.stdout or "heron plan newest of all" in "".join(every_hit[:3]),
           paged.stdout)
 
-    late_in_early_stop = (many / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-seat0"
+    late_in_early_stop = (many / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / "-home-nedlern-agents-seat0"
                           / "late.jsonl")
     write(late_in_early_stop, transcript_records(typed("heron plan dated after its file", "2026-08-15T00:00:00Z")),
           mtime=epoch("2026-07-31"))
@@ -627,7 +627,7 @@ print(failures)
           "older transcripts were not read" in stopped.stdout and stopped.returncode == 2
           and "after its modification time" in stopped.stderr, stopped.stdout + stopped.stderr)
 
-    tabbed = write(root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-x" / "tabbed.jsonl",
+    tabbed = write(root / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / "-home-nedlern-agents-x" / "tabbed.jsonl",
                    transcript_records(typed("heron\tplan with a tab", "2026-10-03T00:00:00Z")))
     result = run(root, "heron\tplan", "--kind", "user-messages")
     tabbed.unlink()
@@ -711,7 +711,7 @@ locked.chmod(0o644)
     check("ripgrep failing without a word is a failure",
           result.returncode == 2 and "ripgrep exited 3 and said nothing" in result.stderr, result.stderr)
 
-    locked_transcript = root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-x" / "s9.jsonl"
+    locked_transcript = root / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / "-home-nedlern-agents-x" / "s9.jsonl"
     write(locked_transcript, transcript_records(typed("heron", "2026-10-02T00:00:00Z")))
     locked_transcript.chmod(0)
     lister = stub(scratch, "rg-lists-locked-transcript", f"echo '{locked_transcript}'\n")
@@ -722,7 +722,7 @@ locked.chmod(0o644)
     check("a transcript the reader cannot read is a failure",
           result.returncode == 2 and "could not read the transcript" in result.stderr, result.stderr)
 
-    gone = [root / "transcripts" / "ned-box" / "projects" / "-home-nedlern-agents-x" / f"gone-{letter}.jsonl"
+    gone = [root / "claude-code-files-mirror-per-machine" / "ned-box" / "projects" / "-home-nedlern-agents-x" / f"gone-{letter}.jsonl"
             for letter in "ab"]
     gone_lister = stub(scratch, "rg-lists-gone-transcripts", "".join(f"echo '{path}'\n" for path in reversed(gone)))
     result = run(root, "heron", "--kind", "user-messages",

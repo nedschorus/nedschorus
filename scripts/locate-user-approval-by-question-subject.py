@@ -77,7 +77,7 @@ NED_BOX_SSH_TARGET = "nedlern@ned-box"
 SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 SSH_EXIT_CONNECTION_FAILED = 255
 WALK_MINUTES_DIRECTORY = "/home/nedlern/nedschorus-logs/walk"
-MAC_TRANSCRIPTS_COPY_ON_NED_BOX = "/home/nedlern/nedschorus-logs/transcripts/mac/projects"
+MAC_TRANSCRIPTS_COPY_ON_NED_BOX = "/home/nedlern/nedschorus-logs/claude-code-files-mirror-per-machine/mac/projects"
 NED_BOX_TRANSCRIPTS_DIRECTORY = "/home/nedlern/.claude/projects"
 NED_BOX_UNREACHABLE_REMEDY = (f"make sure ned-box is on and on the LAN, then check that "
                               f"`ssh {NED_BOX_SSH_TARGET} true` succeeds")

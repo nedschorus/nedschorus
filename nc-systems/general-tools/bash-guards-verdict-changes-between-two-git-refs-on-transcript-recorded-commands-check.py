@@ -64,9 +64,9 @@ from pathlib import Path
 
 DEFAULT_TRANSCRIPT_DIRECTORIES = [
     str(Path.home() / ".claude" / "projects"),
-    "/home/nedlern/nedschorus-logs/transcripts/mac/projects",
-    "/home/nedlern/nedschorus-logs/transcripts/ned-box",
-    "/home/nedlern/nedschorus-logs/transcripts/recovered",
+    "/home/nedlern/nedschorus-logs/claude-code-files-mirror-per-machine/mac/projects",
+    "/home/nedlern/nedschorus-logs/claude-code-files-mirror-per-machine/ned-box",
+    "/home/nedlern/nedschorus-logs/claude-code-files-mirror-per-machine/recovered",
 ]
 
 DEFAULT_PER_PAIR_TIMEOUT_SECONDS = 20

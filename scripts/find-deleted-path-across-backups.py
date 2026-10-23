@@ -390,7 +390,7 @@ DEFAULT_BOX_SEARCH_ROOTS = (
 DEFAULT_TRANSCRIPTS_DIR = "~/.claude/projects"
 DEFAULT_LOG_STORE_ROOT = "/home/nedlern/nedschorus-logs"
 # Keep this path aligned with transcript-mirror-to-log-store.py's destination.
-MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE = ("transcripts", "mac", "projects")
+MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE = ("claude-code-files-mirror-per-machine", "mac", "projects")
 # Keep this name aligned with transcript-mirror-to-log-store.py's MIRROR_PASS_STAMP_FILE_NAME.
 MAC_MIRROR_PASS_STAMP_FILE_NAME = "last-complete-mirror-pass-utc.txt"
 MAC_MIRROR_PASS_STAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
