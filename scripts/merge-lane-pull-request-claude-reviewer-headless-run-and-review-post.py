@@ -26,8 +26,10 @@ in wt/pr<n>-head, which step 1 built detached at the head commit; a refused
 tool call does not wait for anyone, and is listed in the output's
 permission_denials, each of which is printed. The reviewer's environment has no
 GH_TOKEN or GITHUB_TOKEN, and GH_CONFIG_DIR is an empty directory, so gh has no
-login in it. The run gets --time-limit-seconds, 5400 by default, after which its
-whole process group is killed.
+login in it. The run gets --time-limit-seconds, 5400 by default. Whenever the
+wait for it ends, at the time limit, on an interrupt or SIGTERM, or when claude
+exits, the run's whole process group is killed and reaped, before the cleanup
+below: the reviewer runs in its own session, so nothing else would stop it.
 
 claude exits 0 with subtype "success" even when the reviewer never produced an
 answer the schema accepts; only structured_output being null shows that. So
@@ -178,16 +180,21 @@ def run_reviewer(schema_text, brief, head_worktree, environment, time_limit):
          "--permission-mode", "dontAsk", "--allowedTools", *ALLOWED_TOOLS],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         cwd=head_worktree, env=environment, start_new_session=True)
+    timed_out = False
     try:
         stdout, stderr = process.communicate(brief, timeout=time_limit)
-        return process.returncode, stdout, stderr
     except subprocess.TimeoutExpired:
+        timed_out = True
+    finally:
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        process.wait()
+    if timed_out:
         stdout, stderr = process.communicate()
         return None, stdout, stderr
+    return process.returncode, stdout, stderr
 
 
 def remove_reviewer_worktrees(head_worktree, number):
@@ -214,7 +221,14 @@ def resume_command(session_id):
                        "--allowedTools", *ALLOWED_TOOLS])
 
 
+def exit_on_sigterm(signal_number, frame):
+    raise SystemExit(128 + signal_number)
+
+
 def main(argv=None):
+    # SIGTERM must raise, so the finally blocks that stop the reviewer and remove its
+    # worktrees run, as they do for an interrupt.
+    signal.signal(signal.SIGTERM, exit_on_sigterm)
     arguments = parse_arguments(argv)
     number, tag, head = arguments.pull_request, arguments.tag, arguments.head_commit
     helpers = arguments.merge_lane_worktrees_and_outputs_directory

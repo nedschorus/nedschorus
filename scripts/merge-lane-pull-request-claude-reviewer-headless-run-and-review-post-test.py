@@ -8,8 +8,8 @@ and a stand-in gh go first on PATH, and HOME holds a mac-claude token file, so
 no case runs a model or reaches GitHub. The stand-in claude logs its
 arguments, standard input, directory and environment, and answers as
 FAKE_CLAUDE_MODE says: valid, null, invalid, could-not-review, nonzero,
-not-json, hang (it starts a child that also sleeps, and writes the child's
-pid), or move-head (it checks the head worktree out at another commit). Every
+not-json, hang (it writes its pid, starts a child that also sleeps, and
+writes the child's pid), or move-head (it checks the head worktree out at another commit). Every
 mode first makes a worktree named mac-claude-pr7-mutation, as a reviewer does.
 The stand-in gh answers the author lookup with ned-review-merge, the pull
 request's files with a diff of scripts/thing.py lines 1 to 3, the post with
@@ -22,6 +22,7 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -80,6 +81,7 @@ elif mode == "not-json":
     print("not json at all")
     sys.exit(0)
 elif mode == "hang":
+    (state / "claude.pid").write_text(str(os.getpid()))
     child = subprocess.Popen(["sleep", "60"])
     (state / "child.pid").write_text(str(child.pid))
     time.sleep(60)
@@ -177,14 +179,38 @@ class Case:
                             "GITHUB_TOKEN": "another-token-the-reviewer-must-not-see",
                             "PATH": f"{bin_directory}{os.pathsep}{os.environ.get('PATH', '')}"}
 
+    def command(self, tag, head, options):
+        return [sys.executable, str(PROGRAM), "7", tag, head or self.head, *options,
+                "--merge-lane-worktrees-and-outputs-directory", str(self.helpers),
+                "--review-tools-worktree-at-main", str(self.helpers / "wt" / "main")]
+
     def run(self, mode="valid", *options, tag="7a", head=None, **environment):
         completed = subprocess.run(
-            [sys.executable, str(PROGRAM), "7", tag, head or self.head, *options,
-             "--merge-lane-worktrees-and-outputs-directory", str(self.helpers),
-             "--review-tools-worktree-at-main", str(self.helpers / "wt" / "main")],
-            capture_output=True, text=True,
+            self.command(tag, head, options), capture_output=True, text=True,
             env={**self.environment, "FAKE_CLAUDE_MODE": mode, **environment})
         self.code, self.stdout = completed.returncode, completed.stdout + completed.stderr
+        return self.read_calls()
+
+    def interrupt(self, signal_number):
+        """Run in hang mode and send the program signal_number once the reviewer is running."""
+        process = subprocess.Popen(
+            self.command("7a", None, ("--time-limit-seconds", "60")), stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True,
+            env={**self.environment, "FAKE_CLAUDE_MODE": "hang"})
+        deadline = time.monotonic() + 20
+        while not (self.state / "child.pid").exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        process.send_signal(signal_number)
+        try:
+            self.stdout = process.communicate(timeout=30)[0]
+            self.code = process.returncode
+        except subprocess.TimeoutExpired:
+            process.kill()
+            self.stdout = process.communicate()[0] + "\n(the program was still running 30 s after the signal)"
+            self.code = 0
+        return self.read_calls()
+
+    def read_calls(self):
         self.claude_calls = read_lines(self.state / "claude-calls.jsonl")
         self.gh_calls = read_lines(self.state / "gh-calls.jsonl")
         self.detail = f"exit {self.code}\n{self.stdout}\nclaude: {self.claude_calls}\ngh: {self.gh_calls}"
@@ -195,6 +221,10 @@ class Case:
 
     def reviewer_worktree_left(self):
         return "mac-claude-pr7-mutation" in git(self.head_worktree, "worktree", "list")
+
+    def reviewer_processes_alive(self):
+        return [pid for pid in (self.state / "claude.pid", self.state / "child.pid")
+                if not pid.exists() or running(int(pid.read_text()))]
 
     def posted(self):
         return any("POST" in call["arguments"] for call in self.gh_calls)
@@ -247,6 +277,17 @@ def main():
               case.detail)
         check("the reviewer's own worktree is removed after the run",
               not case.reviewer_worktree_left(), case.detail)
+
+        case = Case(scratch)
+        others = [case.helpers / "wt" / name for name in
+                  ("mac-claude-pr70-mutation", "mac-claude-pr8-mutation")]
+        for other in others:
+            git(case.head_worktree, "worktree", "add", "-q", "--detach", str(other), "HEAD")
+        case.run("valid")
+        listed = git(case.head_worktree, "worktree", "list")
+        check("another pull request's reviewer worktrees, pr70 and pr8, survive the cleanup",
+              case.code == 0 and not case.reviewer_worktree_left()
+              and all(str(other) in listed for other in others), case.detail + "\n" + listed)
         case.run("valid")
         check("a second run on the same head keeps the first run's records and writes -2",
               case.code == 0 and (case.record() / "review.json").exists()
@@ -281,6 +322,14 @@ def main():
               "and exits 1",
               case.code == 1 and not case.posted() and took < 30 and not child_alive
               and "ran past its 2-second limit and was killed" in case.stdout, case.detail)
+
+        for signal_number in (signal.SIGTERM, signal.SIGINT):
+            case = Case(scratch).interrupt(signal_number)
+            time.sleep(0.2)
+            check(f"{signal.Signals(signal_number).name} during the wait kills the reviewer and "
+                  f"its children, removes its worktree, posts nothing, and exits nonzero",
+                  case.code != 0 and not case.posted() and not case.reviewer_processes_alive()
+                  and not case.reviewer_worktree_left(), case.detail)
 
         case = Case(scratch).run("valid", FAKE_GH_FAILS="post")
         check("a failed post exits 1 and passes the posting script's message through",

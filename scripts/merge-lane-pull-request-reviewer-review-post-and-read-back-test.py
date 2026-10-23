@@ -252,6 +252,19 @@ def main():
         check("a removed line does not count as a new-side line",
               result.code == 0 and result.posted is not None and result.posted["comments"] == []
               and "`scripts/thing.py:2`" in result.posted["body"], result.detail)
+        second_hunk = {"path": "scripts/thing.py", "line": 21, "body": "In the second hunk."}
+        between = {"path": "scripts/thing.py", "line": 4, "body": "Between the hunks."}
+        result = run_program(
+            scratch, review("APPROVE", comments=[second_hunk, between]),
+            FAKE_GH_FILES=json.dumps([[{"filename": "scripts/thing.py",
+                                        "patch": "@@ -1,1 +1,2 @@\n a\n+b\n"
+                                                 "@@ -19,2 +20,3 @@\n x\n+y\n z"}]]))
+        check("each hunk header restarts the line count: a comment in the second hunk stays "
+              "inline, and one between the hunks moves into the body",
+              result.code == 0 and result.posted is not None
+              and result.posted["comments"] == [second_hunk]
+              and "`scripts/thing.py:4`: Between the hunks." in result.posted["body"],
+              result.detail)
         files_call = [call for call in result.calls if "/files" in " ".join(call["arguments"])]
         check("the pull request's files are read every page at once",
               bool(files_call) and files_call[0]["arguments"][:3] == ["api", "--paginate", "--slurp"],
