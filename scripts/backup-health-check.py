@@ -14,8 +14,9 @@ a poor advertisement for the rule.
 WHY THE LOG DIRECTORY AND NOT JUST SNAPSHOT AGE. Timeshift is time-driven, not
 content-driven: `--check` means "create a snapshot if one is scheduled", so it
 never skips because nothing changed — it skips because the level is not yet due.
-A manual snapshot therefore resets the hourly clock, and a perfectly healthy
-machine can go nearly two hours with no new hourly snapshot. Observed 2026-08-14:
+A manual snapshot therefore resets the hourly clock, and with Timeshift run every
+three hours a perfectly healthy machine can go nearly six hours with no new
+scheduled snapshot. Observed 2026-08-14:
 an on-demand snapshot at 11:35 took the H, W and M tags, so the 12:00 run
 correctly created nothing. Snapshot age alone would have cried wolf.
 
@@ -133,9 +134,9 @@ def diagnose():
     log_age = newest_run_log_age(TIMESHIFT_LOG_DIRECTORY)
     if log_age is None or log_age > MAXIMUM_LOG_AGE_SECONDS:
         age_text = format_age(log_age) if log_age is not None else "never"
-        detail.append(f"Timeshift last ran {age_text} ago; it should run every three hours.")
-        detail.append("The scheduler is not firing. Check /etc/cron.d/timeshift-hourly "
-                      "and whether cron is running.")
+        detail.append(f"Timeshift last ran {age_text} ago; /etc/cron.d/timeshift-hourly "
+                      "runs it every three hours, despite the file's name.")
+        detail.append("The scheduler is not firing. Check that file and whether cron is running.")
         return f"BACKUP STALLED {age_text}", detail
 
     snapshot_age = newest_scheduled_snapshot_age(TIMESHIFT_SNAPSHOT_DIRECTORY)
