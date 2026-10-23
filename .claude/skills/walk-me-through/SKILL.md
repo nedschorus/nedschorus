@@ -50,6 +50,8 @@ Call the advisor at these points, and at any other time you judge you need it or
 
 The six questions Aa's text in the section "Each item" asks for: "Then answer each of these, saying "nothing" where nothing applies: 1. What here should not exist? What could be removed or made simpler, rather than added to? 2. What is patched where its cause should be fixed? Name the root cause of each problem in view, and anything that only treats a symptom. 3. Where did we stop looking too soon? What lies under the problem in front of us? 4. What relies on an agent following English, or the user remembering, where code could do it? 5. What should be questioned that has not been, such as an assumption, a premise, or how the item is framed, and what should we ask the user? 6. Any other problem, concern, suggestion or improvement?"
 
+Ask the six questions at each of the calls above too, after the call's own question; what the advisor raises outside that question becomes a new item in the walk or a loose end.
+
 What the advisor changed is marked [advisor] in the item's text. If a call fails, say so in your message and go on without it.
 
 ## Advancing
