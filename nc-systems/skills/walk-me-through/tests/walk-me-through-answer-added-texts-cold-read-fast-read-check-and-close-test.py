@@ -218,10 +218,12 @@ def test_a_failed_fast_read_stops_the_check():
           and "close.py check --obvious` again" in result.stdout, described(result))
     check("after a FAILED fast read the minutes do not record the answer", case.minutes.read_text() == before,
           case.minutes.read_text())
-    case = Case()
-    result = case.run("check", "--after-advisor", mode="failed")
-    check("after a FAILED fast read on an Aa answer, the rerun command keeps --after-advisor",
-          result.returncode == 1 and "close.py check --after-advisor` again" in result.stdout, described(result))
+    for flags in (("--after-advisor",), ("--disapproved",), ("--option", "2")):
+        case = Case()
+        result = case.run("check", *flags, mode="failed")
+        check(f"after a FAILED fast read, the rerun command keeps {' '.join(flags)}",
+              result.returncode == 1 and f"close.py check {' '.join(flags)}` again" in result.stdout,
+              described(result))
 
 
 def test_a_fast_read_that_exits_nonzero_without_a_line_is_a_failure():
