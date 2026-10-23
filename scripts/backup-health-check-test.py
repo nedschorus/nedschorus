@@ -110,19 +110,27 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     check("an absent drive is reported", "BACKUP DRIVE GONE" in result.stdout, result.stdout)
     check("an absent drive exits 1", result.returncode == 1)
 
-    # Scheduler dead: no run for four hours, though snapshots on disk look fine.
-    build_layout(root, log_age_seconds=4 * 3600, snapshot_age_seconds=1800)
+    # One three-hour run late is still healthy: the last log and snapshot are
+    # just inside the limits.
+    build_layout(root, log_age_seconds=4 * 3600 + 25 * 60,
+                 snapshot_age_seconds=8 * 3600 + 55 * 60)
+    result = run_check(root, mounted=True)
+    check("a run late by under a three-hour cycle prints nothing",
+          result.stdout.strip() == "", repr(result.stdout))
+
+    # Scheduler dead: no run for five hours, though snapshots on disk look fine.
+    build_layout(root, log_age_seconds=5 * 3600, snapshot_age_seconds=1800)
     result = run_check(root, mounted=True)
     check("a dead scheduler is reported as STALLED", "BACKUP STALLED" in result.stdout,
           result.stdout)
-    check("STALLED carries the age", "4h00m" in result.stdout, result.stdout)
+    check("STALLED carries the age", "5h00m" in result.stdout, result.stdout)
 
     # Running but not producing: fresh log, stale snapshot.
-    build_layout(root, log_age_seconds=300, snapshot_age_seconds=6 * 3600)
+    build_layout(root, log_age_seconds=300, snapshot_age_seconds=10 * 3600)
     result = run_check(root, mounted=True)
     check("running-but-failing is reported as FAILING", "BACKUP FAILING" in result.stdout,
           result.stdout)
-    check("FAILING carries the age", "6h00m" in result.stdout, result.stdout)
+    check("FAILING carries the age", "10h00m" in result.stdout, result.stdout)
 
     # The distinction that motivated the design: an on-demand snapshot is not
     # evidence that the schedule works, so it must not mask a stalled schedule.
