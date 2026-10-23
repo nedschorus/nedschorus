@@ -272,11 +272,13 @@ def main():
 
         result = run_program(scratch, review("APPROVE"), FAKE_GH_FAILS="post")
         check("a failed post exits 2, says the review may be posted, names gh's error, and "
-              "says not to run the command again", result.code == 2
+              "gives the command that lists mac-claude's reviews on the head commit",
+              result.code == 2
               and "review may or may not be posted: posting the review failed: gh exited 1: "
               "gh: HTTP 502" in result.stderr
-              and "Do not run this command again until you have looked" in result.stderr
-              and f"no review from mac-claude on commit {HEAD}" in result.stderr, result.detail)
+              and "Before running this command again, list mac-claude's reviews" in result.stderr
+              and "gh api --paginate 'repos/nedschorus/nedschorus/pulls/7/reviews'" in result.stderr
+              and f'.commit_id == "{HEAD}"' in result.stderr, result.detail)
         result = run_program(scratch, review("APPROVE"), FAKE_GH_FAILS="read-back")
         check("a failed read-back exits 2, says review 42 was posted, and names gh's error",
               result.code == 2 and "review 42 was posted, but reading it back failed: "

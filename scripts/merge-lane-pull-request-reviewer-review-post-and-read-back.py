@@ -53,8 +53,11 @@ EXIT_NOT_POSTED = 2
 REVIEW_FILE_UNUSABLE = (
     "review not posted: the review file {path} {reason}.\n"
     "Do not post the review any other way.\n"
-    "If the file came from a reviewer's run, run that review again: the run should not have "
-    "passed it.")
+    "Tell the user this whole message.\n"
+    "If the file came from a reviewer's run, also tell the user that "
+    "scripts/merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py, which ran "
+    "the reviewer, checks its answer and should have refused this file instead of handing it to "
+    "the posting script, and do not run that script again until the user answers.")
 NOT_POSTED = (
     "review not posted: {reason}.\n"
     "Do not post the review any other way.\n"
@@ -62,19 +65,33 @@ NOT_POSTED = (
     "tell the user this message.")
 POST_FAILED = (
     "review may or may not be posted: posting the review failed: {reason}\n"
-    "Do not run this command again until you have looked: GitHub may have made the review "
-    "before the failure, and a second post would add a second review.\n"
-    "If pull request {number} has no review from mac-claude on commit {head}, run the same "
-    "command again; if it has one, use that review.")
+    "GitHub may have made the review before the failure, and a second post would add a second "
+    "review.\n"
+    "Before running this command again, list mac-claude's reviews on commit {head} of pull "
+    "request {number}:\n"
+    "  gh api --paginate 'repos/{repository}/pulls/{number}/reviews' --jq "
+    "'.[] | select(.user.login == \"mac-claude\" and .commit_id == \"{head}\") "
+    "| [.id, .state, .html_url] | @tsv'\n"
+    "If it lists nothing, run the posting command that printed this message again.\n"
+    "If it lists one or more reviews, do not post again: mac-claude already has a review on this "
+    "commit, whether this command's post or an earlier one, and the list gives each one's id and "
+    "link.")
 READ_BACK_FAILED = (
     "review {review_id} was posted, but reading it back failed: {reason}\n"
     "Do not post the review again: it is on the pull request.\n"
     "Check review {review_id} on pull request {number} yourself.")
 READ_BACK_DIFFERS = (
-    "review {review_id} was posted, but GitHub's copy differs from what was asked for: "
-    "{differences}.\n"
-    "Do not post the review again: it is on the pull request.\n"
-    "Check review {review_id} on pull request {number} yourself.")
+    "review {review_id} was posted on pull request {number}, but GitHub's copy differs from what "
+    "was asked for: {differences}.\n"
+    "The review is on the pull request as GitHub kept it: in each difference above, the first "
+    "value is what GitHub kept and the second is what was asked for.\n"
+    "Do not post the review again: a second post adds a second review and leaves this one as "
+    "it is.\n"
+    "Look at the review with:\n"
+    "  gh api 'repos/{repository}/pulls/{number}/reviews/{review_id}' --jq "
+    "'[.state, .commit_id, .html_url] | @tsv'\n"
+    "Then tell the user this whole message and what that command printed, and do nothing more "
+    "with this review or this pull request's merge until the user answers.")
 
 
 class ReviewFileUnusable(Exception):
@@ -109,7 +126,8 @@ def read_review_file(path):
             and isinstance(comment["body"], str)
             for comment in comments):
         raise ReviewFileUnusable(
-            "has a \"comments\" entry without a text \"path\", a number \"line\" and a text \"body\"")
+            "has a \"comments\" entry that is not exactly a text \"path\", a number \"line\" and "
+            "a text \"body\", with no other keys")
     return verdict, body, comments
 
 
@@ -224,7 +242,8 @@ def main(argv=None):
                                                 "comments": comments}))
         review_id = posted["id"]
     except (GhFailed, KeyError, TypeError) as error:
-        print(POST_FAILED.format(reason=reason_of(error), number=number, head=head),
+        print(POST_FAILED.format(reason=reason_of(error), number=number, head=head,
+                                 repository=REPOSITORY),
               file=sys.stderr)
         return EXIT_NOT_POSTED
     try:
@@ -238,7 +257,7 @@ def main(argv=None):
         return EXIT_NOT_POSTED
     if differences:
         print(READ_BACK_DIFFERS.format(review_id=review_id, differences="; ".join(differences),
-                                       number=number),
+                                       number=number, repository=REPOSITORY),
               file=sys.stderr)
         return EXIT_NOT_POSTED
     print(f"review {review_id} posted on pull request {number} as {event}, verdict {verdict}, "

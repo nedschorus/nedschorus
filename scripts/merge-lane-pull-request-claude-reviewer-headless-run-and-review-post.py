@@ -215,8 +215,13 @@ def remove_reviewer_worktrees(head_worktree, number):
     """Remove the clone's mac-claude-pr<n>- worktrees; print any that could not be removed."""
     listed = git(head_worktree, "worktree", "list", "--porcelain")
     if listed.returncode != 0:
-        print(f"PR {number}: could not list worktrees to remove the reviewer's: "
-              f"{listed.stderr.strip()}; remove any mac-claude-pr{number}- worktree yourself.",
+        print(f"PR {number}: could not list worktrees to remove the reviewer's worktrees: "
+              f"{listed.stderr.strip()}.\n"
+              f"Once git works in {head_worktree} again, list the worktrees of the repository "
+              f"it belongs to with `git -C {head_worktree} worktree list`, and remove each one "
+              f"whose directory name starts with mac-claude-pr{number}- with "
+              f"`git -C {head_worktree} worktree remove --force <the path the list shows>`.\n"
+              f"If git cannot be made to work there, tell the user this whole message.",
               flush=True)
         return
     for line in listed.stdout.splitlines():
