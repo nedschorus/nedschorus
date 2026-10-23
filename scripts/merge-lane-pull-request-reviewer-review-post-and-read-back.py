@@ -53,11 +53,13 @@ EXIT_NOT_POSTED = 2
 REVIEW_FILE_UNUSABLE = (
     "review not posted: the review file {path} {reason}.\n"
     "Do not post the review any other way.\n"
-    "Tell the user this whole message.\n"
-    "If the file came from a reviewer's run, also tell the user that "
+    "If the file came from a reviewer's run, "
     "scripts/merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py, which ran "
-    "the reviewer, checks its answer and should have refused this file instead of handing it to "
-    "the posting script, and do not run that script again until the user answers.")
+    "the reviewer, should have refused this file instead of handing it to the posting script.\n"
+    "In that case, do not run "
+    "scripts/merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py again, for "
+    "any pull request, until the user answers.\n"
+    "Tell the user this whole message.")
 NOT_POSTED = (
     "review not posted: {reason}.\n"
     "Do not post the review any other way.\n"
