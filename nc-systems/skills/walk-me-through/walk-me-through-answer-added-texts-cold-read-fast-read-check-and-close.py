@@ -53,7 +53,9 @@ records the items it opens with, after any date or timestamp, as in `Item 4 of
 9:`, `- Item 4, <date>:` or `- <timestamp> Item 4 <rejected>`,
 when it says approved, disapproved, accepted, rejected or `<moved on, no
 decision>`; one that says deferred instead records a deferral; CHECK's answer
-lines record nothing. When the `#next_to_present` line names other items than
+lines record nothing. CLOSE refuses, writing nothing, when a line after the
+last answer line already opens with its item, because no check has run since
+that answer was closed. When the `#next_to_present` line names other items than
 the answer line, a new item a finding raised is waiting: the answer is recorded
 as held for it, and the line is written again unchanged as the last line.
 Either way it prints the lines the agent's next message must include, the
@@ -124,6 +126,11 @@ CHECK_DEFERRED_MINUTES = "{item}: the user answered deferred ({date_and_time}), 
 CLOSE_TOOK_EFFECT_MINUTES = "{item}: {answered}; every text the change adds has had a fast read. {outcome}"
 CLOSE_DEFERRED_MINUTES = "{item}: deferred; it moves to just before the summary item. <open>"
 CLOSE_DEFERRED_AGAIN_MINUTES = "{item}: deferred a second time, so it leaves the walk and stays open. <open>"
+CLOSE_ALREADY_RECORDED = (
+    "nothing written: the last answer line in {minutes}, for {item}, is already recorded by an earlier close, "
+    "so no check has run since then.\n"
+    "Run `python3 {program} check` first, with the flag for the user's answer as `--help` lists it, then close.\n"
+    "If check failed, fix what it printed before running close.")
 CLOSE_HELD_MINUTES = "{item}: answer held: {new_item}, raised by a fast-read finding, waits for the user's answer. <open>"
 CLOSE_TOOK_EFFECT_LINES = (
     "{item}'s answer is recorded in the minutes, and its change may now be made.",
@@ -380,7 +387,8 @@ def check(arguments):
 
 
 def last_answer(minutes):
-    """Return (item, answered, status lines) of the walk-minutes' last answer line, or raise Failure."""
+    """Return (item, answered, status lines) of the walk-minutes' last answer line, or raise Failure when
+    there is none or a close already recorded it."""
     lines = minutes.read_text(encoding="utf-8").split("\n")
     for index in range(len(lines) - 1, -1, -1):
         match = ANSWER_LINE.match(lines[index])
@@ -390,6 +398,11 @@ def last_answer(minutes):
                 if not line.startswith(STATUS_LINE_PREFIX):
                     break
                 statuses.append(line[len(STATUS_LINE_PREFIX):])
+            # Every line close writes for an answer opens with its item; without this, a close after a
+            # check that failed reads the earlier, already closed answer as one held for a new item.
+            if any(line.startswith(match["item"] + ": ") for line in lines[index + 1:]):
+                raise Failure(CLOSE_ALREADY_RECORDED.format(minutes=minutes, item=match["item"],
+                                                            program=Path(__file__).resolve()))
             return match["item"], match["answered"], statuses
     raise Failure(f"{minutes} has no line recording the user's answer; run "
                   f"`python3 {Path(__file__).resolve()} check` first, with the flag for the user's answer as "

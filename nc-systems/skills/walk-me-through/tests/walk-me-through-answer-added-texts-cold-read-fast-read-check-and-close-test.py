@@ -354,6 +354,36 @@ def test_close_without_a_check_fails():
           described(result))
 
 
+def test_close_after_a_failed_check_refuses_to_reread_a_closed_answer():
+    case = Case(next_to_present="item 4 of 9")
+    case.run("check")
+    case.run("close")
+    before = case.minutes.read_bytes()
+    failed_check = case.run("check", "--item", "6")
+    result = case.run("close")
+    check("close after a check that failed refuses, writing nothing, instead of holding the closed answer",
+          failed_check.returncode == 2
+          and result.returncode == 1 and result.stdout == "" and result.stderr.startswith(FAILURE_PREFIX + "close: ")
+          and "item 4 of 9, is already recorded by an earlier close" in result.stderr
+          and "\nRun `python3 " in result.stderr
+          and case.minutes.read_bytes() == before,
+          described(result))
+
+
+def test_close_run_twice_refuses_the_second_time():
+    case = Case()
+    case.run("check")
+    with open(case.minutes, "a") as minutes:
+        minutes.write("#next_to_present item 5 of 9\n")
+    case.run("close")
+    before = case.minutes.read_bytes()
+    result = case.run("close")
+    check("a second close of a held answer refuses, writing nothing",
+          result.returncode == 1 and "is already recorded by an earlier close" in result.stderr
+          and case.minutes.read_bytes() == before,
+          described(result))
+
+
 def test_no_open_walk_or_no_item_fails():
     case = Case(next_to_present="none, closed")
     result = case.run("check")
