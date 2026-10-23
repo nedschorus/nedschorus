@@ -433,6 +433,17 @@ def test_numbered_answers():
           and lines[2].startswith("A agrees with the item's recommendation; AO does the same")
           and "The answer does not name item 6 of 9, so it stays open; say so in your reply." in lines,
           f"lines {lines!r}")
+    text = " ".join(lines or [])
+    check("a numbered answer names each letter's check flag, records one item at a time through close, and "
+          "falls back to asking one item at a time",
+          all(flag in text for flag in ("AO does the same and marks the approval as obvious, with the flag --obvious",
+                                        "alternative, with the flag --disapproved",
+                                        "Z defers the item, with the flag --deferred"))
+          and ("Record the answers one item at a time, in the order given: for each, run the check step with that "
+               "answer's flag, then close, and do what close prints, before the next.") in text
+          and ("If check reports more than one item waiting, record nothing, and ask the user to answer those "
+               "items one at a time.") in text
+          and "makes a change waits for the check step" not in text, f"lines {lines!r}")
     for prompt, letters in (("5 d, 6 ao", ("D", "AO")), ("5d 6ao", ("D", "AO")), ("5 - a 6 - z", ("A", "Z")),
                             ("Item 5 AO; item 6 D", ("AO", "D"))):
         lines = case.lines(prompt)
@@ -623,13 +634,16 @@ def test_all_a_and_all_ao():
         check(f"{prompt!r} approves every waiting item",
               lines is not None
               and lines[1] == (f"\"{prompt.rstrip('.')}\" means A to every item now waiting, items 5 and 6 of 9: the "
-                               "user agrees with each one's recommendation. Do what each recommends; where that "
-                               "makes a change, first run the check step for that item."), f"lines {lines!r}")
+                               "user agrees with each one's recommendation. Do what each recommends. For each item, "
+                               "whether or not it makes a change, run the check step, then close, and do what close "
+                               "prints; write nothing in the minutes by hand."), f"lines {lines!r}")
     for prompt in ("all ao", "ao to all"):
         lines = case.lines(prompt)
         check(f"{prompt!r} approves every waiting item as obvious",
               lines is not None and lines[1].startswith(f"\"{prompt}\" means AO to every item now waiting")
-              and lines[1].endswith("first run the check step for that item with --obvious."), f"lines {lines!r}")
+              and lines[1].endswith("For each item, whether or not it makes a change, run the check step (with "
+                                    "--obvious for `all ao`), then close, and do what close prints; write nothing in "
+                                    "the minutes by hand."), f"lines {lines!r}")
     lines = Case().lines("all a")
     check("all a with no approval-walk acts on each open recommendation",
           lines is not None and lines[1].startswith("\"all a\" means the user agrees with every recommendation"),

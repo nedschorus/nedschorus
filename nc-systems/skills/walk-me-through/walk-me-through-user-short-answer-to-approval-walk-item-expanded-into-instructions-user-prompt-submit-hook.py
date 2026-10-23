@@ -237,22 +237,26 @@ NUMBERED_R_LINES = (
 )
 ALL_LINES = {
     "A": (("\"{answer}\" means A to every item now waiting, {item}: the user agrees with each one's "
-           "recommendation. Do what each recommends; where that makes a change, first run the check step "
-           "for that item.",),
+           "recommendation. Do what each recommends. For each item, whether or not it makes a change, run "
+           "the check step, then close, and do what close prints; write nothing in the minutes by hand.",),
           ("\"{answer}\" means the user agrees with every recommendation or proposal your last message left "
            "open. Act on each as for a single approval, with the fast reads that text sets out.",)),
     "AO": (("\"{answer}\" means AO to every item now waiting, {item}: the user agrees with each one's "
-            "recommendation and finds each obvious. Do what each recommends, and record each as AO; where "
-            "that makes a change, first run the check step for that item with --obvious.",),
+            "recommendation and finds each obvious. Do what each recommends. For each item, whether or not "
+            "it makes a change, run the check step (with --obvious for `all ao`), then close, and do what "
+            "close prints; write nothing in the minutes by hand.",),
            ("\"{answer}\" means the user agrees with every recommendation or proposal your last message left "
             "open, and finds each obvious. Act on each as for a single approval, with the fast reads that "
             "text sets out.",)),
 }
 NUMBERED_LINES = (
     ("The answer gives each item it names its own letter: {pairs}.",
-     "A agrees with the item's recommendation; AO does the same and marks the approval as obvious; D "
-     "disagrees with it, so D does the item's alternative; Z defers the item; R shows the item again. Any answer that makes a "
-     "change waits for the check step first, run with --obvious for an AO."),
+     "A agrees with the item's recommendation; AO does the same and marks the approval as obvious, with the "
+     "flag --obvious; D disagrees with it, so D does the item's alternative, with the flag --disapproved; Z "
+     "defers the item, with the flag --deferred; R shows the item again.",
+     "Record the answers one item at a time, in the order given: for each, run the check step with that "
+     "answer's flag, then close, and do what close prints, before the next. If check reports more than one "
+     "item waiting, record nothing, and ask the user to answer those items one at a time."),
     ("The answer gives each numbered question or point of your last message its own letter: {pairs}.",
      "Every question or point the answer does not name stays open; say so in your reply."),
 )

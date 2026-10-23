@@ -32,7 +32,9 @@ proposed text marked", into the walk-minutes, and prints the status lines, the
 judgement the agent must make on new reports, and the close step to run. It
 appends one line of counts to the log-store's COUNTS_LOG_FILE_NAME. A deferral
 changes nothing, so CHECK --deferred runs no fast read, logs no counts, and
-writes only the answer line.
+writes only the answer line. When the `#next_to_present` line names more than
+one item, CHECK refuses, writing nothing, because one run records one answer
+for every item it names.
 
 A fast read that prints a line opening FAILED, or exits nonzero, ends CHECK
 before the walk-minutes are written: the program prints that line, or a FAILED
@@ -126,6 +128,10 @@ CHECK_DEFERRED_MINUTES = "{item}: the user answered deferred ({date_and_time}), 
 CLOSE_TOOK_EFFECT_MINUTES = "{item}: {answered}; every text the change adds has had a fast read. {outcome}"
 CLOSE_DEFERRED_MINUTES = "{item}: deferred; it moves to just before the summary item. <open>"
 CLOSE_DEFERRED_AGAIN_MINUTES = "{item}: deferred a second time, so it leaves the walk and stays open. <open>"
+CHECK_SEVERAL_WAITING = (
+    "nothing written: the `#next_to_present` line in {minutes} names more than one item waiting, {item}, "
+    "and one check run records one answer for all of them.\n"
+    "Ask the user to answer those items one at a time, and run check for each answer as it comes.")
 CLOSE_ALREADY_RECORDED = (
     "nothing written: the last answer line in {minutes}, for {item}, is already recorded by an earlier close, "
     "so no check has run since then.\n"
@@ -340,6 +346,8 @@ def check(arguments):
     walk_finder = load_walk_finder()
     top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
     item, numbers, total = waiting_items(walk_finder, value, minutes)
+    if numbers[1:]:
+        raise Failure(CHECK_SEVERAL_WAITING.format(minutes=minutes, item=item))
     document, lines = item_lines(walk_finder, minutes, numbers, total, item, parser)
     if arguments.deferred:
         now = datetime.datetime.now().astimezone()

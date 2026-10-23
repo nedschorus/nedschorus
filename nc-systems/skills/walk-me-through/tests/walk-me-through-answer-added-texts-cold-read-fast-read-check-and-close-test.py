@@ -312,11 +312,21 @@ def test_a_waiting_item_under_a_heading_shared_with_another_reads_only_its_own_l
     check("check reads only the waiting item's #new lines under a heading shared with another item",
           result.returncode == 0 and case.calls.read_text() == "Item seven's text.\n"
           and "\nitem 7 of 9: the user answered approved (" in case.minutes.read_text(), described(result))
-    case = Case(next_to_present="items 6 and 7 of 9")
-    result = case.run("check")
-    check("check reads every waiting item",
-          result.returncode == 0 and case.calls.read_text() == "The path is docs/walk/.\nItem seven's text.\n",
-          described(result))
+
+
+def test_check_refuses_when_more_than_one_item_waits():
+    for flags in ((), ("--disapproved",), ("--deferred",)):
+        case = Case(next_to_present="items 6 and 7 of 9")
+        before = case.minutes.read_text()
+        result = case.run("check", *flags)
+        check(f"check {' '.join(flags) or 'with no flag'} refuses on stderr, writing nothing and running no fast read, "
+              "when more than one item waits",
+              result.returncode == 1
+              and result.stderr.startswith(FAILURE_PREFIX + "check: nothing written: ")
+              and "names more than one item waiting, items 6 and 7 of 9," in result.stderr
+              and "Ask the user to answer those items one at a time" in result.stderr
+              and case.minutes.read_text() == before and case.calls.read_text() == ""
+              and not case.counts_log.exists(), described(result))
 
 
 def test_item_under_a_shared_heading_with_no_line_of_its_own_reads_the_whole_unit():
@@ -580,7 +590,9 @@ def test_a_minutes_line_with_an_unusable_item_range_is_skipped():
 
 def test_the_walk_goes_on_after_the_last_of_several_items_answered_together():
     case = Case(next_to_present="items 3 and 6 of 9")
-    case.run("check")
+    with case.minutes.open("a") as minutes:
+        minutes.write("items 3 and 6 of 9: the user answered approved (2026-10-23 10:00), which makes its change. "
+                      "Fast reads:\n- no proposed text marked\n")
     closed = case.run("close")
     check("after items answered together, the walk starts after the last of them in the walk-document",
           closed.returncode == 0 and marker(case) == "#next_to_present item 7 of 9", described(closed))
