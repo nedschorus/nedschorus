@@ -304,37 +304,24 @@ def test_answer_flags_exclude_each_other_and_option_takes_2_or_3():
               described(result))
 
 
-def test_item_picks_one_of_the_waiting_items():
-    case = Case(next_to_present="items 6 and 7 of 9")
-    result = case.run("check", "--item", "7")
-    check("--item reads only that item's #new lines under a heading shared with another item",
+def test_a_waiting_item_under_a_heading_shared_with_another_reads_only_its_own_lines():
+    case = Case(next_to_present="item 7 of 9")
+    result = case.run("check")
+    check("check reads only the waiting item's #new lines under a heading shared with another item",
           result.returncode == 0 and case.calls.read_text() == "Item seven's text.\n"
           and "\nitem 7 of 9: the user answered approved (" in case.minutes.read_text(), described(result))
-    closed = case.run("close")
-    check("close records the one item's answer while the other is still waiting",
-          closed.returncode == 0 and closed.stdout.startswith("item 7 of 9's answer is recorded in the minutes")
-          and case.minutes.read_text().rstrip().endswith("item 7 of 9: approved; every text the change adds has had "
-                                                         "a fast read. <accepted>\n#next_to_present item 6 of 9")
-          and closed.stdout.rstrip().endswith("Then present item 6 of 9, which the minutes' `#next_to_present` "
-                                              "line now names."), described(closed))
     case = Case(next_to_present="items 6 and 7 of 9")
     result = case.run("check")
-    check("without --item, check reads every waiting item",
+    check("check reads every waiting item",
           result.returncode == 0 and case.calls.read_text() == "The path is docs/walk/.\nItem seven's text.\n",
-          described(result))
-    case = Case(next_to_present="items 6 and 7 of 9")
-    result = case.run("check", "--item", "8", "--disapproved")
-    check("--item naming an item that is not waiting fails on stderr, writing nothing",
-          result.returncode == 1 and result.stderr.startswith(FAILURE_PREFIX + "check: --item 8 is not among")
-          and "give one of 6, 7" in result.stderr and "the user answered" not in case.minutes.read_text(),
           described(result))
 
 
 def test_item_under_a_shared_heading_with_no_line_of_its_own_reads_the_whole_unit():
     document = WALK_DOCUMENT + "\n## Items 8 and 9 of 9: two rows\n\n#new \"Row eight.\"\n\n#new \"Row nine.\"\n\nNo count per row.\n"
-    case = Case(next_to_present="items 8 and 9 of 9", document=document)
-    result = case.run("check", "--item", "8")
-    check("--item on a shared heading whose items have no count line of their own reads every #new line of it",
+    case = Case(next_to_present="item 8 of 9", document=document)
+    result = case.run("check")
+    check("a waiting item on a shared heading whose items have no count line of their own reads every #new line of it",
           result.returncode == 0 and case.calls.read_text() == "Row eight.\nRow nine.\n", described(result))
 
 
@@ -432,8 +419,8 @@ def test_a_deferral_is_recorded_and_the_item_comes_back_before_the_summary_item(
                                               "just before the summary item.")
           and "item 2 of 5: deferred; it moves to just before the summary item. <open>\n" in case.minutes.read_text()
           and marker(case) == "#next_to_present item 3 of 5", described(closed) + case.minutes.read_text())
-    for item in ("3", "4"):
-        case.run("check", "--item", item)
+    for _ in range(2):
+        case.run("check")
         case.run("close")
     check("a deferred item is named again just before the summary item",
           marker(case) == "#next_to_present item 2 of 5", case.minutes.read_text())
@@ -464,7 +451,7 @@ def test_an_item_deferred_a_second_time_leaves_the_walk():
           and "item 2 of 5: deferred a second time, so it leaves the walk and stays open. <open>\n"
           in case.minutes.read_text()
           and marker(case) == "#next_to_present item 3 of 5", described(closed) + case.minutes.read_text())
-    case.run("check", "--item", "3")
+    case.run("check")
     case.run("close")
     check("once every other item is recorded, the twice-deferred item is not named and the walk closes",
           marker(case) == "#next_to_present none, closed", case.minutes.read_text())
@@ -548,16 +535,6 @@ def test_a_deferred_last_item_hands_on_to_the_first_unrecorded_item():
     closed = case.run("close")
     check("deferring the walk-document's last item, with no summary item, names the first item not recorded",
           closed.returncode == 0 and marker(case) == "#next_to_present item 3 of 9", case.minutes.read_text())
-
-
-def test_items_shown_together_stay_waiting_until_each_is_answered():
-    case = summary_case(next_to_present="items 2, 3 and 4 of 5")
-    case.run("check", "--item", "2")
-    closed = case.run("close")
-    check("answering one of three items shown together leaves the other two named",
-          closed.returncode == 0 and marker(case) == "#next_to_present items 3 and 4 of 5"
-          and closed.stdout.rstrip().endswith("Then present items 3 and 4 of 5, which the minutes' "
-                                              "`#next_to_present` line now names."), described(closed))
 
 
 def test_a_minutes_line_with_an_unusable_item_range_is_skipped():

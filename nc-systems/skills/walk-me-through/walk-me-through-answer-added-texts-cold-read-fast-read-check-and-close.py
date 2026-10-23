@@ -6,15 +6,14 @@ cold-read-fast-read, then record the answer in the walk-minutes and set their
 
 Usage, from the agent-session's checkout:
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check
-      [--obvious | --after-advisor | --disapproved | --deferred | --option N] [--item N]
+      [--obvious | --after-advisor | --disapproved | --deferred | --option N]
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py close
 
 The answer is an approval, A, unless a flag says otherwise: --obvious for AO,
 --after-advisor for Aa, --disapproved for D, --deferred for Z, --option 2 or 3
 for O2 or O3, which approve the item's "Option N" paragraph instead of its
 recommendation. R, E and O decide nothing, so the program takes no flag for
-them. --item N picks one of the
-waiting items when the `#next_to_present` line names several.
+them.
 
 The open approval-walk and its waiting items are found with WALK_FINDER_FILE,
 loaded by path, the module the walk-me-through Stop hook uses too, so the
@@ -205,16 +204,6 @@ def waiting_items(walk_finder, value, minutes):
     return match[0], numbers, total
 
 
-def chosen_item(count, numbers, total, item, minutes):
-    """Return (running count, item numbers) of the item --item names, or of every waiting item without it."""
-    if item is None:
-        return count, numbers
-    if item not in numbers:
-        raise Failure(f"--item {item} is not among the items the last `#next_to_present` line in {minutes} "
-                      f"names, `{count}`; give one of {', '.join(numbers)}.")
-    return (f"item {item} of {total}" if total else f"item {item}"), [item]
-
-
 def item_lines(walk_finder, minutes, numbers, total, count, parser):
     """Return (walk-document path, the lines of the items numbered, outside fenced code)."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
@@ -337,16 +326,13 @@ def check_flags(arguments):
         flags += " --deferred"
     if arguments.option is not None:
         flags += f" --option {arguments.option}"
-    if arguments.item is not None:
-        flags += f" --item {arguments.item}"
     return flags
 
 
 def check(arguments):
     walk_finder = load_walk_finder()
     top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
-    count, numbers, total = waiting_items(walk_finder, value, minutes)
-    item, numbers = chosen_item(count, numbers, total, arguments.item, minutes)
+    item, numbers, total = waiting_items(walk_finder, value, minutes)
     document, lines = item_lines(walk_finder, minutes, numbers, total, item, parser)
     if arguments.deferred:
         now = datetime.datetime.now().astimezone()
@@ -524,7 +510,6 @@ def main(argv=None):
     answer.add_argument("--deferred", action="store_true", help="check: the answer was Z, defer")
     answer.add_argument("--option", type=int, choices=(2, 3),
                         help="check: the answer was O2 or O3, approving the item's \"Option N\" paragraph")
-    parser.add_argument("--item", help="check: the one waiting item the answer is for, such as 5 or 4.1")
     parser.add_argument("--cwd", default=os.getcwd(), help="a directory in the walk's checkout")
     parser.add_argument("--cold-read-records", type=Path, action="append",
                         help="a cold-read-records directory to search instead of the defaults; repeatable")
