@@ -7,7 +7,7 @@ Wired as a UserPromptSubmit hook in .claude/settings.json. The prompt is
 stripped of surrounding whitespace, and of one trailing period for every form
 but a rider, then read, ignoring case, as the first of these forms it matches:
 
-  SINGLE      one answer: A, AO, D, Z, R, E, O, O2 or O3, or a word approve,
+  SINGLE      one answer: A, AO, Aa, D, Z, R, E, O, O2 or O3, or a word approve,
               approved, approve as obvious, disapprove, disapproved, defer,
               later or repeat.
   ALL         `all a`, `a to all`, `all ao`, `ao to all`.
@@ -24,9 +24,11 @@ but a rider, then read, ignoring case, as the first of these forms it matches:
 Every other prompt prints nothing and exits 0 without reading any file: Y, N
 and C are not answers.
 
-A, AO and D answer the item's recommendation: A and AO approve it, D
-disapproves it, so the item's alternative is done. An answer that makes a
-change sends the agent to CHECK_PROGRAM's check step, with --obvious for AO.
+A, AO, Aa and D answer the item's recommendation: A, AO and Aa approve it,
+Aa only after an advisor check, which the agent makes as AA_SKILL_TEXT, the
+walk-me-through skill's text for Aa, says; D disapproves it, so the item's
+alternative is done. An answer that makes a change sends the agent to
+CHECK_PROGRAM's check step, with --obvious for AO and --after-advisor for Aa.
 O asks the agent to show the item again with an "Option 2" and an "Option 3"
 paragraph; O2 and O3 approve one of them, through the check step with
 --option.
@@ -62,7 +64,7 @@ then ONE_QUESTION_LINE.
 
 WHEN READING THE WALK STATE FAILS, such as a minutes file that is not UTF-8,
 the first line says so and why, and the text gives the answer's lines both for
-an open approval-walk and for none. When an A, AO or D answer reaches an item
+an open approval-walk and for none. When an A, AO, Aa or D answer reaches an item
 whose recommendation cannot be read, RECOMMENDATION_UNKNOWN_LINE says why and
 what to do. A payload that is not JSON is a fault: one line on stderr, exit 1,
 which Claude Code records as a non-blocking error.
@@ -86,9 +88,9 @@ EXPLAIN_SKILL = CHECKOUT / ".claude" / "skills" / "explain" / "SKILL.md"
 # Longer forms first, so `ao` is not read as `a` and `approve as obvious` not as `approve`.
 WORDS = {"approve as obvious": "AO", "approved": "A", "approve": "A", "disapproved": "D",
          "disapprove": "D", "defer": "Z", "later": "Z", "repeat": "R"}
-LETTERS = ("ao", "a", "d", "z", "r", "e", "o", "o2", "o3")
+LETTERS = ("aa", "ao", "a", "d", "z", "r", "e", "o", "o2", "o3")
 NUMBER = r"\d+(?:\.\d+)*"
-LETTER = r"ao|o[23]|[adzreo]"
+LETTER = r"aa|ao|o[23]|[adzreo]"
 WORD = "|".join(word.replace(" ", r"\s+") for word in WORDS)
 ANSWER = rf"(?P<answer>{WORD}|{LETTER})"
 ALL = re.compile(r"^(?:all\s+(?P<first>ao|a)|(?P<last>ao|a)\s+to\s+all)$", re.I)
@@ -105,7 +107,9 @@ LETTER_RIDER = re.compile(
 WORD_RIDER = re.compile(rf"^(?P<answer>{WORD})\b[\s,;:.\-]+{NOT_AN_ITEM_NUMBER}(?P<rest>\S.*)$", re.I | re.S)
 RECOMMENDATION = re.compile(r"Recommendation:(.*)$", re.I | re.M)
 NO_RECOMMENDATION_PROBLEM = "no line starting \"Recommendation:\""
-CHANGE_MAKING_ANSWERS = ("A", "AO", "D")
+CHANGE_MAKING_ANSWERS = ("A", "AO", "AA", "D")
+# How an answer code is written to the agent: Aa's second letter is lower case.
+CODE_NAMES = {"AA": "Aa"}
 
 OPEN_WALK_OPENING = "The user answered \"{answer}\" to {item} of approval-walk {walk}."
 NO_WALK_OPENING = "The user answered \"{answer}\"; no approval-walk is open."
@@ -121,6 +125,16 @@ ONE_QUESTION_LINE = (
     "If your last message to the user left more than one question open, ask him which one this "
     "answer is for, naming each, and act on none of them until he says.")
 
+# The walk-me-through skill's text for Aa, word for word; the hook's test checks SKILL.md still holds it.
+AA_SKILL_TEXT = (
+    "**Aa** approves after an advisor check. Write in the conversation, for the advisor, the question "
+    "whether anything it sees would change what the item decides, then the six questions listed in the "
+    "section \"Advisor\", then call the advisor. If the advisor finds something that would change what the "
+    "item decides, revise the item, mark what changed [advisor], and show the revised item again for the "
+    "user to answer. Otherwise record the approval and go to the next item; what the advisor raised "
+    "outside the item becomes a new item in the walk or a loose end. If the call fails, say so and show "
+    "the item again, unapproved; the user may then answer A to approve it without the check."
+)
 CHECK_COMMAND = "`python3 {checkout}/nc-systems/skills/walk-me-through/{program} check`"
 # Each answer's lines: (lines while an approval-walk is open, lines while none is).
 MEANINGS = {
@@ -148,6 +162,22 @@ MEANINGS = {
            ("AO means approve as obvious: the user agrees with your last recommendation or proposal, and "
             "finds it obvious. With no approval-walk open there are no minutes to mark, so act exactly as "
             "for A.",)),
+    "AA": (("Aa means approve after an advisor check: the user agrees with the recommendation of {item}{recommended}, "
+            "once the advisor has checked it. The walk-me-through skill's text for Aa says what to do:",
+            "{aa_skill_text}",
+            "If the approval is recorded and it makes a change, first run "
+            "`python3 {checkout}/nc-systems/skills/walk-me-through/{program} check --after-advisor` and do what it "
+            "prints; the program marks the answer.",
+            "If the approval is recorded and it makes no change, write the answer in the minutes as "
+            "\"approved #approved_after_advisor\", the hashtag right after the word."),
+           ("Aa means approve after an advisor check: the user agrees with your last recommendation or proposal, "
+            "once the advisor has checked it.",
+            "Write in the conversation, for the advisor, the question whether anything it sees would change what "
+            "you recommended, then the six questions listed in the walk-me-through skill's section \"Advisor\", "
+            "then call the advisor.",
+            "If the advisor finds something that would change your recommendation, put the changed recommendation "
+            "to the user instead of acting on it; if the call fails, say so, and act only when he answers again.",
+            "Otherwise act exactly as for A.")),
     "D": (("{word} means disapprove: the user disagrees with the recommendation of {item}{recommended}.",
            "If the item gives no single alternative, ask the user what he wants done instead, and act on "
            "nothing yet.",
@@ -265,7 +295,8 @@ def load_walk_finder():
 
 
 def answer_code(answer):
-    """The answer's code, A, AO, D, Z, R, E, O, O2 or O3, from a letter or a word in any case and spacing."""
+    """The answer's code, A, AO, AA for Aa, D, Z, R, E, O, O2 or O3, from a letter or a word in any case and
+    spacing."""
     lowered = " ".join(answer.lower().split())
     return WORDS.get(lowered, lowered.upper())
 
@@ -402,14 +433,14 @@ def item_name(number, walk):
 
 
 def recommendation_unknown_lines(answer_letter, numbers, walk):
-    """A line for each item an A, AO or D answer reaches whose recommendation the hook could not read."""
+    """A line for each item an A, AO, Aa or D answer reaches whose recommendation the hook could not read."""
     if answer_letter not in CHANGE_MAKING_ANSWERS or walk is None:
         return []
+    name = CODE_NAMES.get(answer_letter, answer_letter)
     if walk.problem:
-        return [RECOMMENDATION_UNKNOWN_LINE.format(item=walk.item, problem=walk.problem,
-                                                   answer_letter=answer_letter)]
+        return [RECOMMENDATION_UNKNOWN_LINE.format(item=walk.item, problem=walk.problem, answer_letter=name)]
     return [RECOMMENDATION_UNKNOWN_LINE.format(item=item_name(number, walk), problem=NO_RECOMMENDATION_PROBLEM,
-                                               answer_letter=answer_letter)
+                                               answer_letter=name)
             for number in numbers if walk.recommendations.get(number) is None]
 
 
@@ -420,7 +451,7 @@ def meaning_lines(answer, walk, in_walk):
     item = walk.item if walk else "the waiting item"
     numbers = walk.numbers if walk else []
     values = {"item": item, "answer": answer["answer"], "checkout": CHECKOUT, "program": CHECK_PROGRAM.name,
-              "explain_skill": EXPLAIN_SKILL}
+              "explain_skill": EXPLAIN_SKILL, "aa_skill_text": AA_SKILL_TEXT}
     form = answer["form"]
     if form == "numbered":
         pairs = ", ".join(f"{item_name(number, walk) if in_walk else number}: {letter}"

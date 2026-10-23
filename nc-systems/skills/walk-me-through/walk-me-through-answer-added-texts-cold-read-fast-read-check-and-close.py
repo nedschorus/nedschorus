@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Carry out the user's A, AO, D, Z, O2 or O3 answer to the waiting item of an
+"""Carry out the user's A, AO, Aa, D, Z, O2 or O3 answer to the waiting item of an
 open approval-walk: give each text the answered item adds, its `#new` lines, a
 cold-read-fast-read, then record the answer in the walk-minutes and set their
 `#next_to_present` line to the next item.
 
 Usage, from the agent-session's checkout:
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check
-      [--obvious | --disapproved | --deferred | --option N] [--item N]
+      [--obvious | --after-advisor | --disapproved | --deferred | --option N] [--item N]
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py close
 
 The answer is an approval, A, unless a flag says otherwise: --obvious for AO,
---disapproved for D, --deferred for Z, --option 2 or 3 for O2 or O3, which
-approve the item's "Option N" paragraph instead of its recommendation. R, E and
-O decide nothing, so the program takes no flag for them. --item N picks one of the
+--after-advisor for Aa, --disapproved for D, --deferred for Z, --option 2 or 3
+for O2 or O3, which approve the item's "Option N" paragraph instead of its
+recommendation. R, E and O decide nothing, so the program takes no flag for
+them. --item N picks one of the
 waiting items when the `#next_to_present` line names several.
 
 The open approval-walk and its waiting items are found with WALK_FINDER_FILE,
@@ -88,10 +89,12 @@ PROGRAM = "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-clos
 
 NEW_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*#new\b[:\s]*(.*)$")
 QUOTE_PAIRS = (('"', '"'), ("“", "”"), ("'", "'"))
-ANSWER_LINE = re.compile(r"^(?P<item>items? .+?): the user answered (?P<answered>.+?)(?: #approved_obvious)? "
-                         r"\([^)]*\), which makes (?:its change\. Fast reads:|no change\.)$")
+ANSWER_LINE = re.compile(r"^(?P<item>items? .+?): the user answered (?P<answered>.+?)"
+                         r"(?: #approved_(?:obvious|after_advisor))? \([^)]*\), "
+                         r"which makes (?:its change\. Fast reads:|no change\.)$")
 STATUS_LINE_PREFIX = "- "
 OBVIOUS_HASHTAG = " #approved_obvious"
+AFTER_ADVISOR_HASHTAG = " #approved_after_advisor"
 APPROVED, DISAPPROVED, DEFERRED = "approved", "disapproved", "deferred"
 OUTCOMES = {APPROVED: "<accepted>", DISAPPROVED: "<rejected>"}
 
@@ -117,7 +120,7 @@ FAST_READ_FAILED_LINES = (
     "Tell the user the line above, and ask whether to run `python3 {program} check{flags}` again or "
     "answer the item another way.",
 )
-CHECK_MINUTES = "{item}: the user answered {answered}{obvious} ({date_and_time}), which makes its change. Fast reads:"
+CHECK_MINUTES = "{item}: the user answered {answered}{hashtag} ({date_and_time}), which makes its change. Fast reads:"
 CHECK_DEFERRED_MINUTES = "{item}: the user answered deferred ({date_and_time}), which makes no change."
 CLOSE_TOOK_EFFECT_MINUTES = "{item}: {answered}; every text the change adds has had a fast read. {outcome}"
 CLOSE_DEFERRED_MINUTES = "{item}: deferred; it moves to just before the summary item. <open>"
@@ -312,11 +315,22 @@ def answered_word(arguments):
     return APPROVED
 
 
+def answer_hashtag(arguments):
+    """The hashtag the walk-minutes write right after an AO or Aa approval, or nothing."""
+    if arguments.obvious:
+        return OBVIOUS_HASHTAG
+    if arguments.after_advisor:
+        return AFTER_ADVISOR_HASHTAG
+    return ""
+
+
 def check_flags(arguments):
     """The flags this check step was run with, to repeat in the command it tells the agent to rerun."""
     flags = ""
     if arguments.obvious:
         flags += " --obvious"
+    if arguments.after_advisor:
+        flags += " --after-advisor"
     if arguments.disapproved:
         flags += " --disapproved"
     if arguments.deferred:
@@ -358,7 +372,7 @@ def check(arguments):
         statuses.append(NO_PROPOSED_TEXT)
     now = datetime.datetime.now().astimezone()
     append_to_minutes(minutes, [CHECK_MINUTES.format(item=item, answered=answered_word(arguments),
-                                                     obvious=OBVIOUS_HASHTAG if arguments.obvious else "",
+                                                     hashtag=answer_hashtag(arguments),
                                                      date_and_time=f"{now:%Y-%m-%d %H:%M}")]
                       + [STATUS_LINE_PREFIX + status for status in statuses])
     output = list(statuses)
@@ -504,6 +518,8 @@ def main(argv=None):
     parser.add_argument("step", choices=("check", "close"))
     answer = parser.add_mutually_exclusive_group()
     answer.add_argument("--obvious", action="store_true", help="check: the answer was AO, approve as obvious")
+    answer.add_argument("--after-advisor", action="store_true",
+                        help="check: the answer was Aa, approve after an advisor check")
     answer.add_argument("--disapproved", action="store_true", help="check: the answer was D, disapprove")
     answer.add_argument("--deferred", action="store_true", help="check: the answer was Z, defer")
     answer.add_argument("--option", type=int, choices=(2, 3),

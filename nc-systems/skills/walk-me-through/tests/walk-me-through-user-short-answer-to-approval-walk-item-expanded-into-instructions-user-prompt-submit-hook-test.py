@@ -58,6 +58,8 @@ Item 6 of 9 drops a sentence; the sentence may still be needed. Recommendation: 
 NO_WALK_MEANINGS = {
     "A": "A means approve: the user agrees with your last recommendation or proposal. Do what it says.",
     "AO": "AO means approve as obvious: the user agrees with your last recommendation or proposal, and finds it obvious.",
+    "Aa": "Aa means approve after an advisor check: the user agrees with your last recommendation or proposal, "
+          "once the advisor has checked it.",
     "D": "D means disapprove: the user disagrees with your last recommendation or proposal. Do not act on it.",
     "Z": "Z means defer: postpone your last question or proposal and record it as a task.",
     "defer": "Z means defer: postpone your last question or proposal and record it as a task.",
@@ -148,7 +150,7 @@ def test_each_single_answer_in_either_case_with_or_without_a_period():
 def test_retired_letters_o_and_other_prompts_print_nothing():
     case = Case(next_to_present="item 3 of 9")
     for prompt in ("y", "n", "c", "l", "L.", "1 l", "l, later", "Y.", "all o", "1 o2", "o4", "oo", "all y", "1 y 2 n", "5 n, 6 y", "y but quickly",
-                   "yes", "a a", "aa", "A..", "X", "", ".", "a lot of things to do", "I think a",
+                   "yes", "a a", "aaa", "A..", "X", "", ".", "a lot of things to do", "I think a",
                    "4", "1a2d", "1 c", "1 ab", "explain", "repeater", "deferred", "aol"):
         result = case.run(prompt)
         check(f"{prompt!r} prints nothing",
@@ -185,6 +187,35 @@ def test_ao_runs_the_check_step_with_obvious():
     lines = Case().lines("ao")
     check("AO with no approval-walk acts as for A",
           lines is not None and lines[1].endswith("so act exactly as for A."), f"lines {lines!r}")
+
+
+SKILL_FILE = CHECKOUT / ".claude" / "skills" / "walk-me-through" / "SKILL.md"
+
+
+def test_aa_in_any_mix_of_capitals_runs_the_check_step_with_after_advisor():
+    case = Case(next_to_present="item 4 of 9")
+    skill_lines = SKILL_FILE.read_text().split("\n")
+    for prompt in ("aa", "AA", "aA", "Aa", "Aa."):
+        lines = case.lines(prompt)
+        check(f"{prompt!r} is Aa: it carries the skill's text for Aa and runs the check step with --after-advisor",
+              lines is not None
+              and lines[1].startswith("Aa means approve after an advisor check: the user agrees with the "
+                                      "recommendation of item 4 of 9 (leave the filter out), once the advisor "
+                                      "has checked it.")
+              and lines[2].startswith("**Aa** approves after an advisor check.") and lines[2] in skill_lines
+              and f"If the approval is recorded and it makes a change, first run `{CHECK} --after-advisor` and do "
+                  "what it prints; the program marks the answer." in lines
+              and any("\"approved #approved_after_advisor\"" in line for line in lines), f"lines {lines!r}")
+    lines = Case().lines("aA")
+    check("Aa with no approval-walk asks the advisor first, then acts as for A",
+          lines is not None and lines[1].startswith("Aa means approve after an advisor check")
+          and any("the six questions listed in the walk-me-through skill's section \"Advisor\"" in line
+                  for line in lines)
+          and lines[-2] == "Otherwise act exactly as for A.", f"lines {lines!r}")
+    for prompt, meaning in (("a", "A means approve:"), ("AO", "AO means approve as obvious:")):
+        lines = case.lines(prompt)
+        check(f"{prompt!r} still means what it meant before Aa", lines is not None and lines[1].startswith(meaning),
+              f"lines {lines!r}")
 
 
 def test_d_does_the_alternative_after_the_check_step():
@@ -297,7 +328,7 @@ def test_no_open_walk():
 
 def test_an_item_without_a_recommendation_line_is_reported_for_a_ao_and_d():
     case = Case(next_to_present="item 3 of 9")
-    for letter in ("A", "AO", "D"):
+    for letter in ("A", "AO", "Aa", "D"):
         lines = case.lines(letter.lower())
         check(f"{letter} on an item with no recommendation says so and how to go on",
               lines is not None and unknown_line("item 3 of 9", NO_RECOMMENDATION, letter) in lines
@@ -617,6 +648,7 @@ def test_condition_and_rider():
             ("A but will need careful instructional wording.", "but will need careful instructional wording.",
              "A means approve"),
             ("d and r", "and r", "D means disapprove"), ("ao, keep the old name", "keep the old name", "AO means"),
+            ("aa, keep the old name", "keep the old name", "Aa means approve after an advisor check"),
             ("z - later", "later", "Z means defer"), ("approved next", "next", "Approved means approve"),
             ("approve as obvious, thanks", "thanks", "AO means")):
         lines = case.lines(prompt)
@@ -647,6 +679,7 @@ def test_each_check_command_the_hook_names_runs_on_the_real_program():
     """The command is run as the hook prints it, plus --counts-log, so no test line reaches the log-store.
     Item 3 has no `#new` line, so no fast read, and no model, is called."""
     for prompt, word in (("a", "approved ("), ("ao", "approved #approved_obvious ("),
+                         ("aa", "approved #approved_after_advisor ("),
                          ("o2", "approved option 2 ("), ("o3", "approved option 3 (")):
         case = Case(next_to_present="item 3 of 9")
         lines = case.lines(prompt) or []

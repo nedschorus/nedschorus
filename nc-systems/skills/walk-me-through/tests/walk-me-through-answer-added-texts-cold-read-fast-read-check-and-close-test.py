@@ -218,6 +218,10 @@ def test_a_failed_fast_read_stops_the_check():
           and "close.py check --obvious` again" in result.stdout, described(result))
     check("after a FAILED fast read the minutes do not record the answer", case.minutes.read_text() == before,
           case.minutes.read_text())
+    case = Case()
+    result = case.run("check", "--after-advisor", mode="failed")
+    check("after a FAILED fast read on an Aa answer, the rerun command keeps --after-advisor",
+          result.returncode == 1 and "close.py check --after-advisor` again" in result.stdout, described(result))
 
 
 def test_a_fast_read_that_exits_nonzero_without_a_line_is_a_failure():
@@ -272,6 +276,8 @@ def test_each_answer_is_recorded_as_its_word():
     for flags, first, last in (
             (("--obvious",), "the user answered approved #approved_obvious (",
              "item 4 of 9: approved; every text the change adds has had a fast read. <accepted>"),
+            (("--after-advisor",), "the user answered approved #approved_after_advisor (",
+             "item 4 of 9: approved; every text the change adds has had a fast read. <accepted>"),
             (("--disapproved",), "the user answered disapproved (",
              "item 4 of 9: disapproved; every text the change adds has had a fast read. <rejected>"),
             (("--option", "2"), "the user answered approved option 2 (",
@@ -288,7 +294,9 @@ def test_each_answer_is_recorded_as_its_word():
 
 
 def test_answer_flags_exclude_each_other_and_option_takes_2_or_3():
-    for flags in (("--obvious", "--disapproved"), ("--disapproved", "--option", "2"), ("--option", "4")):
+    for flags in (("--obvious", "--disapproved"), ("--disapproved", "--option", "2"), ("--option", "4"),
+                  ("--after-advisor", "--obvious"), ("--after-advisor", "--disapproved"),
+                  ("--after-advisor", "--deferred"), ("--after-advisor", "--option", "2")):
         case = Case(next_to_present="item 4 of 9")
         result = case.run("check", *flags)
         check(f"check {' '.join(flags)} is refused as usage, writing nothing",
