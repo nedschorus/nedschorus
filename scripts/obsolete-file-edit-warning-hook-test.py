@@ -899,6 +899,19 @@ with tempfile.TemporaryDirectory() as temporary_directory:
           and "main deleted lib/moved.py" not in last_line
           and "main moved lib/moved.py to" not in last_line,
           agent_text(result))
+    check("detached: the could-not-tell line names a show command whose R line gives "
+          "the new path",
+          "`git show --name-status -M --format= <that commit>`. If a line there starts "
+          "with R and names lib/moved.py, main moved the file, and your edit belongs at "
+          "the second path on that line." in last_line, last_line)
+    removing_commit = git(["log", "-1", "--format=%h", "origin/main", "--",
+                           "lib/moved.py"], detached).stdout.strip()
+    shown = git(["show", "--name-status", "-M", "--format=", removing_commit],
+                detached).stdout.splitlines()
+    check("detached: that show command prints the move as R, the old path, the new path",
+          any(line.startswith("R") and line.split("\t")[1:] == ["lib/moved.py",
+                                                                  "lib/renamed.py"]
+              for line in shown), "\n".join(shown))
     git(["checkout", "-q", "--", "lib/moved.py"], detached)
 
     (detached_git_dir / "rebase-merge").mkdir()

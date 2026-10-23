@@ -249,9 +249,10 @@ MAIN_DELETED_FILE_LINE = (
 MAIN_LOST_FILE_UNKNOWN_LINE = (
     "main no longer has a file at {path}, and git could not tell whether main moved or "
     "deleted it ({text}). Run `git log -1 --format=%h origin/main -- {path}` for the "
-    "commit that removed it, then `git show --stat -M <that commit>`. If a line there "
-    "shows {path} with `=>`, main moved the file, and your edit belongs at the path "
-    "after the `=>`. Otherwise main deleted it: drop this edit with `git checkout -- "
+    "commit that removed it, then `git show --name-status -M --format= <that commit>`. "
+    "If a line there starts with R and names {path}, main moved the file, and your "
+    "edit belongs at the second path on that line. Otherwise main deleted it: drop "
+    "this edit with `git checkout -- "
     "{path}`, and if your fix is still needed, make it in the file that does that job "
     "on main now, on a topic branch from origin/main (`git switch -c <a-branch-name> "
     "origin/main`)."
