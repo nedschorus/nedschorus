@@ -303,7 +303,8 @@ def working_directories_from_process_table(process_table_directory: Path):
             # The process ended while the table was read; it occupies nothing.
             continue
         except PermissionError:
-            # Another user's process; lsof run as this user cannot read it either.
+            # Another user's process, or one of this user's that is not dumpable, such as ssh-agent;
+            # lsof run as this user cannot read either.
             continue
         except OSError as error:
             problem = (f"the occupancy check ({process_table_directory}) could not read the working "

@@ -322,8 +322,13 @@ def latest_unanswered_disconnect(transcript: Path, transcript_read_positions=Non
             elif str(entry.get("content", "")).startswith(DISCONNECT_TEXT):
                 latest = entry
         stream.seek(max(0, offset - BYTES_COMPARED_BEFORE_SAVED_OFFSET))
-        bytes_before = stream.read(offset - stream.tell())
-    transcript_read_positions[key] = {"offset": offset, "bytes_before": bytes_before.hex(), "latest": latest}
+        wanted = offset - stream.tell()
+        bytes_before = stream.read(wanted)
+    if len(bytes_before) == wanted:
+        transcript_read_positions[key] = {"offset": offset, "bytes_before": bytes_before.hex(), "latest": latest}
+    else:
+        # The file shrank after the scan; a short window could never match, so the next run reads whole.
+        transcript_read_positions.pop(key, None)
     return latest
 
 
@@ -345,8 +350,8 @@ def transcript_read_positions_load(log_directory: Path):
     return positions
 
 
-def transcript_read_positions_save(log_directory: Path, positions):
-    """Save the read positions; when that fails, say so, and the next run reads every transcript whole."""
+def transcript_read_positions_save(log_directory: Path, positions) -> bool:
+    """Save the read positions and return True; when that fails, say so and return False."""
     path = log_directory / TRANSCRIPT_READ_POSITIONS_FILE_NAME
     temporary = path.with_name(path.name + ".new")
     try:
@@ -355,6 +360,8 @@ def transcript_read_positions_save(log_directory: Path, positions):
     except OSError as error:
         print(f"{PROGRAM}: the read positions were not saved to {path} ({error}); the next run reads "
               "every transcript whole.", file=sys.stderr)
+        return False
+    return True
 
 
 def prompt_line_is_empty(pane_text: str) -> bool:
@@ -486,7 +493,8 @@ def run_once(environment) -> int:
             run = Run(log_directory)
             for seat, pid, age in running_agent_seats(process_table(process_table_directory)):
                 check_seat(run, seat, pid, age, session_records_directory, projects_directory)
-            transcript_read_positions_save(log_directory, run.transcript_read_positions)
+            if not transcript_read_positions_save(log_directory, run.transcript_read_positions):
+                run.failed = True
         except Exception as error:  # noqa: BLE001 - a failed run must reach the user, not only cron's log
             report_run_failure(log_directory, f"{type(error).__name__}: {error}")
             raise
