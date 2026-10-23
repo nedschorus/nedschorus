@@ -484,7 +484,7 @@ def never_pushed_rebase_line(base, resolution="resolving the conflict"):
             "it; the lines below do not apply." % (base, resolution))
 
 
-def replacement_pull_request_lines(base):
+def replacement_pull_request_lines(head, base):
     """Return the instructions for clearing a conflict with a new pull request."""
     return [
         "Do not merge %s into this branch: a conflict with %s is never cleared "
@@ -493,7 +493,7 @@ def replacement_pull_request_lines(base):
         "If it has been pushed, do not push it again: its pull request is "
         "closed, and replaced by a new one only if %s still lacks some of its "
         "work. To see which commits on %s changed each conflicting file, run "
-        "git log --oneline HEAD..%s -- <file>." % (base, base, base),
+        "git log --oneline %s..%s -- <file>." % (base, base, head, base),
         "If %s already holds all of this branch's work, close the pull request "
         "with a comment naming the commit or pull request on %s that holds it, "
         "and open no new pull request." % (base, base),
@@ -619,10 +619,10 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
                         "CONFLICTING; GitHub decides whether the merge is "
                         "allowed, so the pull request is replaced as the "
                         "lines above say. git names no conflicting file, so "
-                        "run git log --oneline HEAD..%s instead of the "
+                        "run git log --oneline %s..%s instead of the "
                         "per-file command above, to see what %s changed. If "
                         "GitHub reports the new pull request CONFLICTING too, "
-                        "tell the user." % (base, base))
+                        "tell the user." % (head, base, base))
                     conflict = True
                 elif verdict == "MERGEABLE" and conflict:
                     lines.append(
@@ -643,7 +643,7 @@ def check(head, base, pull_request=None, runner=run, sleep=time.sleep,
         lines[0:0] = [
             "VERDICT: CONFLICT -- %s conflicts with %s."
             % (commit_label(head_hash, runner), base),
-        ] + replacement_pull_request_lines(base)
+        ] + replacement_pull_request_lines(head, base)
         return EXIT_CONFLICT, lines
 
     lines.insert(0, "VERDICT: CLEAN -- %s does not conflict with %s. Nothing to do."

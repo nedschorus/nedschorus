@@ -604,7 +604,7 @@ def clean_block(base="origin/main", label=HEAD_LABEL):
             % (label, base)]
 
 
-def conflict_block(base="origin/main", label=HEAD_LABEL):
+def conflict_block(base="origin/main", label=HEAD_LABEL, head="HEAD"):
     return [
         "VERDICT: CONFLICT -- %s conflicts with %s." % (label, base),
         "Do not merge %s into this branch: a conflict with %s is never "
@@ -615,7 +615,7 @@ def conflict_block(base="origin/main", label=HEAD_LABEL):
         "If it has been pushed, do not push it again: its pull request is "
         "closed, and replaced by a new one only if %s still lacks some of its "
         "work. To see which commits on %s changed each conflicting file, run "
-        "git log --oneline HEAD..%s -- <file>." % (base, base, base),
+        "git log --oneline %s..%s -- <file>." % (base, base, head, base),
         "If %s already holds all of this branch's work, close the pull request "
         "with a comment naming the commit or pull request on %s that holds it, "
         "and open no new pull request." % (base, base),
@@ -632,9 +632,9 @@ def conflict_block(base="origin/main", label=HEAD_LABEL):
     ]
 
 
-def verdict_block(exit_status, base="origin/main", label=HEAD_LABEL):
+def verdict_block(exit_status, base="origin/main", label=HEAD_LABEL, head="HEAD"):
     if exit_status == CHECK.EXIT_CONFLICT:
-        return conflict_block(base, label)
+        return conflict_block(base, label, head)
     return clean_block(base, label)
 
 
@@ -644,13 +644,17 @@ GIT_ANSWERS = (
     ("conflict", 1, CHECK.EXIT_CONFLICT),
 )
 GITHUB_FAILED = "GITHUB: could not be asked (gh failed) -- git's answer stands"
-GITHUB_DECIDES = (
-    "DISCLOSURE: git finds no conflict but GitHub reports CONFLICTING; GitHub "
-    "decides whether the merge is allowed, so the pull request is replaced as "
-    "the lines above say. git names no conflicting file, so run git log "
-    "--oneline HEAD..origin/main instead of the per-file command above, to see "
-    "what origin/main changed. If GitHub reports the new pull request "
-    "CONFLICTING too, tell the user.")
+def github_decides(head="HEAD"):
+    return (
+        "DISCLOSURE: git finds no conflict but GitHub reports CONFLICTING; "
+        "GitHub decides whether the merge is allowed, so the pull request is "
+        "replaced as the lines above say. git names no conflicting file, so run "
+        "git log --oneline %s..origin/main instead of the per-file command "
+        "above, to see what origin/main changed. If GitHub reports the new pull "
+        "request CONFLICTING too, tell the user." % head)
+
+
+GITHUB_DECIDES = github_decides()
 NOT_ONE_TO_ATTEMPT = (
     "DISCLOSURE: git finds a conflict but GitHub reports MERGEABLE; treating "
     "it as a conflict, because a merge that git cannot do is not one to "
@@ -1557,7 +1561,7 @@ def real_repository_cases(root):
     status, lines, calls = run_here("--head", "conflict-topic")
     case("real: the fetch moves origin/main, and the conflict is found",
          status == CHECK.EXIT_CONFLICT
-         and lines == conflict_block(label=conflict_label))
+         and lines == conflict_block(label=conflict_label, head="conflict-topic"))
     case("real: without --pull-request gh is never run", calls == [])
 
     status, lines, _ = run_here("--head", "clean-topic")
@@ -1756,8 +1760,8 @@ def real_repository_cases(root):
                 MERGEABLE="CONFLICTING"))
     case("real: heads match, GitHub CONFLICTING overrules a clean git",
          status == CHECK.EXIT_CONFLICT
-         and lines == conflict_block(label=clean_label)
-         + [github_line("CONFLICTING", 1), GITHUB_DECIDES])
+         and lines == conflict_block(label=clean_label, head="clean-topic")
+         + [github_line("CONFLICTING", 1), github_decides("clean-topic")])
     case("real: heads match, GitHub is asked for mergeability",
          any("mergeable" in call for call in calls))
 
@@ -1773,7 +1777,7 @@ def real_repository_cases(root):
         label = "real: heads differ, %s, GitHub would say %s" % (head, github_says)
         case(label + ": the exit is git's", status == head_status)
         case(label + ": the whole output", lines == verdict_block(
-            head_status, label=head_label) + [
+            head_status, label=head_label, head=head) + [
             "GITHUB: not consulted -- pull request 605's pushed head is %s, "
             "not the %s this run checked" % (main_label, head_label),
             "DISCLOSURE: GitHub's mergeability is about pull request 605's "
