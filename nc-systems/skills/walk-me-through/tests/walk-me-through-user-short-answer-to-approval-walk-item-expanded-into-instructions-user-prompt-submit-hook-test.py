@@ -305,6 +305,34 @@ def test_a_shared_bold_count_with_no_line_per_item_gives_each_item_the_whole_uni
           f"lines {lines!r}")
 
 
+def test_lines_inside_code_are_neither_an_items_start_nor_its_recommendation():
+    for shape, hidden in (("a ``` fence", "```\nItem 6 of 9: an example\nRecommendation: hidden.\n```"),
+                          ("a ~~~ fence", "~~~\nItem 6 of 9: an example\nRecommendation: hidden.\n~~~"),
+                          ("an indented code block", "    Item 6 of 9: an example\n    Recommendation: hidden."),
+                          ("an HTML comment", "<!-- A drafter's note.\nItem 6 of 9: an example\nRecommendation: hidden.\n-->")):
+        # The hidden recommendation comes last, since the last recommendation of an item is the one read.
+        document = WALK_DOCUMENT.replace(
+            "Item 5 of 9 fixes a path. Recommendation: fix the path.\n",
+            f"Item 5 of 9 fixes a path.\n\nRecommendation: fix the path.\n\n{hidden}\n")
+        lines = Case(next_to_present="item 5 of 9", document=document).lines("a")
+        check(f"inside {shape}, a line opening with another item's count does not end the waiting item, and "
+              "a recommendation line is not read",
+              lines is not None and lines[1].startswith(
+                  "A means approve: the user agrees with the recommendation of item 5 of 9 (fix the path)."),
+              f"lines {lines!r}")
+
+
+def test_a_quoted_count_is_not_an_items_start_for_the_recommendation():
+    document = WALK_DOCUMENT.replace(
+        "Item 5 of 9 fixes a path. Recommendation: fix the path.\n",
+        "Item 5 of 9 fixes a path.\n\n> Item 6 of 9: the user's earlier wording\n\nRecommendation: fix the path.\n")
+    lines = Case(next_to_present="item 5 of 9", document=document).lines("a")
+    check("a quoted line opening with another item's count does not end the waiting item",
+          lines is not None and lines[1].startswith(
+              "A means approve: the user agrees with the recommendation of item 5 of 9 (fix the path)."),
+          f"lines {lines!r}")
+
+
 def test_z_defer_and_later_defer():
     for prompt in ("Z", "defer", "Later."):
         lines = Case(next_to_present="item 4 of 9").lines(prompt)

@@ -379,11 +379,14 @@ def read_walk(cwd):
     if not document.is_file():
         return WalkState(name, count[0], numbers, total, {}, f"the walk-document {document} does not exist")
     text = document.read_text(encoding="utf-8")
+    tokens = parser.parse(text)
     spans = walk_finder.item_unit_spans(text, parser)
     if total is None:
         totals = {span[1] for span in spans}
         total = totals.pop() if len(totals) == 1 else None
-    return WalkState(name, count[0], numbers, total, recommendations_in(text.split("\n"), spans, total, walk_finder), None)
+    recommendations = recommendations_in(walk_finder.prose_lines(text, parser, tokens),
+                                         walk_finder.item_opening_lines(text, parser, tokens), spans, total, walk_finder)
+    return WalkState(name, count[0], numbers, total, recommendations, None)
 
 
 class WaitingItemNotShown(Exception):
@@ -428,19 +431,19 @@ def recommendation_text(part):
     return found[-1] if found and found[-1] else None
 
 
-def recommendations_in(lines, spans, total, walk_finder):
-    """Return {item number: recommendation text or None} for every item of the walk-document."""
+def recommendations_in(lines, openings, spans, total, walk_finder):
+    """Return {item number: recommendation text or None} for every item of the walk-document, from its
+    prose_lines and item_opening_lines."""
     found = {}
     for numbers, unit_total, _, first, end in spans:
         if total is not None and unit_total != total:
             continue
         for number in numbers:
-            part = lines[first:end]
+            own_first, own_end = first, end
             if len(numbers) > 1:
                 own_first, own_end = walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
-                    part, number, numbers, unit_total)
-                part = part[own_first:own_end]
-            found[number] = recommendation_text(part)
+                    openings, first, end, number, numbers, unit_total)
+            found[number] = recommendation_text(lines[own_first:own_end])
     return found
 
 

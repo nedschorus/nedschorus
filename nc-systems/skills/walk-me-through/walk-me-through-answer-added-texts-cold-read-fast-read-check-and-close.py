@@ -277,15 +277,14 @@ def item_lines(walk_finder, minutes, value, numbers, total, parser):
     except walk_finder.UnusableRange as problem:
         raise Failure(f"the last `#next_to_present` line in {minutes}, `{value}`: {problem}")
     text = document.read_text(encoding="utf-8")
-    code = walk_finder.code_line_numbers(parser.parse(text))
-    lines = text.split("\n")
+    tokens = parser.parse(text)
+    lines, openings = walk_finder.prose_lines(text, parser, tokens), walk_finder.item_opening_lines(text, parser, tokens)
     kept = []
     for unit_numbers, unit_total, _, first, end in spans:
         if len(numbers) == 1 and len(unit_numbers) > 1:
-            own_first, own_end = walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
-                lines[first:end], numbers[0], unit_numbers, unit_total)
-            first, end = first + own_first, first + own_end
-        kept += [lines[number] for number in range(first, end) if number not in code]
+            first, end = walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+                openings, first, end, numbers[0], unit_numbers, unit_total)
+        kept += lines[first:end]
     return document, kept
 
 
@@ -454,10 +453,10 @@ def check(arguments):
     return 2 if problems else 0
 
 
-def last_answer(minutes):
+def last_answer(walk_finder, minutes, parser):
     """Return (item, answered, status lines) of the walk-minutes' last answer line, or raise Failure when
     there is none or a close already recorded it."""
-    lines = minutes.read_text(encoding="utf-8").split("\n")
+    lines = walk_finder.prose_lines(minutes.read_text(encoding="utf-8"), parser)
     for index in range(len(lines) - 1, -1, -1):
         match = ANSWER_LINE.match(lines[index])
         if match:
@@ -480,14 +479,15 @@ def last_answer(minutes):
 def walk_document_items(walk_finder, minutes, value, numbers, total, parser):
     """Return (M, the walk-document's item numbers of total M in order, the summary item's number or None)."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
+    text = document.read_text(encoding="utf-8") if document.is_file() else ""
+    units = walk_finder.item_unit_spans(text, parser) if document.is_file() else None
     try:
-        total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser)
+        total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser, units)
     except walk_finder.UnusableRange as problem:
         raise Failure(f"the last `#next_to_present` line in {minutes}, `{value}`: {problem}")
-    text = document.read_text(encoding="utf-8")
     lines = text.split("\n")
     order, summary = [], None
-    for unit_numbers, unit_total, _, first, _ in walk_finder.item_unit_spans(text, parser):
+    for unit_numbers, unit_total, _, first, _ in units:
         if unit_total != total:
             continue
         order += [number for number in unit_numbers if number not in order]
@@ -499,10 +499,9 @@ def walk_document_items(walk_finder, minutes, value, numbers, total, parser):
 def minutes_record(walk_finder, minutes_text, parser):
     """Return (the item numbers whose last line that records a decision or its absence decides them, a
     Counter of how many lines defer each item)."""
-    code = walk_finder.code_line_numbers(parser.parse(minutes_text))
     decided, deferrals = set(), collections.Counter()
-    for number, line in enumerate(minutes_text.split("\n")):
-        if number in code or ANSWER_LINE.match(line):
+    for line in walk_finder.prose_lines(minutes_text, parser):
+        if ANSWER_LINE.match(line):
             continue
         dated = DATE.sub("", line)
         match = RECORDED_ITEMS.match(dated)
@@ -519,17 +518,18 @@ def minutes_record(walk_finder, minutes_text, parser):
         # by its keywords, since a hand-written open line may use "approved" in another sense. An
         # awaiting-ruling tag undoes an earlier decision and beats a deciding tag on its own line; `<open>`
         # does neither, since real minutes use it after a decision for a side point left open.
+        defers = first_word == DEFERRED
         if AWAITING_RULING in outcomes:
             decided.difference_update(items)
         elif outcomes & DECIDING_OUTCOMES:
             decided.update(items)
-        elif outcomes & UNDECIDED_OUTCOMES or first_word == DEFERRED:
-            if first_word == DEFERRED:
-                for item in items:
-                    deferrals[item] += 1
-        elif DECIDED.search(line):
-            decided.update(items)
-        elif DEFERRED_WORD.search(line):
+            defers = False
+        elif not (outcomes & UNDECIDED_OUTCOMES or defers):
+            if DECIDED.search(line):
+                decided.update(items)
+            else:
+                defers = bool(DEFERRED_WORD.search(line))
+        if defers:
             for item in items:
                 deferrals[item] += 1
     return decided, deferrals
@@ -562,7 +562,7 @@ def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferr
 def close(arguments):
     walk_finder = load_walk_finder()
     _, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
-    item, answered, statuses = last_answer(minutes)
+    item, answered, statuses = last_answer(walk_finder, minutes, parser)
     waiting, waiting_numbers, total = waiting_items(walk_finder, value, minutes)
     try:
         answered_numbers, _ = walk_finder.parse_items(item)

@@ -18,12 +18,18 @@ is the most recently modified one whose value is not closed.
 
 ITEMS IN THE WALK-DOCUMENT. An item starts at its running count, `Item N of
 M`, `Items 5 and 6 of M`, `Items 10 to 12 of M` or `Items 12 to 12.3 of M`,
-on a heading or on a paragraph opening with `**`, as markdown-it-py reads the
-document, and runs to the next running count. A heading that names several
-items is one unit, and so are the paragraphs under it that open with the
-count of one of its items. A heading that says `revised` right after its
+on a top-level heading or paragraph opening with `**`, outside any list or
+quotation, as markdown-it-py reads the document, and runs to the next running count. A heading that names several
+items is one unit, and so are the top-level paragraphs under it that open
+with the count of one of its items; within the unit, each of those paragraphs
+starts its item's lines. A heading that says `revised` right after its
 count replaces the earlier units it names. A running count that names no
-item still ends the unit before it.
+item still ends the unit before it. Every search of a walk file for its
+structure, here and in the programs that load this module, reads the lines
+prose_lines returns, in which fenced and indented code and HTML comment blocks
+are empty, or the parser's own tokens, as item starts are, so a line in code or
+in a comment is never an item's start, a marker, a recommendation or a recorded
+answer.
 
 Agent-facing messages follow
 docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
@@ -54,7 +60,6 @@ NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
 NUMBER_LIST = rf"{NUMBER}(?:{NUMBER_JOINER}{NUMBER})*(?![\d.]\d)"
 VALUE_COUNT = re.compile(rf"^items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b)?", re.I)
 HEADING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
-ITEM_OPENING_LINE = re.compile(rf"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
 REPLY_COUNT = re.compile(rf"\bitems?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
 # Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
 REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
@@ -94,21 +99,43 @@ def markdown_parser():
                        MARKDOWN_PARSER_MODULE_FILE).markdown_parser()
 
 
-def code_line_numbers(tokens):
-    lines = set()
-    for token in tokens:
-        if token.map is not None and token.type in ("fence", "code_block"):
-            lines.update(range(*token.map))
-    return lines
+def prose_lines(text, parser, tokens=None):
+    """Return text's lines with every line of fenced or indented code, or of an HTML comment block, made
+    empty, keeping each line's index; tokens are parser.parse(text) when the caller has them already.
+
+    Every search of a walk file for its structure, such as a marker, a `#new` line, a recommendation, an
+    answer line or an outcome tag, runs over these lines, so that an example in code, or a note in a
+    comment the reader never sees, is never read as structure. Other HTML blocks stay, since they show."""
+    hidden = set()
+    for token in parser.parse(text) if tokens is None else tokens:
+        if token.map is not None and (token.type in ("fence", "code_block")
+                                      or token.type == "html_block" and token.content.lstrip().startswith("<!--")):
+            hidden.update(range(*token.map))
+    return ["" if number in hidden else line for number, line in enumerate(text.split("\n"))]
+
+
+def item_opening_lines(text, parser, tokens=None):
+    """Return {line: (item numbers, M)} for each top-level paragraph, outside any list, quotation, HTML or
+    code, whose first line opens with a running count naming items of total M, after any emphasis."""
+    openings = {}
+    tokens = parser.parse(text) if tokens is None else tokens
+    for index, token in enumerate(tokens):
+        if token.type != "paragraph_open" or token.level != 0 or token.map is None:
+            continue
+        match = HEADING_COUNT.match(tokens[index + 1].content.split("\n")[0])
+        if not match:
+            continue
+        try:
+            openings[token.map[0]] = (expand_numbers(match[1]), match[2])
+        except UnusableRange:
+            continue
+    return openings
 
 
 def next_to_present(minutes_text, parser):
     """Return (value, whether the marker is the old form) for the minutes' last marker outside code, or None."""
-    code_lines = code_line_numbers(parser.parse(minutes_text))
     markers = []
-    for number, line in enumerate(minutes_text.split("\n")):
-        if number in code_lines:
-            continue
+    for line in prose_lines(minutes_text, parser):
         spans = [span.span() for span in CODE_SPAN.finditer(line)]
         for marker in NEXT_MARKER.finditer(line):
             if not any(start <= marker.start() < end for start, end in spans):
@@ -193,7 +220,8 @@ def item_unit_spans(document_text, parser):
     The lines are 0-based; a unit runs from its first line up to, not including, its end
     line, which is where the next running count starts, or the document's line count.
 
-    A count starts an item on a heading, or on a paragraph opening with `**`, except a
+    A count starts an item on a top-level heading, or on a top-level paragraph opening with `**`, outside
+    any list or quotation, except a
     paragraph whose items the count heading above it already names, with no other count
     between them, which stays in that heading's unit. A count that names no item still
     ends the unit before it; its unit has no numbers, and problem names the heading and
@@ -205,7 +233,7 @@ def item_unit_spans(document_text, parser):
     group = None
     tokens = parser.parse(document_text)
     for index, token in enumerate(tokens):
-        if token.map is None or token.type not in ("heading_open", "paragraph_open"):
+        if token.map is None or token.level != 0 or token.type not in ("heading_open", "paragraph_open"):
             continue
         if token.type == "paragraph_open" and not lines[token.map[0]].lstrip().startswith("**"):
             continue
@@ -232,38 +260,33 @@ def item_unit_spans(document_text, parser):
                                     for later_numbers, later_total, _, revised, _ in starts[index + 1:]))]
 
 
-def approval_walk_item_line_range_within_heading_shared_by_several_items(lines, number, numbers, total):
-    """Return (first, end) of the lines, of a unit naming several items, that belong to item number: from
-    the first line that opens with its running count alone, after any list marker or emphasis, up to the
-    next such line of another of the unit's items, or every line when no line opens with its count. A
-    count further into a line is a mention, not a start."""
+def approval_walk_item_line_range_within_heading_shared_by_several_items(openings, first, end, number, numbers, total):
+    """Return (first, end) of the lines, of the unit from line first up to end that names several items, that
+    belong to item number: from the first of item_opening_lines' openings that names that item alone, up to
+    the next that names another of the unit's items alone, or every line of the unit when none names it."""
     starts = {}
-    for index, line in enumerate(lines):
-        match = ITEM_OPENING_LINE.match(line)
-        if not match or match[2] != total:
-            continue
-        try:
-            named = expand_numbers(match[1])
-        except UnusableRange:
-            continue
-        if len(named) == 1 and named[0] in numbers:
-            starts.setdefault(named[0], index)
+    for line in sorted(openings):
+        named, opening_total = openings[line]
+        if first <= line < end and opening_total == total and len(named) == 1 and named[0] in numbers:
+            starts.setdefault(named[0], line)
     if number not in starts:
-        return 0, len(lines)
-    later = [index for other, index in starts.items() if index > starts[number]]
-    return starts[number], min(later) if later else len(lines)
+        return first, end
+    later = [line for line in starts.values() if line > starts[number]]
+    return starts[number], min(later) if later else end
 
 
-def waiting_item_units(document, value, numbers, total, parser):
+def waiting_item_units(document, value, numbers, total, parser, all_units=None):
     """Return (M, the units of item_unit_spans that hold the waiting items) for the item numbers and
     total M that parse_items read from the `#next_to_present` value, M None when it gives none.
 
     Raise UnusableRange, saying what is wrong, when the walk-document does not exist, when M is None
     and the walk-document's headings give no total or more than one, or when a waiting item has no
-    heading, or more than one that is not a revision."""
-    if not document.is_file():
-        raise UnusableRange(f"its walk-document {document} does not exist.")
-    all_units = item_unit_spans(document.read_text(encoding="utf-8"), parser)
+    heading, or more than one that is not a revision. all_units are item_unit_spans of the walk-document when
+    the caller has them already."""
+    if all_units is None:
+        if not document.is_file():
+            raise UnusableRange(f"its walk-document {document} does not exist.")
+        all_units = item_unit_spans(document.read_text(encoding="utf-8"), parser)
     if total is None:
         totals = {unit[1] for unit in all_units}
         if not totals:

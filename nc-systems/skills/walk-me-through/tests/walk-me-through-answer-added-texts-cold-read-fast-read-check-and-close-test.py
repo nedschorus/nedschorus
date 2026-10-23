@@ -406,6 +406,158 @@ def test_item_under_a_shared_heading_with_no_line_of_its_own_reads_the_whole_uni
           result.returncode == 0 and case.calls.read_text() == "Row eight.\nRow nine.\n", described(result))
 
 
+CODE_SHOWING_ANOTHER_ITEMS_COUNT = {
+    "a backtick fence": "```\nItem 7 of 9: an example\n```\n",
+    "a tilde fence": "~~~\nItem 7 of 9: an example\n~~~\n",
+    "an indented code block": "    Item 7 of 9: an example\n",
+    "a fence in a list item": "- for example:\n\n  ```\n  **Item 7 of 9**: an example\n  ```\n",
+    "an HTML comment": "<!-- A drafter's note.\nItem 7 of 9 was split from this item.\n-->\n",
+    "a quotation": "> Item 7 of 9: the user's earlier wording\n",
+    "a list item": "Related:\n\n- Item 7 of 9, which follows\n",
+    "a quoted heading": "> ## Item 7 of 9: quoted\n",
+}
+
+
+def test_a_count_line_inside_code_is_not_an_items_start():
+    for shape, code in CODE_SHOWING_ANOTHER_ITEMS_COUNT.items():
+        document = WALK_DOCUMENT.replace("Item 6 of 9 fixes a path.\n\n", f"Item 6 of 9 fixes a path.\n\n{code}\n")
+        case = Case(next_to_present="item 6 of 9", document=document)
+        result = case.run("check")
+        check(f"a line opening with another item's count inside {shape} does not end the waiting item's lines, "
+              "so its later #new text is fast-read",
+              result.returncode == 0 and case.calls.read_text() == "The path is docs/walk/.\n", described(result))
+
+
+def test_only_the_units_own_openings_of_its_total_bound_an_item_under_a_shared_heading():
+    document = (WALK_DOCUMENT
+                .replace("Nothing is proposed. Recommendation: leave it.\n",
+                         "Nothing is proposed. Recommendation: leave it.\n\nItem 7 of 9 comes later.\n\n#new \"Item four's text.\"\n")
+                .replace("Item 6 of 9 fixes a path.\n\n", "")
+                .replace("Item 7 of 9 drops a sentence.\n\n", "Item 7 of 9 drops a sentence.\n\nItem 6 of 8 is another walk's.\n\n")
+                .replace("#new \"A changed decision.\"\n", "#new \"A changed decision.\"\n\nItem 6 of 9 was split out.\n"))
+    case = Case(next_to_present="item 7 of 9", document=document)
+    result = case.run("check")
+    check("an item under a shared heading starts at its own opening in the unit, not at one before the unit, and "
+          "ends at the unit's end, not at an opening after it, nor at one of another total",
+          result.returncode == 0 and case.calls.read_text() == "Item seven's text.\n", described(result))
+
+
+def test_an_item_with_no_opening_of_its_own_reads_to_the_units_last_line():
+    document = WALK_DOCUMENT.replace(
+        "## Item 5 of 9: a new item a finding raised",
+        "## Items 8 and 9 of 9: two rows\n\n#new \"Row eight.\"\n#new \"Row nine.\"\n## Item 5 of 9: a new item a finding raised")
+    case = Case(next_to_present="item 9 of 9", document=document)
+    result = case.run("check")
+    check("an item under a shared heading with no opening of its own reads the unit up to its last line",
+          result.returncode == 0 and case.calls.read_text() == "Row eight.\nRow nine.\n", described(result))
+
+
+def test_an_html_block_that_is_not_a_comment_is_read():
+    document = WALK_DOCUMENT.replace("Nothing is proposed. Recommendation: leave it.\n",
+                                     "<div>\n#new \"Shown in a div.\"\n</div>\n\nRecommendation: leave it.\n")
+    case = Case(next_to_present="item 4 of 9", document=document)
+    result = case.run("check")
+    check("a `#new` line in an HTML block that is not a comment shows on the page, so it is a proposed text",
+          result.returncode == 0 and case.calls.read_text() == "Shown in a div.\n", described(result))
+
+
+def test_lines_inside_code_in_the_minutes_record_nothing():
+    case = summary_case(next_to_present="item 2 of 5",
+                        recorded="Item 1 of 5: approved. <accepted>\n```\nItem 3 of 5: approved. <accepted>\n```\n")
+    case.run("check")
+    closed = case.run("close")
+    check("an outcome tag inside a fence in the minutes decides nothing, so the item it names comes next",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 3 of 5",
+          described(closed) + case.minutes.read_text())
+    case = Case(next_to_present="item 4 of 9")
+    case.run("check")
+    with case.minutes.open("a") as minutes:
+        minutes.write("```\nitem 5 of 9: the user answered disapproved (2026-10-23 10:00), which makes no change.\n```\n")
+    closed = case.run("close")
+    check("an answer line inside a fence in the minutes is not the last answer, so close records the real one",
+          closed.returncode == 0 and closed.stdout.startswith("item 4 of 9's answer is recorded in the minutes")
+          and marker(case) == "#next_to_present item 6 of 9", described(closed))
+
+
+def test_a_marker_inside_code_in_the_minutes_is_not_the_last_marker():
+    case = Case(next_to_present="item 4 of 9")
+    with case.minutes.open("a") as minutes:
+        minutes.write("```\n#next_to_present item 3 of 9\n```\n")
+    result = case.run("check")
+    check("a `#next_to_present` line inside a fence after the real one is not read, so check answers the real item",
+          result.returncode == 0 and case.calls.read_text() == ""
+          and "\nitem 4 of 9: the user answered approved (" in case.minutes.read_text(), described(result))
+
+
+def test_a_deciding_tag_on_a_line_opening_deferred_records_no_deferral():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    parser = walk_finder.markdown_parser()
+    decided, deferrals = program.minutes_record(
+        walk_finder, "Item 2 of 5: deferred, then approved. <accepted>\n", parser)
+    check("a line that opens with deferred but carries <accepted> decides its item and records no deferral",
+          decided == {"2"} and not deferrals, repr((decided, deferrals)))
+
+
+def test_lines_inside_an_html_comment_in_the_minutes_record_nothing():
+    case = summary_case(next_to_present="item 2 of 5",
+                        recorded="Item 1 of 5: approved. <accepted>\n<!-- A note, not presented:\n"
+                                 "Item 3 of 5: approved in an earlier walk. <accepted>\n-->\n")
+    case.run("check")
+    closed = case.run("close")
+    check("an outcome tag inside an HTML comment in the minutes decides nothing, so the item it names comes next",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 3 of 5",
+          described(closed) + case.minutes.read_text())
+    case = Case(next_to_present="item 4 of 9")
+    with case.minutes.open("a") as minutes:
+        minutes.write("<!-- an older marker:\n#next_to_present item 3 of 9\n-->\n")
+    result = case.run("check")
+    check("a `#next_to_present` line inside an HTML comment is not read, so check answers the real item",
+          result.returncode == 0 and "\nitem 4 of 9: the user answered approved (" in case.minutes.read_text(),
+          described(result))
+
+
+def test_how_a_minutes_line_without_a_deciding_tag_is_read():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    parser = walk_finder.markdown_parser()
+    for line, expected, case_name in (
+            ("Item 2 of 5: the user deferred it until Friday.\n", (set(), {"2": 1}),
+             "an untagged line with deferred later in it records a deferral"),
+            ("Item 2 of 5: the approved wording waits. <open>\n", (set(), {}),
+             "an `<open>` line holding a deciding word records no decision"),
+            ("Item 2 of 5: the user approved it.\n", ({"2"}, {}),
+             "an untagged line holding a deciding word records a decision")):
+        decided, deferrals = program.minutes_record(walk_finder, line, parser)
+        check(case_name, (decided, dict(deferrals)) == expected, repr((decided, deferrals)))
+
+
+def test_status_lines_end_at_the_first_line_that_is_not_one():
+    program = load_program()
+    walk_finder = program.load_walk_finder()
+    case = Case(next_to_present="item 4 of 9")
+    case.minutes.write_text("# Minutes\n\nitem 4 of 9: the user answered approved (2026-10-23 10:00), which makes its "
+                            "change. Fast reads:\n- the status line\nA note.\n- a later bullet\n"
+                            "#next_to_present item 4 of 9\n")
+    _, _, statuses = program.last_answer(walk_finder, case.minutes, walk_finder.markdown_parser())
+    check("the answer's status lines stop at the first line that is not a status line",
+          statuses == ["the status line"], repr(statuses))
+
+
+def test_a_deferred_line_awaiting_a_ruling_records_a_deferral():
+    case = summary_case(next_to_present="item 2 of 5",
+                        recorded="Item 1 of 5: approved. <accepted>\n"
+                                 "Item 2 of 5: deferred until the redraft is read. <revised, awaiting ruling>\n"
+                                 "Item 3 of 5: approved. <accepted>\nItem 4 of 5: approved. <accepted>\n"
+                                 "Item 5 of 5: approved. <accepted>\n")
+    case.run("check", "--deferred")
+    closed = case.run("close")
+    check("a `<revised, awaiting ruling>` line whose first word is deferred counts as a deferral, so the next "
+          "deferral is the second",
+          closed.returncode == 0 and closed.stdout.startswith("item 2 of 5 is deferred a second time")
+          and marker(case) == "#next_to_present none, closed", described(closed) + case.minutes.read_text())
+
+
 def test_close_holds_the_answer_for_a_waiting_new_item():
     case = Case()
     case.run("check")
