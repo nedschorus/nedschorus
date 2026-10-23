@@ -15,14 +15,18 @@ Each brief is three parts: the standing text, composed by --review-tools-worktre
 scripts/compose-pull-request-reviewer-brief.py with the reviewing
 instructions inserted; the ned-box environment addendum; and a section of
 facts, which git reads in --review-tools-worktree-at-main and in the worktrees
-and outputs directory's wt/pr<n>-merged. The brief is written to
+and outputs directory's wt/pr<n>-merged, ending with the pull request's
+description, which gh reads with the merge account's token and the brief quotes
+as the author's claims. The reviewer runs with no GitHub login, so the brief is
+where it reads the description. The brief is written to
 briefs/brief-<tag>-mac-claude.md under the worktrees and outputs directory, and
 rv<tag>/ is made under --merge-lane-pull-request-reviewer-scratch-directories-parent-directory as the reviewer's
 scratch directory. That parent is outside the log-store, because the standing
 text forbids the reviewer to write to the log-store.
 
-Exit codes: 0 every brief written; 1 a step failed, named on stderr, and no
-later brief is composed.
+Exit codes: 0 every brief written; 1 a step failed, such as gh failing to read
+a description, named on stderr, and that brief and every later one are not
+composed.
 """
 
 import argparse
@@ -97,6 +101,29 @@ def git(directory, *arguments):
     return run(["git", "-C", str(directory), *arguments]).strip()
 
 
+def pull_request_description(number):
+    """The pull request's description, read by gh as the merge account."""
+    try:
+        token = common.read_merge_account_token()
+    except common.MergeAccountTokenUnusable as unusable:
+        raise StepFailed(f"could not read pull request {number}'s description: {unusable}; "
+                         f"only the user can restore the token") from unusable
+    completed = subprocess.run(
+        ["gh", "pr", "view", str(number), "--repo", common.REPOSITORY, "--json", "body",
+         "--jq", ".body"],
+        capture_output=True, text=True, stdin=subprocess.DEVNULL,
+        env={**run_all_test_suites.environment_without_git_redirecting_variables(),
+             "GH_TOKEN": token})
+    if completed.returncode != 0:
+        raise StepFailed(f"gh could not read pull request {number}'s description: exit "
+                         f"{completed.returncode}: {completed.stderr.strip()}")
+    return completed.stdout.rstrip("\n")
+
+
+def quoted(text):
+    return "\n".join(f"> {line}".rstrip() for line in text.split("\n"))
+
+
 def files_touched_text(review_tools_worktree, base, head):
     """The files changed between base and head, each with its line counts, for the brief."""
     entries = git_output.numstat_entries(
@@ -151,6 +178,13 @@ def compose(spec, arguments, review_tools_worktree, instructions_file):
     facts.append("- Other open pull requests changing the same files: "
                  + spec.get("overlaps", "none") + ".")
     facts.append(f"- Hazards: {spec['hazards']}")
+    description = pull_request_description(number)
+    facts.append("- The author's description of the pull request, quoted below. It is what "
+                 "the author claims; check each claim against the repository yourself, "
+                 "including its `#root_cause`, `#root_cause_not_fixed` or `#no_defect_fixed` "
+                 "line.")
+    facts.append("")
+    facts.append(quoted(description) if description.strip() else "(the description is empty)")
     addendum = arguments.ned_box_reviewer_brief_environment_addendum_file.read_text()
     brief = (standing.rstrip("\n") + "\n\n" + addendum.rstrip("\n") + "\n\n"
              + "\n".join(facts) + "\n")
@@ -174,6 +208,8 @@ def main(argv=None):
               f"Briefs for entries before the failing one were written; none after it.\n"
               f"If the error names an entry of the specifications file or a missing file, fix "
               f"that and run this again.\n"
+              f"If gh could not read a description, run this again once; if it fails the "
+              f"same way, tell the user this message.\n"
               f"Otherwise, tell the user this message.", file=sys.stderr)
         return 1
     return 0

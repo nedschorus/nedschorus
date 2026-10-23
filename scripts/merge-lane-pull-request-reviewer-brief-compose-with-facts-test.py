@@ -7,7 +7,10 @@ copy of this directory's compose-pull-request-reviewer-brief.py and an
 instructions file committed on main. wt/pr7-merged is a worktree of that
 repository. The reviewer's scratch directories are made in their own directory
 of the scratch, in place of the default parent outside the log-store. The program runs with GIT_DIR pointing at a directory that does
-not exist, so a case passes only if the program drops it.
+not exist, so a case passes only if the program drops it. A fake gh first on
+PATH prints the file FAKE_GH_BODY_FILE names as the description, or fails when
+FAKE_GH_FAIL is set, and records its arguments and GH_TOKEN; HOME is a scratch
+directory holding the merge account's token file.
 
 Run: python3 scripts/merge-lane-pull-request-reviewer-brief-compose-with-facts-test.py
 """
@@ -40,6 +43,17 @@ GIT_ENVIRONMENT = {
 STANDING_TEXT = "Review pull request <N>.\n<<PR-REVIEWER-INSTRUCTIONS>>\nEnd of standing text.\n"
 INSTRUCTIONS = "The reviewing instructions.\n"
 ADDENDUM = "The ned-box addendum.\n"
+TOKEN = "merge-account-token-for-the-test"
+DESCRIPTION = "The author's description.\n\n#no_defect_fixed\n"
+FAKE_GH = """#!/bin/sh
+printf '%s\\n' "$*" > "$FAKE_GH_RECORD"
+printf '%s\\n' "$GH_TOKEN" >> "$FAKE_GH_RECORD"
+if [ -n "$FAKE_GH_FAIL" ]; then
+  echo "HTTP 502: bad gateway" >&2
+  exit 1
+fi
+cat "$FAKE_GH_BODY_FILE"
+"""
 
 failures = []
 
@@ -65,9 +79,10 @@ def commit_file(repository, path, text, message):
     return git(repository, "rev-parse", "HEAD")
 
 
-def run_program(scratch, helpers, specs, *extra):
+def run_program(scratch, helpers, specs, *extra, description=DESCRIPTION, gh_fails=False):
     specs_file = scratch / "brief-specs.json"
     specs_file.write_text(json.dumps(specs))
+    (scratch / "description.md").write_text(description)
     return subprocess.run(
         [sys.executable, str(PROGRAM), str(specs_file),
          "--merge-lane-worktrees-and-outputs-directory", str(helpers),
@@ -76,7 +91,11 @@ def run_program(scratch, helpers, specs, *extra):
          "--ned-box-reviewer-brief-environment-addendum-file", str(scratch / "addendum.md"),
          "--merge-lane-pull-request-reviewer-scratch-directories-parent-directory", str(scratch / "reviewer-scratch"), *extra],
         capture_output=True, text=True,
-        env={**GIT_ENVIRONMENT, "GIT_DIR": str(scratch / "no-such-git-directory")})
+        env={**GIT_ENVIRONMENT, "GIT_DIR": str(scratch / "no-such-git-directory"),
+             "PATH": f"{scratch / 'fake-bin'}{os.pathsep}{os.environ['PATH']}",
+             "HOME": str(scratch / "home"), "FAKE_GH_RECORD": str(scratch / "gh-record"),
+             "FAKE_GH_BODY_FILE": str(scratch / "description.md"),
+             **({"FAKE_GH_FAIL": "1"} if gh_fails else {})})
 
 
 def main():
@@ -100,6 +119,12 @@ def main():
         merged_tree = git(helpers / "wt" / "pr7-merged", "rev-parse", "HEAD^{tree}")
         (scratch / "standing.md").write_text(STANDING_TEXT)
         (scratch / "addendum.md").write_text(ADDENDUM)
+        (scratch / "fake-bin").mkdir()
+        (scratch / "fake-bin" / "gh").write_text(FAKE_GH)
+        (scratch / "fake-bin" / "gh").chmod(0o755)
+        (scratch / "home" / ".config" / "nedschorus").mkdir(parents=True)
+        (scratch / "home" / ".config" / "nedschorus" / "ned-review-merge.token").write_text(
+            TOKEN + "\n")
 
         first_round = {"tag": "7", "number": 7, "title": "A title", "author": "an author",
                        "head": first_head, "main": main_commit,
@@ -121,7 +146,11 @@ def main():
             "- Test files the change touches: `scripts/thing-test.py`.\n"
             "- First round: no head commit was reviewed before.\n"
             "- Other open pull requests changing the same files: none.\n"
-            "- Hazards: Check the thing.\n")
+            "- Hazards: Check the thing.\n"
+            "- The author's description of the pull request, quoted below. It is what the "
+            "author claims; check each claim against the repository yourself, including its "
+            "`#root_cause`, `#root_cause_not_fixed` or `#no_defect_fixed` line.\n\n"
+            "> The author's description.\n>\n> #no_defect_fixed\n")
         detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
         brief = brief_file.read_text() if brief_file.exists() else ""
         check("a first-round brief is the standing text, the addendum and the facts",
@@ -131,6 +160,10 @@ def main():
               "not in the worktrees and outputs directory",
               (scratch / "reviewer-scratch" / "rv7").is_dir()
               and not (helpers / "rv7").exists(), detail)
+        check("gh reads the pull request's description as the merge account",
+              (scratch / "gh-record").read_text()
+              == f"pr view 7 --repo nedschorus/nedschorus --json body --jq .body\n{TOKEN}\n",
+              (scratch / "gh-record").read_text())
         check("the output names the brief and its word count",
               completed.stdout == f"composed {brief_file} {len(expected.split())} words\n",
               detail)
@@ -197,6 +230,39 @@ def main():
               completed.returncode == 1 and "brief not composed" in completed.stderr
               and not (helpers / "briefs" / "brief-8-mac-claude.md").exists(),
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+
+        completed = run_program(scratch, helpers, [{**first_round, "tag": "10"}],
+                                description="\n")
+        brief_file = helpers / "briefs" / "brief-10-mac-claude.md"
+        brief = brief_file.read_text() if brief_file.exists() else ""
+        check("an empty description is said to be empty",
+              completed.returncode == 0
+              and brief.endswith("`#no_defect_fixed` line.\n\n(the description is empty)\n"),
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
+              f"\n--- brief ---\n{brief}")
+
+        completed = run_program(scratch, helpers, [{**first_round, "tag": "11"}],
+                                gh_fails=True)
+        check("gh failing to read the description exits 1, names gh's reason and says to "
+              "run again once, writing no brief",
+              completed.returncode == 1
+              and "gh could not read pull request 7's description" in completed.stderr
+              and "HTTP 502: bad gateway" in completed.stderr
+              and "run this again once" in completed.stderr
+              and not (helpers / "briefs" / "brief-11-mac-claude.md").exists(),
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+
+        token_file = scratch / "home" / ".config" / "nedschorus" / "ned-review-merge.token"
+        token_file.unlink()
+        completed = run_program(scratch, helpers, [{**first_round, "tag": "12"}])
+        check("a missing merge account token exits 1, says only the user can restore it, "
+              "writing no brief",
+              completed.returncode == 1
+              and "could not read pull request 7's description" in completed.stderr
+              and "only the user can restore the token" in completed.stderr
+              and not (helpers / "briefs" / "brief-12-mac-claude.md").exists(),
+              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
+        token_file.write_text(TOKEN + "\n")
 
         (scratch / "standing.md").write_text("A standing text with no instructions line.\n")
         completed = run_program(scratch, helpers, [{**first_round, "tag": "9"}])
