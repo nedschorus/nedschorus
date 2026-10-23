@@ -18,8 +18,8 @@ the invocation itself was wrong (a --target that is not a file) and nothing
 was launched. When the cold-read-target belongs to a class the
 /cold-read skill's step 2 sends to the cold-read-full-run -- CLAUDE.md, a
 skill or its prompt, a file under docs/agents/, a wiki file, a design, a test
-design, a design-contract -- the read also says that this fast read does not finish the
-review: one line on stderr and one line in the report (user-ruled 2026-09-17,
+design, a design-contract -- the read also says that, unless step 2 exempts
+the change, this fast read does not finish the review: one line on stderr and one line in the report (user-ruled 2026-09-17,
 item 4 of nedschorus#418, after a skill change merged on a fast read alone).
 It warns and never refuses, because the fast read is the cold-read-full-run's
 first step. When the cold-read-target is a walk draft, the read also lists every
@@ -569,7 +569,12 @@ def full_run_class_of_target(target: pathlib.Path):
 
 def full_run_required_line(class_name: str) -> str:
     """The one sentence said on stderr and written into the report."""
-    return (f"the cold-read-full-run is required before this document lands "
+    # The program sees only the path, not the change, so it cannot tell
+    # whether step 2 exempts this change; the sentence leaves that to the reader.
+    return (f"unless step 2 of the /cold-read skill exempts this change (one "
+            f"that leaves unchanged what the document tells a program or an "
+            f"agent to do, and what it decides or plans), the "
+            f"cold-read-full-run is required before this document lands "
             f"({class_name}); this fast read is its first step, not the whole "
             f"review. Run nc-systems/cold-read/cold-read-grid.py --target on it.")
 

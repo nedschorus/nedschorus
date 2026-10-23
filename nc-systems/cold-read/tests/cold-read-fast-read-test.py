@@ -1132,15 +1132,17 @@ with tempfile.TemporaryDirectory() as warning_scratch:
     check("the read still succeeds: the warning never refuses",
           result.returncode == 0 and brief_report.is_file(),
           f"exit {result.returncode}; stderr={result.stderr!r}")
-    check("the warning is on stderr, naming the class",
-          "the cold-read-full-run is required before this document lands "
+    check("the warning is on stderr, naming the class and step 2's exemption",
+          "unless step 2 of the /cold-read skill exempts this change" in result.stderr
+          and "the cold-read-full-run is required before this document lands "
           "(a file under docs/agents/)" in result.stderr, repr(result.stderr))
     check("stdout is still exactly the report path",
           result.stdout.strip() == str(brief_report)
           and len(result.stdout.splitlines()) == 1, repr(result.stdout))
     brief_report_text = brief_report.read_text(encoding="utf-8") if brief_report.is_file() else ""
     check("the report carries the same sentence, so the shipped record says it too",
-          "The cold-read-full-run is required before this document lands" in brief_report_text,
+          "Unless step 2 of the /cold-read skill exempts this change" in brief_report_text
+          and "the cold-read-full-run is required before this document lands" in brief_report_text,
           repr(brief_report_text[-400:]))
 
     # A document outside the class is read with nothing said.
