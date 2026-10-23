@@ -54,7 +54,14 @@ items it names. In a NUMBERED answer that mixes R with other letters, each R
 tells the agent to show that item. When no approval-walk is open, or its
 walk-document has no item with a number an R names, or with one of the
 numbers after a word, as in `approve 5 and 6`, the hook prints nothing, so
-the prompt reaches the agent as typed.
+the prompt reaches the agent as typed; when the walk-document or the
+`#next_to_present` line cannot be read, the text says why instead.
+
+A NUMBERED ANSWER THAT GIVES A, AO, D OR Z TO AN ITEM NOT WAITING, one the
+`#next_to_present` line does not name, is refused whole: the text names that
+item and tells the agent to record nothing and ask the user to answer the
+waiting item on its own, because the check step records an answer only for
+the waiting item.
 
 OUTPUT otherwise: {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
 "additionalContext": <text>}}. No other answer blocks, and the hook never
@@ -260,6 +267,13 @@ NUMBERED_LINES = (
     ("The answer gives each numbered question or point of your last message its own letter: {pairs}.",
      "Every question or point the answer does not name stays open; say so in your reply."),
 )
+NUMBERED_NOT_WAITING_LINES = (
+    "The answer gives a letter to {not_waiting}, which {verb} not waiting for an answer: the minutes' "
+    "`#next_to_present` line names only {item}.",
+    "Record nothing and act on none of the answer: the check step records an answer for the waiting item only, "
+    "so running it for another item's letter would record that letter against an item the user did not answer.",
+    "Ask the user to answer {item} first; the other items come to him one at a time after it.",
+)
 NUMBERED_UNNAMED_LINE = "The answer does not name {unnamed}, so it stays open; say so in your reply."
 NUMBERED_ALL_NAMED_LINE = "The answer names every item now waiting."
 CONDITION_LINES = (
@@ -455,6 +469,12 @@ def meaning_lines(answer, walk, in_walk):
               "explain_skill": EXPLAIN_SKILL, "aa_skill_text": AA_SKILL_TEXT}
     form = answer["form"]
     if form == "numbered":
+        not_waiting = [number for number, letter in answer["pairs"]
+                       if in_walk and numbers and letter != "R" and number not in numbers]
+        if not_waiting:
+            return [line.format(not_waiting=", ".join(item_name(number, walk) for number in not_waiting),
+                                verb="are" if not_waiting[1:] else "is", item=item)
+                    for line in NUMBERED_NOT_WAITING_LINES]
         pairs = ", ".join(f"{item_name(number, walk) if in_walk else number}: {letter}"
                           for number, letter in answer["pairs"])
         lines = [line.format(pairs=pairs) for line in NUMBERED_LINES[branch]]
@@ -491,7 +511,13 @@ def meaning_lines(answer, walk, in_walk):
 def output_for(payload):
     """Return the hook's output for the payload as a dict, or None."""
     answer = parsed_answer(payload.get("prompt") or "")
-    if answer is None or named_item_missing(answer, payload.get("cwd") or os.getcwd()):
+    if answer is None:
+        return None
+    try:
+        walk, walk_error = read_walk(payload.get("cwd") or os.getcwd()), None
+    except Exception as error:
+        walk, walk_error = None, error
+    if named_item_missing(answer, walk, walk_error):
         return None
     note = []
     shown = None
@@ -508,36 +534,31 @@ def output_for(payload):
         else:
             if section is not None:
                 return {"decision": "block", "reason": section}
-    context = context_for(answer, payload, note)
+    context = context_for(answer, walk, walk_error, note)
     return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}
 
 
-def named_item_missing(answer, cwd):
+def named_item_missing(answer, walk, walk_error):
     """Whether a numbered answer gives R, or a word with a list of numbers, to a number no item of the
-    open approval-walk has, or no approval-walk is open; False when the walk cannot be read, so that
-    context_for reports why."""
+    open approval-walk has, or no approval-walk is open; False when the walk, its `#next_to_present` line
+    or its walk-document cannot be read, so that the context says why."""
     numbers = [number for number, letter in answer.get("pairs", [])
                if letter == "R" or answer.get("every number names an item")]
-    if not numbers:
-        return False
-    try:
-        walk = read_walk(cwd)
-    except Exception:
+    if not numbers or walk_error is not None or (walk is not None and walk.problem):
         return False
     return walk is None or any(number not in walk.recommendations for number in numbers)
 
 
-def context_for(answer, payload, note=()):
-    """Return the additionalContext text for the answer, with the note's lines after its opening line."""
+def context_for(answer, walk, walk_error, note=()):
+    """Return the additionalContext text for the answer, given the open approval-walk as read_walk read it, or
+    the error reading it raised, with the note's lines after its opening line."""
     prefix = list(note)
     if answer["form"] == "condition":
         prefix = [line.format(condition=answer["condition"]) for line in CONDITION_LINES]
     elif answer["form"] == "rider":
         prefix = [line.format(rest=answer["rest"]) for line in RIDER_LINES]
-    try:
-        walk = read_walk(payload.get("cwd") or os.getcwd())
-    except Exception as error:
-        lines = [WALK_UNKNOWN_OPENING.format(answer=answer["answer"], error=repr(error)), WALK_UNKNOWN_FIND]
+    if walk_error is not None:
+        lines = [WALK_UNKNOWN_OPENING.format(answer=answer["answer"], error=repr(walk_error)), WALK_UNKNOWN_FIND]
         lines += prefix + [IF_WALK_OPEN]
         lines += meaning_lines(answer, WalkState("", "the waiting item", [], None, {}, None), True)
         lines += [IF_NO_WALK] + meaning_lines(answer, None, False)

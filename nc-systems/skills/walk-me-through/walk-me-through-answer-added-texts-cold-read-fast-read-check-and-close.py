@@ -25,12 +25,16 @@ first word is `#new`, after any list or quotation marker, outside fenced code;
 the text is the rest of the line, without one pair of surrounding quotation
 marks. For each text it looks for a cold-read-record holding a fast-read.md and
 a file under target/ that contains the text, whitespace aside, in the
-checkout's cold-read-records/ and in the log-store's. For each text with none,
-it saves the text to a scratch file and runs cold-read-fast-read.py --target on
-that file. Then it writes the answer line and one status line per text, or "no
-proposed text marked", into the walk-minutes, and prints the status lines, the
-judgement the agent must make on new reports, and the close step to run. It
-appends one line of counts to the log-store's COUNTS_LOG_FILE_NAME. A deferral
+checkout's cold-read-records/ and in the log-store's. The log-store's
+cold-read-records directory is the path in cold-read-record-ship.py's
+LOG_STORE_RECORDS_DESTINATION, read on ned-box as it is and on the Mac through
+the Mac's mount of ned-box's home. For each text with none, it saves the text to
+a scratch file and runs cold-read-fast-read.py --target on that file. Then it
+writes the answer line and one status line per text, or "no proposed text
+marked", into the walk-minutes, and prints the status lines, the judgement the
+agent must make on new reports, and the close step to run. It appends one line
+of counts to COUNTS_LOG_FILE_NAME beside the log-store's cold-read-records
+directory. A deferral
 changes nothing, so CHECK --deferred runs no fast read, logs no counts, and
 writes only the answer line. When the `#next_to_present` line names more than
 one item, CHECK refuses, writing nothing, because one run records one answer
@@ -39,8 +43,11 @@ for every item it names.
 A fast read that prints a line opening FAILED, or exits nonzero, ends CHECK
 before the walk-minutes are written: the program prints that line, or a FAILED
 line of its own, with FAST_READ_FAILED_LINES, and exits 1; the item stays
-waiting. A counts line that cannot be written is printed as such after the
-rest, with exit 2.
+waiting. A fast read that succeeds but says on stderr that its record was not
+shipped, or that its target changed during the read, has that line added to its
+status line, and the output says the record stays unshipped. That, a log-store
+this machine cannot reach, and a counts line that cannot be written are each
+printed after the rest, saying the minutes record the answer, with exit 2.
 
 CLOSE reads the last answer line CHECK wrote. When the `#next_to_present` line
 still names that line's items, it records the answer: that it took effect, or,
@@ -55,7 +62,11 @@ records the items it opens with, after any date or timestamp, as in `Item 4 of
 9:`, `- Item 4, <date>:` or `- <timestamp> Item 4 <rejected>`,
 when it says approved, disapproved, accepted, rejected or `<moved on, no
 decision>`; one that says deferred instead records a deferral; CHECK's answer
-lines record nothing. CLOSE refuses, writing nothing, when a line after the
+lines record nothing. A line with an outcome tag, `<accepted>`, `<rejected>`,
+`<moved on, no decision>` or `<approved as revised>`, records a decision
+whatever else it says; one with only `<open>` or `<revised, awaiting ruling>`
+records none, and records a deferral when its first word after the items is
+deferred; so does a line with no such tag whose first word is deferred. CLOSE refuses, writing nothing, when a line after the
 last answer line already opens with its item, because no check has run since
 that answer was closed. When the `#next_to_present` line names other items than
 the answer line, a new item a finding raised is waiting: the answer is recorded
@@ -85,7 +96,9 @@ HERE = Path(__file__).resolve().parent
 REPOSITORY_TOP = HERE.parents[2]
 WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
 FAST_READ_PROGRAM = REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-fast-read.py"
-LOG_STORE = Path("/home/nedlern/nedschorus-logs")
+RECORD_SHIPPER_FILE = REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-record-ship.py"
+PATH_CONSTANTS_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
+                       / "ned-box-home-directory-and-its-mac-mount-point-path-constants-common.py")
 COUNTS_LOG_FILE_NAME = "walk-me-through-answer-added-texts-cold-read-fast-read-already-done-or-had-to-run-counts-per-check.tsv"
 RECORDS_DIRECTORY_NAME = "cold-read-records"
 PROGRAM = "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close"
@@ -94,7 +107,7 @@ NEW_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*#new\b[:\s]*(.*)$")
 QUOTE_PAIRS = (('"', '"'), ("“", "”"), ("'", "'"))
 ANSWER_LINE = re.compile(r"^(?P<item>items? .+?): the user answered (?P<answered>.+?)"
                          r"(?: #approved_(?:obvious|after_advisor))? \([^)]*\), "
-                         r"which makes (?:its change\. Fast reads:|no change\.)$")
+                         r"which makes (?:its change\. Fast reads:|no change\.)$", re.I)
 STATUS_LINE_PREFIX = "- "
 OBVIOUS_HASHTAG = " #approved_obvious"
 AFTER_ADVISOR_HASHTAG = " #approved_after_advisor"
@@ -104,6 +117,9 @@ OUTCOMES = {APPROVED: "<accepted>", DISAPPROVED: "<rejected>"}
 NO_PROPOSED_TEXT = "no proposed text marked"
 STATUS_ALREADY_DONE = "`#new` text {number}, \"{excerpt}\": fast read already done ({record})."
 STATUS_HAD_TO_BE_RUN = "`#new` text {number}, \"{excerpt}\": fast read had to be run ({record})."
+STATUS_FAST_READ_NOTE = " The fast read also said: {note}"
+# The fast read reports these on stderr and still exits 0, because its report was written.
+FAST_READ_NOTE_MARKERS = ("cold-read-fast-read: record: FAILED", "#cold_read_target_changed_during_run")
 CHECK_JUDGEMENT_LINES = (
     "Read each fast-read report named above as had to be run.",
     "If a finding holds and changes how a text is understood but not what the item decides, "
@@ -115,8 +131,15 @@ CHECK_JUDGEMENT_LINES = (
 )
 CHECK_CLOSE_LINE = "Then run `python3 {program} close --cwd {top}` and do what it prints."
 COUNTS_NOT_LOGGED = (
-    "The fast-read counts were not logged to {log}: {error}.",
+    "The minutes record the answer, but the fast-read counts were not logged to {log}: {error}.",
     "Include this line in your next message to the user, and carry on as the lines above say.",
+)
+LOG_STORE_UNREACHABLE = ("this machine reaches the log-store at neither {paths}, so its cold-read-records were "
+                         "not searched either")
+RECORDS_NOT_SHIPPED = (
+    "The minutes record the answer, but the fast read of `#new` text {number} did not ship its record: {note}",
+    "The record stays at {record}; once ned-box can be reached, run `python3 {shipper} {record}`.",
+    "Include these lines in your next message to the user, and carry on as the lines above say.",
 )
 FAST_READ_FAILED_LINES = (
     "The item stays waiting: the minutes do not record the answer.",
@@ -170,6 +193,10 @@ RECORDED_ITEMS = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_]*(items?\s+[^:(
 DATE = re.compile(r"\d{4}-\d\d-\d\d(?:[T ]\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:?\d\d)?)?")
 DECIDED = re.compile(r"\b(?:dis)?approved\b|\baccepted\b|\brejected\b|<moved on, no decision>", re.I)
 DEFERRED_WORD = re.compile(r"\bdeferred\b", re.I)
+OUTCOME_TAG = re.compile(r"<([^<>]+)>")
+DECIDING_OUTCOMES = {"accepted", "rejected", "moved on, no decision", "approved as revised"}
+UNDECIDED_OUTCOMES = {"open", "revised, awaiting ruling"}
+FIRST_WORD = re.compile(r"^[\s,:;*_.)\-\u2013\u2014]*(\w+)")
 SUMMARY_HEADING = re.compile(r"\bof\s+\d+\b[*_\s:.\-\u2013\u2014]*summary\b", re.I)
 CLOSE_HELD_NEXT = ("Then present {new_item}, and record the user's answer to it in the minutes as "
                    "the outcome of {item} too.")
@@ -183,12 +210,31 @@ class FastReadFailed(Exception):
     """A fast read failed; its argument is the FAILED line, printed as it is."""
 
 
-def load_walk_finder():
-    spec = importlib.util.spec_from_file_location(
-        "walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common", WALK_FINDER_FILE)
+def load_module(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def load_walk_finder():
+    return load_module("walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
+                       WALK_FINDER_FILE)
+
+
+def reachable_log_store_records(record_shipper=None, ned_box_home=None, mac_mount=None):
+    """Return (the log-store's cold-read-records directory as this machine reaches it, or None, and the paths
+    tried): the path ned-box names it by, then the same path under the Mac's mount of ned-box's home."""
+    if record_shipper is None:
+        record_shipper = load_module("cold_read_record_ship", RECORD_SHIPPER_FILE)
+        constants = load_module("ned_box_home_directory_and_its_mac_mount_point_path_constants_common",
+                                PATH_CONSTANTS_FILE)
+        ned_box_home, mac_mount = constants.NED_BOX_HOME, constants.MAC_MOUNT_OF_NED_BOX_HOME
+    _, path = record_shipper.split_destination(record_shipper.LOG_STORE_RECORDS_DESTINATION)
+    candidates = [Path(str(path))]
+    if str(path).startswith(ned_box_home + "/"):
+        candidates.append(Path(mac_mount + str(path)[len(ned_box_home):]))
+    return next((candidate for candidate in candidates if candidate.is_dir()), None), candidates
 
 
 def the_open_walk(walk_finder, cwd):
@@ -275,7 +321,8 @@ def fast_read_record_holding(text, record_directories):
 
 
 def run_fast_read(text, name, fast_read_program):
-    """Fast-read the text from a scratch file; return the report's directory, or raise FastReadFailed."""
+    """Fast-read the text from a scratch file; return (the report's directory, the lines the fast read printed
+    on stderr about an unshipped record or a changed target), or raise FastReadFailed."""
     scratch = Path(tempfile.mkdtemp(prefix=PROGRAM + "-"))
     target = scratch / f"{name}.md"
     target.write_text(text + "\n", encoding="utf-8")
@@ -288,7 +335,9 @@ def run_fast_read(text, name, fast_read_program):
     if result.returncode != 0 or not lines[-1]:
         raise FastReadFailed(f"FAILED: {fast_read_program} --target {target} exited {result.returncode} "
                              f"without naming a report; its stderr: {result.stderr.strip()[-500:]}")
-    return Path(lines[-1]).parent
+    notes = [line.strip() for line in result.stderr.split("\n")
+             if any(marker in line for marker in FAST_READ_NOTE_MARKERS)]
+    return Path(lines[-1]).parent, notes
 
 
 def excerpt(text):
@@ -355,10 +404,12 @@ def check(arguments):
         print(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
         return 0
     texts = proposed_texts(lines)
-    record_directories = arguments.cold_read_records or [top / RECORDS_DIRECTORY_NAME,
-                                                         LOG_STORE / RECORDS_DIRECTORY_NAME]
+    log_store_records, tried = (None, []) if arguments.cold_read_records and arguments.counts_log \
+        else reachable_log_store_records()
+    record_directories = arguments.cold_read_records or (
+        [top / RECORDS_DIRECTORY_NAME] + ([log_store_records] if log_store_records else []))
     walk_name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
-    statuses, already_done, had_to_be_run = [], 0, 0
+    statuses, already_done, had_to_be_run, problems = [], 0, 0, []
     for number, text in enumerate(texts, 1):
         record = fast_read_record_holding(text, record_directories)
         if record is not None:
@@ -366,9 +417,14 @@ def check(arguments):
             statuses.append(STATUS_ALREADY_DONE.format(number=number, excerpt=excerpt(text), record=record))
             continue
         name = f"{walk_name}-{file_name_part(item)}-new-{number}"
-        record = run_fast_read(text, name, arguments.fast_read_program)
+        record, notes = run_fast_read(text, name, arguments.fast_read_program)
         had_to_be_run += 1
-        statuses.append(STATUS_HAD_TO_BE_RUN.format(number=number, excerpt=excerpt(text), record=record))
+        statuses.append(STATUS_HAD_TO_BE_RUN.format(number=number, excerpt=excerpt(text), record=record)
+                        + "".join(STATUS_FAST_READ_NOTE.format(note=note) for note in notes))
+        for note in notes:
+            if note.startswith(FAST_READ_NOTE_MARKERS[0]):
+                problems += [line.format(number=number, note=note, record=record, shipper=RECORD_SHIPPER_FILE)
+                             for line in RECORDS_NOT_SHIPPED]
     if not texts:
         statuses.append(NO_PROPOSED_TEXT)
     now = datetime.datetime.now().astimezone()
@@ -380,18 +436,18 @@ def check(arguments):
     if had_to_be_run:
         output += [line.format(document=document, item=item) for line in CHECK_JUDGEMENT_LINES]
     output.append(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
-    log = arguments.counts_log or LOG_STORE / COUNTS_LOG_FILE_NAME
+    log = arguments.counts_log or (log_store_records.parent / COUNTS_LOG_FILE_NAME if log_store_records else None)
     try:
+        if log is None:
+            raise OSError(LOG_STORE_UNREACHABLE.format(paths=" or ".join(str(path) for path in tried)))
         with open(log, "a", encoding="utf-8") as file:
             file.write("\t".join([now.isoformat(timespec="seconds"), walk_name, item,
                                   f"texts={len(texts)}", f"already_done={already_done}",
                                   f"had_to_be_run={had_to_be_run}"]) + "\n")
     except OSError as error:
-        output += [line.format(log=log, error=error) for line in COUNTS_NOT_LOGGED]
-        print("\n".join(output))
-        return 2
-    print("\n".join(output))
-    return 0
+        problems += [line.format(log=log or "the log-store", error=error) for line in COUNTS_NOT_LOGGED]
+    print("\n".join(output + problems))
+    return 2 if problems else 0
 
 
 def last_answer(minutes):
@@ -443,14 +499,26 @@ def minutes_record(walk_finder, minutes_text, parser):
     for number, line in enumerate(minutes_text.split("\n")):
         if number in code or ANSWER_LINE.match(line):
             continue
-        match = RECORDED_ITEMS.match(DATE.sub("", line))
+        dated = DATE.sub("", line)
+        match = RECORDED_ITEMS.match(dated)
         if not match:
             continue
         try:
             items, _ = walk_finder.parse_items(match[1].strip())
         except walk_finder.UnusableRange:
             continue
-        if DECIDED.search(line):
+        outcomes = {tag.strip().lower() for tag in OUTCOME_TAG.findall(line)}
+        first = FIRST_WORD.match(dated[match.end():])
+        first_word = first[1].lower() if first else ""
+        # An outcome tag or a leading "deferred" says what the line records; only an untagged line is read
+        # by its keywords, since a hand-written open line may use "approved" in another sense.
+        if outcomes & DECIDING_OUTCOMES:
+            decided.update(items)
+        elif outcomes & UNDECIDED_OUTCOMES or first_word == DEFERRED:
+            if first_word == DEFERRED:
+                for item in items:
+                    deferrals[item] += 1
+        elif DECIDED.search(line):
             decided.update(items)
         elif DEFERRED_WORD.search(line):
             for item in items:

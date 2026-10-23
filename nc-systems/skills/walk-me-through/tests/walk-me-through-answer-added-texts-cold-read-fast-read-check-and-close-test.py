@@ -57,6 +57,9 @@ record = Path(os.environ["STAND_IN_RECORDS"]) / (target.stem + "-2026-10-17")
 print(record / "fast-read.md")
 if mode == "path-then-exit":
     sys.exit(4)
+if mode == "record-not-shipped":
+    sys.stderr.write("cold-read-fast-read: record: FAILED: ned-box could not be reached (ssh exit 255); "
+                     "the record stays on disk.\n")
 '''
 
 WALK_DOCUMENT = """# A walk
@@ -246,9 +249,71 @@ def test_a_fast_read_that_names_a_report_but_exits_nonzero_is_a_failure():
 def test_counts_that_cannot_be_logged_are_reported():
     case = Case(next_to_present="item 4 of 9")
     result = case.run("check", counts_log=case.root / "no-such-directory" / "counts.tsv")
-    check("a counts log that cannot be written is printed, with exit 2",
-          result.returncode == 2 and "The fast-read counts were not logged to " in result.stdout
-          and result.stdout.startswith("no proposed text marked"), described(result))
+    check("a counts log that cannot be written is printed, saying the minutes record the answer, with exit 2",
+          result.returncode == 2
+          and "The minutes record the answer, but the fast-read counts were not logged to " in result.stdout
+          and result.stdout.startswith("no proposed text marked")
+          and "item 4 of 9: the user answered approved (" in case.minutes.read_text(), described(result))
+
+
+def test_a_fast_read_whose_record_was_not_shipped_is_reported():
+    case = Case()
+    result = case.run("check", mode="record-not-shipped")
+    note = ("cold-read-fast-read: record: FAILED: ned-box could not be reached (ssh exit 255); the record stays "
+            "on disk.")
+    check("a fast read that exits 0 but did not ship its record has its line in the status line, in the minutes, "
+          "and in what to do, with exit 2",
+          result.returncode == 2
+          and result.stdout.split("\n")[0].endswith(f"The fast read also said: {note}")
+          and "The minutes record the answer, but the fast read of `#new` text 1 did not ship its record: "
+              f"{note}" in result.stdout
+          and "cold-read-record-ship.py " in result.stdout
+          and case.minutes.read_text().count(f"The fast read also said: {note}") == 2, described(result))
+
+
+def load_program():
+    spec = importlib.util.spec_from_file_location("check_and_close", PROGRAM)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_log_store_is_found_on_ned_box_or_through_the_macs_mount():
+    program = load_program()
+    root = SUITE_ROOT / "log-store-lookup"
+
+    class Shipper:
+        LOG_STORE_RECORDS_DESTINATION = f"nedlern@ned-box:{root}/box-home/nedschorus-logs/cold-read-records"
+
+        @staticmethod
+        def split_destination(destination):
+            host, _, path = destination.partition(":")
+            return host, Path(path)
+
+    on_box, on_mac = root / "box-home" / "nedschorus-logs" / "cold-read-records", \
+        root / "mac-mount" / "nedschorus-logs" / "cold-read-records"
+    found, tried = program.reachable_log_store_records(Shipper, str(root / "box-home"), str(root / "mac-mount"))
+    check("with neither path a directory, the log-store is not found, and both paths are named as tried",
+          found is None and tried == [on_box, on_mac], repr((found, tried)))
+    on_mac.mkdir(parents=True)
+    found, _ = program.reachable_log_store_records(Shipper, str(root / "box-home"), str(root / "mac-mount"))
+    check("on the Mac, the log-store is found through the mount of ned-box's home", found == on_mac, repr(found))
+    on_box.mkdir(parents=True)
+    found, _ = program.reachable_log_store_records(Shipper, str(root / "box-home"), str(root / "mac-mount"))
+    check("on ned-box, the log-store is found at its own path", found == on_box, repr(found))
+    found, tried = program.reachable_log_store_records()
+    check("by default the path comes from cold-read-record-ship.py's LOG_STORE_RECORDS_DESTINATION",
+          tried[0] == Path("/home/nedlern/nedschorus-logs/cold-read-records")
+          and tried[1] == Path("/Volumes/nedhome/nedschorus-logs/cold-read-records"), repr(tried))
+
+
+def test_a_capitalised_marker_is_read_and_closed():
+    case = Case(next_to_present="Item 4 of 9")
+    case.run("check")
+    closed = case.run("close")
+    check("a `#next_to_present Item 4 of 9` line, capital I, is checked and closed",
+          closed.returncode == 0 and "Item 4 of 9: approved; every text the change adds" in case.minutes.read_text(),
+          described(closed) + case.minutes.read_text())
 
 
 TOOK_EFFECT_NEXT = [
@@ -577,6 +642,34 @@ def test_a_deferred_last_item_hands_on_to_the_first_unrecorded_item():
     closed = case.run("close")
     check("deferring the walk-document's last item, with no summary item, names the first item not recorded",
           closed.returncode == 0 and marker(case) == "#next_to_present item 3 of 9", case.minutes.read_text())
+
+
+def test_an_outcome_tag_decides_whether_a_line_records_a_decision():
+    case = summary_case(next_to_present="item 3 of 5",
+                        recorded="Item 2 of 5: deferred until the approved migration finishes. <open>\n"
+                                 "- Item 1, a proposal: <accepted>. A side direction, <open> until scoped.\n"
+                                 "Item 4 of 5: the user asked again; approved wording waits. <revised, awaiting ruling>\n")
+    case.run("check")
+    closed = case.run("close")
+    check("an open line naming 'approved' is not a decision, a line with <accepted> is, whatever <open> follows",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 4 of 5", case.minutes.read_text())
+    case.run("check")
+    case.run("close")
+    check("an item deferred in a hand-written open line comes back before the summary item",
+          marker(case) == "#next_to_present item 2 of 5", case.minutes.read_text())
+    case.run("check")
+    case.run("close")
+    case.run("check")
+    case.run("close")
+    check("an item whose line has <accepted> and then an <open> side note stays decided, so the walk closes "
+          "after the summary item", marker(case) == "#next_to_present none, closed", case.minutes.read_text())
+    case = summary_case(next_to_present="item 3 of 5", recorded="Item 2 of 5: deferred, approved wording to come.\n")
+    case.run("check")
+    case.run("close")
+    case.run("check")
+    case.run("close")
+    check("an untagged line whose first word is deferred records a deferral, not a decision",
+          marker(case) == "#next_to_present item 2 of 5", case.minutes.read_text())
 
 
 def test_a_minutes_line_with_an_unusable_item_range_is_skipped():

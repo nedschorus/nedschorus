@@ -162,7 +162,7 @@ OLD_MARKER_INSTRUCTIONS = (
 def transcript_records(transcript_path):
     """The records from the newest one that opens a turn, and the newest one holding a
     `turnOrigin`, to the transcript's end: all that turn_reply_text and turn_answers_user read."""
-    reader = load_module("claude_code_session_transcript_records_read_backward_common",
+    reader = walk_finder.load_module("claude_code_session_transcript_records_read_backward_common",
                          TRANSCRIPT_READER_FILE)
     return reader.records_from_newest_boundary_to_end(transcript_path, is_turn_start, lambda record: "turnOrigin" in record)
 

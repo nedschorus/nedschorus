@@ -534,8 +534,8 @@ def test_an_answer_word_and_a_list_of_item_numbers_answers_each_when_each_names_
               result.returncode == 0 and result.stdout == "" and result.stderr == "",
               f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
     lines = case.lines("approve 7")
-    check("'approve 7', one number that names no item, still expands as that numbered answer",
-          lines is not None and lines[1] == "The answer gives each item it names its own letter: item 7 of 9: A.",
+    check("'approve 7', one number that names an item not waiting, is refused",
+          lines is not None and lines[1].startswith("The answer gives a letter to item 7 of 9, which is not waiting"),
           f"lines {lines!r}")
     for prompt, rest in (("Approve, first line\nsecond line", "first line\nsecond line"),
                          ("a, first line\nsecond line", "first line\nsecond line"),
@@ -596,13 +596,40 @@ def test_numbered_r_beside_other_numbered_answers():
           f"lines {lines!r}")
 
 
-def test_a_numbered_letter_other_than_r_on_a_number_no_item_has_still_expands():
-    case = Case(next_to_present="items 5 and 6 of 9")
-    for prompt in ("7 a", "7 z"):
+NOT_WAITING_LINES = [
+    "Record nothing and act on none of the answer: the check step records an answer for the waiting item only, "
+    "so running it for another item's letter would record that letter against an item the user did not answer.",
+    "Ask the user to answer item 5 of 9 first; the other items come to him one at a time after it."]
+
+
+def test_a_numbered_letter_other_than_r_for_an_item_not_waiting_is_refused():
+    case = Case(next_to_present="item 5 of 9")
+    for prompt, named in (("5 a, 7 d", "item 7 of 9, which is"), ("7 a", "item 7 of 9, which is"),
+                          ("5 a 6 z 7 ao", "item 6 of 9, item 7 of 9, which are"), ("approve 5 and 6", "item 6 of 9, which is")):
         lines = case.lines(prompt)
-        check(f"{prompt!r} still expands", lines is not None
-              and lines[1].startswith("The answer gives each item it names its own letter: item 7 of 9:"),
+        check(f"{prompt!r} with only item 5 waiting is refused whole, naming {named.split(', which')[0]}",
+              lines is not None
+              and lines[1] == (f"The answer gives a letter to {named} not waiting for an answer: the minutes' "
+                               "`#next_to_present` line names only item 5 of 9.")
+              and lines[2:4] == NOT_WAITING_LINES and not any("`python3" in line for line in lines),
               f"lines {lines!r}")
+    lines = case.lines("5 a, 6 r")
+    check("an R for an item not waiting does not refuse the answer for the waiting item",
+          lines is not None and lines[1] == "The answer gives each item it names its own letter: item 5 of 9: A, "
+          "item 6 of 9: R.", f"lines {lines!r}")
+    lines = Case(next_to_present="items 5 and 6 of 9").lines("5 a, 6 d")
+    check("letters for every waiting item are not refused",
+          lines is not None and lines[1].startswith("The answer gives each item it names its own letter:"),
+          f"lines {lines!r}")
+
+
+def test_numbered_r_whose_walk_document_or_marker_cannot_be_read_goes_to_the_agent_with_the_reason():
+    for case, problem in ((Case(next_to_present="item 4 of 9", document=None), "walk-document "),
+                          (Case(next_to_present="paused until rewritten"), "`paused until rewritten`")):
+        lines = case.lines("4 r")
+        check(f"'4 r' when {problem!r} cannot be read expands and says why, instead of printing nothing",
+              lines is not None and any(line.startswith("The hook could not show ") and problem in line
+                                        for line in lines), f"lines {lines!r}")
 
 
 def test_numbered_r_reads_the_walk_in_the_payloads_cwd_not_the_hooks_own():
@@ -716,6 +743,22 @@ def test_each_check_command_the_hook_names_runs_on_the_real_program():
               result.returncode == 0 and result.stdout.startswith("no proposed text marked")
               and f"item 3 of 9: the user answered {word}" in minutes,
               f"command {commands[0]!r}, exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+    case = Case(next_to_present="item 3 of 9")
+    lines = case.lines("d") or []
+    commands = [line.split("`")[1] for line in lines if "`python3 " in line and " check" in line]
+    result = subprocess.run((commands or ["false"])[0].split() + ["--counts-log", str(case.checkout.parent / "c.tsv")],
+                            capture_output=True, text=True, cwd=case.checkout)
+    check("the check command the hook names for 'd' runs and records the answer as disapproved",
+          result.returncode == 0 and "item 3 of 9: the user answered disapproved ("
+          in (case.walk / f"{WALK_NAME}-minutes.md").read_text(), f"lines {lines!r}, stdout {result.stdout!r}")
+    # Z's text names the check step and its flag, not the whole command.
+    case = Case(next_to_present="item 3 of 9")
+    lines = case.lines("z") or []
+    result = subprocess.run(CHECK.strip("`").split() + ["--deferred"], capture_output=True, text=True, cwd=case.checkout)
+    check("Z's text names --deferred, and the check step run with it records the answer as deferred",
+          any("--deferred" in line for line in lines) and result.returncode == 0
+          and "item 3 of 9: the user answered deferred (" in (case.walk / f"{WALK_NAME}-minutes.md").read_text(),
+          f"lines {lines!r}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
 def test_unreadable_minutes_still_expand_and_say_so():
