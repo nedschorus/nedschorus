@@ -117,7 +117,7 @@ TMUX_TIMEOUT_SECONDS = 30
 MAC_WINDOW_OPENER_TIMEOUT_SECONDS = 90
 PANE_IN_MODE = "1"
 TRANSCRIPT_READ_POSITIONS_FILE_NAME = "transcript-read-positions.json"
-WHOLE_READ_TYPES_NOTHING_TWICE = ("Nothing needs doing for this run: a whole read types nothing twice, "
+WHOLE_READ_TYPES_NOTHING_TWICE = ("A whole read types nothing twice, "
                                   "because decisions.jsonl records each disconnect already typed for.")
 # Enough to tell a transcript rewritten in place from the one an earlier run read.
 BYTES_COMPARED_BEFORE_SAVED_OFFSET = 4096
@@ -344,14 +344,14 @@ def transcript_read_positions_load(log_directory: Path):
     except (OSError, ValueError) as error:
         print(f"{PROGRAM}: the saved read positions {path} could not be read ({type(error).__name__}: "
               f"{error}), so this run reads every transcript whole and saves new positions in their place.\n"
-              f"{WHOLE_READ_TYPES_NOTHING_TWICE}\n"
+              f"Nothing needs doing for this run: {WHOLE_READ_TYPES_NOTHING_TWICE}\n"
               "When a later run prints this line again: fix the cause the error names, such as the file's "
               "permissions, because until then every run reads every transcript whole.", file=sys.stderr)
         return {}
     if not isinstance(positions, dict):
-        print(f"{PROGRAM}: the saved read positions {path} hold JSON that is not an object, so this run "
-              "reads every transcript whole and saves new positions in their place.\n"
-              f"{WHOLE_READ_TYPES_NOTHING_TWICE}", file=sys.stderr)
+        print(f"{PROGRAM}: the saved read positions {path} hold valid JSON whose top level is not an "
+              "object, so this run reads every transcript whole and saves new positions in their place.\n"
+              f"Nothing needs doing for this run: {WHOLE_READ_TYPES_NOTHING_TWICE}", file=sys.stderr)
         return {}
     return positions
 
@@ -368,7 +368,7 @@ def transcript_read_positions_save(log_directory: Path, positions) -> bool:
               "every transcript whole again, and every run exits 1 until a save succeeds.\n"
               f"{WHOLE_READ_TYPES_NOTHING_TWICE}\n"
               f"When the error says No space left on device: free space on the disk that holds {log_directory}.\n"
-              f"When the error says Permission denied: give this user write permission on {log_directory} "
+              f"When the error says Permission denied: give the user this watcher runs as write permission on {log_directory} "
               f"and on {path}.\n"
               f"When the error says Is a directory: remove the directory at {path} or at {temporary}; "
               "the next run writes the file in its place.\n"
