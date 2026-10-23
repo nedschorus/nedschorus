@@ -759,6 +759,9 @@ def main():
         print("FAIL  tmux is not installed, and every typing case needs it")
         return 1
     namespace = isolate_tmux()
+    # The program refuses off Linux; every case but the off-ned-box one runs it as on ned-box.
+    real_platform = watcher.sys.platform
+    watcher.sys.platform = "linux"
     try:
         case_prompt_line_reading()
         case_seat_finding(namespace)
@@ -787,6 +790,7 @@ def main():
         case_overlapping_run(namespace)
         case_off_ned_box_and_show_notice()
     finally:
+        watcher.sys.platform = real_platform
         end_tmux(namespace)
     if failures:
         print(f"{len(failures)} case(s) failed: {', '.join(failures)}")

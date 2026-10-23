@@ -375,9 +375,10 @@ def run_remote_ghi_info_log_store_cases(scratch: Path):
          "2026-10-03.md").write_text("another GHI-MD's\n")
         read_back = tool.ghi_info_files_in_log_store("570-a", runner)
         check("over ssh, the files read back are this GHI-MD's, each with "
-              "its text exactly",
+              "its text exactly, a text long enough that GNU base64 wraps it",
               sorted(name for name, _ in read_back) == sorted([first, second])
-              and dict(read_back)[first] == written_text, read_back)
+              and dict(read_back)[first] == written_text
+              and len(written_text.encode("utf-8")) > 57, read_back)
         check("over ssh, an earlier question about the same text is found "
               "by its key",
               tool.ghi_info_file_for_reviewed_text(
