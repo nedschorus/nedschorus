@@ -16,9 +16,9 @@ WHAT IT SEARCHES. Five kinds of record in the log-store,
   session-dialogs    session-dialogs/<machine>/<project-key>/: each session's
                      complete filtered dialog, subagent tasks and reports included
   user-messages      the user's typed messages in the transcripts under
-                     claude-code-files-mirror-per-machine/<machine>/projects/<project-key>/*.jsonl
+                     agent-session-files-by-machine/<machine>/projects/<project-key>/*.jsonl
 
-The transcripts' subagents/ directories and claude-code-files-mirror-per-machine/recovered/ are not
+The transcripts' subagents/ directories and agent-session-files-by-machine/recovered/ are not
 searched. A user's message is usually found twice, once in his session's
 dialog and once among user-messages; the user-messages hit carries the time
 he sent it, and the session-dialogs hit the turns around it.
@@ -195,7 +195,7 @@ MODIFICATION_TIME_MARGIN_SECONDS = 2
 TRANSCRIPT_TAIL_BYTES = 64 * 1024
 OWN_SESSION_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 LIVE_TRANSCRIPTS_DIRECTORY = Path.home() / ".claude" / "projects"
-MIRRORED_CLAUDE_CODE_FILES_FOLDER = "claude-code-files-mirror-per-machine"
+AGENT_SESSION_FILES_FOLDER_IN_LOG_STORE = "agent-session-files-by-machine"
 COMPACTION_SUBTYPE = "compact_boundary"
 # What the Mac's copy tells ned-box's copy, besides a compaction's timestamp.
 NEVER_COMPACTED = "never"
@@ -256,7 +256,7 @@ def seat_from_project_key(key):
 
 
 def session_parts(path, root):
-    """Return (machine, project_key) for a path under session-dialogs/ or claude-code-files-mirror-per-machine/."""
+    """Return (machine, project_key) for a path under session-dialogs/ or agent-session-files-by-machine/."""
     parts = path.relative_to(root).parts
     if parts[0] == SESSION_DIALOGS:
         return parts[1], parts[2]
@@ -447,7 +447,7 @@ def file_hits(root, kinds, pattern, context, failures):
 
 def session_transcript(root, hit):
     session_id = Path(hit["path"]).name[:-len(DIALOG_FILE_SUFFIX)]
-    return root / MIRRORED_CLAUDE_CODE_FILES_FOLDER / hit["machine"] / "projects" / hit["project_key"] / f"{session_id}.jsonl"
+    return root / AGENT_SESSION_FILES_FOLDER_IN_LOG_STORE / hit["machine"] / "projects" / hit["project_key"] / f"{session_id}.jsonl"
 
 
 def listed_directories(directory, failures):
@@ -484,7 +484,7 @@ def own_session_transcript(session_id, root, failures):
     live = transcript_in(listed_directories(LIVE_TRANSCRIPTS_DIRECTORY, failures), session_id, failures)
     if live is not None:
         return live
-    return transcript_in([projects for machine in listed_directories(root / MIRRORED_CLAUDE_CODE_FILES_FOLDER, failures)
+    return transcript_in([projects for machine in listed_directories(root / AGENT_SESSION_FILES_FOLDER_IN_LOG_STORE, failures)
                           for projects in listed_directories(machine / "projects", failures)],
                          session_id, failures)
 
@@ -514,7 +514,7 @@ def own_session_compaction(session_id, root, failures):
     transcript = own_session_transcript(session_id, root, failures)
     if transcript is None:
         failures.append(f"found no transcript of this agent-session, {session_id}, under "
-                        f"{LIVE_TRANSCRIPTS_DIRECTORY} or {root / MIRRORED_CLAUDE_CODE_FILES_FOLDER}, so its last compaction is "
+                        f"{LIVE_TRANSCRIPTS_DIRECTORY} or {root / AGENT_SESSION_FILES_FOLDER_IN_LOG_STORE}, so its last compaction is "
                         f"unknown and all of its records were left out")
         return COMPACTION_UNKNOWN
     return transcript_compaction(transcript, failures)
@@ -805,7 +805,7 @@ def transcript_candidates(root, pattern, seat, machine, since, failures, own_ses
         return None
     directories = []
     for each in ([machine] if machine else MACHINES):
-        directory = root / MIRRORED_CLAUDE_CODE_FILES_FOLDER / each / "projects"
+        directory = root / AGENT_SESSION_FILES_FOLDER_IN_LOG_STORE / each / "projects"
         if directory.is_dir():
             directories.append(directory)
         else:

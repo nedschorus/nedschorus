@@ -72,7 +72,7 @@ THE RECORD is one text file per machine and day in the log-store:
 
   nedlern@ned-box:/home/nedlern/nedschorus-logs/daily-full-test-runs/<machine>/<YYYY-MM-DD>.txt
 
-<machine> is `ned-box` or `mac`, the spellings the log-store's claude-code-files-mirror-per-machine/
+<machine> is `ned-box` or `mac`, the spellings the log-store's agent-session-files-by-machine/
 directory uses. The date is the date in America/Los_Angeles when the run
 started, never the machine's own zone. The record holds: this program's
 name, the machine, the date and the UTC time the run started; origin/main's

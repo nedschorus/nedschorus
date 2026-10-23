@@ -77,7 +77,7 @@ NED_BOX_SSH_TARGET = "nedlern@ned-box"
 SSH_OPTIONS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 SSH_EXIT_CONNECTION_FAILED = 255
 WALK_MINUTES_DIRECTORY = "/home/nedlern/nedschorus-logs/walk"
-MAC_TRANSCRIPTS_COPY_ON_NED_BOX = "/home/nedlern/nedschorus-logs/claude-code-files-mirror-per-machine/mac/projects"
+MIRROR_RELATIVE_PATH = Path("scripts") / "transcript-mirror-to-log-store.py"
 NED_BOX_TRANSCRIPTS_DIRECTORY = "/home/nedlern/.claude/projects"
 NED_BOX_UNREACHABLE_REMEDY = (f"make sure ned-box is on and on the LAN, then check that "
                               f"`ssh {NED_BOX_SSH_TARGET} true` succeeds")
@@ -93,12 +93,23 @@ COMMAND_TIMEOUT_SECONDS = 300
 DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
+def mac_transcripts_copy_path_on_ned_box() -> str:
+    """Return where the transcript mirror keeps the Mac's transcripts on ned-box."""
+    # Loaded here, not at import: the copy run over ssh has no repository to load it from.
+    spec = importlib.util.spec_from_file_location("transcript_mirror_to_log_store",
+                                                  REPOSITORY_ROOT / MIRROR_RELATIVE_PATH)
+    mirror = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mirror)
+    _, store = mirror.split_destination(mirror.LOG_STORE_AGENT_SESSION_FILES_DESTINATION)
+    return str(store / mirror.MACHINE_NAME_ELSEWHERE / "projects")
+
+
 def production_plan() -> dict:
     """Return the places to search on this machine."""
     on_ned_box = socket.gethostname().split(".")[0] == NED_BOX_HOSTNAME
     transcripts = [str(Path.home() / ".claude" / "projects")]
     if on_ned_box:
-        transcripts.append(MAC_TRANSCRIPTS_COPY_ON_NED_BOX)
+        transcripts.append(mac_transcripts_copy_path_on_ned_box())
     else:
         transcripts.append({"directory": NED_BOX_TRANSCRIPTS_DIRECTORY,
                             "ssh_target": NED_BOX_SSH_TARGET,

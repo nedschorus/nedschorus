@@ -266,7 +266,7 @@ in the nedschorus repository, which this machine also clones:
   `scripts/sanity-check-record-ship.py`
 - `walk/` -- approval-walk files, named by the walk-me-through skill, shipped
   by `scripts/walk-files-ship.py`
-- `claude-code-files-mirror-per-machine/` -- each machine's session transcripts, handoffs,
+- `agent-session-files-by-machine/` -- each machine's session transcripts, handoffs,
   task lists, seat-briefs and global CLAUDE.md, mirrored by
   `scripts/transcript-mirror-to-log-store.py`
 - `session-dialogs/` -- each mirrored session's complete filtered dialog,
