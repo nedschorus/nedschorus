@@ -8,7 +8,9 @@ made. cold-read-fast-read.py is replaced by a stand-in this suite writes, so no
 case calls a model. The exit code is asserted on every case.
 """
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -57,6 +59,8 @@ record = Path(os.environ["STAND_IN_RECORDS"]) / (target.stem + "-2026-10-17")
 print(record / "fast-read.md")
 if mode == "path-then-exit":
     sys.exit(4)
+if mode == "target-changed":
+    sys.stderr.write("cold-read-fast-read: #cold_read_target_changed_during_run: the target changed while it was read.\n")
 if mode == "record-not-shipped":
     sys.stderr.write("cold-read-fast-read: record: FAILED: ned-box could not be reached (ssh exit 255); "
                      "the record stays on disk.\n")
@@ -469,7 +473,7 @@ def test_no_open_walk_or_no_item_fails():
     case = Case(next_to_present="item 8 of 9")
     result = case.run("check")
     check("check on an item the walk-document lacks fails on stderr",
-          result.returncode == 1 and result.stderr.startswith(FAILURE_PREFIX + "check: ") and "has no heading for `item 8 of 9`" in result.stderr, described(result))
+          result.returncode == 1 and result.stderr.startswith(FAILURE_PREFIX + "check: ") and "has no heading `Item 8 of 9`, which the minutes name" in result.stderr, described(result))
     case = Case(next_to_present="items 6 to 4 of 9")
     result = case.run("check")
     check("check on a backwards range fails on stderr",
@@ -708,6 +712,144 @@ def test_repeat_explain_and_other_options_have_no_flag():
         result = case.run("check", flag)
         check(f"check {flag} is refused as usage, since R, E and O decide nothing",
               result.returncode == 2 and "the user answered" not in case.minutes.read_text(), described(result))
+
+
+def test_a_changed_target_is_noted_but_does_not_fail_the_check():
+    case = Case()
+    result = case.run("check", mode="target-changed")
+    check("a fast read whose target changed has its line in the status line, with exit 0",
+          result.returncode == 0
+          and result.stdout.split("\n")[0].endswith(
+              "The fast read also said: cold-read-fast-read: #cold_read_target_changed_during_run: the target changed "
+              "while it was read.")
+          and "did not ship its record" not in result.stdout, described(result))
+
+
+def test_a_log_store_this_machine_cannot_reach_is_reported():
+    case = Case(next_to_present="item 4 of 9")
+    program = load_program()
+    unreachable = [Path("/nowhere/box/cold-read-records"), Path("/nowhere/mac/cold-read-records")]
+    program.reachable_log_store_records = lambda: (None, unreachable)
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        status = program.main(["check", "--cwd", str(case.checkout), "--cold-read-records", str(case.records),
+                               "--fast-read-program", str(case.stand_in)])
+    check("with no counts log given and no log-store reachable, check says so and that the minutes record the "
+          "answer, with exit 2",
+          status == 2
+          and "the fast-read counts were not logged to the log-store: this machine reaches the log-store at "
+              "neither /nowhere/box/cold-read-records or /nowhere/mac/cold-read-records" in output.getvalue()
+          and "item 4 of 9: the user answered approved (" in case.minutes.read_text(),
+          f"status {status}, output {output.getvalue()!r}")
+
+
+SHARED_HEADING_CROSS_REFERENCE_DOCUMENT = """# A walk
+
+## Item 4 of 9: four
+
+Recommendation: do four.
+
+## Items 5 and 6 of 9: grouped
+
+**Item 5 of 9**: the label wording.
+
+#new "Label text five."
+
+Recommendation: adopt label text five.
+
+**Item 6 of 9**: the button wording.
+
+#new "Button text six."
+
+Recommendation: use the same style as Item 5 of 9.
+
+## Item 7 of 9: seven
+
+Recommendation: do seven.
+"""
+
+
+def test_a_mention_of_an_item_inside_another_is_not_its_start():
+    case = Case(next_to_present="item 5 of 9", document=SHARED_HEADING_CROSS_REFERENCE_DOCUMENT)
+    result = case.run("check")
+    check("item 5's text is fast-read, not item 6's, though item 6 mentions `Item 5 of 9`",
+          result.returncode == 0 and case.calls.read_text() == "Label text five.\n", described(result))
+    case = Case(next_to_present="item 6 of 9", document=SHARED_HEADING_CROSS_REFERENCE_DOCUMENT)
+    result = case.run("check")
+    check("item 6's own text is fast-read", result.returncode == 0 and case.calls.read_text() == "Button text six.\n",
+          described(result))
+    document = SHARED_HEADING_CROSS_REFERENCE_DOCUMENT.replace(
+        "Recommendation: use the same style as Item 5 of 9.", "Item 5 of 9 sets the style this follows.")
+    case = Case(next_to_present="item 5 of 9", document=document)
+    result = case.run("check")
+    check("a later line of another item that opens with `Item 5 of 9` does not move item 5's start",
+          result.returncode == 0 and case.calls.read_text() == "Label text five.\n", described(result))
+    document = SHARED_HEADING_CROSS_REFERENCE_DOCUMENT.replace(
+        "**Item 5 of 9**: the label wording.\n", "**Item 5 of 9**: the label wording.\n\nThe button in Item 6 of 9 "
+        "reuses this label.\n")
+    case = Case(next_to_present="item 5 of 9", document=document)
+    result = case.run("check")
+    check("a mention of `Item 6 of 9` inside item 5, before item 6 starts, does not end item 5 there",
+          result.returncode == 0 and case.calls.read_text() == "Label text five.\n", described(result))
+    document = SHARED_HEADING_CROSS_REFERENCE_DOCUMENT.replace(
+        "**Item 5 of 9**: the label wording.\n", "**Item 5 of 9**: the label wording.\n\nItems 6 and 7 of 9 follow "
+        "this label.\n")
+    case = Case(next_to_present="item 5 of 9", document=document)
+    result = case.run("check")
+    check("a line inside item 5 that opens with a count of several items starts none of them",
+          result.returncode == 0 and case.calls.read_text() == "Label text five.\n", described(result))
+
+
+THREE_ITEM_DOCUMENT = """# A walk
+
+## Item 1 of 3: one
+
+Recommendation: do one.
+
+## Item 2 of 3: two
+
+Recommendation: do two.
+
+## Item 3 of 3: summary
+
+Recommendation: close.
+"""
+
+
+def test_a_later_awaiting_ruling_undoes_an_earlier_decision():
+    for recorded in ("Item 2 of 3: approved. <accepted>\n"
+                     "Item 2 of 3: the user asked for a change; redrafted. <revised, awaiting ruling>\n",
+                     "Item 2 of 3: redrafted after discussion <revised, awaiting ruling>; item 3 <moved on, no "
+                     "decision>.\n"):
+        case = Case(next_to_present="item 1 of 3", document=THREE_ITEM_DOCUMENT)
+        case.minutes.write_text(f"# Minutes\n\n{recorded}#next_to_present item 1 of 3\n")
+        case.run("check")
+        closed = case.run("close")
+        check(f"after {recorded.splitlines()[-1][:60]!r}, close names item 2, which awaits a ruling",
+              closed.returncode == 0 and marker(case) == "#next_to_present item 2 of 3",
+              described(closed) + case.minutes.read_text())
+    case = Case(next_to_present="item 1 of 3", document=THREE_ITEM_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\nItem 2 of 3: approved. <accepted> A side point stays <open>.\n"
+                            "#next_to_present item 1 of 3\n")
+    case.run("check")
+    closed = case.run("close")
+    check("`<open>` after a decision on its line, for a side point, leaves the item decided",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 3 of 3",
+          described(closed) + case.minutes.read_text())
+
+
+def test_check_refuses_a_walk_document_close_would_refuse_before_any_fast_read():
+    for document, next_to_present, reason in (
+            ("# W\n\n## Item 2 of 3: two\n\n#new \"First.\"\n\n## Item 2 of 3: again\n\n#new \"Second.\"\n\n"
+             "## Item 3 of 3: summary\n", "item 2 of 3", "more than one heading for `Item 2 of 3`"),
+            ("# W\n\n## Item 1 of 3: one\n\n## Item 2 of 3: old\n\n#new \"Old.\"\n\n## Item 2 of 4: new\n\n"
+             "#new \"New.\"\n", "item 2", "more than one total")):
+        case = Case(next_to_present=next_to_present, document=document)
+        before = case.minutes.read_text()
+        result = case.run("check")
+        check(f"check refuses, running no fast read and writing nothing, when the walk-document has {reason}",
+              result.returncode == 1 and reason in result.stderr and case.calls.read_text() == ""
+              and case.minutes.read_text() == before, described(result))
 
 
 def main():

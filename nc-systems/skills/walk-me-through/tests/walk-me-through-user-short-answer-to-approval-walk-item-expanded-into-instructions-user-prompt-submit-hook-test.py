@@ -597,9 +597,10 @@ def test_numbered_r_beside_other_numbered_answers():
 
 
 NOT_WAITING_LINES = [
-    "Record nothing and act on none of the answer: the check step records an answer for the waiting item only, "
-    "so running it for another item's letter would record that letter against an item the user did not answer.",
-    "Ask the user to answer item 5 of 9 first; the other items come to him one at a time after it."]
+    "Record nothing and act on none of the answer: each check run records one answer for the waiting item, so "
+    "a letter for another item, or a second letter for the same item, would be recorded against an item the "
+    "user did not answer.",
+    "Ask the user to answer item 5 of 9 with one letter; the other items come to him one at a time after it."]
 
 
 def test_a_numbered_letter_other_than_r_for_an_item_not_waiting_is_refused():
@@ -609,10 +610,26 @@ def test_a_numbered_letter_other_than_r_for_an_item_not_waiting_is_refused():
         lines = case.lines(prompt)
         check(f"{prompt!r} with only item 5 waiting is refused whole, naming {named.split(', which')[0]}",
               lines is not None
-              and lines[1] == (f"The answer gives a letter to {named} not waiting for an answer: the minutes' "
+              and lines[1] == (f"The answer gives a letter to {named} not waiting for an answer, and the minutes' "
                                "`#next_to_present` line names only item 5 of 9.")
               and lines[2:4] == NOT_WAITING_LINES and not any("`python3" in line for line in lines),
               f"lines {lines!r}")
+    for prompt, problems in (
+            ("5 a, 5 a", "gives item 5 of 9 more than one letter"),
+            ("5 a 5 d", "gives item 5 of 9 more than one letter"),
+            ("5 a, 7 d, 5 z", "gives a letter to item 7 of 9, which is not waiting for an answer and gives item 5 "
+                              "of 9 more than one letter")):
+        lines = case.lines(prompt)
+        check(f"{prompt!r} with only item 5 waiting is refused whole, saying {problems!r}",
+              lines is not None
+              and lines[1] == (f"The answer {problems}, and the minutes' `#next_to_present` line names only "
+                               "item 5 of 9.")
+              and lines[2:4] == NOT_WAITING_LINES and not any("`python3" in line for line in lines),
+              f"lines {lines!r}")
+    lines = case.lines("5 a, 5 r")
+    check("an R beside a letter for the same waiting item is not a second letter",
+          lines is not None and lines[1] == "The answer gives each item it names its own letter: item 5 of 9: A, "
+          "item 5 of 9: R.", f"lines {lines!r}")
     lines = case.lines("5 a, 6 r")
     check("an R for an item not waiting does not refuse the answer for the waiting item",
           lines is not None and lines[1] == "The answer gives each item it names its own letter: item 5 of 9: A, "
@@ -804,6 +821,18 @@ def test_payload_that_is_not_json_is_a_fault():
           result.returncode == 1 and result.stdout == ""
           and "short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook: the hook failed" in result.stderr,
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+
+
+def test_a_mention_of_an_item_inside_another_does_not_take_its_recommendation():
+    document = ("# A walk\n\n## Item 4 of 9: four\n\nRecommendation: do four.\n\n## Items 5 and 6 of 9: grouped\n\n"
+                "**Item 5 of 9**: the label wording.\n\nRecommendation: adopt label text five.\n\n"
+                "**Item 6 of 9**: the button wording.\n\nRecommendation: use the same style as Item 5 of 9.\n\n"
+                "## Item 7 of 9: seven\n\nRecommendation: do seven.\n")
+    lines = Case(next_to_present="item 5 of 9", document=document).lines("a")
+    check("item 5's recommendation is its own, though item 6 mentions `Item 5 of 9`",
+          lines is not None and lines[1].startswith(
+              "A means approve: the user agrees with the recommendation of item 5 of 9 (adopt label text five)."),
+          f"lines {lines!r}")
 
 
 def main():

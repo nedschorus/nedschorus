@@ -58,10 +58,10 @@ the prompt reaches the agent as typed; when the walk-document or the
 `#next_to_present` line cannot be read, the text says why instead.
 
 A NUMBERED ANSWER THAT GIVES A, AO, D OR Z TO AN ITEM NOT WAITING, one the
-`#next_to_present` line does not name, is refused whole: the text names that
-item and tells the agent to record nothing and ask the user to answer the
-waiting item on its own, because the check step records an answer only for
-the waiting item.
+`#next_to_present` line does not name, or more than one of those letters to
+one item, is refused whole: the text names those items and tells the agent to
+record nothing and ask the user to answer the waiting item with one letter,
+because each check run records one answer for the waiting item.
 
 OUTPUT otherwise: {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
 "additionalContext": <text>}}. No other answer blocks, and the hook never
@@ -142,7 +142,6 @@ AA_SKILL_TEXT = (
     "outside the item becomes a new item in the walk or a loose end. If the call fails, say so and show "
     "the item again, unapproved; the user may then answer A to approve it without the check."
 )
-CHECK_COMMAND = "`python3 {checkout}/nc-systems/skills/walk-me-through/{program} check`"
 # Each answer's lines: (lines while an approval-walk is open, lines while none is).
 MEANINGS = {
     "A": (("{word} means approve: the user agrees with the recommendation of {item}{recommended}. "
@@ -267,13 +266,15 @@ NUMBERED_LINES = (
     ("The answer gives each numbered question or point of your last message its own letter: {pairs}.",
      "Every question or point the answer does not name stays open; say so in your reply."),
 )
-NUMBERED_NOT_WAITING_LINES = (
-    "The answer gives a letter to {not_waiting}, which {verb} not waiting for an answer: the minutes' "
-    "`#next_to_present` line names only {item}.",
-    "Record nothing and act on none of the answer: the check step records an answer for the waiting item only, "
-    "so running it for another item's letter would record that letter against an item the user did not answer.",
-    "Ask the user to answer {item} first; the other items come to him one at a time after it.",
+NUMBERED_REFUSED_LINES = (
+    "The answer {problems}, and the minutes' `#next_to_present` line names only {item}.",
+    "Record nothing and act on none of the answer: each check run records one answer for the waiting item, so "
+    "a letter for another item, or a second letter for the same item, would be recorded against an item the "
+    "user did not answer.",
+    "Ask the user to answer {item} with one letter; the other items come to him one at a time after it.",
 )
+NUMBERED_NOT_WAITING_PROBLEM = "gives a letter to {items}, which {verb} not waiting for an answer"
+NUMBERED_REPEATED_PROBLEM = "gives {items} more than one letter"
 NUMBERED_UNNAMED_LINE = "The answer does not name {unnamed}, so it stays open; say so in your reply."
 NUMBERED_ALL_NAMED_LINE = "The answer names every item now waiting."
 CONDITION_LINES = (
@@ -469,12 +470,19 @@ def meaning_lines(answer, walk, in_walk):
               "explain_skill": EXPLAIN_SKILL, "aa_skill_text": AA_SKILL_TEXT}
     form = answer["form"]
     if form == "numbered":
-        not_waiting = [number for number, letter in answer["pairs"]
-                       if in_walk and numbers and letter != "R" and number not in numbers]
+        deciding = [number for number, letter in answer["pairs"] if in_walk and numbers and letter != "R"]
+        not_waiting = [number for number in dict.fromkeys(deciding) if number not in numbers]
+        named_twice = [number for number in dict.fromkeys(deciding) if deciding.count(number) > 1]
+        problems = []
         if not_waiting:
-            return [line.format(not_waiting=", ".join(item_name(number, walk) for number in not_waiting),
-                                verb="are" if not_waiting[1:] else "is", item=item)
-                    for line in NUMBERED_NOT_WAITING_LINES]
+            problems.append(NUMBERED_NOT_WAITING_PROBLEM.format(
+                items=", ".join(item_name(number, walk) for number in not_waiting),
+                verb="are" if not_waiting[1:] else "is"))
+        if named_twice:
+            problems.append(NUMBERED_REPEATED_PROBLEM.format(
+                items=", ".join(item_name(number, walk) for number in named_twice)))
+        if problems:
+            return [line.format(problems=" and ".join(problems), item=item) for line in NUMBERED_REFUSED_LINES]
         pairs = ", ".join(f"{item_name(number, walk) if in_walk else number}: {letter}"
                           for number, letter in answer["pairs"])
         lines = [line.format(pairs=pairs) for line in NUMBERED_LINES[branch]]

@@ -45,9 +45,10 @@ before the walk-minutes are written: the program prints that line, or a FAILED
 line of its own, with FAST_READ_FAILED_LINES, and exits 1; the item stays
 waiting. A fast read that succeeds but says on stderr that its record was not
 shipped, or that its target changed during the read, has that line added to its
-status line, and the output says the record stays unshipped. That, a log-store
-this machine cannot reach, and a counts line that cannot be written are each
-printed after the rest, saying the minutes record the answer, with exit 2.
+status line. An unshipped record, a log-store this machine cannot reach, and a
+counts line that cannot be written are each printed after the rest, saying the
+minutes record the answer, with exit 2; a changed target alone leaves the exit
+code 0, since the report was written.
 
 CLOSE reads the last answer line CHECK wrote. When the `#next_to_present` line
 still names that line's items, it records the answer: that it took effect, or,
@@ -66,7 +67,10 @@ lines record nothing. A line with an outcome tag, `<accepted>`, `<rejected>`,
 `<moved on, no decision>` or `<approved as revised>`, records a decision
 whatever else it says; one with only `<open>` or `<revised, awaiting ruling>`
 records none, and records a deferral when its first word after the items is
-deferred; so does a line with no such tag whose first word is deferred. CLOSE refuses, writing nothing, when a line after the
+deferred; so does a line with no such tag whose first word is deferred. A
+`<revised, awaiting ruling>` tag also undoes an earlier line's decision of its
+items, and outweighs a deciding tag on its own line; `<open>` does neither.
+CLOSE refuses, writing nothing, when a line after the
 last answer line already opens with its item, because no check has run since
 that answer was closed. When the `#next_to_present` line names other items than
 the answer line, a new item a finding raised is waiting: the answer is recorded
@@ -195,7 +199,8 @@ DECIDED = re.compile(r"\b(?:dis)?approved\b|\baccepted\b|\brejected\b|<moved on,
 DEFERRED_WORD = re.compile(r"\bdeferred\b", re.I)
 OUTCOME_TAG = re.compile(r"<([^<>]+)>")
 DECIDING_OUTCOMES = {"accepted", "rejected", "moved on, no decision", "approved as revised"}
-UNDECIDED_OUTCOMES = {"open", "revised, awaiting ruling"}
+AWAITING_RULING = "revised, awaiting ruling"
+UNDECIDED_OUTCOMES = {"open", AWAITING_RULING}
 FIRST_WORD = re.compile(r"^[\s,:;*_.)\-\u2013\u2014]*(\w+)")
 SUMMARY_HEADING = re.compile(r"\bof\s+\d+\b[*_\s:.\-\u2013\u2014]*summary\b", re.I)
 CLOSE_HELD_NEXT = ("Then present {new_item}, and record the user's answer to it in the minutes as "
@@ -263,16 +268,15 @@ def waiting_items(walk_finder, value, minutes):
     return match[0], numbers, total
 
 
-def item_lines(walk_finder, minutes, numbers, total, count, parser):
-    """Return (walk-document path, the lines of the items numbered, outside fenced code)."""
+def item_lines(walk_finder, minutes, value, numbers, total, parser):
+    """Return (walk-document path, the lines of the items numbered, outside fenced code), finding the items
+    as close does, so check refuses a walk-document close would refuse."""
     document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
-    if not document.is_file():
-        raise Failure(f"the walk-document {document} does not exist.")
+    try:
+        _, spans = walk_finder.waiting_item_units(document, value, numbers, total, parser)
+    except walk_finder.UnusableRange as problem:
+        raise Failure(f"the last `#next_to_present` line in {minutes}, `{value}`: {problem}")
     text = document.read_text(encoding="utf-8")
-    spans = [unit for unit in walk_finder.item_unit_spans(text, parser)
-             if set(unit[0]) & set(numbers) and (total is None or unit[1] == total)]
-    if not spans:
-        raise Failure(f"the walk-document {document} has no heading for `{count}`.")
     code = walk_finder.code_line_numbers(parser.parse(text))
     lines = text.split("\n")
     kept = []
@@ -397,7 +401,7 @@ def check(arguments):
     item, numbers, total = waiting_items(walk_finder, value, minutes)
     if numbers[1:]:
         raise Failure(CHECK_SEVERAL_WAITING.format(minutes=minutes, item=item))
-    document, lines = item_lines(walk_finder, minutes, numbers, total, item, parser)
+    document, lines = item_lines(walk_finder, minutes, value, numbers, total, parser)
     if arguments.deferred:
         now = datetime.datetime.now().astimezone()
         append_to_minutes(minutes, [CHECK_DEFERRED_MINUTES.format(item=item, date_and_time=f"{now:%Y-%m-%d %H:%M}")])
@@ -493,7 +497,8 @@ def walk_document_items(walk_finder, minutes, value, numbers, total, parser):
 
 
 def minutes_record(walk_finder, minutes_text, parser):
-    """Return (the item numbers a minutes line decides, a Counter of how many lines defer each item)."""
+    """Return (the item numbers whose last line that records a decision or its absence decides them, a
+    Counter of how many lines defer each item)."""
     code = walk_finder.code_line_numbers(parser.parse(minutes_text))
     decided, deferrals = set(), collections.Counter()
     for number, line in enumerate(minutes_text.split("\n")):
@@ -511,8 +516,12 @@ def minutes_record(walk_finder, minutes_text, parser):
         first = FIRST_WORD.match(dated[match.end():])
         first_word = first[1].lower() if first else ""
         # An outcome tag or a leading "deferred" says what the line records; only an untagged line is read
-        # by its keywords, since a hand-written open line may use "approved" in another sense.
-        if outcomes & DECIDING_OUTCOMES:
+        # by its keywords, since a hand-written open line may use "approved" in another sense. An
+        # awaiting-ruling tag undoes an earlier decision and beats a deciding tag on its own line; `<open>`
+        # does neither, since real minutes use it after a decision for a side point left open.
+        if AWAITING_RULING in outcomes:
+            decided.difference_update(items)
+        elif outcomes & DECIDING_OUTCOMES:
             decided.update(items)
         elif outcomes & UNDECIDED_OUTCOMES or first_word == DEFERRED:
             if first_word == DEFERRED:

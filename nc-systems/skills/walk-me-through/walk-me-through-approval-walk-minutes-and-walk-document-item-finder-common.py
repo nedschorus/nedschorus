@@ -54,6 +54,7 @@ NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
 NUMBER_LIST = rf"{NUMBER}(?:{NUMBER_JOINER}{NUMBER})*(?![\d.]\d)"
 VALUE_COUNT = re.compile(rf"^items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b)?", re.I)
 HEADING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
+ITEM_OPENING_LINE = re.compile(rf"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
 REPLY_COUNT = re.compile(rf"\bitems?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
 # Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
 REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
@@ -233,10 +234,20 @@ def item_unit_spans(document_text, parser):
 
 def approval_walk_item_line_range_within_heading_shared_by_several_items(lines, number, numbers, total):
     """Return (first, end) of the lines, of a unit naming several items, that belong to item number: from
-    the line holding its running count up to the next such line of another of the unit's items, or every
-    line when no line holds its count."""
-    starts = {other: index for index, line in enumerate(lines) for other in numbers
-              if re.search(rf"\bItem {re.escape(other)} of {total}\b", line)}
+    the first line that opens with its running count alone, after any list marker or emphasis, up to the
+    next such line of another of the unit's items, or every line when no line opens with its count. A
+    count further into a line is a mention, not a start."""
+    starts = {}
+    for index, line in enumerate(lines):
+        match = ITEM_OPENING_LINE.match(line)
+        if not match or match[2] != total:
+            continue
+        try:
+            named = expand_numbers(match[1])
+        except UnusableRange:
+            continue
+        if len(named) == 1 and named[0] in numbers:
+            starts.setdefault(named[0], index)
     if number not in starts:
         return 0, len(lines)
     later = [index for other, index in starts.items() if index > starts[number]]

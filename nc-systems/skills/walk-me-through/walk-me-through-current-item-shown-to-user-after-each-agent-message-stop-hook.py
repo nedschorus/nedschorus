@@ -99,7 +99,6 @@ hook's exit 1 as a non-blocking error and still ends the turn.
 import importlib.util
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
