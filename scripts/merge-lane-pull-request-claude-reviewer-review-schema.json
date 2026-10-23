@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "body", "comments"],
+  "properties": {
+    "verdict": {"enum": ["APPROVE", "REQUEST_CHANGES", "COULD_NOT_REVIEW"]},
+    "body": {"type": "string", "minLength": 1},
+    "comments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "line", "body"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "line": {"type": "integer", "minimum": 1},
+          "body": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

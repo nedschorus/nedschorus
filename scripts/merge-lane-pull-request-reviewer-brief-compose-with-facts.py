@@ -11,12 +11,6 @@ The file holds a JSON list. Each entry has tag, number, title, author, head,
 main, tests and hazards, and may have overlaps. A fix-round entry also has
 reviewed_before, previous_reviews, new_commits and answer.
 
-The facts end with the one command the reviewer posts its review with:
---review-tools-worktree-at-main's
-scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py, given the
-pull request, its head commit and review-to-post.txt in the reviewer's scratch
-directory.
-
 Each brief is three parts: the standing text, composed by --review-tools-worktree-at-main's
 scripts/compose-pull-request-reviewer-brief.py with the reviewing
 instructions inserted; the ned-box environment addendum; and a section of
@@ -34,7 +28,6 @@ later brief is composed.
 import argparse
 import importlib.util
 import json
-import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -59,9 +52,6 @@ _git_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
-
-
-REVIEW_POST_SCRIPT = Path("scripts") / "merge-lane-pull-request-reviewer-review-post-and-read-back.py"
 
 
 class StepFailed(Exception):
@@ -124,9 +114,6 @@ def files_touched_text(review_tools_worktree, base, head):
 
 def compose(spec, arguments, review_tools_worktree, instructions_file):
     tag, number = spec["tag"], spec["number"]
-    missing = common.review_tool_missing_message(arguments, REVIEW_POST_SCRIPT)
-    if missing:
-        raise StepFailed(missing)
     head, main = spec["head"], spec["main"]
     helpers = arguments.merge_lane_worktrees_and_outputs_directory
     merge_base = git(review_tools_worktree, "merge-base", main, head)
@@ -164,10 +151,6 @@ def compose(spec, arguments, review_tools_worktree, instructions_file):
     facts.append("- Other open pull requests changing the same files: "
                  + spec.get("overlaps", "none") + ".")
     facts.append(f"- Hazards: {spec['hazards']}")
-    post_script = review_tools_worktree / REVIEW_POST_SCRIPT
-    post_command = shlex.join(["python3", str(post_script), "--pull-request", str(number),
-                               "--head-commit", head, str(scratch / "review-to-post.txt")])
-    facts.append(f"- Post your review with this command, and in no other way: `{post_command}`")
     addendum = arguments.ned_box_reviewer_brief_environment_addendum_file.read_text()
     brief = (standing.rstrip("\n") + "\n\n" + addendum.rstrip("\n") + "\n\n"
              + "\n".join(facts) + "\n")

@@ -4,7 +4,7 @@
 Real git in a scratch directory: a bare origin holding main and a pull
 request's head at refs/pull/7/head, as GitHub keeps it, and a clone of that
 origin as the --review-tools-worktree-at-main. The clone's scripts/ holds a
-stub for each of the four steps, which logs its arguments and exits with the
+stub for each of the five steps, which logs its arguments and exits with the
 code the case gives it, so no worktree is built, no Codex runs and no network
 is used. The program runs with GIT_DIR pointing at a directory that does not
 exist, so a case passes only if the program drops the variables that
@@ -35,7 +35,8 @@ PROGRAM = Path(__file__).with_name(
 STEPS = ("merge-lane-pull-request-head-and-merged-worktrees-rebuild.py",
          "merge-lane-pull-request-reviewer-brief-compose-with-facts.py",
          "merge-lane-code-review-codex-cell-run-on-pull-request-head.py",
-         "merge-lane-pull-request-head-test-run-on-merged-worktree.py")
+         "merge-lane-pull-request-head-test-run-on-merged-worktree.py",
+         "merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py")
 GIT_ENVIRONMENT = {
     **{key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
     "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@example.invalid",
@@ -147,7 +148,7 @@ def main():
         directory_options = ["--merge-lane-worktrees-and-outputs-directory", str(helpers),
                              "--review-tools-worktree-at-main", str(checkout)]
         first_round = {"tag": "7a", "number": 7, "title": "t", "author": "a", "tests": [],
-                       "hazards": "none", "overlaps": "none"}
+                       "hazards": "none", "claude_reviewer": True, "overlaps": "none"}
         fix_round = {**first_round, "reviewed_before": head_reviewed_before,
                      "previous_reviews": "one review", "new_commits": "one commit",
                      "answer": "fixed"}
@@ -157,7 +158,7 @@ def main():
         completed, calls, specifications_file = run_program(scratch, checkout, helpers,
                                                             [first_round])
         detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}"
-        check("a first round with no head or main runs all four steps in order and exits 0",
+        check("a first round with no head or main runs all five steps in order and exits 0",
               completed.returncode == 0 and [call["step"] for call in calls] == list(STEPS),
               detail)
         check("each step gets the one head and main commit, the filled-in copy, the merge "
@@ -166,7 +167,8 @@ def main():
                   ["7", head_commit, main_commit, *directory_options],
                   [str(filled_in_file), *directory_options],
                   ["7", merge_base, *directory_options],
-                  ["7", *directory_options]], detail)
+                  ["7", *directory_options],
+                  ["7", "7a", head_commit, *directory_options]], detail)
         filled_in = json.loads(filled_in_file.read_text()) if filled_in_file.exists() else None
         check("the filled-in copy is the entry with origin's full head and main added",
               filled_in == [{**first_round, "head": head_commit, "main": main_commit}],
@@ -183,7 +185,19 @@ def main():
               f"(merge base)" in completed.stdout
               and all(f"{step} stub output" in completed.stdout for step in STEPS)
               and completed.stdout.rstrip().endswith(
-                  "PR 7: all 4 steps exited 0; nothing was merged."), detail)
+                  "PR 7: all 5 steps exited 0; nothing was merged."), detail)
+
+        completed, calls, _ = run_program(scratch, checkout, helpers,
+                                          [{**first_round, "claude_reviewer": False}])
+        detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}"
+        check("an entry whose claude_reviewer is false runs steps 1 to 4, skips step 5 and says "
+              "why, and exits 0",
+              completed.returncode == 0 and [call["step"] for call in calls] == list(STEPS[:4])
+              and f"step 5 of 5: {STEPS[4]}: skipped, because the entry's claude_reviewer is "
+                  f"false" in completed.stdout
+              and completed.stdout.rstrip().endswith(
+                  "PR 7: steps 1 to 4 exited 0 and step 5 was skipped; nothing was merged."),
+              detail)
 
         completed, calls, _ = run_program(
             scratch, checkout, helpers, [{**fix_round, "head": head_commit[:10],
@@ -193,7 +207,7 @@ def main():
         detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}"
         check("a fix-round's Codex base is the full head commit reviewed before, and "
               "abbreviated commits in the file and the option are accepted",
-              completed.returncode == 0 and len(calls) == 4
+              completed.returncode == 0 and len(calls) == 5
               and calls[2]["argv"] == ["7", head_reviewed_before, *directory_options]
               and "(head commit reviewed before)" in completed.stdout, detail)
         filled_in = json.loads(filled_in_file.read_text())
@@ -212,7 +226,7 @@ def main():
                   f"code, and exits 1",
                   completed.returncode == 1
                   and [call["step"] for call in calls] == list(STEPS[:position])
-                  and f"PR 7: stopped at step {position} of 4, {step}, which exited 5; "
+                  and f"PR 7: stopped at step {position} of 5, {step}, which exited 5; "
                       f"no later step ran, and nothing was merged." in completed.stdout,
                   detail)
 
@@ -251,6 +265,12 @@ def main():
             ("a first-round entry with no tag or hazards",
              [{k: v for k, v in first_round.items() if k not in ("tag", "hazards")}], [],
              "its entry has no tag, hazards, which the brief step reads"),
+            ("an entry with no claude_reviewer",
+             [{k: v for k, v in first_round.items() if k != "claude_reviewer"}], [],
+             "its entry has no claude_reviewer"),
+            ("an entry whose claude_reviewer is not true or false",
+             [{**first_round, "claude_reviewer": "yes"}], [],
+             "its claude_reviewer is 'yes', not true or false"),
             ("a fix-round entry without --head-commit-reviewed-before", [fix_round], [],
              "but --head-commit-reviewed-before was not given"),
             ("--head-commit-reviewed-before with a first-round entry", [first_round],
@@ -407,16 +427,16 @@ def main():
         # the worktree is checked out at main.
         author = scratch / "author"
         (author / "scripts").mkdir()
-        (author / "scripts" / STEPS[3]).write_text(STUB_STEP)
+        (author / "scripts" / STEPS[4]).write_text(STUB_STEP)
         git(author, "add", ".")
         git(author, "commit", "-q", "-m", "a step script on main")
         main_with_step = git(author, "rev-parse", "HEAD")
         git(author, "push", "-q", str(scratch / "origin.git"), "main:refs/heads/main")
         git(checkout, "checkout", "-q", "--detach", merge_base)
-        (checkout / "scripts" / STEPS[3]).unlink()
+        (checkout / "scripts" / STEPS[4]).unlink()
         completed, calls, _ = run_program(scratch, checkout, helpers, [first_round])
         check("a step script that only main has is found after the worktree is moved to main, "
-              "and all four steps run",
+              "and all five steps run",
               completed.returncode == 0 and [call["step"] for call in calls] == list(STEPS)
               and head_of(checkout) == main_with_step,
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}\n{calls}")

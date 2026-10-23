@@ -31,7 +31,6 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 
 PROGRAM = Path(__file__).with_name("merge-lane-pull-request-reviewer-brief-compose-with-facts.py")
 COMPOSER = Path(__file__).with_name("compose-pull-request-reviewer-brief.py")
-REVIEW_POST_SCRIPT = "scripts/merge-lane-pull-request-reviewer-review-post-and-read-back.py"
 GIT_ENVIRONMENT = {
     **{key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
     "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@example.invalid",
@@ -41,6 +40,7 @@ GIT_ENVIRONMENT = {
 STANDING_TEXT = "Review pull request <N>.\n<<PR-REVIEWER-INSTRUCTIONS>>\nEnd of standing text.\n"
 INSTRUCTIONS = "The reviewing instructions.\n"
 ADDENDUM = "The ned-box addendum.\n"
+
 failures = []
 
 
@@ -88,7 +88,6 @@ def main():
                        env=GIT_ENVIRONMENT)
         commit_file(repository, "scripts/compose-pull-request-reviewer-brief.py",
                     COMPOSER.read_text(), "composer")
-        commit_file(repository, REVIEW_POST_SCRIPT, "a stand-in posting script\n", "posting script")
         main_commit = commit_file(repository, "docs/agents/pr-reviewer-instructions.md",
                                   INSTRUCTIONS, "instructions")
         git(repository, "checkout", "-q", "-b", "topic")
@@ -122,11 +121,7 @@ def main():
             "- Test files the change touches: `scripts/thing-test.py`.\n"
             "- First round: no head commit was reviewed before.\n"
             "- Other open pull requests changing the same files: none.\n"
-            "- Hazards: Check the thing.\n"
-            "- Post your review with this command, and in no other way: `python3 "
-            f"{repository / REVIEW_POST_SCRIPT}"
-            f" --pull-request 7 --head-commit {first_head} "
-            f"{scratch / 'reviewer-scratch' / 'rv7' / 'review-to-post.txt'}`\n")
+            "- Hazards: Check the thing.\n")
         detail = f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}"
         brief = brief_file.read_text() if brief_file.exists() else ""
         check("a first-round brief is the standing text, the addendum and the facts",
@@ -208,16 +203,6 @@ def main():
         check("a composer refusal exits 1 and names the composer's reason",
               completed.returncode == 1 and "marker lines" in completed.stderr
               and not (helpers / "briefs" / "brief-9-mac-claude.md").exists(),
-              f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
-
-        (scratch / "standing.md").write_text(STANDING_TEXT)
-        (repository / REVIEW_POST_SCRIPT).unlink()
-        completed = run_program(scratch, helpers, [{**first_round, "tag": "7p"}])
-        check("a review tools worktree without the posting script exits 1, names the missing "
-              "script and writes no brief",
-              completed.returncode == 1 and f"{repository / REVIEW_POST_SCRIPT} is missing"
-              in completed.stderr
-              and not (helpers / "briefs" / "brief-7p-mac-claude.md").exists(),
               f"exit {completed.returncode}\n{completed.stdout}{completed.stderr}")
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

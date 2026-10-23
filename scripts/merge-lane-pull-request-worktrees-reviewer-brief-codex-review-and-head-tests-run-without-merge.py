@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the four merge-lane steps that come before a pull request's review, and stop at the first that fails.
+"""Run the five merge-lane steps that review a pull request, and stop at the first that fails.
 
 Usage:
   scripts/merge-lane-pull-request-worktrees-reviewer-brief-codex-review-and-head-tests-run-without-merge.py
@@ -12,8 +12,9 @@ review's base is the merge base of those two commits, or, for a fix-round,
 the commit given as --head-commit-reviewed-before.
 
 The brief specifications file holds merge-lane-2's judgments in exactly one
-entry, for this pull request: tag, number, title, author, tests and hazards,
-and optionally overlaps. A fix-round entry also has reviewed_before,
+entry, for this pull request: tag, number, title, author, tests, hazards and
+claude_reviewer, true when the pull request's review tier calls for a Claude
+reviewer and false when it does not, and optionally overlaps. A fix-round entry also has reviewed_before,
 previous_reviews, new_commits and answer; an entry is a fix-round exactly
 when --head-commit-reviewed-before is given, and its reviewed_before names
 that same commit. The entry need not name head or main; when it does, each
@@ -36,14 +37,19 @@ the pull request's, with those commits and both directory options:
   2. merge-lane-pull-request-reviewer-brief-compose-with-facts.py <the filled-in copy>
   3. merge-lane-code-review-codex-cell-run-on-pull-request-head.py <n> <base>
   4. merge-lane-pull-request-head-test-run-on-merged-worktree.py <n>
+  5. merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py <n> <tag> <head>,
+     which runs the Claude reviewer and posts its review, only when the entry's
+     claude_reviewer is true; when it is false, step 5 is skipped and the output
+     says so.
 Each step's own output passes straight through. The steps run one after
 another, so nothing here waits on a process. Nothing here merges: merging is
 merge-lane-pull-request-merge-through-merge-gate-with-stacked-pull-request-retarget.py.
 
-Exit codes: 0 all four steps exited 0; 1 a step exited nonzero, named on
+Exit codes: 0 every step that ran exited 0; 1 a step exited nonzero, named on
 stdout, and no later step ran; 2 refused before any step ran: a step script
 is missing, git could not fetch, read or check out a commit, the brief
-specifications file is unreadable, lacks a field or disagrees with the
+specifications file is unreadable, lacks a field, has a claude_reviewer that
+is not true or false, or disagrees with the
 commits, or the filled-in copy could not be written, named on stdout.
 """
 
@@ -58,12 +64,14 @@ WORKTREES_REBUILD_STEP = "merge-lane-pull-request-head-and-merged-worktrees-rebu
 REVIEWER_BRIEF_STEP = "merge-lane-pull-request-reviewer-brief-compose-with-facts.py"
 CODEX_REVIEW_STEP = "merge-lane-code-review-codex-cell-run-on-pull-request-head.py"
 HEAD_TEST_RUN_STEP = "merge-lane-pull-request-head-test-run-on-merged-worktree.py"
-STEPS = (WORKTREES_REBUILD_STEP, REVIEWER_BRIEF_STEP, CODEX_REVIEW_STEP, HEAD_TEST_RUN_STEP)
+CLAUDE_REVIEWER_STEP = "merge-lane-pull-request-claude-reviewer-headless-run-and-review-post.py"
+STEPS = (WORKTREES_REBUILD_STEP, REVIEWER_BRIEF_STEP, CODEX_REVIEW_STEP, HEAD_TEST_RUN_STEP,
+         CLAUDE_REVIEWER_STEP)
 
 # The fields REVIEWER_BRIEF_STEP reads from every entry and from a fix-round
 # entry, apart from head and main, which this program fills in. Keep in step
 # with that script's compose().
-ENTRY_FIELDS = ("tag", "number", "title", "author", "tests", "hazards")
+ENTRY_FIELDS = ("tag", "number", "title", "author", "tests", "hazards", "claude_reviewer")
 FIX_ROUND_ENTRY_FIELDS = ("reviewed_before", "previous_reviews", "new_commits", "answer")
 FILLED_IN_BRIEF_SPECIFICATIONS_FILE_NAME = (
     "reviewer-brief-specifications-pr{number}-with-head-and-main-commits-from-origin.json")
@@ -99,8 +107,10 @@ class RefusedBeforeAnyStep(Exception):
 def parse_arguments(argv):
     parser = argparse.ArgumentParser(
         description="Move the review tools worktree to main, then rebuild a pull request's "
-                    "worktrees, compose its reviewer brief, run the Codex review and run the "
-                    "head tests, stopping at the first step that fails. Does not merge. "
+                    "worktrees, compose its reviewer brief, run the Codex review, run the "
+                    "head tests and, when the entry asks for one, run the Claude reviewer "
+                    "and post its review, stopping at the first step that fails. Does not "
+                    "merge. "
                     "Runs at the same time need separate --review-tools-worktree-at-main "
                     "worktrees, because moving a worktree that a running Codex cell reads "
                     "from makes that cell exit 64.")
@@ -113,7 +123,7 @@ def parse_arguments(argv):
     parser.add_argument("--head-commit-reviewed-before",
                         help="for a fix-round, the head commit reviewed before; the Codex "
                              "review runs from it instead of from the merge base")
-    common.add_directory_options(parser, "wt/, briefs/, cx/, hr/ and tripwire-bin/")
+    common.add_directory_options(parser, "wt/, briefs/, cx/, hr/, claude-reviews/ and tripwire-bin/")
     return common.resolve_path_options(parser.parse_args(argv))
 
 
@@ -167,6 +177,9 @@ def brief_specification_disagreement(checkout, specifications, number, head, mai
         return (f"its entry has no {', '.join(missing)}, which the brief step reads; "
                 f"an entry needs {', '.join(ENTRY_FIELDS)}, and a fix-round entry also "
                 f"needs {', '.join(FIX_ROUND_ENTRY_FIELDS)}", CORRECT_THE_FILE_INSTRUCTION)
+    if not isinstance(entry["claude_reviewer"], bool):
+        return (f"its claude_reviewer is {entry['claude_reviewer']!r}, not true or false",
+                CORRECT_THE_FILE_INSTRUCTION)
     for field, commit in (("head", head), ("main", main)):
         if field in entry and resolved_commit(checkout, str(entry[field])) != commit:
             return (f"its {field} is {entry[field]}, but origin's {field} commit is {commit}, "
@@ -276,8 +289,15 @@ def main(argv=None):
     steps = ((WORKTREES_REBUILD_STEP, [str(number), head_commit, main_commit]),
              (REVIEWER_BRIEF_STEP, [str(filled_in_specifications_file)]),
              (CODEX_REVIEW_STEP, [str(number), base]),
-             (HEAD_TEST_RUN_STEP, [str(number)]))
+             (HEAD_TEST_RUN_STEP, [str(number)]),
+             (CLAUDE_REVIEWER_STEP, [str(number), str(specifications[0]["tag"]), head_commit]))
+    claude_reviewer = specifications[0]["claude_reviewer"]
     for position, (step, step_arguments) in enumerate(steps, start=1):
+        if step == CLAUDE_REVIEWER_STEP and not claude_reviewer:
+            print(f"step {position} of {len(STEPS)}: {step}: skipped, because the entry's "
+                  f"claude_reviewer is false: this pull request's review tier calls for no "
+                  f"Claude reviewer.", flush=True)
+            continue
         exit_code = run_step(position, step, arguments, step_arguments)
         if exit_code != 0:
             print(f"PR {number}: stopped at step {position} of {len(STEPS)}, {step}, which "
@@ -286,7 +306,9 @@ def main(argv=None):
                   f"If that message says to run the step again, run this program again "
                   f"instead, so every step uses the same commits.", flush=True)
             return 1
-    print(f"PR {number}: all {len(STEPS)} steps exited 0; nothing was merged.", flush=True)
+    outcome = (f"all {len(STEPS)} steps exited 0" if claude_reviewer else
+               f"steps 1 to {len(STEPS) - 1} exited 0 and step {len(STEPS)} was skipped")
+    print(f"PR {number}: {outcome}; nothing was merged.", flush=True)
     return 0
 
 
