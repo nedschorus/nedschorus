@@ -174,8 +174,8 @@ class GeminiTaskTests(unittest.TestCase):
             self.assertEqual(runner.main(self.args), 1)
         self.assertIn("agy exited 3", stderr.getvalue())
         self.assertIn(f"{key_file} gave no key", stderr.getvalue())
-        self.assertIn("ask the user for the key", stderr.getvalue())
-        self.assertIn(f"put the key in {key_file}", stderr.getvalue())
+        self.assertIn("Do not read, write or repair that file yourself", stderr.getvalue())
+        self.assertIn(f"to make {key_file} readable and holding the key", stderr.getvalue())
 
     def test_unknown_model_stops_before_task(self):
         result = self.run_cli(extra=("-m", "gemini-4-argon"))
