@@ -145,9 +145,11 @@ REPLY_LEAVES_OUT_INSTRUCTIONS = (
     "`Item 4 of 9: <the point>`.",
     "Otherwise, end your reply with one line naming it, as in `{example} {verb} waiting for "
     "your answer.`",
-    "If his answer moved the approval-walk on, first run the check program's check and close "
-    "steps, which set the `#next_to_present` line in {minutes} to the item now waiting; do not "
-    "set it by hand. Then name that item.",
+    "If his answer moved the approval-walk on, first run `python3 nc-systems/skills/walk-me-through/"
+    "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check`, with the "
+    "flag for his answer as its --help lists it, then the close command that check prints; "
+    "together they set the `#next_to_present` line in {minutes} to the item now waiting, so do "
+    "not set that line by hand. Then name that item.",
     "If he ended or abandoned the approval-walk, add the line `#next_to_present none, closed` "
     "at the end of {minutes} instead of naming the item, and end the turn.",
 )
