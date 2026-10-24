@@ -476,7 +476,14 @@ def read_supervisor_state(state_path: Path) -> dict:
 
 def write_supervisor_state(state_path: Path, state: dict) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    # Other programs read this file while the supervisor rewrites it every poll, and the
+    # supervisor can be killed mid-write: a write in place would let either find it cut off.
+    partial_path = state_path.with_name(state_path.name + ".partial")
+    with open(partial_path, "w", encoding="utf-8") as partial:
+        partial.write(json.dumps(state, indent=2))
+        partial.flush()
+        os.fsync(partial.fileno())
+    os.replace(partial_path, state_path)
 
 
 def stamp_heartbeat(state_path: Path, state: dict) -> None:
@@ -686,7 +693,7 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
 
 def supervisor_liveness(state_path: Path):
     """Return (is_alive, explanation) for the supervisor owning this state file."""
-    # Read the PID from the lock: heartbeat writes truncate the state file, so a concurrent read can see it empty.
+    # Read the PID from the lock: the state file holds none.
     if not state_path.is_file():
         return False, f"no supervisor state at {state_path} — none has ever run for this agent"
 
