@@ -52,10 +52,8 @@ The rule, from docs/issues/116-fleet-survives-machine-restart-design.md
   - A seat's heartbeat is its last_poll_at. When that cannot be read —
     empty, cut off, no stamp, a stamp that does not parse, or one in the
     future — the file's last write stands in for it, and is judged against
-    the anchor like any heartbeat. So a file damaged at the stop counts as
-    live and is resumed, which was the user's answer (2026-09-11): "Resume
-    or continue works perfectly 99% of the time, so I'd try that." A file
-    damaged long before the stop counts as an old seat.
+    the anchor like any heartbeat, so a file cut off by the stop is resumed
+    with the seats that were running then.
   - The anchor is the newest heartbeat before this boot; it approximates the
     moment the machine stopped.
   - A seat whose heartbeat or file was written since boot has had a
