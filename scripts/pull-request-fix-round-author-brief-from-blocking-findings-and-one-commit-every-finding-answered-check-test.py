@@ -302,7 +302,7 @@ def brief_cases(root, repository, base, frozen_head):
     code, out, err = run(root, outside, routes_for(frozen_head, [review(commit_id=frozen_head)]), "--check")
     check("check: outside a git worktree, with no --answers, refuses with exit 1, naming the worktree to use",
           code == 1 and "must run in the worktree or checkout of pull request 7's branch" in err
-          and "--answers" in err, err)
+          and "Change to that worktree" in err and "--answers" not in err, err)
 
     code, out, err = run(root, repository, routes_for(
         frozen_head, [review(commit_id=frozen_head),
