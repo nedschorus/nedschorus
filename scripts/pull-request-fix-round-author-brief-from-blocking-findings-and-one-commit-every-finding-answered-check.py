@@ -22,7 +22,9 @@ With --check, run in the worktree or checkout that holds the round's commit: the
 HEAD) must be none, or one non-merge commit, or with --after-conflict-merge a merge of origin/main
 followed by at most one non-merge commit. The answers file holds one entry per blocking finding,
 each starting "<n>. " on its own line; by default it is ANSWERS_FILE_NAME_FORMAT at the root of
-the worktree or checkout --check runs in, which .gitignore keeps out of commits. It prints the files the fix commit changes that no blocking
+the worktree or checkout --check runs in, and --check refuses when a commit of the round holds
+any answers file, since a branch cut before .gitignore named the file does not leave it out of
+commits. It prints the files the fix commit changes that no blocking
 finding names, and, once GitHub's head is the checked commit or the frozen-head, the message for
 merge-lane-2, which the agent sends with SendMessage, since a program cannot.
 
@@ -53,6 +55,7 @@ ANSWER_START_PATTERN = re.compile(r"^(\d+)\.\s+(\S.*)$")
 GH_TIMEOUT_SECONDS = 60
 PROGRAM = "scripts/" + Path(__file__).name
 ANSWERS_FILE_NAME_FORMAT = "fix-round-answers-pull-request-{number}.md"
+ANSWERS_FILE_NAME_PATTERN = re.compile(r"fix-round-answers-pull-request-\d+\.md")
 PRE_PUSH_TEST_COMMAND = ("python3 scripts/run-all-test-suites.py "
                          "--only-suites-whose-recorded-inputs-changed-since origin/main")
 WORKTREE_DISPATCH_INSTRUCTION = (
@@ -300,8 +303,9 @@ def print_brief(number, reviewer_login):
         "If no finding holds, make no commit.",
         f"5. Write the answers file {answers_name} at the root of your worktree, one entry per "
         "finding above, each starting \"<n>. \" on its own line, with any further lines of the "
-        "entry after it: what you fixed, or why the finding does not hold. .gitignore keeps it "
-        "out of the commit.",
+        "entry after it: what you fixed, or why the finding does not hold. Never commit it: "
+        "the branch's .gitignore may not leave it out, and the check in step 7 refuses a commit "
+        "that holds it.",
         f"6. Run the affected test suites: {PRE_PUSH_TEST_COMMAND}",
         "   If a suite fails because of this round's change, fix it in the same commit; if it "
         "fails for another cause, tell merge-lane-2 with SendMessage before pushing.",
@@ -322,7 +326,7 @@ def print_brief(number, reviewer_login):
 
 
 def default_answers_path(number):
-    """The answers file at the root of the worktree or checkout this runs in, which .gitignore keeps out of commits."""
+    """The answers file at the root of the worktree or checkout this runs in."""
     try:
         top_level = git(["rev-parse", "--show-toplevel"]).strip()
     except StepFailed as failure:
@@ -408,6 +412,28 @@ def fix_commit_range(frozen_head, commits, after_conflict_merge):
                   "If they are pushed, tell merge-lane-2 with SendMessage; do not force-push.")
 
 
+def round_files(frozen_head, commit):
+    """Every file the round's own commits change, leaving out what a merge of origin/main brings in."""
+    files = []
+    for sha, parents in commits_since(frozen_head, commit):
+        listing = git(["diff", "-z", "--name-only", parents[0], sha])
+        files += [path for path in git_output.nul_separated_fields(listing) if path not in files]
+    return files
+
+
+def refuse_committed_answers_file(frozen_head, commit):
+    committed = [path for path in round_files(frozen_head, commit)
+                 if ANSWERS_FILE_NAME_PATTERN.fullmatch(Path(path).name)]
+    if committed:
+        raise Refused(f"The round does not pass: its commits after the frozen-head {frozen_head[:12]} "
+                      f"hold the answers file {', '.join(committed)}, and an answers file must never "
+                      "reach the pull request.\n"
+                      "If the round's commit is not pushed, run git rm --cached on each answers file "
+                      "named above, then git commit --amend --no-edit, and check again.\n"
+                      "If the round's commit is pushed, tell merge-lane-2 with SendMessage which "
+                      "answers file it holds; do not force-push.")
+
+
 def unnamed_files(base, fix_commit, findings):
     if base is None:
         return []
@@ -423,6 +449,7 @@ def check_round(number, reviewer_login, answers_path, commit_name, after_conflic
     commit = git(["rev-parse", "--verify", f"{commit_name}^{{commit}}"]).strip()
     git(["cat-file", "-e", f"{frozen_head}^{{commit}}"])
     fix_range = fix_commit_range(frozen_head, commits_since(frozen_head, commit), after_conflict_merge)
+    refuse_committed_answers_file(frozen_head, commit)
     leftovers = unnamed_files(*(fix_range or (None, None)), findings)
     lines = [f"PASS: the fix-round on {url} keeps to its rules; {len(findings)} findings answered."]
     if leftovers:

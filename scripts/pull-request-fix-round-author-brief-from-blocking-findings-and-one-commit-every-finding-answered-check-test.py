@@ -587,6 +587,35 @@ def check_cases(root, repository, base, frozen_head):
     check("check: a missing default answers file fails with exit 2, naming it",
           code == 2 and str(default_answers) in err, err)
 
+    # A branch cut before .gitignore named the answers file: the fix commit picks it up with git add -A.
+    git(repository, "reset", "-q", "--hard", frozen_head)
+    (repository / ".gitignore").write_text("")
+    git(repository, "commit", "-q", "-am", "frozen-head without the ignore line")
+    unignored_head = git(repository, "rev-parse", "HEAD")
+    unignored_reviews = [review(commit_id=unignored_head)]
+    default_answers.write_text(GOOD_ANSWERS)
+    (repository / "hook.py").write_text("fixed\n")
+    git(repository, "add", "-A")
+    git(repository, "commit", "-q", "-m", "fix with the answers file")
+    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews), "--check")
+    check("check: a fix commit holding the answers file refuses with exit 1, naming the file",
+          code == 1 and ANSWERS_NAME in err and "git rm --cached" in err, out + err)
+    git(repository, "rm", "-q", "--cached", ANSWERS_NAME)
+    git(repository, "commit", "-q", "--amend", "--no-edit")
+    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews), "--check")
+    check("check: the same fix without the answers file passes", code == 0 and "Not pushed yet" in out,
+          out + err)
+    git(repository, "reset", "-q", "--hard", unignored_head)
+    git(repository, "update-ref", "refs/remotes/origin/main", "main-line")
+    git(repository, "merge", "-q", "--no-edit", "origin/main")
+    (repository / "other-answers").mkdir()
+    commit_file(repository, "other-answers/fix-round-answers-pull-request-1901.md", "1. x\n", "fix")
+    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews),
+                         "--check", "--after-conflict-merge")
+    check("check: after a conflict merge, any pull request's answers file in a subdirectory refuses",
+          code == 1 and "other-answers/fix-round-answers-pull-request-1901.md" in err, out + err)
+    default_answers.unlink()
+
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers_file(root, GOOD_ANSWERS), "--commit", "no-such-ref")
     check("check: an unknown --commit fails with exit 2", code == 2 and "rev-parse" in err, err)
