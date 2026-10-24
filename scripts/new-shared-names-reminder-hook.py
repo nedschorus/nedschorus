@@ -216,11 +216,6 @@ def worktree_head_branch_untracked_and_status_text(checkout: Path):
     return head, branch, untracked, status
 
 
-def reported_names_record_key_for(checkout: Path) -> str:
-    """Return the branch the worktree is on, or the detached-HEAD key; raises GitCommandFailed when git fails."""
-    return worktree_head_branch_untracked_and_status_text(checkout)[1]
-
-
 def read_reported_names_record(record_path: Path) -> dict:
     """Return the record, {branch: {reported "kind\\tname" keys}}; a missing record is empty.
 
@@ -421,13 +416,21 @@ def main() -> int:
     working_directory = payload.get("cwd")
     if not isinstance(working_directory, str) or not Path(working_directory).is_dir():
         return 0
+    location_arguments = ["rev-parse", "--show-toplevel", "--absolute-git-dir"]
     try:
         locations = git_machine_readable_output.run_git_unless_outside_a_repository(
-            Path(working_directory), ["rev-parse", "--show-toplevel", "--absolute-git-dir"],
-            timeout_seconds=GIT_CALL_TIMEOUT_SECONDS)
+            Path(working_directory), location_arguments, timeout_seconds=GIT_CALL_TIMEOUT_SECONDS)
         if locations is None or not locations.strip():
             return 0
-        top_level, git_directory = os.fsdecode(locations).strip().split("\n")
+        location_lines = os.fsdecode(locations).strip().split("\n")
+        if len(location_lines) != 2:
+            print(GIT_FAILURE_TEMPLATE.format(
+                command=" ".join(location_arguments),
+                outcome=f"printed {len(location_lines)} lines where the 2 paths should give one line each; "
+                        "a path holding a newline prints as two lines, and fewer lines mean git "
+                        "printed less than asked"), file=sys.stderr)
+            return 1
+        top_level, git_directory = location_lines
         checkout = Path(top_level)
         # The record lives in the worktree's own git directory, so each worktree keeps its own.
         record_path = Path(git_directory) / REPORTED_NAMES_FILE_NAME

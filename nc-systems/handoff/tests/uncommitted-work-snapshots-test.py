@@ -413,6 +413,32 @@ def test_each_operation_is_read_from_its_own_marker():
             check(found == "am", "rebase-apply holding applying reads as am", found)
         shutil.rmtree(path) if is_directory else path.unlink()
 
+def test_git_path_line_count_other_than_five_is_reported():
+    # A path holding a newline, or git printing less than asked, cannot be made for real here,
+    # so git's output gains one line or loses one.
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "newline", "newline-branch")
+    real_run_git = snapshots.run_git
+    for count, change in ((6, lambda text: text.replace("\n", "\nsplit\n", 1)),
+                          (4, lambda text: text.split("\n", 1)[1])):
+        def run_git_with_changed_output(directory, *arguments, **options):
+            result = real_run_git(directory, *arguments, **options)
+            if "--git-path" in arguments:
+                result.stdout = change(result.stdout)
+            return result
+        snapshots.run_git = run_git_with_changed_output
+        name = f"a rev-parse that prints {count} lines for 5 paths raises WorkSnapshotError saying so"
+        try:
+            snapshots.operation_in_progress(worktree)
+            check(False, name, "nothing raised")
+        except snapshots.WorkSnapshotError as error:
+            check(f"printed {count} lines where the 5 paths should give one line each" in str(error), name, str(error))
+        except ValueError as error:
+            check(False, name, f"ValueError: {error}")
+        finally:
+            snapshots.run_git = real_run_git
+
+
 def test_hook_failure_is_reported():
     name = "a hook that cannot write reports it through additionalContext and exits 0"
     main = new_clone()
@@ -1344,6 +1370,7 @@ def main():
                      test_bash_commit_deletes_and_other_worktrees_follow,
                      test_overlapping_runs_end_on_the_final_state, test_operation_trailer,
                      test_each_operation_is_read_from_its_own_marker,
+                     test_git_path_line_count_other_than_five_is_reported,
                      test_hook_failure_is_reported, test_other_repository_is_untouched,
                      test_worktree_discovery_failure_is_reported,
                      test_names_read_from_git_are_the_files_as_stored,
