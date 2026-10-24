@@ -191,7 +191,7 @@ def build_argument_parser(
     parser.add_argument(
         "--prompt-file", metavar="PATH",
         help="read the prompt template from this file instead of the "
-             "cell's own, .claude/skills/cold-read/prompts/<cell>.md, "
+             "cell's own, .claude/skills/cold-read/prompts/<cell>-prompt.md, "
              "with the same "
              "{TARGET_PATH} and {REPORT_PATH} substitution; relative to the "
              "current directory unless absolute. --cell is still required and "
@@ -271,7 +271,7 @@ def target_origin_paragraph(target: pathlib.Path, target_origin: pathlib.Path) -
 
 def prompt_template_path(cell: str, prompt_file=None) -> pathlib.Path:
     template_path = (prompt_file if prompt_file is not None
-                     else PROMPTS_DIR / f"{cell}.md")
+                     else PROMPTS_DIR / f"{cell}-prompt.md")
     if not template_path.is_file():
         raise CellRefusal(f"prompt template missing: {template_path}")
     return template_path

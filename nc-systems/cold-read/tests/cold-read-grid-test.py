@@ -1245,7 +1245,7 @@ with tempfile.TemporaryDirectory() as scratch:
     reference_target = reference_directory / "target.md"
     reference_target.write_text(
         "See [PR 661](https://github.com/nedschorus/nedschorus/pull/661) and"
-        " defect-hunt.md, then no-such-prompt-anywhere.md and"
+        " defect-hunt-prompt.md, then no-such-prompt-anywhere.md and"
         " nc-systems/cold-read/no-such-file.py.\n", encoding="utf-8")
     grid_module.reference_integrity_pre_pass(reference_target, reference_directory)
     reference_lines = (reference_directory / "reference-check.md").read_text(
@@ -1255,7 +1255,7 @@ with tempfile.TemporaryDirectory() as scratch:
     check("reference pre-pass: a web link is not listed as a path",
           not any("github.com" in line for line in reference_lines), repr(reference_lines))
     check("reference pre-pass: a bare file name that a tracked file has is ok",
-          "- ok: `defect-hunt.md`" in reference_lines, repr(reference_lines))
+          "- ok: `defect-hunt-prompt.md`" in reference_lines, repr(reference_lines))
     check("reference pre-pass: a bare file name no tracked file has is UNRESOLVED",
           "- UNRESOLVED: `no-such-prompt-anywhere.md`" in reference_lines, repr(reference_lines))
     check("reference pre-pass: a missing path is UNRESOLVED",
@@ -1402,7 +1402,7 @@ with tempfile.TemporaryDirectory() as scratch:
     reference_lines = (reference_directory / "reference-check.md").read_text(
         encoding="utf-8").splitlines()
     check("reference pre-pass: an inherited GIT_DIR does not stop the bare-name lookup",
-          "- ok: `defect-hunt.md`" in reference_lines, repr(reference_lines))
+          "- ok: `defect-hunt-prompt.md`" in reference_lines, repr(reference_lines))
     not_a_repository = scratch / "reference-pre-pass-not-a-repository"
     not_a_repository.mkdir()
     with mock.patch.object(grid_module, "REPO_ROOT", not_a_repository):
@@ -1413,7 +1413,7 @@ with tempfile.TemporaryDirectory() as scratch:
           any(line.startswith("- bare file names were not looked up: git ls-files exited 128")
               for line in reference_lines), repr(reference_lines))
     check("reference pre-pass: when git cannot list files, the bare name is still listed",
-          "- UNRESOLVED: `defect-hunt.md`" in reference_lines, repr(reference_lines))
+          "- UNRESOLVED: `defect-hunt-prompt.md`" in reference_lines, repr(reference_lines))
 
     clock_at_1042 = datetime.datetime(2026, 9, 16, 10, 42)
 
@@ -1438,9 +1438,9 @@ with tempfile.TemporaryDirectory() as scratch:
           == "explain-skill-draft-2026-09-16",
           grid_record_name("/r/docs/drafts/explain-skill-draft.md"))
     check("grid: a skill's prompt file is its stem alone, like any other document",
-          grid_record_name("/r/.claude/skills/cold-read/prompts/terminology.md")
-          == "terminology-2026-09-16",
-          grid_record_name("/r/.claude/skills/cold-read/prompts/terminology.md"))
+          grid_record_name("/r/.claude/skills/cold-read/prompts/terminology-prompt.md")
+          == "terminology-prompt-2026-09-16",
+          grid_record_name("/r/.claude/skills/cold-read/prompts/terminology-prompt.md"))
     check("grid: README and index get no special case",
           grid_record_name("/r/docs/nedschorus-wiki/README.md") == "README-2026-09-16"
           and grid_record_name("/r/docs/index.md") == "index-2026-09-16")
@@ -1814,7 +1814,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # most. Found by the 2026-09-11 cold read, which caught the grid calling
     # its own terminology prompt unresolved inside that run's own record.
     repository = build_scratch_repository(scratch, "dot-directory-reference")
-    dotted = ".claude/skills/cold-read/prompts/terminology.md"
+    dotted = ".claude/skills/cold-read/prompts/terminology-prompt.md"
     (repository / TARGET_RELATIVE_PATH).write_text(
         f"# Target\n\nThe terminology prompt is `{dotted}`, and here it ends\n"
         f"a sentence: {dotted}.\n", encoding="utf-8")

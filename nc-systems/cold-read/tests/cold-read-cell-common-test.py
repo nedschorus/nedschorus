@@ -1796,7 +1796,7 @@ with tempfile.TemporaryDirectory() as scratch:
     # the report, so on a temporary directory behind a symlink (macOS /var)
     # their paths are spelled differently from the test's.
     shared_terminology_template = (
-        (scratch_prompts / "terminology.md").read_text(encoding="utf-8")
+        (scratch_prompts / "terminology-prompt.md").read_text(encoding="utf-8")
         .replace("{TARGET_PATH}", "<path>").replace("{REPORT_PATH}", "<path>"))
     received_prompt_paths_blanked = (
         received_prompt
@@ -1804,7 +1804,7 @@ with tempfile.TemporaryDirectory() as scratch:
         .replace(str(repository / TARGET_RELATIVE_PATH), "<path>")
         .replace(str(report.resolve()), "<path>")
         .replace(str(report), "<path>"))
-    check("the Claude cell reads that same shared terminology.md",
+    check("the Claude cell reads that same shared terminology-prompt.md",
           result.returncode == 0 and "CODEX COPY MARKER" not in received_prompt
           and received_prompt_paths_blanked == shared_terminology_template,
           f"exit {result.returncode}; prompt={received_prompt[:200]!r}")
