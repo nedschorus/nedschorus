@@ -714,13 +714,13 @@ with tempfile.TemporaryDirectory() as workspace:
               f"code {result.returncode}, stderr {result.stderr[:120]}")
 
         # --- A session its caller reincarnates is left alone ---------------
-        # 2026-09-16: ghi-info, run by scripts/ghi-info-ask.py as `claude -p`
+        # 2026-09-16: ghi-guide-agent, run by scripts/ghi-guide-agent-ask.py as `claude -p`
         # turns, crossed the threshold mid-answer, and the handoff notice came
         # back to the caller in place of the reading list.
         result = run_hook(
             {"session_id": CALLER_OWNED_PROBE_SESSION_ID, "transcript_path": str(loud)},
             extra_environment={hook.REINCARNATION_OWNED_BY_CALLER_VARIABLE:
-                               "scripts/ghi-info-ask.py"})
+                               "scripts/ghi-guide-agent-ask.py"})
         check("hook stays silent past the threshold when the caller reincarnates the session",
               result.returncode == 0 and not result.stderr.strip()
               and not caller_owned_marker_file.exists(),

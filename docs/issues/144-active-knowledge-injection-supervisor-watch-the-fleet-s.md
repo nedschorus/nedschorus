@@ -16,7 +16,7 @@ agent to look.
 
 The project's knowledge-retrieval ladder is passive: forced instruction
 files for always-needed rules, per-system READMEs reached through skill
-triggers, and the ghi-info agent for issue knowledge. All three require
+triggers, and the ghi-guide-agent for issue knowledge. All three require
 the needing agent to look. The failure mode on record: knowledge that was
 written down but not found at need (the merge seat's memory notes record
 this as memory's standing failure — the read path fails, not the store).

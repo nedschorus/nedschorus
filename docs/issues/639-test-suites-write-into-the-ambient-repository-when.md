@@ -82,7 +82,7 @@ Not proposed: repairing the authorship of commits already on main. That needs a 
 
 ## Search receipt
 
-`scripts/ghi-info-ask.py` asked 2026-09-22 with `--include-closed`, for existing coverage of suites writing into the real repository, `git init` success unchecked, `GIT_DIR`, `run-all-test-suites.py` environment, and tests overwriting `user.name`/`user.email`. Answer: no issue, open or closed, covers any of it; the only `user.name`/`user.email` hit anywhere is GHI [main-gatekeeper — the single check-in gate](https://github.com/nedschorus/nedschorus/issues/3)'s own gatekeeper build facts, which is a different matter.
+`scripts/ghi-guide-agent-ask.py` asked 2026-09-22 with `--include-closed`, for existing coverage of suites writing into the real repository, `git init` success unchecked, `GIT_DIR`, `run-all-test-suites.py` environment, and tests overwriting `user.name`/`user.email`. Answer: no issue, open or closed, covers any of it; the only `user.name`/`user.email` hit anywhere is GHI [main-gatekeeper — the single check-in gate](https://github.com/nedschorus/nedschorus/issues/3)'s own gatekeeper build facts, which is a different matter.
 
 
 ## Added 2026-09-22T~20:2xZ, found while building the part-1 fix

@@ -225,9 +225,9 @@ def run_decision_cases(root: Path):
           repr(harness.decisions()))
 
     harness = Harness(root / "never-seen")
-    harness.verdicts["ghi-info"] = ("resume", ("session-id", "found"))
-    harness.run(SEEN_RUNNING, seats=("ghi-info",))
-    harness.run(SEEN_RUNNING + timedelta(minutes=2), seats=("ghi-info",))
+    harness.verdicts["ghi-guide-agent"] = ("resume", ("session-id", "found"))
+    harness.run(SEEN_RUNNING, seats=("ghi-guide-agent",))
+    harness.run(SEEN_RUNNING + timedelta(minutes=2), seats=("ghi-guide-agent",))
     check("a seat this watcher never saw running is not restarted",
           harness.recoveries == [], repr(harness.recoveries))
 
