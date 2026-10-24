@@ -63,9 +63,13 @@ A removal that fails is printed, and does not change the exit code.
 The posting script runs in this program's process group, so a terminal's
 Ctrl-C reaches it and its gh directly, even when whoever ran this kills this
 program first. An interrupt or SIGTERM sent to this program alone during the
-posting step sends the posting script SIGINT, on which it kills its gh before
-it exits, perhaps after its post; this then prints that the review may or may
-not have been posted, and the gh api command that shows whether it was.
+posting step sends the posting script SIGTERM, not SIGINT, because a program
+started as a background job of a non-interactive shell, and every program it
+starts, ignores SIGINT. On SIGTERM the posting script kills its gh, perhaps
+after its post, and exits. This waits for that, with no time limit, prints and
+keeps in posted.txt what the posting script printed, then prints that the
+review may or may not have been posted, and the gh api command that shows
+whether it was.
 """
 
 import argparse
@@ -80,8 +84,6 @@ from pathlib import Path
 
 SCHEMA_FILE_NAME = "merge-lane-pull-request-claude-reviewer-review-schema.json"
 POST_SCRIPT_NAME = "merge-lane-pull-request-reviewer-review-post-and-read-back.py"
-# On SIGINT, subprocess.run waits 0.25 s for gh before killing it.
-POSTING_SCRIPT_EXIT_SECONDS = 5
 VERDICTS = ("APPROVE", "REQUEST_CHANGES", "COULD_NOT_REVIEW")
 DEFAULT_TIME_LIMIT_SECONDS = 5400
 ALLOWED_TOOLS = ("Read", "Grep", "Glob", "Bash", "WebFetch", "WebSearch")
@@ -365,15 +367,14 @@ def review_and_post(arguments, number, head, brief, schema_text, head_worktree, 
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL)
         stdout, stderr = posting.communicate()
     except BaseException:
-        if posting is not None and posting.poll() is None:
-            # Not SIGKILL: on SIGINT the posting script's subprocess.run kills its gh, which
-            # could otherwise still post after the message below says what may have happened.
-            posting.send_signal(signal.SIGINT)
-            try:
-                posting.wait(timeout=POSTING_SCRIPT_EXIT_SECONDS)
-            except subprocess.TimeoutExpired:
-                posting.kill()
-                posting.wait()
+        if posting is not None:
+            if posting.poll() is None:
+                # Not SIGKILL, which would leave its gh to post after the message below: the
+                # posting script's SIGTERM handler makes its subprocess.run kill gh.
+                posting.terminate()
+            stdout, stderr = posting.communicate()
+            (record / "posted.txt").write_text(stdout + stderr)
+            sys.stdout.write(stdout + stderr)
         print(POSTING_INTERRUPTED.format(number=number, head=head, review_file=review_file,
                                          repository=common.REPOSITORY), flush=True)
         raise
