@@ -119,8 +119,8 @@ RECOMMENDATION = re.compile(r"Recommendation:(.*)$", re.I | re.M)
 NO_RECOMMENDATION_PROBLEM = "no line starting \"Recommendation:\""
 PARTS_NOT_TOLD_APART_PROBLEM = (
     "it is one of the items under the walk-document's heading `{heading}`, which holds more than one line "
-    "starting \"Recommendation:\", and the hook could not tell which part is whose, because {missing} "
-    "has no opening it reads. It reads an opening only on the first line of a top-level paragraph or "
+    "starting \"Recommendation:\", and the hook could not tell which part of the text under that heading "
+    "belongs to which item, because {missing} has no opening it reads. It reads an opening only on the first line of a top-level paragraph or "
     "top-level list item that starts with the item's label in bold, the number followed by `:`, `.` or `,` "
     "inside or right after the bold, as in `**Item 5: the label.**` or `- **Item 5, step 1.**`, or on the "
     "first line of a top-level paragraph that starts `Item 5:`, `Item 5.` or the full count `Item 5 of 9`")
