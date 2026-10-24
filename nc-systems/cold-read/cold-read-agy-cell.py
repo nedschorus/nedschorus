@@ -100,8 +100,8 @@ a fixed path and not one an environment variable can change, strips the
 surrounding whitespace, and gives the key to agy's environment alone; a value
 the caller set is passed on unchanged. The file is read here, outside the
 sandbox, because the sandbox masks ~/.config/nedschorus/. When the variable is
-unset and the file is missing, unreadable, or empty once stripped, agy runs
-without one and fails, and the cell's cause line names the file and why it
+unset or empty and the file is missing, unreadable, or empty once stripped, agy runs
+without a key and fails, and the cell's cause line names the file and why it
 gave no key. The key itself is never printed.
 
 WHY THIS LEG'S STAMP CARRIES NO `tokens=` FIELD. The Antigravity CLI prints
