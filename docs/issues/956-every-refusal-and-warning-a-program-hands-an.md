@@ -34,8 +34,8 @@ Thirteen messages from the registered hooks, each with at least one gap or one c
 
 | # | Program | When it appears | What | Why | Instead | Conditions | Citation in the text |
 |---|---|---|---|---|---|---|---|
-| 1 | `ghi-issue-write-redirect.py` | closing or reopening an issue with `--comment` | yes | no | yes | yes | none |
-| 2 | `ghi-issue-write-redirect.py` | deleting an issue | yes | no | yes | no | none |
+| 1 | `ghi-issue-write-hand-typed-gh-command-refusal.py` | closing or reopening an issue with `--comment` | yes | no | yes | yes | none |
+| 2 | `ghi-issue-write-hand-typed-gh-command-refusal.py` | deleting an issue | yes | no | yes | no | none |
 | 3 | `session-location-write-guard.py` | write from a detached HEAD | yes | yes | yes | no | none |
 | 4 | `backup-and-snapshot-write-guard.py` | write to backup state | yes | yes | yes | yes | date |
 | 5 | `synthetic-keystroke-guard-hook.py` | AppleScript typing | yes | yes | yes | one instruction | date, issue number |
@@ -54,7 +54,7 @@ Thirteen messages from the registered hooks, each with at least one gap or one c
 
 **When an agent sees this.** An agent finishes the work of a GHI and runs `gh issue close 224 --comment "done in the layout pull request"`. The guard refuses the command, because agents here do not write issue comments: what an issue says lives in the issue's GHI-MD.
 
-**What the agent is told today** (`.claude/hooks/ghi-issue-write-redirect.py:168`; the program fills `{subcommand}` with `close` or `reopen`, shown here for `close`):
+**What the agent is told today** (`.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py:168`; the program fills `{subcommand}` with `close` or `reopen`, shown here for `close`):
 
 ```
 Run gh issue close again without --comment.
@@ -96,13 +96,13 @@ Run gh issue reopen again without --comment.
 {record_line}
 ```
 
-**What changes.** `STATE_CHANGE_COMMENT_REFUSAL` becomes two templates, one per subcommand. The hook takes the issue number from the command's first positional argument, or from an issue URL there, imports `scripts/ghi-issue-write.py` by path and calls its `ghi_md_paths_for_issue` against origin/main, the same function that builds the issue's body, so the hook's answer and the tool's cannot disagree. `COMMENT_REFUSAL`, `EDIT_BODY_REFUSAL` and `EDIT_TITLE_REFUSAL` in the same hook carry the same `docs/issues/<number>-*.md` placeholder and take the same fill. `.claude/hooks/ghi-issue-write-redirect-test.py` compares each refusal against its template, and also requires every refusal line to start with one of its listed opening words and to contain neither "ruled" nor "2026"; the list gains "This" and "The", and needs a test case for each of the three record lines and for the fallback. Once `scripts/ghi-issue-write.py` gains the close command named under Related issues, the record and close lines shrink to one line naming that command; that change is its own pull request, after this one. The file is under `.claude/`, so the exact text must be approved-by-walk: the instruction-file guard refuses the edit until the user's approval words are quoted into its marker.
+**What changes.** `STATE_CHANGE_COMMENT_REFUSAL` becomes two templates, one per subcommand. The hook takes the issue number from the command's first positional argument, or from an issue URL there, imports `scripts/ghi-issue-write.py` by path and calls its `ghi_md_paths_for_issue` against origin/main, the same function that builds the issue's body, so the hook's answer and the tool's cannot disagree. `COMMENT_REFUSAL`, `EDIT_BODY_REFUSAL` and `EDIT_TITLE_REFUSAL` in the same hook carry the same `docs/issues/<number>-*.md` placeholder and take the same fill. `.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal-test.py` compares each refusal against its template, and also requires every refusal line to start with one of its listed opening words and to contain neither "ruled" nor "2026"; the list gains "This" and "The", and needs a test case for each of the three record lines and for the fallback. Once `scripts/ghi-issue-write.py` gains the close command named under Related issues, the record and close lines shrink to one line naming that command; that change is its own pull request, after this one. The file is under `.claude/`, so the exact text must be approved-by-walk: the instruction-file guard refuses the edit until the user's approval words are quoted into its marker.
 
 ### 2. Deleting an issue
 
 **When an agent sees this.** An agent files a GHI by mistake and runs `gh issue delete 912 --yes`.
 
-**What the agent is told today** (`.claude/hooks/ghi-issue-write-redirect.py:200`):
+**What the agent is told today** (`.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py:200`):
 
 ```
 Do not delete this project's issues.
@@ -128,7 +128,7 @@ If the issue will not be done, or was filed by mistake and duplicates no other i
 This issue has no file on main under docs/issues/<number>-* or a system's directory: if the issue was filed by mistake, close it with gh issue close <number> --reason "not planned"; otherwise stop and tell the user.
 ```
 
-**What changes.** `DELETE_REFUSAL` becomes a template, filled by the lookup of message 1; `.claude/hooks/ghi-issue-write-redirect-test.py` compares against the template, and every line starts with a listed opening word. The record line, the wait and the duplicate line are new; the /ghi-write skill already says to record the outcome before closing and names the duplicate close reason, and `gh issue close --duplicate-of` sets that close reason. Under `.claude/`: the exact text must be approved-by-walk.
+**What changes.** `DELETE_REFUSAL` becomes a template, filled by the lookup of message 1; `.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal-test.py` compares against the template, and every line starts with a listed opening word. The record line, the wait and the duplicate line are new; the /ghi-write skill already says to record the outcome before closing and names the duplicate close reason, and `gh issue close --duplicate-of` sets that close reason. Under `.claude/`: the exact text must be approved-by-walk.
 
 ### 3. Writing from a detached HEAD
 
@@ -452,7 +452,7 @@ A task prompt or another agent's message is the user's approval only when it quo
 
 The second approval-walk moved instructions the messages gave into code, so the pull request also changes these programs; each change is described under its message:
 
-- `.claude/hooks/ghi-issue-write-redirect.py` looks up the issue's files on main (messages 1 and 2).
+- `.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py` looks up the issue's files on main (messages 1 and 2).
 - `.claude/hooks/session-location-write-guard.py` lets through a write while a git operation is in progress (open question 7) and a write to a path git ignores (message 3).
 - `scripts/synthetic-keystroke-guard-hook.py` gains its check mode (message 7) and chooses the show-the-user line by platform (messages 6, 7 and 9).
 - `scripts/obsolete-file-edit-warning-hook.py` reports a git operation in progress, the overlap verdict and git's failure text (message 12).

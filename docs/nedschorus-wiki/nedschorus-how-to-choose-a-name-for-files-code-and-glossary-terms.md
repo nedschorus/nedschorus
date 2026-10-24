@@ -61,7 +61,7 @@ The main-gatekeeper is the program that will be the single route by which a chan
 - `scripts/branch-conflict-check.py`: it acts on a branch and checks it for a merge conflict. It belongs to no single system, and its name says so by naming none (see "Where a rule above does not apply").
 - `nc-systems/handoff/handoff-supervisor.py`: the system is the handoff system, and the program supervises it.
 
-A name can also fail the third question by saying something untrue. `.claude/hooks/ghi-issue-write-redirect.py` refuses a write to a GitHub issue typed by hand and tells the agent which command to run instead; it does not redirect the write anywhere. Its name says "redirect", so a reader expects the write to have gone through by another route. Step 4 covers this.
+A name can also fail the third question by saying something untrue. The hook now named `.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py` refuses a write to a GitHub issue typed by hand and tells the agent which command to run instead; it does not redirect the write anywhere. Its former name, `ghi-issue-write-redirect.py`, said "redirect", so a reader expected the write to have gone through by another route. Step 4 covers this.
 
 ### Order the parts from the system to the role
 

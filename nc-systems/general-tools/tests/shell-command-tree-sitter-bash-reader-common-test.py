@@ -1871,12 +1871,12 @@ except r.ShellParserUnavailable as error:
     GUARDS = [
         ("scripts/synthetic-keystroke-guard-hook.py", "The synthetic keystroke guard"),
         ("scripts/force-push-with-open-pull-request-guard-hook.py", "The force-push guard"),
-        (".claude/hooks/ghi-issue-write-redirect.py", "The GHI write redirect guard"),
+        (".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py", "The GHI write redirect guard"),
         ("scripts/search-file-argument-read-as-option-guard-hook.py",
          "The search-file-argument guard"),
         ("nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-"
          "server-selection-refusal-hook.py", "The tmux kill guard"),
-        ("scripts/hand-typed-codex-exec-redirect-hook.py", "The hand-typed codex exec guard"),
+        ("scripts/hand-typed-codex-exec-command-refusal-hook.py", "The hand-typed codex exec guard"),
     ]
     for relative, guard_name in GUARDS:
         guard = load(REPOSITORY_ROOT / relative, "guard_" + Path(relative).stem.replace("-", "_"))

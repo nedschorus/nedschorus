@@ -47,8 +47,8 @@ MARKER_PATTERNS = {
 # markers it may hold: awaiting the comment trim. A file may only go down.
 FILES_AWAITING_THE_COMMENT_TRIM = {
     ".claude/hooks/backup-and-snapshot-write-guard-test.py": 3,
-    ".claude/hooks/ghi-issue-write-redirect-test.py": 3,
-    ".claude/hooks/ghi-issue-write-redirect.py": 21,
+    ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal-test.py": 3,
+    ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py": 21,
     ".claude/hooks/instruction-file-guard-test.py": 8,
     ".claude/hooks/session-location-write-guard-test.py": 6,
     "nc-systems/cold-read/cold-read-agy-cell.py": 14,
