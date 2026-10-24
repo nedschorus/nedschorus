@@ -32,7 +32,7 @@ GHI [Relaunch stopped agent-seats with open tasks daily](https://github.com/neds
 
 ## Next action
 
-Build the idle check, item 2, as its own pull request; a subagent of the agent-seat merge-lane-backlog is building it. Then answer the hourly sweep's two open questions, and build the sweep.
+The idle check, item 2, is built: `scripts/agent-seat-due-task-raise-hook.py`, merged on 2026-10-02 and registered as a Stop hook in `.claude/settings.json`. It has raised nothing, because no task opts in: on 2026-10-23, none of the 1,472 task files on the two machines carried `due_utc` or `waits_on`, and none of the 1,550 TaskCreate and TaskUpdate calls in the agent-session transcripts of the 14 days before set either field (measurement: `nedlern@ned-box:/home/nedlern/nedschorus-logs/analysis/nothing-needs-you-idle-measurement-2026-10-23/report.md`). The next actions are to get agents to set those fields on the tasks that wait on a time or a condition, and to answer the hourly sweep's two open questions, then build the sweep.
 
 ## Trigger to close
 
@@ -41,3 +41,4 @@ The idle check runs in every agent-seat, the hourly sweep runs on both machines,
 ## Provisional additions (not yet vetted by the user)
 
 - fleet-restart-at-login, 2026-10-14: If the idle check's raised tasks ever repeat or go missing, move the hook's state file into a small SQLite table (task #150).
+- cold-read-research, 2026-10-24: When an agent's turn ends with open tasks that no `blockedBy`, `due_utc` or `waits_on` holds, the idle check reminds it once of those tasks. The reminder suggests that if the agent is idle or waiting, it continue with one of them; it does not tell the agent it must, because the hook cannot see the agent's whole situation. The user's direction on the wording, 2026-10-24: "Don't say has too, as we don't know the whole situation, just suggest if they are idle or waiting that they continue". The evidence: over the 14 days to 2026-10-23, 125 replies to the user ended with "Nothing needs you."; every one was said with open tasks (median 16), and in 17 of them the user was the one who woke the agent, after 528 idle minutes in all (same measurement as § Next action). ned-box-helper's proposal to check replies for words to avoid, which runs only when the user's next message arrives, leaves this case to the idle check, because by then the idle time is lost.
