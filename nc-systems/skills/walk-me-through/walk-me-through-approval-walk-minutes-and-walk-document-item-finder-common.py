@@ -22,14 +22,24 @@ on a top-level heading or paragraph opening with `**`, outside any list or
 quotation, as markdown-it-py reads the document, and runs to the next running count. A heading that names several
 items is one unit, and so are the top-level paragraphs under it that open
 with the count of one of its items. Within the unit, an item's lines start at
-its opening: the first line of a top-level paragraph that opens, after any
-emphasis, with `Item N`, where N is one of the unit's items, followed by
-`of M` with the heading's M or by no `of` at all, as in `Item 5 of 9.
-Recommendation: ...` or `**Item 5: the label.**`; or the first line of an item
-of a top-level list that opens the same way in bold, as in
-`- **Item 5, step 1.**`. An opening in any other shape, such as a line inside
-a paragraph, a quotation or an HTML block, is not read, so the unit's items are not told apart; the
-UserPromptSubmit hook then says it cannot read their recommendations. A heading that says `revised` right after its
+its opening, where N is one of the unit's items, read whole, and M, when
+given, is the heading's M. An opening is one of three shapes:
+- on the first line of a top-level paragraph or of an item of a top-level
+  list, a bold label: `**` or `__`, then `Item N` or `Item N of M`, then `:`,
+  `.` or `,`, or the bold's end followed by one of those, a dash or the line's
+  end, as in `**Item 5: the label.**`, `**Item 5.** Old: ...`,
+  `- **Item 5, step 1.**` or `**Item 5 of 9**`;
+- on the first line of a top-level paragraph, a plain label: `Item N` then
+  `:` or `.` and a space or the line's end, as in `Item 5: the label`;
+- on the first line of a top-level paragraph, the full count `Item N of M`
+  after any emphasis, as in `Item 5 of 9. Recommendation: ...`.
+Any other line is not an opening: a mention such as `Item 6 depends on item
+5` or `Item 5.2 shows the rewrite`, a label whose bold ends before `of`, as in
+`**Item 6** of 8`, a number followed by more words, as in
+`**Item 5 of the plan**` or `Item 60 of the previous walk`, a plain list item,
+or a line inside a quotation, a nested list or an HTML block. When an item of the unit
+has no opening, its items are not told apart, and the UserPromptSubmit hook
+says it cannot read their recommendations. A heading that says `revised` right after its
 count replaces the earlier units it names. A running count that names no
 item still ends the unit before it. Every search of a walk file for its
 structure, here and in the programs that load this module, reads the lines
@@ -67,8 +77,14 @@ NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
 NUMBER_LIST = rf"{NUMBER}(?:{NUMBER_JOINER}{NUMBER})*(?![\d.]\d)"
 VALUE_COUNT = re.compile(rf"^items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b)?", re.I)
 HEADING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
-# Within a heading shared by several items, an item's opening may leave out `of M`, the heading giving it.
-ITEM_OPENING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b|(?!\s+of\b))", re.I)
+# Within a heading shared by several items, an item's opening may leave out `of M`, the heading giving it, when
+# it is a label: the number, read whole, ends the label, so a mention such as `**Item 6** of 8`, `Item 6 depends`
+# or `Item 60 of the` is not one. In bold the label ends at `:`, `.` or `,`, or at the bold's end followed by one
+# of those, a dash or the line's end; plain, at `:` or `.` followed by a space or the line's end.
+ITEM_LABEL = re.compile(
+    rf"^(?:(?P<bold>\*\*|__)item\s+(?P<bold_number>{NUMBER})(?:\s+of\s+(?P<total>\d+))?"
+    rf"(?=\s*[:.,]|(?P=bold)\s*(?:[:.,\-–—]|$))"
+    rf"|item\s+(?P<plain_number>{NUMBER})[:.](?=\s|$))", re.I)
 REPLY_COUNT = re.compile(rf"\bitems?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
 # Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
 REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
@@ -124,25 +140,30 @@ def prose_lines(text, parser, tokens=None):
 
 
 def item_opening_lines(text, parser, tokens=None):
-    """Return {line: (item numbers, M or None)} for each top-level paragraph, outside any quotation, HTML or
-    code, whose first line opens with a running count naming items, after any emphasis, and each item of a
-    top-level list whose first line opens with one in bold; M is None when the count gives no `of M`."""
+    """Return {line: (item numbers, M or None)} for each opening the module docstring lists: on the first line
+    of a top-level paragraph, a label ITEM_LABEL reads or a running count `Item N of M` after any emphasis; on
+    the first line of an item of a top-level list, a label in bold. M is None when the label gives no `of M`."""
     openings = {}
     tokens = parser.parse(text) if tokens is None else tokens
     for index, token in enumerate(tokens):
         if token.type != "paragraph_open" or token.map is None:
             continue
-        first_line = tokens[index + 1].content.split("\n")[0]
-        # Only in bold, since a plain list item such as `- Item 7 of 9, which follows` mentions an item.
-        bold_top_level_list_item = (token.level == 2 and tokens[index - 1].type == "list_item_open"
-                                    and tokens[index - 1].level == 1 and first_line.startswith(("**", "__")))
-        if token.level != 0 and not bold_top_level_list_item:
+        # A paragraph at level 2 straight after an item's start is that item's first paragraph; an item of a
+        # list nested in another list, or in a quotation, puts its paragraph deeper.
+        top_level_list_item = token.level == 2 and tokens[index - 1].type == "list_item_open"
+        if token.level != 0 and not top_level_list_item:
             continue
-        match = ITEM_OPENING_COUNT.match(first_line)
-        if not match:
+        first_line = tokens[index + 1].content.split("\n")[0]
+        label = ITEM_LABEL.match(first_line)
+        # In a list only in bold, since a plain list item such as `- Item 7: which follows` mentions an item.
+        if label and (label["bold"] or not top_level_list_item):
+            openings[token.map[0]] = ([label["bold_number"] or label["plain_number"]], label["total"])
+            continue
+        count = None if top_level_list_item else HEADING_COUNT.match(first_line)
+        if not count:
             continue
         try:
-            openings[token.map[0]] = (expand_numbers(match[1]), match[2])
+            openings[token.map[0]] = (expand_numbers(count[1]), count[2])
         except UnusableRange:
             continue
     return openings
