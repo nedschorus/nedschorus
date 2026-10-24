@@ -1,5 +1,5 @@
 ---
-name: start-new-agent-seat-on-ned-box
+name: start-agent-seat
 description: Use when the user asks for a new named Claude agent, agent-seat or seat on ned-box (the Ubuntu machine). Covers choosing the name, the CLAUDE.local.md he approves, and the launch command. Runs from an agent-session on either machine.
 ---
 
