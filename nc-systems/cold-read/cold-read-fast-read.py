@@ -16,10 +16,10 @@ then prints exactly one line on stdout: the report's absolute path on success,
 or a line opening `FAILED` on failure. Exit 0 on success, 1 on failure, 64 when
 the invocation itself was wrong (a --target that is not a file) and nothing
 was launched. When the cold-read-target belongs to a class the
-/cold-read skill's step 2 sends to the cold-read-full-run -- a skill or its
-prompt, a file under docs/agents/, a wiki file, a design, a test design, a
-design-contract -- the read also says that this fast read does not finish the
-review: one line on stderr and one line in the report (user-ruled 2026-09-17,
+/cold-read skill's step 2 sends to the cold-read-full-run -- CLAUDE.md, a
+skill or its prompt, a file under docs/agents/, a wiki file, a design, a test
+design, a design-contract -- the read also says that, unless step 2 exempts
+the change, this fast read does not finish the review: one line on stderr and one line in the report (user-ruled 2026-09-17,
 item 4 of nedschorus#418, after a skill change merged on a fast read alone).
 It warns and never refuses, because the fast read is the cold-read-full-run's
 first step. When the cold-read-target is a walk draft, the read also lists every
@@ -231,6 +231,8 @@ WALK_SUGGESTIONS_SUFFIX = "-suggestions.md"
 # class: one line on stderr, and one line in the report that ships with the
 # record. It is a warning, not a refusal -- the fast read is the full run's
 # first step, so running it here is right; merging on it alone is not.
+# CLAUDE.md is named, not placed: Claude Code loads one from any directory.
+FULL_RUN_NAMES = (("CLAUDE.md", "CLAUDE.md"),)
 FULL_RUN_DIRECTORIES_RELATIVE = (
     (pathlib.Path(".claude") / "skills", "a skill or a skill's prompt"),
     (pathlib.Path("docs") / "agents", "a file under docs/agents/"),
@@ -250,11 +252,10 @@ FULL_RUN_NAME_SUFFIXES = (
     ("-contract.md", "a design-contract"),
     ("-design.md", "a design"),
 )
-# Step 1's own exceptions, which beat the classes above: a walk file, a
-# handoff, a pull request description, an issue body, and CLAUDE.md all take
-# the fast read and nothing more. Only the two that are files in this
-# checkout can be recognised here.
-FAST_READ_ONLY_NAMES = ("CLAUDE.md", "CLAUDE.local.md")
+# Step 2's own exceptions, which beat the classes above: a walk file, a
+# handoff, a pull request description and an issue body take the fast read and
+# nothing more. Only the walk file is a file in this checkout, so only it can
+# be recognised here.
 
 
 _git_output_spec = importlib.util.spec_from_file_location(
@@ -552,8 +553,11 @@ def full_run_class_of_target(target: pathlib.Path):
         relative = target.relative_to(checkout_root_holding(target))
     except ValueError:
         return None
-    if relative.parent == WALK_DIRECTORY_RELATIVE or relative.name in FAST_READ_ONLY_NAMES:
+    if relative.parent == WALK_DIRECTORY_RELATIVE:
         return None
+    for name, class_name in FULL_RUN_NAMES:
+        if relative.name == name:
+            return class_name
     for directory, class_name in FULL_RUN_DIRECTORIES_RELATIVE:
         if directory in relative.parents:
             return class_name
@@ -565,7 +569,12 @@ def full_run_class_of_target(target: pathlib.Path):
 
 def full_run_required_line(class_name: str) -> str:
     """The one sentence said on stderr and written into the report."""
-    return (f"the cold-read-full-run is required before this document lands "
+    # The program sees only the path, not the change, so it cannot tell
+    # whether step 2 exempts this change; the sentence leaves that to the reader.
+    return (f"unless step 2 of the /cold-read skill exempts this change (one "
+            f"that leaves unchanged what the document tells a program or an "
+            f"agent to do, and what it decides or plans), the "
+            f"cold-read-full-run is required before this document lands "
             f"({class_name}); this fast read is its first step, not the whole "
             f"review. Run nc-systems/cold-read/cold-read-grid.py --target on it.")
 

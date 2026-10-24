@@ -41,11 +41,11 @@ WHAT IS PINNED HERE.
     and nothing launched.
 
   - The full-run warning. A target in the class the /cold-read skill's step 2
-    sends to the cold-read-full-run -- a skill or its prompt, a file under
-    docs/agents/, a wiki file, a design, a test design, a design-contract --
-    is read with one line on stderr and one line in the report saying the
-    full run is still required; step 2's own exceptions (a walk file,
-    CLAUDE.md) and everything else are read with nothing said. The warning
+    sends to the cold-read-full-run -- CLAUDE.md, a skill or its prompt, a file
+    under docs/agents/, a wiki file, a design, a test design, a design-contract
+    -- is read with one line on stderr and one line in the report saying the
+    full run is still required; step 2's own exception (a walk file) and
+    everything else are read with nothing said. The warning
     never refuses and never touches stdout's one line.
 
   - The bare-number check. A walk draft is read with every bare issue, pull
@@ -1033,10 +1033,13 @@ check("a design's glossary is not in step 2's list, so it is not called a design
       class_of(root / "docs/design-to-main/design-to-main-glossary.md") is None)
 check("notes about a design are not the design",
       class_of(root / "docs/issues/142-draft-md-skill-design-notes.md") is None)
-check("step 2's own exceptions are not in the class: a walk file and CLAUDE.md",
-      class_of(root / "docs/walk/an-item-draft.md") is None
-      and class_of(root / "CLAUDE.md") is None
-      and class_of(root / "docs/agents/CLAUDE.local.md") is None)
+check("CLAUDE.md is recognised by its name, wherever it sits",
+      class_of(root / "CLAUDE.md") == "CLAUDE.md"
+      and class_of(root / "nc-systems/cold-read/CLAUDE.md") == "CLAUDE.md")
+check("step 2's own exception is not in the class: a walk file",
+      class_of(root / "docs/walk/an-item-draft.md") is None)
+check("a seat's CLAUDE.local.md at the checkout's root is not in the class",
+      class_of(root / "CLAUDE.local.md") is None)
 check("an ordinary document is not in the class",
       class_of(root / "docs/issues/32-preservation-and-placement.md") is None)
 check("a file outside the checkout is not classified",
@@ -1129,15 +1132,17 @@ with tempfile.TemporaryDirectory() as warning_scratch:
     check("the read still succeeds: the warning never refuses",
           result.returncode == 0 and brief_report.is_file(),
           f"exit {result.returncode}; stderr={result.stderr!r}")
-    check("the warning is on stderr, naming the class",
-          "the cold-read-full-run is required before this document lands "
+    check("the warning is on stderr, naming the class and step 2's exemption",
+          "unless step 2 of the /cold-read skill exempts this change" in result.stderr
+          and "the cold-read-full-run is required before this document lands "
           "(a file under docs/agents/)" in result.stderr, repr(result.stderr))
     check("stdout is still exactly the report path",
           result.stdout.strip() == str(brief_report)
           and len(result.stdout.splitlines()) == 1, repr(result.stdout))
     brief_report_text = brief_report.read_text(encoding="utf-8") if brief_report.is_file() else ""
     check("the report carries the same sentence, so the shipped record says it too",
-          "The cold-read-full-run is required before this document lands" in brief_report_text,
+          "Unless step 2 of the /cold-read skill exempts this change" in brief_report_text
+          and "the cold-read-full-run is required before this document lands" in brief_report_text,
           repr(brief_report_text[-400:]))
 
     # A document outside the class is read with nothing said.
