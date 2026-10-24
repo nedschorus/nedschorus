@@ -419,7 +419,7 @@ with tempfile.TemporaryDirectory() as scratch:
     for relative_path in (
             "nc-systems/cold-read/cold-read-codex-cell.py",
             "nc-systems/cold-read/cold-read-cell-common.py",
-            "nc-systems/cold-read/cold-read-record-names.py",
+            "nc-systems/cold-read/cold-read-record-names-common.py",
             "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py"):
         (copied_checkout / relative_path).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(CELL_SCRIPT.parents[2] / relative_path, copied_checkout / relative_path)

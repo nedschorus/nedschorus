@@ -111,7 +111,7 @@ _next_step_lines_spec.loader.exec_module(next_step_lines)
 
 _worth_resuming_spec = importlib.util.spec_from_file_location(
     "seat_transcript_worth_resuming",
-    SCRIPTS_DIRECTORY / "seat-transcript-worth-resuming.py")
+    SCRIPTS_DIRECTORY / "agent-seat-transcript-worth-resuming-common.py")
 worth_resuming = importlib.util.module_from_spec(_worth_resuming_spec)
 _worth_resuming_spec.loader.exec_module(worth_resuming)
 
@@ -137,7 +137,7 @@ _claude_json_presets_spec.loader.exec_module(claude_json_presets)
 
 _architecture_overview_path_template_and_checked_against_commit_reader_spec = importlib.util.spec_from_file_location(
     "architecture_overview_path_template_and_checked_against_commit_reader",
-    SCRIPTS_DIRECTORY / "architecture-overview-path-template-and-checked-against-commit-reader.py")
+    SCRIPTS_DIRECTORY / "architecture-overview-path-template-and-checked-against-commit-reader-common.py")
 architecture_overview_path_template_and_checked_against_commit_reader = importlib.util.module_from_spec(
     _architecture_overview_path_template_and_checked_against_commit_reader_spec)
 _architecture_overview_path_template_and_checked_against_commit_reader_spec.loader.exec_module(architecture_overview_path_template_and_checked_against_commit_reader)

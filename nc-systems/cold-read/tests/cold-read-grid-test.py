@@ -438,14 +438,14 @@ def frozen_target_path_in_scratch_repository(repository, record_directory):
     `record_directory`, as frozen_target_path() itself answers it.
 
     Loaded from the scratch repository's own copy of
-    nc-systems/cold-read/cold-read-record-names.py, not from this checkout's:
+    nc-systems/cold-read/cold-read-record-names-common.py, not from this checkout's:
     the function makes the target relative to its module's REPO_ROOT, so this
     checkout's copy would find the scratch target outside its repository and
     return the absolute-path fallback. The scratch copy is also the very file
     the grid under test loaded."""
     record_names_spec = importlib.util.spec_from_file_location(
         "cold_read_record_names_in_scratch_repository",
-        repository / "nc-systems" / "cold-read" / "cold-read-record-names.py")
+        repository / "nc-systems" / "cold-read" / "cold-read-record-names-common.py")
     record_names = importlib.util.module_from_spec(record_names_spec)
     record_names_spec.loader.exec_module(record_names)
     return record_names.frozen_target_path(

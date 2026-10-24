@@ -399,7 +399,7 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     (broken_tree / ".claude" / "hooks").mkdir(parents=True)
     (broken_tree / "scripts").mkdir()
     import shutil as _copier
-    for name in ("session-location-write-guard.py", "guard_approval_marker.py"):
+    for name in ("session-location-write-guard.py", "guard-approval-marker-common.py"):
         _copier.copy(SCRIPT_PATH.with_name(name), broken_tree / ".claude" / "hooks" / name)
     (broken_tree / "scripts" / "checkout-freshness-catch-up.py").write_text(
         "raise RuntimeError('stand-in broken module')\n", encoding="utf-8")

@@ -40,7 +40,7 @@ SCRIPTS = Path(__file__).resolve().parent
 PROGRAM = SCRIPTS / "stale-code-citation-check.py"
 LINT = SCRIPTS / "md-drift-lint.py"
 LINT_OVERVIEW_PATH_MODULE = (
-    SCRIPTS / "architecture-overview-path-template-and-checked-against-commit-reader.py")
+    SCRIPTS / "architecture-overview-path-template-and-checked-against-commit-reader-common.py")
 GIT_OUTPUT_MODULE = (SCRIPTS.parent / "nc-systems" / "general-tools"
                      / "git-machine-readable-output-runner-and-parser-common.py")
 NEXT_STEP_LINES_MODULE = GIT_OUTPUT_MODULE.with_name(

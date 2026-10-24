@@ -184,7 +184,7 @@ import typing
 # has hyphens.
 _record_names_spec = importlib.util.spec_from_file_location(
     "cold_read_record_names",
-    pathlib.Path(__file__).with_name("cold-read-record-names.py"))
+    pathlib.Path(__file__).with_name("cold-read-record-names-common.py"))
 record_names = importlib.util.module_from_spec(_record_names_spec)
 _record_names_spec.loader.exec_module(record_names)
 RECORDS_DIR = record_names.RECORDS_DIR
@@ -203,7 +203,7 @@ DESTINATION_ENVIRONMENT_VARIABLE = "COLD_READ_RECORD_SHIP_DESTINATION"
 # name is add-only like the rest of that directory. nc-systems/cold-read/cold-read-grid.py
 # names the same file in the prose it hands the agent, which is prose naming a
 # file rather than a second definition of a path a program builds -- the
-# distinction nc-systems/cold-read/tests/cold-read-record-names-test.py draws.
+# distinction nc-systems/cold-read/tests/cold-read-record-names-common-test.py draws.
 TRIAGE_FILE_REPLACED_IN_THE_STORE = "triage.md"
 
 SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
@@ -261,7 +261,7 @@ What each kind holds and how its files are named is decided by its owner,
 in the nedschorus repository, which this machine also clones:
 
 - `cold-read-records/` -- cold-read-records, named by
-  `nc-systems/cold-read/cold-read-record-names.py`
+  `nc-systems/cold-read/cold-read-record-names-common.py`
 - `sanity-check-records/` -- the /sanity-check skill's records, shipped by
   `scripts/sanity-check-record-ship.py`
 - `walk/` -- approval-walk files, named by the walk-me-through skill, shipped

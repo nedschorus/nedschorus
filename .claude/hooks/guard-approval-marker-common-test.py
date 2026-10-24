@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Tests for .claude/hooks/guard_approval_marker.py, the one-use approval marker
+"""Tests for .claude/hooks/guard-approval-marker-common.py, the one-use approval marker
 every write guard reads.
 
 The guards' own suites reach this module only through their callers. These
 cases pin its three functions directly, so a change that keeps one guard's
 suite passing but breaks the marker's rules for another guard fails here.
 
-Run: python3 .claude/hooks/guard-approval-marker-test.py
+Run: python3 .claude/hooks/guard-approval-marker-common-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -18,8 +18,8 @@ from pathlib import Path
 
 MODULE_PATH = Path(os.environ.get(
     "GUARD_APPROVAL_MARKER_MODULE_PATH",
-    Path(__file__).resolve().parent / "guard_approval_marker.py"))
-_spec = importlib.util.spec_from_file_location("guard_approval_marker", MODULE_PATH)
+    Path(__file__).resolve().parent / "guard-approval-marker-common.py"))
+_spec = importlib.util.spec_from_file_location("guard_approval_marker_common", MODULE_PATH)
 marker = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(marker)
 

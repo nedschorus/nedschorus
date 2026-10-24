@@ -7,7 +7,7 @@ import pathlib
 
 _tables_spec = importlib.util.spec_from_file_location(
     "design_to_main_state_tables",
-    pathlib.Path(__file__).with_name("design-to-main-state-tables.py"))
+    pathlib.Path(__file__).with_name("design-to-main-state-tables-common.py"))
 tables = importlib.util.module_from_spec(_tables_spec)
 _tables_spec.loader.exec_module(tables)
 
