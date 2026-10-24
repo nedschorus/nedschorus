@@ -17,8 +17,9 @@ Steps:
   2. Check out each ref as a detached worktree in the scratch directory, and check that the
      guards this replay reads are exactly the Bash PreToolUse hooks in the head checkout's
      .claude/settings.json, and, less the guards the head adds, in the base checkout's. A base hook
-     at a former path in BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH is that guard, read at the base from
-     its former path; its rows are named by its current path, so a renamed guard is not an added guard.
+     at a former path, a key of this script's BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH map, is the
+     guard that key maps to, read at the base from its former path; its rows are named by its current
+     path, so a renamed guard is not an added guard.
   3. At each ref, run the guards' analysis functions on every pair, with the guards' probes
      of git and gh stubbed so a verdict depends only on the command text and the working directory
      (in-process mode). Run the search-file guard's main() with each pair's own working
@@ -324,9 +325,9 @@ def check_guards_match_settings(hooks, replayed, label):
             f"{sorted(replayed - hooks) or 'none'}.\n"
             "When the pull request adds a hook: add it to GUARDS in this script, with a function that reads one "
             "command through it.\n"
-            "When the pull request renames a guard's file: change its path in GUARDS, and add a line from its former "
-            "path to its new one to BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH in this script, so the base's hook at "
-            "the former path is read as the same guard.\n"
+            "When the pull request renames a guard's file: change its path in GUARDS, and add the line "
+            "\"<former path>\": \"<new path>\", to the BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH map in this script, "
+            "so the base's hook at the former path is read as the same guard.\n"
             "Make the change in the pull request that adds or renames the hook, and run this check from that pull "
             "request's copy of this script, because only that copy has the change.")
 
