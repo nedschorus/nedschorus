@@ -12,7 +12,8 @@ commit unless FAKE_GH_READ_BACK_STATE or FAKE_GH_READ_BACK_COMMIT replaces
 one. FAKE_GH_POST_REPLY and FAKE_GH_READ_BACK_REPLY replace the whole reply
 to the post or the read-back. FAKE_GH_FAILS names the call that fails:
 author, files, post or read-back. FAKE_GH_KILLED names the call whose gh prints its
-usual reply and is then killed by a signal.
+usual reply and is then killed by a signal. FAKE_GH_HANGS names the call whose gh
+writes its pid to gh-hanging and sleeps, for a case that signals the program then.
 
 Run: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back-test.py
 """
@@ -20,16 +21,18 @@ Run: python3 scripts/merge-lane-pull-request-reviewer-review-post-and-read-back-
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 PROGRAM = Path(__file__).with_name("merge-lane-pull-request-reviewer-review-post-and-read-back.py")
 HEAD = "0123456789abcdef0123456789abcdef01234567"
 TOKEN = "stand-in-mac-claude-token-value"
 FAKE_GH = """#!/usr/bin/env python3
-import json, os, signal, sys
+import json, os, signal, sys, time
 from pathlib import Path
 state = Path(os.environ["FAKE_GH_STATE"])
 arguments = sys.argv[1:]
@@ -40,6 +43,9 @@ with open(state / "calls.jsonl", "a") as log:
 path = next(argument for argument in arguments if argument.startswith("repos/"))
 call = ("post" if "POST" in arguments else "read-back" if "/reviews/" in path
         else "files" if "/files" in path else "author")
+if os.environ.get("FAKE_GH_HANGS") == call:
+    (state / "gh-hanging").write_text(str(os.getpid()))
+    time.sleep(60)
 if os.environ.get("FAKE_GH_FAILS") == call:
     print("gh: HTTP 502: Bad Gateway", file=sys.stderr)
     sys.exit(1)
@@ -84,8 +90,18 @@ class Run:
                        f"\ncalls: {calls}")
 
 
+def running(pid):
+    """Whether pid is a live process, not gone and not a zombie."""
+    try:
+        status = Path(f"/proc/{pid}/status").read_text()
+    except OSError:
+        return False
+    return "\nState:\tZ" not in status
+
+
 def run_program(scratch, review_text, token=TOKEN, arguments=("--pull-request", "7", "--head-commit", HEAD),
-                **fake_gh_environment):
+                interrupt=None, **fake_gh_environment):
+    """Run the program; with interrupt, a signal, send it once the stand-in gh is hanging."""
     case = Path(tempfile.mkdtemp(dir=scratch))
     home, state, fake_gh_directory = case / "home", case / "state", case / "fake-gh"
     for directory in (home, state, fake_gh_directory):
@@ -98,18 +114,34 @@ def run_program(scratch, review_text, token=TOKEN, arguments=("--pull-request", 
     review_file = case / "review-to-post.txt"
     if review_text is not None:
         review_file.write_text(review_text)
-    completed = subprocess.run(
+    process = subprocess.Popen(
         [sys.executable, str(PROGRAM), *arguments, str(review_file)],
-        capture_output=True, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         env={**os.environ, "HOME": str(home), "FAKE_GH_STATE": str(state),
              "PATH": f"{fake_gh_directory}{os.pathsep}{os.environ.get('PATH', '')}",
              **fake_gh_environment})
+    hanging = state / "gh-hanging"
+    if interrupt is not None:
+        deadline = time.monotonic() + 20
+        while not (hanging.exists() and hanging.read_text()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        process.send_signal(interrupt)
+    try:
+        stdout, stderr = process.communicate(timeout=30)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        stdout, stderr = process.communicate()
+        stderr += "\n(the program was still running 30 s after the signal)"
+    completed = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
     calls_file = state / "calls.jsonl"
     calls = ([json.loads(line) for line in calls_file.read_text().splitlines()]
              if calls_file.exists() else [])
     posted_file = state / "posted.json"
     posted = json.loads(posted_file.read_text()) if posted_file.exists() else None
-    return Run(completed, calls, posted)
+    run = Run(completed, calls, posted)
+    time.sleep(0.2 if interrupt is not None else 0)
+    run.gh_left_running = hanging.exists() and running(int(hanging.read_text()))
+    return run
 
 
 def review(verdict, body="The review body.", comments=None):
@@ -303,6 +335,28 @@ def main():
         check("a read-back reply that is not an object exits 2 and says review 42 was posted",
               result.code == 2 and "review 42 was posted, but reading it back failed: GitHub's "
               "reply was not in the expected shape: AttributeError" in result.stderr, result.detail)
+
+        for signal_number in (signal.SIGINT, signal.SIGTERM):
+            name = signal.Signals(signal_number).name
+            result = run_program(scratch, review("APPROVE"), interrupt=signal_number,
+                                 FAKE_GH_HANGS="post")
+            check(f"{name} during the post kills gh, exits 2, says the review may or may not be "
+                  f"posted, and gives the command that lists mac-claude's reviews on the head "
+                  f"commit",
+                  result.code == 2 and not result.gh_left_running
+                  and "review may or may not be posted: posting the review failed: this command "
+                  "was interrupted" in result.stderr
+                  and "gh api --paginate 'repos/nedschorus/nedschorus/pulls/7/reviews'"
+                  in result.stderr and f'.commit_id == "{HEAD}"' in result.stderr, result.detail)
+            result = run_program(scratch, review("APPROVE"), interrupt=signal_number,
+                                 FAKE_GH_HANGS="read-back")
+            check(f"{name} between the post and the end of the read-back kills gh, exits 2, and "
+                  f"says review 42 was posted and not to post it again",
+                  result.code == 2 and not result.gh_left_running
+                  and "review 42 was posted, but reading it back failed: this command was "
+                  "interrupted" in result.stderr
+                  and "Do not post the review again: it is on the pull request." in result.stderr,
+                  result.detail)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
