@@ -422,12 +422,13 @@ def test_a_mention_of_the_next_item_inside_an_items_part_does_not_end_it_under_a
     document = WALK_DOCUMENT.replace(
         "#new \"The path is docs/walk/.\"",
         "Item 7 depends on item 6.\n\n#new \"The path is docs/walk/.\"\n\n**Item 7** of 8 said the same.\n\n"
-        "#new \"A second path.\"")
+        "#new \"A second path.\"\n\n**Item 7.2** shows the rewrite.\n\n#new \"A third path.\"")
     case = Case(next_to_present="item 6 of 9", document=document)
     result = case.run("check")
     check("under a shared heading, a line that only mentions item 7 inside item 6's part does not end it, "
           "so check fast-reads every #new text of item 6",
-          result.returncode == 0 and case.calls.read_text() == "The path is docs/walk/.\nA second path.\n",
+          result.returncode == 0
+          and case.calls.read_text() == "The path is docs/walk/.\nA second path.\nA third path.\n",
           described(result))
 
 

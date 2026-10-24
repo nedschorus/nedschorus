@@ -34,7 +34,8 @@ given, is the heading's M. An opening is one of three shapes:
 - on the first line of a top-level paragraph, the full count `Item N of M`
   after any emphasis, as in `Item 5 of 9. Recommendation: ...`.
 Any other line is not an opening: a mention such as `Item 6 depends on item
-5` or `Item 5.2 shows the rewrite`, a label whose bold ends before `of`, as in
+5`, `Item 5.2 shows the rewrite` or `**Item 5.2** shows the rewrite`, whose
+number is read whole and so is not item 5's, a label whose bold ends before `of`, as in
 `**Item 6** of 8`, a number followed by more words, as in
 `**Item 5 of the plan**` or `Item 60 of the previous walk`, a plain list item,
 or a line inside a quotation, a nested list or an HTML block. When an item of the unit
@@ -77,14 +78,17 @@ NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
 NUMBER_LIST = rf"{NUMBER}(?:{NUMBER_JOINER}{NUMBER})*(?![\d.]\d)"
 VALUE_COUNT = re.compile(rf"^items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b)?", re.I)
 HEADING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
+# Atomic, so a label's number is never shortened to fit what follows it: `**Item 6.2** shows` cannot be read as
+# `**Item 6` followed by `.`. Every label reads its number through this one piece.
+WHOLE_NUMBER = rf"(?>{NUMBER})"
 # Within a heading shared by several items, an item's opening may leave out `of M`, the heading giving it, when
 # it is a label: the number, read whole, ends the label, so a mention such as `**Item 6** of 8`, `Item 6 depends`
 # or `Item 60 of the` is not one. In bold the label ends at `:`, `.` or `,`, or at the bold's end followed by one
 # of those, a dash or the line's end; plain, at `:` or `.` followed by a space or the line's end.
 ITEM_LABEL = re.compile(
-    rf"^(?:(?P<bold>\*\*|__)item\s+(?P<bold_number>{NUMBER})(?:\s+of\s+(?P<total>\d+))?"
+    rf"^(?:(?P<bold>\*\*|__)item\s+(?P<bold_number>{WHOLE_NUMBER})(?:\s+of\s+(?P<total>\d+))?"
     rf"(?=\s*[:.,]|(?P=bold)\s*(?:[:.,\-–—]|$))"
-    rf"|item\s+(?P<plain_number>{NUMBER})[:.](?=\s|$))", re.I)
+    rf"|item\s+(?P<plain_number>{WHOLE_NUMBER})[:.](?=\s|$))", re.I)
 REPLY_COUNT = re.compile(rf"\bitems?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
 # Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
 REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)

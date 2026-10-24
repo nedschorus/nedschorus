@@ -904,14 +904,42 @@ SHARED_HEADING_OPENINGS_READ = {
 # Each is a top-level line inside item 5's part, ahead of its recommendation, that only mentions item 6.
 MENTIONS_OF_ANOTHER_ITEM = {
     "a plain sentence about item 6": "Item 6 depends on item 5, so answer 5 first.",
+    "a bold sentence about item 6": "**Item 6** depends on item 5, so answer 5 first.",
     "a possessive": "Item 6's sentence stays.",
+    "a bold possessive": "**Item 6's** sentence stays.",
     "a bold label that ends before `of` another total": "**Item 6** of 8 said the same.",
     "a longer number of another walk": "Item 60 of the previous approval-walk said the same.",
+    "a bold longer number of another walk": "**Item 60** of the previous approval-walk said the same.",
+    "a bold longer number with its `of` inside the bold": "**Item 60 of the previous approval-walk** said the same.",
     "an item's part number": "Item 6.2 shows the rewrite.",
+    "a bold item's part number": "**Item 6.2** shows the rewrite.",
+    "a bold item's part number followed by its words": "**Item 6.2 shows** the rewrite.",
+    "a plain number followed by more words": "Item 6 of the plan said the same.",
     "a bold number followed by more words": "**Item 6 of the plan** said the same.",
     "a bold label in a list in a quotation": "> - **Item 6: a quotation.** Recommendation: quoted.",
     "a bold label in a nested list": "- Context.\n  - **Item 6: nested.** Recommendation: nested.",
 }
+FINDER_MODULE_FILE = (HOOK_SCRIPT.parent
+                      / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py")
+
+
+def test_no_mention_of_another_item_is_read_as_an_opening_in_any_place_an_opening_is_read():
+    specification = importlib.util.spec_from_file_location("item_finder", FINDER_MODULE_FILE)
+    finder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(finder)
+    parser = finder.markdown_parser()
+    for shape, mention in MENTIONS_OF_ANOTHER_ITEM.items():
+        # A one-line mention is tried as each place an opening is read: a top-level paragraph, under each emphasis,
+        # and the first line of a top-level list item; a mention that has its own structure is tried as written.
+        if "\n" in mention or mention.startswith((">", "-")):
+            places = {"as written": mention}
+        else:
+            places = {"a top-level paragraph": mention, "a top-level list item": f"- {mention}",
+                      "a paragraph in `__`": mention.replace("**", "__")}
+        for place, text in places.items():
+            openings = finder.item_opening_lines(f"Before.\n\n{text}\n\nAfter.\n", parser)
+            check(f"{shape}, as {place}, is not read as an opening of item 6",
+                  not any("6" in numbers for numbers, _ in openings.values()), f"openings {openings!r}")
 
 
 def test_a_line_that_only_mentions_another_item_does_not_open_it_under_a_shared_heading():
