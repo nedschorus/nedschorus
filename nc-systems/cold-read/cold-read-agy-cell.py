@@ -95,10 +95,12 @@ agy is never run unguarded.
 
 THE GEMINI API KEY. agy's settings name the Gemini model provider, so agy
 needs GEMINI_API_KEY in its environment. When the variable is unset or empty,
-this program reads the key from GEMINI_API_KEY_FILE, stripped of surrounding
-whitespace, and gives it to agy's environment alone; a value the caller set is
-passed on unchanged. The file is read here, outside the sandbox, because the
-sandbox masks the directory it lives in. When the file gives no key, agy runs
+this program reads the key from the file ~/.config/nedschorus/gemini-api.key,
+a fixed path and not one an environment variable can change, strips the
+surrounding whitespace, and gives the key to agy's environment alone; a value
+the caller set is passed on unchanged. The file is read here, outside the
+sandbox, because the sandbox masks ~/.config/nedschorus/. When the variable is
+unset and the file is missing, unreadable, or empty once stripped, agy runs
 without one and fails, and the cell's cause line names the file and why it
 gave no key. The key itself is never printed.
 
