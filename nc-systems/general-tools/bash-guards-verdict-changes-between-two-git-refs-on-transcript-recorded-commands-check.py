@@ -523,7 +523,10 @@ def read_markdown_push_reminder(guard, command, working_directory, search_file_d
 
 # A renamed guard's former file path, which a base ref's settings.json may still run, to its path in GUARDS.
 # The line does nothing once main's settings.json no longer runs the former path, and may then be removed.
-BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {}
+BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {
+    ".claude/hooks/ghi-issue-write-redirect.py": ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
+    "scripts/hand-typed-codex-exec-redirect-hook.py": "scripts/hand-typed-codex-exec-command-refusal-hook.py",
+}
 
 # Every Bash PreToolUse hook in .claude/settings.json, by the file it runs, with the function
 # that reads one command through it. check_guards_match_settings() names each hook missing here,
