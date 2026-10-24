@@ -99,7 +99,7 @@ def _run(command, checkout, log, deadline, environment, key_file_problem):
             raise RuntimeError(f"agy exited {code}; GEMINI_API_KEY is not set, and "
                                f"{agy_cell.GEMINI_API_KEY_FILE} gave no key: {key_file_problem}.\n"
                                "Do not read, write or repair that file yourself: it holds a credential.\n"
-                               "Tell the user this line, and ask them either to set GEMINI_API_KEY or to make "
+                               "Tell the user the first line of this message, and ask them either to set GEMINI_API_KEY or to make "
                                f"{agy_cell.GEMINI_API_KEY_FILE} readable and holding the key; "
                                "if you are a subagent, tell the agent that dispatched you instead.")
         raise RuntimeError(f"agy exited {code}")
