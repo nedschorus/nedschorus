@@ -68,6 +68,7 @@ table are read from: the seams the test suite uses.
 
 import argparse
 import fcntl
+import getpass
 import importlib.util
 import json
 import os
@@ -345,8 +346,8 @@ def transcript_read_positions_load(log_directory: Path):
         print(f"{PROGRAM}: the saved read positions {path} could not be read ({type(error).__name__}: "
               f"{error}), so this run reads every transcript whole and saves new positions in their place.\n"
               f"Nothing needs doing for this run: {WHOLE_READ_TYPES_NOTHING_TWICE}\n"
-              "When a later run prints this line again: fix the cause the error names, such as the file's "
-              "permissions, because until then every run reads every transcript whole.", file=sys.stderr)
+              f"When {CRON_LOG} shows this message from two runs in a row: fix the cause the error names, such as "
+              "the file's permissions, because until then every run reads every transcript whole.", file=sys.stderr)
         return {}
     if not isinstance(positions, dict):
         print(f"{PROGRAM}: the saved read positions {path} hold valid JSON whose top level is not an "
@@ -365,11 +366,13 @@ def transcript_read_positions_save(log_directory: Path, positions) -> bool:
         os.replace(temporary, path)
     except OSError as error:
         print(f"{PROGRAM}: the read positions were not saved to {path} ({error}), so the next run reads "
-              "every transcript whole again, and every run exits 1 until a save succeeds.\n"
+              "every transcript whole again. Every run exits 1 until a save succeeds, except a run that finds an earlier "
+              "run still going, which exits 0 without saving.\n"
               f"{WHOLE_READ_TYPES_NOTHING_TWICE}\n"
               f"When the error says No space left on device: free space on the disk that holds {log_directory}.\n"
-              f"When the error says Permission denied: give the user this watcher runs as write permission on {log_directory} "
-              f"and on {path}.\n"
+              f"When the error says Permission denied: give {getpass.getuser()}, the user this watcher runs as, "
+              f"write and search (x) permission on {log_directory}, and write permission on {temporary} "
+              "where it exists.\n"
               f"When the error says Is a directory: remove the directory at {path} or at {temporary}; "
               "the next run writes the file in its place.\n"
               "Otherwise: fix the cause the error names.", file=sys.stderr)

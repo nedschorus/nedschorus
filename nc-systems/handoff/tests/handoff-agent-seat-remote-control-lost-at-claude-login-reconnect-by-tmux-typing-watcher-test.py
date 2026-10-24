@@ -15,6 +15,7 @@ Prints one line per case and exits non-zero if any case fails.
 """
 
 import fcntl
+import getpass
 import importlib.util
 import io
 import json
@@ -446,23 +447,53 @@ def case_saved_read_positions():
             missing = watcher.transcript_read_positions_load(logs)
         check("POSITIONS: no saved positions yet means reading every transcript whole, silently",
               missing == {} and errors.getvalue() == "", (missing, errors.getvalue()))
-        for text, name in (("{not json", "not JSON"), ("[1, 2]", "not an object")):
-            (logs / watcher.TRANSCRIPT_READ_POSITIONS_FILE_NAME).write_text(text, encoding="utf-8")
+        saved_positions = logs / watcher.TRANSCRIPT_READ_POSITIONS_FILE_NAME
+        whole_read = ("A whole read types nothing twice, "
+                      "because decisions.jsonl records each disconnect already typed for.")
+        for text, name, said in (
+                ("{not json", "not JSON",
+                 f"{watcher.PROGRAM}: the saved read positions {saved_positions} could not be read "
+                 "(JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)), "
+                 "so this run reads every transcript whole and saves new positions in their place.\n"
+                 f"Nothing needs doing for this run: {whole_read}\n"
+                 f"When {watcher.CRON_LOG} shows this message from two runs in a row: fix the cause the error names, "
+                 "such as the file's permissions, because until then every run reads every transcript whole.\n"),
+                ("[1, 2]", "not an object",
+                 f"{watcher.PROGRAM}: the saved read positions {saved_positions} hold valid JSON whose top level "
+                 "is not an object, so this run reads every transcript whole and saves new positions in their "
+                 f"place.\nNothing needs doing for this run: {whole_read}\n")):
+            saved_positions.write_text(text, encoding="utf-8")
             errors = io.StringIO()
             with redirect_stderr(errors):
                 loaded = watcher.transcript_read_positions_load(logs)
-            check(f"POSITIONS: saved positions that are {name} mean reading every transcript whole, and say so",
-                  loaded == {} and "reads every transcript whole" in errors.getvalue(),
-                  (loaded, errors.getvalue()))
+            check(f"POSITIONS: saved positions that are {name} mean reading every transcript whole, "
+                  "and say so in these words",
+                  loaded == {} and errors.getvalue() == said, (loaded, errors.getvalue()))
         watcher.transcript_read_positions_save(logs, {"a": {"offset": 1}})
         check("POSITIONS: saved positions read back as saved",
               watcher.transcript_read_positions_load(logs) == {"a": {"offset": 1}},
               (logs / watcher.TRANSCRIPT_READ_POSITIONS_FILE_NAME).read_text(encoding="utf-8"))
+        unsaved_directory = root / "no-such-directory"
+        unsaved = unsaved_directory / watcher.TRANSCRIPT_READ_POSITIONS_FILE_NAME
+        unsaved_temporary = unsaved.with_name(unsaved.name + ".new")
+        said = (f"{watcher.PROGRAM}: the read positions were not saved to {unsaved} ([Errno 2] No such file or "
+                f"directory: '{unsaved_temporary}'), so the next run reads every transcript whole again. Every run "
+                "exits 1 until a save succeeds, except a run that finds an earlier run still going, which exits 0 "
+                "without saving.\n"
+                f"{whole_read}\n"
+                "When the error says No space left on device: free space on the disk that holds "
+                f"{unsaved_directory}.\n"
+                f"When the error says Permission denied: give {getpass.getuser()}, the user this watcher runs as, "
+                f"write and search (x) permission on {unsaved_directory}, and write permission on "
+                f"{unsaved_temporary} where it exists.\n"
+                f"When the error says Is a directory: remove the directory at {unsaved} or at {unsaved_temporary}; "
+                "the next run writes the file in its place.\n"
+                "Otherwise: fix the cause the error names.\n")
         errors = io.StringIO()
         with redirect_stderr(errors):
-            saved_ok = watcher.transcript_read_positions_save(root / "no-such-directory", {"a": {"offset": 1}})
-        check("POSITIONS: positions that cannot be saved are reported, and the save says it failed",
-              saved_ok is False and "were not saved" in errors.getvalue(), errors.getvalue())
+            saved_ok = watcher.transcript_read_positions_save(unsaved_directory, {"a": {"offset": 1}})
+        check("POSITIONS: positions that cannot be saved are reported in these words, and the save says it failed",
+              saved_ok is False and errors.getvalue() == said, errors.getvalue())
 
         class ShrinksAfterScan(io.BytesIO):
             # Stands in for a transcript truncated between the scan and the read of the bytes before its end.
