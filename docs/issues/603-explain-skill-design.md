@@ -319,7 +319,7 @@ None for the skill, which is installed (see Outcome). When this outcome edit is 
 
 ## Search receipts
 
-- `scripts/ghi-info-ask.py` with `--include-closed`, asked 2026-09-21 for any issue covering an
+- `scripts/ghi-guide-agent-ask.py` with `--include-closed`, asked 2026-09-21 for any issue covering an
   explain skill for one-shot explanations: returned GHI [Clarity
   registers](https://github.com/nedschorus/nedschorus/issues/138) (closed not planned), GHI
   [Build draft-md](https://github.com/nedschorus/nedschorus/issues/142) and GHI [Runtime-behavior

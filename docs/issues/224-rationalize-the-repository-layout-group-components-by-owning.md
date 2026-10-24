@@ -13,7 +13,7 @@ The repository is laid out by file type, so no system is findable in one place. 
 | running and recycling seats | 14 — handoff supervisors and hooks, both launchers, `recover-crashed-seats`, `resupervise-seat`, statusline, dialog watcher |
 | reviewing documents | 9 — cold-read cells and grid, `sanity-check-attacks`, `code-review-codex-cell`, two lints |
 | getting work onto main | 4 — `git-gatekeeper`, `checkout-freshness-catch-up`, `clean-worktrees`, `watch-open-pull-requests-nbd` |
-| GitHub issues | 2 — `ghi-info-ask`, `ghi-mirror-refresh` |
+| GitHub issues | 2 — `ghi-guide-agent-ask`, `ghi-mirror-refresh` |
 | backup and recovery | 2 — `backup-health-check`, `find-deleted-path-across-backups` |
 
 Alphabetical order actively scatters these groups: the recovery system's two halves sort to opposite ends of the directory, eleven unrelated programs apart. Add its design (on an unmerged branch), its unbuilt hook half, and its sudoers file, and one system occupies five locations across two trees and a branch.
@@ -93,7 +93,7 @@ Open questions for the user, not settled here:
 
 ## Search receipt
 
-`scripts/ghi-info-ask.py` over both mirrors, 2026-08-31: nothing proposes organizing by owning system or a hook dispatcher; closest are GHI [Layer-design draft held on branch repo-boundary-and-runtime-layers: land or discard](https://github.com/nedschorus/nedschorus/issues/79) (layers) and GHI [built-in-process-planned documents: design docs convert to a pointer map of built / in process / planned, with a skill that verifies and updates them](https://github.com/nedschorus/nedschorus/issues/219) (the status document).
+`scripts/ghi-guide-agent-ask.py` over both mirrors, 2026-08-31: nothing proposes organizing by owning system or a hook dispatcher; closest are GHI [Layer-design draft held on branch repo-boundary-and-runtime-layers: land or discard](https://github.com/nedschorus/nedschorus/issues/79) (layers) and GHI [built-in-process-planned documents: design docs convert to a pointer map of built / in process / planned, with a skill that verifies and updates them](https://github.com/nedschorus/nedschorus/issues/219) (the status document).
 
 ## Provisional additions (not yet vetted by the user)
 

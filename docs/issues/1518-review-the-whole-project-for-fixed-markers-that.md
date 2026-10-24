@@ -40,7 +40,7 @@ It goes to the user with the review's first findings, and is used here only as a
 - GHI [Daily maintenance in one daily step, starting with a daily check of every wiki page](https://github.com/nedschorus/nedschorus/issues/1058): its daily check for names a reader cannot understand away from where they are defined already lists short fixed-set values such as the walk-minutes classes.
 - GHI [Type definitions for the project's kinds of markdown: what each contains, leaves out, and how long it runs](https://github.com/nedschorus/nedschorus/issues/1080): the natural home for any marker convention per kind of document.
 
-ghi-info, asked on 2026-10-15 whether an issue covers conventions for fixed markers or hashtags (`scripts/ghi-info-ask.py --include-closed`), found none: "No open or closed issue proposes a general convention for fixed line-start labels, VERDICT lines, or `#hashtag`-style markers as a reusable pattern across the project."
+ghi-guide-agent, asked on 2026-10-15 whether an issue covers conventions for fixed markers or hashtags (`scripts/ghi-guide-agent-ask.py --include-closed`), found none: "No open or closed issue proposes a general convention for fixed line-start labels, VERDICT lines, or `#hashtag`-style markers as a reusable pattern across the project."
 
 ## Next action
 

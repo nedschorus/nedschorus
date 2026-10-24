@@ -649,9 +649,9 @@ have helped: seats run in tmux and do not register in utmp.
   something evidently ran there — was put to the user and approved, then
   withdrawn when it was measured rather than assumed. Every seat on either
   machine with a seat directory and no state file: the Mac's `seat-t` and
-  `seatub`, both with no transcripts at all, and ned-box's `ghi-info`, with
-  five. `ghi-info` is the only seat the rule would ever have surfaced, and it
-  is precisely the wrong one — `scripts/ghi-info-ask.py` runs it as a one-shot
+  `seatub`, both with no transcripts at all, and ned-box's `ghi-guide-agent`, with
+  five. `ghi-guide-agent` is the only seat the rule would ever have surfaced, and it
+  is precisely the wrong one — `scripts/ghi-guide-agent-ask.py` runs it as a one-shot
   `claude -p` over ssh, never under `handoff-supervisor.py` and never in tmux.
   It has a seat directory because it follows the agents-root convention and
   transcripts because `claude -p` writes them. So **having transcripts does not

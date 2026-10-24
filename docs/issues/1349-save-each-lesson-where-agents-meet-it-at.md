@@ -32,7 +32,7 @@ The rule asks where the agent will be reading at the moment the lesson applies, 
    5. **The seat-brief**, when only one agent-seat meets the moment.
    6. **The glossary**, when the instruction is what a word means.
    7. **A new bullet in CLAUDE.md**, only when the moment comes in every kind of work, agents will otherwise tend to get it wrong, and none of the places above exists.
-3. If no moment can be named, or no place in step 2 fits, nothing gives recall at the moment of use. An instruction about one subject's design can be kept in that subject's GHI-MD, where an agent meets it only when reading that GHI-MD or asking ghi-info about the subject. Otherwise ask the user where to save it.
+3. If no moment can be named, or no place in step 2 fits, nothing gives recall at the moment of use. An instruction about one subject's design can be kept in that subject's GHI-MD, where an agent meets it only when reading that GHI-MD or asking ghi-guide-agent about the subject. Otherwise ask the user where to save it.
 
 ## The rule tested on the eight lessons agents tried to save
 
@@ -77,5 +77,5 @@ Such a store would hold each lesson with a trigger, such as a tool name and a pa
 
 ## Search receipt
 
-- `scripts/ghi-info-ask.py --include-closed` on 2026-10-14, asked for a GHI about where agents save a lesson so that it is recalled when it applies, the blocked memory directory, recall by subject, or the rule for choosing a place. ghi-info answered that no single GHI covers this, and named GHI 32, GHI 30, GHI 1127 and GHI [update-glossary skill: the editor rules for the nedschorus glossary](https://github.com/nedschorus/nedschorus/issues/262) as covering parts, and the closed GHI 39 as nearby.
+- `scripts/ghi-guide-agent-ask.py --include-closed` on 2026-10-14, asked for a GHI about where agents save a lesson so that it is recalled when it applies, the blocked memory directory, recall by subject, or the rule for choosing a place. ghi-guide-agent answered that no single GHI covers this, and named GHI 32, GHI 30, GHI 1127 and GHI [update-glossary skill: the editor rules for the nedschorus glossary](https://github.com/nedschorus/nedschorus/issues/262) as covering parts, and the closed GHI 39 as nearby.
 - The eight lessons: `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-improvement/lesson-recall-ghi-md-review-2026-10-14/memory-directory-write-attempts-in-transcripts-list.py 2026-10-01`, run on 2026-10-14 over every `~/.claude/projects/*/*.jsonl` transcript on ned-box and the subagent transcripts beside them, lists each Edit and Write aimed at a memory directory, with its full text and whether its tool result was the guard's refusal; output in `nedlern@ned-box:/home/nedlern/nedschorus-logs/seats/cold-read-improvement/lesson-recall-ghi-md-review-2026-10-14/memory-directory-write-attempts-2026-10-14.txt`. Besides the eight lessons, the output holds one refused Edit of `MEMORY.md`.

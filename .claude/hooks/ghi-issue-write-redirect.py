@@ -18,7 +18,7 @@ THE RULINGS IT CARRIES.
 - No comments (user-ruled 2026-09-24, item 4 of the meta-walk
   reboot-test-meta-walk-2026-09-23): "But I don't want comments as agents
   forget to read them. Better to update the ghi-Md". The design's comment
-  operation, `docs/issues/46-ghi-info-agent-design.md` § The GHI write path,
+  operation, `docs/issues/46-ghi-guide-agent-design.md` § The GHI write path,
   is dropped with it: there is no comment operation and there will be none.
   The same
   walk approved this hook with "Y" to: refuse a hand-typed `gh issue
@@ -92,8 +92,8 @@ WHAT IT CANNOT SEE, so nobody mistakes a choice for an oversight:
 - The GHI write tool's own `gh` calls are subprocesses, below the Bash tool,
   so this hook never sees them; running the tool is `python3
   scripts/ghi-issue-write.py ...`, whose program is python3.
-- ghi-info's headless sessions run with `--setting-sources user`
-  (`scripts/ghi-info-ask.py`), so this project's hooks do not load there, and
+- ghi-guide-agent's headless sessions run with `--setting-sources user`
+  (`scripts/ghi-guide-agent-ask.py`), so this project's hooks do not load there, and
   its link-repair edits are untouched.
 - A `gh` behind `ssh`, `sh -c`, `eval`, or in a heredoc body is not
   recognised; one behind a wrapper the shared shell module knows, such as

@@ -505,7 +505,7 @@ seat.task("68", metadata={"due_utc": PAST_DUE})
 result = seat.run(environment_changes={"CLAUDE_CODE_SESSION_ATTENDED": "0"})
 check("unattended session (a claude -p child): silent", silent(result), result)
 result = seat.run(environment_changes={
-    "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "scripts/ghi-info-ask.py"})
+    "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "scripts/ghi-guide-agent-ask.py"})
 check("session whose caller owns its reincarnation: silent", silent(result), result)
 check("silenced sessions record nothing, so the seat's own session still raises the task",
       not seat.state_path.exists(), seat.state_path)

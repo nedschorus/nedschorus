@@ -92,7 +92,7 @@ the last thing the child says, which its caller reads as the answer. Two
 signals silence the hook:
 
   NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER set, the variable
-      scripts/ghi-info-ask.py sets for its child and the handoff hook also
+      scripts/ghi-guide-agent-ask.py sets for its child and the handoff hook also
       honours.
   CLAUDE_CODE_SESSION_ATTENDED == "0". Claude Code sets this for every hook
       it runs: "1" in an interactive session, "0" in a `claude -p` child,
@@ -103,7 +103,7 @@ signals silence the hook:
 
 The project's own headless Claude callers run no project hook at all: the
 cold-read Claude cell, and the restater-judge cell through it, pass
-`--settings` with disableAllHooks; scripts/ghi-info-ask.py and
+`--settings` with disableAllHooks; scripts/ghi-guide-agent-ask.py and
 scripts/sanity-check-adversarial-prompts.py pass `--setting-sources user`. The two
 signals cover a child started any other way.
 """
