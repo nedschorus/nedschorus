@@ -168,6 +168,18 @@ def read_lines(path):
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
 
+# Harsher than the review program's run_step, whose subprocess.run waits 0.25 s first.
+KILLING_PARENT = r'''
+import signal, subprocess, sys
+child = subprocess.Popen(sys.argv[1:], stdin=subprocess.DEVNULL)
+def kill_child(signal_number, frame):
+    child.kill()
+    sys.exit(130)
+signal.signal(signal.SIGINT, kill_child)
+child.wait()
+'''
+
+
 class Case:
     """One case's repository, head worktree, brief, stand-ins and run."""
 
@@ -235,6 +247,24 @@ class Case:
             process.kill()
             self.stdout = process.communicate()[0] + "\n(the program was still running 30 s after the signal)"
             self.code = 0
+        return self.read_calls()
+
+    def interrupt_parent_group(self, **environment):
+        """Run under a parent that SIGKILLs this program the moment it gets SIGINT, and send
+        SIGINT to the parent's process group, as a terminal's Ctrl-C does, once the stand-in
+        gh has started its post."""
+        parent = subprocess.Popen(
+            [sys.executable, "-c", KILLING_PARENT, *self.command("7a", None, ())],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True,
+            env={**self.environment, "FAKE_CLAUDE_MODE": "valid", **environment})
+        deadline = time.monotonic() + 20
+        started = self.state / "gh-post-started"
+        while (not (started.exists() and started.read_text())
+               and time.monotonic() < deadline):
+            time.sleep(0.05)
+        os.killpg(parent.pid, signal.SIGINT)
+        self.stdout = parent.communicate(timeout=30)[0]
+        self.code = parent.returncode
         return self.read_calls()
 
     def read_calls(self):
@@ -419,6 +449,13 @@ def main():
               and not case.reviewer_worktree_left(), case.detail)
         check("SIGTERM during the posting step kills the posting script's gh, so it cannot post "
               "after the message",
+              lambda: not running(int((case.state / "gh-post-started").read_text())),
+              case.detail)
+
+        case = Case(scratch).interrupt_parent_group(FAKE_GH_HANGS="post")
+        time.sleep(0.5)
+        check("a Ctrl-C to the group of a parent that kills this program at once still stops "
+              "the posting script's gh, so no review can be posted after the run ends",
               lambda: not running(int((case.state / "gh-post-started").read_text())),
               case.detail)
 

@@ -60,10 +60,12 @@ starts with mac-claude-pr<n>-, the names the reviewer's standing text gives
 the worktrees it makes, is removed, so a run that crashed leaves none behind.
 A removal that fails is printed, and does not change the exit code.
 
-The posting script runs in its own session. An interrupt or SIGTERM during the
-posting step kills its whole process group, gh included, perhaps after its
-post; this then prints that the review may or may not have been posted, and
-the gh api command that shows whether it was.
+The posting script runs in this program's process group, so a terminal's
+Ctrl-C reaches it and its gh directly, even when whoever ran this kills this
+program first. An interrupt or SIGTERM sent to this program alone during the
+posting step sends the posting script SIGINT, on which it kills its gh before
+it exits, perhaps after its post; this then prints that the review may or may
+not have been posted, and the gh api command that shows whether it was.
 """
 
 import argparse
@@ -78,6 +80,8 @@ from pathlib import Path
 
 SCHEMA_FILE_NAME = "merge-lane-pull-request-claude-reviewer-review-schema.json"
 POST_SCRIPT_NAME = "merge-lane-pull-request-reviewer-review-post-and-read-back.py"
+# On SIGINT, subprocess.run waits 0.25 s for gh before killing it.
+POSTING_SCRIPT_EXIT_SECONDS = 5
 VERDICTS = ("APPROVE", "REQUEST_CHANGES", "COULD_NOT_REVIEW")
 DEFAULT_TIME_LIMIT_SECONDS = 5400
 ALLOWED_TOOLS = ("Read", "Grep", "Glob", "Bash", "WebFetch", "WebSearch")
@@ -353,21 +357,23 @@ def review_and_post(arguments, number, head, brief, schema_text, head_worktree, 
     review_file = record / "review.json"
     review = {key: answer[key] for key in ("verdict", "body", "comments")}
     review_file.write_text(json.dumps(review, indent=2) + "\n")
-    # Its own session, so that killing its group on an interrupt also kills its gh, which
-    # could otherwise still post after the message below says what may have happened.
-    posting = subprocess.Popen(
-        [sys.executable, str(here / POST_SCRIPT_NAME), "--pull-request", str(number),
-         "--head-commit", head, str(review_file)],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL,
-        start_new_session=True)
+    posting = None
     try:
+        posting = subprocess.Popen(
+            [sys.executable, str(here / POST_SCRIPT_NAME), "--pull-request", str(number),
+             "--head-commit", head, str(review_file)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL)
         stdout, stderr = posting.communicate()
     except BaseException:
-        try:
-            os.killpg(posting.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        posting.wait()
+        if posting is not None and posting.poll() is None:
+            # Not SIGKILL: on SIGINT the posting script's subprocess.run kills its gh, which
+            # could otherwise still post after the message below says what may have happened.
+            posting.send_signal(signal.SIGINT)
+            try:
+                posting.wait(timeout=POSTING_SCRIPT_EXIT_SECONDS)
+            except subprocess.TimeoutExpired:
+                posting.kill()
+                posting.wait()
         print(POSTING_INTERRUPTED.format(number=number, head=head, review_file=review_file,
                                          repository=common.REPOSITORY), flush=True)
         raise
