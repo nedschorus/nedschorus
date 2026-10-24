@@ -111,6 +111,7 @@ nc-systems/cold-read/cold-read-cell-common.py picks it up with no change here.
 """
 
 import importlib.util
+import json
 import os
 import pathlib
 import re
@@ -199,11 +200,31 @@ def sandbox_exec_profile() -> str:
     return "(version 1)(allow default)(deny file-read* file-write* " + "".join(rules) + ")"
 
 
-def credential_sandbox_prefix(platform: str = sys.platform) -> list:
-    """Return the sandbox argv prefix for agy."""
+def credential_sandbox_prefix(platform: str = sys.platform, *,
+                              writable_paths=None, network: bool = True) -> list:
+    """Return the sandbox argv prefix, optionally restricting writes and network.
+
+    writable_paths contains (path, is_directory) pairs; None preserves the
+    cold-read-cell's write access. Credential denials override write grants.
+    """
     if platform == "darwin":
-        return ["sandbox-exec", "-p", sandbox_exec_profile()]
-    prefix = ["bwrap", "--dev-bind", "/", "/"]
+        profile = sandbox_exec_profile()
+        if writable_paths is not None:
+            exceptions = "".join(
+                f'(require-not ({"subpath" if directory else "literal"} '
+                f'{json.dumps(str(path))}))' for path, directory in writable_paths)
+            profile += f"(deny file-write* (require-all {exceptions}))"
+        if not network:
+            profile += "(deny network*)"
+        return ["sandbox-exec", "-p", profile]
+    prefix = ["bwrap", "--dev-bind" if writable_paths is None else "--ro-bind", "/", "/"]
+    if writable_paths is not None:
+        # --ro-bind mounts / nodev, which leaves /dev/null and /dev/urandom unusable.
+        prefix += ["--dev", "/dev"]
+        for path, _directory in writable_paths:
+            prefix += ["--bind", str(path), str(path)]
+    if not network:
+        prefix += ["--unshare-net"]
     for directory in common.credential_directories_present():
         prefix += ["--tmpfs", directory]
     for path in (common.credential_files_found_now()
