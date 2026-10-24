@@ -331,8 +331,8 @@ def default_answers_path(number):
         top_level = git(["rev-parse", "--show-toplevel"]).strip()
     except StepFailed as failure:
         raise Refused(f"This must run in the worktree or checkout of pull request {number}'s branch "
-                      f"whose root holds the answers file, but git could not find one: {failure}.\n"
-                      "Change to that worktree and run this again, or name the file with --answers.") from None
+                      f"whose root holds the answers file, but git found no worktree here: {failure}.\n"
+                      "Change to that worktree and run this again, or name the answers file with --answers.") from None
     return str(Path(top_level) / ANSWERS_FILE_NAME_FORMAT.format(number=number))
 
 
@@ -424,12 +424,12 @@ def refuse_committed_answers_file(frozen_head, commit):
                  if ANSWERS_FILE_NAME_PATTERN.fullmatch(Path(path).name)]
     if committed:
         raise Refused(f"The round does not pass: its commits after the frozen-head {frozen_head[:12]} "
-                      f"hold the answers file {', '.join(committed)}, and an answers file must never "
+                      f"add these answers files: {', '.join(committed)}. An answers file must never "
                       "reach the pull request.\n"
-                      "If the round's commit is not pushed, run git rm --cached on each answers file "
-                      "named above, then git commit --amend --no-edit, and check again.\n"
+                      "If the round's commit is not pushed, run git rm --cached on each of them, "
+                      "then git commit --amend --no-edit, and check again.\n"
                       "If the round's commit is pushed, tell merge-lane-2 with SendMessage which "
-                      "answers file it holds; do not force-push.")
+                      "answers files it holds; do not force-push.")
 
 
 def unnamed_files(base, fix_commit, findings):
