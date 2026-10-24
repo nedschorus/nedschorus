@@ -54,8 +54,10 @@ Options that widen what Codex may do, each off by default:
 Codex together.
 
 --resume <session-id> sends the brief as a follow-up to that Codex session.
---writable-root is refused with --resume because `codex exec resume` does
-not accept --add-dir.
+The id is on the `session id:` line near the top of the earlier run's run
+log. Every other option applies as in a first run, -C included: Codex works
+in the -C folder, not the one the session started in. --writable-root is
+refused with --resume because `codex exec resume` does not accept --add-dir.
 
 On success it prints `report: <path>` and exits 0. It exits 1, saying what
 failed, when a --prefetch-github command fails, or when Codex cannot be
