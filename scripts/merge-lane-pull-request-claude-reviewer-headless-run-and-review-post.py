@@ -66,10 +66,10 @@ program first. An interrupt or SIGTERM sent to this program alone during the
 posting step sends the posting script SIGTERM, not SIGINT, because a program
 started as a background job of a non-interactive shell, and every program it
 starts, ignores SIGINT. On SIGTERM the posting script kills its gh, perhaps
-after its post, and exits. This waits for that, with no time limit, prints and
-keeps in posted.txt what the posting script printed, then prints that the
-review may or may not have been posted, and the gh api command that shows
-whether it was.
+after its post, and exits. This waits for that, with no time limit, ignoring
+any further interrupt or SIGTERM from then on, prints and keeps in posted.txt
+what the posting script printed, then prints that the review may or may not
+have been posted, and the gh api command that shows whether it was.
 """
 
 import argparse
@@ -367,11 +367,14 @@ def review_and_post(arguments, number, head, brief, schema_text, head_worktree, 
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL)
         stdout, stderr = posting.communicate()
     except BaseException:
+        # Ignored before terminate(), because a second signal that cut the wait short would
+        # skip the report below while the posting script's gh may still be running.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         if posting is not None:
-            if posting.poll() is None:
-                # Not SIGKILL, which would leave its gh to post after the message below: the
-                # posting script's SIGTERM handler makes its subprocess.run kill gh.
-                posting.terminate()
+            # Not SIGKILL, which would leave its gh to post after the message below: the
+            # posting script's SIGTERM handler makes its subprocess.run kill gh.
+            posting.terminate()
             stdout, stderr = posting.communicate()
             (record / "posted.txt").write_text(stdout + stderr)
             sys.stdout.write(stdout + stderr)
