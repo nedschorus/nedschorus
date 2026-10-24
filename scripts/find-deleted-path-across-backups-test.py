@@ -2457,10 +2457,12 @@ mirror_spec.loader.exec_module(mirror)
 copy_parts = getattr(finder, "MAC_TRANSCRIPTS_COPY_UNDER_LOG_STORE", None)
 _, mirror_transcripts_root = mirror.split_destination(mirror.LOG_STORE_AGENT_SESSION_FILES_DESTINATION)
 check("the Mac's copy is where the mirror writes it: <log-store>/agent-session-files-by-machine/<the Mac's name>/<projects' name>",
-      copy_parts is not None and len(copy_parts) == 3
-      and str(mirror_transcripts_root) == os.path.join(finder.DEFAULT_LOG_STORE_ROOT, copy_parts[0])
-      and copy_parts[1] == mirror.MACHINE_NAME_ELSEWHERE
-      and (copy_parts[2], Path(".claude", "projects")) in [(name, Path(path)) for name, path, *_ in mirror.SOURCES]
+      copy_parts is not None
+      and os.path.join(finder.DEFAULT_LOG_STORE_ROOT, *copy_parts)
+      == str(mirror_transcripts_root / mirror.MACHINE_NAME_ELSEWHERE / "projects")
+      == "/home/nedlern/nedschorus-logs/agent-session-files-by-machine/mac/projects"
+      and ("projects", Path(".claude", "projects"), "projects") in [(name, Path(path), store)
+                                                                   for name, path, store, _ in mirror.SOURCES]
       and Path(finder.DEFAULT_TRANSCRIPTS_DIR) == Path("~", ".claude", "projects"),
       "%s %s %s" % (copy_parts, mirror_transcripts_root, mirror.SOURCES))
 

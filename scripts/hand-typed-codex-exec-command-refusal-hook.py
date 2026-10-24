@@ -62,7 +62,7 @@ USAGE_LINE = (
     "[--sandbox read-only|workspace-write] [-m <model>] [--effort <effort>] "
     "[--network] [--writable-root <folder>]... [--outside-git-checkout] "
     "[--web-search] [--deadline-minutes <minutes>] [--run-log <file>] "
-    "[--prefetch-github '<gh arguments>']...")
+    "[--prefetch-github '<gh arguments>']... [--resume <session-id>]")
 
 REFUSAL = (
     "Refused: a hand-typed `codex exec`. Typed into a shell, `codex exec` keeps "
@@ -76,6 +76,8 @@ REFUSAL = (
     "--writable-root <folder>, once per folder; --skip-git-repo-check becomes "
     "--outside-git-checkout; --search or -c web_search=... becomes --web-search; "
     "-c model_reasoning_effort=<effort> becomes --effort <effort>; -m stays -m.\n"
+    "To follow up on a finished Codex session, use --resume <session-id>; "
+    "--writable-root cannot be used with --resume.\n"
     "That program closes stdin, logs Codex's output, stops Codex at the "
     "deadline, and says what failed when Codex writes no report."
 )

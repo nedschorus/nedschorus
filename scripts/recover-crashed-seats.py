@@ -211,7 +211,7 @@ _claude_json_presets_spec.loader.exec_module(claude_json_presets)
 # Re-export the names for callers that reach them through this module.
 _worth_resuming_spec = importlib.util.spec_from_file_location(
     "seat_transcript_worth_resuming",
-    Path(__file__).with_name("seat-transcript-worth-resuming.py"))
+    Path(__file__).with_name("agent-seat-transcript-worth-resuming-common.py"))
 worth_resuming = importlib.util.module_from_spec(_worth_resuming_spec)
 _worth_resuming_spec.loader.exec_module(worth_resuming)
 FIRST_PROMPT_AFTER_RECORDED_EXIT_MARKER = worth_resuming.FIRST_PROMPT_AFTER_RECORDED_EXIT_MARKER

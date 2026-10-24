@@ -21,7 +21,7 @@ THE HOOK STAYS SILENT when any of these holds:
     rule of nc-systems/general-tools/claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py);
   - the agent ran the locator this turn (a Bash command naming
     locate-file-copies-across-machines.py) or invoked the skill
-    locate-before-saying-a-file-is-missing;
+    find-missing-file;
   - this agent-session (for a subagent, this subagent) was already reminded:
     agents remember the reminder for a while, so it comes once;
   - the agent-session is a headless `claude -p` child, told apart as the
@@ -93,7 +93,7 @@ _claude_code_session_transcript_records_read_backward_common_specification = imp
 claude_code_session_transcript_records_read_backward_common = importlib.util.module_from_spec(_claude_code_session_transcript_records_read_backward_common_specification)
 _claude_code_session_transcript_records_read_backward_common_specification.loader.exec_module(claude_code_session_transcript_records_read_backward_common)
 
-SKILL_NAME = "locate-before-saying-a-file-is-missing"
+SKILL_NAME = "find-missing-file"
 LOCATOR_PROGRAM_NAME = "locate-file-copies-across-machines.py"
 # A person ("human"), another session or a subagent handing back ("peer"), and
 # a parent session writing to its subagent ("coordinator"): the agent answers each.

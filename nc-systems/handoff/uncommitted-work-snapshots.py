@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Work-snapshots: copies of a worktree's uncommitted changes that outlive a crash.
 
-Design: nc-systems/handoff/uncommitted-work-snapshots-across-crashes-design.md.
+Design: nc-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md.
 
 A work-snapshot is a commit in the clone's shared object store under
 refs/work-snapshots/<owner key>/<SHA-1 of the worktree's path>, holding every
@@ -264,18 +264,19 @@ def work_snapshot_ref(owner_key, worktree):
 
 def operation_in_progress(worktree):
     """merge, rebase, cherry-pick, revert or am when git shows one under way, else None."""
-    def git_path(name):
-        return Path(git_output(worktree, "rev-parse", "--path-format=absolute",
-                               "--git-path", name))
-    if git_path("MERGE_HEAD").exists():
+    arguments = ["rev-parse", "--path-format=absolute"]
+    for name in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"):
+        arguments += ["--git-path", name]
+    merge_head, cherry_pick_head, revert_head, rebase_merge, rebase_apply = (
+        Path(line) for line in git_output(worktree, *arguments).split("\n"))
+    if merge_head.exists():
         return "merge"
-    if git_path("CHERRY_PICK_HEAD").exists():
+    if cherry_pick_head.exists():
         return "cherry-pick"
-    if git_path("REVERT_HEAD").exists():
+    if revert_head.exists():
         return "revert"
-    if git_path("rebase-merge").is_dir():
+    if rebase_merge.is_dir():
         return "rebase"
-    rebase_apply = git_path("rebase-apply")
     if rebase_apply.is_dir():
         return "am" if (rebase_apply / "applying").exists() else "rebase"
     return None

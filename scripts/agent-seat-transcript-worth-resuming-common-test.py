@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for scripts/seat-transcript-worth-resuming.py, which picks the
+"""Tests for scripts/agent-seat-transcript-worth-resuming-common.py, which picks the
 transcript a restarted agent-seat resumes.
 
 Recovery and the handoff-supervisor reach this module through their own
@@ -7,7 +7,7 @@ suites. These cases pin its three functions directly: which first user turn
 counts, which assistant turns count as work, and which transcript is newest
 and worth resuming.
 
-Run: python3 scripts/seat-transcript-worth-resuming-test.py
+Run: python3 scripts/agent-seat-transcript-worth-resuming-common-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -20,7 +20,7 @@ from pathlib import Path
 
 MODULE_PATH = Path(os.environ.get(
     "SEAT_TRANSCRIPT_WORTH_RESUMING_MODULE_PATH",
-    Path(__file__).resolve().parent / "seat-transcript-worth-resuming.py"))
+    Path(__file__).resolve().parent / "agent-seat-transcript-worth-resuming-common.py"))
 _spec = importlib.util.spec_from_file_location("seat_transcript_worth_resuming", MODULE_PATH)
 resuming = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(resuming)

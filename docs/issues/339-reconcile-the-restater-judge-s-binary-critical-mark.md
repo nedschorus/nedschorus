@@ -19,7 +19,7 @@ So the mark is neither simply redundant nor simply needed, which is why this wan
 
 ## Why nothing has been built
 
-The judge prompt is drafted and **is not on main**. Its home is `.claude/skills/cold-read/prompts/restater-judge.md`, alongside the four prompts that are there (`defect-hunt.md`, `fast-clarify.md`, `restate.md`, `terminology.md`). That directory is operative prose, so the prompt lands only after its own cold read and the user's review.
+The judge prompt is drafted and **is not on main**. Its home is `.claude/skills/cold-read/prompts/restater-judge.md`, alongside the four prompts that are there (`defect-hunt-prompt.md`, `fast-clarify-prompt.md`, `restate-prompt.md`, `terminology-prompt.md`). That directory is operative prose, so the prompt lands only after its own cold read and the user's review.
 
 The reconciliation therefore belongs to the user's walk of that prompt. **Do not edit the prompt ahead of it.**
 

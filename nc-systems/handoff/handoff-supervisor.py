@@ -111,7 +111,7 @@ _next_step_lines_spec.loader.exec_module(next_step_lines)
 
 _worth_resuming_spec = importlib.util.spec_from_file_location(
     "seat_transcript_worth_resuming",
-    SCRIPTS_DIRECTORY / "seat-transcript-worth-resuming.py")
+    SCRIPTS_DIRECTORY / "agent-seat-transcript-worth-resuming-common.py")
 worth_resuming = importlib.util.module_from_spec(_worth_resuming_spec)
 _worth_resuming_spec.loader.exec_module(worth_resuming)
 
@@ -137,7 +137,7 @@ _claude_json_presets_spec.loader.exec_module(claude_json_presets)
 
 _architecture_overview_path_template_and_checked_against_commit_reader_spec = importlib.util.spec_from_file_location(
     "architecture_overview_path_template_and_checked_against_commit_reader",
-    SCRIPTS_DIRECTORY / "architecture-overview-path-template-and-checked-against-commit-reader.py")
+    SCRIPTS_DIRECTORY / "architecture-overview-path-template-and-checked-against-commit-reader-common.py")
 architecture_overview_path_template_and_checked_against_commit_reader = importlib.util.module_from_spec(
     _architecture_overview_path_template_and_checked_against_commit_reader_spec)
 _architecture_overview_path_template_and_checked_against_commit_reader_spec.loader.exec_module(architecture_overview_path_template_and_checked_against_commit_reader)
@@ -476,7 +476,14 @@ def read_supervisor_state(state_path: Path) -> dict:
 
 def write_supervisor_state(state_path: Path, state: dict) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    # Other programs read this file while the supervisor rewrites it every poll, and the
+    # supervisor can be killed mid-write: a write in place would let either find it cut off.
+    partial_path = state_path.with_name(state_path.name + ".partial")
+    with open(partial_path, "w", encoding="utf-8") as partial:
+        partial.write(json.dumps(state, indent=2))
+        partial.flush()
+        os.fsync(partial.fileno())
+    os.replace(partial_path, state_path)
 
 
 def stamp_heartbeat(state_path: Path, state: dict) -> None:
@@ -686,7 +693,7 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
 
 def supervisor_liveness(state_path: Path):
     """Return (is_alive, explanation) for the supervisor owning this state file."""
-    # Read the PID from the lock: heartbeat writes truncate the state file, so a concurrent read can see it empty.
+    # Read the PID from the lock: the state file holds none.
     if not state_path.is_file():
         return False, f"no supervisor state at {state_path} — none has ever run for this agent"
 

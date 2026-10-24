@@ -518,6 +518,36 @@ try:
           status == 2 and "replayed but not a Bash hook: ['scripts/hand-typed-codex-exec-command-refusal-hook.py']" in err,
           f"status {status}\n{out}\n{err}")
 
+    # In the guard's own directory, so the files it loads beside itself are still found.
+    former_tmux_kill_guard = str(Path(TMUX_KILL_GUARD).with_name("tmux-kill-guard-at-a-former-path-hook.py"))
+
+    def move_tmux_kill_guard_to_its_former_path(worktree):
+        git("mv", TMUX_KILL_GUARD, former_tmux_kill_guard, cwd=worktree)
+        path = worktree / ".claude" / "settings.json"
+        path.write_text(path.read_text().replace(TMUX_KILL_GUARD, former_tmux_kill_guard))
+    before_rename = commit_with_change(move_tmux_kill_guard_to_its_former_path, scratch)
+    status, out, err = run_replay("HEAD", scratch, base_ref=before_rename)
+    check("a head that renames a guard whose former path the replay does not know: exit 2, naming the former path "
+          "and the map that takes it",
+          status == 2 and "at the base ref" in err and f"not replayed: ['{former_tmux_kill_guard}']" in err
+          and "BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH" in err, f"status {status}\n{out}\n{err}")
+    renames_as_written = getattr(replay, "BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH", {})
+    replay.BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {former_tmux_kill_guard: TMUX_KILL_GUARD}
+    try:
+        status, out, err = run_replay("HEAD", scratch, base_ref=before_rename)
+        check("a head that only renames a guard whose former path the replay knows: exit 0, and the renamed guard "
+              "is not a guard the head adds",
+              status == 0 and "NO VERDICT CHANGED" in out
+              and "guards the head adds, read at the head only: none" in out, f"status {status}\n{out}\n{err}")
+        status, out, err = run_replay(refusing_ls, scratch, base_ref=before_rename)
+        check("a head that renames a guard and changes its verdict: exit 1, the difference named by the guard's "
+              "current path",
+              status == 1 and "in-process: rows whose verdict differs: 1" in out and f"  {TMUX_KILL_GUARD}: 1" in out
+              and "base: ['passed', None]" in out and "NEW GUARD REFUSES RECORDED COMMANDS" not in out,
+              f"status {status}\n{out}\n{err}")
+    finally:
+        replay.BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = renames_as_written
+
     def commit_without_guard(guard_path):
         """Return a commit made from HEAD that has neither the guard's file nor its hook, as a base before the guard."""
         def remove(worktree):

@@ -2,7 +2,7 @@
 """Cases for the Stop hook that, during an open approval-walk, blocks the
 agent's stop when its reply to the user does not name the waiting item.
 
-Each case runs the hook as a subprocess, its real stdin-to-stdout path, in a
+Each case but one runs the hook as a subprocess, its real stdin-to-stdout path, in a
 scratch checkout this suite made, with a transcript this suite wrote. The exit
 code is asserted on every case: the hook exits 0 unless it hit a fault, which
 it names on stderr with exit 1.
@@ -292,6 +292,26 @@ def test_part_without_recommendation():
     case.walk_files(minutes="#next_to_present item 4.1 of 9.")
     case.reply("Recorded.")
     check_reminded("a reply leaving out a waiting part is sent back", case.run())
+
+
+def test_item_added_by_re_planning_with_a_dotted_number():
+    document = ("# A walk\n\n## Item 37 of 44: a rule\n\nRecommendation: leave the filter out.\n\n"
+                "## Item 37.2 of 44: a case item 37 missed\n\nRecommendation: add the filter.\n\n"
+                "## Item 38 of 44: the next rule\n\nRecommendation: keep it.\n")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 37.2 of 44.", document=document)
+    for case_name, reply in (
+            ("a reply ending with a line naming a dotted item passes",
+             "Recorded.\n\nItem 37.2 of 44 is waiting for your answer."),
+            ("a reply showing a dotted item in full passes",
+             "**Item 37.2 of 44: a case item 37 missed**\n\nRecommendation: add the filter.")):
+        case.reply(reply)
+        check_silent(case_name, case.run())
+    for case_name, reply in (
+            ("a reply naming only the item a dotted item follows is sent back", "Item 37 of 44 is waiting."),
+            ("a reply naming the dotted number with another total is sent back", "Item 37.2 of 4 is waiting.")):
+        case.reply(reply)
+        check_reminded(case_name, case.run(), "`Item 37.2 of 44`")
 
 
 def test_item_holding_original_and_proposed_sections():
@@ -851,6 +871,33 @@ def test_newest_open_walk_is_checked():
     case.walk_files(name="newer-walk", minutes="#next_to_present item 2 of 9.", modified=2_000)
     case.reply("Recorded.")
     check_reminded("the most recently modified open walk's item is the one checked", case.run())
+    case = Case()
+    case.walk_files(name="newer-closed-walk", minutes="#next_to_present none, closed.", modified=3_000)
+    case.walk_files(name="open-walk", minutes="#next_to_present item 2 of 9.", modified=2_000)
+    older = case.walk_files(name="older-walk", minutes="#next_to_present item 5 of 9.", modified=1_000)
+    older.write_bytes(b"#next_to_present \xff\xfe item 5 of 9.\n")
+    os.utime(older, (1_000, 1_000))
+    case.reply(ITEM_2_REPLY)
+    check_silent("a newer closed walk is passed over, and minutes older than the newest open walk are not read",
+                 case.run())
+
+
+def test_minutes_without_a_marker_are_not_parsed():
+    specification = importlib.util.spec_from_file_location("walk_stop_hook_under_test", HOOK_SCRIPT)
+    hook = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(hook)
+
+    class ParserThatMustNotRun:
+        def parse(self, text):
+            raise AssertionError("parsed")
+
+    try:
+        outcome = hook.walk_finder.next_to_present("# Minutes\n\nItem 1: approved.\n", ParserThatMustNotRun())
+    except AssertionError:
+        outcome = "parsed"
+    check("minutes holding no marker are not parsed", outcome is None, f"got {outcome!r}")
+    outcome = hook.walk_finder.next_to_present("# Minutes\n\n#next_to_present item 3 of 9.\n", hook.walk_finder.markdown_parser())
+    check("minutes holding a marker still give its value", outcome == ("item 3 of 9.", False), f"got {outcome!r}")
 
 
 def test_silent_cases():

@@ -4,15 +4,18 @@
 Resolve sessions from payload cwd: CLAUDE_PROJECT_DIR can name the main checkout in forked sessions.
 A session-local approval marker permits one write; shell writes are outside this hook's visibility."""
 
+import importlib.util
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-# Resolve the sibling import from this file, independently of the hook process's cwd.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from guard_approval_marker import consume_approval_marker  # noqa: E402
+_marker_spec = importlib.util.spec_from_file_location(
+    "guard_approval_marker_common", Path(__file__).resolve().with_name("guard-approval-marker-common.py"))
+_guard_approval_marker_common = importlib.util.module_from_spec(_marker_spec)
+_marker_spec.loader.exec_module(_guard_approval_marker_common)
+consume_approval_marker = _guard_approval_marker_common.consume_approval_marker
 
 APPROVAL_MARKER_NAME = ".location-write-approved"
 

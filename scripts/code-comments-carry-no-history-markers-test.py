@@ -64,7 +64,7 @@ FILES_AWAITING_THE_COMMENT_TRIM = {
     "nc-systems/cold-read/tests/cold-read-codex-cell-test.py": 4,
     "nc-systems/cold-read/tests/cold-read-fast-read-test.py": 30,
     "nc-systems/cold-read/tests/cold-read-grid-test.py": 53,
-    "nc-systems/cold-read/tests/cold-read-record-names-test.py": 5,
+    "nc-systems/cold-read/tests/cold-read-record-names-common-test.py": 5,
     "nc-systems/cold-read/tests/cold-read-record-ship-test.py": 20,
     "nc-systems/cold-read/tests/cold-read-restater-judge-cell-test.py": 6,
     "nc-systems/cold-read/tests/cold-read-restater-judge-runner-test.py": 4,

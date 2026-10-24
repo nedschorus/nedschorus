@@ -7,7 +7,7 @@ cold-read-fast-read, the cold-read-restater-judge-runner and the record
 shipper -- and the cold-read-cells' shared module looks for the frozen
 target. Each used to hold its own copy of the names, so a rename had seven
 places to find and nothing failed when it missed one. They now come from
-nc-systems/cold-read/cold-read-record-names.py (user-ruled 2026-09-19, walk
+nc-systems/cold-read/cold-read-record-names-common.py (user-ruled 2026-09-19, walk
 file-naming-and-location-standards-cold-read-findings, item 4).
 
 `frozen_target_path`, the path built under the frozen copy's directory name,
@@ -96,10 +96,10 @@ WHAT IT DOES NOT FAIL, said plainly so no one reads cover into it:
 
 Only the cold-read family is checked, with the hooks in RECORD_FINDING_HOOKS
 that find cold-read-records from outside it. scripts/sanity-check-adversarial-prompts.py
-and scripts/design-to-main/design-to-main-state-tables.py name their own
+and scripts/design-to-main/design-to-main-state-tables-common.py name their own
 record kinds, which are theirs to name.
 
-Run: python3 nc-systems/cold-read/tests/cold-read-record-names-test.py
+Run: python3 nc-systems/cold-read/tests/cold-read-record-names-common-test.py
 Prints one line per case and exits non-zero if any case fails.
 """
 
@@ -110,7 +110,7 @@ from pathlib import Path
 # This suite sits in nc-systems/cold-read/tests/, three directories below the root.
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 SYSTEM_DIRECTORY = REPO_ROOT / "nc-systems" / "cold-read"
-NAMES_MODULE = SYSTEM_DIRECTORY / "cold-read-record-names.py"
+NAMES_MODULE = SYSTEM_DIRECTORY / "cold-read-record-names-common.py"
 # Programs outside nc-systems/cold-read/ that find cold-read-records.
 RECORD_FINDING_HOOKS = (
     REPO_ROOT / "scripts" / "cold-read-fast-read-due-for-linked-document-reminder-hook.py",)

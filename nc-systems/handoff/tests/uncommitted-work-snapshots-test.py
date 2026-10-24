@@ -2,7 +2,7 @@
 """Tests for work-snapshots: the hook, the shared module, the cleaner's step,
 and the handoff-supervisor's first-prompt list.
 
-Design: nc-systems/handoff/uncommitted-work-snapshots-across-crashes-design.md;
+Design: nc-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md;
 each section below is one bullet of its "How it will be tested".
 
 Every case works in a scratch clone with the programs copied into it, so the
@@ -392,6 +392,26 @@ def test_operation_trailer():
     found = [s for s in snapshots.all_work_snapshots(main) if s["owner_key"] == "2-2"]
     check(found and found[0]["operation"] == "merge", name, found)
 
+
+def test_each_operation_is_read_from_its_own_marker():
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "markers", "markers-branch")
+    git_directory = Path(git(worktree, "rev-parse", "--path-format=absolute", "--git-dir"))
+    check(snapshots.operation_in_progress(worktree) is None, "with no marker no operation is under way")
+    for marker, is_directory, expected in (("MERGE_HEAD", False, "merge"),
+                                           ("CHERRY_PICK_HEAD", False, "cherry-pick"),
+                                           ("REVERT_HEAD", False, "revert"),
+                                           ("rebase-merge", True, "rebase"),
+                                           ("rebase-apply", True, "rebase")):
+        path = git_directory / marker
+        path.mkdir() if is_directory else path.write_text("0" * 40 + "\n")
+        found = snapshots.operation_in_progress(worktree)
+        check(found == expected, f"the {marker} marker reads as {expected}", found)
+        if marker == "rebase-apply":
+            (path / "applying").write_text("")
+            found = snapshots.operation_in_progress(worktree)
+            check(found == "am", "rebase-apply holding applying reads as am", found)
+        shutil.rmtree(path) if is_directory else path.unlink()
 
 def test_hook_failure_is_reported():
     name = "a hook that cannot write reports it through additionalContext and exits 0"
@@ -1323,6 +1343,7 @@ def main():
                      test_ref_names,
                      test_bash_commit_deletes_and_other_worktrees_follow,
                      test_overlapping_runs_end_on_the_final_state, test_operation_trailer,
+                     test_each_operation_is_read_from_its_own_marker,
                      test_hook_failure_is_reported, test_other_repository_is_untouched,
                      test_worktree_discovery_failure_is_reported,
                      test_names_read_from_git_are_the_files_as_stored,
