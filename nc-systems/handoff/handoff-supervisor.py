@@ -693,7 +693,7 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
 
 def supervisor_liveness(state_path: Path):
     """Return (is_alive, explanation) for the supervisor owning this state file."""
-    # Read the PID from the lock: heartbeat writes truncate the state file, so a concurrent read can see it empty.
+    # Read the PID from the lock: the state file holds none.
     if not state_path.is_file():
         return False, f"no supervisor state at {state_path} — none has ever run for this agent"
 

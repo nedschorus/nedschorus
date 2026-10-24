@@ -1617,6 +1617,34 @@ def run_state_file_write_killed_midway_case(workspace: Path):
           (read_back, stderr.getvalue()))
 
 
+def run_state_file_written_to_disk_before_rename_case(workspace: Path):
+    """The new state must reach the disk before it replaces the old one: a
+    rename without the fsync can survive a machine crash that loses the
+    data it points to, leaving the state file empty."""
+    state_path = workspace / "fsynced-before-rename" / "seat-supervisor-state.json"
+    supervisor.write_supervisor_state(state_path, {"generation": 1})
+    new_state = {"generation": 2, "consumed_counter": 5}
+    synced = []
+    real_fsync = os.fsync
+
+    def recording_fsync(descriptor):
+        synced.append((os.fstat(descriptor), state_path.read_text(encoding="utf-8")))
+        real_fsync(descriptor)
+
+    os.fsync = recording_fsync
+    try:
+        supervisor.write_supervisor_state(state_path, new_state)
+    finally:
+        os.fsync = real_fsync
+    check("FSYNC BEFORE RENAME: the file that becomes the state file is fsynced whole, "
+          "while the old state file is still in place",
+          len(synced) == 1
+          and synced[0][0].st_size == len(json.dumps(new_state, indent=2))
+          and synced[0][1] == json.dumps({"generation": 1}, indent=2)
+          and os.path.samestat(synced[0][0], state_path.stat()),
+          synced)
+
+
 with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_exit_handoff_cases(workspace)
     run_dont_restart_without_a_terminal_case(workspace)
@@ -1627,5 +1655,6 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_resume_after_a_death_without_a_handoff_cases(workspace)
     run_by_hand_resume_cases(workspace)
     run_state_file_write_killed_midway_case(workspace)
+    run_state_file_written_to_disk_before_rename_case(workspace)
 
 fixture.print_summary_and_exit_nonzero_if_any_case_failed()

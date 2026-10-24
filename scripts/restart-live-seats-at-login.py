@@ -59,7 +59,7 @@ The rule, from docs/issues/116-fleet-survives-machine-restart-design.md
     moment the machine stopped.
   - A seat whose heartbeat or file was written since boot has had a
     supervisor since boot — recovered by hand, started by an earlier run of
-    this program, or caught mid-write while it runs now. It is neither the
+    this program, or running now. It is neither the
     anchor nor restarted.
   - The seats whose heartbeats are within LIVE_SET_WINDOW_SECONDS of the
     anchor were running at the stop, and are restarted — however long before
