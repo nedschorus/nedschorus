@@ -368,7 +368,7 @@ def run_remote_ghi_guide_agent_log_store_cases(scratch: Path):
               lambda: (first == ("570-a-proposed-improvements-or-changes-ghi-guide-agent-"
                         "2026-10-03.md")
               and second == ("570-a-proposed-improvements-or-changes-ghi-"
-                             "info-2026-10-03-2.md")
+                             "guide-agent-2026-10-03-2.md")
               and (remote_store / first).read_text() == written_text),
               (first, second))
         (remote_store / "570-ab-proposed-improvements-or-changes-ghi-guide-agent-"
