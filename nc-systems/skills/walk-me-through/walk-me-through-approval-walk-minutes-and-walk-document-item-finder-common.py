@@ -134,6 +134,9 @@ def item_opening_lines(text, parser, tokens=None):
 
 def next_to_present(minutes_text, parser):
     """Return (value, whether the marker is the old form) for the minutes' last marker outside code, or None."""
+    # Most minutes hold no marker at all, and parsing is most of the walk hooks' run time.
+    if not NEXT_MARKER.search(minutes_text):
+        return None
     markers = []
     for line in prose_lines(minutes_text, parser):
         spans = [span.span() for span in CODE_SPAN.finditer(line)]
@@ -202,16 +205,14 @@ def parse_items(value):
 
 def open_walk(walk_directory, parser):
     """Return (minutes path, value, whether the marker is the old form) for the open approval-walk, or None."""
-    candidates = []
-    for minutes in walk_directory.glob("*" + MINUTES_SUFFIX):
+    newest_first = sorted(walk_directory.glob("*" + MINUTES_SUFFIX),
+                          key=lambda minutes: minutes.stat().st_mtime, reverse=True)
+    for minutes in newest_first:
         marker = next_to_present(minutes.read_text(encoding="utf-8"), parser)
-        if marker is None or is_closed(marker[0]):
-            continue
-        candidates.append((minutes.stat().st_mtime, minutes, marker))
-    if not candidates:
-        return None
-    _, minutes, (value, old_form) = max(candidates, key=lambda candidate: candidate[0])
-    return minutes, value, old_form
+        if marker is not None and not is_closed(marker[0]):
+            value, old_form = marker
+            return minutes, value, old_form
+    return None
 
 
 def item_unit_spans(document_text, parser):
