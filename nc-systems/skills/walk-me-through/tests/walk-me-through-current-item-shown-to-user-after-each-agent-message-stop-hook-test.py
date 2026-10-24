@@ -892,11 +892,11 @@ def test_minutes_without_a_marker_are_not_parsed():
             raise AssertionError("parsed")
 
     try:
-        outcome = hook.next_to_present("# Minutes\n\nItem 1: approved.\n", ParserThatMustNotRun())
+        outcome = hook.walk_finder.next_to_present("# Minutes\n\nItem 1: approved.\n", ParserThatMustNotRun())
     except AssertionError:
         outcome = "parsed"
     check("minutes holding no marker are not parsed", outcome is None, f"got {outcome!r}")
-    outcome = hook.next_to_present("# Minutes\n\n#next_to_present item 3 of 9.\n", hook.markdown_parser())
+    outcome = hook.walk_finder.next_to_present("# Minutes\n\n#next_to_present item 3 of 9.\n", hook.walk_finder.markdown_parser())
     check("minutes holding a marker still give its value", outcome == ("item 3 of 9.", False), f"got {outcome!r}")
 
 
