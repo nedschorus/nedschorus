@@ -15,8 +15,10 @@ for O2 or O3, which approve the item's "Option N" paragraph instead of its
 recommendation. R, E and O decide nothing, so the program takes no flag for
 them.
 
-The open approval-walk and its waiting items are found with WALK_FINDER_FILE,
-loaded by path, the module the walk-me-through Stop hook uses too, so the
+The open approval-walk and its waiting items are found with
+walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py,
+beside this program and loaded by path, the module the walk-me-through Stop
+hook uses too, so the
 `#next_to_present` line and the walk-document's item headings are read exactly
 as that hook reads them.
 
@@ -33,17 +35,19 @@ a scratch file and runs cold-read-fast-read.py --target on that file. Then it
 writes the answer line and one status line per text, or "no proposed text
 marked", into the walk-minutes, and prints the status lines, the judgement the
 agent must make on new reports, and the close step to run. It appends one line
-of counts to COUNTS_LOG_FILE_NAME beside the log-store's cold-read-records
-directory. A deferral
+of counts to
+walk-me-through-answer-added-texts-cold-read-fast-read-already-done-or-had-to-run-counts-per-check.tsv
+beside the log-store's cold-read-records directory. A deferral
 changes nothing, so CHECK --deferred runs no fast read, logs no counts, and
 writes only the answer line. When the `#next_to_present` line names more than
 one item, CHECK refuses, writing nothing, because one run records one answer
-for every item it names.
+for every item it names; it tells the agent to add a `#next_to_present` line
+naming one of those items before each check run.
 
 A fast read that prints a line opening FAILED, or exits nonzero, ends CHECK
 before the walk-minutes are written: the program prints that line, or a FAILED
-line of its own, with FAST_READ_FAILED_LINES, and exits 1; the item stays
-waiting. A fast read that succeeds but says on stderr that its record was not
+line of its own, then says the item stays waiting and tells the agent to ask
+the user whether to run check again, and exits 1. A fast read that succeeds but says on stderr that its record was not
 shipped, or that its target changed during the read, has that line added to its
 status line. An unshipped record, a log-store this machine cannot reach, and a
 counts line that cannot be written are each printed after the rest, saying the
@@ -74,7 +78,7 @@ CLOSE refuses, writing nothing, when a line after the
 last answer line already opens with its item, because no check has run since
 that answer was closed. When the `#next_to_present` line names other items than
 the answer line, a new item a finding raised is waiting: the answer is recorded
-as held for it, and the line is written again unchanged as the last line.
+as held until the user answers the new item, and the line is written again unchanged as the last line.
 Either way it prints the lines the agent's next message must include, the
 status lines among them.
 
@@ -125,7 +129,7 @@ STATUS_FAST_READ_NOTE = " The fast read also said: {note}"
 # The fast read reports these on stderr and still exits 0, because its report was written.
 FAST_READ_NOTE_MARKERS = ("cold-read-fast-read: record: FAILED", "#cold_read_target_changed_during_run")
 CHECK_JUDGEMENT_LINES = (
-    "Read each fast-read report named above as had to be run.",
+    "Read the fast-read report of each text above whose status line says \"fast read had to be run\".",
     "If a finding holds and changes how a text is understood but not what the item decides, "
     "apply it to that text's `#new` line in the walk-document {document}.",
     "If a finding would change what the item decides, write that change as a new item right "
@@ -158,7 +162,11 @@ CLOSE_DEFERRED_AGAIN_MINUTES = "{item}: deferred a second time, so it leaves the
 CHECK_SEVERAL_WAITING = (
     "nothing written: the `#next_to_present` line in {minutes} names more than one item waiting, {item}, "
     "and one check run records one answer for all of them.\n"
-    "Ask the user to answer those items one at a time, and run check for each answer as it comes.")
+    "For each of those items the user has answered, in the order he gave the answers: add the line "
+    "`{one_item_line}`, with that item's number, as the minutes' last line, then run check with the flag for "
+    "his answer to it, then close.\n"
+    "Present the item close names only after the last of those answers is recorded.\n"
+    "If he has not answered some of those items, ask him to answer them.")
 CLOSE_ALREADY_RECORDED = (
     "nothing written: the last answer line in {minutes}, for {item}, is already recorded by an earlier close, "
     "so no check has run since then.\n"
@@ -179,8 +187,8 @@ CLOSE_DEFERRED_AGAIN_LINES = (
     "Your next message must include these lines, as they are:",
 )
 CLOSE_HELD_LINES = (
-    "{item}'s answer does not take effect yet: {new_item}, which a fast-read finding raised, is waiting, "
-    "and the minutes record the answer as held for it.",
+    "{item}'s answer does not take effect yet: {new_item}, which a fast-read finding raised, waits for the "
+    "user's answer, and the minutes record {item}'s answer as held until he answers {new_item}.",
     "Your next message must include these lines, as they are:",
 )
 CLOSE_TOOK_EFFECT_NEXT = (
@@ -399,7 +407,8 @@ def check(arguments):
     top, minutes, value, parser = the_open_walk(walk_finder, arguments.cwd)
     item, numbers, total = waiting_items(walk_finder, value, minutes)
     if numbers[1:]:
-        raise Failure(CHECK_SEVERAL_WAITING.format(minutes=minutes, item=item))
+        raise Failure(CHECK_SEVERAL_WAITING.format(minutes=minutes, item=item, one_item_line=NEXT_MARKER_LINE.format(
+            value=f"item <number>{f' of {total}' if total else ''}")))
     document, lines = item_lines(walk_finder, minutes, value, numbers, total, parser)
     if arguments.deferred:
         now = datetime.datetime.now().astimezone()

@@ -241,19 +241,25 @@ NUMBERED_R_LINES = (
     "walk-document has it.",
     "Then end your message naming the item waiting for his answer, {item}.",
 )
+# Check records one answer for every item the `#next_to_present` line names, and close moves that line on.
+ONE_ITEM_AT_A_TIME_LINE = (
+    "Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add "
+    "the line `{one_item_line}` for it, with its number, as the minutes' last line, as the walk-me-through "
+    "skill allows. Present the item close names only after the last answer is recorded.")
 ALL_LINES = {
     "A": (("\"{answer}\" means A to every item now waiting, {item}: the user agrees with each one's "
            "recommendation. Do what each recommends. For each item, whether or not it makes a change, run "
-           "the check step, then close, and do what close prints; write nothing in the minutes by hand.",),
+           "the check step, then close, and do what close prints; write nothing in the minutes by hand but the "
+           "`#next_to_present` lines below.", ONE_ITEM_AT_A_TIME_LINE),
           ("\"{answer}\" means the user agrees with every recommendation or proposal your last message left "
-           "open. Act on each as for a single approval, with the fast reads that text sets out.",)),
+           "open. Act on each as the lines below say for a single approval.",) + MEANINGS["A"][1][1:]),
     "AO": (("\"{answer}\" means AO to every item now waiting, {item}: the user agrees with each one's "
             "recommendation and finds each obvious. Do what each recommends. For each item, whether or not "
-            "it makes a change, run the check step (with --obvious for `all ao`), then close, and do what "
-            "close prints; write nothing in the minutes by hand.",),
+            "it makes a change, run the check step (with --obvious for `all ao`), then close, and do what close "
+            "prints; write nothing in the minutes by hand but the `#next_to_present` lines below.", ONE_ITEM_AT_A_TIME_LINE),
            ("\"{answer}\" means the user agrees with every recommendation or proposal your last message left "
-            "open, and finds each obvious. Act on each as for a single approval, with the fast reads that "
-            "text sets out.",)),
+            "open, and finds each obvious. With no approval-walk open there are no minutes to mark, so act on "
+            "each as the lines below say for a single approval.",) + MEANINGS["A"][1][1:]),
 }
 NUMBERED_LINES = (
     ("The answer gives each item it names its own letter: {pairs}.",
@@ -261,16 +267,19 @@ NUMBERED_LINES = (
      "flag --obvious; D disagrees with it, so D does the item's alternative, with the flag --disapproved; Z "
      "defers the item, with the flag --deferred; R shows the item again.",
      "Record the answers one item at a time, in the order given: for each, run the check step with that "
-     "answer's flag, then close, and do what close prints, before the next. If check reports more than one "
-     "item waiting, record nothing, and ask the user to answer those items one at a time."),
+     "answer's flag, then close, and do what close prints, before the next.",
+     ONE_ITEM_AT_A_TIME_LINE,
+     "If check or close refuses or fails, stop there and record none of the remaining answers: tell the user "
+     "which answers were recorded and what was printed, and ask him how to go on."),
     ("The answer gives each numbered question or point of your last message its own letter: {pairs}.",
      "Every question or point the answer does not name stays open; say so in your reply."),
 )
 NUMBERED_REFUSED_LINES = (
     "The answer {problems}, and the minutes' `#next_to_present` line names only {item}.",
-    "Record nothing and act on none of the answer: each check run records one answer for the waiting item, so "
-    "a letter for another item, or a second letter for the same item, would be recorded against an item the "
-    "user did not answer.",
+    "Record nothing and act on none of the answer: each check run records one answer against the item the "
+    "`#next_to_present` line names, and close then moves that line on to the next item, so a letter for "
+    "another item, or a second letter for the same item, would be recorded against an item the user did not "
+    "answer.",
     "Ask the user to answer {item} with one letter; the other items come to him one at a time after it.",
 )
 NUMBERED_NOT_WAITING_PROBLEM = "gives a letter to {items}, which {verb} not waiting for an answer"
@@ -470,7 +479,8 @@ def meaning_lines(answer, walk, in_walk):
     item = walk.item if walk else "the waiting item"
     numbers = walk.numbers if walk else []
     values = {"item": item, "answer": answer["answer"], "checkout": CHECKOUT, "program": CHECK_PROGRAM.name,
-              "explain_skill": EXPLAIN_SKILL, "aa_skill_text": AA_SKILL_TEXT}
+              "explain_skill": EXPLAIN_SKILL, "aa_skill_text": AA_SKILL_TEXT,
+              "one_item_line": "#next_to_present item <number>" + (f" of {walk.total}" if walk and walk.total else "")}
     form = answer["form"]
     if form == "numbered":
         deciding = [number for number, letter in answer["pairs"] if in_walk and numbers and letter != "R"]
@@ -488,7 +498,7 @@ def meaning_lines(answer, walk, in_walk):
             return [line.format(problems=" and ".join(problems), item=item) for line in NUMBERED_REFUSED_LINES]
         pairs = ", ".join(f"{item_name(number, walk) if in_walk else number}: {letter}"
                           for number, letter in answer["pairs"])
-        lines = [line.format(pairs=pairs) for line in NUMBERED_LINES[branch]]
+        lines = [line.format(pairs=pairs, one_item_line=values["one_item_line"]) for line in NUMBERED_LINES[branch]]
         if in_walk:
             named = {number for number, _ in answer["pairs"]}
             unnamed = [number for number in numbers if number not in named]

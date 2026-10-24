@@ -462,15 +462,19 @@ def test_numbered_answers():
           and "The answer does not name item 6 of 9, so it stays open; say so in your reply." in lines,
           f"lines {lines!r}")
     text = " ".join(lines or [])
-    check("a numbered answer names each letter's check flag, records one item at a time through close, and "
-          "falls back to asking one item at a time",
+    check("a numbered answer names each letter's check flag, records one item at a time through close, sets "
+          "the `#next_to_present` line to each item before its check, and stops at a refusal",
           all(flag in text for flag in ("AO does the same and marks the approval as obvious, with the flag --obvious",
                                         "alternative, with the flag --disapproved",
                                         "Z defers the item, with the flag --deferred"))
           and ("Record the answers one item at a time, in the order given: for each, run the check step with that "
                "answer's flag, then close, and do what close prints, before the next.") in text
-          and ("If check reports more than one item waiting, record nothing, and ask the user to answer those "
-               "items one at a time.") in text
+          and ("Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add "
+               "the line `#next_to_present item <number> of 9` for it, with its number, as the minutes' last "
+               "line, as the walk-me-through skill allows. Present the item close names only after the last "
+               "answer is recorded.") in text
+          and ("If check or close refuses or fails, stop there and record none of the remaining answers: tell the "
+               "user which answers were recorded and what was printed, and ask him how to go on.") in text
           and "makes a change waits for the check step" not in text, f"lines {lines!r}")
     for prompt, letters in (("5 d, 6 ao", ("D", "AO")), ("5d 6ao", ("D", "AO")), ("5 - a 6 - z", ("A", "Z")),
                             ("Item 5 AO; item 6 D", ("AO", "D"))):
@@ -625,9 +629,10 @@ def test_numbered_r_beside_other_numbered_answers():
 
 
 NOT_WAITING_LINES = [
-    "Record nothing and act on none of the answer: each check run records one answer for the waiting item, so "
-    "a letter for another item, or a second letter for the same item, would be recorded against an item the "
-    "user did not answer.",
+    "Record nothing and act on none of the answer: each check run records one answer against the item the "
+    "`#next_to_present` line names, and close then moves that line on to the next item, so a letter for "
+    "another item, or a second letter for the same item, would be recorded against an item the user did not "
+    "answer.",
     "Ask the user to answer item 5 of 9 with one letter; the other items come to him one at a time after it."]
 
 
@@ -708,18 +713,33 @@ def test_all_a_and_all_ao():
               and lines[1] == (f"\"{prompt.rstrip('.')}\" means A to every item now waiting, items 5 and 6 of 9: the "
                                "user agrees with each one's recommendation. Do what each recommends. For each item, "
                                "whether or not it makes a change, run the check step, then close, and do what close "
-                               "prints; write nothing in the minutes by hand."), f"lines {lines!r}")
+                               "prints; write nothing in the minutes by hand but the `#next_to_present` lines below.")
+              and lines[2] == ("Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add "
+               "the line `#next_to_present item <number> of 9` for it, with its number, as the minutes' last "
+               "line, as the walk-me-through skill allows. Present the item close names only after the last "
+               "answer is recorded."), f"lines {lines!r}")
     for prompt in ("all ao", "ao to all"):
         lines = case.lines(prompt)
         check(f"{prompt!r} approves every waiting item as obvious",
               lines is not None and lines[1].startswith(f"\"{prompt}\" means AO to every item now waiting")
               and lines[1].endswith("For each item, whether or not it makes a change, run the check step (with "
                                     "--obvious for `all ao`), then close, and do what close prints; write nothing in "
-                                    "the minutes by hand."), f"lines {lines!r}")
-    lines = Case().lines("all a")
-    check("all a with no approval-walk acts on each open recommendation",
-          lines is not None and lines[1].startswith("\"all a\" means the user agrees with every recommendation"),
-          f"lines {lines!r}")
+                                    "the minutes by hand but the `#next_to_present` lines below.")
+              and lines[2] == ("Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add "
+               "the line `#next_to_present item <number> of 9` for it, with its number, as the minutes' last "
+               "line, as the walk-me-through skill allows. Present the item close names only after the last "
+               "answer is recorded."), f"lines {lines!r}")
+    for prompt in ("all a", "all ao"):
+        lines = Case().lines(prompt)
+        check(f"{prompt} with no approval-walk acts on each open recommendation, with the single approval's fast "
+              "reads printed beside it",
+              lines is not None and lines[1].startswith(f"\"{prompt}\" means the user agrees with every recommendation")
+              and lines[1].endswith("as the lines below say for a single approval.")
+              and "that text" not in lines[1]
+              and any(line.startswith("If that makes a change, first save each text the change adds that has not had "
+                                      "a fast read to a scratch file, run `python3 ") for line in lines[2:])
+              and any(line.startswith("If a fast read prints a line opening FAILED") for line in lines[2:]),
+              f"lines {lines!r}")
     lines = Case(next_to_present="items 3 and 4 of 9").lines("all a")
     check("all a over an item with no recommendation reports that item",
           lines is not None and unknown_line("item 3 of 9", NO_RECOMMENDATION, "A") in lines, f"lines {lines!r}")

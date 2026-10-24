@@ -169,7 +169,7 @@ def test_missing_fast_reads_are_run_and_reported():
                                   "fast read had to be run (")
           and lines[1].startswith('`#new` text 2, "Each row names the mistake it prevents.": '
                                   "fast read had to be run (")
-          and "Read each fast-read report named above as had to be run." in lines
+          and 'Read the fast-read report of each text above whose status line says "fast read had to be run".' in lines
           and f"close --cwd {shlex.quote(str(case.checkout.resolve()))}` and do what it prints." in lines[-1],
           described(result))
     check("a #new line inside a fence or in another item is not a proposed text",
@@ -393,7 +393,8 @@ def test_check_refuses_when_more_than_one_item_waits():
               result.returncode == 1
               and result.stderr.startswith(FAILURE_PREFIX + "check: nothing written: ")
               and "names more than one item waiting, items 6 and 7 of 9," in result.stderr
-              and "Ask the user to answer those items one at a time" in result.stderr
+              and ("add the line `#next_to_present item <number> of 9`, with that item's number, as the minutes' "
+                   "last line, then run check") in result.stderr
               and case.minutes.read_text() == before and case.calls.read_text() == ""
               and not case.counts_log.exists(), described(result))
 
@@ -568,7 +569,8 @@ def test_close_holds_the_answer_for_a_waiting_new_item():
     check("close holds the answer while a new item is waiting",
           result.returncode == 0
           and lines[0] == ("item 3 of 9's answer does not take effect yet: item 5 of 9, which a fast-read finding "
-                           "raised, is waiting, and the minutes record the answer as held for it.")
+                           "raised, waits for the user's answer, and the minutes record item 3 of 9's answer as held "
+                           "until he answers item 5 of 9.")
           and sum("fast read had to be run" in line for line in lines) == 2
           and lines[-1] == ("Then present item 5 of 9, and record the user's answer to it in the minutes as "
                             "the outcome of item 3 of 9 too.")
@@ -835,6 +837,24 @@ def test_a_minutes_line_with_an_unusable_item_range_is_skipped():
     closed = case.run("close")
     check("a minutes line naming a backwards range records nothing, and later lines still count",
           closed.returncode == 0 and marker(case) == "#next_to_present item 5 of 5", described(closed))
+
+
+def test_answers_to_items_shown_together_are_recorded_as_the_refusal_says():
+    for order in (((5, "--disapproved"), (6, None)), ((6, None), (5, "--disapproved"))):
+        case = Case(next_to_present="items 5 and 6 of 9")
+        refused = case.run("check", "--disapproved")
+        results = []
+        for number, flag in order:
+            with case.minutes.open("a") as minutes:
+                minutes.write(f"#next_to_present item {number} of 9\n")
+            results += [case.run("check", *([flag] if flag else [])), case.run("close")]
+        text = case.minutes.read_text()
+        check(f"after check refuses two items waiting, one `#next_to_present` line per item records each answer, "
+              f"in the order {[number for number, _ in order]}",
+              refused.returncode == 1 and all(result.returncode == 0 for result in results)
+              and "item 5 of 9: disapproved; every text the change adds has had a fast read. <rejected>" in text
+              and "item 6 of 9: approved; every text the change adds has had a fast read. <accepted>" in text,
+              described(results[-1]))
 
 
 def test_the_walk_goes_on_after_the_last_of_several_items_answered_together():
