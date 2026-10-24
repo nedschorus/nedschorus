@@ -6,7 +6,7 @@ Usage:
       [--sandbox read-only|workspace-write] [-m <model>] [--effort <effort>]
       [--network] [--writable-root <folder>]... [--outside-git-checkout]
       [--web-search] [--deadline-minutes <minutes>] [--run-log <file>]
-      [--prefetch-github '<gh arguments>']...
+      [--prefetch-github '<gh arguments>']... [--resume <session-id>]
 
 The program an agent uses to hand Codex a task. It always:
   - reads the prompt from the brief file, never from the command line;
@@ -52,6 +52,10 @@ Options that widen what Codex may do, each off by default:
 
 --deadline-minutes bounds the whole run: the --prefetch-github commands and
 Codex together.
+
+--resume <session-id> sends the brief as a follow-up to that Codex session.
+--writable-root is refused with --resume because `codex exec resume` does
+not accept --add-dir.
 
 On success it prints `report: <path>` and exits 0. It exits 1, saying what
 failed, when a --prefetch-github command fails, or when Codex cannot be
@@ -118,6 +122,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
                         help="file holding the whole prompt")
     parser.add_argument("-o", dest="report", required=True,
                         help="file Codex writes its final message to")
+    parser.add_argument("--resume", metavar="SESSION_ID",
+                        help="send the brief as a follow-up to this Codex session")
     parser.add_argument("--sandbox", choices=tuple(SANDBOX_TO_PROFILE_BASE),
                         default="read-only")
     parser.add_argument("-m", dest="model", help="Codex model id")
@@ -241,13 +247,15 @@ def brief_with_prefetched_files(prompt: str, files) -> str:
 def codex_command(checkout: pathlib.Path, report: pathlib.Path, sandbox: str,
                   model, effort, prompt: str, network: bool = False,
                   writable_roots=(), outside_git_checkout: bool = False,
-                  web_search: bool = False) -> list:
-    command = [
-        "codex", "exec",
+                  web_search: bool = False, resume=None) -> list:
+    # Resume accepts no -C; exec's working directory applies to its subcommand.
+    command = ["codex", "exec", "-C", str(checkout)]
+    if resume is not None:
+        command.append("resume")
+    command += [
         *common.codex_credential_denying_permission_profile_arguments(
             PERMISSION_PROFILE_NAME, SANDBOX_TO_PROFILE_BASE[sandbox], network=network),
         "--disable", "memories",
-        "-C", str(checkout),
         "-o", str(report),
     ]
     for root in writable_roots:
@@ -262,7 +270,7 @@ def codex_command(checkout: pathlib.Path, report: pathlib.Path, sandbox: str,
     if effort:
         command += ["-c", f"model_reasoning_effort={effort}"]
     # `--` keeps a brief that begins with "-", such as front matter, from being read as an option.
-    return command + ["--", prompt]
+    return command + ["--"] + ([resume] if resume is not None else []) + [prompt]
 
 
 def signal_process_group(process: subprocess.Popen, signal_number: int) -> bool:
@@ -304,6 +312,12 @@ def fail(message: str) -> int:
 def main(argv=None) -> int:
     parser = build_argument_parser()
     args = parser.parse_args(argv)
+    if args.resume is not None and args.writable_root:
+        parser.error(
+            "refused --writable-root with --resume: `codex exec resume` does not "
+            "accept --add-dir.\n"
+            "To resume without extra writable folders, omit --writable-root.\n"
+            "To start a new task with extra writable folders, omit --resume.")
     for gh_arguments in args.prefetch_github:
         quoting_error = prefetch_quoting_error(gh_arguments)
         if quoting_error:
@@ -360,7 +374,8 @@ def main(argv=None) -> int:
         checkout, report, args.sandbox, args.model, args.effort, prompt,
         network=args.network,
         writable_roots=[pathlib.Path(root).resolve() for root in args.writable_root],
-        outside_git_checkout=args.outside_git_checkout, web_search=args.web_search)
+        outside_git_checkout=args.outside_git_checkout, web_search=args.web_search,
+        resume=args.resume)
     print(f"{PROGRAM}: running Codex in {checkout}; log {run_log}", file=sys.stderr)
     try:
         with open(run_log, "w", encoding="utf-8") as log:

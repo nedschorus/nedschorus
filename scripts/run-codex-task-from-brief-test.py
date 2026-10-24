@@ -260,11 +260,45 @@ try:
     check("the brief is still the last argument with every option on",
           arguments[-1] == brief.read_text(), repr(arguments[-1]))
 
+    session_id = "019abcde-1234-7000-8000-123456789abc"
+    for options in ((), ("--sandbox", "workspace-write", "--network",
+                         "--outside-git-checkout", "--web-search",
+                         "-m", "model-x", "--effort", "high")):
+        completed, report, _ = run("report", *options)
+        fresh_arguments = json.loads(arguments_file.read_text())
+        resume_log = scratch / "resume.run.log"
+        completed, report, _ = run("report", "--resume", session_id,
+                                   "--run-log", str(resume_log), *options)
+        arguments = json.loads(arguments_file.read_text())
+        expected = fresh_arguments[:3] + ["resume"] + fresh_arguments[3:-1] + [
+            session_id, brief.read_text()]
+        check(f"--resume preserves checkout, permissions, memory, report and options {options!r}",
+              completed.returncode == 0 and arguments == expected
+              and arguments[:4] == ["exec", "-C", str(checkout), "resume"]
+              and arguments[-3:] == ["--", session_id, brief.read_text()]
+              and completed.stdout.strip() == f"report: {report}"
+              and "fake codex trace line" in resume_log.read_text(),
+              f"exit {completed.returncode}, {arguments!r}, stderr {completed.stderr!r}")
+
+    arguments_file.unlink()
+    report.write_text("an existing report\n")
+    completed, report, _ = run("report", "--resume", session_id,
+                               "--writable-root", str(extra_root_one),
+                               "--prefetch-github", "pr view 1")
+    check("--resume refuses --writable-root before Codex, prefetch or report removal",
+          completed.returncode == 2
+          and "refused --writable-root with --resume" in completed.stderr
+          and "does not accept --add-dir" in completed.stderr
+          and not arguments_file.exists() and not gh_log.exists()
+          and report.read_text() == "an existing report\n",
+          f"exit {completed.returncode}, stderr {completed.stderr!r}")
+
     help_text = subprocess.run([sys.executable, str(PROGRAM), "--help"], capture_output=True,
                                text=True, check=False).stdout
     check("the usage line names every option",
           all(option in help_text for option in ("--network", "--writable-root <folder>",
-                                                 "--outside-git-checkout", "--web-search")),
+                                                 "--outside-git-checkout", "--web-search",
+                                                 "--resume <session-id>")),
           help_text)
 
     completed, report, _ = run("fail")
@@ -301,9 +335,9 @@ try:
           and not report.exists(),
           f"exit {completed.returncode}, stderr {completed.stderr!r}")
 
-    def check_deadline_stops_codex(case_suffix="", path_first=None):
+    def check_deadline_stops_codex(case_suffix="", path_first=None, extra=()):
         child_pid_file.unlink(missing_ok=True)
-        completed, report, elapsed = run("sleep", "--deadline-minutes", "0.05",
+        completed, report, elapsed = run("sleep", "--deadline-minutes", "0.05", *extra,
                                          path_first=path_first)
         child_pid = int(child_pid_file.read_text()) if child_pid_file.exists() else None
         time.sleep(0.5)
@@ -323,6 +357,7 @@ try:
               child_pid is not None and not child_alive, f"child {child_pid} alive={child_alive}")
 
     check_deadline_stops_codex()
+    check_deadline_stops_codex(", with --resume", extra=("--resume", session_id))
 
     child_pid_file.unlink(missing_ok=True)
     completed, report, elapsed = run("sleep-child-ignores-sigterm", "--deadline-minutes", "0.05")
@@ -341,11 +376,11 @@ try:
           completed.returncode == 1 and child_pid is not None and not child_alive,
           f"exit {completed.returncode}, child {child_pid} alive={child_alive}, {elapsed:.1f}s")
 
-    def check_codex_stdin_closed(case_suffix="", path_first=None):
+    def check_codex_stdin_closed(case_suffix="", path_first=None, extra=()):
         # The caller's own stdin is an open pipe that never closes; the fake must still see EOF.
         holder = subprocess.Popen(["sleep", "600"], stdout=subprocess.PIPE)
         try:
-            completed, report, elapsed = run("read-stdin", stdin=holder.stdout, timeout=30,
+            completed, report, elapsed = run("read-stdin", *extra, stdin=holder.stdout, timeout=30,
                                              path_first=path_first)
         except subprocess.TimeoutExpired:
             completed, report = None, None
@@ -358,6 +393,7 @@ try:
               f"completed {completed!r}")
 
     check_codex_stdin_closed()
+    check_codex_stdin_closed(", with --resume", extra=("--resume", session_id))
 
     # The program scans for credential files with find only on Linux.
     if sys.platform.startswith("linux"):
