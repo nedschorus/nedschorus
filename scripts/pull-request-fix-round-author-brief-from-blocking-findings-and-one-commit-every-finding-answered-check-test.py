@@ -614,6 +614,35 @@ def check_cases(root, repository, base, frozen_head):
                          "--check", "--after-conflict-merge")
     check("check: after a conflict merge, any pull request's answers file in a subdirectory refuses",
           code == 1 and "other-answers/fix-round-answers-pull-request-1901.md" in err, out + err)
+
+    git(repository, "reset", "-q", "--hard", unignored_head)
+    git(repository, "merge", "-q", "--no-ff", "--no-commit", "origin/main")
+    (repository / "other-answers").mkdir(exist_ok=True)
+    (repository / "other-answers/fix-round-answers-pull-request-1899.md").write_text("1. x\n")
+    git(repository, "add", "other-answers/fix-round-answers-pull-request-1899.md")
+    git(repository, "commit", "-q", "--no-edit")
+    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews),
+                         "--check", "--after-conflict-merge")
+    check("check: an answers file added in the conflict merge's own commit refuses",
+          code == 1 and "other-answers/fix-round-answers-pull-request-1899.md" in err, out + err)
+
+    git(repository, "reset", "-q", "--hard", unignored_head)
+    held = commit_file(repository, "fix-round-answers-pull-request-1900.md", "1. x\n",
+                       "frozen-head holding an answers file")
+    git(repository, "rm", "-q", "fix-round-answers-pull-request-1900.md")
+    git(repository, "commit", "-q", "-m", "fix that deletes the answers file")
+    code, out, err = run(root, repository, routes_for(held, [review(commit_id=held)]), "--check")
+    check("check: a fix commit that deletes an answers file the frozen-head holds passes",
+          code == 0 and "Not pushed yet" in out, out + err)
+
+    git(repository, "reset", "-q", "--hard", unignored_head)
+    notes = commit_file(repository, "notes.md", "1. Fixed: the error is raised.\n2. Added the case.\n",
+                        "frozen-head holding a notes file")
+    git(repository, "mv", "notes.md", "fix-round-answers-pull-request-1898.md")
+    git(repository, "commit", "-q", "-m", "fix that renames the notes file to an answers file")
+    code, out, err = run(root, repository, routes_for(notes, [review(commit_id=notes)]), "--check")
+    check("check: a fix commit that renames a file to an answers file refuses",
+          code == 1 and "fix-round-answers-pull-request-1898.md" in err, out + err)
     default_answers.unlink()
 
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),

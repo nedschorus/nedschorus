@@ -22,8 +22,8 @@ With --check, run in the worktree or checkout that holds the round's commit: the
 HEAD) must be none, or one non-merge commit, or with --after-conflict-merge a merge of origin/main
 followed by at most one non-merge commit. The answers file holds one entry per blocking finding,
 each starting "<n>. " on its own line; by default it is ANSWERS_FILE_NAME_FORMAT at the root of
-the worktree or checkout --check runs in, and --check refuses when a commit of the round holds
-any answers file, since a branch cut before .gitignore named the file does not leave it out of
+the worktree or checkout --check runs in, and --check refuses when the checked commit's tree holds
+an answers file the frozen-head's tree does not, since a branch cut before .gitignore named the file does not leave it out of
 commits. It prints the files the fix commit changes that no blocking
 finding names, and, once GitHub's head is the checked commit or the frozen-head, the message for
 merge-lane-2, which the agent sends with SendMessage, since a program cannot.
@@ -412,17 +412,15 @@ def fix_commit_range(frozen_head, commits, after_conflict_merge):
                   "If they are pushed, tell merge-lane-2 with SendMessage; do not force-push.")
 
 
-def round_files(frozen_head, commit):
-    """Every file the round's own commits change, leaving out what a merge of origin/main brings in."""
-    files = []
-    for sha, parents in commits_since(frozen_head, commit):
-        listing = git(["diff", "-z", "--name-only", parents[0], sha])
-        files += [path for path in git_output.nul_separated_fields(listing) if path not in files]
-    return files
+def files_added_since(frozen_head, commit):
+    """Files commit's tree holds that frozen_head's tree does not, whichever commit of the round added them."""
+    # --no-renames, so that an answers file renamed from a file the frozen-head holds still counts as added.
+    listing = git(["diff", "-z", "--name-only", "--no-renames", "--diff-filter=A", frozen_head, commit])
+    return git_output.nul_separated_fields(listing)
 
 
 def refuse_committed_answers_file(frozen_head, commit):
-    committed = [path for path in round_files(frozen_head, commit)
+    committed = [path for path in files_added_since(frozen_head, commit)
                  if ANSWERS_FILE_NAME_PATTERN.fullmatch(Path(path).name)]
     if committed:
         raise Refused(f"The round does not pass: its commits after the frozen-head {frozen_head[:12]} "
