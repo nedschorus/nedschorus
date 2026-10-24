@@ -1275,6 +1275,15 @@ check("the default transcript folders are this machine's and the three copies th
           "/home/nedlern/nedschorus-logs/agent-session-files-by-machine/recovered"],
       replay.DEFAULT_TRANSCRIPT_DIRECTORIES)
 
+# A deleted entry passes this case; only a replay against a base that still runs the former path shows it.
+renames_to_paths_not_in_guards = {former: current for former, current
+                                  in replay.BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH.items() if current not in replay.GUARDS}
+former_paths_still_in_guards = sorted(set(replay.BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH) & set(replay.GUARDS))
+check("each renamed guard's former path maps to a path in GUARDS, and no former path is itself in GUARDS",
+      not renames_to_paths_not_in_guards and not former_paths_still_in_guards,
+      f"mapped to paths not in GUARDS: {renames_to_paths_not_in_guards}; former paths in GUARDS: "
+      f"{former_paths_still_in_guards}")
+
 if failures:
     print(f"{len(failures)} failed")
     sys.exit(1)
