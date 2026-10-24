@@ -5,7 +5,8 @@ ends.
 A handoff that arrives as a session's exit; the stops with no terminal to ask
 on or to seat a successor on; the exit record a stop writes; the worktree
 cleanup between a retiring session's stop and its successor's launch; and
-resuming a session that ended without a handoff, after a death or by hand.
+resuming a session that ended without a handoff, after a death or by hand;
+and a supervisor killed while it rewrites its state file.
 The supervisor's other cases are in
 handoff-supervisor-successor-prompt-test.py and
 handoff-supervisor-session-launch-and-seat-lock-test.py, beside this file.
@@ -1555,6 +1556,67 @@ def run_by_hand_resume_cases(workspace: Path):
           str(supervisor.read_supervisor_state(settings.state_path)))
 
 
+class WriterKilledMidWrite(Exception):
+    pass
+
+
+def run_state_file_write_killed_midway_case(workspace: Path):
+    """A supervisor killed while it rewrites its state file must leave the
+    file it had readable: the agent-crash-watcher and the next supervisor's
+    startup read consumed_counter from it, and a cut-off file reads as fresh
+    state, which takes an already-consumed handoff for a waiting one.
+
+    The kill is injected: every file opened for writing in the state file's
+    directory gets the first half of what is written to it, then the write
+    raises, as a process killed mid-write would stop."""
+    state_path = workspace / "killed-midway" / "seat-supervisor-state.json"
+    old_state = {"consumed_counter": 27, supervisor.LAUNCHED_SESSION_ID_STATE_KEY: "session-27",
+                 "generation": 3}
+    supervisor.write_supervisor_state(state_path, old_state)
+    real_open = io.open
+
+    class HalfWrittenFile:
+        def __init__(self, file):
+            self.file = file
+
+        def write(self, text):
+            self.file.write(text[:len(text) // 2])
+            self.file.flush()
+            raise WriterKilledMidWrite()
+
+        def __getattr__(self, name):
+            return getattr(self.file, name)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exception):
+            self.file.close()
+
+    def open_killed_midway(file, mode="r", *arguments, **keywords):
+        opened = real_open(file, mode, *arguments, **keywords)
+        if "w" in mode and Path(file).parent == state_path.parent:
+            return HalfWrittenFile(opened)
+        return opened
+
+    new_state = dict(old_state, last_poll_at=datetime.now(timezone.utc).isoformat())
+    killed = False
+    builtin_module = sys.modules["builtins"]
+    builtin_module.open, io.open = open_killed_midway, open_killed_midway
+    try:
+        supervisor.write_supervisor_state(state_path, new_state)
+    except WriterKilledMidWrite:
+        killed = True
+    finally:
+        builtin_module.open, io.open = real_open, real_open
+    with contextlib.redirect_stderr(io.StringIO()) as stderr:
+        read_back = supervisor.read_supervisor_state(state_path)
+    check("KILLED-MID-WRITE: the injected kill stopped the write", killed)
+    check("KILLED-MID-WRITE: the state file still holds the state written before the kill",
+          read_back == old_state and not stderr.getvalue(),
+          (read_back, stderr.getvalue()))
+
+
 with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_exit_handoff_cases(workspace)
     run_dont_restart_without_a_terminal_case(workspace)
@@ -1564,5 +1626,6 @@ with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_handoff_worktree_cleanup_cases(workspace)
     run_resume_after_a_death_without_a_handoff_cases(workspace)
     run_by_hand_resume_cases(workspace)
+    run_state_file_write_killed_midway_case(workspace)
 
 fixture.print_summary_and_exit_nonzero_if_any_case_failed()
