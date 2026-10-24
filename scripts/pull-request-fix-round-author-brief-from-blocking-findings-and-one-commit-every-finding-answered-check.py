@@ -16,13 +16,13 @@ which then re-post its blockers.
 Without --check, run in the author's checkout: refuse when the pull request's head has moved past
 the frozen-head, else print the brief: the frozen-head, each blocking finding word for word, how to
 dispatch the fix-round subagent in a git worktree of its own and push from it, the round's rules,
-and the --check command to finish with, which names the answers file in the author's checkout.
+and the --check command to finish with, which the subagent runs in its own worktree.
 
 With --check, run in the worktree or checkout that holds the round's commit: the commits from the frozen-head to --commit (default
 HEAD) must be none, or one non-merge commit, or with --after-conflict-merge a merge of origin/main
 followed by at most one non-merge commit. The answers file holds one entry per blocking finding,
-each starting "<n>. " on its own line; by default it is ANSWERS_FILE_NAME_FORMAT inside the
-checkout's own git directory, where git never commits it. It prints the files the fix commit changes that no blocking
+each starting "<n>. " on its own line; by default it is ANSWERS_FILE_NAME_FORMAT at the root of
+the worktree or checkout --check runs in, which .gitignore keeps out of commits. It prints the files the fix commit changes that no blocking
 finding names, and, once GitHub's head is the checked commit or the frozen-head, the message for
 merge-lane-2, which the agent sends with SendMessage, since a program cannot.
 
@@ -279,11 +279,9 @@ def print_brief(number, reviewer_login):
     for index, finding in enumerate(findings, 1):
         lines += ["", f"{index}. {finding_place(finding)} ({finding.get('html_url')})",
                   (finding.get("body") or "").strip()]
-    answers_path = default_answers_path(number)
+    answers_name = ANSWERS_FILE_NAME_FORMAT.format(number=number)
     local_branch = LOCAL_BRANCH_NAME_FORMAT.format(number=number, review_id=review_id)
-    # --answers names the file in this checkout's git directory, which the subagent's own
-    # worktree does not hold by default.
-    check_command = f"python3 {PROGRAM} {number} --check --answers {shlex.quote(answers_path)}"
+    check_command = f"python3 {PROGRAM} {number} --check"
     lines += [
         "",
         WORKTREE_DISPATCH_INSTRUCTION,
@@ -300,10 +298,10 @@ def print_brief(number, reviewer_login):
         "are not part of this round: merge-lane-2 sends them after the merge.",
         "4. Put every change in one commit on top of the branch as step 1 left it. "
         "If no finding holds, make no commit.",
-        f"5. Write the answers file {answers_path}, one entry per finding above, each starting "
-        "\"<n>. \" on its own line, with any further lines of the entry after it: what you fixed, "
-        "or why the finding does not hold. It is inside git's own directory, so it is never "
-        "committed.",
+        f"5. Write the answers file {answers_name} at the root of your worktree, one entry per "
+        "finding above, each starting \"<n>. \" on its own line, with any further lines of the "
+        "entry after it: what you fixed, or why the finding does not hold. .gitignore keeps it "
+        "out of the commit.",
         f"6. Run the affected test suites: {PRE_PUSH_TEST_COMMAND}",
         "   If a suite fails because of this round's change, fix it in the same commit; if it "
         "fails for another cause, tell merge-lane-2 with SendMessage before pushing.",
@@ -324,14 +322,14 @@ def print_brief(number, reviewer_login):
 
 
 def default_answers_path(number):
-    """The answers file inside the checkout's own git directory, which git never commits."""
+    """The answers file at the root of the worktree or checkout this runs in, which .gitignore keeps out of commits."""
     try:
-        git_directory = git(["rev-parse", "--absolute-git-dir"]).strip()
+        top_level = git(["rev-parse", "--show-toplevel"]).strip()
     except StepFailed as failure:
-        raise Refused(f"This must run in your checkout of pull request {number}'s branch, whose "
-                      f"git directory holds the answers file, but git could not find one: {failure}.\n"
-                      "Change to that checkout and run this again.") from None
-    return str(Path(git_directory) / ANSWERS_FILE_NAME_FORMAT.format(number=number))
+        raise Refused(f"This must run in the worktree or checkout of pull request {number}'s branch "
+                      f"whose root holds the answers file, but git could not find one: {failure}.\n"
+                      "Change to that worktree and run this again, or name the file with --answers.") from None
+    return str(Path(top_level) / ANSWERS_FILE_NAME_FORMAT.format(number=number))
 
 
 def read_answers(path, finding_count):
@@ -465,7 +463,7 @@ def main(argv=None):
     parser.add_argument("--answers",
                         help="with --check: the answers file, one \"<n>. \" entry per finding "
                              "(default: " + ANSWERS_FILE_NAME_FORMAT.format(number="<number>")
-                             + " in the checkout's git directory)")
+                             + " at the root of this worktree)")
     parser.add_argument("--commit", default="HEAD",
                         help="with --check: the round's last commit (default: HEAD)")
     parser.add_argument("--after-conflict-merge", action="store_true",
