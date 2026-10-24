@@ -42,7 +42,7 @@ An entry that defines a kind of text, a change to text, or a check on text ends 
 - **edit-GHI** — the ghi-write-tool operation that merges an edit of a filed GHI-MD into main and updates the GHI from main.
 - **failed-restart-notice** — the page the agent-crash-watcher opens in the browser on the user's Mac when it cannot restart an agent-seat, with the command to restart it himself; when the page cannot be written or the Mac refuses the page, the notice opens in a terminal window on the Mac instead.
 - **fix-round** — one cycle of a pull request answering review findings, written by a forked subagent that inherits the author's full context, as one commit on top of the frozen-head.
-- **fresh-agent** — a minimal-context agent: one that has read only its agent-instructions, the documents selected for it to read, and (recursively) the documents linked from the selected documents.
+- **fresh-agent** — a minimal-context agent: one that has read only `CLAUDE.md`, every file `CLAUDE.md` names, every glossary (this one and the system glossaries listed at its top), its agent-instructions, and the documents selected for its task with the documents they link.
 - **fresh-reader** — a fresh-agent, or a person, reading a document with no context beyond the document and what it links.
 - **frozen-copy** — the copy of a document that a cold read's reviewers read, taken when the run starts.
 - **frozen-head** — a pull request's head commit once pushed, which is never amended or force-pushed; a fix is a new commit on top.
