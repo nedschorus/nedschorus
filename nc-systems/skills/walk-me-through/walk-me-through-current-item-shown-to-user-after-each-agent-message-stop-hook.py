@@ -99,40 +99,20 @@ hook's exit 1 as a non-blocking error and still ends the turn.
 import importlib.util
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
-REPOSITORY_TOP = Path(__file__).resolve().parents[3]
-SUITE_RUNNER_FILE = REPOSITORY_TOP / "scripts" / "run-all-test-suites.py"
-GIT_MODULE_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
-                   / "git-machine-readable-output-runner-and-parser-common.py")
+WALK_FINDER_FILE = (Path(__file__).resolve().parent
+                    / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py")
+_walk_finder_spec = importlib.util.spec_from_file_location(
+    "walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common", WALK_FINDER_FILE)
+walk_finder = importlib.util.module_from_spec(_walk_finder_spec)
+_walk_finder_spec.loader.exec_module(walk_finder)
 STOP_HOOKS_STAY_SILENT_RULE_FILE = (
-    REPOSITORY_TOP / "nc-systems" / "general-tools"
+    walk_finder.REPOSITORY_TOP / "nc-systems" / "general-tools"
     / "claude-code-stop-hooks-stay-silent-while-agent-answers-a-stop-hook-rule-common.py")
-MARKDOWN_PARSER_MODULE_FILE = (REPOSITORY_TOP / "nc-systems" / "general-tools"
-                               / "markdown-commonmark-parser-with-tables-common.py")
-TRANSCRIPT_READER_FILE = (REPOSITORY_TOP / "scripts"
+TRANSCRIPT_READER_FILE = (walk_finder.REPOSITORY_TOP / "scripts"
                           / "claude-code-session-transcript-records-read-backward-common.py")
-CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
-WALK_DIRECTORY = Path("docs") / "walk"
-MINUTES_SUFFIX = "-minutes.md"
-# Group 1 is set only for the hashtag; the old form is read so that open walks it marks are migrated.
-# The value runs to the line's end or the next marker, so two markers on a line are read as two.
-NEXT_MARKER = re.compile(
-    r"(?:(#next_to_present)\b|Next to present:)[*_`\s:]*((?:(?!#next_to_present\b|Next to present:)[^\n])*)",
-    re.I)
-CLOSED_VALUE = re.compile(r"^(?:none|closed)\b", re.I)
-NUMBER = r"\d+(?:\.\d+)*"
-NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
-# A running count: `item 2`, `item 4.1`, `items 5 and 6`, `items 5, 6 and 7`, `items 10 to 12`, `items 10-12`.
-NUMBER_LIST = rf"{NUMBER}(?:{NUMBER_JOINER}{NUMBER})*(?![\d.]\d)"
-VALUE_COUNT = re.compile(rf"^items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b)?", re.I)
-HEADING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
-REPLY_COUNT = re.compile(rf"\bitems?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
-# Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
-REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
-NUMBER_OR_JOINER = re.compile(rf"{NUMBER}|\bto\b|-|\u2013", re.I)
 # A record from one of these starts a turn even when Claude Code marks it isMeta.
 TURN_STARTING_ORIGIN_KINDS = ("human", "peer", "coordinator", "task-notification")
 USER_TURN_ORIGIN = "human"
@@ -141,15 +121,6 @@ UNUSABLE_OPENING_TEMPLATE = (
     "approval-walk current-item check: the open approval-walk {walk} could not "
     "be checked: {problem}"
 )
-NOT_A_FORM_PROBLEM = (
-    "does not open with an item in one of the forms `item N of M`, `item N.K of M`, "
-    "`items N and P of M` or `items N to P of M`")
-
-
-class UnusableRange(ValueError):
-    """A running count names no item; its argument says why."""
-
-
 UNUSABLE_INSTRUCTIONS = (
     "If the approval-walk has closed, add the line `#next_to_present none, closed` "
     "at the end of {minutes} and end the turn.",
@@ -187,17 +158,10 @@ OLD_MARKER_INSTRUCTIONS = (
 )
 
 
-def load_module(name, path):
-    specification = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(specification)
-    specification.loader.exec_module(module)
-    return module
-
-
 def transcript_records(transcript_path):
     """The records from the newest one that opens a turn, and the newest one holding a
     `turnOrigin`, to the transcript's end: all that turn_reply_text and turn_answers_user read."""
-    reader = load_module("claude_code_session_transcript_records_read_backward_common",
+    reader = walk_finder.load_module("claude_code_session_transcript_records_read_backward_common",
                          TRANSCRIPT_READER_FILE)
     return reader.records_from_newest_boundary_to_end(transcript_path, is_turn_start, lambda record: "turnOrigin" in record)
 
@@ -270,166 +234,15 @@ def turn_reply_text(records):
     return "\n".join(texts)
 
 
-def checkout_top(directory):
-    """Return the top of directory's checkout, or None outside one."""
-    runner = load_module("run_all_test_suites", SUITE_RUNNER_FILE)
-    git = load_module("git_machine_readable_output_runner_and_parser_common", GIT_MODULE_FILE)
-    environment = {name: value for name, value in os.environ.items()
-                   if name not in runner.GIT_REDIRECTING_ENVIRONMENT_VARIABLES}
-    output = git.run_git_unless_outside_a_repository(
-        directory, ["rev-parse", "--show-toplevel"], environment=environment)
-    if output is None:
-        return None
-    return Path(os.fsdecode(output).rstrip("\n"))
-
-
-def markdown_parser():
-    return load_module("markdown_commonmark_parser_with_tables_common",
-                       MARKDOWN_PARSER_MODULE_FILE).markdown_parser()
-
-
-def code_line_numbers(tokens):
-    lines = set()
-    for token in tokens:
-        if token.map is not None and token.type in ("fence", "code_block"):
-            lines.update(range(*token.map))
-    return lines
-
-
-def next_to_present(minutes_text, parser):
-    """Return (value, whether the marker is the old form) for the minutes' last marker outside code, or None."""
-    code_lines = code_line_numbers(parser.parse(minutes_text))
-    markers = []
-    for number, line in enumerate(minutes_text.split("\n")):
-        if number in code_lines:
-            continue
-        spans = [span.span() for span in CODE_SPAN.finditer(line)]
-        for marker in NEXT_MARKER.finditer(line):
-            if not any(start <= marker.start() < end for start, end in spans):
-                markers.append((marker[1], marker[2].replace("`", "").strip()))
-    if not markers:
-        return None
-    hashtag, value = markers[-1]
-    return value, not hashtag
-
-
-def is_closed(value):
-    return bool(CLOSED_VALUE.match(value))
-
-
-def expand_numbers(number_list):
-    """Return the item numbers a list such as `5, 6 and 7` or `10 to 12` names.
-
-    Raise UnusableRange, saying what is wrong, for a range that runs backwards, one whose
-    ends belong to different items, or a joiner such as `to` with no range around it.
-    """
-    pieces = NUMBER_OR_JOINER.findall(number_list)
-    numbers, index = [], 0
-    while index < len(pieces):
-        if index + 2 < len(pieces) and pieces[index + 1].lower() in ("to", "-", "\u2013"):
-            first, last = pieces[index], pieces[index + 2]
-            first_head, _, first_tail = first.rpartition(".")
-            last_head, _, last_tail = last.rpartition(".")
-            if not first_head and last_head == first:
-                # `12 to 12.3`: item 12 and its parts up to 12.3.
-                numbers += [first] + [f"{first}.{n}" for n in range(1, int(last_tail) + 1)]
-                index += 3
-                continue
-            if first_head != last_head:
-                raise UnusableRange(
-                    f"its range `{first} to {last}` runs between parts of different items; "
-                    f"a range runs within one item's parts, such as `items 12.1 to 12.3`, "
-                    f"between whole items, such as `items 10 to 12`, or from an item to "
-                    f"one of its parts, such as `items 12 to 12.3`")
-            if int(first_tail) > int(last_tail):
-                raise UnusableRange(
-                    f"its range `{first} to {last}` runs backwards; a range runs from the "
-                    f"lower number to the higher, such as `items {last} to {first}`")
-            prefix = first_head + "." if first_head else ""
-            numbers += [prefix + str(n) for n in range(int(first_tail), int(last_tail) + 1)]
-            index += 3
-        elif pieces[index].lower() in ("to", "-", "\u2013"):
-            raise UnusableRange(NOT_A_FORM_PROBLEM)
-        else:
-            numbers.append(pieces[index])
-            index += 1
-    return numbers
-
-
-def parse_items(value):
-    """Return (item numbers, M or None) from a value such as `items 10 to 12 of 54.`.
-
-    Raise UnusableRange, saying what is wrong, when the value names no item that way.
-    """
-    match = VALUE_COUNT.match(value)
-    if not match:
-        raise UnusableRange(NOT_A_FORM_PROBLEM)
-    return expand_numbers(match[1]), match[2]
-
-
-def open_walk(walk_directory, parser):
-    """Return (minutes path, value, whether the marker is the old form) for the open approval-walk, or None."""
-    candidates = []
-    for minutes in walk_directory.glob("*" + MINUTES_SUFFIX):
-        marker = next_to_present(minutes.read_text(encoding="utf-8"), parser)
-        if marker is None or is_closed(marker[0]):
-            continue
-        candidates.append((minutes.stat().st_mtime, minutes, marker))
-    if not candidates:
-        return None
-    _, minutes, (value, old_form) = max(candidates, key=lambda candidate: candidate[0])
-    return minutes, value, old_form
-
-
-def item_units(document_text, parser):
-    """Return [(item numbers, M, problem)] for each running count that starts an item.
-
-    A count starts an item on a heading, or on a paragraph opening with `**`, except a
-    paragraph whose items the count heading above it already names, with no other count
-    between them, which stays in that heading's unit. A count that names no item still
-    ends the unit before it; its unit has no numbers, and problem names the heading and
-    says why. problem is None for every other unit. A unit is left out when a later
-    heading that says `revised` right after its count names all of its items.
-    """
-    lines = document_text.split("\n")
-    starts = []
-    group = None
-    tokens = parser.parse(document_text)
-    for index, token in enumerate(tokens):
-        if token.map is None or token.type not in ("heading_open", "paragraph_open"):
-            continue
-        if token.type == "paragraph_open" and not lines[token.map[0]].lstrip().startswith("**"):
-            continue
-        content = tokens[index + 1].content.split("\n")[0] if index + 1 < len(tokens) else ""
-        match = HEADING_COUNT.match(content)
-        if not match:
-            continue
-        try:
-            numbers, problem = expand_numbers(match[1]), None
-        except UnusableRange as error:
-            numbers, problem = [], f"its walk-document's heading `{content.strip()}` names no item: {error}"
-        if token.type == "heading_open":
-            group = (set(numbers), match[2])
-        elif group and numbers and set(numbers) <= group[0] and match[2] == group[1]:
-            continue
-        else:
-            group = None
-        revised = bool(REVISED.match(content[match.end():]))
-        starts.append((numbers, match[2], problem, revised))
-    return [(numbers, total, problem) for index, (numbers, total, problem, _) in enumerate(starts)
-            if not (numbers and any(revised and later_total == total and set(numbers) <= set(later_numbers)
-                                    for later_numbers, later_total, _, revised in starts[index + 1:]))]
-
-
 def items_named_in(reply, total):
     """Return the item numbers the reply's running counts with total M name."""
     named = set()
-    for match in REPLY_COUNT.finditer(reply):
+    for match in walk_finder.REPLY_COUNT.finditer(reply):
         if match[2] != total:
             continue
         try:
-            named.update(expand_numbers(match[1]))
-        except UnusableRange:
+            named.update(walk_finder.expand_numbers(match[1]))
+        except walk_finder.UnusableRange:
             continue
     return named
 
@@ -442,7 +255,7 @@ def block_output(opening, instructions, **values):
 def run(stdin_text, environment):
     """Return the text to print, or None."""
     payload = json.loads(stdin_text)
-    rule = load_module("claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
+    rule = walk_finder.load_module("claude_code_stop_hooks_stay_silent_while_agent_answers_a_stop_hook_rule_common",
                        STOP_HOOKS_STAY_SILENT_RULE_FILE)
     if rule.stop_hook_stays_silent_while_agent_answers_a_stop_hook(payload):
         return None
@@ -459,11 +272,11 @@ def output_for(payload, environment):
         return None
     if not payload.get("cwd"):
         return None
-    top = checkout_top(Path(payload["cwd"]))
-    if top is None or not (top / WALK_DIRECTORY).is_dir():
+    top = walk_finder.checkout_top(Path(payload["cwd"]))
+    if top is None or not (top / walk_finder.WALK_DIRECTORY).is_dir():
         return None
-    parser = markdown_parser()
-    walk = open_walk(top / WALK_DIRECTORY, parser)
+    parser = walk_finder.markdown_parser()
+    walk = walk_finder.open_walk(top / walk_finder.WALK_DIRECTORY, parser)
     if walk is None:
         return None
     records = transcript_records(Path(transcript_path).expanduser())
@@ -471,7 +284,7 @@ def output_for(payload, environment):
     if not turn_answers_user(records) or not reply.strip():
         return None
     minutes, value, old_form = walk
-    name = minutes.name[:-len(MINUTES_SUFFIX)]
+    name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
     document = minutes.with_name(name + ".md")
     values = {"walk": name, "minutes": minutes, "document": document, "value": value}
 
@@ -483,43 +296,14 @@ def output_for(payload, environment):
         return block(UNUSABLE_OPENING_TEMPLATE, OLD_MARKER_INSTRUCTIONS,
                      problem=OLD_MARKER_PROBLEM.format(minutes=minutes), new_line=new_line)
     try:
-        numbers, total = parse_items(value)
-    except UnusableRange as problem:
+        numbers, total = walk_finder.parse_items(value)
+    except walk_finder.UnusableRange as problem:
         return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
             f"its minutes' last `#next_to_present` line, `{value}`, {problem}."))
-    if not document.is_file():
-        return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
-            f"its walk-document {document} does not exist."))
-    all_units = item_units(document.read_text(encoding="utf-8"), parser)
-    if total is None:
-        totals = {unit[1] for unit in all_units}
-        if not totals:
-            return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
-                f"its walk-document {document} has no heading with a running count, such "
-                f"as `## Item 3 of 9: <the point>`, so the hook cannot find the item the "
-                f"minutes name: give each item's heading its count `Item N of M`."))
-        if len(totals) > 1:
-            listed = ", ".join(f"`of {each}`" for each in sorted(totals, key=int))
-            return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
-                f"its minutes' last `#next_to_present` line, `{value}`, gives no `of M`, "
-                f"and the walk-document's headings give more than one total ({listed}), "
-                f"so the line must say which: write it as `item N of M`, with M the total "
-                f"of the heading meant."))
-        total = totals.pop()
-    units = [unit for unit in all_units if unit[1] == total and set(unit[0]) & set(numbers)]
-    missing = [number for number in numbers if not any(number in unit[0] for unit in units)]
-    if missing:
-        named = ", ".join(f"`Item {number} of {total}`" for number in missing)
-        unreadable = [unit[2] for unit in all_units if unit[1] == total and unit[2]]
-        return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
-            f"its walk-document has no heading {named}, which the minutes name"
-            + "".join(f"; {each}" for each in unreadable) + "."))
-    repeated = [number for number in numbers if sum(number in unit[0] for unit in units) > 1]
-    if repeated:
-        named = ", ".join(f"`Item {number} of {total}`" for number in repeated)
-        return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=(
-            f"its walk-document has more than one heading for {named}, so the hook cannot tell "
-            f"which one the minutes name."))
+    try:
+        total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser)
+    except walk_finder.UnusableRange as problem:
+        return block(UNUSABLE_OPENING_TEMPLATE, UNUSABLE_INSTRUCTIONS, problem=str(problem))
     named_in_reply = items_named_in(reply, total)
     left_out = [number for number in numbers if number not in named_in_reply]
     if not left_out:
