@@ -149,8 +149,8 @@ REPLY_LEAVES_OUT_INSTRUCTIONS = (
     "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check`, adding the "
     "flag --help lists for his answer, if it lists one; when check passes, run the close command "
     "it prints. Together they set the `#next_to_present` line in {minutes} to the item now "
-    "waiting, so do not set that line by hand. When check fails, do what it printed. Then name "
-    "that item.",
+    "waiting, so do not set that line by hand; then name the item now waiting. When check fails, "
+    "do what it printed instead.",
     "If he ended or abandoned the approval-walk, add the line `#next_to_present none, closed` "
     "at the end of {minutes} instead of naming the item, and end the turn.",
 )
