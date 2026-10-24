@@ -249,7 +249,7 @@ program_help = subprocess.run(
     capture_output=True, text=True, check=False)
 for flag in ("-C", "--brief", "-o", "--sandbox", "-m", "--effort", "--network",
              "--writable-root", "--outside-git-checkout", "--web-search",
-             "--deadline-minutes", "--run-log", "--prefetch-github"):
+             "--deadline-minutes", "--run-log", "--prefetch-github", "--resume"):
     check(f"the usage line's flag {flag} is one the program accepts",
           flag in hook.USAGE_LINE and flag in program_help.stdout,
           program_help.stdout[:200])
