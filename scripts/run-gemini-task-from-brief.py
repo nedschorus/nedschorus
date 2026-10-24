@@ -27,10 +27,10 @@ logins, recover reports from chat, retry models, or verify report content.
 Without GEMINI_API_KEY in the environment, the launcher reads the key from
 ~/.config/nedschorus/gemini-api.key before starting agy, since the sandbox
 hides that file. A file that gives no key does not stop the launch: agy
-needs the key only when its settings.json sets modelProvider to "gemini",
-and otherwise uses its own Antigravity login. When agy then exits nonzero,
-the error line the launcher prints on stderr also says why the file gave no
-key.
+needs the key only when ~/.gemini/antigravity-cli/settings.json sets
+modelProvider to "gemini", and otherwise uses its own Antigravity login.
+When agy then exits nonzero, the error the launcher prints on stderr also
+says why the file gave no key.
 
 Runs `agy models` inside the same sandbox before starting the task, refusing
 unknown names with the known names. The default is gemini-4-argon-high.
@@ -97,8 +97,10 @@ def _run(command, checkout, log, deadline, environment, key_file_problem):
     if code != 0:
         if key_file_problem:
             raise RuntimeError(f"agy exited {code}; GEMINI_API_KEY is not set, and "
-                               f"{agy_cell.GEMINI_API_KEY_FILE} gave no key: {key_file_problem}; "
-                               f"set GEMINI_API_KEY, or put the key in {agy_cell.GEMINI_API_KEY_FILE}")
+                               f"{agy_cell.GEMINI_API_KEY_FILE} gave no key: {key_file_problem}.\n"
+                               "If the file exists but cannot be read, fix that first.\n"
+                               "Otherwise ask the user for the key, since an agent cannot obtain it:"
+                               f" either set GEMINI_API_KEY or put the key in {agy_cell.GEMINI_API_KEY_FILE}.")
         raise RuntimeError(f"agy exited {code}")
 
 
