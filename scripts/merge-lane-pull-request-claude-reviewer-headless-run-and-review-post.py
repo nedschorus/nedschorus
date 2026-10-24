@@ -60,9 +60,10 @@ starts with mac-claude-pr<n>-, the names the reviewer's standing text gives
 the worktrees it makes, is removed, so a run that crashed leaves none behind.
 A removal that fails is printed, and does not change the exit code.
 
-An interrupt or SIGTERM during the posting step kills the posting script,
-perhaps after its post; this prints that the review may or may not have been
-posted, and the gh api command that shows whether it was.
+The posting script runs in its own session. An interrupt or SIGTERM during the
+posting step kills its whole process group, gh included, perhaps after its
+post; this then prints that the review may or may not have been posted, and
+the gh api command that shows whether it was.
 """
 
 import argparse
@@ -352,19 +353,28 @@ def review_and_post(arguments, number, head, brief, schema_text, head_worktree, 
     review_file = record / "review.json"
     review = {key: answer[key] for key in ("verdict", "body", "comments")}
     review_file.write_text(json.dumps(review, indent=2) + "\n")
+    # Its own session, so that killing its group on an interrupt also kills its gh, which
+    # could otherwise still post after the message below says what may have happened.
+    posting = subprocess.Popen(
+        [sys.executable, str(here / POST_SCRIPT_NAME), "--pull-request", str(number),
+         "--head-commit", head, str(review_file)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL,
+        start_new_session=True)
     try:
-        posted = subprocess.run(
-            [sys.executable, str(here / POST_SCRIPT_NAME), "--pull-request", str(number),
-             "--head-commit", head, str(review_file)],
-            capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        stdout, stderr = posting.communicate()
     except BaseException:
+        try:
+            os.killpg(posting.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        posting.wait()
         print(POSTING_INTERRUPTED.format(number=number, head=head, review_file=review_file,
                                          repository=common.REPOSITORY), flush=True)
         raise
-    (record / "posted.txt").write_text(posted.stdout + posted.stderr)
-    sys.stdout.write(posted.stdout + posted.stderr)
-    if posted.returncode != 0:
-        print(f"PR {number}: the posting script exited {posted.returncode}; act on its message "
+    (record / "posted.txt").write_text(stdout + stderr)
+    sys.stdout.write(stdout + stderr)
+    if posting.returncode != 0:
+        print(f"PR {number}: the posting script exited {posting.returncode}; act on its message "
               f"above. The review it was given is {review_file}.", flush=True)
         return EXIT_NOT_DONE
     print(f"PR {number}: Claude review posted, verdict {answer['verdict']}.", flush=True)
