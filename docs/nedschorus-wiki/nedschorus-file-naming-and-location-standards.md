@@ -21,7 +21,7 @@ A file in a queue directory is named as it will be at its canonical location, ap
   - **Naming:** `<pass>-prompt.md`, named for the pass it drives
 - **Hook**
   - **Location:** `.claude/hooks/` for a hook that guards which files or GitHub issues an agent may change; every other hook in its system's directory, `nc-systems/<system-name>/`, or in `nc-systems/general-tools/` when it belongs to no system
-  - **Naming:** `<what it does>.py`, such as `instruction-file-guard.py` or `ghi-issue-write-redirect.py`
+  - **Naming:** `<what it does>.py`, such as `instruction-file-guard.py` or `ghi-issue-write-hand-typed-gh-command-refusal.py`
 - **Tests, test-designs, design-contracts**
   - **Location:** a test goes in a `tests/` subdirectory when the code sits in a directory of its own, such as `nc-systems/main-gatekeeper/tests/` or `scripts/design-to-main/tests/`; beside the script it tests when the script sits loose in `scripts/` or `.claude/hooks/`, for example `scripts/dangling-path-citation-check-test.py`.
   - **Test Names:** `<name of the program tested>-test.<extension>`, for example `scripts/dangling-path-citation-check-test.py`; when one program has several test files, see "Name a test file after what it tests" in `docs/nedschorus-wiki/nedschorus-how-to-choose-a-name-for-files-code-and-glossary-terms.md`

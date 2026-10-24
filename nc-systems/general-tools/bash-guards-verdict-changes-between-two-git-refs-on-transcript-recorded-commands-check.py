@@ -523,7 +523,10 @@ def read_markdown_push_reminder(guard, command, working_directory, search_file_d
 
 # A renamed guard's former file path, which a base ref's settings.json may still run, to its path in GUARDS.
 # The line does nothing once main's settings.json no longer runs the former path, and may then be removed.
-BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {}
+BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {
+    ".claude/hooks/ghi-issue-write-redirect.py": ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
+    "scripts/hand-typed-codex-exec-redirect-hook.py": "scripts/hand-typed-codex-exec-command-refusal-hook.py",
+}
 
 # Every Bash PreToolUse hook in .claude/settings.json, by the file it runs, with the function
 # that reads one command through it. check_guards_match_settings() names each hook missing here,
@@ -531,10 +534,10 @@ BASH_GUARD_CURRENT_PATHS_BY_FORMER_PATH = {}
 GUARDS = {
     "scripts/synthetic-keystroke-guard-hook.py": read_synthetic_keystroke,
     "scripts/force-push-with-open-pull-request-guard-hook.py": read_force_push,
-    ".claude/hooks/ghi-issue-write-redirect.py": read_issue_write,
+    ".claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py": read_issue_write,
     "nc-systems/general-tools/claude-code-tmux-kill-server-and-kill-session-missing-server-selection-refusal-hook.py": read_tmux_kill,
     "scripts/search-file-argument-read-as-option-guard-hook.py": read_search_file,
-    "scripts/hand-typed-codex-exec-redirect-hook.py": read_codex_exec,
+    "scripts/hand-typed-codex-exec-command-refusal-hook.py": read_codex_exec,
     "nc-systems/general-tools/claude-code-bash-git-push-of-markdown-change-citation-checks-reminder-hook.py":
         read_markdown_push_reminder,
 }

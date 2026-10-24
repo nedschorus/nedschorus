@@ -110,7 +110,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ghi-issue-write-redirect.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ghi-issue-write-hand-typed-gh-command-refusal.py",
             "timeout": 30
           },
           {
@@ -125,7 +125,7 @@
           },
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/hand-typed-codex-exec-redirect-hook.py",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/hand-typed-codex-exec-command-refusal-hook.py",
             "timeout": 30
           },
           {
