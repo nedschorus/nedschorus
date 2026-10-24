@@ -174,8 +174,8 @@ def hand_over_note(note, record, number):
     note_file = record / "note.txt"
     note_file.write_text(note + "\n" if note.strip() else "")
     if note.strip():
-        print(f"PR {number}: the reviewer's note for merge-lane-2, not posted, also saved in "
-              f"{note_file}:\n{note}", flush=True)
+        print(f"PR {number}: the reviewer's note for merge-lane-2, which is private and never "
+              f"posted to the pull request; also saved in {note_file}:\n{note}", flush=True)
     else:
         print(f"PR {number}: the reviewer left no note for merge-lane-2.", flush=True)
 

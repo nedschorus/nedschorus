@@ -317,8 +317,9 @@ def main():
         check("the reviewer's note is printed for merge-lane-2 and saved, and reaches neither "
               "review.json nor any gh call",
               case.code == 0 and case.posted()
-              and f"PR 7: the reviewer's note for merge-lane-2, not posted, also saved in "
-                  f"{case.record() / 'note.txt'}:\n{note}\n" in case.stdout
+              and f"PR 7: the reviewer's note for merge-lane-2, which is private and never posted "
+                  f"to the pull request; also saved in {case.record() / 'note.txt'}:\n{note}\n"
+                  in case.stdout
               and (case.record() / "note.txt").read_text() == note + "\n"
               and note not in (case.record() / "review.json").read_text()
               and not any(note in call["stdin"] or note in " ".join(call["arguments"])
@@ -344,7 +345,7 @@ def main():
         case = Case(scratch).run("could-not-review", FAKE_CLAUDE_NOTE="Bash needs allowing.")
         check("a COULD_NOT_REVIEW answer's note is still printed and saved, and nothing is posted",
               case.code == 1 and not case.posted()
-              and "not posted, also saved in" in case.stdout
+              and "which is private and never posted to the pull request; also saved in" in case.stdout
               and (case.record() / "note.txt").read_text() == "Bash needs allowing.\n",
               case.detail)
         check("a COULD_NOT_REVIEW answer's reason is printed",
