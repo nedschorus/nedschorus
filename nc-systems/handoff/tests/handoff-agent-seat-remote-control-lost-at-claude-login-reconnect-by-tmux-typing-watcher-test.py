@@ -479,7 +479,7 @@ def case_saved_read_positions():
         said = (f"{watcher.PROGRAM}: the read positions were not saved to {unsaved} ([Errno 2] No such file or "
                 f"directory: '{unsaved_temporary}'), so the next run reads every transcript whole again. Every run "
                 "still checks every agent-seat, then exits 1 until a save succeeds. The one exception is a run that "
-                "starts while an earlier run still holds run.lock: that new run exits 0 without saving.\n"
+                f"starts while an earlier run still holds {unsaved_directory}/run.lock: that new run exits 0 without saving.\n"
                 f"{whole_read}\n"
                 "When the error says No space left on device: free space on the disk that holds "
                 f"{unsaved_directory}.\n"

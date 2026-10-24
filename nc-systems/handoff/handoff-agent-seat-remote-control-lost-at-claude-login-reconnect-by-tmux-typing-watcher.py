@@ -367,8 +367,8 @@ def transcript_read_positions_save(log_directory: Path, positions) -> bool:
     except OSError as error:
         print(f"{PROGRAM}: the read positions were not saved to {path} ({error}), so the next run reads "
               "every transcript whole again. Every run still checks every agent-seat, then exits 1 until a save "
-              "succeeds. The one exception is a run that starts while an earlier run still holds run.lock: that new "
-              "run exits 0 without saving.\n"
+              f"succeeds. The one exception is a run that starts while an earlier run still holds {log_directory}/run.lock: "
+              "that new run exits 0 without saving.\n"
               f"{WHOLE_READ_TYPES_NOTHING_TWICE}\n"
               f"When the error says No space left on device: free space on the disk that holds {log_directory}.\n"
               f"When the error says Permission denied: give {getpass.getuser()}, the user this watcher runs as, "
