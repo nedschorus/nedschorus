@@ -227,12 +227,16 @@ class Case:
         self.code, self.stdout = completed.returncode, completed.stdout + completed.stderr
         return self.read_calls()
 
-    def interrupt(self, signal_number, mode="hang", started="child.pid", **environment):
-        """Run in mode and send the program signal_number once the state file started exists."""
+    def interrupt(self, signal_number, mode="hang", started="child.pid", sigint_ignored=False,
+                  **environment):
+        """Run in mode and send the program signal_number once the state file started exists.
+        sigint_ignored starts it ignoring SIGINT, as a non-interactive shell's & job does."""
         process = subprocess.Popen(
             self.command("7a", None, ("--time-limit-seconds", "60")), stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True,
-            env={**self.environment, "FAKE_CLAUDE_MODE": mode, **environment})
+            env={**self.environment, "FAKE_CLAUDE_MODE": mode, **environment},
+            preexec_fn=(lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
+            if sigint_ignored else None)
         deadline = time.monotonic() + 20
         started = self.state / started
         # gh-post-started holds the stand-in gh's pid, which a case reads after the signal.
@@ -450,6 +454,19 @@ def main():
         check("SIGTERM during the posting step kills the posting script's gh, so it cannot post "
               "after the message",
               lambda: not running(int((case.state / "gh-post-started").read_text())),
+              case.detail)
+
+        case = Case(scratch).interrupt(signal.SIGTERM, "valid", "gh-post-started",
+                                       sigint_ignored=True, FAKE_GH_HANGS="post")
+        check("SIGTERM during the posting step of a run started ignoring SIGINT, as a "
+              "background job of a non-interactive shell is, kills the posting script's gh "
+              "before the message, and passes on what the posting script printed",
+              lambda: case.code != 0
+              and not running(int((case.state / "gh-post-started").read_text()))
+              and "may or may not have been posted" in case.stdout
+              and "review may or may not be posted: posting the review failed: this command "
+                  "was interrupted" in case.stdout
+              and "this command was interrupted" in (case.record() / "posted.txt").read_text(),
               case.detail)
 
         case = Case(scratch).interrupt_parent_group(FAKE_GH_HANGS="post")
