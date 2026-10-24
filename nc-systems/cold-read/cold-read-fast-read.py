@@ -156,7 +156,7 @@ RECORD_SHIPPER = pathlib.Path(__file__).with_name("cold-read-record-ship.py")
 # has hyphens.
 _record_names_spec = importlib.util.spec_from_file_location(
     "cold_read_record_names",
-    pathlib.Path(__file__).with_name("cold-read-record-names.py"))
+    pathlib.Path(__file__).with_name("cold-read-record-names-common.py"))
 record_names = importlib.util.module_from_spec(_record_names_spec)
 _record_names_spec.loader.exec_module(record_names)
 # Loaded only for LOG_STORE_RECORDS_DESTINATION, where a read's record lands.
@@ -618,9 +618,9 @@ def walk_draft_suggestions_file_path_for_target_in_worktree_or_none(
 # same stem in different directories read on one day come out as -2 of each
 # other (target/ shows which was which), and the -N count says nothing about
 # which draft each read was; both are accepted.
-# The code implementing it is not restated: nc-systems/cold-read/cold-read-record-names.py
+# The code implementing it is not restated: nc-systems/cold-read/cold-read-record-names-common.py
 # holds it, and this program and nc-systems/cold-read/cold-read-grid.py both import it, so
-# the two cannot drift apart. nc-systems/cold-read/tests/cold-read-record-names-test.py fails a
+# the two cannot drift apart. nc-systems/cold-read/tests/cold-read-record-names-common-test.py fails a
 # program that writes its own copy back. The report inside the record is
 # bare `fast-read.md`: the directory says which read, the file says what it is.
 RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"

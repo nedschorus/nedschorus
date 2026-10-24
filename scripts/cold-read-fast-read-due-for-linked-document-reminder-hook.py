@@ -49,7 +49,7 @@ cold-read-record like any document.
 Records are the directories in the log-store's cold-read-records/ and in a
 cold-read-records/ at the top of the document's checkout or the session's
 checkout whose names match the document by
-nc-systems/cold-read/cold-read-record-names.py, and that hold a finished
+nc-systems/cold-read/cold-read-record-names-common.py, and that hold a finished
 report there; a read that failed after freezing its target leaves no report
 and does not count. The record-name, frozen-path and finished-report rules
 are all taken from that module. A record holding a frozen copy under target/
@@ -71,7 +71,7 @@ fast-read is not due again in this agent-session, whatever the document's own
 time: applying a fast read's findings changes the document, which would
 otherwise make it due again every time the agent linked it. A read is this
 agent-session's own when the file a finished fast read writes beside its
-report (nc-systems/cold-read/cold-read-record-names.py,
+report (nc-systems/cold-read/cold-read-record-names-common.py,
 cold_read_fast_read_report_agent_session_id_file_path) names the payload's session_id and the
 document's resolved path. The fast read takes the ID from
 CLAUDE_CODE_SESSION_ID, which a subagent's Bash shares with its parent, so a
@@ -235,7 +235,7 @@ REMINDER_INSTRUCTIONS = (
 def load_cold_read_record_names():
     """Loaded by run() rather than at import, so a fault loading it is reported by main."""
     return load_module("cold_read_record_names",
-                       REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-record-names.py")
+                       REPOSITORY_TOP / "nc-systems" / "cold-read" / "cold-read-record-names-common.py")
 
 
 def environment_without_git_redirection():

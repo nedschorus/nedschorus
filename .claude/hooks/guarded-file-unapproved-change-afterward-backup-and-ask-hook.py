@@ -1218,8 +1218,8 @@ def approve(pairs, cwd: Path):
         raise Refused(f"{cwd} is in no checkout, so there is no {APPROVAL_MARKER_NAME} to read; "
                       "run this command from your session's checkout")
     marker = checkout / APPROVAL_MARKER_NAME
-    words = loaded("guard_approval_marker",
-                   HOOK_PATH.parent / "guard_approval_marker.py").read_marker_approval(marker)
+    words = loaded("guard_approval_marker_common",
+                   HOOK_PATH.parent / "guard-approval-marker-common.py").read_marker_approval(marker)
     if words is None:
         raise Refused(f"there is no approval in {marker}. Show the user each change and ask him; "
                       f"if he approves, write his words into {marker} and run this command again")
@@ -1281,7 +1281,7 @@ def approve(pairs, cwd: Path):
         return True
 
     run_command_work(work)
-    loaded("guard_approval_marker", HOOK_PATH.parent / "guard_approval_marker.py") \
+    loaded("guard_approval_marker_common", HOOK_PATH.parent / "guard-approval-marker-common.py") \
         .consume_approval_marker(marker)
     return [f"Approved {path} at version {key}." for path, key in pairs]
 

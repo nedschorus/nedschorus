@@ -126,7 +126,7 @@ REMOVE_THE_VARIABLES_ANOTHER_WAY = {
 SUITES_RUN_WITH_GIT_DIR = {
     "scripts/dangling-path-citation-check-test.py": (
         "scripts/dangling-path-citation-check.py", "scripts/md-drift-lint.py",
-        "scripts/architecture-overview-path-template-and-checked-against-commit-reader.py",
+        "scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py",
         "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
         "nc-systems/general-tools/failed-command-agent-facing-message-rerun-once-then-stop-and-report-lines-common.py"),
 }
@@ -135,7 +135,7 @@ FILES_THE_SUITE_RUN_WITH_EVERY_VARIABLE_READS = (
     "scripts/code-review-codex-cell.py",
     "docs/agents/pr-reviewer-instructions.md",
     "nc-systems/cold-read/cold-read-cell-common.py",
-    "nc-systems/cold-read/cold-read-record-names.py",
+    "nc-systems/cold-read/cold-read-record-names-common.py",
     "nc-systems/general-tools/git-machine-readable-output-runner-and-parser-common.py",
 )
 
