@@ -100,7 +100,8 @@ a fixed path and not one an environment variable can change, strips the
 surrounding whitespace, and gives the key to agy's environment alone; a value
 the caller set is passed on unchanged. The file is read here, outside the
 sandbox, because the sandbox masks ~/.config/nedschorus/. When the variable is
-unset or empty and the file is missing, unreadable, or empty once stripped, agy runs
+unset or empty and the file is missing, unreadable, not UTF-8 text, or empty once stripped,
+agy runs
 without a key and fails, and the cell's cause line names the file and why it
 gave no key. The key itself is never printed.
 
@@ -164,6 +165,9 @@ def agy_environment_and_key_file_problem(environment) -> tuple:
         key = GEMINI_API_KEY_FILE.read_text(encoding="utf-8").strip()
     except OSError as error:
         return dict(environment), error.strerror or str(error)
+    except UnicodeDecodeError:
+        # The error's own text quotes a byte of the file, which may be key.
+        return dict(environment), "the file is not UTF-8 text"
     if not key:
         return dict(environment), "the file is empty"
     return {**environment, "GEMINI_API_KEY": key}, None

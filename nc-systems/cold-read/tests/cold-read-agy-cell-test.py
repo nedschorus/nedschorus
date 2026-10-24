@@ -50,9 +50,9 @@ WHAT IS PINNED HERE.
     read from .config/nedschorus/gemini-api.key in the scratch home, with
     its trailing newline stripped, and the key is not printed. A key the
     caller set reaches agy unchanged though the file holds another. With the
-    file missing or empty, agy runs without a key, fails the way the real
-    agy does, and the cell's cause line is logged-out, naming the file and
-    why it gave no key.
+    file missing, not UTF-8 text, or empty, agy runs without a key, fails the
+    way the real agy does, and the cell's cause line is logged-out, naming the
+    file and why it gave no key, with no traceback and no byte of the file.
 
   - Every case runs the launcher with HOME at that scratch home, so no run
     of this suite scans or masks the real home's credential files.
@@ -510,6 +510,8 @@ with tempfile.TemporaryDirectory() as scratch:
     for case_slug, prepare_key_file, problem in (
             ("key-file-missing", lambda: gemini_api_key_file.unlink(),
              "No such file or directory"),
+            ("key-file-not-utf8", lambda: gemini_api_key_file.write_bytes(b"\xff\xfekey\n"),
+             "the file is not UTF-8 text"),
             ("key-file-empty", lambda: gemini_api_key_file.write_text("\n", encoding="utf-8"),
              "the file is empty")):
         prepare_key_file()
@@ -528,6 +530,9 @@ with tempfile.TemporaryDirectory() as scratch:
             f"{gemini_api_key_file} gave no key: {problem}")
         check(f"{case_slug}: the cause line names the key file and why it gave no key",
               expected_cause_line in result.stderr.splitlines(), repr(result.stderr))
+        check(f"{case_slug}: no traceback, and no byte of the file, is printed",
+              "Traceback" not in result.stderr and "0xff" not in result.stderr,
+              repr(result.stderr))
     gemini_api_key_file.unlink()
 
     # --- No sandbox program on PATH: refused, agy never started ------------
