@@ -74,6 +74,8 @@ def scratch_repository(root):
     git(repository, "init", "-q", "-b", "topic")
     git(repository, "config", "user.email", "test@example.invalid")
     git(repository, "config", "user.name", "test")
+    (repository / ".gitignore").write_text(PROJECT_GITIGNORE.read_text())
+    git(repository, "add", ".gitignore")
     base = commit_file(repository, "base.txt", "base\n", "base")
     git(repository, "branch", "main-line")
     frozen_head = commit_file(repository, "hook.py", "one\n", "topic work")
@@ -135,12 +137,15 @@ def run(root, repository, routes, *arguments, path_has_gh=True):
 
 
 WRITE_GUARD = Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "session-location-write-guard.py"
+PROJECT_GITIGNORE = Path(__file__).resolve().parents[1] / ".gitignore"
+ANSWERS_NAME = f"fix-round-answers-pull-request-{NUMBER}.md"
 
 
-def run_write_guard(worktree, file_path):
-    """Return the exit code of the project's write guard on an Edit payload from a session in the worktree."""
-    payload = {"cwd": str(worktree), "tool_name": "Edit",
-               "tool_input": {"file_path": file_path, "old_string": "one", "new_string": "two"}}
+def run_write_guard(worktree, file_path, tool_name="Edit"):
+    """Return the exit code of the project's write guard on an Edit or Write payload from a session in the worktree."""
+    tool_input = ({"file_path": file_path, "old_string": "one", "new_string": "two"} if tool_name == "Edit"
+                  else {"file_path": file_path, "content": "1. Fixed.\n"})
+    payload = {"cwd": str(worktree), "tool_name": tool_name, "tool_input": tool_input}
     return subprocess.run([sys.executable, str(WRITE_GUARD)], input=json.dumps(payload),
                           capture_output=True, text=True, timeout=60).returncode
 
@@ -172,9 +177,13 @@ def brief_cases(root, repository, base, frozen_head):
     check("brief: carries both blocking findings word for word, in order, and not the note",
           out.index("hook.py swallows") < out.index("no case for the timeout")
           and "A non-blocking note" not in out and "1. hook.py:12" in out and "2. test.py (" in out, out)
-    git_directory = git(repository, "rev-parse", "--absolute-git-dir")
-    check("brief: names the answers file inside the checkout's git directory",
-          f"{git_directory}/fix-round-answers-pull-request-{NUMBER}.md" in out, out)
+    check("brief: step 5 names the answers file at the root of the subagent's worktree",
+          f"5. Write the answers file {ANSWERS_NAME} at the root of your worktree," in out, out)
+    check("brief: names no absolute path, so nothing in it points into the author's checkout",
+          str(root) not in out and str(repository) not in out and "/.git/" not in out, out)
+    check("brief: the check command has no --answers, so it reads the file at its own worktree's root",
+          f"7. Run the check: python3 scripts/{PROGRAM.name} {NUMBER} --check\n" in out
+          and "--answers" not in out, out)
     check("brief: names the conflict check, the pre-push test run and the check command, in order",
           out.index(f"branch-conflict-check.py --pull-request {NUMBER}")
           < out.index("run-all-test-suites.py --only-suites-whose-recorded-inputs-changed-since origin/main")
@@ -219,9 +228,6 @@ def brief_cases(root, repository, base, frozen_head):
           and "read them, copy out any that is work to keep and tell merge-lane-2" in out
           and out.count("run step 1 again") == 1 and "start again at 1" not in out
           and out.count("and go no further.") == 2, out)
-    answers_in_checkout = f"{git_directory}/fix-round-answers-pull-request-{NUMBER}.md"
-    check("brief: the check command names the author's answers file, so it reads the same file in any worktree",
-          f"{NUMBER} --check --answers {answers_in_checkout}" in out, out)
 
     worktree = root / "subagent-worktree"
     git(repository, "worktree", "add", "-q", "--detach", str(worktree), frozen_head)
@@ -233,14 +239,23 @@ def brief_cases(root, repository, base, frozen_head):
     subprocess.run(switch_command, cwd=worktree, check=True, capture_output=True, text=True)
     check("brief: after step 0's command, the write guard lets the subagent edit a tracked file",
           run_write_guard(worktree, tracked) == 0, " ".join(switch_command))
-    Path(answers_in_checkout).write_text(GOOD_ANSWERS)
-    check_line = next((line for line in out.splitlines() if f"{NUMBER} --check --answers" in line), "")
-    printed_answers = check_line.split("--answers ", 1)[-1].strip()
+    answers_in_worktree = worktree / ANSWERS_NAME
+    check("brief: the write guard lets the subagent Write the answers file at its worktree's root",
+          run_write_guard(worktree, str(answers_in_worktree), tool_name="Write") == 0)
+    answers_in_worktree.write_text(GOOD_ANSWERS)
+    check_line = next((line for line in out.splitlines() if line.startswith("7. Run the check: ")), "")
+    printed_arguments = check_line.split(f"{PROGRAM.name} ", 1)[-1].split()[1:]
     code, check_out, err = run(root, worktree, routes_for(frozen_head, [review(commit_id=frozen_head)]),
-                               "--check", "--answers", printed_answers)
-    check("brief: the printed check command, run in the subagent's worktree, reads the author's answers file",
-          code == 0 and "Nothing pushed" in check_out, check_out + err)
-    Path(answers_in_checkout).unlink()
+                               *printed_arguments)
+    check("brief: the printed check command, run in the subagent's worktree, reads the answers file at its root",
+          printed_arguments == ["--check"] and code == 0 and "Nothing pushed" in check_out,
+          " ".join(printed_arguments) + check_out + err)
+    check("brief: the author's checkout holds no answers file the subagent's check could have read",
+          not (repository / ANSWERS_NAME).exists())
+    git(worktree, "add", "-A")
+    check("brief: git add -A in the subagent's worktree leaves the answers file out of the commit",
+          git(worktree, "diff", "--cached", "--name-only") == "" and git(worktree, "status", "--porcelain") == "",
+          git(worktree, "status", "--porcelain", "--ignored"))
 
     # A second changes-requested review of the same frozen-head, while the first round's worktree
     # still has its branch checked out: the second round's step 0 must work in a worktree of its own.
@@ -261,15 +276,20 @@ def brief_cases(root, repository, base, frozen_head):
           second_switched.returncode == 0, second_switched.stderr + " ".join(second_switch))
     git(repository, "worktree", "remove", "--force", str(second_worktree))
     git(repository, "branch", "-D", f"fix-round-pull-request-{NUMBER}-review-12")
-    git(repository, "worktree", "remove", "--force", str(worktree))
+    removed = subprocess.run(["git", "worktree", "remove", str(worktree)], cwd=repository,
+                             capture_output=True, text=True)
+    check("brief: git worktree remove, without --force, removes a worktree that holds only the answers file",
+          removed.returncode == 0 and not worktree.exists(), removed.stderr)
+    if worktree.exists():
+        git(repository, "worktree", "remove", "--force", str(worktree))
     git(repository, "branch", "-D", local_branch)
 
     spaced = root / "checkout with space"
     shutil.copytree(repository, spaced)
-    code, spaced_out, err = run(root, spaced, routes_for(frozen_head, [review(commit_id=frozen_head)]))
-    check("brief: an answers path with a space is shell-quoted in the check command",
-          code == 0 and f"--answers '{spaced}/.git/fix-round-answers-pull-request-{NUMBER}.md'" in spaced_out,
-          err + spaced_out)
+    (spaced / ANSWERS_NAME).write_text(GOOD_ANSWERS)
+    code, spaced_out, err = run(root, spaced, routes_for(frozen_head, [review(commit_id=frozen_head)]), "--check")
+    check("check: reads the default answers file in a worktree whose path has a space",
+          code == 0 and "Nothing pushed" in spaced_out, err + spaced_out)
 
     routes = routes_for(frozen_head, [review(commit_id=frozen_head)])
     routes[PR_VIEW] = {"stdout": json.dumps({"url": URL, "headRefOid": frozen_head, "headRefName": "topic$name"})}
@@ -279,9 +299,10 @@ def brief_cases(root, repository, base, frozen_head):
 
     outside = root / "not-a-checkout"
     outside.mkdir()
-    code, out, err = run(root, outside, routes_for(frozen_head, [review(commit_id=frozen_head)]))
-    check("brief: outside a git checkout refuses with exit 1, naming the checkout to use",
-          code == 1 and "must run in your checkout of pull request 7's branch" in err, err)
+    code, out, err = run(root, outside, routes_for(frozen_head, [review(commit_id=frozen_head)]), "--check")
+    check("check: outside a git worktree, with no --answers, refuses with exit 1, naming the worktree to use",
+          code == 1 and "must run in the worktree or checkout of pull request 7's branch" in err
+          and "Change to that worktree" in err and "--answers" not in err, err)
 
     code, out, err = run(root, repository, routes_for(
         frozen_head, [review(commit_id=frozen_head),
@@ -554,11 +575,10 @@ def check_cases(root, repository, base, frozen_head):
     check("check: an unreadable answers file fails with exit 2", code == 2
           and "could not read the answers file" in err, err)
 
-    default_answers = Path(git(repository, "rev-parse", "--absolute-git-dir")) / \
-        f"fix-round-answers-pull-request-{NUMBER}.md"
+    default_answers = repository / ANSWERS_NAME
     default_answers.write_text(GOOD_ANSWERS)
     code, out, err = run(root, repository, routes_for(frozen_head, reviews), "--check")
-    check("check: without --answers it reads the answers file in the checkout's git directory",
+    check("check: without --answers it reads the answers file at the checkout's root",
           code == 0 and "Nothing pushed" in out, out + err)
     check("check: the default answers file is not seen by git status",
           git(repository, "status", "--porcelain") == "", git(repository, "status", "--porcelain"))
@@ -566,6 +586,64 @@ def check_cases(root, repository, base, frozen_head):
     code, out, err = run(root, repository, routes_for(frozen_head, reviews), "--check")
     check("check: a missing default answers file fails with exit 2, naming it",
           code == 2 and str(default_answers) in err, err)
+
+    # A branch cut before .gitignore named the answers file: the fix commit picks it up with git add -A.
+    git(repository, "reset", "-q", "--hard", frozen_head)
+    (repository / ".gitignore").write_text("")
+    git(repository, "commit", "-q", "-am", "frozen-head without the ignore line")
+    unignored_head = git(repository, "rev-parse", "HEAD")
+    unignored_reviews = [review(commit_id=unignored_head)]
+    default_answers.write_text(GOOD_ANSWERS)
+    (repository / "hook.py").write_text("fixed\n")
+    git(repository, "add", "-A")
+    git(repository, "commit", "-q", "-m", "fix with the answers file")
+    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews), "--check")
+    check("check: a fix commit holding the answers file refuses with exit 1, naming the file",
+          code == 1 and ANSWERS_NAME in err and "git rm --cached" in err, out + err)
+    git(repository, "rm", "-q", "--cached", ANSWERS_NAME)
+    git(repository, "commit", "-q", "--amend", "--no-edit")
+    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews), "--check")
+    check("check: the same fix without the answers file passes", code == 0 and "Not pushed yet" in out,
+          out + err)
+    git(repository, "reset", "-q", "--hard", unignored_head)
+    git(repository, "update-ref", "refs/remotes/origin/main", "main-line")
+    git(repository, "merge", "-q", "--no-edit", "origin/main")
+    (repository / "other-answers").mkdir()
+    commit_file(repository, "other-answers/fix-round-answers-pull-request-1901.md", "1. x\n", "fix")
+    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews),
+                         "--check", "--after-conflict-merge")
+    check("check: after a conflict merge, any pull request's answers file in a subdirectory refuses",
+          code == 1 and "other-answers/fix-round-answers-pull-request-1901.md" in err, out + err)
+
+    git(repository, "reset", "-q", "--hard", unignored_head)
+    git(repository, "merge", "-q", "--no-ff", "--no-commit", "origin/main")
+    (repository / "other-answers").mkdir(exist_ok=True)
+    (repository / "other-answers/fix-round-answers-pull-request-1899.md").write_text("1. x\n")
+    git(repository, "add", "other-answers/fix-round-answers-pull-request-1899.md")
+    git(repository, "commit", "-q", "--no-edit")
+    code, out, err = run(root, repository, routes_for(unignored_head, unignored_reviews),
+                         "--check", "--after-conflict-merge")
+    check("check: an answers file added in the conflict merge's own commit refuses",
+          code == 1 and "other-answers/fix-round-answers-pull-request-1899.md" in err, out + err)
+
+    git(repository, "reset", "-q", "--hard", unignored_head)
+    held = commit_file(repository, "fix-round-answers-pull-request-1900.md", "1. x\n",
+                       "frozen-head holding an answers file")
+    git(repository, "rm", "-q", "fix-round-answers-pull-request-1900.md")
+    git(repository, "commit", "-q", "-m", "fix that deletes the answers file")
+    code, out, err = run(root, repository, routes_for(held, [review(commit_id=held)]), "--check")
+    check("check: a fix commit that deletes an answers file the frozen-head holds passes",
+          code == 0 and "Not pushed yet" in out, out + err)
+
+    git(repository, "reset", "-q", "--hard", unignored_head)
+    notes = commit_file(repository, "notes.md", "1. Fixed: the error is raised.\n2. Added the case.\n",
+                        "frozen-head holding a notes file")
+    git(repository, "mv", "notes.md", "fix-round-answers-pull-request-1898.md")
+    git(repository, "commit", "-q", "-m", "fix that renames the notes file to an answers file")
+    code, out, err = run(root, repository, routes_for(notes, [review(commit_id=notes)]), "--check")
+    check("check: a fix commit that renames a file to an answers file refuses",
+          code == 1 and "fix-round-answers-pull-request-1898.md" in err, out + err)
+    default_answers.unlink()
 
     code, out, err = run(root, repository, routes_for(frozen_head, reviews),
                          "--check", "--answers", answers_file(root, GOOD_ANSWERS), "--commit", "no-such-ref")
