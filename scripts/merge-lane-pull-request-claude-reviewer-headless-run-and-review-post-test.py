@@ -17,6 +17,10 @@ The stand-in gh answers the author lookup with ned-review-merge, the pull
 request's files with a diff of scripts/thing.py lines 1 to 3, the post with
 review id 42, and the read-back as posted, unless FAKE_GH_FAILS names the post, or
 FAKE_GH_HANGS names it, when it writes its pid to gh-post-started and sleeps.
+A case that sets FAKE_POSTING_SCRIPT_EXIT_STALLS puts a sitecustomize.py on
+PYTHONPATH that makes the posting script, as it exits, write
+posting-script-exiting and sleep 3 s, so a second signal can be sent while the
+program waits for it.
 
 Run: python3 scripts/merge-lane-pull-request-claude-reviewer-headless-run-and-review-post-test.py
 """
@@ -133,6 +137,18 @@ else:
     print(json.dumps({"user": {"login": "ned-review-merge"}}))
 '''
 
+# Gated at exit, not at import, because site imports this before sys.argv is set.
+STALLING_SITECUSTOMIZE = r'''
+import atexit, os, sys, time
+from pathlib import Path
+def stall():
+    if (os.environ.get("FAKE_POSTING_SCRIPT_EXIT_STALLS")
+            and Path(sys.argv[0]).name == "merge-lane-pull-request-reviewer-review-post-and-read-back.py"):
+        (Path(os.environ["FAKE_CLAUDE_STATE"]) / "posting-script-exiting").write_text("1")
+        time.sleep(3)
+atexit.register(stall)
+'''
+
 failures = []
 
 
@@ -209,6 +225,9 @@ class Case:
         for name, text in (("claude", FAKE_CLAUDE), ("gh", FAKE_GH)):
             (bin_directory / name).write_text(text)
             (bin_directory / name).chmod(0o755)
+        self.site_directory = root / "site"
+        self.site_directory.mkdir()
+        (self.site_directory / "sitecustomize.py").write_text(STALLING_SITECUSTOMIZE)
         self.environment = {**GIT_ENVIRONMENT, "HOME": str(home),
                             "FAKE_CLAUDE_STATE": str(self.state),
                             "GH_TOKEN": "a-token-the-reviewer-must-not-see",
@@ -227,23 +246,29 @@ class Case:
         self.code, self.stdout = completed.returncode, completed.stdout + completed.stderr
         return self.read_calls()
 
+    def wait_for(self, name):
+        deadline = time.monotonic() + 20
+        path = self.state / name
+        # gh-post-started holds the stand-in gh's pid, which a case reads after the signal.
+        while not (path.exists() and path.read_text()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+
     def interrupt(self, signal_number, mode="hang", started="child.pid", sigint_ignored=False,
-                  **environment):
+                  then=None, **environment):
         """Run in mode and send the program signal_number once the state file started exists.
-        sigint_ignored starts it ignoring SIGINT, as a non-interactive shell's & job does."""
+        sigint_ignored starts it ignoring SIGINT, as a non-interactive shell's & job does.
+        then, a (state file, signal) pair, sends a second signal once that file exists."""
         process = subprocess.Popen(
             self.command("7a", None, ("--time-limit-seconds", "60")), stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True,
             env={**self.environment, "FAKE_CLAUDE_MODE": mode, **environment},
             preexec_fn=(lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
             if sigint_ignored else None)
-        deadline = time.monotonic() + 20
-        started = self.state / started
-        # gh-post-started holds the stand-in gh's pid, which a case reads after the signal.
-        while (not (started.exists() and started.read_text())
-               and time.monotonic() < deadline):
-            time.sleep(0.05)
+        self.wait_for(started)
         process.send_signal(signal_number)
+        if then:
+            self.wait_for(then[0])
+            process.send_signal(then[1])
         try:
             self.stdout = process.communicate(timeout=30)[0]
             self.code = process.returncode
@@ -468,6 +493,23 @@ def main():
                   "was interrupted" in case.stdout
               and "this command was interrupted" in (case.record() / "posted.txt").read_text(),
               case.detail)
+
+        for second in (signal.SIGTERM, signal.SIGINT):
+            case = Case(scratch)
+            case.interrupt(signal.SIGTERM, "valid", "gh-post-started",
+                           then=("posting-script-exiting", second), FAKE_GH_HANGS="post",
+                           FAKE_POSTING_SCRIPT_EXIT_STALLS="1",
+                           PYTHONPATH=str(case.site_directory))
+            check(f"a {signal.Signals(second).name} sent while the program waits for the "
+                  "posting script it sent SIGTERM does not cut the wait short: no gh is left "
+                  "running, and what the posting script printed and the message that the "
+                  "review may or may not have been posted are printed",
+                  lambda: case.code != 0
+                  and (case.state / "posting-script-exiting").exists()
+                  and not running(int((case.state / "gh-post-started").read_text()))
+                  and "this command was interrupted" in case.stdout
+                  and "this command was interrupted" in (case.record() / "posted.txt").read_text()
+                  and "may or may not have been posted" in case.stdout, case.detail)
 
         case = Case(scratch).interrupt_parent_group(FAKE_GH_HANGS="post")
         time.sleep(0.5)
