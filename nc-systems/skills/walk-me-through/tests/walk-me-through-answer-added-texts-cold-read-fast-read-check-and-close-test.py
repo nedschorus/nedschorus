@@ -407,6 +407,17 @@ def test_item_under_a_shared_heading_with_no_line_of_its_own_reads_the_whole_uni
           result.returncode == 0 and case.calls.read_text() == "Row eight.\nRow nine.\n", described(result))
 
 
+def test_bold_openings_with_no_total_or_in_a_list_item_bound_an_item_under_a_shared_heading():
+    for shape, six, seven in (("a top-level paragraph with no `of M`", "**Item 6: the path.**", "**Item 7: the sentence.**"),
+                              ("a top-level list item", "- **Item 6, the path.**", "- **Item 7, the sentence.**")):
+        document = WALK_DOCUMENT.replace("Item 6 of 9 fixes a path.", six).replace("Item 7 of 9 drops a sentence.", seven)
+        case = Case(next_to_present="item 6 of 9", document=document)
+        result = case.run("check")
+        check(f"under a shared heading, an item opening with a bold count in {shape} ends the item before it, "
+              "so check fast-reads only the waiting item's #new text",
+              result.returncode == 0 and case.calls.read_text() == "The path is docs/walk/.\n", described(result))
+
+
 CODE_SHOWING_ANOTHER_ITEMS_COUNT = {
     "a backtick fence": "```\nItem 7 of 9: an example\n```\n",
     "a tilde fence": "~~~\nItem 7 of 9: an example\n~~~\n",

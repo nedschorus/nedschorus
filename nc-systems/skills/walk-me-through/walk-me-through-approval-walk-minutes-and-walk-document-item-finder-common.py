@@ -21,8 +21,15 @@ M`, `Items 5 and 6 of M`, `Items 10 to 12 of M` or `Items 12 to 12.3 of M`,
 on a top-level heading or paragraph opening with `**`, outside any list or
 quotation, as markdown-it-py reads the document, and runs to the next running count. A heading that names several
 items is one unit, and so are the top-level paragraphs under it that open
-with the count of one of its items; within the unit, each of those paragraphs
-starts its item's lines. A heading that says `revised` right after its
+with the count of one of its items. Within the unit, an item's lines start at
+its opening: the first line of a top-level paragraph that opens, after any
+emphasis, with `Item N`, where N is one of the unit's items, followed by
+`of M` with the heading's M or by no `of` at all, as in `Item 5 of 9.
+Recommendation: ...` or `**Item 5: the label.**`; or the first line of an item
+of a top-level list that opens the same way in bold, as in
+`- **Item 5, step 1.**`. An opening in any other shape, such as a line inside
+a paragraph, a quotation or an HTML block, is not read, so the unit's items are not told apart; the
+UserPromptSubmit hook then says it cannot read their recommendations. A heading that says `revised` right after its
 count replaces the earlier units it names. A running count that names no
 item still ends the unit before it. Every search of a walk file for its
 structure, here and in the programs that load this module, reads the lines
@@ -60,6 +67,8 @@ NUMBER_JOINER = r"\s*(?:,|&|\band\b|\bto\b|-|\u2013)\s*"
 NUMBER_LIST = rf"{NUMBER}(?:{NUMBER_JOINER}{NUMBER})*(?![\d.]\d)"
 VALUE_COUNT = re.compile(rf"^items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b)?", re.I)
 HEADING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
+# Within a heading shared by several items, an item's opening may leave out `of M`, the heading giving it.
+ITEM_OPENING_COUNT = re.compile(rf"^[*_\s]*items?\s+({NUMBER_LIST})(?:\s+of\s+(\d+)\b|(?!\s+of\b))", re.I)
 REPLY_COUNT = re.compile(rf"\bitems?\s+({NUMBER_LIST})\s+of\s+(\d+)\b", re.I)
 # Only right after the count, as in `(revised)` or `, revised:`, so a title that uses the word drops nothing.
 REVISED = re.compile(r"^[*_\s(,:;.\-\u2013\u2014]*revised\b", re.I)
@@ -115,14 +124,21 @@ def prose_lines(text, parser, tokens=None):
 
 
 def item_opening_lines(text, parser, tokens=None):
-    """Return {line: (item numbers, M)} for each top-level paragraph, outside any list, quotation, HTML or
-    code, whose first line opens with a running count naming items of total M, after any emphasis."""
+    """Return {line: (item numbers, M or None)} for each top-level paragraph, outside any quotation, HTML or
+    code, whose first line opens with a running count naming items, after any emphasis, and each item of a
+    top-level list whose first line opens with one in bold; M is None when the count gives no `of M`."""
     openings = {}
     tokens = parser.parse(text) if tokens is None else tokens
     for index, token in enumerate(tokens):
-        if token.type != "paragraph_open" or token.level != 0 or token.map is None:
+        if token.type != "paragraph_open" or token.map is None:
             continue
-        match = HEADING_COUNT.match(tokens[index + 1].content.split("\n")[0])
+        first_line = tokens[index + 1].content.split("\n")[0]
+        # Only in bold, since a plain list item such as `- Item 7 of 9, which follows` mentions an item.
+        bold_top_level_list_item = (token.level == 2 and tokens[index - 1].type == "list_item_open"
+                                    and tokens[index - 1].level == 1 and first_line.startswith(("**", "__")))
+        if token.level != 0 and not bold_top_level_list_item:
+            continue
+        match = ITEM_OPENING_COUNT.match(first_line)
         if not match:
             continue
         try:
@@ -262,12 +278,13 @@ def item_unit_spans(document_text, parser):
 
 def approval_walk_item_line_range_within_heading_shared_by_several_items(openings, first, end, number, numbers, total):
     """Return (first, end) of the lines, of the unit from line first up to end that names several items, that
-    belong to item number: from the first of item_opening_lines' openings that names that item alone, up to
-    the next that names another of the unit's items alone, or every line of the unit when none names it."""
+    belong to item number: from the first of item_opening_lines' openings that names that item alone, with
+    the unit's total or none, up to the next that names another of the unit's items alone, or every line of
+    the unit when none names it."""
     starts = {}
     for line in sorted(openings):
         named, opening_total = openings[line]
-        if first <= line < end and opening_total == total and len(named) == 1 and named[0] in numbers:
+        if first <= line < end and opening_total in (total, None) and len(named) == 1 and named[0] in numbers:
             starts.setdefault(named[0], line)
     if number not in starts:
         return first, end

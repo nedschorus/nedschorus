@@ -40,7 +40,10 @@ docs/walk/*-minutes.md, in the checkout the payload's cwd names, whose last
 line's running count, such as `item 4.1 of 6`. An item's recommendation is the
 rest of the line after the last `Recommendation:` in its part of the
 walk-document, emphasis and one trailing period aside; an item with none
-recommends nothing.
+recommends nothing. Under a heading shared by several items, an item's part
+starts at its opening, as WALK_FINDER_FILE's docstring says; when the heading
+holds more than one recommendation and an item has no opening, the hook reads
+no recommendation for any of its items and says why.
 
 R ON AN OPEN APPROVAL-WALK, as the whole prompt (R or repeat), is shown by
 the hook itself: it blocks the prompt with {"decision": "block", "reason":
@@ -114,6 +117,12 @@ LETTER_RIDER = re.compile(
 WORD_RIDER = re.compile(rf"^(?P<answer>{WORD})\b[\s,;:.\-]+{NOT_AN_ITEM_NUMBER}(?P<rest>\S.*)$", re.I | re.S)
 RECOMMENDATION = re.compile(r"Recommendation:(.*)$", re.I | re.M)
 NO_RECOMMENDATION_PROBLEM = "no line starting \"Recommendation:\""
+PARTS_NOT_TOLD_APART_PROBLEM = (
+    "it is one of the items under the walk-document's heading `{heading}`, which holds more than one line "
+    "starting \"Recommendation:\", and the hook could not tell which part is whose, because {missing} "
+    "has no opening it reads. It reads an opening only on the first line of a top-level paragraph "
+    "starting `Item N` with the item's number, after any emphasis, as in `**Item 5: the label.**`, or of a "
+    "top-level list item starting it in bold, as in `- **Item 5, step 1.**`")
 CHANGE_MAKING_ANSWERS = ("A", "AO", "AA", "D")
 # How an answer code is written to the agent: Aa's second letter is lower case.
 CODE_NAMES = {"AA": "Aa"}
@@ -358,10 +367,12 @@ def parsed_answer(prompt):
 class WalkState:
     """The open approval-walk as the hook read it."""
 
-    def __init__(self, name, item, numbers, total, recommendations, problem):
+    def __init__(self, name, item, numbers, total, recommendations, problem, recommendation_problems=None):
         self.name, self.item, self.numbers, self.total = name, item, numbers, total
         self.recommendations = recommendations  # item number -> recommendation text or None
         self.problem = problem  # why recommendations could not be read, or None
+        # item number -> why its recommendation is None, when the reason is not NO_RECOMMENDATION_PROBLEM
+        self.recommendation_problems = recommendation_problems or {}
 
 
 def read_walk(cwd):
@@ -393,9 +404,10 @@ def read_walk(cwd):
     if total is None:
         totals = {span[1] for span in spans}
         total = totals.pop() if len(totals) == 1 else None
-    recommendations = recommendations_in(walk_finder.prose_lines(text, parser, tokens),
-                                         walk_finder.item_opening_lines(text, parser, tokens), spans, total, walk_finder)
-    return WalkState(name, count[0], numbers, total, recommendations, None)
+    recommendations, problems = recommendations_in(
+        walk_finder.prose_lines(text, parser, tokens), walk_finder.item_opening_lines(text, parser, tokens),
+        spans, total, walk_finder)
+    return WalkState(name, count[0], numbers, total, recommendations, None, problems)
 
 
 class WaitingItemNotShown(Exception):
@@ -441,19 +453,32 @@ def recommendation_text(part):
 
 
 def recommendations_in(lines, openings, spans, total, walk_finder):
-    """Return {item number: recommendation text or None} for every item of the walk-document, from its
-    prose_lines and item_opening_lines."""
-    found = {}
+    """Return ({item number: recommendation text or None} for every item of the walk-document, {item number:
+    why its recommendation is None} for the items whose reason is not NO_RECOMMENDATION_PROBLEM), from its
+    prose_lines and item_opening_lines.
+
+    Under a heading that names several items and holds more than one recommendation, every item's
+    recommendation is None when any of them has no opening, since an opening missed leaves the part
+    before it running on into the next item's recommendation."""
+    found, problems = {}, {}
     for numbers, unit_total, _, first, end in spans:
         if total is not None and unit_total != total:
             continue
+        ranges = {number: (first, end) for number in numbers}
+        if len(numbers) > 1:
+            ranges = {number: walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+                openings, first, end, number, numbers, unit_total) for number in numbers}
+            # An item with no opening of its own is given the whole unit, which starts at the heading.
+            missing = [number for number in numbers if ranges[number][0] == first]
+            if missing and len(RECOMMENDATION.findall("\n".join(lines[first:end]))) > 1:
+                problem = PARTS_NOT_TOLD_APART_PROBLEM.format(
+                    heading=lines[first].strip(), missing=", ".join(f"item {number}" for number in missing))
+                for number in numbers:
+                    found[number], problems[number] = None, problem
+                continue
         for number in numbers:
-            own_first, own_end = first, end
-            if len(numbers) > 1:
-                own_first, own_end = walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
-                    openings, first, end, number, numbers, unit_total)
-            found[number] = recommendation_text(lines[own_first:own_end])
-    return found
+            found[number] = recommendation_text(lines[ranges[number][0]:ranges[number][1]])
+    return found, problems
 
 
 def item_name(number, walk):
@@ -467,8 +492,9 @@ def recommendation_unknown_lines(answer_letter, numbers, walk):
     name = CODE_NAMES.get(answer_letter, answer_letter)
     if walk.problem:
         return [RECOMMENDATION_UNKNOWN_LINE.format(item=walk.item, problem=walk.problem, answer_letter=name)]
-    return [RECOMMENDATION_UNKNOWN_LINE.format(item=item_name(number, walk), problem=NO_RECOMMENDATION_PROBLEM,
-                                               answer_letter=name)
+    return [RECOMMENDATION_UNKNOWN_LINE.format(
+                item=item_name(number, walk), answer_letter=name,
+                problem=walk.recommendation_problems.get(number, NO_RECOMMENDATION_PROBLEM))
             for number in numbers if walk.recommendations.get(number) is None]
 
 

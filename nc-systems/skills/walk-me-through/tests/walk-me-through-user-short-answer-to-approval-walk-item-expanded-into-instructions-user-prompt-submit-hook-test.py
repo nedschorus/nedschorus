@@ -883,6 +883,59 @@ def test_a_mention_of_an_item_inside_another_does_not_take_its_recommendation():
           f"lines {lines!r}")
 
 
+def shared_heading_document(parts):
+    return ("# A walk\n\n## Item 4 of 9: four\n\nRecommendation: do four.\n\n## Items 5 and 6 of 9: grouped\n\n"
+            + parts + "\n## Item 7 of 9: seven\n\nRecommendation: do seven.\n")
+
+
+SHARED_HEADING_OPENINGS_READ = {
+    "a bold count with no `of M`": ("**Item 5: the path.** Recommendation: fix the path.\n\n"
+                                     "**Item 6: the sentence.** Recommendation: drop it.\n"),
+    "a list item opening with a bold count with no `of M`": ("- **Item 5, the path.** Recommendation: fix the path.\n"
+                                                              "- **Item 6, the sentence.** Recommendation: drop it.\n"),
+    "a list item opening with a bold count with `of M`": ("- **Item 5 of 9**: the path.\n  Recommendation: fix the path.\n"
+                                                           "- **Item 6 of 9**: the sentence.\n  Recommendation: drop it.\n"),
+}
+
+
+def test_each_item_under_a_shared_heading_reads_its_own_recommendation_from_each_opening_shape():
+    for shape, parts in SHARED_HEADING_OPENINGS_READ.items():
+        for number, recommendation in (("5", "fix the path"), ("6", "drop it")):
+            lines = Case(next_to_present=f"item {number} of 9", document=shared_heading_document(parts)).lines("a")
+            check(f"under a shared heading, item {number} opening with {shape} reads its own recommendation",
+                  lines is not None and lines[1].startswith(
+                      f"A means approve: the user agrees with the recommendation of item {number} of 9 ({recommendation}).")
+                  and not any(line.startswith("The hook could not read") for line in lines), f"lines {lines!r}")
+
+
+SHARED_HEADING_OPENINGS_NOT_READ = {
+    "a continuation line": ("**Item 5 of 9**: the path.\nRecommendation: fix the path.\n"
+                            "**Item 6 of 9**: the sentence.\nRecommendation: drop it.\n", "item 6"),
+    "a line inside <details>": ("**Item 5 of 9**: the path.\nRecommendation: fix the path.\n\n<details>\n"
+                                "**Item 6 of 9**: the sentence.\nRecommendation: drop it.\n</details>\n", "item 6"),
+    "a plain list item": ("- Item 5: the path. Recommendation: fix the path.\n"
+                          "- Item 6: the sentence. Recommendation: drop it.\n", "item 5, item 6"),
+    "a bold number with no `Item`": ("**5. The path.** Recommendation: fix the path.\n\n"
+                                     "**6. The sentence.** Recommendation: drop it.\n", "item 5, item 6"),
+}
+
+
+def test_items_under_a_shared_heading_whose_openings_are_not_read_get_no_recommendation_and_the_reason():
+    for shape, (parts, missing) in SHARED_HEADING_OPENINGS_NOT_READ.items():
+        for number in ("5", "6"):
+            lines = Case(next_to_present=f"item {number} of 9", document=shared_heading_document(parts)).lines("a")
+            check(f"under a shared heading with more than one recommendation, item {number}, where an item opens with "
+                  f"{shape}, gets no recommendation and the line saying why",
+                  lines is not None
+                  and lines[1] == f"A means approve: the user agrees with the recommendation of item {number} of 9. "
+                                  "Do what the recommendation says."
+                  and any(line.startswith(f"The hook could not read the recommendation of item {number} of 9: it is "
+                                          "one of the items under the walk-document's heading `## Items 5 and 6 of 9: "
+                                          "grouped`")
+                          and f"because {missing} has no opening it reads" in line for line in lines),
+                  f"lines {lines!r}")
+
+
 def main():
     try:
         for name, function in sorted(globals().items()):
