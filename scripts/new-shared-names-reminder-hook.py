@@ -426,8 +426,9 @@ def main() -> int:
         if len(location_lines) != 2:
             print(GIT_FAILURE_TEMPLATE.format(
                 command=" ".join(location_arguments),
-                outcome=f"printed {len(location_lines)} lines for 2 paths, so a path holding a newline "
-                        "cannot be told apart from the next one"), file=sys.stderr)
+                outcome=f"printed {len(location_lines)} lines where the 2 paths should give one line each; "
+                        "a path holding a newline prints as two lines, and fewer lines mean git "
+                        "printed less than asked"), file=sys.stderr)
             return 1
         top_level, git_directory = location_lines
         checkout = Path(top_level)

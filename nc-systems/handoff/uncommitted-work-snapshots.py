@@ -270,8 +270,9 @@ def operation_in_progress(worktree):
     lines = git_output(worktree, *arguments).split("\n")
     if len(lines) != 5:
         raise WorkSnapshotError(
-            f"git {' '.join(arguments)} in {worktree} printed {len(lines)} lines for 5 paths, "
-            "so a path holding a newline cannot be told apart from the next one")
+            f"git {' '.join(arguments)} in {worktree} printed {len(lines)} lines where the 5 paths "
+            "should give one line each; a path holding a newline prints as two lines, "
+            "and fewer lines mean git printed less than asked")
     merge_head, cherry_pick_head, revert_head, rebase_merge, rebase_apply = (
         Path(line) for line in lines)
     if merge_head.exists():
