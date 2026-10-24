@@ -294,6 +294,26 @@ def test_part_without_recommendation():
     check_reminded("a reply leaving out a waiting part is sent back", case.run())
 
 
+def test_item_added_by_re_planning_with_a_dotted_number():
+    document = ("# A walk\n\n## Item 37 of 44: a rule\n\nRecommendation: leave the filter out.\n\n"
+                "## Item 37.2 of 44: a case item 37 missed\n\nRecommendation: add the filter.\n\n"
+                "## Item 38 of 44: the next rule\n\nRecommendation: keep it.\n")
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 37.2 of 44.", document=document)
+    for case_name, reply in (
+            ("a reply ending with a line naming a dotted item passes",
+             "Recorded.\n\nItem 37.2 of 44 is waiting for your answer."),
+            ("a reply showing a dotted item in full passes",
+             "**Item 37.2 of 44: a case item 37 missed**\n\nRecommendation: add the filter.")):
+        case.reply(reply)
+        check_silent(case_name, case.run())
+    for case_name, reply in (
+            ("a reply naming only the item a dotted item follows is sent back", "Item 37 of 44 is waiting."),
+            ("a reply naming the dotted number with another total is sent back", "Item 37.2 of 4 is waiting.")):
+        case.reply(reply)
+        check_reminded(case_name, case.run(), "`Item 37.2 of 44`")
+
+
 def test_item_holding_original_and_proposed_sections():
     case = Case()
     case.walk_files(minutes="#next_to_present item 9 of 9.")

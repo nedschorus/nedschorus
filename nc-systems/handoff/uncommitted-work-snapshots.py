@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Work-snapshots: copies of a worktree's uncommitted changes that outlive a crash.
 
-Design: nc-systems/handoff/uncommitted-work-snapshots-across-crashes-design.md.
+Design: nc-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md.
 
 A work-snapshot is a commit in the clone's shared object store under
 refs/work-snapshots/<owner key>/<SHA-1 of the worktree's path>, holding every

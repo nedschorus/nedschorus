@@ -31,7 +31,7 @@ Checks, per file type:
           edit to the first does nothing)
 
 An architecture overview, a file at the path
-scripts/architecture-overview-path-template-and-checked-against-commit-reader.py
+scripts/architecture-overview-path-template-and-checked-against-commit-reader-common.py
 gives for a system with a directory under nc-systems/, gets the overview
 checks of docs/nedschorus-wiki/nedschorus-how-to-write-an-architecture-overview.md
 too, when this script is run (a program that calls lint_markdown() gets them
@@ -78,7 +78,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def _load_architecture_overview_path_reader():
     path = Path(__file__).resolve().with_name(
-        "architecture-overview-path-template-and-checked-against-commit-reader.py")
+        "architecture-overview-path-template-and-checked-against-commit-reader-common.py")
     specification = importlib.util.spec_from_file_location(
         "architecture_overview_path_template_and_checked_against_commit_reader", path)
     module = importlib.util.module_from_spec(specification)

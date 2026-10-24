@@ -702,7 +702,7 @@ def main():
     git_runner_module = "git-machine-readable-output-runner-and-parser-common.py"
     shutil.copy(HOOK_SCRIPT.resolve().parents[1] / "nc-systems" / "general-tools" / git_runner_module,
                 scratch_root / "nc-systems" / "general-tools" / git_runner_module)
-    record_names_path = scratch_root / "nc-systems" / "cold-read" / "cold-read-record-names.py"
+    record_names_path = scratch_root / "nc-systems" / "cold-read" / "cold-read-record-names-common.py"
     case = Case()
     case.transcript.write_text("")
     completed = subprocess.run(

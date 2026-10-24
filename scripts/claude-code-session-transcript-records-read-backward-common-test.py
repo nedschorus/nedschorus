@@ -158,7 +158,7 @@ FIXTURES = {
     ],
     "a skill and a system reminder inside the turn": [
         user("go"),
-        assistant("m1", tool_use("Skill", skill="locate-before-saying-a-file-is-missing")),
+        assistant("m1", tool_use("Skill", skill="find-missing-file")),
         user("skill text", isMeta=True), assistant("m2", text("Cannot find it.")),
     ],
     "a subagent's hand-back from its parent": [

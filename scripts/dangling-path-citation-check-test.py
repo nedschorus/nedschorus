@@ -39,7 +39,7 @@ _git_environment_fixture.remove_git_redirecting_environment_variables_from_this_
 CHECK_SCRIPT = Path(__file__).with_name("dangling-path-citation-check.py")
 LINT_SCRIPT = Path(__file__).with_name("md-drift-lint.py")
 LINT_OVERVIEW_PATH_MODULE = Path(__file__).with_name(
-    "architecture-overview-path-template-and-checked-against-commit-reader.py")
+    "architecture-overview-path-template-and-checked-against-commit-reader-common.py")
 GIT_OUTPUT_MODULE = (Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
                      / "git-machine-readable-output-runner-and-parser-common.py")
 NEXT_STEP_LINES_MODULE = GIT_OUTPUT_MODULE.with_name(
