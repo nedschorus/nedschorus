@@ -413,6 +413,28 @@ def test_each_operation_is_read_from_its_own_marker():
             check(found == "am", "rebase-apply holding applying reads as am", found)
         shutil.rmtree(path) if is_directory else path.unlink()
 
+def test_git_path_holding_a_newline_is_reported():
+    # A path holding a newline cannot be made for real here, so one extra line is added to git's output.
+    main = new_clone()
+    worktree = add_worktree(main, main / ".claude" / "worktrees" / "newline", "newline-branch")
+    real_run_git = snapshots.run_git
+
+    def run_git_with_one_path_split(directory, *arguments, **options):
+        result = real_run_git(directory, *arguments, **options)
+        if "--git-path" in arguments:
+            result.stdout = result.stdout.replace("\n", "\nsplit\n", 1)
+        return result
+    snapshots.run_git = run_git_with_one_path_split
+    try:
+        snapshots.operation_in_progress(worktree)
+        check(False, "a rev-parse that prints 6 lines for 5 paths raises WorkSnapshotError", "nothing raised")
+    except snapshots.WorkSnapshotError as error:
+        check("printed 6 lines for 5 paths" in str(error),
+              "a rev-parse that prints 6 lines for 5 paths raises WorkSnapshotError saying so", str(error))
+    finally:
+        snapshots.run_git = real_run_git
+
+
 def test_hook_failure_is_reported():
     name = "a hook that cannot write reports it through additionalContext and exits 0"
     main = new_clone()
@@ -1344,6 +1366,7 @@ def main():
                      test_bash_commit_deletes_and_other_worktrees_follow,
                      test_overlapping_runs_end_on_the_final_state, test_operation_trailer,
                      test_each_operation_is_read_from_its_own_marker,
+                     test_git_path_holding_a_newline_is_reported,
                      test_hook_failure_is_reported, test_other_repository_is_untouched,
                      test_worktree_discovery_failure_is_reported,
                      test_names_read_from_git_are_the_files_as_stored,

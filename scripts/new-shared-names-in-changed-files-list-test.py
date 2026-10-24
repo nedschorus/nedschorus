@@ -531,6 +531,33 @@ def run_hook_in_process(hook, root: Path, clone: Path, payload: dict, planted_fa
     return code, context
 
 
+def case_hook_git_path_holding_a_newline_exits_1_and_says_so(root):
+    # A path holding a newline cannot be made for real here, so one extra line is added to git's output.
+    clone = make_clone(root, BASE_MAIN_FILES)
+    write(clone, "alpha.md", "A `name-not-listed-when-a-path-splits` here.\n")
+    hook = load_module("hook_for_split_path", HOOK_PATH)
+    real_run = subprocess.run
+
+    def run_with_one_path_split(arguments, **options):
+        result = real_run(arguments, **options)
+        if "--absolute-git-dir" in arguments:
+            result.stdout = result.stdout.replace(b"\n", b"\nsplit\n", 1)
+        return result
+    subprocess.run = run_with_one_path_split
+    stderr = io.StringIO()
+    try:
+        code, context = run_hook_in_process(hook, root, clone, {"tool_name": "Write",
+                                            "tool_input": {"file_path": "alpha.md"}}, {}, stderr)
+    finally:
+        subprocess.run = real_run
+    first_line = (stderr.getvalue().splitlines() or [""])[0]
+    check("a rev-parse that prints 3 lines for 2 paths exits 1 and tells the agent nothing on stdout",
+          code == 1 and context == "", f"exit {code}: {context}")
+    check("its first stderr line names the command and the line count",
+          "git rev-parse --show-toplevel --absolute-git-dir failed (printed 3 lines for 2 paths" in first_line,
+          repr(first_line))
+
+
 def case_hook_git_failure_exits_1_with_the_cause_on_stderr(root):
     for planted in ("rev-parse --show-toplevel", "status", "diff HEAD"):
         case_root = root / planted.replace(" ", "_")
@@ -559,7 +586,7 @@ def case_hook_git_failure_exits_1_with_the_cause_on_stderr(root):
     git(["checkout", "-q", "--detach"], detached)
     detached_hook = load_module("hook_for_detached_head", HOOK_PATH)
     check("a detached HEAD is never reported as a branch named HEAD, even where origin has no HEAD",
-          detached_hook.unreported_new_branch(detached, set(), detached_hook.reported_names_record_key_for(detached)) == "")
+          detached_hook.unreported_new_branch(detached, set(), detached_hook.worktree_head_branch_untracked_and_status_text(detached)[1]) == "")
     (root / "timeout").mkdir()
     clone = make_clone(root / "timeout", BASE_MAIN_FILES)
     hook = load_module("hook_for_git_timeout", HOOK_PATH)
@@ -1291,6 +1318,7 @@ def main() -> int:
              case_agent_seat_branch_in_its_agent_home_is_not_reported,
              case_agent_home_check_failure_is_told_and_no_branch_reported,
              case_hook_git_failure_exits_1_with_the_cause_on_stderr,
+             case_hook_git_path_holding_a_newline_exits_1_and_says_so,
              case_branch_check_failure_is_told_and_the_file_check_still_runs,
              case_branch_check_and_lister_both_failing_tell_only_the_lister_failure,
              case_quiet_shell_calls_tell_the_branch_check_failure_once_the_lister_works_again,
