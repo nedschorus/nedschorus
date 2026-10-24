@@ -219,6 +219,8 @@ def credential_sandbox_prefix(platform: str = sys.platform, *,
         return ["sandbox-exec", "-p", profile]
     prefix = ["bwrap", "--dev-bind" if writable_paths is None else "--ro-bind", "/", "/"]
     if writable_paths is not None:
+        # --ro-bind mounts / nodev, which leaves /dev/null and /dev/urandom unusable.
+        prefix += ["--dev", "/dev"]
         for path, _directory in writable_paths:
             prefix += ["--bind", str(path), str(path)]
     if not network:

@@ -24,6 +24,11 @@ model connection; without it even Gemini's API is unreachable. No proxy
 separates model traffic from tool traffic. This launcher does not provision
 logins, recover reports from chat, retry models, or verify report content.
 
+Without GEMINI_API_KEY in the environment, the launcher reads the key from
+the agy cell's key file before starting agy, since the sandbox hides that
+file; when agy then exits nonzero, the failure line says why the file gave
+no key.
+
 Runs `agy models` inside the same sandbox before starting the task, refusing
 unknown names with the known names. The default is gemini-4-argon-high.
 Closes stdin and logs both output streams to REPORT.run.log, or to
@@ -40,6 +45,7 @@ Requires bwrap on Linux or sandbox-exec on macOS; never runs unsandboxed.
 import argparse
 import importlib.util
 import math
+import os
 import pathlib
 import re
 import shutil
@@ -77,8 +83,8 @@ def _parser():
     return parser
 
 
-def _run(command, checkout, log, deadline):
-    process = subprocess.Popen(command, cwd=checkout, stdin=subprocess.DEVNULL,
+def _run(command, checkout, log, deadline, environment, key_file_problem):
+    process = subprocess.Popen(command, cwd=checkout, env=environment, stdin=subprocess.DEVNULL,
                                stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     try:
         code = process.wait(timeout=max(0, deadline - time.monotonic()))
@@ -86,6 +92,9 @@ def _run(command, checkout, log, deadline):
         codex_task.stop_process_group(process)
         raise RuntimeError("deadline passed; agy and its children were stopped") from None
     if code != 0:
+        if key_file_problem:
+            raise RuntimeError(f"agy exited {code}; GEMINI_API_KEY is not set, and "
+                               f"{agy_cell.GEMINI_API_KEY_FILE} gave no key: {key_file_problem}")
         raise RuntimeError(f"agy exited {code}")
 
 
@@ -116,6 +125,8 @@ def main(argv=None):
         if not prompt.strip():
             raise RuntimeError("the brief is empty")
         stage = "preparing the sandbox"
+        # The sandbox masks the key file, so it is read here, before agy starts.
+        environment, key_file_problem = agy_cell.agy_environment_and_key_file_problem(os.environ)
         writable_folders = [checkout, *roots] if args.sandbox == "workspace-write" else []
         prefix = agy_cell.credential_sandbox_prefix(
             writable_paths=[(report, False), *((folder, True) for folder in writable_folders)],
@@ -128,7 +139,7 @@ def main(argv=None):
         with log_path.open("w+", encoding="utf-8") as log:
             deadline = time.monotonic() + args.deadline_minutes * 60
             stage = "listing models with agy models"
-            _run([*prefix, "agy", "models"], checkout, log, deadline)
+            _run([*prefix, "agy", "models"], checkout, log, deadline, environment, key_file_problem)
             log.seek(0)
             listing = re.sub(r"\x1b\[[0-9;]*m", "", log.read())
             # IDs in agy's human-readable listing are whitespace-delimited hyphenated words.
@@ -146,7 +157,7 @@ def main(argv=None):
             command += ["--print", prompt + f"\n\nWrite the task's report to this exact file: {report}\n"]
             stage = "running the task"
             print(f"{PROGRAM}: running Gemini in {checkout}; log {log_path}", file=sys.stderr)
-            _run(command, checkout, log, deadline)
+            _run(command, checkout, log, deadline, environment, key_file_problem)
         stage = f"reading report {report}"
         if not report.is_file() or not report.read_text(encoding="utf-8").strip():
             raise RuntimeError(f"agy exited 0 but wrote no report at {report}")
