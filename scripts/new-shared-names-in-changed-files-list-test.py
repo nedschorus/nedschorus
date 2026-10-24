@@ -532,9 +532,7 @@ def run_hook_in_process(hook, root: Path, clone: Path, payload: dict, planted_fa
 
 
 def case_hook_git_failure_exits_1_with_the_cause_on_stderr(root):
-    for planted in ("rev-parse --show-toplevel", "rev-parse -q --verify HEAD", "rev-parse --absolute-git-dir",
-                    "rev-parse HEAD", "status",
-                    "diff HEAD", "ls-files -z --others", "symbolic-ref"):
+    for planted in ("rev-parse --show-toplevel", "status", "diff HEAD"):
         case_root = root / planted.replace(" ", "_")
         case_root.mkdir()
         clone = make_clone(case_root, BASE_MAIN_FILES)
@@ -1171,6 +1169,35 @@ def case_hook_shell_commands(root):
     check("a shell edit to an untracked file already scanned is scanned again", "second-shell-name" in rewritten, rewritten)
 
 
+def case_hook_reads_head_branch_and_untracked_files_from_one_status(root):
+    clone = make_clone(root, BASE_MAIN_FILES)
+    hook = load_module("hook_for_one_status_case", HOOK_PATH)
+    git(["checkout", "-q", "-b", "topic-from-status"], clone)
+    # A source path that looks like an untracked entry shows whether the rename's second field is skipped.
+    write(clone, "? looks untracked.md", "tracked\n")
+    git(["add", "--", "? looks untracked.md"], clone)
+    git(["commit", "-q", "-m", "add an oddly named file"], clone)
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=clone, capture_output=True, text=True).stdout.strip()
+    git(["mv", "--", "? looks untracked.md", "renamed.md"], clone)
+    write(clone, "untracked one.md", "one\n")
+    write(clone, "zz-untracked-two.md", "two\n")
+    found_head, branch, untracked, _ = hook.worktree_head_branch_untracked_and_status_text(clone)
+    check("the status gives HEAD's commit", found_head == head, f"{found_head} {head}")
+    check("the status gives the branch's own name", branch == "topic-from-status", branch)
+    check("a staged rename's source path is not read as an untracked file",
+          sorted(untracked) == ["untracked one.md", "zz-untracked-two.md"], repr(untracked))
+    git(["tag", "topic-from-status"], clone)
+    check("a branch sharing its name with a tag keys the record under the branch's own name, as the branch list does",
+          hook.worktree_head_branch_untracked_and_status_text(clone)[1] == "topic-from-status" and "topic-from-status" in hook.local_branches(clone),
+          f"{hook.worktree_head_branch_untracked_and_status_text(clone)[1]} {hook.local_branches(clone)}")
+    git(["checkout", "-q", "--detach"], clone)
+    check("a detached HEAD gives the detached-HEAD key",
+          hook.worktree_head_branch_untracked_and_status_text(clone)[1] == hook.DETACHED_HEAD_REPORTED_NAMES_RECORD_KEY, hook.worktree_head_branch_untracked_and_status_text(clone)[1])
+    unborn = root / "status-no-commit-yet"
+    git(["init", "-q", "-b", "main", str(unborn)], root)
+    check("a repository with no commit yet gives no HEAD commit", hook.worktree_head_branch_untracked_and_status_text(unborn)[0] == "",
+          repr(hook.worktree_head_branch_untracked_and_status_text(unborn)[0]))
+
 def case_hook_fingerprint_sees_a_rewritten_untracked_file_git_would_quote(root):
     clone = make_clone(root, BASE_MAIN_FILES)
     hook = load_module("new_shared_names_reminder_hook", HOOK_PATH)
@@ -1286,6 +1313,7 @@ def main() -> int:
              case_same_branch_name_recreated_is_told_names_again, case_switch_to_a_branch_origin_has_lists_its_names,
              case_overlapping_writers_never_leave_invalid_json_and_keep_every_name,
              case_hook_shell_commands,
+             case_hook_reads_head_branch_and_untracked_files_from_one_status,
              case_hook_fingerprint_sees_a_rewritten_untracked_file_git_would_quote,
              case_hook_fingerprint_sees_an_untracked_file_whose_name_is_not_utf8,
              case_hook_reports_failure_once, case_hook_ignores_other_input]
