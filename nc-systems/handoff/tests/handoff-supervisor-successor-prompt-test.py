@@ -789,6 +789,21 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     check("queue status reports an empty queue", "docs/nedschorus-wiki/queue: empty" in line, line)
 
 
+def run_supervisor_names_replaced_unknown_name_cases():
+    """The fixture refuses a stub under a name the supervisor does not define,
+    such as the launch-time-git-sync's former name, since such a stub would
+    replace nothing and let the real code run."""
+    try:
+        with supervisor_names_replaced(branch_sync=lambda working_directory: "stubbed"):
+            refusal = None
+    except NameError as error:
+        refusal = str(error)
+    check("supervisor_names_replaced refuses a name the supervisor does not define, naming it",
+          refusal is not None and "branch_sync" in refusal, refusal)
+    check("a refused supervisor_names_replaced leaves the supervisor without the unknown name",
+          not hasattr(supervisor, "branch_sync"))
+
+
 def run_launch_time_git_sync_cases(workspace: Path):
     """Every branch of launch_time_git_sync, against real repositories.
 
@@ -799,8 +814,9 @@ def run_launch_time_git_sync_cases(workspace: Path):
     root = workspace / "launch-time-git-sync"
     root.mkdir()
 
+    report = supervisor.launch_time_git_sync(root)
     check("a directory that is not a checkout syncs to nothing",
-          "nothing to sync" in supervisor.launch_time_git_sync(root))
+          report.startswith("launch-time-git-sync: ") and "nothing to sync" in report, report)
 
     remote = root / "remote.git"
     git_in(["init", "--quiet", "--bare", "--initial-branch=main", str(remote)], root)
@@ -820,8 +836,9 @@ def run_launch_time_git_sync_cases(workspace: Path):
     git_in(["config", "user.email", "agent@nedschorus.invalid"], home)
     git_in(["checkout", "--quiet", "-b", "agent-branch"], home)
 
+    report = supervisor.launch_time_git_sync(home)
     check("a branch level with main reports current",
-          "current with main" in supervisor.launch_time_git_sync(home))
+          report.startswith("launch-time-git-sync: ") and "current with main" in report, report)
 
     # Main moves ahead; the agent's clean branch must fast-forward onto it.
     (seed / "README.md").write_text("seed\nfrom main\n", encoding="utf-8")
@@ -830,7 +847,8 @@ def run_launch_time_git_sync_cases(workspace: Path):
     git_in(["push", "--quiet", "origin", "main"], seed)
 
     report = supervisor.launch_time_git_sync(home)
-    check("a clean branch behind main fast-forwards", "fast-forwarded to main" in report, report)
+    check("a clean branch behind main fast-forwards",
+          report.startswith("launch-time-git-sync: ") and "fast-forwarded to main" in report, report)
     check("the fast-forward really moved the files",
           (home / "README.md").read_text(encoding="utf-8") == "seed\nfrom main\n")
 
@@ -844,7 +862,7 @@ def run_launch_time_git_sync_cases(workspace: Path):
 
     report = supervisor.launch_time_git_sync(home)
     check("a branch with only an untracked file fast-forwards",
-          "fast-forwarded to main" in report
+          report.startswith("launch-time-git-sync: ") and "fast-forwarded to main" in report
           and (home / "README.md").read_text(encoding="utf-8") == "seed\nfrom main\nfurther\n",
           report)
     check("the untracked file survives the fast-forward", (home / "work-in-progress.txt").is_file())
@@ -971,7 +989,7 @@ def run_launch_time_git_sync_cases(workspace: Path):
     git_in(["merge", "--no-edit", "--quiet", "origin/main"], home)
     report = supervisor.launch_time_git_sync(home)
     check("a branch ahead of main with all of main reports nothing to pull",
-          "nothing to pull" in report, report)
+          report.startswith("launch-time-git-sync: ") and "nothing to pull" in report, report)
 
     no_remote = root / "no-remote"
     git_in(["init", "--quiet", "--initial-branch=main", str(no_remote)], root)
@@ -3335,6 +3353,7 @@ def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str)
 with fixture.handoff_supervisor_suite_workspace() as workspace:
     recent_timestamp = run_offline_cases(workspace)
     run_launch_time_git_sync_cases(workspace)
+    run_supervisor_names_replaced_unknown_name_cases()
     with gh_answering_no_open_pull_requests_first_on_path(
             workspace / "gh-answering-no-open-pull-requests"):
         run_overview_check_git_output_cases(workspace)
