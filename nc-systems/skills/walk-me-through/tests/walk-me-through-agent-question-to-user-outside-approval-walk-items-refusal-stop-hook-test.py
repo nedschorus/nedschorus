@@ -421,9 +421,34 @@ def test_a_question_held_in_an_interruption_item_is_not_checked():
             ("a question that is only part of a word of the item blocks",
              "File it?", "Should I refile it?", False),
             ("a word the item bolds in part does not match the whole word, so the question blocks",
-             "Should we refile it?", "Should we re**file** it?", False)):
+             "Should we refile it?", "Should we re**file** it?", False),
+            ("a short question whose words run inside the item's longer question blocks",
+             "Should I merge?", "Should I merge PR 5 now?", False),
+            ("a list whose lead-in the item holds, with other choices, blocks",
+             "PR 1922 merged.\n\nShould I do one of these:\n- delete the hook\n- keep it",
+             "Should I do one of these:\n- merge the lines\n- keep both", False)):
         item = f"## Item 2.1 of 11: a question\n\n{item_line}\n\nRecommendation: Merge.\n\n{ANSWER_LINE}\n"
         case = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + item,
+                    minutes="#next_to_present item 2 of 11")
+        case.reply(reply_line + "\n\n" + closing)
+        if passes:
+            check_silent(case_name, case.run(model="yes"))
+        else:
+            check_blocked(case_name, case.run(), "approval-walk question check")
+    with_openings = (f"## Items 2.1 and 3 of 11: two questions\n\n**Item 2.1:** Should I file the GHI?\n\n"
+                     f"{ANSWER_LINE}\n\n**Item 3:** Should I merge PR 5 now?\n\n{ANSWER_LINE}\n")
+    partly_opened = (f"## Items 3, 2.1 and 2.2 of 11: three questions\n\n**Item 3:** Should I merge PR 5 now?\n\n"
+                     f"Should I file the GHI?\n\n**Item 2.2:** Should I rename the hook?\n\n{ANSWER_LINE}\n")
+    without_openings = f"## Items 2.1 and 3 of 11: two questions\n\nShould I file the GHI?\n\nShould I merge PR 5 now?\n"
+    for case_name, shared, reply_line, passes in (
+            ("under a shared heading, the interruption item's own question passes",
+             with_openings, "Should I file the GHI?", True),
+            ("under a shared heading, the other item's question blocks", with_openings, "Should I merge PR 5 now?", False),
+            ("under a shared heading, an interruption item's question passes after items without their own",
+             partly_opened, "Should I rename the hook?", True),
+            ("under a shared heading whose items have no openings, the interruption item's question blocks",
+             without_openings, "Should I file the GHI?", False)):
+        case = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + shared,
                     minutes="#next_to_present item 2 of 11")
         case.reply(reply_line + "\n\n" + closing)
         if passes:
@@ -470,6 +495,11 @@ def test_every_turn_is_checked_whoever_started_it():
     case.records(USER_PROMPT, text_record("Should I open the pull request?"), USER_PROMPT,
                  text_record("Recorded."))
     check_silent("a question from an earlier turn is not checked again", case.run())
+    unmarked_peer_prompt = {key: value for key, value in PEER_PROMPT.items() if key != "turnOrigin"}
+    case.records(USER_PROMPT, text_record("Should I open the pull request?"), unmarked_peer_prompt,
+                 text_record("Noted.\n\nItem 2 of 10 is waiting for your answer."))
+    check_silent("a question from an earlier turn is not checked again when the newer turn's start has no "
+                 "turnOrigin", case.run())
 
 
 def test_when_the_hook_stays_silent():
@@ -537,6 +567,19 @@ def test_two_waiting_items():
                   case.run(), "`## Item 3.1 of 11: <the point of the question>`, placed right after item 3.",
                   "which then reads `#next_to_present items 2 and 3 of 11`",
                   "`Items 2 and 3 of 11 are waiting for your answer.`")
+
+
+def test_only_a_reminder_of_the_open_walks_waiting_items_is_skipped():
+    case = Case()
+    for case_name, reminder in (
+            ("a reminder with another total is checked", "Item 2 of 200 is waiting for your answer."),
+            ("a reminder of an item that is not waiting is checked", "Item 99 of 10 is waiting for your answer."),
+            ("a reminder whose range runs backwards is checked", "Items 3 to 2 of 10 are waiting for your answer.")):
+        case.reply("PR 1922 merged.\n\n" + reminder)
+        check_blocked(case_name, case.run(model="yes"), f'"{reminder}"')
+    two_waiting = Case(minutes="#next_to_present items 2 and 3 of 10")
+    two_waiting.reply("PR 1922 merged.\n\nItem 2 of 10 is waiting for your answer.")
+    check_silent("a reminder of one of two waiting items is skipped", two_waiting.run(model="yes"))
 
 
 def test_a_fault_exits_1_and_names_it():
