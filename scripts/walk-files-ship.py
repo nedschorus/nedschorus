@@ -139,12 +139,13 @@ asks the agent to run /handoff when the context used plus the tokens the
 session's compactions dropped is at least 20%. The close is recognised from
 the minutes, which the skill closes before it runs this program, so no flag
 is needed; a later run that finds the closed minutes already in the store,
-such as a dispositions update, writes no marker. The marker is written
-whatever the stdout line opens with, because closed minutes that reached the
-store are the close, and a re-run then finds them unchanged. With no session
-id, as in a terminal, nothing is written and stderr says so. A marker that
-cannot be written is a FAILED line on stderr and exit 1, the stdout line
-unchanged.
+such as a dispositions update, writes no marker. Only a run whose closed
+minutes reached the store writes the marker, even when its stdout line opens
+with `REFUSED:` or `FAILED:` because another file did not ship: those minutes
+are the close, and a re-run finds them unchanged. With no session id, as in a
+terminal, nothing is written and stderr says so. A marker that cannot be
+written adds a FAILED line on stderr and makes the exit 1, on a REFUSED run
+too; stdout still holds its one `shipped:` or `REFUSED:` line.
 
 WHAT THIS IS: the THIRD CALLER of nc-systems/cold-read/cold-read-record-ship.py, imported by
 importlib the way scripts/seat-shared-file-ship.py and
@@ -641,7 +642,7 @@ def ship_walk(destination: WalkStoreDestination, name: str,
         print(f"REFUSED: {name} — already in the store with different content and "
               f"not replaced, add-only: {'; '.join(refused)}. The rest: {summary}; "
               f"minutes at {citation}")
-        return EXIT_REFUSED
+        return EXIT_FAILED if marker_failed else EXIT_REFUSED
     print(f"shipped: {name} — {summary}; minutes at {citation}")
     return EXIT_FAILED if marker_failed else EXIT_SHIPPED
 
@@ -658,10 +659,11 @@ def walk_closed_marker_written_when_minutes_close_the_walk(minutes: pathlib.Path
     if not session_id:
         print(f"{PROGRAM}: the walk is closed, but {SESSION_ID_ENVIRONMENT_VARIABLE} is "
               f"not set, so no walk-closed marker was written and the handoff Stop hook "
-              f"will not ask for /handoff at this close.\n"
-              f"If an agent-session ran this command: run /handoff after the closing "
-              f"message when its context used plus the tokens its compactions dropped "
-              f"is at least 20%.", file=sys.stderr)
+              f"will not ask for /handoff at this close. The walk's files are not "
+              f"affected; do not rerun this command.\n"
+              f"If an agent-session ran this command: run /handoff as the last step of "
+              f"this turn, after the walk's closing message.\n"
+              f"If a person ran it in a terminal: nothing more is needed.", file=sys.stderr)
         return True
     path = threshold_hook.handoff_due_at_lower_context_threshold_after_approval_walk_closed_marker_path(
         session_id)
@@ -669,12 +671,12 @@ def walk_closed_marker_written_when_minutes_close_the_walk(minutes: pathlib.Path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"{minutes.name}\n", encoding="utf-8")
     except OSError as error:
-        print(f"{PROGRAM}: FAILED to write the walk-closed marker {path} ({error}); the "
-              f"walk's files shipped, but the handoff Stop hook will not ask for /handoff "
-              f"at this close, so this run exits 1.\n"
-              f"Run /handoff after the closing message when this agent-session's context "
-              f"used plus the tokens its compactions dropped is at least 20%.",
-              file=sys.stderr)
+        print(f"{PROGRAM}: FAILED to write the walk-closed marker {path} ({error}), so "
+              f"the handoff Stop hook will not ask for /handoff at this close. The walk's "
+              f"files shipped as the stdout line says; do not rerun this command. This run "
+              f"exits 1 only to report the marker.\n"
+              f"Run /handoff as the last step of this turn, after the walk's closing "
+              f"message.", file=sys.stderr)
         return False
     return True
 

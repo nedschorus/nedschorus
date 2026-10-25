@@ -901,6 +901,20 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_
           WALK_CLOSED_MARKER.is_file() and "FAILED to write" not in result.stderr,
           f"exit {result.returncode}: {result.stdout}{result.stderr}")
 
+    # A marker failure on a REFUSED run still exits 1, as the docstring says.
+    WALK_CLOSED_MARKER.unlink()
+    shutil.rmtree(handoffs_directory, ignore_errors=True)
+    handoffs_directory.write_text("a file where the directory should be\n", encoding="utf-8")
+    (close_walks / f"{CLOSE_WALK}-minutes.md").write_text(
+        reclosed_minutes + "Closing note, revised a third time.\n", encoding="utf-8")
+    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
+    check("a REFUSED run whose walk-closed marker cannot be written exits 1, keeps "
+          "its one REFUSED: line, and names the marker on stderr",
+          result.returncode == 1 and result.stdout.startswith("REFUSED:")
+          and one_line(result.stdout) and "FAILED to write the walk-closed marker" in result.stderr,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    handoffs_directory.unlink()
+
 print()
 if failures:
     print(f"{len(failures)} case(s) FAILED:")

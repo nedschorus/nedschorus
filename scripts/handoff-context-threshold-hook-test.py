@@ -85,9 +85,9 @@ def is_compacted_handoff_instruction(stderr):
 
 
 WALK_CLOSED_HANDOFF_INSTRUCTION_PATTERN = re.compile(
-    r"An approval-walk has closed, and this session has used \d+% \(\d+% counting the "
-    r"tokens its compactions dropped\) of its context window, which reaches the "
-    r"reincarnation threshold at an approval-walk's close\. Run the /handoff skill now\.")
+    r"An approval-walk has closed, and this agent-session has used \d+% \(\d+% counting "
+    r"the tokens its compactions dropped\) of its context window, at or above the 20% "
+    r"at which an approval-walk's close starts a session-handoff\. Run the /handoff skill now\.")
 
 
 def is_walk_closed_handoff_instruction(stderr):

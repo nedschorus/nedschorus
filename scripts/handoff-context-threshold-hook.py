@@ -85,9 +85,10 @@ SHARE_WITH_COMPACTION_DROPPED = (
 )
 
 WALK_CLOSED_HANDOFF_INSTRUCTION = (
-    "An approval-walk has closed, and this session has used {share} of its "
-    "context window, which reaches the reincarnation threshold at an approval-walk's "
-    "close. Run the /handoff skill now."
+    "An approval-walk has closed, and this agent-session has used {share} of its "
+    "context window, at or above the {walk_closed_threshold:g}% at which an "
+    "approval-walk's close starts a session-handoff. "
+    "Run the /handoff skill now."
 )
 
 HANDOFF_DEFERRED_NOTICE = (
@@ -440,7 +441,10 @@ def request_handoff_when_due(arguments, session_id: str, transcript_path: str,
     except OSError:
         pass
 
-    print(instruction.format(share=share), file=sys.stderr)
+    print(instruction.format(
+        share=share,
+        walk_closed_threshold=arguments.threshold_used_plus_compaction_dropped_percentage_after_approval_walk_closed),
+        file=sys.stderr)
     return 2, False
 
 
