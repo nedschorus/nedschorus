@@ -137,10 +137,12 @@ class Case:
                             "message": {"id": f"message-{index}", "content": content}})
         self.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
 
-    def run(self, stop_hook_active=False, environment_extra=None, stdin_text=None):
+    def run(self, stop_hook_active=False, environment_extra=None, stdin_text=None, last_assistant_message=None):
         payload = {"hook_event_name": "Stop", "session_id": "test-session",
                    "transcript_path": str(self.transcript), "cwd": str(self.checkout),
                    "stop_hook_active": stop_hook_active}
+        if last_assistant_message is not None:
+            payload["last_assistant_message"] = last_assistant_message
         environment = {name: value for name, value in os.environ.items()
                        if name not in ("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
                                        "CLAUDE_CODE_SESSION_ATTENDED")}
@@ -458,6 +460,25 @@ def test_only_a_turn_that_answers_the_user_is_checked():
     check_silent("unusable minutes do not block a turn that does not answer the user", case.run())
     case.transcript.write_text("".join(json.dumps(record) + "\n" for record in (PEER_PROMPT, REPLY_TEXT, USER_PROMPT, REPLY_TEXT)))
     check_blocked("unusable minutes block a turn that answers the user", case.run(), "runs backwards")
+
+
+def test_the_final_message_counts_before_the_transcript_holds_it():
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    progress_line = {"type": "assistant", "message": {"id": "m5", "content": [
+        {"type": "text", "text": "I'm checking the other walk for overlap."}]}}
+    written_so_far = [USER_PROMPT, TOOL_CALL, TOOL_RESULT, USER_ANSWER_WHILE_WORKING, TOOL_CALL, TOOL_RESULT,
+                      progress_line, TOOL_CALL, TOOL_RESULT]
+    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in written_so_far))
+    check_silent("an item shown in a final message the transcript does not yet hold passes",
+                 case.run(last_assistant_message=ITEM_2_REPLY))
+    with case.transcript.open("a") as transcript:
+        transcript.write(json.dumps({"type": "assistant", "message": {"id": "m6", "content": [
+            {"type": "text", "text": ITEM_2_REPLY}]}})[:40])
+    check_silent("an item shown in a final message the transcript holds only part of passes",
+                 case.run(last_assistant_message=ITEM_2_REPLY))
+    check_reminded("a final message that leaves out the item is sent back",
+                   case.run(last_assistant_message="Recorded."))
 
 
 RANGE_WALK_DOCUMENT = """# A walk with ranges
