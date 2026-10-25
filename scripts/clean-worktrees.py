@@ -521,8 +521,7 @@ def main(argv=None):
                    else WHAT_A_STOPPED_INVOCATION_REMOVED_WITHOUT_REMOVE)
         print(f"{STOPPED_LINE_START}{' '.join(str(error).split())}; {removed}\n"
               + next_step_lines.git_failure_next_step_lines(
-                  rerun, "scripts/clean-worktrees.py",
-                  text_the_failure_line_contains=STOPPED_LINE_START.strip(),
+                  rerun, text_the_failure_line_contains=STOPPED_LINE_START.strip(),
                   include_the_misspelt_branch_commit_or_path_line=False),
               file=sys.stderr)
         return 2

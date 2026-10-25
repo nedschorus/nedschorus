@@ -75,7 +75,7 @@ def agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
             f"{which_lines_to_quote_in_the_report}.")
 
 
-def git_failure_next_step_lines(rerun, program, *, include_the_misspelt_branch_commit_or_path_line,
+def git_failure_next_step_lines(rerun, program=None, *, include_the_misspelt_branch_commit_or_path_line,
                                 text_the_failure_line_contains=None, rerun_fails_when=None,
                                 which_lines_to_quote_in_the_report=None, read_by_a_subagent=True,
                                 next_step_to_skip_when_the_rerun_fails_too=None):
@@ -83,8 +83,13 @@ def git_failure_next_step_lines(rerun, program, *, include_the_misspelt_branch_c
 
     Include the misspelt-name line only for a program that takes a branch,
     commit or path on its command line; elsewhere no name of the agent's can
-    be wrong.
+    be wrong. program is the name that line gives the program, so it is
+    required with that line, which raises TypeError without it, and unused
+    otherwise.
     """
+    if include_the_misspelt_branch_commit_or_path_line and program is None:
+        raise TypeError("pass program, the name the misspelt-name line gives the program, "
+                        "with include_the_misspelt_branch_commit_or_path_line=True")
     lines = [f"If git's error names a lock file, such as .git/index.lock, "
              f"{lock_file_named_by_git_error_wait_then_rerun_instruction(f'exactly {rerun}')}."]
     if include_the_misspelt_branch_commit_or_path_line:
