@@ -832,6 +832,23 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_
           and not WALK_CLOSED_MARKER.exists(),
           f"exit {result.returncode}: {result.stdout}{result.stderr}")
 
+    (close_walks / f"{CLOSE_WALK}-dispositions.md").write_text(
+        "# dispositions\n\nFinding 1 fixed.\n", encoding="utf-8")
+    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
+    check("a later ship that replaces the closed walk's dispositions writes no marker",
+          result.returncode == 0 and "dispositions replaced" in result.stdout
+          and not WALK_CLOSED_MARKER.exists(),
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+
+    close_walk_text.write_text(close_walk_text.read_text(encoding="utf-8") + "\nAdded.\n",
+                               encoding="utf-8")
+    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
+    check("a later ship that replaces the closed walk's walk text, only added to, "
+          "writes no marker",
+          result.returncode == 0 and "walk text replaced" in result.stdout
+          and not WALK_CLOSED_MARKER.exists(),
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+
     reopened_minutes = closed_minutes + "\nReopened.\n\n#next_to_present item 3 of 3\n"
     (close_walks / f"{CLOSE_WALK}-minutes.md").write_text(reopened_minutes, encoding="utf-8")
     result = ship(close_destination, str(close_walk_text), extra_env=with_session)
@@ -874,6 +891,14 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_
     check("a REFUSED run that still put closed minutes in the store writes the marker",
           result.returncode == 2 and result.stdout.startswith("REFUSED:")
           and WALK_CLOSED_MARKER.is_file(),
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+
+    WALK_CLOSED_MARKER.unlink()
+    (close_walks / f"{CLOSE_WALK}-minutes.md").write_text(
+        reclosed_minutes + "Closing note, revised again.\n", encoding="utf-8")
+    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
+    check("a close writes the marker when ~/.claude/handoffs already exists",
+          WALK_CLOSED_MARKER.is_file() and "FAILED to write" not in result.stderr,
           f"exit {result.returncode}: {result.stdout}{result.stderr}")
 
 print()
