@@ -14,10 +14,10 @@ Usage:
       --report cold-read-records/foo-2026-01-01/claude-restate-second-strongest-model.md
 
 The cold-read-tier `second-strongest-model` asks for the agent-binary's
-second-strongest model. The cold-read-tier `fast` runs Claude Sonnet at medium,
-the backup nc-systems/cold-read/cold-read-fast-read.py runs when its Gemini
-cold-read-cell fails; medium matches the effort the Gemini cold-read-cell
-reads at.
+second-strongest model. The cold-read-tier `fast` runs Claude Sonnet at medium
+effort, the same effort as the Gemini cold-read-cell.
+nc-systems/cold-read/cold-read-fast-read.py runs this tier as its backup when
+the Gemini cold-read-cell fails.
 
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.

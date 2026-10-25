@@ -11,12 +11,14 @@ nc-systems/cold-read/cold-read-agy-cell.py (user-ruled 2026-09-07 after measurem
 superseding the earlier ruling for low: Gemini 3.8 Flash at medium, about
 100-110 s per document in single runs on a 658-word skill and a 1,967-word walk
 draft, recall 42% against 19% at low on the ghi-write candidate defect list,
-replacing gpt-5.6-terra at low), retries once if that cold-read-cell fails, and,
-when it fails again, runs the same cell once on Claude Sonnet at medium, the
-claude cold-read-cell's fast cold-read-tier, through
-nc-systems/cold-read/cold-read-claude-cell.py, the Sonnet backup. It then prints exactly one line on stdout:
-the report's absolute path on success, or a line opening `FAILED`, naming the
-Gemini cell's cause and the Sonnet backup's, when both failed. Exit 0 on success, 1 on failure, 64 when
+replacing gpt-5.6-terra at low), and retries once if that cold-read-cell fails.
+When the Gemini cell has failed for good -- twice, or once with a launcher
+refusal or Gemini's spending cap, which get no retry -- it runs the same cell
+once on Claude Sonnet at medium, the claude cold-read-cell's fast
+cold-read-tier, through nc-systems/cold-read/cold-read-claude-cell.py, the
+Sonnet backup. It then prints exactly one line on stdout:
+the report's absolute path on success, or, when both the Gemini cell and the
+Sonnet backup failed, a line opening `FAILED` that names both causes. Exit 0 on success, 1 on failure, 64 when
 the invocation itself was wrong (a --target that is not a file) and nothing
 was launched. When the cold-read-target belongs to a class the
 /cold-read skill's step 2 sends to the cold-read-full-run -- CLAUDE.md, a
@@ -126,23 +128,24 @@ now stands, as the cold-read-grid asks for the same event.
 ONE RETRY, AND WHY NOT MORE. The cold-read-fast-read is a walk's instrument,
 and the walk is waiting on it: a Gemini cold-read-cell that fails once -- a
 transient CLI error, a model that neither wrote the file nor answered in chat
--- is worth one more try. Two failures are not retried again. Two kinds of
-failure get no retry at all, because a retry would fail the same way: a
+-- is worth one more try. A cell that fails a second time is not retried
+again. Two kinds of failure get no retry at all, because a retry would fail the same way: a
 refusal from the agy launcher (exit 64, a bad invocation, or no sandbox on
 this machine), and Gemini's monthly spending cap, which Gemini reports as
 `Error 429, Message: Your project has exceeded its monthly spending cap` and
 which lifts only when the user raises the cap at https://ai.studio/spend.
 
-THE SONNET BACKUP. After the Gemini cold-read-cell has failed for any of
-these reasons, the same fast-clarify cell, with the same embedded prompt and
+THE SONNET BACKUP. After the Gemini cold-read-cell has failed for good --
+twice, or once with a refusal or the spending cap -- the same fast-clarify cell, with the same embedded prompt and
 the same marked copy, runs once through the claude launcher, which pins the
 fast cold-read-tier to claude-sonnet-5-5 at medium. One line on stderr says
 that the backup runs and why, naming the Gemini cell's cause. When the
 backup writes the report, a `<!-- #cold_read_fast_read_sonnet_backup_ran
-... -->` line after the provenance stamp says the same, and the stamp itself
+... -->` line after the provenance stamp says that the Gemini cell failed,
+gives its cause, and says that Sonnet read the document instead; the stamp itself
 names runtime=claude and the model, so a reader of the report knows which
 model read the document. The backup is not retried: a walk waiting on a
-read that has failed twice on Gemini is better served by a FAILED line it
+read that Gemini has already failed is better served by a FAILED line it
 can act on.
 """
 
