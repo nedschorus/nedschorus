@@ -384,72 +384,56 @@ def test_an_empty_recommendation_line_is_no_recommendation():
           and not any("item 8 of 9 (" in line for line in lines), f"lines {lines!r}")
 
 
-def blocked_reason(result):
-    """The block's reason when the hook blocked the prompt with exit 0, or None."""
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
-    output = json.loads(result.stdout)
-    return output["reason"] if set(output) == {"decision", "reason"} and output["decision"] == "block" else None
+def not_blocked(result):
+    """Whether the hook exited 0 with output that holds no "decision" key, so it did not block the prompt."""
+    return (result.returncode == 0 and bool(result.stdout.strip())
+            and "decision" not in json.loads(result.stdout) and result.stderr == "")
 
 
-ITEM_4_SECTION = """## Item 4 of 9: a filter
-
-A filter would hide old rows. The strongest case against: old rows confuse readers.
-
-**Recommendation: leave the filter out.**"""
+def r_line(word, item):
+    return (f"{word} asks to see {item} again: show it in full, heading included, word for word as the "
+            "walk-document has it, and wait for his answer.")
 
 
-def test_r_on_an_open_walk_is_blocked_and_shows_the_waiting_item_as_written():
+def numbered_r_line(number, item):
+    return (f"\"{number} R\" asks to see {item} again: show it in full, heading included, word for word as the "
+            "walk-document has it.")
+
+
+def test_r_on_an_open_walk_goes_to_the_agent_and_does_not_block():
     case = Case(next_to_present="item 4 of 9")
     before = (case.walk / f"{WALK_NAME}-minutes.md").read_text()
-    for prompt in ("r", "R.", "repeat", "Repeat"):
+    for prompt, word in (("r", "R"), ("R.", "R"), ("repeat", "Repeat"), ("Repeat", "Repeat")):
         result = case.run(prompt)
-        check(f"{prompt!r} blocks the prompt with the waiting item's section, word for word",
-              blocked_reason(result) == ITEM_4_SECTION and result.stderr == "",
+        lines = case.lines(prompt)
+        check(f"{prompt!r} gives the agent additionalContext telling it to show the waiting item, and no decision",
+              not_blocked(result) and lines is not None
+              and lines[0] == f"The user answered \"{prompt.rstrip('.')}\" to item 4 of 9 of approval-walk {WALK_NAME}."
+              and lines[1] == r_line(word, "item 4 of 9") and lines[-1] == ONE_QUESTION_LINE
+              and not any("leave the filter out" in line or "old rows" in line for line in lines),
               f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
     check("R records nothing in the minutes", (case.walk / f"{WALK_NAME}-minutes.md").read_text() == before)
-    reason = blocked_reason(Case(next_to_present="items 5 and 6 of 9").run("r"))
-    check("R on items shown together shows their shared heading's whole unit",
-          reason is not None and reason.startswith("## Items 5 and 6 of 9: two small corrections")
-          and reason.endswith("Recommendation: Y."), repr(reason))
-    reason = blocked_reason(Case(next_to_present="items 3 and 4 of 9").run("r"))
-    check("R on waiting items under two headings shows both sections, in the walk-document's order",
-          reason is not None and reason.startswith("## Item 3 of 9: the opening sentence")
-          and reason.endswith(ITEM_4_SECTION), repr(reason))
+    lines = Case(next_to_present="items 5 and 6 of 9").lines("r")
+    check("R on items shown together tells the agent to show them all",
+          lines is not None and lines[1] == r_line("R", "items 5 and 6 of 9"), f"lines {lines!r}")
     case = Case(next_to_present="item 3 of 9")
     case.minutes("#next_to_present item 3 of 9\n\n#next_to_present none, closed")
     lines = case.lines("r")
-    check("R with only a closed approval-walk is not blocked and carries no note",
+    check("R with only a closed approval-walk asks for the last question again",
           lines is not None and lines[0] == "The user answered \"r\"; no approval-walk is open."
-          and not any(line.startswith("The hook could not show") for line in lines), f"lines {lines!r}")
+          and lines[1].startswith(NO_WALK_MEANINGS["R"]), f"lines {lines!r}")
     lines = Case(next_to_present="item 4 of 9").lines("r but shorter")
-    check("R with more text after it is not blocked: it goes to the agent as a rider",
+    check("R with more text after it goes to the agent as a rider",
           lines is not None and lines[1] == "The user added to the answer: \"but shorter\".", f"lines {lines!r}")
 
 
-def test_r_whose_item_cannot_be_read_goes_to_the_agent_with_the_reason():
-    shown_by_agent = "R asks to see "
-    for case, item, problem in (
-            (Case(next_to_present="item 7 of 9"), "item 7 of 9",
-             "its walk-document has no heading `Item 7 of 9`, which the minutes name."),
-            (Case(next_to_present="item 4 of 9", document=None), "item 4 of 9", "its walk-document "),
-            (Case(next_to_present="paused until rewritten"), "the waiting item",
-             "its minutes' last `#next_to_present` line, `paused until rewritten`, does not open with an item")):
+def test_r_whose_item_cannot_be_read_still_goes_to_the_agent():
+    for case, item in ((Case(next_to_present="item 7 of 9"), "item 7 of 9"),
+                       (Case(next_to_present="item 4 of 9", document=None), "item 4 of 9")):
         result = case.run("r")
         lines = case.lines("r")
-        check(f"R whose waiting item cannot be read ({problem[:40]}...) is not blocked, and says why",
-              blocked_reason(result) is None and lines is not None
-              and lines[1].startswith(f"The hook could not show {item} to the user itself: {problem}")
-              and lines[2] == "Show it to him as the lines for R below say; if you cannot find it either, tell him what the line above says, and ask him how to go on."
-              and any(line.startswith(shown_by_agent) for line in lines), f"lines {lines!r}")
-    case = Case(next_to_present="item 4 of 9")
-    (case.walk / f"{WALK_NAME}-minutes.md").write_bytes(b"#next_to_present item 4 of 9 \xff\xfe\n")
-    lines = case.lines("r")
-    check("R with minutes that cannot be read is not blocked, and names the failure",
-          lines is not None
-          and "The hook could not show the waiting item to the user itself: reading the walk files failed: "
-              "UnicodeDecodeError" in "\n".join(lines)
-          and "Show it to him as the lines for R below say; if you cannot find it either, tell him what the line above says, and ask him how to go on." in lines, f"lines {lines!r}")
+        check(f"R on {item}, whose walk-document holds no such item or does not exist, tells the agent to show it",
+              not_blocked(result) and lines is not None and lines[1] == r_line("R", item), f"lines {lines!r}")
 
 
 def test_numbered_answers():
@@ -500,18 +484,22 @@ Recommendation: show it too."""
 NUMBERED_R_DOCUMENT = WALK_DOCUMENT + "\n" + ITEM_37_4_SECTION + "\n\n" + ITEM_38_SECTION + "\n"
 
 
-def test_numbered_r_alone_is_blocked_and_shows_the_items_it_names_as_written():
+def test_numbered_r_alone_tells_the_agent_to_show_the_items_it_names_and_records_nothing():
     case = Case(next_to_present="item 4 of 9", document=NUMBERED_R_DOCUMENT)
     before = (case.walk / f"{WALK_NAME}-minutes.md").read_text()
     for prompt in ("37.4 r", "37.4 R.", "item 37.4 - r", "37.4r"):
         result = case.run(prompt)
-        check(f"{prompt!r} blocks the prompt with item 37.4's section, word for word",
-              blocked_reason(result) == ITEM_37_4_SECTION and result.stderr == "",
-              f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
-    result = case.run("38 r, 37.4 r")
-    check("'38 r, 37.4 r' blocks with both sections, in the walk-document's order",
-          blocked_reason(result) == ITEM_37_4_SECTION + "\n\n" + ITEM_38_SECTION,
-          f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+        lines = case.lines(prompt)
+        check(f"{prompt!r} tells the agent to show item 37.4, then name the waiting item, and nothing else",
+              not_blocked(result) and lines is not None
+              and lines[1:] == [numbered_r_line("37.4", "item 37.4 of 9"),
+                                "Then end your message naming the item waiting for his answer, item 4 of 9.",
+                                ONE_QUESTION_LINE], f"lines {lines!r}")
+    lines = case.lines("38 r, 37.4 r")
+    check("'38 r, 37.4 r' tells the agent to show both items, and gives no line for recording an answer",
+          lines is not None
+          and lines[1:3] == [numbered_r_line("38", "item 38 of 9"), numbered_r_line("37.4", "item 37.4 of 9")]
+          and not any("check step" in line or "`#next_to_present`" in line for line in lines), f"lines {lines!r}")
     check("numbered R records nothing in the minutes", (case.walk / f"{WALK_NAME}-minutes.md").read_text() == before)
 
 
@@ -523,12 +511,10 @@ Recommendation: show it."""
 def test_repeat_and_an_item_number_is_read_as_that_number_and_r():
     case = Case(next_to_present="item 4 of 9",
                 document=NUMBERED_R_DOCUMENT + "\n" + ITEM_37_53_SECTION + "\n")
-    for prompt, section in (("repeat 37.4", ITEM_37_4_SECTION), ("Repeat 37.53.", ITEM_37_53_SECTION),
-                            ("REPEAT item 37.4", ITEM_37_4_SECTION)):
-        result = case.run(prompt)
-        check(f"{prompt!r} blocks the prompt with that item's section, not the waiting item's",
-              blocked_reason(result) == section and result.stderr == "",
-              f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+    for prompt, number in (("repeat 37.4", "37.4"), ("Repeat 37.53.", "37.53"), ("REPEAT item 37.4", "37.4")):
+        lines = case.lines(prompt)
+        check(f"{prompt!r} tells the agent to show that item, not the waiting item",
+              lines is not None and lines[1] == numbered_r_line(number, f"item {number} of 9"), f"lines {lines!r}")
     result = case.run("repeat 99")
     check("'repeat 99' with no item 99 prints nothing",
           result.returncode == 0 and result.stdout == "" and result.stderr == "",
@@ -555,10 +541,10 @@ def test_an_answer_word_and_a_list_of_item_numbers_answers_each_when_each_names_
               lines is not None
               and lines[1] == "The answer gives each item it names its own letter: item 5 of 9: A, item 6 of 9: A."
               and not any(line.startswith("The user added to the answer") for line in lines), f"lines {lines!r}")
-    result = case.run("repeat 5 6")
-    check("'repeat 5 6' blocks with the unit holding items 5 and 6",
-          (blocked_reason(result) or "").startswith("## Items 5 and 6 of 9: two small corrections"),
-          f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+    lines = case.lines("repeat 5 6")
+    check("'repeat 5 6' tells the agent to show items 5 and 6",
+          lines is not None and lines[1:3] == [numbered_r_line("5", "item 5 of 9"), numbered_r_line("6", "item 6 of 9")],
+          f"lines {lines!r}")
     for prompt in ("approve 5 and 99", "repeat 5 99", "approve 5 and 6 then more", "a, 5", "approve item 5 too",
                    "defer, 5 and 6"):
         result = case.run(prompt)
@@ -581,19 +567,6 @@ def test_an_answer_word_and_a_list_of_item_numbers_answers_each_when_each_names_
           lines is not None and lines[1] == "The user added to the answer: \"items are fine\".", f"lines {lines!r}")
 
 
-def test_numbered_r_alone_whose_section_cannot_be_read_goes_to_the_agent_with_the_reason():
-    case = Case(next_to_present="item 4 of 9", document=NUMBERED_R_DOCUMENT + "\n" + ITEM_37_4_SECTION + "\n")
-    lines = case.lines("37.4 r")
-    check("'37.4 r' on an item with two headings is not blocked, and says why",
-          lines is not None
-          and lines[1] == ("The hook could not show item 37.4 to the user itself: its walk-document has more than "
-                           "one heading for `Item 37.4 of 9`, so the hook cannot tell which one the minutes name.")
-          and "\"37.4 R\" asks to see item 37.4 of 9 again: show it in full, word for word as the "
-              "walk-document has it." in lines
-          and "Then end your message naming the item waiting for his answer, item 4 of 9." in lines,
-          f"lines {lines!r}")
-
-
 def test_numbered_r_on_a_number_no_item_has_passes_the_prompt_through():
     for case, prompt in ((Case(next_to_present="item 4 of 9"), "37.4 r"),
                          (Case(next_to_present="items 5 and 6 of 9"), "5 a, 7 r"),
@@ -610,8 +583,7 @@ def test_numbered_r_beside_other_numbered_answers():
           lines is not None
           and lines[1] == "The answer gives each item it names its own letter: item 5 of 9: A, item 6 of 9: R."
           and "R shows the item again" in lines[2]
-          and "\"6 R\" asks to see item 6 of 9 again: show it in full, word for word as the walk-document has it."
-              in lines
+          and numbered_r_line("6", "item 6 of 9") in lines
           and not any("item 5 of 9 again" in line for line in lines)
           and "Then end your message naming the item waiting for his answer, item 6 of 9." in lines,
           f"lines {lines!r}")
@@ -673,13 +645,13 @@ def test_a_numbered_letter_other_than_r_for_an_item_not_waiting_is_refused():
           f"lines {lines!r}")
 
 
-def test_numbered_r_whose_walk_document_or_marker_cannot_be_read_goes_to_the_agent_with_the_reason():
-    for case, problem in ((Case(next_to_present="item 4 of 9", document=None), "walk-document "),
-                          (Case(next_to_present="paused until rewritten"), "`paused until rewritten`")):
+def test_numbered_r_whose_walk_document_or_marker_cannot_be_read_still_goes_to_the_agent():
+    for case, problem in ((Case(next_to_present="item 4 of 9", document=None), "no walk-document"),
+                          (Case(next_to_present="paused until rewritten"), "a marker naming no item")):
         lines = case.lines("4 r")
-        check(f"'4 r' when {problem!r} cannot be read expands and says why, instead of printing nothing",
-              lines is not None and any(line.startswith("The hook could not show ") and problem in line
-                                        for line in lines), f"lines {lines!r}")
+        check(f"'4 r' with {problem} tells the agent to show item 4, instead of printing nothing",
+              lines is not None and any(line.startswith("\"4 R\" asks to see item 4") for line in lines),
+              f"lines {lines!r}")
 
 
 def test_numbered_r_reads_the_walk_in_the_payloads_cwd_not_the_hooks_own():
@@ -688,8 +660,10 @@ def test_numbered_r_reads_the_walk_in_the_payloads_cwd_not_the_hooks_own():
                "cwd": str(case.checkout), "prompt": "37.4 r"}
     result = subprocess.run([sys.executable, str(HOOK_SCRIPT)], input=json.dumps(payload),
                             capture_output=True, text=True, cwd=SUITE_ROOT)
+    context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"] if not_blocked(result) else ""
     check("'37.4 r' run from outside the checkout still finds item 37.4 in the payload's cwd",
-          result.returncode == 0 and blocked_reason(result) == ITEM_37_4_SECTION,
+          context.startswith(f"The user answered \"37.4 r\" to item 4 of 9 of approval-walk {WALK_NAME}.\n"
+                             + numbered_r_line("37.4", "item 37.4 of 9")),
           f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
 
 
@@ -700,8 +674,7 @@ def test_numbered_r_on_unreadable_minutes_expands_and_says_so():
     check("'6 r' on minutes that cannot be read names the failure and still says to show item 6",
           lines is not None
           and "reading the approval-walk state failed: UnicodeDecodeError" in lines[0]
-          and "\"6 R\" asks to see item 6 again: show it in full, word for word as the walk-document has it."
-              in lines, f"lines {lines!r}")
+          and numbered_r_line("6", "item 6") in lines, f"lines {lines!r}")
 
 
 def test_all_a_and_all_ao():
