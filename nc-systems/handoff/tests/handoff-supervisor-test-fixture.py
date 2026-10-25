@@ -16,6 +16,7 @@ scripts/run-all-test-suites.py does not run it as a suite of its own.
 """
 
 import atexit
+import builtins
 import contextlib
 import importlib.util
 import os
@@ -180,8 +181,17 @@ class StubLaunchedSession:
 def supervisor_names_replaced(**replacements):
     """Replace module-level names the supervisor looks up when it runs — its
     functions, and `input`, which it otherwise finds in builtins — and a
-    terminal on stdin when `stdin_isatty` is given; everything is put back."""
+    terminal on stdin when `stdin_isatty` is given; everything is put back.
+
+    Raises NameError, replacing nothing, for a name that is neither the
+    supervisor's own nor a builtin: a stub under a name the supervisor no
+    longer defines would replace nothing, and the real code would run."""
     stdin_isatty = replacements.pop("stdin_isatty", None)
+    unknown = sorted(name for name in replacements
+                     if name not in supervisor.__dict__ and not hasattr(builtins, name))
+    if unknown:
+        raise NameError(f"supervisor_names_replaced: {', '.join(unknown)} not defined in "
+                        f"{SCRIPT_PATH} nor a builtin, so a stub under that name replaces nothing")
     missing = object()
     saved = {name: supervisor.__dict__.get(name, missing) for name in replacements}
     saved_stdin = sys.stdin
