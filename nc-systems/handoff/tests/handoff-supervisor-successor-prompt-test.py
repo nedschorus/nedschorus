@@ -496,20 +496,40 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
           "the older it is" not in prompt and "re-verify against the live state" not in prompt,
           prompt[:500])
     check("the composition-time elapsed phrase is gone", "minutes ago" not in prompt, prompt)
-    # The open-walks duty (user-ruled 2026-08-30, second round), immediately
-    # after the wariness sentence. Exact text; absent from the pre-revision
-    # supervisor, so this pin fails there.
-    check("ignition carries the open-walks duty, exactly",
-          "in proportion to that gap. This handoff should list what items or "
-          "walks are open. Display them to the user, and continue them when "
-          "you get a chance." in prompt,
-          prompt[:600])
+    # The one-approval-walk instruction, immediately after the wariness sentence.
+    check("ignition carries the one-approval-walk instruction right after the wariness sentence",
+          "in proportion to that gap. "
+          + supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION in prompt,
+          prompt[:1500])
+    check("ignition no longer tells the successor to display open walks and continue them later",
+          "Display them to the user" not in prompt, prompt[:1500])
+    # The instruction word for word, held as its constant, so no change of
+    # fixture can quietly take the wording's guard away.
+    check("the one-approval-walk instruction is word for word what the user approved",
+          supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION == (
+              "Bring the user everything that needs the user in one approval-walk, by "
+              "/walk-me-through's steps, opened as your first action: the unanswered "
+              "items of any approval-walk in progress, open questions, concerns, "
+              "suggestions, and the loose ends the next step lists, when it lists "
+              "any. Put first the next step's own item, when it needs the user; then "
+              "items that block work, then items that change direction, then the "
+              "rest. Close each approval-walk in progress with a "
+              "line in its walk-minutes naming the new approval-walk, and give each "
+              "item you carry into it a link to its original walk-document. When the "
+              "next step is to present an item of an approval-walk in progress, this "
+              "instruction overrides it: carry that item into the new approval-walk "
+              "instead of presenting it in the old one. Do the work that does not "
+              "need the user without asking the user: your own yourself, and another "
+              "agent-seat's by sending it to that agent-seat with SendMessage. Keep working on the previous session's work while the "
+              "user answers. When nothing needs the user, open no approval-walk and "
+              "only keep working."),
+          repr(supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION))
     # The pointer at the supervisor itself (user-ruled 2026-08-30, second
-    # round), after the open-walks duty. Exact text; absent before.
+    # round), after the one-approval-walk instruction. Exact text; absent before.
     check("ignition points at the supervisor that composed it, exactly",
           nothing_is_appended_to(
               prompt,
-              "continue them when you get a chance. This session was launched by "
+              "open no approval-walk and only keep working. This session was launched by "
               "nc-systems/handoff/handoff-supervisor.py, which watches this seat and composed "
               "this prompt — read it if you need to investigate the handoff "
               "mechanism.",
@@ -601,7 +621,9 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
           boot_recovery_prompt == (
               "finish the supervisor\n\n(Recovered at supervisor boot: the previous "
               "session's conversation-tail is unavailable; this next-step and the "
-              "repository are your whole context.) branch sync: fixture-branch is 3 "
+              "repository are your whole context.) "
+              + supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION
+              + " branch sync: fixture-branch is 3 "
               "commit(s) behind main — If this branch has never been pushed, rebase "
               "it onto origin/main before your first substantive action and rerun the "
               "tests for what you touched. If it is pushed, leave it as it is, and "
@@ -2263,7 +2285,9 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
           boot_recovery_prompt == (
               "finish the supervisor\n\n(Recovered at supervisor boot: the previous "
               "session's conversation-tail is unavailable; this next-step and the "
-              "repository are your whole context.) " + branch_state_line + " " + line),
+              "repository are your whole context.) "
+              + supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION + " "
+              + branch_state_line + " " + line),
           repr(boot_recovery_prompt))
 
     # End to end: a supervisor starting a fresh agent-session for agent-instructions-editor, the one
@@ -2780,7 +2804,8 @@ def run_memory_review_due_prompt_cases(workspace: Path):
           "composes", plan_prompt == prompt and prompt != "", repr(plan_prompt))
     recovery_note = ("\n\n(Recovered at supervisor boot: the previous session's "
                      "conversation-tail is unavailable; this next-step and the repository "
-                     "are your whole context.) ")
+                     "are your whole context.) "
+                     + supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION + " ")
     try:
         boot_recovery_prompt = supervisor.BootRecoveryIgnitionPlan("finish the review").compose(
             branch_sync_report, (overview_line,), (memory_line,))
