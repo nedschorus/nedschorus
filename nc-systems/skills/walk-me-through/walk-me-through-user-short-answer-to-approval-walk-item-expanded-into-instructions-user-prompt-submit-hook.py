@@ -13,10 +13,12 @@ letters of AO, O2 and O3 (`A-O`, `a - o`, `O-2`):
               approved, approve as obvious, disapprove, disapproved, defer,
               later or repeat.
   ALL         `all a`, `a to all`, `all ao`, `ao to all`.
-  NUMBERED    one or more pairs of an item number and A, AO, D, Z or R:
+  NUMBERED    one or more pairs of a number and A, AO, D, Z or R:
               `8a`, `6 - a`, `1 a 2 d`, `5 d, 6 z`, `item 3 ao`, `37.4 r`; or a
-              word, then item numbers: `repeat 37.4` reads as `37.4 r`,
-              `approve item 5` as `5 a`, `approve 5 and 6` as `5 a, 6 a`.
+              word, then numbers: `repeat 37.4` reads as `37.4 r`,
+              `approve item 5` as `5 a`, `approve 5 and 6` as `5 a, 6 a`. The
+              numbers are part numbers when PARTS OF THE WAITING ITEM, below,
+              says so, and item numbers otherwise.
   CONDITION   an answer, then `if` or `after` and a condition: `a if ...`.
   RIDER       an answer, then more text: a letter needs a comma, semicolon,
               colon, dash or period before the text, or the words but, and,
@@ -59,6 +61,26 @@ of the numbers after a word, as in `approve 5 and 6`, the hook prints
 nothing, so the prompt reaches the agent as typed; when the walk-document or
 the `#next_to_present` line cannot be read, the hook still gives the text, and
 the agent looks for the item itself.
+
+PARTS OF THE WAITING ITEM. The walk-me-through skill lets one item hold up to
+five parts of a single fix, numbered 1 to 5, and answered part by part as in
+`1 a 2 d`. The hook reads a part's number from a line in the item's part of
+the walk-document, outside code, that starts at the line's first character,
+after any heading marks and `**` or `__`, with `Part N`, or with N then `.` or
+`)` and a space, emphasis or the line's end: `1. ...`, `**1.** ...`,
+`**Part 2:** ...`, `### Part 3`. The item holds parts when those numbers run
+1 to K, K from 2 to 5. When exactly one item is waiting, it holds parts, and
+every number of a numbered answer is one of its part numbers, the answer
+answers those parts, not items. The text names each part's letter; R on a part
+asks to see the item again. CHECK_PROGRAM records one answer for the whole
+item and has no flag for a part's answer, so: when every part gets the same
+letter, the text gives that letter's lines for the whole item; when the
+letters differ, it says check cannot record them and tells the agent to record
+nothing and ask the user to answer the item with one letter; when a part is
+left unanswered, the item stays open and the agent records nothing yet; when
+a part gets more than one letter, the answer is refused whole. Every other
+numbered answer, one to an item with no parts included, reads its numbers as
+item numbers.
 
 A NUMBERED ANSWER THAT GIVES A, AO, D OR Z TO AN ITEM NOT WAITING, one the
 `#next_to_present` line does not name, or more than one of those letters to
@@ -119,6 +141,10 @@ LETTER_RIDER = re.compile(
     rf"{NOT_AN_ITEM_NUMBER}(?P<rest>\S.*)$", re.I | re.S)
 WORD_RIDER = re.compile(rf"^(?P<answer>{WORD})\b[\s,;:.\-]+{NOT_AN_ITEM_NUMBER}(?P<rest>\S.*)$", re.I | re.S)
 RECOMMENDATION = re.compile(r"Recommendation:(.*)$", re.I | re.M)
+PART_START = re.compile(
+    r"^(?:#{1,6}\s+)?(?:\*\*|__)?(?:part\s+(?P<labelled>\d+)\b|(?P<listed>\d+)(?:\*\*|__)?[.)](?=[\s*_]|$))",
+    re.I)
+MOST_PARTS = 5
 NO_RECOMMENDATION_PROBLEM = "no line starting \"Recommendation:\""
 PARTS_NOT_TOLD_APART_PROBLEM = (
     "it is one of the items under the walk-document's heading `{heading}`, which holds more than one line "
@@ -255,8 +281,8 @@ NUMBERED_R_LINES = (
 ONE_ITEM_AT_A_TIME_LINE = (
     "Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add "
     "the line `{one_item_line}` for it, with its number, as the minutes' last line, because the walk-me-through "
-    "skill has that line name one item, or one part such as `item 4.1 of 9`. Present the item close names only "
-    "after the last answer is recorded.")
+    "skill has that line name one item, or one part such as `item 4.1 of 9`. Present the item that `close` names "
+    "only after the last answer is recorded.")
 ALL_LINES = {
     "A": (("\"{answer}\" means A to every item now waiting, {item}: the user agrees with each one's "
            "recommendation. Do what each recommends. For each item, whether or not it makes a change, run "
@@ -295,6 +321,35 @@ NUMBERED_REFUSED_LINES = (
 )
 NUMBERED_NOT_WAITING_PROBLEM = "gives a letter to {items}, which {verb} not waiting for an answer"
 NUMBERED_REPEATED_PROBLEM = "gives {items} more than one letter"
+PARTS_READ_LINE = (
+    "The numbers are the part numbers of {item}, which holds parts {parts} of one fix, as the walk-me-through "
+    "skill lets an item do; the answer gives each part it names its own letter: {pairs}.")
+PARTS_REPEATED_LINES = (
+    "The answer gives {parts} of {item} more than one letter.",
+    "Record nothing and act on none of the answer, because the letters for that part contradict each other.",
+    "Ask the user to answer every part of {item} again, giving each part's number once with its letter, as in "
+    "`1 a 2 d`.",
+)
+PART_R_LINE = (
+    "R on a part asks to see {item} again: show it in full, heading included, word for word as the walk-document "
+    "has it.")
+PARTS_SAME_LETTER_LINE = (
+    "Every part has the answer {letter}, so the answer is {letter} to the whole of {item}, and means what the "
+    "lines below say.")
+PARTS_NOT_RECORDABLE_LINES = (
+    "The check step cannot record this answer: `{program} check` records one answer for the whole item, and "
+    "none of the flags its --help lists gives a part its own answer.",
+    "Record nothing and act on none of the parts, because a check run would record, for the whole of {item}, an "
+    "answer the user did not give.",
+    "Tell the user that the walk-me-through check program cannot yet record a different answer for each part of "
+    "an item, and ask him to answer {item} with one letter, or to say how else to go on.",
+)
+PARTS_UNANSWERED_LINES = (
+    "The answer does not name {unanswered}, and the walk-me-through skill keeps an item open while a part is "
+    "unanswered, so record nothing in the minutes and act on none of the parts of {item}.",
+    "Ask the user to answer every part of {item} in one reply, the parts he has answered included, giving each "
+    "part's number with its letter, as in `1 a 2 d`, because this hook reads each reply on its own, so a reply "
+    "that names only the parts still missing would leave the others unanswered.")
 NUMBERED_UNNAMED_LINE = "The answer does not name {unnamed}, so it stays open; say so in your reply."
 NUMBERED_ALL_NAMED_LINE = "The answer names every item now waiting."
 CONDITION_LINES = (
@@ -363,12 +418,14 @@ def parsed_answer(prompt):
 class WalkState:
     """The open approval-walk as the hook read it."""
 
-    def __init__(self, name, item, numbers, total, recommendations, problem, recommendation_problems=None):
+    def __init__(self, name, item, numbers, total, recommendations, problem, recommendation_problems=None,
+                 parts=None):
         self.name, self.item, self.numbers, self.total = name, item, numbers, total
         self.recommendations = recommendations  # item number -> recommendation text or None
         self.problem = problem  # why recommendations could not be read, or None
         # item number -> why its recommendation is None, when the reason is not NO_RECOMMENDATION_PROBLEM
         self.recommendation_problems = recommendation_problems or {}
+        self.parts = parts or {}  # item number -> its part numbers, for the items that hold parts
 
 
 def read_walk(cwd):
@@ -400,10 +457,10 @@ def read_walk(cwd):
     if total is None:
         totals = {span[1] for span in spans}
         total = totals.pop() if len(totals) == 1 else None
-    recommendations, problems = recommendations_in(
+    recommendations, problems, parts = recommendations_in(
         walk_finder.prose_lines(text, parser, tokens), walk_finder.item_opening_lines(text, parser, tokens),
         spans, total, walk_finder)
-    return WalkState(name, count[0], numbers, total, recommendations, None, problems)
+    return WalkState(name, count[0], numbers, total, recommendations, None, problems, parts)
 
 
 def recommendation_text(part):
@@ -413,15 +470,22 @@ def recommendation_text(part):
     return found[-1] if found and found[-1] else None
 
 
+def part_numbers(part):
+    """The part numbers 1 to K that the lines number, as the docstring's PARTS OF THE WAITING ITEM says, or
+    an empty list when they number no parts."""
+    found = {int(match["labelled"] or match["listed"]) for match in map(PART_START.match, part) if match}
+    return sorted(found) if 1 < len(found) <= MOST_PARTS and found == set(range(1, len(found) + 1)) else []
+
+
 def recommendations_in(lines, openings, spans, total, walk_finder):
     """Return ({item number: recommendation text or None} for every item of the walk-document, {item number:
-    why its recommendation is None} for the items whose reason is not NO_RECOMMENDATION_PROBLEM), from its
-    prose_lines and item_opening_lines.
+    why its recommendation is None} for the items whose reason is not NO_RECOMMENDATION_PROBLEM, {item number:
+    its part numbers} for the items that hold parts), from its prose_lines and item_opening_lines.
 
     Under a heading that names several items and holds more than one recommendation, every item's
     recommendation is None when any of them has no opening, since an opening missed leaves the part
     before it running on into the next item's recommendation."""
-    found, problems = {}, {}
+    found, problems, parts = {}, {}, {}
     for numbers, unit_total, _, first, end in spans:
         if total is not None and unit_total != total:
             continue
@@ -438,8 +502,12 @@ def recommendations_in(lines, openings, spans, total, walk_finder):
                     found[number], problems[number] = None, problem
                 continue
         for number in numbers:
-            found[number] = recommendation_text(lines[ranges[number][0]:ranges[number][1]])
-    return found, problems
+            part = lines[ranges[number][0]:ranges[number][1]]
+            found[number] = recommendation_text(part)
+            numbered = part_numbers(part)
+            if numbered:
+                parts[number] = numbered
+    return found, problems, parts
 
 
 def item_name(number, walk):
@@ -459,6 +527,43 @@ def recommendation_unknown_lines(answer_letter, numbers, walk):
             for number in numbers if walk.recommendations.get(number) is None]
 
 
+def answered_parts(answer, walk):
+    """The waiting item's part numbers when the numbered answer answers its parts, or None."""
+    if answer["form"] != "numbered" or walk is None or len(walk.numbers) != 1:
+        return None
+    parts = walk.parts.get(walk.numbers[0])
+    if parts and all(number.isdigit() and int(number) in parts for number, _ in answer["pairs"]):
+        return parts
+    return None
+
+
+def parts_lines(answer, parts, walk):
+    """The lines for a numbered answer that answers the parts of the one waiting item."""
+    def named(numbers):
+        return ", ".join(f"part {number}" for number in numbers)
+    item = walk.item
+    deciding = [(int(number), letter) for number, letter in answer["pairs"] if letter != "R"]
+    numbers = [number for number, _ in deciding]
+    repeated = [number for number in dict.fromkeys(numbers) if numbers.count(number) > 1]
+    if repeated:
+        return [line.format(parts=named(repeated), item=item) for line in PARTS_REPEATED_LINES]
+    pairs = ", ".join(f"part {int(number)}: {letter}" for number, letter in answer["pairs"])
+    lines = [PARTS_READ_LINE.format(item=item, parts=f"1 to {parts[-1]}", pairs=pairs)]
+    if len(deciding) < len(answer["pairs"]):
+        lines.append(PART_R_LINE.format(item=item))
+    letters = {letter for _, letter in deciding}
+    unanswered = [number for number in parts if number not in numbers]
+    if len(letters) > 1:
+        return lines + [line.format(program=CHECK_PROGRAM.name, item=item) for line in PARTS_NOT_RECORDABLE_LINES]
+    if not deciding:
+        return lines
+    if unanswered:
+        return lines + [line.format(unanswered=named(unanswered), item=item) for line in PARTS_UNANSWERED_LINES]
+    letter = letters.pop()
+    return [*lines, PARTS_SAME_LETTER_LINE.format(letter=letter, item=item),
+            *meaning_lines({"form": "single", "answer": letter, "code": letter}, walk, True)]
+
+
 def meaning_lines(answer, walk, in_walk):
     """The answer's lines for an open approval-walk (in_walk) or for none."""
     branch = 0 if in_walk else 1
@@ -469,6 +574,9 @@ def meaning_lines(answer, walk, in_walk):
               "explain_skill": EXPLAIN_SKILL, "aa_skill_text": AA_SKILL_TEXT,
               "one_item_line": "#next_to_present item <number>" + (f" of {walk.total}" if walk and walk.total else "")}
     form = answer["form"]
+    parts = answered_parts(answer, walk)
+    if parts:
+        return parts_lines(answer, parts, walk)
     if form == "numbered":
         deciding = [number for number, letter in answer["pairs"] if in_walk and numbers and letter != "R"]
         not_waiting = [number for number in dict.fromkeys(deciding) if number not in numbers]
@@ -541,7 +649,7 @@ def named_item_missing(answer, walk, walk_error):
     or its walk-document cannot be read, so that the context says why."""
     numbers = [number for number, letter in answer.get("pairs", [])
                if letter == "R" or answer.get("every number names an item")]
-    if not numbers or walk_error is not None or (walk is not None and walk.problem):
+    if not numbers or walk_error is not None or (walk is not None and walk.problem) or answered_parts(answer, walk):
         return False
     return walk is None or any(number not in walk.recommendations for number in numbers)
 
