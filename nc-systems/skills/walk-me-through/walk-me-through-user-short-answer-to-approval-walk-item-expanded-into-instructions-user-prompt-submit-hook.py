@@ -45,20 +45,18 @@ starts at its opening, as WALK_FINDER_FILE's docstring says; when the heading
 holds more than one recommendation and an item has no opening, the hook reads
 no recommendation for any of its items and says why.
 
-R ON AN OPEN APPROVAL-WALK, as the whole prompt (R or repeat), is shown by
-the hook itself: it blocks the prompt with {"decision": "block", "reason":
-<the walk-document's units holding the waiting items, as written>}, which
-Claude Code shows the user without running the model; the walk-minutes record
-nothing. When the units cannot be read, the hook does not block: the
-additionalContext below opens with REPEAT_NOT_SHOWN_LINES saying why, and the
-agent shows the item. A NUMBERED answer whose every letter is R, such as
-`37.4 r` or `37.4 r, 38 r`, is shown the same way, with the units holding the
-items it names. In a NUMBERED answer that mixes R with other letters, each R
-tells the agent to show that item. When no approval-walk is open, or its
-walk-document has no item with a number an R names, or with one of the
-numbers after a word, as in `approve 5 and 6`, the hook prints nothing, so
-the prompt reaches the agent as typed; when the walk-document or the
-`#next_to_present` line cannot be read, the text says why instead.
+R ON AN OPEN APPROVAL-WALK, as the whole prompt (R or repeat), tells the
+agent to show the waiting items in full, heading included, word for word as
+the walk-document has them; the hook does not copy the item's text into the
+context, so the agent reads the walk-document. In a NUMBERED answer, each R
+tells the agent the same for the item it names, and an answer whose every
+letter is R, such as `37.4 r`, gets none of the lines for recording answers,
+since R records nothing. When no approval-walk is
+open, or its walk-document has no item with a number an R names, or with one
+of the numbers after a word, as in `approve 5 and 6`, the hook prints
+nothing, so the prompt reaches the agent as typed; when the walk-document or
+the `#next_to_present` line cannot be read, the hook still gives the text, and
+the agent looks for the item itself.
 
 A NUMBERED ANSWER THAT GIVES A, AO, D OR Z TO AN ITEM NOT WAITING, one the
 `#next_to_present` line does not name, or more than one of those letters to
@@ -66,11 +64,12 @@ one item, is refused whole: the text names those items and tells the agent to
 record nothing and ask the user to answer the waiting item with one letter,
 because each check run records one answer for the waiting item.
 
-OUTPUT otherwise: {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
-"additionalContext": <text>}}. No other answer blocks, and the hook never
-rewrites the prompt. The text opens with one line naming the answer and the approval-walk
-item it answers, or saying no approval-walk is open; then the answer's lines;
-then ONE_QUESTION_LINE.
+OUTPUT: {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+"additionalContext": <text>}}. The hook never blocks or rewrites the prompt:
+a block's reason reaches neither the agent nor the user's window, only the
+terminal the session runs in. The text opens with one line naming the answer
+and the approval-walk item it answers, or saying no approval-walk is open;
+then the answer's lines; then ONE_QUESTION_LINE.
 
 WHEN READING THE WALK STATE FAILS, such as a minutes file that is not UTF-8,
 the first line says so and why, and the text gives the answer's lines both for
@@ -221,8 +220,8 @@ MEANINGS = {
     "Z": (("Z means defer: move {item} as the walk-me-through skill's sentence on Z says.",
            "Then run the check step with --deferred, then close, and do what close prints."),
           ("Z means defer: postpone your last question or proposal and record it as a task.",)),
-    "R": (("{word} asks to see {item} again: show it in full, word for word as the walk-document "
-           "has it, and wait for his answer.",),
+    "R": (("{word} asks to see {item} again: show it in full, heading included, word for word as the "
+           "walk-document has it, and wait for his answer.",),
           ("{word} asks to see your last question or proposal again: show it in full, word for word, "
            "and wait for his answer.",)),
     "E": (("E means explain: run the explain skill, {explain_skill}, on {item}.",),
@@ -247,8 +246,8 @@ OPTION_TAKEN_LINES = (
 MEANINGS.update({f"O{option}": tuple(tuple(line.replace("{option}", option) for line in lines)
                                      for lines in OPTION_TAKEN_LINES) for option in ("2", "3")})
 NUMBERED_R_LINES = (
-    "\"{answer}\" asks to see item {number}{of_total} again: show it in full, word for word as the "
-    "walk-document has it.",
+    "\"{answer}\" asks to see item {number}{of_total} again: show it in full, heading included, word for "
+    "word as the walk-document has it.",
     "Then end your message naming the item waiting for his answer, {item}.",
 )
 # Check records one answer for every item the `#next_to_present` line names, and close moves that line on.
@@ -308,12 +307,6 @@ RIDER_LINES = (
     "If what he added contradicts or limits the answer, ask him which he means before acting on either.",
     "If what he added cannot be done this turn, record it as a task.",
     "The answer itself means:",
-)
-# R on an open approval-walk is shown by the hook itself; when it cannot be, the agent shows it.
-REPEAT_NOT_SHOWN_LINES = (
-    "The hook could not show {item} to the user itself: {problem}",
-    "Show it to him as the lines for R below say; if you cannot find it either, tell him what the line "
-    "above says, and ask him how to go on.",
 )
 RECOMMENDATION_UNKNOWN_LINE = (
     "The hook could not read the recommendation of {item}: {problem}. Read the recommendation in the "
@@ -411,41 +404,6 @@ def read_walk(cwd):
     return WalkState(name, count[0], numbers, total, recommendations, None, problems)
 
 
-class WaitingItemNotShown(Exception):
-    """The waiting item's section could not be read; its arguments are the item and why."""
-
-
-def item_section(cwd, shown=None):
-    """Return the walk-document's units that hold the item numbers shown, or the open approval-walk's
-    waiting items when shown is None, as written, or None when no approval-walk is open; raise
-    WaitingItemNotShown when they cannot be read."""
-    walk_finder = load_walk_finder()
-    top = walk_finder.checkout_top(Path(cwd))
-    if top is None or not (top / walk_finder.WALK_DIRECTORY).is_dir():
-        return None
-    parser = walk_finder.markdown_parser()
-    walk = walk_finder.open_walk(top / walk_finder.WALK_DIRECTORY, parser)
-    if walk is None:
-        return None
-    minutes, value, _ = walk
-    count = walk_finder.VALUE_COUNT.match(value)
-    item = count[0] if count else "the waiting item"
-    try:
-        numbers, total = walk_finder.parse_items(value)
-    except walk_finder.UnusableRange as problem:
-        raise WaitingItemNotShown(item, f"its minutes' last `#next_to_present` line, `{value}`, {problem}.")
-    if shown is not None:
-        numbers, item = shown, "item " + ", ".join(shown)
-    document = minutes.with_name(minutes.name[:-len(walk_finder.MINUTES_SUFFIX)] + ".md")
-    try:
-        _, units = walk_finder.waiting_item_units(document, value, numbers, total, parser)
-    except walk_finder.UnusableRange as problem:
-        raise WaitingItemNotShown(item, str(problem))
-    lines = document.read_text(encoding="utf-8").split("\n")
-    return "\n\n".join("\n".join(lines[first:end]).strip("\n")
-                        for _, _, _, first, end in sorted(units, key=lambda unit: unit[3]))
-
-
 def recommendation_text(part):
     """The last recommendation in the lines, as written, without emphasis or one trailing period; or None."""
     found = [match[1].strip(" *_") for match in RECOMMENDATION.finditer("\n".join(part))]
@@ -525,12 +483,16 @@ def meaning_lines(answer, walk, in_walk):
             return [line.format(problems=" and ".join(problems), item=item) for line in NUMBERED_REFUSED_LINES]
         pairs = ", ".join(f"{item_name(number, walk) if in_walk else number}: {letter}"
                           for number, letter in answer["pairs"])
-        lines = [line.format(pairs=pairs, one_item_line=values["one_item_line"]) for line in NUMBERED_LINES[branch]]
+        # R records nothing, and a check run with no flag would record an A, so R alone gets no recording lines.
+        only_repeats = in_walk and all(letter == "R" for _, letter in answer["pairs"])
+        lines = [] if only_repeats else [line.format(pairs=pairs, one_item_line=values["one_item_line"])
+                                         for line in NUMBERED_LINES[branch]]
         if in_walk:
             named = {number for number, _ in answer["pairs"]}
             unnamed = [number for number in numbers if number not in named]
-            lines.append(NUMBERED_UNNAMED_LINE.format(unnamed=", ".join(item_name(n, walk) for n in unnamed))
-                         if unnamed else NUMBERED_ALL_NAMED_LINE)
+            if not only_repeats:
+                lines.append(NUMBERED_UNNAMED_LINE.format(unnamed=", ".join(item_name(n, walk) for n in unnamed))
+                             if unnamed else NUMBERED_ALL_NAMED_LINE)
             for number, letter in answer["pairs"]:
                 lines += recommendation_unknown_lines(letter, [number], walk)
             repeated = [number for number, letter in answer["pairs"] if letter == "R"]
@@ -567,22 +529,7 @@ def output_for(payload):
         walk, walk_error = None, error
     if named_item_missing(answer, walk, walk_error):
         return None
-    note = []
-    shown = None
-    if answer["form"] == "numbered" and all(letter == "R" for _, letter in answer["pairs"]):
-        shown = [number for number, _ in answer["pairs"]]
-    if shown is not None or (answer["form"] == "single" and answer["code"] == "R"):
-        try:
-            section = item_section(payload.get("cwd") or os.getcwd(), shown)
-        except WaitingItemNotShown as not_shown:
-            note = [line.format(item=not_shown.args[0], problem=not_shown.args[1]) for line in REPEAT_NOT_SHOWN_LINES]
-        except Exception as error:
-            note = [line.format(item="the waiting item", problem=f"reading the walk files failed: {error!r}.")
-                    for line in REPEAT_NOT_SHOWN_LINES]
-        else:
-            if section is not None:
-                return {"decision": "block", "reason": section}
-    context = context_for(answer, walk, walk_error, note)
+    context = context_for(answer, walk, walk_error)
     return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}
 
 
@@ -597,10 +544,10 @@ def named_item_missing(answer, walk, walk_error):
     return walk is None or any(number not in walk.recommendations for number in numbers)
 
 
-def context_for(answer, walk, walk_error, note=()):
+def context_for(answer, walk, walk_error):
     """Return the additionalContext text for the answer, given the open approval-walk as read_walk read it, or
-    the error reading it raised, with the note's lines after its opening line."""
-    prefix = list(note)
+    the error reading it raised."""
+    prefix = []
     if answer["form"] == "condition":
         prefix = [line.format(condition=answer["condition"]) for line in CONDITION_LINES]
     elif answer["form"] == "rider":
