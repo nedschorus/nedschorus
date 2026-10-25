@@ -511,8 +511,9 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               "/walk-me-through's steps, opened as your first action: the unanswered "
               "items of any approval-walk in progress, open questions, concerns, "
               "suggestions, and the loose ends the next step lists, when it lists "
-              "any. Put items that block work first, then items that change "
-              "direction, then the rest. Close each approval-walk in progress with a "
+              "any. Put first the next step's own item, when it needs the user; then "
+              "items that block work, then items that change direction, then the "
+              "rest. Close each approval-walk in progress with a "
               "line in its walk-minutes naming the new approval-walk, and give each "
               "item you carry into it a link to its original walk-document. When the "
               "next step is to present an item of an approval-walk in progress, this "
@@ -524,7 +525,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
               "only keep working."),
           repr(supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION))
     # The pointer at the supervisor itself (user-ruled 2026-08-30, second
-    # round), after the open-walks duty. Exact text; absent before.
+    # round), after the one-approval-walk instruction. Exact text; absent before.
     check("ignition points at the supervisor that composed it, exactly",
           nothing_is_appended_to(
               prompt,
