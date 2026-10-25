@@ -1231,6 +1231,23 @@ with tempfile.TemporaryDirectory() as workspace:
               f"code {result.returncode}, stderr {result.stderr[:200]}")
         walk_fired_marker_file.unlink(missing_ok=True)
 
+        walk_exactly_twenty = transcript_of(workspace, "walk-exactly-twenty.jsonl", [
+            compaction_record(50_000), usage_record(150_000)])  # 15% + 5% = 20%
+        mark_walk_closed()
+        result = run_hook({**walk_payload, "transcript_path": str(walk_exactly_twenty)})
+        check("after a walk's close the hook fires at exactly 20% with the dropped tokens",
+              result.returncode == 2 and is_walk_closed_handoff_instruction(result.stderr),
+              f"code {result.returncode}, stderr {result.stderr[:250]}")
+        walk_fired_marker_file.unlink(missing_ok=True)
+
+        exactly_forty = transcript_of(workspace, "exactly-forty.jsonl", [
+            compaction_record(200_000), usage_record(200_000)])  # 20% + 20% = 40%
+        result = run_hook({**walk_payload, "transcript_path": str(exactly_forty)})
+        check("with no walk closed the hook fires at exactly 40% with the dropped tokens",
+              result.returncode == 2 and is_compacted_handoff_instruction(result.stderr),
+              f"code {result.returncode}, stderr {result.stderr[:250]}")
+        walk_fired_marker_file.unlink(missing_ok=True)
+
         mark_walk_closed()
         result = run_hook({**walk_payload, "transcript_path": str(walk_over)},
                           ("--threshold-used-plus-compaction-dropped-percentage-after-approval-walk-closed",

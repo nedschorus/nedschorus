@@ -371,7 +371,7 @@ def main(argv=None) -> int:
     code, keep_walk_closed_marker = request_handoff_when_due(
         arguments, session_id, payload.get("transcript_path", ""), walk_closed)
     if walk_closed and not keep_walk_closed_marker:
-        walk_closed_marker.unlink(missing_ok=True)
+        walk_closed_marker.unlink()
     return code
 
 
