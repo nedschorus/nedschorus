@@ -379,6 +379,36 @@ def test_an_interruption_item_added_this_turn_clears_the_block():
                   text_record("It is Item 2.1 of 12.\n\nItem 2 of 11 is waiting for your answer."))
     check_blocked("naming the added item with another total does not clear the block", added.run(),
                   "approval-walk question check")
+    heading = INTERRUPTION_ITEM.split("\n")[0]
+    named_added = "It is Item 2.1 of 11.\n\nItem 2 of 11 is waiting for your answer."
+    for case_name, tool in [
+            ("a MultiEdit that adds the item's heading to the walk-document clears the block",
+             tool_record("MultiEdit", {"file_path": str(added.document),
+                                       "edits": [{"old_string": "x", "new_string": INTERRUPTION_ITEM}]})),
+            ("a Write of the walk-document that holds the item's heading clears the block",
+             tool_record("Write", {"file_path": str(added.document), "content": added.document.read_text()}))]:
+        added.records(PEER_PROMPT, text_record(stray), tool, text_record(named_added))
+        check_silent(case_name, added.run(model="yes"))
+    for case_name, tool in [
+            ("a read-only grep for the item's running count does not clear the block",
+             tool_record("Bash", {"command": f"grep -n 'Item 2.1 of' {added.document}"})),
+            ("an Edit whose old text holds the item's heading, revising it, does not clear the block",
+             tool_record("Edit", {"file_path": str(added.document), "old_string": heading,
+                                  "new_string": heading + " revised"})),
+            ("an Edit of the minutes' #next_to_present line does not clear the block",
+             tool_record("Edit", {"file_path": str(added.minutes), "old_string": "#next_to_present item 2 of 10",
+                                  "new_string": "#next_to_present item 2.1 of 11"})),
+            ("an Edit writing the heading to another file does not clear the block",
+             tool_record("Edit", {"file_path": str(added.root / "other.md"), "old_string": "x",
+                                  "new_string": INTERRUPTION_ITEM}))]:
+        added.records(PEER_PROMPT, text_record(stray), tool, text_record(named_added))
+        check_blocked(case_name, added.run(), "approval-walk question check")
+    added.records(PEER_PROMPT, text_record(stray),
+                  tool_record("Edit", {"file_path": str(added.document), "old_string": "x",
+                                       "new_string": "## Item 2 of 11: where the poem page lives"}),
+                  text_record("I revised Item 2 of 11.\n\nItem 2 of 11 is waiting for your answer."))
+    check_blocked("an Edit writing the waiting item's own heading does not clear the block", added.run(),
+                  "approval-walk question check")
 
 
 def test_the_final_message_from_the_payload_is_checked():

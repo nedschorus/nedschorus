@@ -46,10 +46,12 @@ model check failed: a missed question scrolls away, a false block costs one
 reworded line.
 
 THE BLOCK CLEARS when the reply names, by `Item N of M` with the walk's
-total, an item the walk-document holds whose running count `Item N of` an
-assistant tool call of this turn wrote, as an Edit, a Write or a shell
-command: the agent has added the question as an interruption item. Naming
-only an item that was already there does not clear it.
+total, an interruption item the agent added this turn: an item the
+walk-document holds, numbered `W.n` after a waiting item W, whose heading
+line an assistant Edit, MultiEdit or Write of this turn wrote to the
+walk-document, in an edit's new text and not in its old text. Naming an
+item that was already there, or one that only a shell command or a read
+mentions, does not clear it.
 
 EACH BLOCK is logged as one JSON line, with its time, session, walk, the
 sentence flagged, and what decided, `code`, `model` or `model-check-failed`,
@@ -203,10 +205,10 @@ def normalized(line):
     return EMPHASIS_AND_SPACING.sub(" ", line).strip().lower()
 
 
-def turn_texts_and_tool_inputs(records):
-    """(every assistant text, the JSON of every assistant tool call's input) since the transcript's last turn start."""
+def turn_texts_and_tool_calls(records):
+    """(every assistant text, (name, input) of every assistant tool call) since the transcript's last turn start."""
     start = current_item_hook.turn_start(records)
-    texts, tool_inputs = [], []
+    texts, tool_calls = [], []
     for record in records[0 if start is None else start + 1:]:
         content = record.get("message", {}).get("content") if record.get("type") == "assistant" else None
         for block in content if isinstance(content, list) else ():
@@ -215,8 +217,8 @@ def turn_texts_and_tool_inputs(records):
             if block.get("type") == "text":
                 texts.append(block.get("text", ""))
             elif block.get("type") == "tool_use":
-                tool_inputs.append(json.dumps(block.get("input"), ensure_ascii=False))
-    return texts, tool_inputs
+                tool_calls.append((block.get("name"), block.get("input")))
+    return texts, tool_calls
 
 
 def shown_item_lines(reply_lines, document_lines, units):
@@ -306,11 +308,38 @@ def model_judgement(message_lines, unclear_lines, total, waiting, timeout_second
     return unclear_lines[number - 1] if 1 <= number <= len(unclear_lines) else unclear_lines[0], None
 
 
-def items_added_this_turn(reply, total, units, tool_inputs):
-    """The items the reply names with total M that the walk-document holds and a tool call of the turn wrote."""
-    held = {number for numbers, unit_total, _, _, _ in units if unit_total == total for number in numbers}
-    return {number for number in current_item_hook.items_named_in(reply, total) & held
-            if any(re.search(rf"\bitems?\s+{re.escape(number)}\s+of\b", text, re.I) for text in tool_inputs)}
+def texts_written_to(document, tool_calls):
+    """[(new text, old text)] of every Edit, MultiEdit and Write in tool_calls whose file is document."""
+    written = []
+    for name, tool_input in tool_calls:
+        if not isinstance(tool_input, dict) or not isinstance(tool_input.get("file_path"), str):
+            continue
+        if Path(tool_input["file_path"]).expanduser().resolve() != document.resolve():
+            continue
+        if name == "Write":
+            written.append((tool_input.get("content"), ""))
+        elif name == "Edit":
+            written.append((tool_input.get("new_string"), tool_input.get("old_string")))
+        elif name == "MultiEdit":
+            written.extend((edit.get("new_string"), edit.get("old_string"))
+                           for edit in tool_input.get("edits") or () if isinstance(edit, dict))
+    return [(new, old if isinstance(old, str) else "") for new, old in written if isinstance(new, str)]
+
+
+def items_added_this_turn(reply, total, waiting_numbers, units, document_lines, document, tool_calls):
+    """The items the reply names as the module docstring's THE BLOCK CLEARS says."""
+    written = [({normalized(line) for line in new.split("\n")}, {normalized(line) for line in old.split("\n")})
+               for new, old in texts_written_to(document, tool_calls)]
+    named = current_item_hook.items_named_in(reply, total)
+    added = set()
+    for numbers, unit_total, _, first, _ in units:
+        heading = normalized(document_lines[first])
+        if unit_total != total or not any(heading in new_lines and heading not in old_lines
+                                          for new_lines, old_lines in written):
+            continue
+        added.update(number for number in numbers if number in named and number not in waiting_numbers
+                     and any(re.fullmatch(rf"{re.escape(waiting)}\.\d+", number) for waiting in waiting_numbers))
+    return added
 
 
 def log_path(environment, log_store_homes=None):
@@ -377,7 +406,7 @@ def output_for(payload, environment, model=model_judgement):
         return None
     minutes, value, _ = walk
     records = current_item_hook.transcript_records(Path(transcript_path).expanduser())
-    texts, tool_inputs = turn_texts_and_tool_inputs(records)
+    texts, tool_calls = turn_texts_and_tool_calls(records)
     reply = "\n".join(texts + [payload.get("last_assistant_message") or ""])
     if not reply.strip():
         return None
@@ -390,7 +419,7 @@ def output_for(payload, environment, model=model_judgement):
         total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser, all_units=units)
     except walk_finder.UnusableRange:
         return None
-    if items_added_this_turn(reply, total, units, tool_inputs):
+    if items_added_this_turn(reply, total, numbers, units, document_text.split("\n"), document, tool_calls):
         return None
     lines = checked_lines(reply, document_text, units, parser)
     kinds = [(line, line_kind(line)) for line in lines]
