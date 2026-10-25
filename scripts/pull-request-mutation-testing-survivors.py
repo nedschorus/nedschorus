@@ -212,10 +212,16 @@ def test_command_for(suites, interpreter, test_command_script_file, sandbox_pref
     try:
         Path(test_command_script_file).write_text(chain + "\n")
     except OSError as error:
+        temporary_root = Path(test_command_script_file).parent.parent
         raise CouldNotRun(
-            f"{PROGRAM}: not run — could not write the test command's script "
-            f"{test_command_script_file}: {error}\n"
-            f"Fix what the error names, then run this again.") from error
+            f"{PROGRAM}: not run — could not write {test_command_script_file}, the script this "
+            f"program writes into its own temporary directory under {temporary_root} so that "
+            f"cosmic-ray can run the chain of test suites, so no mutant was run: {error}\n"
+            f"If the error says no space is left on the device, permission denied, or no such file "
+            f"or directory: run scripts/{PROGRAM}.py again with the same arguments, with TMPDIR set "
+            f"for that command to a directory you can write to on a disk with free space.\n"
+            f"If that rerun fails the same way, or the error is another one: tell the user that "
+            f"mutation testing could not run on this machine, quoting the error.") from error
     return shlex.join(["sh", str(test_command_script_file)])
 
 
