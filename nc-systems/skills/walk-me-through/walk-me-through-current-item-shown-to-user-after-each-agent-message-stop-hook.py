@@ -37,8 +37,10 @@ origin decides first.
 THE REPLY is the text of every assistant message after the turn's start, or
 after the last prompt the user typed into the turn, if that comes later: a
 turn may show the item, make tool calls, and end with a short line such as
-"Recorded.", and it still names the item. It is checked only when it holds
-text.
+"Recorded.", and it still names the item. The reply also holds the payload's
+`last_assistant_message`, the turn's final message, because Claude Code can
+start the Stop hook before it has written that message to the transcript. It
+is checked only when it holds text.
 
 THE OPEN APPROVAL-WALK. The walk-me-through skill keeps a `#next_to_present`
 line in each walk's docs/walk/<name>-minutes.md; agents write it at a line's
@@ -284,7 +286,7 @@ def output_for(payload, environment):
     if walk is None:
         return None
     records = transcript_records(Path(transcript_path).expanduser())
-    reply = turn_reply_text(records)
+    reply = turn_reply_text(records) + "\n" + (payload.get("last_assistant_message") or "")
     if not turn_answers_user(records) or not reply.strip():
         return None
     minutes, value, old_form = walk
