@@ -391,29 +391,50 @@ def test_a_question_held_in_an_interruption_item_is_not_checked():
         case = Case(document=document, minutes=minutes)
         case.records(PEER_PROMPT, text_record(stray), text_record(closing))
         check_blocked(case_name, case.run(), "approval-walk question check")
-    for case_name, document in (
+    for case_name, document, minutes in (
             ("an interruption item retitled after it was added still holds its question",
              WALK_DOCUMENT.replace("of 10", "of 11") + "\n"
-             + INTERRUPTION_ITEM.replace("merge-lane-2's question about the GHI", "the remaining seats' GHI, revised")),
+             + INTERRUPTION_ITEM.replace("merge-lane-2's question about the GHI", "the remaining seats' GHI, revised"),
+             "#next_to_present item 2 of 11"),
             ("an interruption item with a newer total than the minutes' still holds its question",
-             WALK_DOCUMENT + "\n" + INTERRUPTION_ITEM)):
-        case = Case(document=document, minutes="#next_to_present item 2 of 10")
+             WALK_DOCUMENT + "\n" + INTERRUPTION_ITEM, "#next_to_present item 2 of 10")):
+        case = Case(document=document, minutes=minutes)
         case.records(PEER_PROMPT, text_record(stray), text_record(closing))
         check_silent(case_name, case.run(model="yes"))
-    for case_name, reply_line, item_line in (
+    for case_name, reply_line, item_line, passes in (
             ("a bold question the item holds without bold passes",
-             "**Should we rename the hook before it merges?**", "Should we rename the hook before it merges?"),
+             "**Should we rename the hook before it merges?**", "Should we rename the hook before it merges?", True),
             ("a question with a code span the item holds passes",
              "Should I rerun `run-all-test-suites.py` before the push?",
-             "Should I rerun `run-all-test-suites.py` before the push?"),
+             "Should I rerun `run-all-test-suites.py` before the push?", True),
             ("a list joined to its lead-in that the item holds passes",
              "Should I do one of these:\n- merge the lines\n- keep both",
-             "Should I do one of these:\n- merge the lines\n- keep both")):
+             "Should I do one of these:\n- merge the lines\n- keep both", True),
+            ("a question holding a quotation the walk-document holds passes once the item holds it",
+             'Should I label the pull request "needs-tests"?', 'Should I label the pull request "needs-tests"?', True),
+            ("a numbered question passes when the item holds it without its number",
+             "1. Should I keep both hooks?", "Should I keep both hooks?", True),
+            ("a question the item holds with a link passes when the reply holds the link's text",
+             "Should I merge PR 5 now?", "Should I merge [PR 5](https://github.com/nedschorus/nedschorus/pull/5) now?",
+             True),
+            ("a line that is the end of an item word for word passes", ANSWER_LINE, "Should I keep both hooks?", True),
+            ("a question that is only part of a word of the item blocks",
+             "File it?", "Should I refile it?", False),
+            ("a word the item bolds in part does not match the whole word, so the question blocks",
+             "Should we refile it?", "Should we re**file** it?", False)):
         item = f"## Item 2.1 of 11: a question\n\n{item_line}\n\nRecommendation: Merge.\n\n{ANSWER_LINE}\n"
         case = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + item,
                     minutes="#next_to_present item 2 of 11")
         case.reply(reply_line + "\n\n" + closing)
-        check_silent(case_name, case.run(model="yes"))
+        if passes:
+            check_silent(case_name, case.run(model="yes"))
+        else:
+            check_blocked(case_name, case.run(), "approval-walk question check")
+    headed = Case(document=WALK_DOCUMENT.replace("of 10", "of 11")
+                  + f"\n## Item 2.1 of 11: should I file the GHI?\n\nRecommendation: File it.\n\n{ANSWER_LINE}\n",
+                  minutes="#next_to_present item 2 of 11")
+    headed.reply("Item 2.1 of 11: should I file the GHI? Recommendation: File it.\n\n" + closing)
+    check_silent("a line that is the start of an item word for word passes", headed.run(model="yes"))
 
 
 def test_the_final_message_from_the_payload_is_checked():

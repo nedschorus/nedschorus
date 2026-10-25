@@ -45,14 +45,16 @@ MODEL_TIMEOUT_SECONDS, the hook blocks on the first unclear line, saying the
 model check failed: a missed question scrolls away, a false block costs one
 reworded line.
 
-AN INTERRUPTION ITEM'S TEXT is not checked either: a checked line is left
-out when the walk-document, as it stands when the hook runs, holds it word
-for word in an interruption item, one numbered `W.n` after a waiting item W
-and not itself waiting, whatever its total. Both sides are compared with code
-spans, `**` and `__`, quotation marks, list marks and the marks `normalized`
-drops removed, and the line must match whole words of the item. So a question the
-agent has put into an interruption item passes, however that item got there
-or was later retitled, and a question in any other item does not.
+AN INTERRUPTION ITEM'S TEXT is not checked either: a reply line, taken
+before any of the removals above and before lists are joined, is left out
+when the walk-document, as it stands when the hook runs, holds it word for
+word in an interruption item, one numbered `W.n` after a waiting item W and
+not itself waiting, whatever its total. Both sides are compared as their
+words alone, the runs of letters and digits left once `normalized` has
+dropped its marks, so every other mark is ignored and a line matches only
+whole words of the item. So a question the agent has put into an
+interruption item passes, however that item got there or was later
+retitled, and a question in any other item does not.
 
 EACH BLOCK is logged as one JSON line, with its time, session, walk, the
 sentence flagged, and what decided, `code`, `model` or `model-check-failed`,
@@ -126,9 +128,7 @@ UNCLEAR_ASK = re.compile(
 SENTENCE_END = re.compile(r"(?:(?<=[.?!])|(?<=[.?!][\"'\u201d\u2019)*_]))\s+")
 TRAILING_MARKS = "*_ )\"'”’"
 QUOTED = re.compile(r"\"[^\"\n]+\"|“[^”\n]+”")
-QUOTATION_MARKS = re.compile("[\"“”]")
-# checked_lines joins a list to its lead-in, so a list mark can stand mid-line.
-LIST_MARK_ANYWHERE = re.compile(r"(?:^|\s)(?:[-+*]|\d+[.)])(?=\s)")
+WORD = re.compile(r"\w+")
 LINK = re.compile(r"\[([^\]\n]*)\]\([^)\n]*\)")
 LIST_ITEM = re.compile(r"^(?:[-+*]|\d+[.)])\s")
 LINE_MARKS = re.compile(r"^\s*(?:(?:[-+*>]|\d+[.)])\s+)+")
@@ -222,9 +222,8 @@ def turn_assistant_texts(records):
 
 
 def comparable(line):
-    """line as AN INTERRUPTION ITEM'S TEXT in the module docstring compares it, padded with spaces."""
-    line = LIST_MARK_ANYWHERE.sub(" ", walk_finder.CODE_SPAN.sub(" ", line).replace("**", "").replace("__", ""))
-    return " " + " ".join(QUOTATION_MARKS.sub("", normalized(line)).split()) + " "
+    """line as AN INTERRUPTION ITEM'S TEXT in the module docstring compares it: its words, padded with spaces."""
+    return " " + " ".join(WORD.findall(normalized(line))) + " "
 
 
 def interruption_item_texts(document_lines, units, waiting_numbers):
@@ -234,8 +233,8 @@ def interruption_item_texts(document_lines, units, waiting_numbers):
         if any(number not in waiting_numbers
                and any(re.fullmatch(rf"{re.escape(waiting)}\.\d+", number) for waiting in waiting_numbers)
                for number in numbers):
-            texts.append(" " + " ".join(comparable(line).strip() for line in document_lines[first:end]
-                                        if comparable(line).strip()) + " ")
+            texts.append(" " + " ".join(word for line in document_lines[first:end]
+                                        for word in WORD.findall(normalized(line))) + " ")
     return texts
 
 
@@ -254,16 +253,17 @@ def shown_item_lines(reply_lines, document_lines, units):
     return shown
 
 
-def checked_lines(reply, document_text, units, parser):
+def checked_lines(reply, document_text, units, parser, waiting_numbers):
     """The reply's lines as the module docstring's THE TEXT CHECKED says, emphasis dropped, empty ones left out,
     and each list joined to the line ending in `:` that introduces it, so the list is judged with its lead-in."""
     document_lines = document_text.split("\n")
     normalized_document = normalized(" ".join(document_lines))
+    item_texts = interruption_item_texts(document_lines, units, waiting_numbers)
     lines = walk_finder.prose_lines(reply, parser)
     shown = shown_item_lines(lines, document_lines, units)
     kept, introduced_list = [], False
     for line in lines:
-        if normalized(line) in shown:
+        if normalized(line) in shown or any(comparable(line) in text for text in item_texts):
             continue
         if line.lstrip().startswith(">") and normalized(line) in normalized_document:
             continue
@@ -403,9 +403,7 @@ def output_for(payload, environment, model=model_judgement):
         total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser, all_units=units)
     except walk_finder.UnusableRange:
         return None
-    item_texts = interruption_item_texts(document_text.split("\n"), units, numbers)
-    lines = [line for line in checked_lines(reply, document_text, units, parser)
-             if not any(comparable(line) in text for text in item_texts)]
+    lines = checked_lines(reply, document_text, units, parser, numbers)
     kinds = [(line, line_kind(line)) for line in lines]
     clear = [line for line, kind in kinds if kind == "clear"]
     unclear = [line for line, kind in kinds if kind == "unclear"]
