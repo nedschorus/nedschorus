@@ -16,9 +16,17 @@ WHAT IS PINNED HERE.
     set, so no case can flake across a minute boundary.
 
   - One retry. A cell that fails once is run again and, when the second run
-    produces a report, the read succeeds. A cell that fails twice is not run
-    a third time: the read prints a line opening FAILED on stdout, exits 1,
-    and leaves no report.
+    produces a report, the read succeeds. A Gemini cell that fails twice is
+    not run a third time, and one that fails on Gemini's monthly spending cap
+    is not run a second time.
+
+  - The Sonnet backup. After the Gemini cell's failures, the same cell runs
+    once on claude-sonnet-5-5 through the claude cell launcher; its report is
+    the read's, stamped runtime=claude, with a line after the stamp naming
+    the backup and Gemini's cause. When the backup fails too, the read prints
+    one line opening FAILED, naming both causes, exits 1, and leaves no
+    report. A stub `claude` is first on PATH in every case, failing unless
+    the case plans a report, so no case reaches the real claude.
 
   - The chat-instead-of-file quirk carries through: a model that answers a
     review-length text in chat and writes no file still gives the read a
@@ -170,8 +178,8 @@ if "edit_document" in step:
 if "delete_document" in step:
     pathlib.Path(step["delete_document"]).unlink()
 if launches <= step.get("fail_first_attempts", 0):
-    sys.stderr.write("stub agy: simulated failure on launch %d\\n" % launches)
-    sys.exit(1)
+    sys.stderr.write(step.get("fail_stderr", "stub agy: simulated failure on launch %d\\n" % launches))
+    sys.exit(step.get("fail_exit", 1))
 report_path = pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"])
 if "report" in step:
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -180,6 +188,34 @@ if "stdout" in step:
     sys.stdout.write(step["stdout"])
 sys.exit(step.get("exit", 0))
 """
+
+# The stub `claude`, which the claude cell launcher runs for the Sonnet
+# backup. It is on PATH in every case, so no case reaches the real claude, and
+# with no plan it fails, so a case that does not plan the backup sees it fail.
+# "report" writes the report and succeeds; "fail_stderr" is what a failure
+# prints.
+STUB_CLAUDE = """#!/usr/bin/env python3
+import json, os, pathlib, sys
+argv = sys.argv
+sys.stdin.read()
+plan = json.loads(os.environ.get("COLD_READ_CLAUDE_CELL_TEST_STUB_PLAN", "{}"))
+counter_path = pathlib.Path(os.environ["COLD_READ_CLAUDE_CELL_TEST_STUB_COUNTER_PATH"])
+launches = (int(counter_path.read_text()) if counter_path.is_file() else 0) + 1
+counter_path.write_text(str(launches))
+if "report" not in plan:
+    sys.stderr.write(plan.get("fail_stderr", "stub claude: simulated failure\\n"))
+    sys.exit(1)
+report_path = pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"])
+report_path.parent.mkdir(parents=True, exist_ok=True)
+report_path.write_text(plan["report"], encoding="utf-8")
+"""
+# The words Gemini's agy prints when the project's monthly spending cap is
+# reached, as a real failing read on ned-box printed them.
+GEMINI_SPENDING_CAP_STDERR = (
+    'AGY_ERROR: {"short_error":"agent executor error: generating and executing: '
+    'Error 429, Message: Your project has exceeded its monthly spending cap. '
+    'Please go to AI Studio at https://ai.studio/spend to manage your project '
+    'spend cap.","error_code":429,"retryable":true}\n')
 
 failures = []
 
@@ -238,7 +274,7 @@ def build_scratch_repository(scratch):
 def run_fast_read(repository, stub_directory, plan, expected_report, target_argument,
                   counter_path, ship_destination=None,
                   record_clock=FIXED_RECORD_CLOCK_FOR_TESTS, agent_session_id=None,
-                  current_directory=None):
+                  current_directory=None, claude_plan=None):
     """The read as a subprocess, with the stub agy first on PATH, run from
     `current_directory`, by default `repository`.
 
@@ -250,7 +286,11 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     stub = stub_directory / "agy"
     stub.write_text(STUB_AGY, encoding="utf-8")
     stub.chmod(0o755)
+    stub_claude = stub_directory / "claude"
+    stub_claude.write_text(STUB_CLAUDE, encoding="utf-8")
+    stub_claude.chmod(0o755)
     counter_path.unlink(missing_ok=True)
+    claude_counter_path(counter_path).unlink(missing_ok=True)
     # The agy cell scans HOME for credential files at launch, and the real
     # home takes seconds to walk.
     scratch_home = repository.parent / "scratch-home"
@@ -261,6 +301,9 @@ def run_fast_read(repository, stub_directory, plan, expected_report, target_argu
     environment["COLD_READ_AGY_CELL_TEST_STUB_PLAN"] = json.dumps(plan)
     environment["COLD_READ_AGY_CELL_TEST_STUB_REPORT_PATH"] = str(expected_report)
     environment["COLD_READ_AGY_CELL_TEST_STUB_COUNTER_PATH"] = str(counter_path)
+    environment["COLD_READ_CLAUDE_CELL_TEST_STUB_PLAN"] = json.dumps(claude_plan or {})
+    environment["COLD_READ_CLAUDE_CELL_TEST_STUB_COUNTER_PATH"] = str(
+        claude_counter_path(counter_path))
     environment[RECORD_SHIP_DESTINATION_VARIABLE] = (
         ship_destination or str(repository / SCRATCH_LOG_STORE_RELATIVE))
     environment[RECORD_CLOCK_OVERRIDE_VARIABLE] = record_clock
@@ -280,6 +323,11 @@ def agent_session_written_beside(report):
     """The JSON the read wrote beside report naming its agent-session, or None when there is none."""
     written = report.with_name(report.name + ".agent-session.json")
     return json.loads(written.read_text(encoding="utf-8")) if written.is_file() else None
+
+
+def claude_counter_path(counter_path):
+    """Where the stub claude counts its launches, beside the stub agy's counter."""
+    return counter_path.with_name(counter_path.name + "-claude")
 
 
 def launches_counted(counter_path):
@@ -524,13 +572,94 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the read prints one line opening FAILED on stdout",
           result.stdout.startswith("FAILED") and len(result.stdout.splitlines()) == 1,
           repr(result.stdout))
-    check("exactly two launches were made: the run and one retry",
-          launches_counted(counter) == 2, f"launches={launches_counted(counter)}")
+    check("exactly two Gemini launches were made: the run and one retry, then one "
+          "Sonnet backup launch",
+          launches_counted(counter) == 2 and launches_counted(claude_counter_path(counter)) == 1,
+          f"launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}")
     check("no report is left behind by a failed read",
           not suggestions.exists(), f"{suggestions} exists")
     check("a failed read writes no agent-session file",
           agent_session_written_beside(suggestions) is None,
           repr(agent_session_written_beside(suggestions)))
+
+    # --- The Sonnet backup -----------------------------------------------
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: of the walk item\n"},
+    )
+    backup_lines = (suggestions.read_text(encoding="utf-8").splitlines()
+                    if suggestions.is_file() else [])
+    check("when the Gemini cell fails twice, the Sonnet backup's report is the read's",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and "STUB SONNET FAST READ: of the walk item" in "\n".join(backup_lines)
+          and launches_counted(counter) == 2
+          and launches_counted(claude_counter_path(counter)) == 1,
+          f"exit {result.returncode}; stdout={result.stdout!r}; "
+          f"launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+    check("the Sonnet backup's stamp names the claude runtime, claude-sonnet-5-5, "
+          "effort medium and the fast tier",
+          all(field in provenance_stamp_of(suggestions)
+              for field in ("runtime=claude", "model=claude-sonnet-5-5", "effort=medium",
+                            "cell=fast-clarify", "tier=fast")),
+          repr(provenance_stamp_of(suggestions)))
+    check("the report's second line says the Sonnet backup ran and names the Gemini cause",
+          len(backup_lines) > 1
+          and backup_lines[1].startswith("<!-- #cold_read_fast_read_sonnet_backup_ran ")
+          and "stub agy: the gemini cause" in backup_lines[1],
+          repr(backup_lines[:2]))
+    check("stderr says the Sonnet backup runs and why, before it runs, and that it read the document",
+          "running the same cell once on claude-sonnet-5-5" in result.stderr
+          and "stub agy: the gemini cause" in result.stderr
+          and "cold-read-fast-read: #cold_read_fast_read_sonnet_backup_ran " in result.stderr,
+          repr(result.stderr))
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_exit": 3,
+               "fail_stderr": GEMINI_SPENDING_CAP_STDERR}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: past the cap\n"},
+    )
+    cap_lines = (suggestions.read_text(encoding="utf-8").splitlines()
+                 if suggestions.is_file() else [])
+    check("Gemini's monthly spending cap is not retried: one Gemini launch, then the "
+          "Sonnet backup, whose report is the read's",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and launches_counted(counter) == 1
+          and launches_counted(claude_counter_path(counter)) == 1
+          and "a retry cannot pass a monthly cap" in result.stderr,
+          f"exit {result.returncode}; launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+    check("the Sonnet backup line names Gemini's spending cap and where to raise it",
+          len(cap_lines) > 1 and "monthly spending cap" in cap_lines[1]
+          and "https://ai.studio/spend" in cap_lines[1],
+          repr(cap_lines[:2]))
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"fail_stderr": "stub claude: the sonnet cause\n"},
+    )
+    check("when Gemini and the Sonnet backup both fail, one FAILED line names both causes",
+          result.returncode == 1 and len(result.stdout.splitlines()) == 1
+          and result.stdout.startswith("FAILED")
+          and "stub agy: the gemini cause" in result.stdout
+          and "stub claude: the sonnet cause" in result.stdout
+          and not suggestions.exists(),
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr!r}")
 
     # --- Chat instead of file, through the read ---------------------------
     repository = build_scratch_repository(scratch)
@@ -997,12 +1126,13 @@ def ssh_time_limit_seconds_with_agy_cell(agy_cell_text):
     return module.COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS
 
 
-check("the ssh time limit of a read on ned-box follows the agy cell's per-model limit "
-      "and the length of the fast cold-read-tier's model chain",
+check("the ssh time limit of a read on ned-box follows the agy cell's per-model limit, "
+      "the length of the fast cold-read-tier's model chain and the Sonnet backup's allowance",
       ssh_time_limit_seconds_with_agy_cell(
           "COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS = 45 * 60\n"
           "TIER_TO_AGY_MODEL_CHAIN = {'fast': ('model-a', 'model-b')}\n")
-      == warning_module.FAST_READ_ATTEMPTS * 2 * 45 * 60 + 5 * 60)
+      == warning_module.FAST_READ_ATTEMPTS * 2 * 45 * 60
+      + warning_module.COLD_READ_FAST_READ_SONNET_BACKUP_RUN_ALLOWANCE_SECONDS + 5 * 60)
 class_of = warning_module.full_run_class_of_target
 root = warning_module.REPO_ROOT
 check("a skill is in the class",

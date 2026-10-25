@@ -373,7 +373,9 @@ def main() -> int:
 
         # Oracle: stdout and exit code. Red: exit 0, or no instruction to send
         # anyway, or the fast read's FAILED line not passed on.
-        failed_line = "FAILED (exit 1 from the fast-clarify cell; no report)"
+        failed_line = ("FAILED (the fast-clarify cell failed on Gemini, exit 1: exit-1 — "
+                       "an error, and on the Sonnet backup claude-sonnet-5-5, exit 1: "
+                       "exit-1 — an error; no report)")
         completed, _ = run_program(
             scratch, {"stdout": failed_line + "\n", "exit": 1}, GOOD_INPUT)
         check("a FAILED fast read exits 1", completed.returncode == 1,
@@ -438,8 +440,10 @@ def main() -> int:
         fast_read_own_line = ("cold-read-fast-read: the cell launcher refused the "
                               "invocation (exit 64); not retried, because the same "
                               "invocation would be refused the same way.")
-        launcher_failed_line = ("FAILED (exit 64 from the fast-clarify cell; no report "
-                                f"at {scratch / 'fast-read.md'})")
+        launcher_failed_line = ("FAILED (the fast-clarify cell failed on Gemini, exit 64: "
+                                "cold-read-agy-cell: refused before agy started, and on "
+                                "the Sonnet backup claude-sonnet-5-5, exit 1: no-report "
+                                f"— no report written; no report at {scratch / 'fast-read.md'})")
         completed, _ = run_program(
             scratch,
             {"stdout": launcher_failed_line + "\n",
