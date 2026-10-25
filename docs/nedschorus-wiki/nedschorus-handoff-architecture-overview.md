@@ -26,7 +26,7 @@ handoff-supervisor.py ──reads <seat>-handoff.md, kills claude, runs handoff-
 
 - `scripts/launch-claude-mac`: run on the Mac, creates a Mac agent-seat's agent-home and seat-branch when missing, and starts the agent-seat on its own tmux server with the handoff-supervisor from the launcher's own checkout as the pane's command, or attaches to it.
 - `scripts/launch-claude-ubuntu`: run on the Mac, does the same for a ned-box agent-seat over ssh, with the handoff-supervisor from ned-box's clone at `~/Projects/nedschorus`.
-- `scripts/handoff-context-threshold-hook.py`, the threshold hook, a `Stop` hook: at a set share of the context window, tells the agent to run the /handoff skill, once until the next compaction, deferring up to a higher share while a subagent or a recent background task still runs.
+- `scripts/handoff-context-threshold-hook.py`, the threshold hook, a `Stop` hook: at a set share of the context window, or when the context used plus the tokens the agent-session's compactions dropped reaches a second, higher share, tells the agent to run the /handoff skill, once until the next compaction, deferring up to a ceiling while a subagent or a recent background task still runs.
 - `.claude/skills/handoff/SKILL.md`: the /handoff skill; the agent writes the next step to a file and runs the writer script on it.
 - `docs/agents/seat-session-appended-system-prompt.md`: below its `---` line, the text the handoff-supervisor appends to every agent-session's system prompt.
 - `scripts/post-compaction-session-continues-hook.py`, the post-compaction hook, a `SessionStart` hook: after a compaction, gives the agent-session the tail of its own dialog and tells it to continue, and deletes the threshold hook's marker file so that hook can ask again.
