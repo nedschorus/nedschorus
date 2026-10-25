@@ -86,8 +86,9 @@ def is_compacted_handoff_instruction(stderr):
 
 WALK_CLOSED_HANDOFF_INSTRUCTION_PATTERN = re.compile(
     r"An approval-walk has closed, and this agent-session has used \d+% \(\d+% counting "
-    r"the tokens its compactions dropped\) of its context window, at or above the 20% "
-    r"at which an approval-walk's close starts a session-handoff\. Run the /handoff skill now\.")
+    r"the tokens its compactions dropped\) of its context window\. The second number, which "
+    r"adds the dropped tokens to the context used, is at or above the \d+% at which an "
+    r"approval-walk's close starts a session-handoff\. Run the /handoff skill now\.")
 
 
 def is_walk_closed_handoff_instruction(stderr):
@@ -1214,7 +1215,8 @@ with tempfile.TemporaryDirectory() as workspace:
         check("after a walk's close the hook fires past 20% with the dropped tokens, "
               "saying the walk closed and giving both shares",
               result.returncode == 2 and is_walk_closed_handoff_instruction(result.stderr)
-              and "used 16% (21% counting the tokens its compactions dropped)" in result.stderr,
+              and "used 16% (21% counting the tokens its compactions dropped)" in result.stderr
+              and "at or above the 20% at which" in result.stderr,
               f"code {result.returncode}, stderr {result.stderr[:250]}")
         check("that request writes the fired marker and removes the walk-closed marker",
               walk_fired_marker_file.exists() and not walk_closed_marker_file.exists(),
@@ -1256,6 +1258,16 @@ with tempfile.TemporaryDirectory() as workspace:
               result.returncode == 0 and not result.stderr.strip()
               and not walk_closed_marker_file.exists(),
               f"code {result.returncode}, stderr {result.stderr[:200]}")
+
+        mark_walk_closed()
+        result = run_hook({**walk_payload, "transcript_path": str(walk_under)},
+                          ("--threshold-used-plus-compaction-dropped-percentage-after-approval-walk-closed",
+                           "15"))
+        check("a lower walk-close threshold fires at 19% and names that threshold",
+              result.returncode == 2 and is_walk_closed_handoff_instruction(result.stderr)
+              and "at or above the 15% at which" in result.stderr,
+              f"code {result.returncode}, stderr {result.stderr[:250]}")
+        walk_fired_marker_file.unlink(missing_ok=True)
 
         mark_walk_closed()
         result = run_hook({**walk_payload,

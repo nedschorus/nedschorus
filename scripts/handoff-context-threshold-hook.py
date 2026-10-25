@@ -86,9 +86,9 @@ SHARE_WITH_COMPACTION_DROPPED = (
 
 WALK_CLOSED_HANDOFF_INSTRUCTION = (
     "An approval-walk has closed, and this agent-session has used {share} of its "
-    "context window, at or above the {walk_closed_threshold:g}% at which an "
-    "approval-walk's close starts a session-handoff. "
-    "Run the /handoff skill now."
+    "context window. The second number, which adds the dropped tokens to the "
+    "context used, is at or above the {walk_closed_threshold:g}% at which an "
+    "approval-walk's close starts a session-handoff. Run the /handoff skill now."
 )
 
 HANDOFF_DEFERRED_NOTICE = (

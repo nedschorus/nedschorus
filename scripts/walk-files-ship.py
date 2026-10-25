@@ -137,15 +137,20 @@ the session id read from CLAUDE_CODE_SESSION_ID. The marker's name is
 scripts/handoff-context-threshold-hook.py's, and that Stop hook, finding it,
 asks the agent to run /handoff when the context used plus the tokens the
 session's compactions dropped is at least 20%. The close is recognised from
-the minutes, which the skill closes before it runs this program, so no flag
-is needed; a later run that finds the closed minutes already in the store,
-such as a dispositions update, writes no marker. Only a run whose closed
-minutes reached the store writes the marker, even when its stdout line opens
-with `REFUSED:` or `FAILED:` because another file did not ship: those minutes
-are the close, and a re-run finds them unchanged. With no session id, as in a
-terminal, nothing is written and stderr says so. A marker that cannot be
-written adds a FAILED line on stderr and makes the exit 1, on a REFUSED run
-too; stdout still holds its one `shipped:` or `REFUSED:` line.
+the minutes, which /walk-me-through closes before it runs this program, so no
+flag is needed; a later run that finds the closed minutes already in the
+store, such as a dispositions update, writes no marker. Only a run that adds
+or replaces the closed minutes in the store writes the marker. That includes a
+run whose stdout line opens with `REFUSED:` or `FAILED:` because some other
+file did not ship, since the closed minutes are the close and a re-run finds
+them unchanged. A `FAILED:` run whose closed minutes never reached the store,
+such as one that could not reach the store at all, writes no marker. With no
+session id, as in a terminal, no marker is written, the files still ship, the
+exit code is unchanged, and stderr says so. A marker that cannot be written
+adds a FAILED line on stderr and makes the exit 1, on a REFUSED run too: the
+exit code reports the marker, not the stdout line, which stays the one
+`shipped:`, `REFUSED:` or `FAILED:` line the files earned. The files need no
+re-run; the stderr line tells the agent to run /handoff itself.
 
 WHAT THIS IS: the THIRD CALLER of nc-systems/cold-read/cold-read-record-ship.py, imported by
 importlib the way scripts/seat-shared-file-ship.py and
