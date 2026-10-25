@@ -481,6 +481,16 @@ def test_the_final_message_counts_before_the_transcript_holds_it():
                    case.run(last_assistant_message="Recorded."))
 
 
+def test_a_final_message_that_is_the_turn_only_text_is_checked():
+    case = Case()
+    case.walk_files(minutes="#next_to_present item 2 of 9.")
+    written_so_far = [USER_PROMPT, TOOL_CALL, TOOL_RESULT, USER_ANSWER_WHILE_WORKING, TOOL_CALL, TOOL_RESULT,
+                      TOOL_CALL, TOOL_RESULT]
+    case.transcript.write_text("".join(json.dumps(record) + "\n" for record in written_so_far))
+    check_reminded("a final message that is the turn's only text and leaves out the item is sent back",
+                   case.run(last_assistant_message="Recorded."))
+
+
 RANGE_WALK_DOCUMENT = """# A walk with ranges
 
 ## Item 9 of 54: nine
