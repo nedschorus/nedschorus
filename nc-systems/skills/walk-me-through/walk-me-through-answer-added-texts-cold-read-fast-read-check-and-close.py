@@ -67,7 +67,7 @@ records the items it opens with, after any date or timestamp, as in `Item 4 of
 9:`, `- Item 4, <date>:` or `- <timestamp> Item 4 <rejected>`,
 when it says approved, disapproved, accepted, rejected or `<moved on, no
 decision>`; one that says deferred instead records a deferral; a word right
-after a determiner, as in "the approved definition", says neither; CHECK's
+after the, a or an, as in "the approved definition", says neither; CHECK's
 answer lines record nothing. A line with an outcome tag, `<accepted>`, `<rejected>`,
 `<moved on, no decision>` or `<approved as revised>`, records a decision
 whatever else it says; one with only `<open>` or `<revised, awaiting ruling>`
@@ -206,7 +206,7 @@ RECORDED_ITEMS = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_]*(items?\s+[^:(
 DATE = re.compile(r"\d{4}-\d\d-\d\d(?:[T ]\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:?\d\d)?)?")
 DECIDED = re.compile(r"\b(?:dis)?approved\b|\baccepted\b|\brejected\b|<moved on, no decision>", re.I)
 DEFERRED_WORD = re.compile(r"\bdeferred\b", re.I)
-MODIFIER_BEFORE = re.compile(r"\b(?:the|a|an|its|his|her|their|this|these|those|each|every)\s+$", re.I)
+MODIFIER_BEFORE = re.compile(r"\b(?:the|a|an)\s+$", re.I)
 OUTCOME_TAG = re.compile(r"<([^<>]+)>")
 DECIDING_OUTCOMES = {"accepted", "rejected", "moved on, no decision", "approved as revised"}
 AWAITING_RULING = "revised, awaiting ruling"
@@ -508,7 +508,7 @@ def walk_document_items(walk_finder, minutes, value, numbers, total, parser):
 
 
 def says_outcome(pattern, line):
-    """Return whether the line holds a match of pattern that does not follow a determiner such as "the"."""
+    """Return whether the line holds a match of pattern that does not follow the, a or an."""
     return any(not MODIFIER_BEFORE.search(line[:match.start()]) for match in pattern.finditer(line))
 
 
@@ -532,7 +532,7 @@ def minutes_record(walk_finder, minutes_text, parser):
         first_word = first[1].lower() if first else ""
         # An outcome tag or a leading "deferred" says what the line records; only an untagged line is read
         # by its keywords, since a hand-written open line may use "approved" in another sense, and even
-        # then a keyword right after a determiner, as in "the approved definition", is not read. An
+        # then a keyword right after the, a or an, as in "the approved definition", is not read. An
         # awaiting-ruling tag undoes an earlier decision and beats a deciding tag on its own line; `<open>`
         # does neither, since real minutes use it after a decision for a side point left open.
         defers = first_word == DEFERRED
