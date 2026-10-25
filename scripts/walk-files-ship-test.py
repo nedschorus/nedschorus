@@ -100,7 +100,8 @@ SUITE_HOME = pathlib.Path(tempfile.mkdtemp(prefix="walk-files-ship-test-home-"))
 atexit.register(lambda: shutil.rmtree(SUITE_HOME, ignore_errors=True))
 SESSION_ID_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 PROBE_SESSION_ID = "walk-files-ship-test-session"
-WALK_CLOSED_MARKER = SUITE_HOME / ".claude" / "handoffs" / f"{PROBE_SESSION_ID}-walk-closed"
+WALK_CLOSED_MARKER = (SUITE_HOME / ".claude" / "handoffs" / (
+    f"{PROBE_SESSION_ID}-handoff-due-at-lower-context-threshold-after-approval-walk-closed"))
 
 failures = []
 

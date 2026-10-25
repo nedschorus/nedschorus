@@ -1172,13 +1172,17 @@ with tempfile.TemporaryDirectory() as workspace:
 
         # --- An approval-walk's close: the walk-closed marker and 20% -------
         WALK_PROBE_SESSION_ID = "handoff-threshold-hook-test-walk-closed-session"
-        walk_closed_marker_file = hook.walk_closed_marker_path(WALK_PROBE_SESSION_ID)
+        walk_closed_marker_file = (
+            hook.handoff_due_at_lower_context_threshold_after_approval_walk_closed_marker_path(
+                WALK_PROBE_SESSION_ID))
         walk_fired_marker_file = hook.fired_marker_path(WALK_PROBE_SESSION_ID)
         walk_deferred_marker_file = (
             hook.HANDOFF_DIRECTORY / f"{WALK_PROBE_SESSION_ID}-handoff-deferred")
         check("the walk-closed marker sits beside the other markers, named by session",
               walk_closed_marker_file
-              == hook.HANDOFF_DIRECTORY / f"{WALK_PROBE_SESSION_ID}-walk-closed",
+              == hook.HANDOFF_DIRECTORY / (
+                  f"{WALK_PROBE_SESSION_ID}"
+                  "-handoff-due-at-lower-context-threshold-after-approval-walk-closed"),
               str(walk_closed_marker_file))
 
         def mark_walk_closed():
@@ -1229,7 +1233,7 @@ with tempfile.TemporaryDirectory() as workspace:
 
         mark_walk_closed()
         result = run_hook({**walk_payload, "transcript_path": str(walk_over)},
-                          ("--threshold-used-plus-compaction-dropped-percentage-at-walk-close",
+                          ("--threshold-used-plus-compaction-dropped-percentage-after-approval-walk-closed",
                            "25"))
         check("the walk-close threshold is configurable, and a marker under it is removed",
               result.returncode == 0 and not result.stderr.strip()

@@ -646,7 +646,8 @@ def walk_closed_marker_written_when_minutes_close_the_walk(minutes: pathlib.Path
               f"message when its context used plus the tokens its compactions dropped "
               f"is at least 20%.", file=sys.stderr)
         return True
-    path = threshold_hook.walk_closed_marker_path(session_id)
+    path = threshold_hook.handoff_due_at_lower_context_threshold_after_approval_walk_closed_marker_path(
+        session_id)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"{minutes.name}\n", encoding="utf-8")

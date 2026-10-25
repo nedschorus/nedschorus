@@ -45,11 +45,15 @@ def fired_marker_path(session_id: str) -> Path:
     return HANDOFF_DIRECTORY / f"{session_id}{FIRED_MARKER_SUFFIX}"
 
 
-WALK_CLOSED_MARKER_SUFFIX = "-walk-closed"
+HANDOFF_DUE_AT_LOWER_CONTEXT_THRESHOLD_AFTER_APPROVAL_WALK_CLOSED_MARKER_SUFFIX = (
+    "-handoff-due-at-lower-context-threshold-after-approval-walk-closed")
 
 
-def walk_closed_marker_path(session_id: str) -> Path:
-    return HANDOFF_DIRECTORY / f"{session_id}{WALK_CLOSED_MARKER_SUFFIX}"
+def handoff_due_at_lower_context_threshold_after_approval_walk_closed_marker_path(
+        session_id: str) -> Path:
+    return HANDOFF_DIRECTORY / (
+        f"{session_id}"
+        f"{HANDOFF_DUE_AT_LOWER_CONTEXT_THRESHOLD_AFTER_APPROVAL_WALK_CLOSED_MARKER_SUFFIX}")
 
 # Caller-owned reincarnation must not replace the caller's answer with a handoff.
 REINCARNATION_OWNED_BY_CALLER_VARIABLE = "NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER"
@@ -333,8 +337,8 @@ def main(argv=None) -> int:
              "session's compactions dropped reaches this share",
     )
     parser.add_argument(
-        "--threshold-used-plus-compaction-dropped-percentage-at-walk-close", type=float,
-        default=20.0,
+        "--threshold-used-plus-compaction-dropped-percentage-after-approval-walk-closed",
+        type=float, default=20.0,
         help="when an approval-walk has closed, the handoff fires when the current context "
              "plus the tokens the session's compactions dropped reaches this share",
     )
@@ -361,7 +365,8 @@ def main(argv=None) -> int:
         return 0
 
     # Removed on every path below but deferral, which must still count the walk's close when it ends.
-    walk_closed_marker = walk_closed_marker_path(session_id)
+    walk_closed_marker = (
+        handoff_due_at_lower_context_threshold_after_approval_walk_closed_marker_path(session_id))
     walk_closed = walk_closed_marker.exists()
     code, keep_walk_closed_marker = request_handoff_when_due(
         arguments, session_id, payload.get("transcript_path", ""), walk_closed)
@@ -387,7 +392,7 @@ def request_handoff_when_due(arguments, session_id: str, transcript_path: str,
             used_percentage=used, used_plus_dropped_percentage=used_plus_dropped)
         if used_plus_dropped < arguments.threshold_used_plus_compaction_dropped_percentage:
             if not walk_closed or used_plus_dropped < \
-                    arguments.threshold_used_plus_compaction_dropped_percentage_at_walk_close:
+                    arguments.threshold_used_plus_compaction_dropped_percentage_after_approval_walk_closed:
                 return 0, False
             instruction = WALK_CLOSED_HANDOFF_INSTRUCTION
 
