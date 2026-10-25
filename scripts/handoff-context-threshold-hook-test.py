@@ -819,6 +819,21 @@ with tempfile.TemporaryDirectory() as workspace:
               f"fired={compacted_marker_file.exists()}")
         compacted_deferred_marker_file.unlink(missing_ok=True)
 
+        def compacted_scan_that_cannot_read(_transcript_path, *_arguments, **_keywords):
+            raise hook.TranscriptCouldNotBeFullyRead("unreadable in this test")
+
+        code, stderr = run_hook_in_process(
+            {"session_id": COMPACTED_PROBE_SESSION_ID,
+             "transcript_path": str(compacted_over)},
+            scan_replacement=compacted_scan_that_cannot_read)
+        check("a compacted session past 40% with an unreadable transcript defers with both shares",
+              code == 2 and "unknown" in stderr
+              and "Context at 20% (41% counting the tokens its compactions dropped)" in stderr,
+              f"code {code}, stderr {stderr[:250]}")
+        check("that unknown-count deferral writes no fired marker",
+              not compacted_marker_file.exists(), str(compacted_marker_file))
+        compacted_deferred_marker_file.unlink(missing_ok=True)
+
         # 55% current plus 50% dropped is 105%: past the ceiling only if the
         # ceiling counted the dropped tokens.
         compacted_past_ceiling_with_dropped = transcript_of(
