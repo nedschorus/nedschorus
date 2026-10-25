@@ -1,6 +1,6 @@
 ---
 name: walk-me-through
-description: Present long or complex material to the user one item at a time, if the display message will be >300 words or combines >4 independent items.
+description: 'Use when a message to the user would run over 300 words or carry more than 4 separate items, questions or decisions; when the user says "too much", "walk me through" or "one at a time", or types /walk-me-through anywhere in his message; and when another skill calls for an approval-walk. Presents the material as an approval-walk, one item at a time, each with a recommendation the user answers.'
 ---
 
 # Walk me through
