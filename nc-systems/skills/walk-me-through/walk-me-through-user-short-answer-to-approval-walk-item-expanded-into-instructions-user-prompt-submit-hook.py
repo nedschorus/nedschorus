@@ -74,13 +74,15 @@ every number of a numbered answer is one of its part numbers, the answer
 answers those parts, not items, unless the answer says `item`, as in `item 2 a`
 or `approve item 2`, or its only number is the waiting item's own, as in `2 a`
 or `approve 2` while item 2 waits: those answer the item. The text names each part's letter; R on a part
-asks to see the item again. CHECK_PROGRAM records one answer for the whole
-item and has no flag for a part's answer, so: when every part gets the same
-letter, the text gives that letter's lines for the whole item; when the
-letters differ, it says check cannot record them and tells the agent to record
-nothing and ask the user to answer the item with one letter; when a part is
-left unanswered, the item stays open and the agent records nothing yet; when
-a part gets more than one letter, the answer is refused whole. Every other
+asks to see the item again. When a part gets more than one letter, the answer
+is refused whole; when a part is left unanswered, the item stays open and the
+agent records nothing yet. When every part gets the same letter, the text
+gives that letter's lines for the whole item. When the letters differ and are
+each A, AO or D, the text says what each does for its part and gives the
+CHECK_PROGRAM check command with one `--part N=LETTER` flag per part. When
+they differ and one is Z, it says check cannot record a part deferred while
+others are answered, and tells the agent to record nothing and ask the user to
+answer again. Every other
 numbered answer, one to an item with no parts included, reads its numbers as
 item numbers.
 
@@ -338,13 +340,24 @@ PART_R_LINE = (
 PARTS_SAME_LETTER_LINE = (
     "Every part has the answer {letter}, so the answer is {letter} to the whole of {item}, and means what the "
     "lines below say.")
+PARTS_LETTERS_LINES = (
+    "Each part's letter does for that part what it does for a whole item: A approves the part's recommendation, "
+    "so do what it says; AO does the same and marks the approval as obvious; D disapproves it, so do the "
+    "part's alternative.",
+    "If a part answered D gives no single alternative, ask the user what he wants done instead, and act on "
+    "nothing yet.",
+    "Otherwise, whether or not the parts make a change, first run "
+    "`python3 {checkout}/nc-systems/skills/walk-me-through/{program} check {flags}`, which records each part's "
+    "answer, then the close command it prints, and do what close prints; write nothing in the minutes by hand.",
+)
 PARTS_NOT_RECORDABLE_LINES = (
-    "The check step cannot record this answer: `{program} check` records one answer for the whole item, and "
-    "none of the flags `{program} --help` lists gives a part its own answer.",
-    "Record nothing and act on none of the parts, because a check run would record, for the whole of {item}, an "
-    "answer the user did not give.",
-    "Tell the user that the walk-me-through check program cannot yet record a different answer for each part of "
-    "an item, and ask him to answer {item} with one letter, or to say how else to go on.",
+    "The check step cannot record this answer: `{program} check --part` takes A, AO or D for a part, because "
+    "the walk-me-through skill does not say where an item goes in the walk when one of its parts is deferred "
+    "and the others are answered.",
+    "Record nothing and act on none of the parts.",
+    "Tell the user that the walk-me-through check program cannot record a deferred part beside answered ones, "
+    "and ask him to answer every part of {item} with A, AO or D, to answer Z to the whole item, or to say how "
+    "else to go on.",
 )
 PARTS_UNANSWERED_LINES = (
     "The answer does not name {unanswered}, and the walk-me-through skill keeps an item open while a part is "
@@ -559,12 +572,16 @@ def parts_lines(answer, parts, walk):
         lines.append(PART_R_LINE.format(item=item))
     letters = {letter for _, letter in deciding}
     unanswered = [number for number in parts if number not in numbers]
-    if len(letters) > 1:
-        return lines + [line.format(program=CHECK_PROGRAM.name, item=item) for line in PARTS_NOT_RECORDABLE_LINES]
     if not deciding:
         return lines
     if unanswered:
         return lines + [line.format(unanswered=named(unanswered), item=item) for line in PARTS_UNANSWERED_LINES]
+    if len(letters) > 1 and "Z" in letters:
+        return lines + [line.format(program=CHECK_PROGRAM.name, item=item) for line in PARTS_NOT_RECORDABLE_LINES]
+    if len(letters) > 1:
+        flags = " ".join(f"--part {number}={letter}" for number, letter in sorted(deciding))
+        return lines + [line.format(checkout=CHECKOUT, program=CHECK_PROGRAM.name, flags=flags)
+                        for line in PARTS_LETTERS_LINES]
     letter = letters.pop()
     return [*lines, PARTS_SAME_LETTER_LINE.format(letter=letter, item=item),
             *meaning_lines({"form": "single", "answer": letter, "code": letter}, walk, True)]
