@@ -62,7 +62,7 @@ check("a git failure in a program that takes names on its command line gets four
           "from the command that printed this message and from the rerun, or the corrected command."], lines)
 
 lines = next_step_lines.git_failure_next_step_lines(
-    "`git -C d status`", "the sync", include_the_misspelt_branch_commit_or_path_line=False,
+    "`git -C d status`", include_the_misspelt_branch_commit_or_path_line=False,
     rerun_fails_when="prints an error again", which_lines_to_quote_in_the_report="the sync line and the error",
     read_by_a_subagent=False,
     next_step_to_skip_when_the_rerun_fails_too="act on the rest of this prompt").splitlines()
@@ -72,6 +72,19 @@ check("a program that takes no names gets one case; a line no subagent reads nam
           "If git's error names no lock file, run exactly `git -C d status` once more.",
           "If the rerun prints an error again, stop, do not act on the rest of this prompt, "
           "and tell the user word for word, the sync line and the error."], lines)
+
+try:
+    lines = next_step_lines.git_failure_next_step_lines(
+        "`p --x`", text_the_failure_line_contains="p: could not",
+        include_the_misspelt_branch_commit_or_path_line=True)
+except TypeError as error:
+    lines = None
+    said = str(error)
+check("the misspelt-name line without the program it names is refused, naming the argument and both "
+      "values of the flag",
+      lines is None and "needs program" in said
+      and "include_the_misspelt_branch_commit_or_path_line=True" in said
+      and "include_the_misspelt_branch_commit_or_path_line=False" in said, lines)
 
 for case_name, arguments in [
         ("neither the failure text nor the free-text pair", {}),

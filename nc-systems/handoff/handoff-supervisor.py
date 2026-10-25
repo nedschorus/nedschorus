@@ -271,7 +271,6 @@ SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
 WRITTEN_BY_SESSION_FIELD = "written-by-session"
 WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 
-LAUNCH_TIME_GIT_SYNC_PROGRAM_NAME = "the handoff-supervisor's launch-time-git-sync"
 # The prompt goes on to the next step; a stop must hold that back too.
 LAUNCH_TIME_GIT_SYNC_STOP_HOLDS_BACK = "act on the rest of this prompt"
 LAUNCH_TIME_GIT_SYNC_RERUN_FAILS_WHEN = "prints an error again"
@@ -282,7 +281,7 @@ def launch_time_git_sync_git_failure_next_steps(error) -> str:
     """The next-step lines for a GitCommandFailed the launch-time-git-sync reports."""
     rerun = f"`{shlex.join(['git', '-C', str(error.directory), *error.arguments])}`"
     return next_step_lines.git_failure_next_step_lines(
-        rerun, LAUNCH_TIME_GIT_SYNC_PROGRAM_NAME, include_the_misspelt_branch_commit_or_path_line=False,
+        rerun, include_the_misspelt_branch_commit_or_path_line=False,
         rerun_fails_when=LAUNCH_TIME_GIT_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=LAUNCH_TIME_GIT_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
         read_by_a_subagent=False,
         next_step_to_skip_when_the_rerun_fails_too=LAUNCH_TIME_GIT_SYNC_STOP_HOLDS_BACK)
