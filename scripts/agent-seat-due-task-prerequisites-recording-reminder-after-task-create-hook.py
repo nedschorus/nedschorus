@@ -42,8 +42,11 @@ WAITS_ON_RECORD_INSTRUCTION_TEMPLATE = (
     "Record no other kind of dependency: one that is not a pull request, GHI or task is noise."
 )
 TASK_ID_CLAUSE_TEMPLATE = " (id {task_id})"
-FAULT_LINE_TEMPLATE = ("{program}: the agent was not told how to record what the new task waits on, "
-                       "because the hook's stdin is not a JSON object: {error}")
+FAULT_LINE_TEMPLATE = ("{program}: the task was added, but this hook could not say how to record what it "
+                       "waits on, because Claude Code sent the hook a payload that is not a JSON object "
+                       "({error}); you did nothing wrong. If the task waits on a pull request or a GHI, "
+                       "record it with TaskUpdate in metadata.waits_on; if it waits on another task, "
+                       "with addBlockedBy.")
 
 
 def created_task_id(payload):
