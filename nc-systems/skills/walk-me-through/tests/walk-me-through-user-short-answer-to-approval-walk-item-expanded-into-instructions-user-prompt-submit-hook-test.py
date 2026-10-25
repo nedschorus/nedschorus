@@ -707,8 +707,9 @@ A plain item. Recommendation: keep it.
 """
 PARTS_CHECK_GAP = [
     "The check step cannot record this answer: `walk-me-through-answer-added-texts-cold-read-fast-read-check-and-"
-    "close.py check` records one answer for the whole item, and none of the flags its --help lists gives a part its "
-    "own answer.",
+    "close.py check` records one answer for the whole item, and none of the flags "
+    "`walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py --help` lists gives a part its own "
+    "answer.",
     "Record nothing and act on none of the parts, because a check run would record, for the whole of item 4 of 9, an "
     "answer the user did not give.",
     "Tell the user that the walk-me-through check program cannot yet record a different answer for each part of an "
@@ -791,6 +792,21 @@ def test_numbers_are_item_numbers_when_the_waiting_item_has_no_parts_or_a_number
               lines is not None
               and lines[1] == (f"The answer gives a letter to {named} not waiting for an answer, and the minutes' "
                                f"`#next_to_present` line names only {next_to_present}."), f"lines {lines!r}")
+    own_number_document = PARTS_DOCUMENT.replace("## Item 4 of 9:", "## Item 2 of 9:")
+    case = Case(next_to_present="item 2 of 9", document=own_number_document)
+    for prompt in ("2 a", "item 2 a", "approve item 2", "approve 2"):
+        lines = case.lines(prompt)
+        check(f"{prompt!r} while item 2, with parts 1 to 3, waits is A to item 2, not to its part 2",
+              lines is not None
+              and lines[1] == "The answer gives each item it names its own letter: item 2 of 9: A.", f"lines {lines!r}")
+    lines = case.lines("1 a 2 d")
+    check("'1 a 2 d' while item 2, with parts 1 to 3, waits still answers its parts",
+          lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: D", "item 2 of 9")]
+          + [line.replace("item 4 of 9", "item 2 of 9") for line in PARTS_CHECK_GAP], f"lines {lines!r}")
+    lines = Case(next_to_present="item 4 of 9", document=PARTS_DOCUMENT).lines("item 1 a item 2 d")
+    check("an answer that says `item` names items, not parts",
+          lines is not None and lines[1].startswith("The answer gives a letter to item 1 of 9, item 2 of 9"),
+          f"lines {lines!r}")
     lines = Case(next_to_present="items 4 and 7 of 9", document=PARTS_DOCUMENT).lines("1 a 2 d")
     check("with two items with parts waiting, numbers stay item numbers",
           lines is not None and lines[1].startswith("The answer gives a letter to item 1 of 9, item 2 of 9"),

@@ -71,7 +71,9 @@ after any heading marks and `**` or `__`, with `Part N`, or with N then `.` or
 `**Part 2:** ...`, `### Part 3`. The item holds parts when those numbers run
 1 to K, K from 2 to 5. When exactly one item is waiting, it holds parts, and
 every number of a numbered answer is one of its part numbers, the answer
-answers those parts, not items. The text names each part's letter; R on a part
+answers those parts, not items, unless the answer says `item`, as in `item 2 a`
+or `approve item 2`, or its only number is the waiting item's own, as in `2 a`
+or `approve 2` while item 2 waits: those answer the item. The text names each part's letter; R on a part
 asks to see the item again. CHECK_PROGRAM records one answer for the whole
 item and has no flag for a part's answer, so: when every part gets the same
 letter, the text gives that letter's lines for the whole item; when the
@@ -338,7 +340,7 @@ PARTS_SAME_LETTER_LINE = (
     "lines below say.")
 PARTS_NOT_RECORDABLE_LINES = (
     "The check step cannot record this answer: `{program} check` records one answer for the whole item, and "
-    "none of the flags its --help lists gives a part its own answer.",
+    "none of the flags `{program} --help` lists gives a part its own answer.",
     "Record nothing and act on none of the parts, because a check run would record, for the whole of {item}, an "
     "answer the user did not give.",
     "Tell the user that the walk-me-through check program cannot yet record a different answer for each part of "
@@ -397,12 +399,13 @@ def parsed_answer(prompt):
     if match:
         return {"form": "all", "answer": text, "code": answer_code(match["first"] or match["last"])}
     if NUMBERED.match(text):
-        return {"form": "numbered", "answer": text,
+        return {"form": "numbered", "answer": text, "says item": "item" in lowered,
                 "pairs": [(number, answer_code(letter)) for number, letter in PAIRS.findall(text)]}
     match = WORD_NUMBERS.match(text)
     if match:
         numbers = re.findall(NUMBER, match["numbers"])
-        return {"form": "numbered", "answer": text, "pairs": [(n, answer_code(match["word"])) for n in numbers],
+        return {"form": "numbered", "answer": text, "says item": "item" in lowered,
+                "pairs": [(n, answer_code(match["word"])) for n in numbers],
                 "every number names an item": len(numbers) > 1}
     match = CONDITION.match(text)
     if match:
@@ -529,7 +532,10 @@ def recommendation_unknown_lines(answer_letter, numbers, walk):
 
 def answered_parts(answer, walk):
     """The waiting item's part numbers when the numbered answer answers its parts, or None."""
-    if answer["form"] != "numbered" or walk is None or len(walk.numbers) != 1:
+    if answer["form"] != "numbered" or walk is None or len(walk.numbers) != 1 or answer["says item"]:
+        return None
+    # Many items number their own number among their parts; `2 a` while item 2 waits answers the item.
+    if {number for number, _ in answer["pairs"]} == set(walk.numbers):
         return None
     parts = walk.parts.get(walk.numbers[0])
     if parts and all(number.isdigit() and int(number) in parts for number, _ in answer["pairs"]):
