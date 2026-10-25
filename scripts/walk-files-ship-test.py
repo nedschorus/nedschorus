@@ -22,9 +22,12 @@ import contextlib
 import hashlib
 import importlib.util
 import io
+import atexit
 import json
 import os
 import pathlib
+import shutil
+import site
 import subprocess
 import sys
 import tempfile
@@ -89,6 +92,16 @@ if any("sha256sum" in a for a in sys.argv):
         print(size_line)
 """
 
+# Every run gets this HOME, so a walk-closed marker can land only here, and no
+# session id unless a case gives one. PYTHONUSERBASE keeps the packages the
+# launching HOME's user site provides, such as markdown-it-py on a Mac.
+LAUNCH_USER_BASE = site.getuserbase()
+SUITE_HOME = pathlib.Path(tempfile.mkdtemp(prefix="walk-files-ship-test-home-"))
+atexit.register(lambda: shutil.rmtree(SUITE_HOME, ignore_errors=True))
+SESSION_ID_VARIABLE = "CLAUDE_CODE_SESSION_ID"
+PROBE_SESSION_ID = "walk-files-ship-test-session"
+WALK_CLOSED_MARKER = SUITE_HOME / ".claude" / "handoffs" / f"{PROBE_SESSION_ID}-walk-closed"
+
 failures = []
 
 
@@ -109,6 +122,9 @@ def write_walk(directory: pathlib.Path, name: str, files: dict) -> pathlib.Path:
 
 def ship(destination, *args, extra_env=None):
     env = dict(os.environ)
+    env.pop(SESSION_ID_VARIABLE, None)
+    env["HOME"] = str(SUITE_HOME)
+    env["PYTHONUSERBASE"] = LAUNCH_USER_BASE
     env[DESTINATION_VARIABLE] = destination
     if args and args[0].endswith(".md"):
         env["WALK_SHIP_TEST_WALK_DIRECTORY"] = str(pathlib.Path(args[0]).parent)
@@ -779,6 +795,85 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-race-test-") as race_sc
                             "walk-text-grown-there", "minutes-landed",
                             "minutes-after-copy", "minutes-after-rename")),
           str(names))
+
+# --- The walk-closed marker ---------------------------------------------------
+with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_scratch_name:
+    close_scratch = pathlib.Path(close_scratch_name)
+    close_destination = str(close_scratch / "store" / "cold-read-records")
+    close_walks = close_scratch / "walks"
+    CLOSE_WALK = "close-demo-walk-2026-10-24"
+    open_minutes = "# minutes\n\nItem 1 ruled.\n\n#next_to_present item 2 of 2\n"
+    closed_minutes = open_minutes + "Item 2 ruled.\n\n#next_to_present none, closed\n"
+    close_walk_text = write_walk(close_walks, CLOSE_WALK,
+                                 {**FILES, "-minutes": open_minutes})
+    with_session = {SESSION_ID_VARIABLE: PROBE_SESSION_ID}
+
+    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
+    check("a mid-walk ship writes no walk-closed marker",
+          result.returncode == 0 and not WALK_CLOSED_MARKER.exists(),
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+
+    (close_walks / f"{CLOSE_WALK}-minutes.md").write_text(closed_minutes, encoding="utf-8")
+    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
+    check("the ship that puts closed minutes in the store writes the session's "
+          "walk-closed marker, exit 0, one line opening shipped:",
+          result.returncode == 0 and result.stdout.startswith("shipped:")
+          and one_line(result.stdout) and WALK_CLOSED_MARKER.is_file(),
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+
+    WALK_CLOSED_MARKER.unlink()
+    (close_walks / f"{CLOSE_WALK}-dispositions.md").write_text("# dispositions\n",
+                                                               encoding="utf-8")
+    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
+    check("a later ship of the closed walk whose minutes are already in the store, "
+          "such as a dispositions update, writes no marker",
+          result.returncode == 0 and "already there unchanged" in result.stdout
+          and not WALK_CLOSED_MARKER.exists(),
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+
+    reopened_minutes = closed_minutes + "\nReopened.\n\n#next_to_present item 3 of 3\n"
+    (close_walks / f"{CLOSE_WALK}-minutes.md").write_text(reopened_minutes, encoding="utf-8")
+    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
+    check("a ship of reopened minutes, whose last #next_to_present line names an item, "
+          "writes no marker though an earlier line says closed",
+          result.returncode == 0 and "minutes replaced" in result.stdout
+          and not WALK_CLOSED_MARKER.exists(),
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+
+    reclosed_minutes = reopened_minutes + "Item 3 ruled.\n\n#next_to_present none, closed\n"
+    (close_walks / f"{CLOSE_WALK}-minutes.md").write_text(reclosed_minutes, encoding="utf-8")
+    result = ship(close_destination, str(close_walk_text))
+    check("closing with no session id set writes no marker, says so on stderr, "
+          "and still exits 0 with one shipped: line",
+          result.returncode == 0 and result.stdout.startswith("shipped:")
+          and one_line(result.stdout) and not WALK_CLOSED_MARKER.exists()
+          and SESSION_ID_VARIABLE in result.stderr and "/handoff" in result.stderr,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+
+    (close_walks / f"{CLOSE_WALK}-minutes.md").write_text(
+        reclosed_minutes + "Closing note.\n", encoding="utf-8")
+    handoffs_directory = WALK_CLOSED_MARKER.parent
+    shutil.rmtree(handoffs_directory, ignore_errors=True)
+    handoffs_directory.parent.mkdir(parents=True, exist_ok=True)
+    handoffs_directory.write_text("a file where the directory should be\n", encoding="utf-8")
+    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
+    check("a walk-closed marker that cannot be written exits 1, keeps the one "
+          "shipped: line, and names the marker and /handoff on stderr",
+          result.returncode == 1 and result.stdout.startswith("shipped:")
+          and one_line(result.stdout) and "FAILED to write the walk-closed marker" in result.stderr
+          and str(WALK_CLOSED_MARKER) in result.stderr and "/handoff" in result.stderr,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    handoffs_directory.unlink()
+
+    # A refused add-only file does not stop the closed minutes landing, so the close counts.
+    (close_walks / f"{CLOSE_WALK}-draft.md").write_text("# draft, rewritten\n", encoding="utf-8")
+    (close_walks / f"{CLOSE_WALK}-minutes.md").write_text(
+        reclosed_minutes + "Closing note, revised.\n", encoding="utf-8")
+    result = ship(close_destination, str(close_walk_text), extra_env=with_session)
+    check("a REFUSED run that still put closed minutes in the store writes the marker",
+          result.returncode == 2 and result.stdout.startswith("REFUSED:")
+          and WALK_CLOSED_MARKER.is_file(),
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
 
 print()
 if failures:
