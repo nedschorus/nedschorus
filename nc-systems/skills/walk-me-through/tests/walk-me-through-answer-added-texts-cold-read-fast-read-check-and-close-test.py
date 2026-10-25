@@ -553,7 +553,15 @@ def test_how_a_minutes_line_without_a_deciding_tag_is_read():
             ("Item 2 of 5: the approved wording waits. <open>\n", (set(), {}),
              "an `<open>` line holding a deciding word records no decision"),
             ("Item 2 of 5: the user approved it.\n", ({"2"}, {}),
-             "an untagged line holding a deciding word records a decision")):
+             "an untagged line holding a deciding word records a decision"),
+            ("Items 3 to 4 of 5: respelled; item 3 cites the approved definition.\n", (set(), {}),
+             "an untagged line whose only deciding word follows `the` records no decision"),
+            ("Item 2 of 5: an Accepted text and a rejected one; each disapproved.\n", (set(), {}),
+             "deciding words after `an`, `a` and `each` record no decision, whatever their case"),
+            ("Item 2 of 5: the approved text stays, and the user approved it.\n", ({"2"}, {}),
+             "an untagged line with one deciding word after `the` and one not records a decision"),
+            ("Item 2 of 5: the change waits for the deferred migration.\n", (set(), {}),
+             "an untagged line whose only `deferred` follows `the` records no deferral")):
         decided, deferrals = program.minutes_record(walk_finder, line, parser)
         check(case_name, (decided, dict(deferrals)) == expected, repr((decided, deferrals)))
 
@@ -853,6 +861,35 @@ def test_an_outcome_tag_decides_whether_a_line_records_a_decision():
     case.run("close")
     check("an untagged line whose first word is deferred records a deferral, not a decision",
           marker(case) == "#next_to_present item 2 of 5", case.minutes.read_text())
+
+
+DOTTED_PART_DOCUMENT = """# A walk with a part added after a re-plan
+
+## Item 1 of 6: one
+
+## Item 2 of 6: two
+
+## Item 2.1 of 6: a part the user raised
+
+## Item 3 of 6: three
+
+## Item 4 of 6: four
+
+## Item 5 of 6: summary
+"""
+
+
+def test_a_note_naming_later_items_with_approved_as_a_modifier_does_not_skip_them():
+    case = Case(next_to_present="item 2.1 of 6", document=DOTTED_PART_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\nItem 1 of 6: approved. <accepted>\n"
+                            "Items 2 to 4: respelled after item 1; item 2 cites the approved definition.\n"
+                            "Item 2 of 6: approved. <accepted>\n#next_to_present item 2.1 of 6\n")
+    case.run("check")
+    closed = case.run("close")
+    check("after a dotted part is approved, a note naming later items whose `approved` follows `the` leaves them "
+          "unrecorded, so the item after the part comes next, not the summary item",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 3 of 6",
+          described(closed) + case.minutes.read_text())
 
 
 def test_a_minutes_line_with_an_unusable_item_range_is_skipped():
