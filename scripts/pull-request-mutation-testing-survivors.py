@@ -216,9 +216,8 @@ def test_command_for(suites, interpreter, test_command_script_file, sandbox_pref
             f"{PROGRAM}: not run — this program could not write {test_command_script_file}, the "
             f"script it writes so that cosmic-ray can run the test suites, so no mutant was run: "
             f"{error}\n"
-            f"Tell the user the line above, word for word.\n"
-            f"Do not rerun this program until the user says to: a rerun writes the file under the "
-            f"same temporary root, {Path(test_command_script_file).parent.parent}.") from error
+            f"Tell the user the first line of this message, word for word, and that you will not "
+            f"rerun scripts/pull-request-mutation-testing-survivors.py until they say to.") from error
     return shlex.join(["sh", str(test_command_script_file)])
 
 

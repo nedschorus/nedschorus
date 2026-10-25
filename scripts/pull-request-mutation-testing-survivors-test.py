@@ -1084,13 +1084,15 @@ def run_cases():
               "CouldNotRun, naming the file",
               raised is not None and str(unwritable) in raised, raised)
         check("the unwritable-script refusal says the program writes the file itself and that no "
-              "mutant was run, and gives each instruction on its own line: tell the user, and "
-              "do not rerun",
+              "mutant was run, then on a line of its own tells the agent to pass the first line "
+              "to the user and say it will not rerun until the user says to",
               raised is not None and "this program could not write" in raised
               and "no mutant was run" in raised
-              and len(raised.split("\n")) == 3
-              and raised.split("\n")[1].startswith("Tell the user the line above")
-              and raised.split("\n")[2].startswith("Do not rerun this program"),
+              and len(raised.split("\n")) == 2
+              and raised.split("\n")[1] == ("Tell the user the first line of this message, word "
+                                             "for word, and that you will not rerun "
+                                             "scripts/pull-request-mutation-testing-survivors.py "
+                                             "until they say to."),
               raised)
     stem_for =survivors.scratch_file_name_stem_under_255_bytes_unique_to_repository_paths
     long_path = "/".join(["é" * 120] * 3) + ".py"
