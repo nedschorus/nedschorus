@@ -1,0 +1,515 @@
+#!/usr/bin/env python3
+"""Cases for the Stop hook that, during an open approval-walk, blocks the
+agent's stop when its reply asks the user something outside the walk's items.
+
+Most cases run the hook as a subprocess, its real stdin-to-stdout path, in a
+scratch checkout this suite made, with a transcript this suite wrote. The model
+call is never real: a fake `claude` first on PATH records each call and answers
+as the case sets it. The refusal log goes to a file in the scratch directory.
+"""
+
+import importlib.util
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+# Before anything runs git: a GIT_DIR or similar variable inherited from the
+# caller would otherwise send this suite's `git init` into another repository.
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    Path(__file__).resolve().parents[4] / "scripts"
+    / "git-redirecting-environment-removal-test-fixture.py")
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
+HOOK_SCRIPT = (Path(__file__).resolve().parents[1]
+               / "walk-me-through-agent-question-to-user-outside-approval-walk-items-refusal-stop-hook.py")
+_hook_spec = importlib.util.spec_from_file_location("question_refusal_stop_hook", HOOK_SCRIPT)
+hook = importlib.util.module_from_spec(_hook_spec)
+_hook_spec.loader.exec_module(hook)
+SUITE_ROOT = Path(tempfile.mkdtemp(prefix="approval-walk-question-refusal-hook-test-")).resolve()
+FAKE_BIN = SUITE_ROOT / "bin"
+failures = []
+
+ANSWER_LINE = ("Answer A to approve, AO to approve it as obvious, Aa to approve after an advisor check, D to "
+               "disapprove, Z to defer, R to repeat the item, E to have it explained, or O to ask for other options.")
+WALK_DOCUMENT = f"""# The poem page: approval-walk
+
+This approval-walk settles where the poem page lives. It has 10 items.
+
+## Item 1 of 10: the page's name
+
+The page is named by the naming page. Recommendation: Use the name.
+
+{ANSWER_LINE}
+
+## Item 2 of 10: where the poem page lives
+
+The page goes in the [wiki](file:///x/wiki), next to the glossary. Do you agree that agents look there first?
+
+**The strongest case against:** one more page to read. Recommendation: Put it in the wiki.
+
+{ANSWER_LINE}
+
+## Item 3 of 10: the hook
+
+A hook checks each written file. Recommendation: Build the hook.
+
+{ANSWER_LINE}
+"""
+ITEM_2_SHOWN = """**Item 2 of 10: where the poem page lives**
+
+The page goes in the wiki, next to the glossary. Do you agree that agents look there first?
+
+**The strongest case against:** one more page to read. Recommendation: Put it in the wiki.
+
+""" + ANSWER_LINE
+INTERRUPTION_ITEM = f"""## Item 2.1 of 11: merge-lane-2's question about the GHI
+
+merge-lane-2 asks: "Should I file one GHI listing the remaining seats' tests?" Recommendation: File it.
+
+{ANSWER_LINE}
+"""
+
+FAKE_CLAUDE = """#!/usr/bin/env python3
+import json, os, sys, time
+with open(os.environ["FAKE_CLAUDE_CALLS"], "a") as calls:
+    calls.write(json.dumps({"argv": sys.argv[1:], "stdin": sys.stdin.read()}) + "\\n")
+mode = os.environ.get("FAKE_CLAUDE_MODE", "no")
+if mode == "sleep":
+    time.sleep(30)
+if mode == "fail":
+    print(json.dumps({"type": "result", "is_error": True, "result": "Not logged in"}))
+    sys.exit(1)
+if mode == "garbage":
+    print("not json")
+    sys.exit(0)
+if mode == "stderr-only":
+    print("Not logged in. Run claude login.", file=sys.stderr)
+    sys.exit(1)
+if mode == "error-exit-0":
+    print(json.dumps({"type": "result", "is_error": True, "result": "API overloaded",
+                      "structured_output": {"asks_user": False, "line_number": 0}}))
+    sys.exit(0)
+if mode in ("verdict-exit-1", "verdict-then-killed"):
+    print(json.dumps({"type": "result", "is_error": False,
+                      "structured_output": {"asks_user": False, "line_number": 0}}), flush=True)
+    if mode == "verdict-exit-1":
+        sys.exit(1)
+    import signal
+    os.kill(os.getpid(), signal.SIGKILL)
+asks = mode.startswith("yes")
+number = int(mode.split(":")[1]) if ":" in mode else (1 if asks else 0)
+print(json.dumps({"type": "result", "is_error": False,
+                  "structured_output": {"asks_user": asks, "line_number": number}}))
+"""
+
+
+def check(case_name, condition, detail=""):
+    if condition:
+        print(f"PASS  {case_name}")
+    else:
+        print(f"FAIL  {case_name}: {detail}")
+        failures.append(case_name)
+
+
+def opening_prompt(turn_origin, text, **fields):
+    return {"type": "user", "turnOrigin": turn_origin, **fields,
+            "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
+
+
+USER_PROMPT = opening_prompt("human", "A", origin={"kind": "human"}, promptSource="typed")
+PEER_PROMPT = opening_prompt("peer", "Another Claude session sent a message: should I file one GHI?",
+                             origin={"kind": "peer"}, isMeta=True, promptSource="system")
+
+
+def text_record(text):
+    return {"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}
+
+
+def tool_record(name, tool_input):
+    return {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": name, "input": tool_input}]}}
+
+
+class Case:
+    """One case's own checkout, walk files, transcript, fake model and log."""
+
+    counter = 0
+
+    def __init__(self, minutes="#next_to_present item 2 of 10", document=WALK_DOCUMENT):
+        Case.counter += 1
+        self.root = SUITE_ROOT / f"case-{Case.counter}"
+        self.checkout = self.root / "checkout"
+        self.checkout.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(self.checkout)], check=True)
+        self.walk = self.checkout / "docs" / "walk"
+        self.walk.mkdir(parents=True)
+        self.document = self.walk / "poem-page-2026-10-12.md"
+        self.document.write_text(document)
+        self.minutes = self.walk / "poem-page-2026-10-12-minutes.md"
+        self.minutes.write_text(f"# Minutes\n\n{minutes}\n")
+        self.transcript = self.root / "transcript.jsonl"
+        self.calls = self.root / "model-calls.jsonl"
+        self.log = self.root / "refusals.jsonl"
+
+    def records(self, *records):
+        self.transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
+
+    def reply(self, *texts, opening=USER_PROMPT):
+        self.records(opening, *(text_record(text) for text in texts))
+
+    def run(self, model="no", stop_hook_active=False, last_assistant_message=None, environment_extra=None,
+            stdin_text=None):
+        payload = {"hook_event_name": "Stop", "session_id": "test-session",
+                   "transcript_path": str(self.transcript), "cwd": str(self.checkout),
+                   "stop_hook_active": stop_hook_active}
+        if last_assistant_message is not None:
+            payload["last_assistant_message"] = last_assistant_message
+        environment = {name: value for name, value in os.environ.items()
+                       if name not in ("NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER",
+                                       "CLAUDE_CODE_SESSION_ATTENDED")}
+        environment.update({"PATH": f"{FAKE_BIN}{os.pathsep}{os.environ['PATH']}",
+                            "FAKE_CLAUDE_CALLS": str(self.calls), "FAKE_CLAUDE_MODE": model,
+                            hook.LOG_PATH_VARIABLE: str(self.log)})
+        environment.update(environment_extra or {})
+        return subprocess.run([sys.executable, str(HOOK_SCRIPT)],
+                              input=json.dumps(payload) if stdin_text is None else stdin_text,
+                              capture_output=True, text=True, env=environment, cwd=self.checkout)
+
+    def model_calls(self):
+        if not self.calls.exists():
+            return []
+        return [json.loads(line) for line in self.calls.read_text().splitlines()]
+
+    def logged(self):
+        if not self.log.exists():
+            return []
+        return [json.loads(line) for line in self.log.read_text().splitlines()]
+
+
+def blocked_reason(result):
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    output = json.loads(result.stdout)
+    return output["reason"] if output.get("decision") == "block" else None
+
+
+def check_silent(case_name, result):
+    check(case_name, result.returncode == 0 and result.stdout == "",
+          f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+
+
+def check_blocked(case_name, result, *phrases):
+    reason = blocked_reason(result)
+    check(case_name, reason is not None and all(phrase in reason for phrase in phrases),
+          f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+
+
+def test_a_clear_question_blocks_without_the_model_and_is_logged():
+    case = Case()
+    case.reply("The tests passed.\n\nShould I merge the pull request now?\n\nItem 2 of 10 is waiting for your answer.")
+    result = case.run(model="no")
+    check_blocked("a sentence ending in a question mark blocks", result,
+                  '"Should I merge the pull request now?"', "the hook's code read it as a clear question")
+    check("a clear question is decided without the model", case.model_calls() == [], case.model_calls())
+    entries = case.logged()
+    check("the refusal is logged with its time, session, walk, sentence and what decided",
+          len(entries) == 1 and entries[0]["session"] == "test-session"
+          and entries[0]["walk"] == "poem-page-2026-10-12"
+          and entries[0]["sentence"] == "Should I merge the pull request now?"
+          and entries[0]["decided_by"] == "code" and entries[0]["time"].endswith("+00:00"), entries)
+    for case_name, text in (
+            ("`say yes` blocks", "The fix is ready. Say yes and I will push it."),
+            ("`waiting for your answer` on a question that is not an item blocks",
+             "The cleanup of the old directories is still waiting for your answer."),
+            ("a bold question blocks", "**Do you agree with merging the two lines?** A: merge. D: keep both."),
+            ("a cue split by bold marks blocks once the marks are dropped", "**Should** I go ahead with the merge."),
+            ("a question relayed in quotes from another agent blocks",
+             'merge-lane-2 asks: "Should the hook be fixed today?" I recommend yes.')):
+        case.reply(text)
+        check_blocked(case_name, case.run(model="no"), "approval-walk question check")
+
+
+def test_the_block_message_says_what_to_do():
+    case = Case()
+    case.reply("Should I merge the pull request now?")
+    reason = blocked_reason(case.run()) or ""
+    for case_name, phrase in (
+            ("the message says the hook refused on purpose", "this hook refused to end your turn on purpose"),
+            ("the message names the walk and quotes the flagged text",
+             "the open approval-walk poem-page-2026-10-12 (the hook's code read it as a clear question). "
+             "The flagged text: \"Should I merge the pull request now?\""),
+            ("the message names the waiting item", "goes to the waiting item, item 2,"),
+            ("the message names the interruption item's number and the new total",
+             "`## Item 2.1 of 11: <the point of the question>`, placed right after item 2."),
+            ("the message says to quote the question whole with a recommendation",
+             "Quote the question whole, as its asker wrote it, whether you or another agent, give your recommendation as `Recommendation: <what you recommend"),
+            ("the message quotes the walk's answer line", f"end the item with this line, which the walk's other "
+             f"items end with: `{ANSWER_LINE}`."),
+            ("the message says to change M everywhere",
+             f"Change the walk's item count M from 10 to 11 in every item heading of {case.document} that carries `of 10`"),
+            ("the message gives the minutes' new line",
+             f"the last `#next_to_present` line of {case.minutes}, which then reads `#next_to_present item 2 of 11`"),
+            ("the message says not to show the new item now",
+             "Do not show the new item now: it is shown after item 2 is answered."),
+            ("the message gives the closing lines", "end the message you write next with these two lines, of which the first clears this check: `I added the question as "
+             "Item 2.1 of 11.` and `Item 2 of 11 is waiting for your answer.`"),
+            ("the message says how to clear a false block",
+             "If the flagged text does not ask the user anything, reword it in your reply so that it no longer reads")):
+        check(case_name, phrase in reason, reason)
+    taken = Case(document=WALK_DOCUMENT + "\n" + INTERRUPTION_ITEM.replace("of 11", "of 10"))
+    taken.reply("Should I merge the pull request now?")
+    check_blocked("an interruption number already in the walk-document is skipped",
+                  taken.run(), "`## Item 2.2 of 11: <the point of the question>`")
+    no_answer_line = Case(document=WALK_DOCUMENT.replace(ANSWER_LINE, "Answer below."))
+    no_answer_line.reply("Should I merge the pull request now?")
+    check_blocked("a walk-document without an answer line is described in words", no_answer_line.run(),
+                  "end the item with the answer line the walk's other items end with.")
+
+
+def test_a_reply_with_nothing_question_like_passes():
+    case = Case()
+    for case_name, text in (
+            ("a plain report passes", "The background job finished, and its report is in the log-store."),
+            ("the waiting-item line the skill requires passes",
+             "PR 1922 merged.\n\nItem 2 of 10 is waiting for your answer."),
+            ("a question in a code span passes", "I ran `grep -c 'why?' notes.md` and found none."),
+            ("a question in a code block passes", "The test prints:\n\n```\nShould I retry?\n```\n\nIt retried once.")):
+        case.reply(text)
+        check_silent(case_name, case.run(model="yes"))
+    check("a reply with nothing question-like never calls the model", case.model_calls() == [], case.model_calls())
+
+
+def test_an_unclear_line_goes_to_the_model():
+    case = Case()
+    case.reply("The fix has a second part, and I recommend building it next.")
+    result = case.run(model="yes:1")
+    check_blocked("an unclear line the model says asks the user blocks", result,
+                  '"The fix has a second part, and I recommend building it next."',
+                  "the model judged that it asks him something")
+    calls = case.model_calls()
+    argv = calls[0]["argv"] if calls else []
+    check("the model is called once, as Haiku, with every hook disabled and no session file",
+          len(calls) == 1 and argv[argv.index("--model") + 1] == hook.MODEL == "claude-haiku-5-5"
+          and json.loads(argv[argv.index("--settings") + 1]) == {"disableAllHooks": True}
+          and "--no-session-persistence" in argv, calls)
+    check("the model is given the unclear line, numbered, and the walk's total and waiting item",
+          calls and "1. The fix has a second part, and I recommend building it next." in calls[0]["stdin"]
+          and "`Item N of 10`, or `item N` for short, and item 2 waits for his answer" in calls[0]["stdin"], calls)
+    check("a block the model decided is logged as the model's",
+          [entry["decided_by"] for entry in case.logged()] == ["model"], case.logged())
+    check_silent("an unclear line the model says asks nothing passes", case.run(model="no"))
+    case.reply("Waiting on you: should line 34 change, as item 2 of 10 asks?")
+    check_silent("a clear question on a line naming an item is unclear, so the model decides", case.run(model="no"))
+    case.reply("I recommend building it next.\n\nThat also fixes the second part, if you agree with the plan.")
+    check_blocked("the model's line number picks the sentence named", case.run(model="yes:2"),
+                  '"That also fixes the second part, if you agree with the plan."')
+
+
+def test_a_failed_model_check_blocks():
+    case = Case()
+    case.reply("The fix has a second part, and I recommend building it next.")
+    for case_name, mode, phrase in (
+            ("a model call that exits nonzero blocks", "fail", "claude exited 1"),
+            ("a model call that prints no verdict blocks, quoting its output", "garbage", "without a verdict (JSONDecodeError"),
+            ("the output of a call with no verdict is quoted", "garbage", "): not json"),
+            ("a model call that writes only to stderr blocks, quoting stderr", "stderr-only",
+             "Not logged in. Run claude login."),
+            ("a model call that reports an error with exit 0 blocks", "error-exit-0",
+             "claude exited 0 reporting an error: API overloaded"),
+            ("a model call that prints a verdict but exits 1 blocks", "verdict-exit-1",
+             "claude exited 1 reporting an error"),
+            ("a model call killed by a signal after printing a verdict blocks", "verdict-then-killed",
+             "claude exited -9 reporting an error")):
+        check_blocked(case_name, case.run(model=mode), "the hook's `claude -p` call that has the model judge this unclear text failed", phrase,
+                      '"The fix has a second part, and I recommend building it next."')
+    check("a block after a failed model check is logged as such",
+          [entry["decided_by"] for entry in case.logged()] == ["model-check-failed"] * 7, case.logged())
+    saved_path = os.environ["PATH"]
+    os.environ["FAKE_CLAUDE_CALLS"] = str(case.calls)
+    try:
+        os.environ["PATH"] = str(SUITE_ROOT / "no-such-directory")
+        line, failure = hook.model_judgement(["x"], ["x"], "10", "2")
+        check("a model that cannot be run is a failure", line is None and "could not be run" in (failure or ""),
+              failure)
+        os.environ["PATH"] = f"{FAKE_BIN}{os.pathsep}{saved_path}"
+        os.environ["FAKE_CLAUDE_MODE"] = "sleep"
+        line, failure = hook.model_judgement(["x"], ["x"], "10", "2", timeout_seconds=1)
+        check("a model call past its time limit is a failure",
+              line is None and "no answer within 1 seconds" in (failure or ""), failure)
+        os.environ["FAKE_CLAUDE_MODE"] = "yes:7"
+        line, failure = hook.model_judgement(["a", "b"], ["a", "b"], "10", "2")
+        check("a line number out of range picks the first unclear line", (line, failure) == ("a", None),
+              (line, failure))
+        for mode, expected in (("yes:0", "a"), ("yes:3", "c"), ("yes:2", "b")):
+            os.environ["FAKE_CLAUDE_MODE"] = mode
+            line, failure = hook.model_judgement(["a", "b", "c"], ["a", "b", "c"], "10", "2")
+            check(f"the model's answer {mode} picks unclear line {expected}", (line, failure) == (expected, None),
+                  (line, failure))
+    finally:
+        os.environ["PATH"] = saved_path
+        os.environ.pop("FAKE_CLAUDE_MODE", None)
+        os.environ.pop("FAKE_CLAUDE_CALLS", None)
+
+
+def test_an_interruption_item_added_this_turn_clears_the_block():
+    stray = "merge-lane-2 asks: should I file one GHI listing the remaining seats' tests?"
+    added = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + INTERRUPTION_ITEM,
+                 minutes="#next_to_present item 2 of 11")
+    added.records(PEER_PROMPT, text_record(stray),
+                  tool_record("Edit", {"file_path": str(added.document), "old_string": "x",
+                                       "new_string": INTERRUPTION_ITEM}),
+                  text_record("I added it as Item 2.1 of 11.\n\nItem 2 of 11 is waiting for your answer."))
+    check_silent("a reply naming an interruption item a tool call of the turn wrote passes", added.run(model="yes"))
+    added.records(PEER_PROMPT, text_record(stray),
+                  tool_record("Bash", {"command": "python3 add.py '## Item 2.1 of 11: the GHI'"}),
+                  text_record("Item 2 of 11 is waiting for your answer."))
+    check_blocked("a reply naming only the waiting item still blocks", added.run(), "approval-walk question check")
+    added.records(PEER_PROMPT, text_record(stray), tool_record("Bash", {"command": "ls"}),
+                  text_record("It is Item 2.1 of 11.\n\nItem 2 of 11 is waiting for your answer."))
+    check_blocked("naming an item that was already in the walk-document does not clear the block", added.run(),
+                  "approval-walk question check")
+    added.records(PEER_PROMPT, text_record(stray),
+                  tool_record("Write", {"file_path": "x", "content": "## Item 2.1 of 11: the GHI"}),
+                  text_record("It is Item 2.1 of 12.\n\nItem 2 of 11 is waiting for your answer."))
+    check_blocked("naming the added item with another total does not clear the block", added.run(),
+                  "approval-walk question check")
+
+
+def test_the_final_message_from_the_payload_is_checked():
+    case = Case()
+    case.records(USER_PROMPT, tool_record("Bash", {"command": "ls"}))
+    check_blocked("a question only in the payload's last_assistant_message blocks",
+                  case.run(last_assistant_message="Do you want me to merge it?"), '"Do you want me to merge it?"')
+    check_silent("a turn with no text in the transcript or the payload passes", case.run())
+
+
+def test_the_shown_item_and_quotes_from_it_are_not_checked():
+    case = Case()
+    case.reply("Recorded your answer to item 1.\n\n" + ITEM_2_SHOWN)
+    check_silent("a question inside the item the reply shows does not block", case.run(model="yes"))
+    case.reply(ITEM_2_SHOWN + "\n\nShould I also add a link to it?")
+    check_blocked("a question after the shown item still blocks", case.run(), '"Should I also add a link to it?"')
+    case.reply('You asked about "Do you agree that agents look there first?" It means the wiki comes first.')
+    check_silent("a quote of the walk-document's text is not checked", case.run(model="no"))
+    case.reply("> Do you agree that agents look there first?\n\nThat line is the item's question.")
+    check_silent("a quotation line holding the walk-document's text is not checked", case.run(model="no"))
+    check("quoted text from the walk-document never reaches the model", case.model_calls() == [], case.model_calls())
+
+
+def test_every_turn_is_checked_whoever_started_it():
+    case = Case()
+    case.reply("merge-lane-2 reports PR 1922 merged. Should I start the next fix?", opening=PEER_PROMPT)
+    check_blocked("a turn started by another agent-seat's message is checked", case.run(),
+                  '"merge-lane-2 reports PR 1922 merged. Should I start the next fix?"')
+    notice = opening_prompt("task_notification", "<task-notification>done</task-notification>",
+                            origin={"kind": "task-notification"}, promptSource="system")
+    case.reply("The subagent finished. Should I open the pull request?", opening=notice)
+    check_blocked("a turn started by a background-task notice is checked", case.run(), "approval-walk question check")
+    case.records(USER_PROMPT, text_record("Should I open the pull request?"), USER_PROMPT,
+                 text_record("Recorded."))
+    check_silent("a question from an earlier turn is not checked again", case.run())
+
+
+def test_when_the_hook_stays_silent():
+    case = Case()
+    case.reply("Should I merge the pull request now?")
+    check_silent("silent while the agent answers a Stop hook", case.run(stop_hook_active=True))
+    check_silent("silent in a headless claude -p child",
+                 case.run(environment_extra={"CLAUDE_CODE_SESSION_ATTENDED": "0"}))
+    check_silent("silent in a child whose caller owns its session",
+                 case.run(environment_extra={"NEDSCHORUS_SESSION_REINCARNATION_OWNED_BY_CALLER": "x"}))
+    closed = Case(minutes="#next_to_present none, closed")
+    closed.reply("Should I merge the pull request now?")
+    check_silent("silent when no approval-walk is open", closed.run())
+    unreadable = Case(minutes="#next_to_present item 7 of 10")
+    unreadable.reply("Should I merge the pull request now?")
+    check_silent("silent when the walk-document has no heading for the waiting item", unreadable.run())
+    old_marker = Case(minutes="Next to present: item 2 of 10")
+    old_marker.reply("Should I merge the pull request now?")
+    check_silent("silent when the minutes carry only the old marker", old_marker.run())
+    check("no silent case is logged", case.logged() == [] and closed.logged() == [], case.logged())
+
+
+def test_the_refusal_log():
+    case = Case()
+    case.reply("Should I merge the pull request now?")
+    case.log.mkdir()
+    check_blocked("a refusal that cannot be logged still blocks and says it was not logged", case.run(),
+                  "This refusal was not logged, because", str(case.log))
+    homes = SUITE_ROOT / "log-store-homes"
+    (homes / "mac-mount" / hook.LOG_STORE_DIRECTORY_NAME).mkdir(parents=True)
+    path, problem = hook.log_path({}, [str(homes / "ned-box-home"), str(homes / "mac-mount")])
+    check("the log-store is reached through the Mac's mount when ned-box's path is missing",
+          (path, problem) == (homes / "mac-mount" / hook.LOG_STORE_DIRECTORY_NAME / hook.LOG_FILE_NAME, None),
+          (path, problem))
+    path, problem = hook.log_path({}, [str(homes / "ned-box-home"), str(homes / "nowhere")])
+    check("an unreachable log-store is reported", path is None and "reachable at neither" in problem, problem)
+    path, _ = hook.log_path({})
+    check("by default the log-store is the one under ned-box's home or the Mac's mount",
+          path is None or path.name == hook.LOG_FILE_NAME and path.parent.name == "nedschorus-logs", path)
+
+
+def test_which_line_is_flagged_and_how_lines_are_joined():
+    case = Case()
+    case.reply("Should I merge it now?\n\nShould I also tag it?")
+    check_blocked("of two clear questions, the first is flagged", case.run(), '"Should I merge it now?"')
+    case.reply("I recommend merging it.\n\nI recommend tagging it too.")
+    check_blocked("after a failed model check, the first unclear line is flagged", case.run(model="fail"),
+                  '"I recommend merging it."')
+    case.reply("Still waiting for you:\n- the cleanup of the old directories;\n- the naming change.\n\nDone.")
+    case.run(model="no")
+    calls = case.model_calls()
+    check("a list is judged with the line ending in `:` that introduces it",
+          calls and "1. Still waiting for you: - the cleanup of the old directories; - the naming change.\n"
+          in calls[-1]["stdin"] + "\n" and "2." not in calls[-1]["stdin"].split("The numbered lines:")[1], calls)
+    case.reply("Should I merge the café page now?")
+    case.run()
+    check("the log keeps a sentence's letters as written", "café" in case.log.read_text(encoding="utf-8"),
+          case.log.read_text(encoding="utf-8"))
+
+
+def test_two_waiting_items():
+    case = Case(minutes="#next_to_present items 2 and 3 of 10")
+    case.reply("Should I merge the pull request now?")
+    check_blocked("with two items waiting, the interruption item follows the later one and both are named",
+                  case.run(), "`## Item 3.1 of 11: <the point of the question>`, placed right after item 3.",
+                  "which then reads `#next_to_present items 2 and 3 of 11`",
+                  "`Items 2 and 3 of 11 are waiting for your answer.`")
+
+
+def test_a_fault_exits_1_and_names_it():
+    case = Case()
+    result = case.run(stdin_text="not json")
+    check("input that is not JSON exits 1 and names the fault on stderr",
+          result.returncode == 1 and result.stdout == "" and result.stderr.startswith(
+              "walk-me-through-agent-question-to-user-outside-approval-walk-items-refusal-stop-hook: the hook failed")
+          and "JSONDecodeError" in result.stderr and "Traceback" not in result.stderr,
+          f"exit {result.returncode}, stderr {result.stderr!r}")
+
+
+def main():
+    FAKE_BIN.mkdir(parents=True)
+    fake = FAKE_BIN / "claude"
+    fake.write_text(FAKE_CLAUDE.replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1))
+    fake.chmod(0o755)
+    try:
+        for name, function in sorted(globals().items()):
+            if name.startswith("test_") and callable(function):
+                function()
+    finally:
+        shutil.rmtree(SUITE_ROOT, ignore_errors=True)
+    if failures:
+        print(f"{len(failures)} failed: {', '.join(failures)}")
+        return 1
+    print("all passed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
