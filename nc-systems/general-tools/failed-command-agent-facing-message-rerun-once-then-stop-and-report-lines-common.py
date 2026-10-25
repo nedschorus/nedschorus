@@ -88,8 +88,14 @@ def git_failure_next_step_lines(rerun, program=None, *, include_the_misspelt_bra
     otherwise.
     """
     if include_the_misspelt_branch_commit_or_path_line and program is None:
-        raise TypeError("pass program, the name the misspelt-name line gives the program, "
-                        "with include_the_misspelt_branch_commit_or_path_line=True")
+        raise TypeError(
+            "include_the_misspelt_branch_commit_or_path_line=True needs program: the name of the program "
+            "the agent ran, whose git failure these next-step lines report, such as "
+            "program='run-all-test-suites.py'. With include_the_misspelt_branch_commit_or_path_line=True, "
+            'the lines include "If a branch, commit or path you gave <program> on its command line is '
+            'misspelt or does not exist, ...". Pass program if the program the agent ran takes a branch, '
+            "commit or path on its command line; if it takes none, pass "
+            "include_the_misspelt_branch_commit_or_path_line=False instead.")
     lines = [f"If git's error names a lock file, such as .git/index.lock, "
              f"{lock_file_named_by_git_error_wait_then_rerun_instruction(f'exactly {rerun}')}."]
     if include_the_misspelt_branch_commit_or_path_line:

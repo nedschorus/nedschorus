@@ -80,9 +80,11 @@ try:
 except TypeError as error:
     lines = None
     said = str(error)
-check("the misspelt-name line without the program it names is refused, naming the argument and the flag",
-      lines is None and "pass program" in said
-      and "include_the_misspelt_branch_commit_or_path_line=True" in said, lines)
+check("the misspelt-name line without the program it names is refused, naming the argument and both "
+      "values of the flag",
+      lines is None and "needs program" in said
+      and "include_the_misspelt_branch_commit_or_path_line=True" in said
+      and "include_the_misspelt_branch_commit_or_path_line=False" in said, lines)
 
 for case_name, arguments in [
         ("neither the failure text nor the free-text pair", {}),
