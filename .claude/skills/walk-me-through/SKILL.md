@@ -79,7 +79,7 @@ A ruling that invalidates or changes later items re-plans the approval-walk befo
 
 ## Interruption and recovery
 
-The minutes enables recovery after any interruption on this machine — the approval-walk resumes at the first unresolved item in the minutes. When returning from any interruption or detour, first say in under 20 words which item was last ruled on, if any, and set the minutes' `#next_to_present` line to the item being resumed. To recover reread the walk-document and the minutes. If you cannot find the walk-document or the minutes, look for each one as the /locate-before-saying-a-file-is-missing skill says. If either is still missing, or the two do not match, for example because the minutes rule on an item the walk-document does not have, tell the user so, then resume as best you can. 
+The minutes enables recovery after any interruption on this machine — the approval-walk resumes at the item that the minutes' last `#next_to_present` line names. When returning from any interruption or detour, first say in under 20 words which item was last ruled on, if any, and set the minutes' `#next_to_present` line to the item being resumed. To recover reread the walk-document and the minutes. If you cannot find the walk-document or the minutes, look for each one as the /locate-before-saying-a-file-is-missing skill says. If either is still missing, or the two do not match, for example because the minutes rule on an item the walk-document does not have, tell the user so, then resume as best you can. 
 
 ## Closing
 
