@@ -214,6 +214,16 @@
         ]
       },
       {
+        "matcher": "TaskCreate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/agent-seat-due-task-prerequisites-recording-reminder-after-task-create-hook.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
         "matcher": "",
         "hooks": [
           {
