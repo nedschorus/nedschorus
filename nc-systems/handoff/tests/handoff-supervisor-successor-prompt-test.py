@@ -3,7 +3,7 @@
 inherits.
 
 The handoff file and the supervisor's state file as the supervisor reads
-them; the initial agent instructions it composes, with the branch-sync,
+them; the initial agent instructions it composes, with the launch-time-git-sync,
 overview-refresh and memory-review lines they carry; the dialog retention across
 reincarnations; and the prompts of a boot
 ignition and of a first launch. The supervisor's other cases are in
@@ -84,7 +84,7 @@ def nothing_is_appended_to(prompt, tail, expected_rest_of_prompt):
     So the rest is pinned whole. build_ignition_prompt's segments are
     conditional in production, but each case's own fixture decides every one of
     them, so what follows the pinned sentence is fully determined and can be
-    spelled out to the last character. A fixture that gains a branch sync, a
+    spelled out to the last character. A fixture that gains a launch-time-git-sync, a
     roster, an unterminated verbatim block, or a different next step must extend
     `expected_rest_of_prompt` with the segment it adds -- never reopen the tail.
     """
@@ -556,12 +556,12 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
         synced_prompt = supervisor.build_ignition_prompt(
             Path("/tmp/dialog-0002.md"),
             {"written-at": "2026-08-30T17:20:00Z", "next-step": "finish the supervisor"},
-            branch_sync_report="branch sync: fixture-branch is 3 commit(s) behind main",
+            launch_time_git_sync_report="launch-time-git-sync: fixture-branch is 3 commit(s) behind main",
         )
     except TypeError:
         synced_prompt = ""
-    check("ignition carries the branch sync's own one-line result",
-          "branch sync: fixture-branch is 3 commit(s) behind main" in synced_prompt,
+    check("ignition carries the launch-time-git-sync's own one-line result",
+          "launch-time-git-sync: fixture-branch is 3 commit(s) behind main" in synced_prompt,
           synced_prompt[:900])
     # The constant itself, word for word. The three checks below carry it into
     # the prompt but each is containment, so until 2026-09-20 an extra sentence
@@ -586,7 +586,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     # unterminated, so the branch-state segment ends the preamble and only the
     # next step follows it. Pinned as a tail rather than by containment: the
     # instruction is a constant, but the segment is COMPOSED at the call site
-    # (`lines.append(branch_sync_report + BRANCH_STATE_INSTRUCTION)`), and text
+    # (`lines.append(launch_time_git_sync_report + BRANCH_STATE_INSTRUCTION)`), and text
     # appended there lands outside the constant's equality pin -- measured
     # 2026-09-21, " If unclear, rebase onto origin/main anyway." appended at
     # that call site left both suites fully green.
@@ -595,7 +595,7 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     check("the branch-state instruction follows the sync result, exactly, and nothing is appended at the call site",
           nothing_is_appended_to(
               synced_prompt,
-              "branch sync: fixture-branch is 3 commit(s) behind main — If this "
+              "launch-time-git-sync: fixture-branch is 3 commit(s) behind main — If this "
               "branch has never been pushed, rebase it onto origin/main before your "
               "first substantive action and rerun the tests for what you touched. "
               "If it is pushed, leave it as it is, and start new work on a branch "
@@ -616,14 +616,14 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     # fails here.
     boot_recovery_prompt = supervisor.BootRecoveryIgnitionPlan(
         "finish the supervisor").compose(
-            "branch sync: fixture-branch is 3 commit(s) behind main")
+            "launch-time-git-sync: fixture-branch is 3 commit(s) behind main")
     check("the boot-recovery prompt is exactly its next step, the recovery note, and the branch-state line",
           boot_recovery_prompt == (
               "finish the supervisor\n\n(Recovered at supervisor boot: the previous "
               "session's conversation-tail is unavailable; this next-step and the "
               "repository are your whole context.) "
               + supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION
-              + " branch sync: fixture-branch is 3 "
+              + " launch-time-git-sync: fixture-branch is 3 "
               "commit(s) behind main — If this branch has never been pushed, rebase "
               "it onto origin/main before your first substantive action and rerun the "
               "tests for what you touched. If it is pushed, leave it as it is, and "
@@ -652,12 +652,12 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
           synced_prompt[:1100])
     check("the branch-state line precedes the next step",
           "" if not synced_prompt else
-          synced_prompt.index("branch sync:") < synced_prompt.index("Then take the next step:"),
+          synced_prompt.index("launch-time-git-sync:") < synced_prompt.index("Then take the next step:"),
           synced_prompt[:1100])
     # A caller without a sync report gets no branch-state segment at all —
     # never invented placeholder wording, which the user has not seen.
     check("without a sync report the prompt says nothing about branch state",
-          "branch sync" not in prompt and "origin/main" not in prompt, prompt)
+          "launch-time-git-sync" not in prompt and "origin/main" not in prompt, prompt)
     # The task-count line was CUT (user-ruled 2026-08-30: the task list is a
     # standing tool; the count line is junk). Pinned behaviorally — the OLD
     # supervisor put "Confirm N task(s) are visible to you" into every
@@ -789,18 +789,18 @@ def run_launch_and_retention_cases(workspace: Path, recent: str):
     check("queue status reports an empty queue", "docs/nedschorus-wiki/queue: empty" in line, line)
 
 
-def run_branch_sync_cases(workspace: Path):
-    """Every branch of sync_working_branch_with_main, against real repositories.
+def run_launch_time_git_sync_cases(workspace: Path):
+    """Every branch of launch_time_git_sync, against real repositories.
 
     The function only ever fast-forwards, so the cases that matter most are the
     ones where it must NOT act: a dirty tree, a diverged branch, a directory
     that is not a checkout at all.
     """
-    root = workspace / "branch-sync"
+    root = workspace / "launch-time-git-sync"
     root.mkdir()
 
     check("a directory that is not a checkout syncs to nothing",
-          "nothing to sync" in supervisor.sync_working_branch_with_main(root))
+          "nothing to sync" in supervisor.launch_time_git_sync(root))
 
     remote = root / "remote.git"
     git_in(["init", "--quiet", "--bare", "--initial-branch=main", str(remote)], root)
@@ -821,7 +821,7 @@ def run_branch_sync_cases(workspace: Path):
     git_in(["checkout", "--quiet", "-b", "agent-branch"], home)
 
     check("a branch level with main reports current",
-          "current with main" in supervisor.sync_working_branch_with_main(home))
+          "current with main" in supervisor.launch_time_git_sync(home))
 
     # Main moves ahead; the agent's clean branch must fast-forward onto it.
     (seed / "README.md").write_text("seed\nfrom main\n", encoding="utf-8")
@@ -829,7 +829,7 @@ def run_branch_sync_cases(workspace: Path):
     git_in(["commit", "--quiet", "-m", "main moves ahead"], seed)
     git_in(["push", "--quiet", "origin", "main"], seed)
 
-    report = supervisor.sync_working_branch_with_main(home)
+    report = supervisor.launch_time_git_sync(home)
     check("a clean branch behind main fast-forwards", "fast-forwarded to main" in report, report)
     check("the fast-forward really moved the files",
           (home / "README.md").read_text(encoding="utf-8") == "seed\nfrom main\n")
@@ -842,7 +842,7 @@ def run_branch_sync_cases(workspace: Path):
     git_in(["push", "--quiet", "origin", "main"], seed)
     (home / "work-in-progress.txt").write_text("half a thought\n", encoding="utf-8")
 
-    report = supervisor.sync_working_branch_with_main(home)
+    report = supervisor.launch_time_git_sync(home)
     check("a branch with only an untracked file fast-forwards",
           "fast-forwarded to main" in report
           and (home / "README.md").read_text(encoding="utf-8") == "seed\nfrom main\nfurther\n",
@@ -856,9 +856,9 @@ def run_branch_sync_cases(workspace: Path):
     git_in(["push", "--quiet", "origin", "main"], seed)
     (home / "README.md").write_text("an edit of a tracked file\n", encoding="utf-8")
 
-    report = supervisor.sync_working_branch_with_main(home)
+    report = supervisor.launch_time_git_sync(home)
     check("a tracked change leaves the branch as it is, and the report names it",
-          report.startswith("branch sync: agent-branch left as is — 1 uncommitted tracked "
+          report.startswith("launch-time-git-sync: agent-branch left as is — 1 uncommitted tracked "
                             "change(s)"), report)
     check("the tracked change survives the sync",
           (home / "README.md").read_text(encoding="utf-8") == "an edit of a tracked file\n")
@@ -868,9 +868,9 @@ def run_branch_sync_cases(workspace: Path):
     home_git_dir = Path(subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=home,
                                        capture_output=True, text=True).stdout.strip())
     (home_git_dir / "BISECT_LOG").write_text("git bisect start\n", encoding="utf-8")
-    report = supervisor.sync_working_branch_with_main(home)
+    report = supervisor.launch_time_git_sync(home)
     check("an operation in progress leaves the checkout as it is, and the report names it",
-          report.startswith("branch sync: agent-branch left as is — a bisect in progress"),
+          report.startswith("launch-time-git-sync: agent-branch left as is — a bisect in progress"),
           report)
     (home_git_dir / "BISECT_LOG").unlink()
 
@@ -878,9 +878,9 @@ def run_branch_sync_cases(workspace: Path):
     home_index = home_git_dir / "index"
     saved_index = home_index.read_bytes()
     home_index.write_bytes(b"not an index")
-    report = supervisor.sync_working_branch_with_main(home)
+    report = supervisor.launch_time_git_sync(home)
     check("an unreadable git status leaves the checkout as it is, and the report says so",
-          report.startswith("branch sync: agent-branch left as is — git status unreadable"),
+          report.startswith("launch-time-git-sync: agent-branch left as is — git status unreadable"),
           report)
     home_index.write_bytes(saved_index)
 
@@ -894,11 +894,11 @@ def run_branch_sync_cases(workspace: Path):
             ["rev-parse", "--absolute-git-dir"], checkout, 128, "fatal: injected")
     catch_up.git_directory = git_directory_fails
     try:
-        report = supervisor.sync_working_branch_with_main(home)
+        report = supervisor.launch_time_git_sync(home)
     finally:
         catch_up.git_directory = real_git_directory
     check("an unreadable git directory leaves the checkout as it is, with git's error",
-          report.startswith("branch sync: agent-branch left as is — git directory unreadable")
+          report.startswith("launch-time-git-sync: agent-branch left as is — git directory unreadable")
           and "fatal: injected" in report, report)
 
     # A detached checkout with an untracked file is fast-forwarded too: an
@@ -907,9 +907,9 @@ def run_branch_sync_cases(workspace: Path):
     git_in(["clone", "--quiet", str(remote), str(detached_home)], root)
     git_in(["checkout", "--quiet", "--detach", "HEAD~1"], detached_home)
     (detached_home / "seat-draft.md").write_text("a draft\n", encoding="utf-8")
-    report = supervisor.sync_working_branch_with_main(detached_home)
+    report = supervisor.launch_time_git_sync(detached_home)
     check("a detached checkout with an untracked file fast-forwards",
-          report.startswith("branch sync: HEAD fast-forwarded to main")
+          report.startswith("launch-time-git-sync: HEAD fast-forwarded to main")
           and (detached_home / "seat-draft.md").is_file(), report)
 
     # A fast-forward git refuses is reported with git's error.
@@ -918,14 +918,14 @@ def run_branch_sync_cases(workspace: Path):
     git_in(["commit", "--quiet", "-m", "main adds a file a checkout holds untracked"], seed)
     git_in(["push", "--quiet", "origin", "main"], seed)
     (detached_home / "seat-collision.md").write_text("my copy\n", encoding="utf-8")
-    report = supervisor.sync_working_branch_with_main(detached_home)
+    report = supervisor.launch_time_git_sync(detached_home)
     check("a refused fast-forward leaves the checkout as it is, with git's error naming the file",
-          report.startswith("branch sync: HEAD left as is — ") and "seat-collision.md" in report
+          report.startswith("launch-time-git-sync: HEAD left as is — ") and "seat-collision.md" in report
           and (detached_home / "seat-collision.md").read_text(encoding="utf-8") == "my copy\n",
           report)
 
     # Bring the branch level, then put it one behind, for the diverged case.
-    supervisor.sync_working_branch_with_main(home)
+    supervisor.launch_time_git_sync(home)
     (seed / "README.md").write_text("seed\nfrom main\nfurther\nagain\nonce more\n",
                                     encoding="utf-8")
     git_in(["add", "-A"], seed)
@@ -939,9 +939,9 @@ def run_branch_sync_cases(workspace: Path):
     git_in(["add", "-A"], home)
     git_in(["commit", "--quiet", "-m", "the agent's own work"], home)
 
-    report = supervisor.sync_working_branch_with_main(home)
+    report = supervisor.launch_time_git_sync(home)
     check("a diverged branch is reported, not merged",
-          report.startswith("branch sync: agent-branch is 1 ahead of main"), report)
+          report.startswith("launch-time-git-sync: agent-branch is 1 ahead of main"), report)
     check("the diverged report counts both directions",
           "1 ahead of main" in report and "1 behind" in report, report)
     # Nor does the report tell the agent to merge (user-ruled 2026-09-16, "y",
@@ -952,13 +952,13 @@ def run_branch_sync_cases(workspace: Path):
     diverged_prompt = supervisor.build_ignition_prompt(
         Path("/tmp/dialog-0002.md"),
         {"written-at": "2026-09-16T09:00:00Z", "next-step": "finish the review fix"},
-        branch_sync_report=report,
+        launch_time_git_sync_report=report,
     )
     check("the diverged-branch initial agent instructions never say to merge main",
           "git merge" not in diverged_prompt and "merge when ready" not in diverged_prompt,
           diverged_prompt)
     check("the diverged-branch initial agent instructions carry the rebase-or-leave-it sentence",
-          "branch sync: agent-branch is 1 ahead of main and 1 behind — If this "
+          "launch-time-git-sync: agent-branch is 1 ahead of main and 1 behind — If this "
           "branch has never been pushed, rebase it onto origin/main before your "
           "first substantive action and rerun the tests for what you touched. "
           "If it is pushed, leave it as it is, and start new work on a branch "
@@ -969,7 +969,7 @@ def run_branch_sync_cases(workspace: Path):
 
     # Ahead-only: everything main has, plus local work. Nothing to pull.
     git_in(["merge", "--no-edit", "--quiet", "origin/main"], home)
-    report = supervisor.sync_working_branch_with_main(home)
+    report = supervisor.launch_time_git_sync(home)
     check("a branch ahead of main with all of main reports nothing to pull",
           "nothing to pull" in report, report)
 
@@ -978,25 +978,25 @@ def run_branch_sync_cases(workspace: Path):
     git_in(["config", "user.name", "agent"], no_remote)
     git_in(["config", "user.email", "agent@nedschorus.invalid"], no_remote)
     git_in(["commit", "--quiet", "--allow-empty", "-m", "alone"], no_remote)
-    report = supervisor.sync_working_branch_with_main(no_remote)
+    report = supervisor.launch_time_git_sync(no_remote)
     check("a checkout with no origin/main reports that, not a failure",
-          report.startswith("branch sync: no origin/main to sync with"), report)
+          report.startswith("launch-time-git-sync: no origin/main to sync with"), report)
 
     # A checkout made with git init and given origin/main, before its first commit.
     unborn = root / "unborn-home"
     git_in(["init", "--quiet", "--initial-branch=topic", str(unborn)], root)
     git_in(["remote", "add", "origin", str(remote)], unborn)
     git_in(["fetch", "--quiet", "origin"], unborn)
-    report = supervisor.sync_working_branch_with_main(unborn)
+    report = supervisor.launch_time_git_sync(unborn)
     check("a checkout with no commits yet is reported as such, not as a git failure",
-          report.startswith("branch sync: topic has no commits yet, so not compared with main"),
+          report.startswith("launch-time-git-sync: topic has no commits yet, so not compared with main"),
           report)
 
-    run_branch_sync_git_failure_cases(root, remote, seed)
+    run_launch_time_git_sync_git_failure_cases(root, remote, seed)
 
 
-def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
-    """Each git call the branch sync reads an answer from, failing with exit 128,
+def run_launch_time_git_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
+    """Each git call the launch-time-git-sync reads an answer from, failing with exit 128,
     is reported with git's error, never read as one of the answers."""
     real_git = shutil.which("git")
     stub_directory = root / "git-failing-on-one-call"
@@ -1018,7 +1018,7 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
         os.environ["FAIL_GIT_CALL_CONTAINING"] = call
         os.environ["FAIL_GIT_STDERR"] = stderr
         try:
-            return supervisor.sync_working_branch_with_main(checkout)
+            return supervisor.launch_time_git_sync(checkout)
         finally:
             os.environ["PATH"] = original_path
             del os.environ["FAIL_GIT_CALL_CONTAINING"]
@@ -1037,7 +1037,7 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
     git_in(["config", "user.email", "agent@nedschorus.invalid"], home)
 
     report = sync_with_failing_call(home, "rev-parse --show-toplevel")
-    check("a branch sync git failure ends with the next steps, naming the git command to rerun",
+    check("a launch-time-git-sync git failure ends with the next steps, naming the git command to rerun",
           report.endswith(
               f"If git's error names a lock file, such as .git/index.lock, do not delete the lock "
               f"file yourself, because a git command still running may hold it; wait up to one "
@@ -1049,13 +1049,13 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
               f"If git's error names no lock file, run exactly `git -C {home} rev-parse "
               f"--show-toplevel` once more.\n"
               "If the rerun prints an error again, stop, do not act on the rest of this prompt, "
-              "and tell the user word for word, the branch sync line in this prompt and the "
+              "and tell the user word for word, the launch-time-git-sync line in this prompt and the "
               "error the rerun printed."), report)
     plan = supervisor.DialogIgnitionPlan(root / "extract.md", {})
     for shape, prompt in (
             ("dialog", plan.compose(report)),
             ("boot-recovery", supervisor.BootRecoveryIgnitionPlan("next").compose(report))):
-        check(f"after a branch sync git failure, the {shape} prompt gives the next steps and "
+        check(f"after a launch-time-git-sync git failure, the {shape} prompt gives the next steps and "
               "no rebase instruction, which would contradict their stop",
               report in prompt and supervisor.BRANCH_STATE_INSTRUCTION not in prompt, prompt)
         check(f"in the {shape} prompt, the git failure's report stands as its own paragraph",
@@ -1066,10 +1066,10 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
         arguments = ["rev-parse", "HEAD"]
     check("the rerun command quotes a checkout path that holds a space",
           "`git -C '/tmp/checkout with spaces' rev-parse HEAD`"
-          in supervisor.branch_sync_git_failure_next_steps(SpacedFailure()),
-          supervisor.branch_sync_git_failure_next_steps(SpacedFailure()))
+          in supervisor.launch_time_git_sync_git_failure_next_steps(SpacedFailure()),
+          supervisor.launch_time_git_sync_git_failure_next_steps(SpacedFailure()))
     check("a failed --show-toplevel is reported with git's error, not as no checkout",
-          report.startswith("branch sync: could not tell whether this is a git checkout")
+          report.startswith("launch-time-git-sync: could not tell whether this is a git checkout")
           and "fatal: stub failure" in report, report)
 
     for call, wrong_answer in (
@@ -1091,7 +1091,7 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
     except Exception as error:
         report = f"raised {type(error).__name__}: {error}"
     check("a git directory git cannot read is reported, and the checkout is not moved",
-          report.startswith("branch sync: main left as is — ")
+          report.startswith("launch-time-git-sync: main left as is — ")
           and git_in(["rev-parse", "HEAD"], home).stdout.strip() == head_before, report)
     # git_directory answers None when git calls the checkout no repository,
     # which after --show-toplevel answered means its git directory has gone.
@@ -1100,7 +1100,7 @@ def run_branch_sync_git_failure_cases(root: Path, remote: Path, seed: Path):
         stderr="fatal: not a git repository (or any of the parent directories): .git")
     check("a git directory that is gone after --show-toplevel answered is reported, and "
           "the checkout is not moved",
-          report.startswith("branch sync: main left as is — git directory unreadable")
+          report.startswith("launch-time-git-sync: main left as is — git directory unreadable")
           and git_in(["rev-parse", "HEAD"], home).stdout.strip() == head_before, report)
     head_before = git_in(["rev-parse", "HEAD"], home).stdout.strip()
     report = sync_with_failing_call(home, "merge-base --is-ancestor HEAD origin/main")
@@ -1311,14 +1311,14 @@ def run_overview_check_git_output_cases(workspace: Path):
 
 def run_overview_refresh_due_cases(workspace: Path):
     """overview_refresh_due_lines against real repositories, one fixture
-    repository whose origin/main is moved by hand the way the branch sync's
+    repository whose origin/main is moved by hand the way the launch-time-git-sync's
     fetch would move it.
 
     Ruled 2026-09-23 (item 14 of the walk
     what-a-design-becomes-when-its-code-lands-2026-09-22): when a system's
     code under nc-systems/<system>/ has moved on main past the commit pinned
     in its overview, the successor's first prompt says so beside the
-    branch-sync line. The cases the build was asked for: moved past (the line,
+    launch-time-git-sync line. The cases the build was asked for: moved past (the line,
     naming the system and the range), current (no line), no pin (skipped, no
     error), and a pin naming a commit the repository does not hold, which the
     pinned-line reader's rule counts as no pin.
@@ -1345,7 +1345,7 @@ def run_overview_refresh_due_cases(workspace: Path):
         return git_in(["rev-parse", "HEAD"], repository).stdout.strip()
 
     def publish():
-        # What the branch sync's fetch leaves behind: origin/main at this commit.
+        # What the launch-time-git-sync's fetch leaves behind: origin/main at this commit.
         git_in(["update-ref", "refs/remotes/origin/main", "HEAD"], repository)
         return git_in(["rev-parse", "--short", "HEAD"], repository).stdout.strip()
 
@@ -2244,7 +2244,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
 
     line = expected_widget_overview_refresh_due_line("1111111", "2222222", 3, "2222222")
     branch_state_line = (
-        "branch sync: fixture-branch is 3 commit(s) behind main — If this "
+        "launch-time-git-sync: fixture-branch is 3 commit(s) behind main — If this "
         "branch has never been pushed, rebase it onto origin/main before your "
         "first substantive action and rerun the tests for what you touched. "
         "If it is pushed, leave it as it is, and start new work on a branch "
@@ -2256,7 +2256,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     try:
         prompt = supervisor.build_ignition_prompt(
             Path("/tmp/dialog-0002.md"), fields,
-            branch_sync_report="branch sync: fixture-branch is 3 commit(s) behind main",
+            launch_time_git_sync_report="launch-time-git-sync: fixture-branch is 3 commit(s) behind main",
             overview_refresh_due=(line,))
     except TypeError:
         prompt = ""
@@ -2269,7 +2269,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
           + "; expected: " + repr(expected_rest))
     try:
         plan_prompt = supervisor.DialogIgnitionPlan(Path("/tmp/dialog-0002.md"), fields).compose(
-            "branch sync: fixture-branch is 3 commit(s) behind main", (line,))
+            "launch-time-git-sync: fixture-branch is 3 commit(s) behind main", (line,))
     except TypeError:
         plan_prompt = "compose takes no overview lines"
     check("the dialog plan hands its overview lines to the prompt it composes",
@@ -2277,7 +2277,7 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     try:
         boot_recovery_prompt = supervisor.BootRecoveryIgnitionPlan(
             "finish the supervisor").compose(
-                "branch sync: fixture-branch is 3 commit(s) behind main", (line,))
+                "launch-time-git-sync: fixture-branch is 3 commit(s) behind main", (line,))
     except TypeError:
         boot_recovery_prompt = ""
     check("the boot-recovery prompt is its next step, the recovery note, the "
@@ -2380,8 +2380,8 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
     console = io.StringIO()
     with supervisor_names_replaced(
             launch_agent_session=launch_recording,
-            sync_working_branch_with_main=lambda working_directory: (
-                "branch sync: fixture-branch is 3 commit(s) behind main"),
+            launch_time_git_sync=lambda working_directory: (
+                "launch-time-git-sync: fixture-branch is 3 commit(s) behind main"),
             overview_refresh_due_lines=overview_refresh_due_lines_recording,
             memory_review_due_lines=lambda: (),
             stdin_isatty=False), contextlib.redirect_stdout(console):
@@ -2770,9 +2770,9 @@ def run_memory_review_due_prompt_cases(workspace: Path):
     memory_line = expected_memory_review_due_line(
         Path("/fixture/mac-memory-store"), Path("/fixture/ned-box-memory-store"),
         "2 entries", "1 entry", "and no review is recorded as done")
-    branch_sync_report = "branch sync: fixture-branch is 3 commit(s) behind main"
+    launch_time_git_sync_report = "launch-time-git-sync: fixture-branch is 3 commit(s) behind main"
     branch_state_line = (
-        branch_sync_report + " — If this "
+        launch_time_git_sync_report + " — If this "
         "branch has never been pushed, rebase it onto origin/main before your "
         "first substantive action and rerun the tests for what you touched. "
         "If it is pushed, leave it as it is, and start new work on a branch "
@@ -2783,7 +2783,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
     fields = {"written-at": "2026-09-30T19:20:00Z", "next-step": "finish the review"}
     try:
         prompt = supervisor.build_ignition_prompt(
-            Path("/tmp/dialog-0002.md"), fields, branch_sync_report=branch_sync_report,
+            Path("/tmp/dialog-0002.md"), fields, launch_time_git_sync_report=launch_time_git_sync_report,
             overview_refresh_due=(overview_line,), memory_review_due=(memory_line,))
     except TypeError:
         prompt = ""
@@ -2797,7 +2797,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
           + "; expected: " + repr(expected_rest))
     try:
         plan_prompt = supervisor.DialogIgnitionPlan(Path("/tmp/dialog-0002.md"), fields).compose(
-            branch_sync_report, (overview_line,), (memory_line,))
+            launch_time_git_sync_report, (overview_line,), (memory_line,))
     except TypeError:
         plan_prompt = "compose takes no memory review line"
     check("MEMORY REVIEW: the dialog plan hands its memory review line to the prompt it "
@@ -2808,7 +2808,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
                      + supervisor.ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION + " ")
     try:
         boot_recovery_prompt = supervisor.BootRecoveryIgnitionPlan("finish the review").compose(
-            branch_sync_report, (overview_line,), (memory_line,))
+            launch_time_git_sync_report, (overview_line,), (memory_line,))
     except TypeError:
         boot_recovery_prompt = ""
     check("MEMORY REVIEW: the boot-recovery prompt is its next step, the recovery note, "
@@ -2856,7 +2856,7 @@ def run_memory_review_due_prompt_cases(workspace: Path):
     console = io.StringIO()
     with fixture.in_place(), supervisor_names_replaced(
             launch_agent_session=launch_recording,
-            sync_working_branch_with_main=lambda working_directory: branch_sync_report,
+            launch_time_git_sync=lambda working_directory: launch_time_git_sync_report,
             overview_refresh_due_lines=lambda working_directory: (overview_line,),
             memory_review_due_lines=at_noon,
             stdin_isatty=False), contextlib.redirect_stdout(console):
@@ -2922,17 +2922,17 @@ def run_boot_ignition_case(workspace: Path):
     # so the next-step and the repository are the successor's whole context.
     # It composes at the launch site through the same threading as the dialog
     # path, which since the user's second round (2026-08-30) carries the
-    # branch sync's result instead of the launch clock — the clock sentence
+    # launch-time-git-sync's result instead of the launch clock — the clock sentence
     # was cut by the user himself on the rendered mock. This is the
     # end-to-end proof that the report produced at the launch site reaches
     # the launched prompt: the workspace is what it is, so only the stable
-    # "branch sync:" prefix of the report is pinned, never one variant.
+    # "launch-time-git-sync:" prefix of the report is pinned, never one variant.
     check("the launch-clock sentence is cut from the boot-recovery initial agent instructions",
           launched and "The clock read" not in launched
           and "never from estimate" not in launched,
           launched[:400])
     check("the boot-recovery initial agent instructions carry the sync's own report",
-          "branch sync:" in launched, launched[:400])
+          "launch-time-git-sync:" in launched, launched[:400])
     check("the boot-recovery initial agent instructions carry the branch-state instruction, exactly",
           " — If this branch has never been pushed, rebase it onto origin/main "
           "before your first substantive action and rerun the tests for what "
@@ -2979,7 +2979,7 @@ def run_boot_ignition_without_a_conversation_tail_cases(workspace: Path):
         with supervisor_names_replaced(
                 extract_dialog=failing_extract_dialog,
                 launch_agent_session=launch_recording,
-                sync_working_branch_with_main=lambda working_directory: "branch sync: stubbed",
+                launch_time_git_sync=lambda working_directory: "launch-time-git-sync: stubbed",
                 memory_review_due_lines=lambda: (),
                 stdin_isatty=False), \
                 contextlib.redirect_stdout(console), contextlib.redirect_stderr(errors):
@@ -3203,14 +3203,14 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
           == supervisor.project_directory_for_working_directory(working_directory)
           / "0000-retiring-session",
           str(plan and plan.predecessor_session_directory))
-    # compose() takes the branch sync's one-line report since the user's
+    # compose() takes the launch-time-git-sync's one-line report since the user's
     # second round (2026-08-30) — the launch site produces it immediately
     # before composing, exactly where the launch clock used to be read.
     # Guarded so the cases below FAIL cleanly against the pre-revision plan
     # instead of crashing the suite: compose(launch_time) there feeds the
     # report string to the clock helper, which raises on it.
     try:
-        prompt = plan.compose("branch sync: composer-branch is 2 commit(s) behind main")
+        prompt = plan.compose("launch-time-git-sync: composer-branch is 2 commit(s) behind main")
     except (TypeError, AttributeError):
         prompt = ""
     check("the reincarnation prompt carries no queue status",
@@ -3223,7 +3223,7 @@ def run_recycle_prompt_composition_cases(workspace: Path, recent: str):
           "written at 20" in prompt
           and "Calculate from `date` how long ago that was" in prompt, prompt)
     check("the reincarnation prompt carries the branch-state line the plan was composed with",
-          "branch sync: composer-branch is 2 commit(s) behind main — If this "
+          "launch-time-git-sync: composer-branch is 2 commit(s) behind main — If this "
           "branch has never been pushed, rebase it onto origin/main before your "
           "first substantive action"
           in prompt, prompt)
@@ -3334,7 +3334,7 @@ def run_retiring_session_id_from_the_handoff_cases(workspace: Path, recent: str)
 
 with fixture.handoff_supervisor_suite_workspace() as workspace:
     recent_timestamp = run_offline_cases(workspace)
-    run_branch_sync_cases(workspace)
+    run_launch_time_git_sync_cases(workspace)
     with gh_answering_no_open_pull_requests_first_on_path(
             workspace / "gh-answering-no-open-pull-requests"):
         run_overview_check_git_output_cases(workspace)
