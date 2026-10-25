@@ -35,7 +35,7 @@ ONE_ITEM_AT_A_TIME_LINE = (
     "Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add the "
     "line `#next_to_present item <number> of 9` for it, with its number, as the minutes' last line, because the "
     "walk-me-through skill has that line name one item, or one part such as `item 4.1 of 9`. Present the item "
-    "close names only after the last answer is recorded.")
+    "that `close` names only after the last answer is recorded.")
 failures = []
 
 WALK_DOCUMENT = """# A walk
@@ -677,6 +677,156 @@ def test_a_numbered_letter_other_than_r_for_an_item_not_waiting_is_refused():
     check("letters for every waiting item are not refused",
           lines is not None and lines[1].startswith("The answer gives each item it names its own letter:"),
           f"lines {lines!r}")
+
+
+PARTS_DOCUMENT = """# A walk with parts
+
+## Item 4 of 9: three wording fixes in one file
+
+The fix changes three phrases in `docs/example.md`.
+
+1. "item close names" becomes "item that `close` names".
+2. "a walk" becomes "an approval-walk".
+3. "fast read" becomes "cold-read-fast-read".
+
+Recommendation: make all three changes.
+
+## Item 7 of 9: labelled parts
+
+**Part 1:** drop a word.
+
+### Part 2
+
+Drop another.
+
+Recommendation: drop both.
+
+## Item 8 of 9: no parts
+
+A plain item. Recommendation: keep it.
+"""
+PARTS_CHECK_GAP = [
+    "The check step cannot record this answer: `walk-me-through-answer-added-texts-cold-read-fast-read-check-and-"
+    "close.py check` records one answer for the whole item, and none of the flags "
+    "`walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py --help` lists gives a part its own "
+    "answer.",
+    "Record nothing and act on none of the parts, because a check run would record, for the whole of item 4 of 9, an "
+    "answer the user did not give.",
+    "Tell the user that the walk-me-through check program cannot yet record a different answer for each part of an "
+    "item, and ask him to answer item 4 of 9 with one letter, or to say how else to go on."]
+
+
+def parts_read_line(pairs, item="item 4 of 9", last="3"):
+    return (f"The numbers are the part numbers of {item}, which holds parts 1 to {last} of one fix, as the "
+            f"walk-me-through skill lets an item do; the answer gives each part it names its own letter: {pairs}.")
+
+
+def test_a_numbered_answer_within_the_waiting_items_parts_answers_the_parts():
+    case = Case(next_to_present="item 4 of 9", document=PARTS_DOCUMENT)
+    for prompt, pairs in (("1 a 2 d 3 a", "part 1: A, part 2: D, part 3: A"),
+                          ("1 ao, 2 a, 3 a", "part 1: AO, part 2: A, part 3: A")):
+        lines = case.lines(prompt)
+        check(f"{prompt!r} on an item with parts 1 to 3 names each part's letter and says check cannot record "
+              "different letters",
+              lines is not None
+              and lines[0] == f"The user answered \"{prompt}\" to item 4 of 9 of approval-walk {WALK_NAME}."
+              and lines[1:] == [parts_read_line(pairs)] + PARTS_CHECK_GAP, f"lines {lines!r}")
+    lines = case.lines("1 a 2 d")
+    check("'1 a 2 d' on an item with parts 1 to 3, which the defect refused as answering items 1 and 2, is read as "
+          "parts and still says check cannot record it",
+          lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: D")] + PARTS_CHECK_GAP,
+          f"lines {lines!r}")
+    lines = case.lines("1 a 2 a")
+    check("'1 a 2 a' leaves part 3 unanswered, so the item stays open and nothing is recorded",
+          lines is not None and lines[1:] == [
+              parts_read_line("part 1: A, part 2: A"),
+              "The answer does not name part 3, and the walk-me-through skill keeps an item open while a part is "
+              "unanswered, so record nothing in the minutes and act on none of the parts of item 4 of 9.",
+              "Ask the user to answer every part of item 4 of 9 in one reply, the parts he has answered included, "
+              "giving each part's number with its letter, as in `1 a 2 d`, because this hook reads each reply on its "
+              "own, so a reply that names only the parts still missing would leave the others unanswered."],
+          f"lines {lines!r}")
+    for prompt, letter, flag in (("1 a 2 a 3 a", "A", " check`"), ("approve 1, 2 and 3", "A", " check`"),
+                                 ("1 d 2 d 3 d", "D", " check --disapproved`")):
+        lines = case.lines(prompt)
+        check(f"{prompt!r} gives every part {letter}, so it is {letter} to the whole item, with that letter's "
+              "check command",
+              lines is not None and lines[1] == parts_read_line(", ".join(f"part {n}: {letter}" for n in "123"))
+              and lines[2] == (f"Every part has the answer {letter}, so the answer is {letter} to the whole of item 4 "
+                               "of 9, and means what the lines below say.")
+              and lines[3].startswith(f"{letter} means ") and "(make all three changes)" in lines[3]
+              and any(flag in line for line in lines[4:]), f"lines {lines!r}")
+    lines = case.lines("1 a 1 d 2 a 3 a")
+    check("a part given two letters is refused whole",
+          lines is not None and lines[1:] == [
+              "The answer gives part 1 of item 4 of 9 more than one letter.",
+              "Record nothing and act on none of the answer, because the letters for that part contradict each other.",
+              "Ask the user to answer every part of item 4 of 9 again, giving each part's number once with its "
+              "letter, as in `1 a 2 d`."],
+          f"lines {lines!r}")
+    lines = case.lines("2 r")
+    check("R on a part shows the waiting item again and records nothing",
+          lines is not None and lines[1:] == [
+              parts_read_line("part 2: R"),
+              "R on a part asks to see item 4 of 9 again: show it in full, heading included, word for word as the "
+              "walk-document has it."], f"lines {lines!r}")
+    lines = Case(next_to_present="item 7 of 9", document=PARTS_DOCUMENT).lines("1 a 2 d")
+    check("parts labelled `**Part 1:**` and `### Part 2` are read as parts",
+          lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: D", "item 7 of 9", "2")]
+          + [line.replace("item 4 of 9", "item 7 of 9") for line in PARTS_CHECK_GAP], f"lines {lines!r}")
+
+
+def test_numbers_are_item_numbers_when_the_waiting_item_has_no_parts_or_a_number_falls_outside_them():
+    for next_to_present, prompt, named in (
+            ("item 8 of 9", "1 a 2 d", "item 1 of 9, item 2 of 9, which are"),
+            ("item 4 of 9", "1 a 6 d", "item 1 of 9, item 6 of 9, which are"),
+            ("item 4 of 9", "1 a 2.1 d", "item 1 of 9, item 2.1 of 9, which are"),
+            ("item 4 of 9", "1 a 2 z", None)):
+        lines = Case(next_to_present=next_to_present, document=PARTS_DOCUMENT).lines(prompt)
+        if named is None:
+            check(f"{prompt!r} on an item with parts reads Z on a part as a part's letter",
+                  lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: Z")] + PARTS_CHECK_GAP,
+                  f"lines {lines!r}")
+            continue
+        check(f"{prompt!r} while {next_to_present} waits is read as item numbers and refused as today",
+              lines is not None
+              and lines[1] == (f"The answer gives a letter to {named} not waiting for an answer, and the minutes' "
+                               f"`#next_to_present` line names only {next_to_present}."), f"lines {lines!r}")
+    own_number_document = PARTS_DOCUMENT.replace("## Item 4 of 9:", "## Item 2 of 9:")
+    case = Case(next_to_present="item 2 of 9", document=own_number_document)
+    for prompt in ("2 a", "item 2 a", "approve item 2", "approve 2"):
+        lines = case.lines(prompt)
+        check(f"{prompt!r} while item 2, with parts 1 to 3, waits is A to item 2, not to its part 2",
+              lines is not None
+              and lines[1] == "The answer gives each item it names its own letter: item 2 of 9: A.", f"lines {lines!r}")
+    lines = case.lines("1 a 2 d")
+    check("'1 a 2 d' while item 2, with parts 1 to 3, waits still answers its parts",
+          lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: D", "item 2 of 9")]
+          + [line.replace("item 4 of 9", "item 2 of 9") for line in PARTS_CHECK_GAP], f"lines {lines!r}")
+    lines = Case(next_to_present="item 4 of 9", document=PARTS_DOCUMENT).lines("item 1 a item 2 d")
+    check("an answer that says `item` names items, not parts",
+          lines is not None and lines[1].startswith("The answer gives a letter to item 1 of 9, item 2 of 9"),
+          f"lines {lines!r}")
+    lines = Case(next_to_present="items 4 and 7 of 9", document=PARTS_DOCUMENT).lines("1 a 2 d")
+    check("with two items with parts waiting, numbers stay item numbers",
+          lines is not None and lines[1].startswith("The answer gives a letter to item 1 of 9, item 2 of 9"),
+          f"lines {lines!r}")
+
+
+def test_part_numbers_are_read_only_from_top_level_lines_outside_code_and_only_as_a_run_from_1():
+    for name, body, prompt in (
+            ("numbers inside a fenced code block", "```\n1. one\n2. two\n```", "1 a 2 d"),
+            ("a nested list", "- a list\n  1. one\n  2. two", "1 a 2 d"),
+            ("a single numbered line", "1. only one", "1 a"),
+            ("numbers that do not start at 1", "2. two\n3. three", "2 a 3 d"),
+            ("more than five numbers", "1. a\n2. b\n3. c\n4. d\n5. e\n6. f", "1 a 2 d"),
+            ("a decimal at a line's start", "1.5 litres\n2.5 litres", "1 a 2 d")):
+        document = f"## Item 4 of 9: no real parts\n\n{body}\n\nRecommendation: keep it.\n"
+        lines = Case(next_to_present="item 4 of 9", document=document).lines(prompt)
+        first = prompt.split()[0]
+        check(f"{name} are not parts, so {prompt!r} is read as item numbers",
+              lines is not None and lines[1].startswith(f"The answer gives a letter to item {first} of 9"),
+              f"lines {lines!r}")
 
 
 def test_numbered_r_whose_walk_document_or_marker_cannot_be_read_still_goes_to_the_agent():
