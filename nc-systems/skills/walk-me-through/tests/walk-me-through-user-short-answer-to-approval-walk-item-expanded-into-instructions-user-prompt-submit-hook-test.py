@@ -31,8 +31,11 @@ SUITE_ROOT = Path(tempfile.mkdtemp(prefix="short-answer-expansion-hook-test-")).
 WALK_NAME = "reboot-test-older-open-items-2026-10-15"
 CHECKOUT = HOOK_SCRIPT.parents[3]
 CHECK = f"python3 {CHECKOUT}/nc-systems/skills/walk-me-through/walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check"
-ONE_QUESTION_LINE = ("If your last message to the user left more than one question open, ask him which "
-                     "one this answer is for, naming each, and act on none of them until he says.")
+ONE_ITEM_AT_A_TIME_LINE = (
+    "Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add the "
+    "line `#next_to_present item <number> of 9` for it, with its number, as the minutes' last line, because the "
+    "walk-me-through skill has that line name one item, or one part such as `item 4.1 of 9`. Present the item "
+    "close names only after the last answer is recorded.")
 failures = []
 
 WALK_DOCUMENT = """# A walk
@@ -143,8 +146,43 @@ def test_each_single_answer_in_either_case_with_or_without_a_period():
             check(f"{prompt!r} is expanded",
                   lines is not None
                   and lines[0] == f"The user answered \"{prompt.strip().rstrip('.')}\"; no approval-walk is open."
-                  and lines[1].startswith(meaning) and lines[-1] == ONE_QUESTION_LINE,
+                  and lines[1].startswith(meaning) and not any("which one" in line for line in lines),
                   f"lines {lines!r}")
+
+
+def test_a_hyphen_between_the_letters_of_ao_o2_and_o3_is_read_as_that_letter():
+    case = Case(next_to_present="item 4 of 9")
+    for prompt, code, meaning in (
+            ("A-O.", "AO", "AO means approve as obvious"), ("a-o", "AO", "AO means approve as obvious"),
+            ("A - O", "AO", "AO means approve as obvious"), ("O-2", "O2", "O2 means the user approves option 2"),
+            ("o - 3.", "O3", "O3 means the user approves option 3")):
+        lines = case.lines(prompt)
+        check(f"{prompt!r} is {code}",
+              lines is not None
+              and lines[0] == f"The user answered \"{prompt.rstrip('.')}\" to item 4 of 9 of approval-walk {WALK_NAME}."
+              and lines[1].startswith(meaning), f"lines {lines!r}")
+    lines = case.lines("A-O, keep the old name")
+    check("'A-O, keep the old name' is a rider on AO",
+          lines is not None and lines[1] == "The user added to the answer: \"keep the old name\"."
+          and any(line.startswith("AO means approve as obvious") for line in lines), f"lines {lines!r}")
+    lines = Case(next_to_present="items 5 and 6 of 9").lines("5 a-o, 6 d")
+    check("'5 a-o, 6 d' gives item 5 AO",
+          lines is not None
+          and lines[1] == "The answer gives each item it names its own letter: item 5 of 9: AO, item 6 of 9: D.",
+          f"lines {lines!r}")
+    for prompt in ("all a-o", "a-o to all"):
+        lines = Case(next_to_present="items 5 and 6 of 9").lines(prompt)
+        check(f"{prompt!r} is AO to all", lines is not None
+              and lines[1].startswith(f"\"{prompt}\" means AO to every item now waiting"), f"lines {lines!r}")
+    for prompt in ("a-ok", "A-OK.", "O-ring", "a-one", "a-o-k", "a o", "o-4", "5 a-ok"):
+        result = case.run(prompt)
+        check(f"the hyphenated word {prompt!r} is not read as an answer",
+              result.returncode == 0 and result.stdout == "" and result.stderr == "",
+              f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
+    lines = case.lines("a - other text")
+    check("'a - other text' stays a rider on A", lines is not None
+          and lines[1] == "The user added to the answer: \"other text\"."
+          and any(line.startswith("A means approve") for line in lines), f"lines {lines!r}")
 
 
 def test_retired_letters_o_and_other_prompts_print_nothing():
@@ -172,8 +210,7 @@ def test_a_on_an_open_walk_names_the_item_its_recommendation_and_the_check_step(
           lines == [f"The user answered \"a\" to item 4 of 9 of approval-walk {WALK_NAME}.",
                     "A means approve: the user agrees with the recommendation of item 4 of 9 (leave the filter out). "
                     "Do what the recommendation says.",
-                    f"Whether or not that makes a change, first run `{CHECK}`, {CLOSE_END}",
-                    ONE_QUESTION_LINE], f"lines {lines!r}")
+                    f"Whether or not that makes a change, first run `{CHECK}`, {CLOSE_END}"], f"lines {lines!r}")
     lines = case.lines("Approved")
     check("approved is A", lines is not None and lines[1].startswith(
         "Approved means approve: the user agrees with the recommendation of item 4 of 9 (leave the filter out)."),
@@ -218,7 +255,7 @@ def test_aa_in_any_mix_of_capitals_runs_the_check_step_with_after_advisor():
           lines is not None and lines[1].startswith("Aa means approve after an advisor check")
           and any("the six questions listed in the walk-me-through skill's section \"Advisor\"" in line
                   for line in lines)
-          and lines[-2] == "Otherwise act exactly as for A.", f"lines {lines!r}")
+          and lines[-1] == "Otherwise act exactly as for A.", f"lines {lines!r}")
     for prompt, meaning in (("a", "A means approve:"), ("AO", "AO means approve as obvious:")):
         lines = case.lines(prompt)
         check(f"{prompt!r} still means what it meant before Aa", lines is not None and lines[1].startswith(meaning),
@@ -254,12 +291,12 @@ def test_o_asks_for_option_2_and_option_3_paragraphs():
               and any("how it differs from your recommendation, and its pluses and minuses" in line for line in lines)
               and ("Replace the item's answer line in the walk-document with this one: \"Answer O2 or O3 to take "
                    "that option; A still takes the recommendation, and the other answers work as before.\"") in lines
-              and lines[-2] == "Then show the item again in full, word for word as the walk-document has it."
+              and lines[-1] == "Then show the item again in full, word for word as the walk-document has it."
               and not any(line.startswith("The hook could not read") for line in lines), f"lines {lines!r}")
     lines = Case().lines("o")
     check("O with no approval-walk asks for the two options in the reply",
           lines is not None and lines[1].startswith("O asks for other options: the user is not answering your last")
-          and lines[-2] == "End with this line: \"Answer O2 or O3 to take that option; A still takes the recommendation.\"",
+          and lines[-1] == "End with this line: \"Answer O2 or O3 to take that option; A still takes the recommendation.\"",
           f"lines {lines!r}")
 
 
@@ -409,7 +446,7 @@ def test_r_on_an_open_walk_goes_to_the_agent_and_does_not_block():
         check(f"{prompt!r} gives the agent additionalContext telling it to show the waiting item, and no decision",
               not_blocked(result) and lines is not None
               and lines[0] == f"The user answered \"{prompt.rstrip('.')}\" to item 4 of 9 of approval-walk {WALK_NAME}."
-              and lines[1] == r_line(word, "item 4 of 9") and lines[-1] == ONE_QUESTION_LINE
+              and lines[1:] == [r_line(word, "item 4 of 9")]
               and not any("leave the filter out" in line or "old rows" in line for line in lines),
               f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
     check("R records nothing in the minutes", (case.walk / f"{WALK_NAME}-minutes.md").read_text() == before)
@@ -453,10 +490,7 @@ def test_numbered_answers():
                                         "Z defers the item, with the flag --deferred"))
           and ("Record the answers one item at a time, in the order given: for each, run the check step with that "
                "answer's flag, then close, and do what close prints, before the next.") in text
-          and ("Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add "
-               "the line `#next_to_present item <number> of 9` for it, with its number, as the minutes' last "
-               "line, as the walk-me-through skill allows. Present the item close names only after the last "
-               "answer is recorded.") in text
+          and ONE_ITEM_AT_A_TIME_LINE in text
           and ("If check or close refuses or fails, stop there and record none of the remaining answers: tell the "
                "user which answers were recorded and what was printed, and ask him how to go on.") in text
           and "makes a change waits for the check step" not in text, f"lines {lines!r}")
@@ -493,8 +527,8 @@ def test_numbered_r_alone_tells_the_agent_to_show_the_items_it_names_and_records
         check(f"{prompt!r} tells the agent to show item 37.4, then name the waiting item, and nothing else",
               not_blocked(result) and lines is not None
               and lines[1:] == [numbered_r_line("37.4", "item 37.4 of 9"),
-                                "Then end your message naming the item waiting for his answer, item 4 of 9.",
-                                ONE_QUESTION_LINE], f"lines {lines!r}")
+                                "Then end your message naming the item waiting for his answer, item 4 of 9."],
+              f"lines {lines!r}")
     lines = case.lines("38 r, 37.4 r")
     check("'38 r, 37.4 r' tells the agent to show both items, and gives no line for recording an answer",
           lines is not None
@@ -674,7 +708,8 @@ def test_numbered_r_on_unreadable_minutes_expands_and_says_so():
     check("'6 r' on minutes that cannot be read names the failure and still says to show item 6",
           lines is not None
           and "reading the approval-walk state failed: UnicodeDecodeError" in lines[0]
-          and numbered_r_line("6", "item 6") in lines, f"lines {lines!r}")
+          and numbered_r_line("6", "item 6") in lines
+          and not any("check step" in line for line in lines), f"lines {lines!r}")
 
 
 def test_all_a_and_all_ao():
@@ -687,10 +722,7 @@ def test_all_a_and_all_ao():
                                "user agrees with each one's recommendation. Do what each recommends. For each item, "
                                "whether or not it makes a change, run the check step, then close, and do what close "
                                "prints; write nothing in the minutes by hand but the `#next_to_present` lines below.")
-              and lines[2] == ("Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add "
-               "the line `#next_to_present item <number> of 9` for it, with its number, as the minutes' last "
-               "line, as the walk-me-through skill allows. Present the item close names only after the last "
-               "answer is recorded."), f"lines {lines!r}")
+              and lines[2] == ONE_ITEM_AT_A_TIME_LINE, f"lines {lines!r}")
     for prompt in ("all ao", "ao to all"):
         lines = case.lines(prompt)
         check(f"{prompt!r} approves every waiting item as obvious",
@@ -698,10 +730,7 @@ def test_all_a_and_all_ao():
               and lines[1].endswith("For each item, whether or not it makes a change, run the check step (with "
                                     "--obvious for `all ao`), then close, and do what close prints; write nothing in "
                                     "the minutes by hand but the `#next_to_present` lines below.")
-              and lines[2] == ("Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add "
-               "the line `#next_to_present item <number> of 9` for it, with its number, as the minutes' last "
-               "line, as the walk-me-through skill allows. Present the item close names only after the last "
-               "answer is recorded."), f"lines {lines!r}")
+              and lines[2] == ONE_ITEM_AT_A_TIME_LINE, f"lines {lines!r}")
     for prompt in ("all a", "all ao"):
         lines = Case().lines(prompt)
         check(f"{prompt} with no approval-walk acts on each open recommendation, with the single approval's fast "
