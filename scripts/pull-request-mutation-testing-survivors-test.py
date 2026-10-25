@@ -43,7 +43,7 @@ def load_test_suite_runner():
 CONTROL_DIRECTORY_VARIABLE = "PULL_REQUEST_MUTATION_TESTING_SURVIVORS_TEST_CONTROL_DIR"
 
 FAKE_COSMIC_RAY_SOURCE = f'''#!/usr/bin/env python3
-import fcntl, json, os, pathlib, shlex, subprocess, sys, tomllib
+import fcntl, json, os, pathlib, re, shlex, subprocess, sys
 
 control = pathlib.Path(os.environ["{CONTROL_DIRECTORY_VARIABLE}"])
 plan = json.loads((control / "plan.json").read_text())
@@ -86,7 +86,9 @@ if command == "baseline":
     config_text = pathlib.Path(arguments[-1]).read_text()
     (control / "config.toml").write_text(config_text)
     # The script the test command runs lives in the scratch directory, gone when a case looks.
-    words = shlex.split(tomllib.loads(config_text)["cosmic-ray"]["test-command"])
+    # Not tomllib, which Apple's Python 3.9 lacks; the script writes this line's value as JSON.
+    test_command = re.search(r"^test-command = (.*)$", config_text, re.MULTILINE).group(1)
+    words = shlex.split(json.loads(test_command))
     if words[0] == "sh" and len(words) == 2:
         (control / "test-command.sh").write_text(pathlib.Path(words[1]).read_text())
     if "--session-file" in arguments:
@@ -1094,7 +1096,7 @@ def run_cases():
                                              "scripts/pull-request-mutation-testing-survivors.py "
                                              "until they say to."),
               raised)
-    stem_for =survivors.scratch_file_name_stem_under_255_bytes_unique_to_repository_paths
+    stem_for = survivors.scratch_file_name_stem_under_255_bytes_unique_to_repository_paths
     long_path = "/".join(["é" * 120] * 3) + ".py"
     stems = [stem_for(long_path, long_path), stem_for(long_path, long_path),
              stem_for("a/x.py", "a/x-test.py"), stem_for("b/x.py", "a/x-test.py")]
