@@ -175,8 +175,11 @@ def suites_for_file(path, suites_at_head, recordings_directory, runner):
     return chosen
 
 
-def test_command_for(suites, interpreter, sandbox_prefix=(), suites_outside_sandbox=(),
-                     started_proofs=None, sandbox_did_not_start_file=None):
+def test_command_for(suites, interpreter, test_command_script_file, sandbox_prefix=(),
+                     suites_outside_sandbox=(), started_proofs=None,
+                     sandbox_did_not_start_file=None):
+    # Writes the chain of suite launches to test_command_script_file and returns the command
+    # that runs it; raises CouldNotRun when the file cannot be written.
     # The same launch the suite runner uses, so a suite judged by its exit code here is judged the same way there.
     # A mutant can aim a signal anywhere, so each suite runs inside the runner's signal sandbox.
     # sandbox_prefix is one prefix for every suite, or a mapping of each suite to its own.
@@ -203,8 +206,19 @@ def test_command_for(suites, interpreter, sandbox_prefix=(), suites_outside_sand
                 f"[ $status -eq 0 ]; }}")
 
     chain = " && ".join(launch(suite) for suite in suites)
-    # cosmic-ray splits the command with shlex and runs it without a shell, so && needs sh -c.
-    return f"sh -c {shlex.quote(chain)}"
+    # cosmic-ray splits the command with shlex and runs it without a shell, so && needs sh.
+    # sh reads the chain from a file because, for a file that many suites read, the chain
+    # passes Linux's 128 KiB limit on one argument, and `sh -c <chain>` could not start.
+    try:
+        Path(test_command_script_file).write_text(chain + "\n")
+    except OSError as error:
+        raise CouldNotRun(
+            f"{PROGRAM}: not run — this program could not write {test_command_script_file}, the "
+            f"script it writes so that cosmic-ray can run the test suites, so no mutant was run: "
+            f"{error}\n"
+            f"Tell the user the first line of this message, word for word, and that you will not "
+            f"rerun scripts/pull-request-mutation-testing-survivors.py until they say to.") from error
+    return shlex.join(["sh", str(test_command_script_file)])
 
 
 def cosmic_ray_config_text(module_path, test_command, merge_base,
@@ -318,8 +332,9 @@ def mutation_test_one_file(path, suites, worktree, scratch, tools, merge_base,
     baseline_session = scratch / f"{name}.baseline.sqlite"
     did_not_start = scratch / f"{name}.test-sandbox-did-not-start"
     config.write_text(cosmic_ray_config_text(
-        path, test_command_for(suites, arguments.python, sandbox_prefix,
-                               suites_outside_sandbox, started_proofs, did_not_start),
+        path, test_command_for(suites, arguments.python, scratch / f"{name}.test-command.sh",
+                               sandbox_prefix, suites_outside_sandbox, started_proofs,
+                               did_not_start),
         merge_base, arguments.mutant_timeout_seconds))
     cosmic_ray = [*nice_prefix, tools["cosmic-ray"]]
     baseline = run([*cosmic_ray, "baseline", "--session-file",
