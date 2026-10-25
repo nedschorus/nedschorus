@@ -1083,11 +1083,14 @@ def run_cases():
         check("a test command script that cannot be written stops the invocation with "
               "CouldNotRun, naming the file",
               raised is not None and str(unwritable) in raised, raised)
-        check("the unwritable-script refusal says the program writes the file itself, and gives "
-              "each instruction on its own line, naming the program to rerun with its arguments",
-              raised is not None and "the script this program writes" in raised
-              and all(line.startswith("If ") for line in raised.split("\n")[1:])
-              and raised.count(f"run scripts/{survivors.PROGRAM}.py again with the same arguments") == 1,
+        check("the unwritable-script refusal says the program writes the file itself and that no "
+              "mutant was run, and gives each instruction on its own line: tell the user, and "
+              "do not rerun",
+              raised is not None and "this program could not write" in raised
+              and "no mutant was run" in raised
+              and len(raised.split("\n")) == 3
+              and raised.split("\n")[1].startswith("Tell the user the line above")
+              and raised.split("\n")[2].startswith("Do not rerun this program"),
               raised)
     stem_for =survivors.scratch_file_name_stem_under_255_bytes_unique_to_repository_paths
     long_path = "/".join(["é" * 120] * 3) + ".py"
