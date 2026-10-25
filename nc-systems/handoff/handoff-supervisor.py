@@ -389,6 +389,25 @@ MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE = (
     "When the approval-walk closes, run `python3 {mark_script} done`."
 )
 
+# A loose-ends audit at the session-handoff, not yet built, will write the loose ends into the next-step file; until then that clause matches nothing.
+ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION = (
+    "Bring the user everything that needs the user in one approval-walk, by "
+    "/walk-me-through's steps, opened as your first action: the unanswered "
+    "items of any approval-walk in progress, open questions, concerns, "
+    "suggestions, and the loose ends the next step lists, when it lists "
+    "any. Put items that block work first, then items that change "
+    "direction, then the rest. Close each approval-walk in progress with a "
+    "line in its walk-minutes naming the new approval-walk, and give each "
+    "item you carry into it a link to its original walk-document. When the "
+    "next step is to present an item of an approval-walk in progress, this "
+    "instruction overrides it: carry that item into the new approval-walk "
+    "instead of presenting it in the old one. Do the work that does not "
+    "need the user without asking the user: your own yourself, and another "
+    "agent-seat's by sending it to that agent-seat with SendMessage. Keep "
+    "working on the previous session's work while the user answers. When "
+    "nothing needs the user, open no approval-walk and only keep working."
+)
+
 SUPERVISOR_POINTER_SENTENCE = (
     "This session was launched by nc-systems/handoff/handoff-supervisor.py, which "
     "watches this seat and composed this prompt — read it if you need to "
@@ -835,8 +854,7 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
     lines = [
         f"Read {extract_path} — the dialog from the session you are continuing, "
         + written_at_wariness_sentence(handoff_fields.get("written-at", "")),
-        "This handoff should list what items or walks are open. Display them "
-        "to the user, and continue them when you get a chance.",
+        ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION,
         SUPERVISOR_POINTER_SENTENCE,
     ]
     if branch_sync_report:
@@ -890,7 +908,8 @@ class BootRecoveryIgnitionPlan:
         prompt = (
             f"{self.next_step}\n\n(Recovered at supervisor boot: the previous "
             "session's conversation-tail is unavailable; this next-step and the "
-            "repository are your whole context.)"
+            "repository are your whole context.) "
+            + ITEMS_NEEDING_THE_USER_IN_ONE_APPROVAL_WALK_INSTRUCTION
         )
         if branch_sync_report:
             prompt += " " + branch_sync_report_in_prompt(branch_sync_report)
