@@ -5,7 +5,9 @@ what the answer means and what to do.
 
 Wired as a UserPromptSubmit hook in .claude/settings.json. The prompt is
 stripped of surrounding whitespace, and of one trailing period for every form
-but a rider, then read, ignoring case, as the first of these forms it matches:
+but a rider, then read, ignoring case, as the first of these forms it matches,
+in every form allowing a hyphen, with or without spaces around it, between the
+letters of AO, O2 and O3 (`A-O`, `a - o`, `O-2`):
 
   SINGLE      one answer: A, AO, Aa, D, Z, R, E, O, O2 or O3, or a word approve,
               approved, approve as obvious, disapprove, disapproved, defer,
@@ -69,7 +71,7 @@ OUTPUT: {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
 a block's reason reaches neither the agent nor the user's window, only the
 terminal the session runs in. The text opens with one line naming the answer
 and the approval-walk item it answers, or saying no approval-walk is open;
-then the answer's lines; then ONE_QUESTION_LINE.
+then the answer's lines.
 
 WHEN READING THE WALK STATE FAILS, such as a minutes file that is not UTF-8,
 the first line says so and why, and the text gives the answer's lines both for
@@ -97,13 +99,15 @@ EXPLAIN_SKILL = CHECKOUT / ".claude" / "skills" / "explain" / "SKILL.md"
 # Longer forms first, so `ao` is not read as `a` and `approve as obvious` not as `approve`.
 WORDS = {"approve as obvious": "AO", "approved": "A", "approve": "A", "disapproved": "D",
          "disapprove": "D", "defer": "Z", "later": "Z", "repeat": "R"}
-LETTERS = ("aa", "ao", "a", "d", "z", "r", "e", "o", "o2", "o3")
 NUMBER = r"\d+(?:\.\d+)*"
-LETTER = r"aa|ao|o[23]|[adzreo]"
+JOINER = r"(?:\s*-\s*)?"
+AO = rf"a{JOINER}o"
+LETTER = rf"aa|{AO}|o{JOINER}[23]|[adzreo]"
+SINGLE_LETTER = re.compile(rf"^(?:{LETTER})$", re.I)
 WORD = "|".join(word.replace(" ", r"\s+") for word in WORDS)
 ANSWER = rf"(?P<answer>{WORD}|{LETTER})"
-ALL = re.compile(r"^(?:all\s+(?P<first>ao|a)|(?P<last>ao|a)\s+to\s+all)$", re.I)
-PAIR = rf"(?:items?\s*)?({NUMBER})\s*(?:[-:=)]\s*)?(ao|[adzr])(?![a-z])"
+ALL = re.compile(rf"^(?:all\s+(?P<first>{AO}|a)|(?P<last>{AO}|a)\s+to\s+all)$", re.I)
+PAIR = rf"(?:items?\s*)?({NUMBER})\s*(?:[-:=)]\s*)?({AO}|[adzr])(?![a-z])"
 NUMBERED = re.compile(rf"^(?:{PAIR}(?:[\s,;]+|$))+$", re.I)
 PAIRS = re.compile(PAIR, re.I)
 WORD_NUMBERS = re.compile(
@@ -137,9 +141,6 @@ WALK_UNKNOWN_FIND = (
     "waiting item, and a value other than `none` or `closed` marks the approval-walk open.")
 IF_WALK_OPEN = "If an approval-walk is open:"
 IF_NO_WALK = "If no approval-walk is open:"
-ONE_QUESTION_LINE = (
-    "If your last message to the user left more than one question open, ask him which one this "
-    "answer is for, naming each, and act on none of them until he says.")
 
 # The walk-me-through skill's text for Aa, word for word; the hook's test checks SKILL.md still holds it.
 AA_SKILL_TEXT = (
@@ -253,8 +254,9 @@ NUMBERED_R_LINES = (
 # Check records one answer for every item the `#next_to_present` line names, and close moves that line on.
 ONE_ITEM_AT_A_TIME_LINE = (
     "Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add "
-    "the line `{one_item_line}` for it, with its number, as the minutes' last line, as the walk-me-through "
-    "skill allows. Present the item close names only after the last answer is recorded.")
+    "the line `{one_item_line}` for it, with its number, as the minutes' last line, because the walk-me-through "
+    "skill has that line name one item, or one part such as `item 4.1 of 9`. Present the item close names only "
+    "after the last answer is recorded.")
 ALL_LINES = {
     "A": (("\"{answer}\" means A to every item now waiting, {item}: the user agrees with each one's "
            "recommendation. Do what each recommends. For each item, whether or not it makes a change, run "
@@ -324,9 +326,9 @@ def load_walk_finder():
 
 def answer_code(answer):
     """The answer's code, A, AO, AA for Aa, D, Z, R, E, O, O2 or O3, from a letter or a word in any case and
-    spacing."""
+    spacing, with any hyphen between the letters dropped."""
     lowered = " ".join(answer.lower().split())
-    return WORDS.get(lowered, lowered.upper())
+    return WORDS.get(lowered) or re.sub(r"[\s-]", "", lowered).upper()
 
 
 def parsed_answer(prompt):
@@ -334,14 +336,14 @@ def parsed_answer(prompt):
     raw = prompt.strip()
     text = raw[:-1].rstrip() if raw.endswith(".") else raw
     lowered = " ".join(text.lower().split())
-    if lowered in LETTERS or lowered in WORDS:
+    if SINGLE_LETTER.match(text) or lowered in WORDS:
         return {"form": "single", "answer": text, "code": answer_code(text)}
     match = ALL.match(text)
     if match:
-        return {"form": "all", "answer": text, "code": (match["first"] or match["last"]).upper()}
+        return {"form": "all", "answer": text, "code": answer_code(match["first"] or match["last"])}
     if NUMBERED.match(text):
         return {"form": "numbered", "answer": text,
-                "pairs": [(number, letter.upper()) for number, letter in PAIRS.findall(text)]}
+                "pairs": [(number, answer_code(letter)) for number, letter in PAIRS.findall(text)]}
     match = WORD_NUMBERS.match(text)
     if match:
         numbers = re.findall(NUMBER, match["numbers"])
@@ -563,7 +565,7 @@ def context_for(answer, walk, walk_error):
         else:
             lines = ([OPEN_WALK_OPENING.format(answer=answer["answer"], item=walk.item, walk=walk.name)]
                      + prefix + meaning_lines(answer, walk, True))
-    return "\n".join(lines + [ONE_QUESTION_LINE])
+    return "\n".join(lines)
 
 
 def main():
