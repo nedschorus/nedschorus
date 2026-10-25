@@ -45,8 +45,9 @@ TASK_ID_CLAUSE_TEMPLATE = " (id {task_id})"
 FAULT_LINE_TEMPLATE = ("{program}: the task was added, but this hook could not say how to record what it "
                        "waits on, because Claude Code sent the hook a payload that is not a JSON object "
                        "({error}); you did nothing wrong. If the task waits on a pull request or a GHI, "
-                       "record it with TaskUpdate in metadata.waits_on; if it waits on another task, "
-                       "with addBlockedBy.")
+                       "record each one with TaskUpdate in the task's metadata, as "
+                       "\"waits_on\": [{{\"pr_merged\": <number>}}, {{\"issue_closed\": <number>}}]; "
+                       "if it waits on another task, record that task with TaskUpdate's addBlockedBy.")
 
 
 def created_task_id(payload):
