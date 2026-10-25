@@ -66,8 +66,8 @@ def check_fault(case_name, result):
     check(f"{case_name}: nothing on stdout", result.stdout == "", repr(result.stdout))
     check(f"{case_name}: one stderr line naming the hook and what was lost",
           result.stderr.startswith("agent-seat-due-task-prerequisites-recording-reminder-after-task-create-hook: "
-                                   "the task was added, but this hook could not say how to record what it waits on, "
-                                   "because Claude Code sent the hook a payload that is not a JSON object")
+                                   "the task was added, but this hook could not read it from the payload "
+                                   "Claude Code sent, which is not a JSON object")
           and "you did nothing wrong" in result.stderr
           and result.stderr.count("\n") == 1, repr(result.stderr))
 
