@@ -129,6 +129,23 @@ delivered, and again if the walk is reopened and closed. The one stdout line
 ends with the minutes' citation in scp form, which is the link that closing
 sentence wants.
 
+THE WALK-CLOSED MARKER. When this run puts minutes into the store, added or
+replaced, whose last `#next_to_present` line says the walk is closed
+(`none, closed`, read by the walk-me-through item finder), it writes
+~/.claude/handoffs/<session id>-handoff-due-at-lower-context-threshold-after-approval-walk-closed,
+the session id read from CLAUDE_CODE_SESSION_ID. The marker's name is
+scripts/handoff-context-threshold-hook.py's, and that Stop hook, finding it,
+asks the agent to run /handoff when the context used plus the tokens the
+session's compactions dropped is at least 20%. The close is recognised from
+the minutes, which the skill closes before it runs this program, so no flag
+is needed; a later run that finds the closed minutes already in the store,
+such as a dispositions update, writes no marker. The marker is written
+whatever the stdout line opens with, because closed minutes that reached the
+store are the close, and a re-run then finds them unchanged. With no session
+id, as in a terminal, nothing is written and stderr says so. A marker that
+cannot be written is a FAILED line on stderr and exit 1, the stdout line
+unchanged.
+
 WHAT THIS IS: the THIRD CALLER of nc-systems/cold-read/cold-read-record-ship.py, imported by
 importlib the way scripts/seat-shared-file-ship.py and
 scripts/sanity-check-record-ship.py import it, so the store's location, the ssh
@@ -140,9 +157,9 @@ ned-box the copy is local and the citation still names the host.
 OUTPUT. Exactly one line on stdout -- `shipped:`, `REFUSED:` or `FAILED:` --
 ending, when anything reached the store, with the minutes' citation. Everything
 else is on stderr. Exit 0 when every file shipped or was already there, 2 when
-any add-only file was refused, 1 when the store could not be reached or written
-or a file does not hold this run's bytes after the copy, 64 for a bad
-invocation.
+any add-only file was refused, 1 when the store could not be reached or written,
+a file does not hold this run's bytes after the copy, or the walk-closed marker
+could not be written, 64 for a bad invocation.
 
 THE DESTINATION is the record shipper's one constant with the kind swapped to
 `walk/`. Its environment override, COLD_READ_RECORD_SHIP_DESTINATION, moves this
