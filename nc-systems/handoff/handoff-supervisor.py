@@ -16,7 +16,7 @@ The cycle, per reincarnation:
      the initial agent instructions (user-ruled 2026-08-29: "Also useless is the
      reminder there are files in the queues. Thats what queues are for.").
   6. Launch the successor with the initial agent instructions. Beside the
-     branch sync's line they carry, for agent-instructions-editor alone, one
+     launch-time-git-sync's line they carry, for agent-instructions-editor alone, one
      line per system whose code moved on
      main past the commit its overview was checked against, until the user has been shown
      that overview's refresh that day (overview_refresh_due_lines), plus
@@ -271,38 +271,38 @@ SPAWNED_SUBAGENT_FIELD_PREFIX = "spawned-subagent-"
 WRITTEN_BY_SESSION_FIELD = "written-by-session"
 WRITTEN_BY_SESSION_UNKNOWN_VALUE = "unknown"
 
-BRANCH_SYNC_PROGRAM_NAME = "the handoff-supervisor's branch sync"
+LAUNCH_TIME_GIT_SYNC_PROGRAM_NAME = "the handoff-supervisor's launch-time-git-sync"
 # The prompt goes on to the next step; a stop must hold that back too.
-BRANCH_SYNC_STOP_HOLDS_BACK = "act on the rest of this prompt"
-BRANCH_SYNC_RERUN_FAILS_WHEN = "prints an error again"
-BRANCH_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT = "the branch sync line in this prompt and the error the rerun printed"
+LAUNCH_TIME_GIT_SYNC_STOP_HOLDS_BACK = "act on the rest of this prompt"
+LAUNCH_TIME_GIT_SYNC_RERUN_FAILS_WHEN = "prints an error again"
+LAUNCH_TIME_GIT_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT = "the launch-time-git-sync line in this prompt and the error the rerun printed"
 
 
-def branch_sync_git_failure_next_steps(error) -> str:
-    """The next-step lines for a GitCommandFailed the branch sync reports."""
+def launch_time_git_sync_git_failure_next_steps(error) -> str:
+    """The next-step lines for a GitCommandFailed the launch-time-git-sync reports."""
     rerun = f"`{shlex.join(['git', '-C', str(error.directory), *error.arguments])}`"
     return next_step_lines.git_failure_next_step_lines(
-        rerun, BRANCH_SYNC_PROGRAM_NAME, include_the_misspelt_branch_commit_or_path_line=False,
-        rerun_fails_when=BRANCH_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=BRANCH_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
+        rerun, LAUNCH_TIME_GIT_SYNC_PROGRAM_NAME, include_the_misspelt_branch_commit_or_path_line=False,
+        rerun_fails_when=LAUNCH_TIME_GIT_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=LAUNCH_TIME_GIT_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
         read_by_a_subagent=False,
-        next_step_to_skip_when_the_rerun_fails_too=BRANCH_SYNC_STOP_HOLDS_BACK)
+        next_step_to_skip_when_the_rerun_fails_too=LAUNCH_TIME_GIT_SYNC_STOP_HOLDS_BACK)
 
 
-def branch_state_instruction_after(branch_sync_report: str) -> str:
+def branch_state_instruction_after(launch_time_git_sync_report: str) -> str:
     """The branch-state instruction, left out after a git failure, whose next steps may end in stopping."""
     stop_line = next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
-        rerun_fails_when=BRANCH_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=BRANCH_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
+        rerun_fails_when=LAUNCH_TIME_GIT_SYNC_RERUN_FAILS_WHEN, which_lines_to_quote_in_the_report=LAUNCH_TIME_GIT_SYNC_WHICH_LINES_TO_QUOTE_IN_THE_REPORT,
         read_by_a_subagent=False,
-        next_step_to_skip_when_the_rerun_fails_too=BRANCH_SYNC_STOP_HOLDS_BACK)
-    return "" if branch_sync_report.endswith(stop_line) else BRANCH_STATE_INSTRUCTION
+        next_step_to_skip_when_the_rerun_fails_too=LAUNCH_TIME_GIT_SYNC_STOP_HOLDS_BACK)
+    return "" if launch_time_git_sync_report.endswith(stop_line) else BRANCH_STATE_INSTRUCTION
 
 
-def branch_sync_report_in_prompt(branch_sync_report: str) -> str:
+def launch_time_git_sync_report_in_prompt(launch_time_git_sync_report: str) -> str:
     """The report as the prompt carries it: a report of several lines, such as a git
     failure's next steps, stands as its own paragraph instead of running on from the
     sentence before it."""
-    text = branch_sync_report + branch_state_instruction_after(branch_sync_report)
-    return f"\n\n{text}\n\n" if "\n" in branch_sync_report else text
+    text = launch_time_git_sync_report + branch_state_instruction_after(launch_time_git_sync_report)
+    return f"\n\n{text}\n\n" if "\n" in launch_time_git_sync_report else text
 
 
 BRANCH_STATE_INSTRUCTION = (
@@ -828,7 +828,7 @@ def spawned_subagent_roster_from(handoff_fields: dict) -> list:
 
 def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
                           predecessor_session_directory: Optional[Path] = None,
-                          branch_sync_report: str = "",
+                          launch_time_git_sync_report: str = "",
                           overview_refresh_due: tuple = (),
                           memory_review_due: tuple = ()) -> str:
     next_step = next_step_from(handoff_fields)
@@ -839,8 +839,8 @@ def build_ignition_prompt(extract_path: Path, handoff_fields: dict,
         "to the user, and continue them when you get a chance.",
         SUPERVISOR_POINTER_SENTENCE,
     ]
-    if branch_sync_report:
-        lines.append(branch_sync_report_in_prompt(branch_sync_report))
+    if launch_time_git_sync_report:
+        lines.append(launch_time_git_sync_report_in_prompt(launch_time_git_sync_report))
     lines.extend(overview_refresh_due)
     lines.extend(memory_review_due)
     roster = spawned_subagent_roster_from(handoff_fields)
@@ -869,12 +869,12 @@ class DialogIgnitionPlan:
     handoff_fields: dict
     predecessor_session_directory: Optional[Path] = None
 
-    def compose(self, branch_sync_report: str,
+    def compose(self, launch_time_git_sync_report: str,
                 overview_refresh_due: tuple = (),
                 memory_review_due: tuple = ()) -> str:
         return build_ignition_prompt(self.extract_path, self.handoff_fields,
                                      self.predecessor_session_directory,
-                                     branch_sync_report=branch_sync_report,
+                                     launch_time_git_sync_report=launch_time_git_sync_report,
                                      overview_refresh_due=overview_refresh_due,
                                      memory_review_due=memory_review_due)
 
@@ -884,7 +884,7 @@ class BootRecoveryIgnitionPlan:
     """A launch-time prompt for a handoff whose transcript cannot be extracted."""
     next_step: str
 
-    def compose(self, branch_sync_report: str,
+    def compose(self, launch_time_git_sync_report: str,
                 overview_refresh_due: tuple = (),
                 memory_review_due: tuple = ()) -> str:
         prompt = (
@@ -892,8 +892,8 @@ class BootRecoveryIgnitionPlan:
             "session's conversation-tail is unavailable; this next-step and the "
             "repository are your whole context.)"
         )
-        if branch_sync_report:
-            prompt += " " + branch_sync_report_in_prompt(branch_sync_report)
+        if launch_time_git_sync_report:
+            prompt += " " + launch_time_git_sync_report_in_prompt(launch_time_git_sync_report)
         for line in overview_refresh_due:
             prompt += " " + line
         for line in memory_review_due:
@@ -925,7 +925,7 @@ def run_git_here(arguments: list, working_directory: Path, timeout: int = 60):
         return subprocess.CompletedProcess(arguments, 1, "", f"{type(error).__name__}: {error}")
 
 
-def sync_working_branch_with_main(working_directory: Path) -> str:
+def launch_time_git_sync(working_directory: Path) -> str:
     """Fast-forward a strictly behind checkout, on a branch or detached, that has no
     uncommitted tracked change and no git operation in progress; return a report
     without raising. Untracked files do not block: git refuses on its own to
@@ -937,10 +937,10 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
         toplevel = git.run_git_unless_outside_a_repository(
             working_directory, ["rev-parse", "--show-toplevel"], timeout_seconds=15)
     except git.GitCommandFailed as error:
-        return (f"branch sync: could not tell whether this is a git checkout, left as is — "
-                f"{error}\n{branch_sync_git_failure_next_steps(error)}")
+        return (f"launch-time-git-sync: could not tell whether this is a git checkout, left as is — "
+                f"{error}\n{launch_time_git_sync_git_failure_next_steps(error)}")
     if toplevel is None:
-        return "branch sync: not a git checkout, nothing to sync"
+        return "launch-time-git-sync: not a git checkout, nothing to sync"
 
     fetched = run_git_here(["fetch", "--quiet", "origin"], working_directory)
     fetch_note = "" if fetched.returncode == 0 else " (fetch failed, comparing against what is on disk)"
@@ -964,14 +964,14 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
         # --verify --quiet exits 1 for a name that does not exist.
         if not answer(["rev-parse", "--verify", "--quiet", "origin/main"], 15,
                       accepted_exit_codes=(0, 1)):
-            return f"branch sync: no origin/main to sync with{fetch_note}"
+            return f"launch-time-git-sync: no origin/main to sync with{fetch_note}"
 
         # --verify --quiet exits 1 for an unborn HEAD, which every HEAD comparison below fails on with 128.
         if not answer(["rev-parse", "--verify", "--quiet", "HEAD"], 15,
                       accepted_exit_codes=(0, 1)):
             unborn_branch = answer(["symbolic-ref", "-q", "--short", "HEAD"], 15,
                                    accepted_exit_codes=(0, 1)) or "HEAD"
-            return (f"branch sync: {unborn_branch} has no commits yet, so not compared "
+            return (f"launch-time-git-sync: {unborn_branch} has no commits yet, so not compared "
                     f"with main{fetch_note}")
 
         branch = answer(["rev-parse", "--abbrev-ref", "HEAD"], 15)
@@ -998,35 +998,35 @@ def sync_working_branch_with_main(working_directory: Path) -> str:
             operation = checkout_freshness_catch_up.in_progress_operation(git_dir, marker)
             reasons.append(f"a {operation} in progress")
         if reasons:
-            return f"branch sync: {branch} left as is — {'; '.join(reasons)}{fetch_note}"
+            return f"launch-time-git-sync: {branch} left as is — {'; '.join(reasons)}{fetch_note}"
 
         if is_ancestor("origin/main", "HEAD"):
             ahead = answer(["rev-list", "--count", "origin/main..HEAD"], 30)
             if ahead == "0":
-                return f"branch sync: {branch} is current with main{fetch_note}"
-            return (f"branch sync: {branch} is {ahead} commit(s) ahead of main and has all of "
+                return f"launch-time-git-sync: {branch} is current with main{fetch_note}"
+            return (f"launch-time-git-sync: {branch} is {ahead} commit(s) ahead of main and has all of "
                     f"it — nothing to pull{fetch_note}")
 
         if not is_ancestor("HEAD", "origin/main"):
             ahead = answer(["rev-list", "--count", "origin/main..HEAD"], 30)
             behind = answer(["rev-list", "--count", "HEAD..origin/main"], 30)
-            return (f"branch sync: {branch} is {ahead} ahead of main and {behind} "
+            return (f"launch-time-git-sync: {branch} is {ahead} ahead of main and {behind} "
                     f"behind{fetch_note}")
     except git.GitCommandFailed as error:
-        return (f"branch sync: {branch} left as is — {error}{fetch_note}\n"
-                f"{branch_sync_git_failure_next_steps(error)}")
+        return (f"launch-time-git-sync: {branch} left as is — {error}{fetch_note}\n"
+                f"{launch_time_git_sync_git_failure_next_steps(error)}")
 
     merged = run_git_here(["merge", "--ff-only", "origin/main"], working_directory)
     if merged.returncode != 0:
         error = "; ".join(line.strip() for line in merged.stderr.splitlines()
                           if line.strip())
-        return f"branch sync: {branch} left as is — {error or 'no detail'}{fetch_note}"
+        return f"launch-time-git-sync: {branch} left as is — {error or 'no detail'}{fetch_note}"
     try:
         tip = answer(["rev-parse", "--short", "HEAD"], 15)
     except git.GitCommandFailed as error:
-        return (f"branch sync: {branch} fast-forwarded to main (its new commit could not be "
-                f"read: {error}){fetch_note}\n{branch_sync_git_failure_next_steps(error)}")
-    return f"branch sync: {branch} fast-forwarded to main ({tip}){fetch_note}"
+        return (f"launch-time-git-sync: {branch} fast-forwarded to main (its new commit could not be "
+                f"read: {error}){fetch_note}\n{launch_time_git_sync_git_failure_next_steps(error)}")
+    return f"launch-time-git-sync: {branch} fast-forwarded to main ({tip}){fetch_note}"
 
 
 class OverviewCheckGitFailure(Exception):
@@ -1891,8 +1891,8 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
             process, adopted = adopted, None
         else:
             # An adopted session is still working in this directory, so syncing would change files under it.
-            branch_sync_report = sync_working_branch_with_main(settings.working_directory)
-            print(f"handoff-supervisor: {branch_sync_report}")
+            launch_time_git_sync_report = launch_time_git_sync(settings.working_directory)
+            print(f"handoff-supervisor: {launch_time_git_sync_report}")
             if ignition_plan is not None:
                 # Sync after the retiring session releases the tree; then compose the prompt using the fetched main.
                 overview_refresh_due = (
@@ -1903,7 +1903,7 @@ def supervise_sessions(settings: SupervisorSettings) -> int:
                 memory_review_due = memory_review_due_lines()
                 for line in memory_review_due:
                     print(f"handoff-supervisor: {line}")
-                prompt = ignition_plan.compose(branch_sync_report, overview_refresh_due,
+                prompt = ignition_plan.compose(launch_time_git_sync_report, overview_refresh_due,
                                                memory_review_due)
                 ignition_plan = None
             # Read after sync, which may have updated the prompt file.

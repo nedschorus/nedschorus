@@ -274,7 +274,7 @@ def run_agent_exit_record_cases(workspace: Path):
             return sessions.pop(0)
         return launch
 
-    no_branch_sync = lambda working_directory: "branch sync: not a git checkout, nothing to sync"
+    no_launch_time_git_sync = lambda working_directory: "launch-time-git-sync: not a git checkout, nothing to sync"
 
     # Cleared at launch: a record left by an earlier stop is gone from the state
     # file before the next session starts, and the stop after that session
@@ -293,7 +293,7 @@ def run_agent_exit_record_cases(workspace: Path):
     # exhausting the one-session list below.
     with supervisor_names_replaced(
             launch_agent_session=launch_recording([StubLaunchedSession(9)], snapshots, settings),
-            sync_working_branch_with_main=no_branch_sync, stdin_isatty=False), \
+            launch_time_git_sync=no_launch_time_git_sync, stdin_isatty=False), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
     state = supervisor.read_supervisor_state(settings.state_path)
@@ -351,7 +351,7 @@ def run_agent_exit_record_cases(workspace: Path):
             launch_agent_session=launch_writing_a_handoff(
                 settings, StubLaunchedSession(-15, ended=False),
                 "restart-counter: 2\nnext-step: stand down\ndont-restart: closing\n"),
-            sync_working_branch_with_main=no_branch_sync,
+            launch_time_git_sync=no_launch_time_git_sync,
             input=lambda prompt: "n", stdin_isatty=True), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
@@ -372,7 +372,7 @@ def run_agent_exit_record_cases(workspace: Path):
     launched = []
     with supervisor_names_replaced(
             launch_agent_session=lambda *arguments, **keywords: launched.append(1),
-            sync_working_branch_with_main=no_branch_sync,
+            launch_time_git_sync=no_launch_time_git_sync,
             input=lambda prompt: "n", stdin_isatty=True), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
@@ -392,7 +392,7 @@ def run_agent_exit_record_cases(workspace: Path):
             launch_agent_session=launch_writing_a_handoff(
                 settings, StubLaunchedSession(-15, ended=False),
                 "restart-counter: 2\nnext-step: carry on\n"),
-            sync_working_branch_with_main=no_branch_sync,
+            launch_time_git_sync=no_launch_time_git_sync,
             extract_dialog=lambda session_id, working_directory, output_path: False,
             stdin_isatty=True), \
             contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -437,7 +437,7 @@ def run_failed_extraction_at_a_handoff_case(workspace: Path):
             launch_agent_session=launch,
             stop_session=lambda process: process.terminate(),
             extract_dialog=failing_extract_dialog,
-            sync_working_branch_with_main=lambda working_directory: "branch sync: stubbed",
+            launch_time_git_sync=lambda working_directory: "launch-time-git-sync: stubbed",
             stdin_isatty=True), \
             contextlib.redirect_stdout(console), contextlib.redirect_stderr(errors):
         exit_code = supervisor.supervise_sessions(settings)
@@ -885,7 +885,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
     with supervisor_names_replaced(
             launch_agent_session=launch, stop_session=stop,
             remove_finished_worktrees_at_handoff=cleanup,
-            sync_working_branch_with_main=lambda working_directory: "branch sync: stubbed",
+            launch_time_git_sync=lambda working_directory: "launch-time-git-sync: stubbed",
             carry_over_to_successor=lambda settings, retiring, fields, generation: (
                 f"successor-{generation}", None),
             stdin_isatty=True), \
@@ -909,7 +909,7 @@ def run_handoff_worktree_cleanup_cases_without_git_redirection(workspace: Path):
             launch_agent_session=lambda *arguments, **_: (
                 events.append("launch") or StubLaunchedSession(0)),
             remove_finished_worktrees_at_handoff=cleanup,
-            sync_working_branch_with_main=lambda working_directory: "branch sync: stubbed",
+            launch_time_git_sync=lambda working_directory: "launch-time-git-sync: stubbed",
             stdin_isatty=False), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
@@ -985,8 +985,8 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
     # --- The loop: what the supervisor actually does at a death -----------
     directory = workspace / "death-resume"
     directory.mkdir(parents=True, exist_ok=True)
-    no_branch_sync = lambda working_directory: (
-        "branch sync: not a git checkout, nothing to sync")
+    no_launch_time_git_sync = lambda working_directory: (
+        "launch-time-git-sync: not a git checkout, nothing to sync")
     first_prompt = "You are the seat. Do the work."
 
     def supervise_a_seat_whose_sessions_die(case: str, deaths, stdin_isatty=True,
@@ -1058,7 +1058,7 @@ def run_resume_after_a_death_without_a_handoff_cases(workspace: Path):
         with supervisor_names_replaced(
                 launch_agent_session=launch,
                 project_directory_for_working_directory=lambda _: case_projects,
-                sync_working_branch_with_main=no_branch_sync,
+                launch_time_git_sync=no_launch_time_git_sync,
                 wait_for_handoff=wait_for_handoff,
                 stop_session=lambda process: None,
                 carry_over_to_successor=lambda settings, retiring, fields, generation: (
@@ -1301,8 +1301,8 @@ def run_by_hand_resume_cases(workspace: Path):
             handoff_directory=case_directory, agent_command="unused-stub-agent",
             first_prompt="")
 
-    no_branch_sync = lambda working_directory: (
-        "branch sync: not a git checkout, nothing to sync")
+    no_launch_time_git_sync = lambda working_directory: (
+        "launch-time-git-sync: not a git checkout, nothing to sync")
 
     def launch_once(settings):
         """(session_id, prompt, resume) of the one launch, which then ends."""
@@ -1315,7 +1315,7 @@ def run_by_hand_resume_cases(workspace: Path):
         with supervisor_names_replaced(
                 launch_agent_session=launch,
                 project_directory_for_working_directory=lambda _: projects,
-                sync_working_branch_with_main=no_branch_sync), \
+                launch_time_git_sync=no_launch_time_git_sync), \
                 contextlib.redirect_stdout(io.StringIO()):
             supervisor.supervise_sessions(settings)
         return launched[0] if launched else (None, None, None)
@@ -1371,7 +1371,7 @@ def run_by_hand_resume_cases(workspace: Path):
     with supervisor_names_replaced(
             launch_agent_session=launch_empty,
             project_directory_for_working_directory=lambda _: empty_projects,
-            sync_working_branch_with_main=no_branch_sync), \
+            launch_time_git_sync=no_launch_time_git_sync), \
             contextlib.redirect_stdout(io.StringIO()):
         supervisor.supervise_sessions(settings)
     check("BY HAND: a seat whose every transcript is an empty successor starts fresh",
@@ -1403,7 +1403,7 @@ def run_by_hand_resume_cases(workspace: Path):
         with supervisor_names_replaced(
                 launch_agent_session=launch,
                 project_directory_for_working_directory=lambda _: project_directory,
-                sync_working_branch_with_main=no_branch_sync), \
+                launch_time_git_sync=no_launch_time_git_sync), \
                 contextlib.redirect_stdout(console):
             supervisor.supervise_sessions(settings)
         return (launched[0] if launched else (None, None, None)), console.getvalue()
@@ -1475,7 +1475,7 @@ def run_by_hand_resume_cases(workspace: Path):
             with supervisor_names_replaced(
                     launch_agent_session=launch,
                     project_directory_for_working_directory=lambda _: projects,
-                    sync_working_branch_with_main=no_branch_sync), \
+                    launch_time_git_sync=no_launch_time_git_sync), \
                     contextlib.redirect_stdout(console):
                 exit_code = supervisor.main(argv)
         finally:

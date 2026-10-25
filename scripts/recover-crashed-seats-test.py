@@ -446,13 +446,13 @@ def supervisor_first_turn_for_a_by_hand_command(command, workspace):
 
     sup = recovery.supervisor
     original_launch = sup.launch_agent_session
-    original_sync = sup.sync_working_branch_with_main
+    original_sync = sup.launch_time_git_sync
     # Both launchers pin the seat's task list before the supervisor starts.
     original_task_list = os.environ.get("CLAUDE_CODE_TASK_LIST_ID")
     os.environ["CLAUDE_CODE_TASK_LIST_ID"] = f"nedschorus-{workspace.name}-tasks"
     try:
         sup.launch_agent_session = launch_probe
-        sup.sync_working_branch_with_main = lambda directory: "sync skipped (probe)"
+        sup.launch_time_git_sync = lambda directory: "sync skipped (probe)"
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             try:
                 sup.main(supervisor_argv)
@@ -460,7 +460,7 @@ def supervisor_first_turn_for_a_by_hand_command(command, workspace):
                 pass
     finally:
         sup.launch_agent_session = original_launch
-        sup.sync_working_branch_with_main = original_sync
+        sup.launch_time_git_sync = original_sync
         if original_task_list is None:
             os.environ.pop("CLAUDE_CODE_TASK_LIST_ID", None)
         else:
@@ -1711,10 +1711,10 @@ with tempfile.TemporaryDirectory() as temporary:
         "# Handoff\nrestart-counter: 7\nnext-step: stale\n", encoding="utf-8")
     sup = supervisor_module
     original_launch = sup.launch_agent_session
-    original_sync = sup.sync_working_branch_with_main
+    original_sync = sup.launch_time_git_sync
     try:
         sup.launch_agent_session = probe_launch
-        sup.sync_working_branch_with_main = lambda d: "sync skipped (probe)"
+        sup.launch_time_git_sync = lambda d: "sync skipped (probe)"
         settings = sup.SupervisorSettings(
             agent="seat-a", working_directory=workspace.seat_directory,
             handoff_directory=workspace.handoffs, agent_command="claude",
@@ -1725,7 +1725,7 @@ with tempfile.TemporaryDirectory() as temporary:
             pass
     finally:
         sup.launch_agent_session = original_launch
-        sup.sync_working_branch_with_main = original_sync
+        sup.launch_time_git_sync = original_sync
     check("F4: a stale handoff is consume-marked before the resume launch",
           state_seen_at_launch.get("consumed_counter") == 7
           and state_seen_at_launch.get("resume_flag") is True,
@@ -1798,10 +1798,10 @@ with tempfile.TemporaryDirectory() as temporary:
         raise StopIteration()
     sup = supervisor_module
     original_launch2 = sup.launch_agent_session
-    original_sync2 = sup.sync_working_branch_with_main
+    original_sync2 = sup.launch_time_git_sync
     try:
         sup.launch_agent_session = prompt_probe
-        sup.sync_working_branch_with_main = lambda d: "sync skipped (probe)"
+        sup.launch_time_git_sync = lambda d: "sync skipped (probe)"
         ws = Workspace(root / "r13")
         settings = sup.SupervisorSettings(
             agent="seat-a", working_directory=ws.seat_directory,
@@ -1813,7 +1813,7 @@ with tempfile.TemporaryDirectory() as temporary:
             pass
     finally:
         sup.launch_agent_session = original_launch2
-        sup.sync_working_branch_with_main = original_sync2
+        sup.launch_time_git_sync = original_sync2
     check("P3-4: a by-hand resume launch defaults to the crash-recovery prompt",
           launched_prompts and launched_prompts[0][1] is True
           and "resumed by crash recovery" in launched_prompts[0][0]
@@ -1991,7 +1991,7 @@ with tempfile.TemporaryDirectory() as temporary:
     # to BRANCH_STATE_INSTRUCTION at the plan's own call site left this suite
     # at 345 passed, 0 failed. Two reasons. The case asserts only that the
     # recovery marker reaches the successor, never what the prompt says; and
-    # it composes with an empty branch-sync report, so the branch-state
+    # it composes with an empty launch-time-git-sync report, so the branch-state
     # sentence is not in this fixture at all. The wording is pinned in
     # nc-systems/handoff/tests/handoff-supervisor-successor-prompt-test.py, by
     # the boot-recovery check that pull request [the ignition prompt's sentences are constants,

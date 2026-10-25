@@ -809,7 +809,7 @@ def test_supervisor_appends_the_list():
     supervisor.launch_agent_session = (
         lambda command, session_id, working_directory, prompt, **keywords:
         launched.append(prompt) or (_ for _ in ()).throw(StopIteration()))
-    supervisor.sync_working_branch_with_main = lambda working_directory: "branch sync: test"
+    supervisor.launch_time_git_sync = lambda working_directory: "launch-time-git-sync: test"
     settings = supervisor.SupervisorSettings(
         agent="seat-four", working_directory=main, handoff_directory=handoffs,
         agent_command="claude", first_prompt="Founding prompt.",
