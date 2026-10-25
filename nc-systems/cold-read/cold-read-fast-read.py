@@ -11,9 +11,12 @@ nc-systems/cold-read/cold-read-agy-cell.py (user-ruled 2026-09-07 after measurem
 superseding the earlier ruling for low: Gemini 3.8 Flash at medium, about
 100-110 s per document in single runs on a 658-word skill and a 1,967-word walk
 draft, recall 42% against 19% at low on the ghi-write candidate defect list,
-replacing gpt-5.6-terra at low), retries once if that cold-read-cell fails, and
-then prints exactly one line on stdout: the report's absolute path on success,
-or a line opening `FAILED` on failure. Exit 0 on success, 1 on failure, 64 when
+replacing gpt-5.6-terra at low), retries once if that cold-read-cell fails, and,
+when it fails again, runs the same cell once on Claude Sonnet at medium, the
+claude cold-read-cell's fast cold-read-tier, through
+nc-systems/cold-read/cold-read-claude-cell.py, the Sonnet backup. It then prints exactly one line on stdout:
+the report's absolute path on success, or a line opening `FAILED`, naming the
+Gemini cell's cause and the Sonnet backup's, when both failed. Exit 0 on success, 1 on failure, 64 when
 the invocation itself was wrong (a --target that is not a file) and nothing
 was launched. When the cold-read-target belongs to a class the
 /cold-read skill's step 2 sends to the cold-read-full-run -- CLAUDE.md, a
@@ -121,12 +124,26 @@ is removed on exit, and carries each fix to the document as it
 now stands, as the cold-read-grid asks for the same event.
 
 ONE RETRY, AND WHY NOT MORE. The cold-read-fast-read is a walk's instrument,
-and the walk is waiting on it: a cold-read-cell that fails once -- a transient
-CLI error, a model that neither wrote the file nor answered in chat -- is
-worth one more try, and a cold-read-cell that fails twice is worth reporting
-so the walk can go on without it. A refusal from the launcher (exit 64,
-a bad invocation) is not retried, because the same invocation would be
-refused the same way.
+and the walk is waiting on it: a Gemini cold-read-cell that fails once -- a
+transient CLI error, a model that neither wrote the file nor answered in chat
+-- is worth one more try. Two failures are not retried again. Two kinds of
+failure get no retry at all, because a retry would fail the same way: a
+refusal from the agy launcher (exit 64, a bad invocation, or no sandbox on
+this machine), and Gemini's monthly spending cap, which Gemini reports as
+`Error 429, Message: Your project has exceeded its monthly spending cap` and
+which lifts only when the user raises the cap at https://ai.studio/spend.
+
+THE SONNET BACKUP. After the Gemini cold-read-cell has failed for any of
+these reasons, the same fast-clarify cell, with the same embedded prompt and
+the same marked copy, runs once through the claude launcher, which pins the
+fast cold-read-tier to claude-sonnet-5-5 at medium. One line on stderr says
+that the backup runs and why, naming the Gemini cell's cause. When the
+backup writes the report, a `<!-- #cold_read_fast_read_sonnet_backup_ran
+... -->` line after the provenance stamp says the same, and the stamp itself
+names runtime=claude and the model, so a reader of the report knows which
+model read the document. The backup is not retried: a walk waiting on a
+read that has failed twice on Gemini is better served by a FAILED line it
+can act on.
 """
 
 from __future__ import annotations
@@ -147,6 +164,7 @@ import typing
 # This file sits in nc-systems/cold-read/, two directories below the root.
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 AGY_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-agy-cell.py")
+CLAUDE_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-claude-cell.py")
 # The program that copies a cold-read-record to the log-store on ned-box.
 # Its one line goes to stderr, since this program's stdout is the report path
 # and nothing else, and a shipping failure never fails the read.
@@ -177,6 +195,11 @@ FAST_READ_CELL = "fast-clarify"
 FAST_READ_TIER = "fast"
 # Attempts in all: the first run and one retry.
 FAST_READ_ATTEMPTS = 2
+# Gemini's words when the project's monthly spending cap is reached; a retry
+# cannot pass a monthly cap, so a Gemini failure carrying them is not retried.
+GEMINI_MONTHLY_SPENDING_CAP_TEXT = "exceeded its monthly spending cap"
+GEMINI_SPENDING_CAP_PAGE = "https://ai.studio/spend"
+SONNET_BACKUP_HASHTAG = "#cold_read_fast_read_sonnet_backup_ran"
 # The launcher's own refusal code (EXIT_BAD_INVOCATION in
 # nc-systems/cold-read/cold-read-cell-common.py), which this program also uses for its
 # own refusal and never retries.
@@ -285,12 +308,21 @@ SSH_EXIT_CONNECTION_FAILED = 255
 _agy_cell_spec = importlib.util.spec_from_file_location("cold_read_agy_cell", AGY_CELL_LAUNCHER)
 agy_cell = importlib.util.module_from_spec(_agy_cell_spec)
 _agy_cell_spec.loader.exec_module(agy_cell)
-# Each attempt of the read on ned-box is bounded by the --print-timeout the
-# agy cell gives each model of the cold-read-tier's chain; the five minutes
-# more cover git, the shipper and the connect.
+_claude_cell_spec = importlib.util.spec_from_file_location(
+    "cold_read_claude_cell", CLAUDE_CELL_LAUNCHER)
+claude_cell = importlib.util.module_from_spec(_claude_cell_spec)
+_claude_cell_spec.loader.exec_module(claude_cell)
+SONNET_BACKUP_MODEL = claude_cell.TIER_TO_CLAUDE_MODEL_CHAIN[FAST_READ_TIER][0]
+# The claude launcher sets no time limit of its own; the Sonnet backup is
+# allowed as long as one Gemini attempt.
+COLD_READ_FAST_READ_SONNET_BACKUP_RUN_ALLOWANCE_SECONDS = 30 * 60
+# Each Gemini attempt of the read on ned-box is bounded by the --print-timeout
+# the agy cell gives each model of the cold-read-tier's chain; the five
+# minutes more cover git, the shipper and the connect.
 COLD_READ_FAST_READ_RUN_ON_NED_BOX_OVER_SSH_TIMEOUT_SECONDS = (
     FAST_READ_ATTEMPTS * len(agy_cell.TIER_TO_AGY_MODEL_CHAIN[FAST_READ_TIER])
-    * agy_cell.COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS + 5 * 60)
+    * agy_cell.COLD_READ_AGY_CELL_PER_MODEL_RUN_TIMEOUT_SECONDS
+    + COLD_READ_FAST_READ_SONNET_BACKUP_RUN_ALLOWANCE_SECONDS + 5 * 60)
 
 
 class CheckoutRootUnreadable(RuntimeError):
@@ -1036,16 +1068,18 @@ def ship_record(record_dir: pathlib.Path) -> str:
 
 
 def run_one_fast_clarify_cell(
-    target: pathlib.Path, report: pathlib.Path, prompt_file: pathlib.Path,
-) -> int:
-    """One attempt through the launcher. Returns the launcher's exit code.
+    launcher: pathlib.Path, target: pathlib.Path, report: pathlib.Path,
+    prompt_file: pathlib.Path,
+) -> tuple:
+    """One attempt through `launcher`. Returns (the launcher's exit code,
+    its stderr and stdout together).
 
     Both of the launcher's streams are re-emitted on stderr: the launcher
     itself prints nothing on stdout, and this program's stdout is reserved
     for its one line.
     """
     command = [
-        sys.executable, str(AGY_CELL_LAUNCHER),
+        sys.executable, str(launcher),
         "--cell", FAST_READ_CELL, "--tier", FAST_READ_TIER,
         "--target", str(target), "--report", str(report),
         "--prompt-file", str(prompt_file),
@@ -1058,7 +1092,62 @@ def run_one_fast_clarify_cell(
         print(completed.stderr, file=sys.stderr, end="")
     if completed.stdout:
         print(completed.stdout, file=sys.stderr, end="")
-    return completed.returncode
+    return completed.returncode, completed.stderr + completed.stdout
+
+
+def fast_clarify_cell_failure_cause(launcher: pathlib.Path, exit_code: int,
+                                    output: str) -> str:
+    """One line naming why a cell failed: Gemini's spending cap when its words
+    are in `output`, else the launcher's last `cause:` line, else its last
+    line. The cause line is cut short by the launcher, which drops the cap's
+    words, so they are looked for in the whole output."""
+    if GEMINI_MONTHLY_SPENDING_CAP_TEXT in output:
+        return (f"exit {exit_code}: Gemini's monthly spending cap is reached; the "
+                f"user can raise it at {GEMINI_SPENDING_CAP_PAGE}")
+    cause_prefix = f"{launcher.stem}: {agy_cell.common.CAUSE_PHRASE} "
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    causes = [line[len(cause_prefix):] for line in lines if line.startswith(cause_prefix)]
+    detail = causes[-1] if causes else (lines[-1] if lines else "no output")
+    return f"exit {exit_code}: {detail}"
+
+
+def fast_read_report_finish_and_print_path(
+    *, report: pathlib.Path, target: pathlib.Path, sentences: dict,
+    marked_copy_kept, full_run_class_name, bare_references, launch_sha256: str,
+    on_records_route: bool, backup_line: str,
+) -> int:
+    """Turn the cell's report into the read's: attach the sentences, the
+    coverage and the bare numbers, name an edit made during the read and the
+    Sonnet backup, ship the record, print the path. Returns 0."""
+    # Before anything reads or ships it: put each original sentence under
+    # the restatement claiming its id, and say which sentences no
+    # restatement claimed.
+    attached = attach_sentences_and_coverage(
+        report.read_text(encoding="utf-8"), sentences, target,
+        marked_copy_kept, full_run_class_name)
+    if bare_references is not None:
+        attached += bare_references_section(bare_references)
+    changed_line = target_changed_during_read_line(target, launch_sha256, marked_copy_kept)
+    if changed_line:
+        attached = with_line_after_provenance(attached, changed_line)
+    if backup_line:
+        attached = with_line_after_provenance(attached, backup_line)
+    report.write_text(attached, encoding="utf-8")
+    if changed_line:
+        print(changed_line, file=sys.stderr)
+    if backup_line:
+        print(f"{PROGRAM}: {backup_line}", file=sys.stderr)
+    record_names.cold_read_fast_read_report_agent_session_id_file_write_or_remove(
+        report, target,
+        os.environ.get(record_names.AGENT_SESSION_ID_ENVIRONMENT_VARIABLE))
+    if bare_references:
+        print(f"{PROGRAM}: bare issue, pull request or task numbers in "
+              f"this walk draft: {len(bare_references)}; the suggestions "
+              "file lists each one.", file=sys.stderr)
+    if on_records_route:
+        print(f"{PROGRAM}: record: {ship_record(report.parent)}", file=sys.stderr)
+    print(report)
+    return 0
 
 
 def main() -> int:
@@ -1104,7 +1193,6 @@ def main() -> int:
     bare_references = (None if on_records_route
                        else bare_references_in(target.read_text(encoding="utf-8")))
 
-    last_exit_code = 1
     with tempfile.TemporaryDirectory(prefix="cold-read-fast-read-") as scratch:
         prompt_file = pathlib.Path(scratch) / EMBEDDED_PROMPT_FILE_NAME
         prompt_file.write_text(FAST_CLARIFY_PROMPT_TEMPLATE, encoding="utf-8")
@@ -1120,53 +1208,51 @@ def main() -> int:
         marked_copy = (report.parent if on_records_route else pathlib.Path(scratch)) / (
             f"{target.stem}{SENTENCE_ID_MARKED_COPY_SUFFIX}")
         marked_copy.write_text(marked_text, encoding="utf-8")
+        finish = dict(
+            report=report, target=target, sentences=sentences,
+            marked_copy_kept=marked_copy if on_records_route else None,
+            full_run_class_name=full_run_class_name, bare_references=bare_references,
+            launch_sha256=launch_sha256, on_records_route=on_records_route)
         for attempt in range(1, FAST_READ_ATTEMPTS + 1):
-            last_exit_code = run_one_fast_clarify_cell(marked_copy, report, prompt_file)
-            if last_exit_code == 0:
-                # Before anything reads or ships it: put each original
-                # sentence under the restatement claiming its id, and say
-                # which sentences no restatement claimed.
-                attached = attach_sentences_and_coverage(
-                    report.read_text(encoding="utf-8"), sentences, target,
-                    marked_copy if on_records_route else None,
-                    full_run_class_name)
-                if bare_references is not None:
-                    attached += bare_references_section(bare_references)
-                changed_line = target_changed_during_read_line(
-                    target, launch_sha256, marked_copy if on_records_route else None)
-                if changed_line:
-                    attached = with_line_after_provenance(attached, changed_line)
-                report.write_text(attached, encoding="utf-8")
-                if changed_line:
-                    print(changed_line, file=sys.stderr)
-                record_names.cold_read_fast_read_report_agent_session_id_file_write_or_remove(
-                    report, target,
-                    os.environ.get(record_names.AGENT_SESSION_ID_ENVIRONMENT_VARIABLE))
-                if bare_references:
-                    print(f"{PROGRAM}: bare issue, pull request or task numbers in "
-                          f"this walk draft: {len(bare_references)}; the suggestions "
-                          "file lists each one.", file=sys.stderr)
-                if on_records_route:
-                    print(f"{PROGRAM}: record: {ship_record(report.parent)}", file=sys.stderr)
-                print(report)
-                return 0
-            if last_exit_code == EXIT_BAD_INVOCATION:
+            exit_code, output = run_one_fast_clarify_cell(
+                AGY_CELL_LAUNCHER, marked_copy, report, prompt_file)
+            if exit_code == 0:
+                return fast_read_report_finish_and_print_path(**finish, backup_line="")
+            gemini_cause = fast_clarify_cell_failure_cause(AGY_CELL_LAUNCHER, exit_code, output)
+            if exit_code == EXIT_BAD_INVOCATION:
                 print(f"{PROGRAM}: the cell launcher refused the invocation "
                       f"(exit {EXIT_BAD_INVOCATION}); not retried, because the "
                       "same invocation would be refused the same way.",
                       file=sys.stderr)
                 break
+            if GEMINI_MONTHLY_SPENDING_CAP_TEXT in output:
+                print(f"{PROGRAM}: Gemini's monthly spending cap is reached; not "
+                      "retried, because a retry cannot pass a monthly cap.",
+                      file=sys.stderr)
+                break
             if attempt < FAST_READ_ATTEMPTS:
                 print(f"{PROGRAM}: attempt {attempt} of {FAST_READ_ATTEMPTS} failed "
-                      f"(exit {last_exit_code}); retrying once.", file=sys.stderr)
+                      f"(exit {exit_code}); retrying once.", file=sys.stderr)
+        print(f"{PROGRAM}: the Gemini fast-clarify cell failed ({gemini_cause}); "
+              f"running the same cell once on {SONNET_BACKUP_MODEL}, the Sonnet "
+              "backup, through the claude cell launcher.", file=sys.stderr)
+        exit_code, output = run_one_fast_clarify_cell(
+            CLAUDE_CELL_LAUNCHER, marked_copy, report, prompt_file)
+        if exit_code == 0:
+            return fast_read_report_finish_and_print_path(
+                **finish,
+                backup_line=(f"{SONNET_BACKUP_HASHTAG} The Gemini fast-clarify cell "
+                             f"failed ({gemini_cause}), so {SONNET_BACKUP_MODEL} read "
+                             "this document instead, as the provenance stamp says."))
+        sonnet_cause = fast_clarify_cell_failure_cause(CLAUDE_CELL_LAUNCHER, exit_code, output)
     if bare_references:
         print(f"{PROGRAM}: bare issue, pull request or task numbers in this walk "
               f"draft: {len(bare_references)}. The read failed, so no suggestions "
               "file lists them. They are:", file=sys.stderr)
         for line_number, reference in bare_references:
             print(f"{PROGRAM}:   line {line_number}: {reference}", file=sys.stderr)
-    print(f"FAILED (exit {last_exit_code} from the fast-clarify cell; "
-          f"no report at {report})")
+    print(f"FAILED (the fast-clarify cell failed on Gemini, {gemini_cause}, and on "
+          f"the Sonnet backup {SONNET_BACKUP_MODEL}, {sonnet_cause}; no report at {report})")
     return 1
 
 

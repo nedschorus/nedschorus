@@ -14,7 +14,10 @@ Usage:
       --report cold-read-records/foo-2026-01-01/claude-restate-second-strongest-model.md
 
 The cold-read-tier `second-strongest-model` asks for the agent-binary's
-second-strongest model.
+second-strongest model. The cold-read-tier `fast` runs Claude Sonnet at medium,
+the backup nc-systems/cold-read/cold-read-fast-read.py runs when its Gemini
+cold-read-cell fails; medium matches the effort the Gemini cold-read-cell
+reads at.
 
 The reviewer writes its findings to --report. This program prints progress
 to stderr and nothing to stdout.
@@ -48,16 +51,19 @@ _common_spec.loader.exec_module(common)
 
 PROGRAM = "cold-read-claude-cell"
 
-# No fallback: each tier must use its pinned model rather than silently substitute a weaker reviewer.
+# No fallback within a tier: each tier must use its pinned model rather than silently substitute a weaker reviewer.
+# The fast tier is no such substitute: the fast read runs it only after its Gemini cell fails, and says so.
 TIER_TO_CLAUDE_MODEL_CHAIN = {
     "deep": ("claude-opus-5-5",),
     "second-strongest-model": ("claude-fable-5-1",),
+    "fast": ("claude-sonnet-5-5",),
 }
 
 # Pin effort so results do not depend on the machine's default.
 TIER_TO_REASONING_EFFORT = {
     "deep": "xhigh",
     "second-strongest-model": "max",
+    "fast": "medium",
 }
 
 # Write is needed for the report; WebFetch lets the reviewer inspect linked pages.
