@@ -30,6 +30,7 @@ Three approval-walks decided the design. Reboot-test's `loose-ends-skill-design-
 - **D13. Which conversations the audit reads** (2026-10-25, item 10 of `prime-intellect-open-decisions-for-the-user-2026-10-22-2`). The audit reads the agent-seat's own conversations, not its subagents' conversations. A subagent's final report, which arrives in the agent-seat's own transcript, is read as fully as a message from the user, so each finding in it that the agent neither acted on nor passed on, and that no task, GHI or pull request records, is a loose-end.
 - **D14. When the glossary entries land** (2026-10-25, item 11 of `prime-intellect-open-decisions-for-the-user-2026-10-22-2`, left to prime-intellect by the user: "Whatever you think is best"). The entry for the project-term "loose-end" (D1) does not wait: it lands now, in its own small pull request. The entry for the skill, `/loose-ends`, waits until the skill exists.
 - **D15. No new rule for a branch with uncommitted changes during branch sync** (2026-10-25, item 12 of `prime-intellect-open-decisions-for-the-user-2026-10-22-2`). The design adds no such rule, because the existing branch-sync rule covers it.
+- **D16. No new rule for the user disapproving or deferring the successor's approval-walk as a whole** (2026-10-25, item 13 of `prime-intellect-open-decisions-for-the-user-2026-10-22-2`). The design adds no such rule, because /walk-me-through already says what each answer does.
 - **Names** (2026-10-16, walk item 5; written form ruled 2026-10-23). The skill is `loose-ends`. The project-term is written "loose-end", plural "loose-ends", because GHI [Before a seat is retired, report what still cites the paths the retirement removes](https://github.com/nedschorus/nedschorus/issues/226) already uses "loose ends" in its ordinary sense.
 - **Who builds it.** prime-intellect, to which reboot-test handed the work on 2026-10-21; the user asked prime-intellect that day to get the skill "ready to start buiding".
 
@@ -71,9 +72,8 @@ The old skill, `loose-ends` in the user's earlier project nedlern (`/Users/el/Pr
 
 ## Decisions for the user
 
-The approval-walks did not decide these. Each comes with a recommendation; the skill's text waits for the user's answers. D16 is item 13 of `prime-intellect-open-decisions-for-the-user-2026-10-22-2`, and D12 its item 14. D1, D2, D5, D8, D9, D10, D11, D13, D14 and D15 are ruled, under "What the user decided" above.
+The approval-walks did not decide these. Each comes with a recommendation; the skill's text waits for the user's answers. D12 is item 14 of `prime-intellect-open-decisions-for-the-user-2026-10-22-2`. D1, D2, D5, D8, D9, D10, D11 and D13 to D16 are ruled, under "What the user decided" above.
 
-- **D16. No new rule for the user disapproving or deferring the successor's approval-walk as a whole** (open, item 13). Recommendation: none; /walk-me-through already says what each answer does.
 - **D12. Refinements of the definition that building it shows** (new; to go to the user with the compiled guidance). Each is marked **Definition check** where it arises:
   - The Claude trawl's first test: "The record must carry the item's words, not just its topic." 20 of its 222 loose-ends were lost inside tracked work: a TaskUpdate rewrote the text, a point was added to a task already completed, or a task closed by its subject with a point still in it. Recommendation: add "A task, GHI or pull request holds an item only if its current text says it."
   - Open or closed: the entry says "a GHI" and "an open pull request". A closed GHI, a merged pull request and a completed task are not processed. Recommendation: say "an open task, an open GHI or an open pull request".
@@ -100,7 +100,7 @@ The approval-walks did not decide these. Each comes with a recommendation; the s
 
 ## Next action
 
-prime-intellect brings D16 and D12 to the user, as items 13 and 14 of its approval-walk `prime-intellect-open-decisions-for-the-user-2026-10-22-2`; meanwhile it finishes the guidance trawl (work step 1) once the two launcher pull requests merge, then compiles the guidance and walks it, with D12, with the user (step 2).
+prime-intellect brings D12 to the user, as item 14 of its approval-walk `prime-intellect-open-decisions-for-the-user-2026-10-22-2`; meanwhile it finishes the guidance trawl (work step 1) once the two launcher pull requests merge, then compiles the guidance and walks it, with D12, with the user (step 2).
 
 ## Deferred-decisions
 
