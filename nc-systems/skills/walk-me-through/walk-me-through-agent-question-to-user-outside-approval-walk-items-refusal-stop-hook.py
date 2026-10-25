@@ -45,13 +45,14 @@ MODEL_TIMEOUT_SECONDS, the hook blocks on the first unclear line, saying the
 model check failed: a missed question scrolls away, a false block costs one
 reworded line.
 
-THE BLOCK CLEARS when the reply names, by `Item N of M` with the walk's
-total, an interruption item the agent added this turn: an item the
-walk-document holds, numbered `W.n` after a waiting item W, whose heading
-line an assistant Edit, MultiEdit or Write of this turn wrote to the
-walk-document, in an edit's new text and not in its old text. Naming an
-item that was already there, or one that only a shell command or a read
-mentions, does not clear it.
+AN INTERRUPTION ITEM'S TEXT is not checked either: a checked line is left
+out when the walk-document, as it stands when the hook runs, holds it word
+for word in an interruption item, one numbered `W.n` after a waiting item W
+and not itself waiting, whatever its total. Both sides are compared with code
+spans, `**` and `__`, quotation marks, list marks and the marks `normalized`
+drops removed, and the line must match whole words of the item. So a question the
+agent has put into an interruption item passes, however that item got there
+or was later retitled, and a question in any other item does not.
 
 EACH BLOCK is logged as one JSON line, with its time, session, walk, the
 sentence flagged, and what decided, `code`, `model` or `model-check-failed`,
@@ -125,6 +126,9 @@ UNCLEAR_ASK = re.compile(
 SENTENCE_END = re.compile(r"(?:(?<=[.?!])|(?<=[.?!][\"'\u201d\u2019)*_]))\s+")
 TRAILING_MARKS = "*_ )\"'”’"
 QUOTED = re.compile(r"\"[^\"\n]+\"|“[^”\n]+”")
+QUOTATION_MARKS = re.compile("[\"“”]")
+# checked_lines joins a list to its lead-in, so a list mark can stand mid-line.
+LIST_MARK_ANYWHERE = re.compile(r"(?:^|\s)(?:[-+*]|\d+[.)])(?=\s)")
 LINK = re.compile(r"\[([^\]\n]*)\]\([^)\n]*\)")
 LIST_ITEM = re.compile(r"^(?:[-+*]|\d+[.)])\s")
 LINE_MARKS = re.compile(r"^\s*(?:(?:[-+*>]|\d+[.)])\s+)+")
@@ -165,7 +169,8 @@ REFUSAL_INSTRUCTIONS = (
     "If the flagged text asks the user to decide or answer something, do these four steps:",
     "1. Add it to the walk-document {document} as an interruption item headed `## Item {new_item} of "
     "{new_total}: <the point of the question>`, placed right after item {last_waiting}. Quote the question whole, "
-    "as its asker wrote it, whether you or another agent, give your recommendation as `Recommendation: <what you recommend doing>.`, and end the item with "
+    "as its asker wrote it, whether you or another agent, with the flagged text in it word for word, because "
+    "that is what lets this check pass the question once it is in the item, give your recommendation as `Recommendation: <what you recommend doing>.`, and end the item with "
     "{answer_line}.",
     "2. Change the walk's item count M from {total} to {new_total} in every item heading of {document} that "
     "carries `of {total}`, and in "
@@ -173,7 +178,7 @@ REFUSAL_INSTRUCTIONS = (
     "{new_total}`.",
     "3. Do not show the new item now: it is shown after item {waiting} is answered.",
     "4. The flagged text has already reached the user, so leave it; end the message you write next with these "
-    "two lines, of which the first clears this check: `I added the question as Item {new_item} of "
+    "two lines: `I added the question as Item {new_item} of "
     "{new_total}.` and `{waiting_reminder}`",
     "If the flagged text does not ask the user anything, reword it in your reply so that it no longer reads "
     "as a question for him, and end the turn.",
@@ -205,20 +210,33 @@ def normalized(line):
     return EMPHASIS_AND_SPACING.sub(" ", line).strip().lower()
 
 
-def turn_texts_and_tool_calls(records):
-    """(every assistant text, (name, input) of every assistant tool call) since the transcript's last turn start."""
+def turn_assistant_texts(records):
+    """Every assistant text since the transcript's last turn start."""
     start = current_item_hook.turn_start(records)
-    texts, tool_calls = [], []
+    texts = []
     for record in records[0 if start is None else start + 1:]:
         content = record.get("message", {}).get("content") if record.get("type") == "assistant" else None
-        for block in content if isinstance(content, list) else ():
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") == "text":
-                texts.append(block.get("text", ""))
-            elif block.get("type") == "tool_use":
-                tool_calls.append((block.get("name"), block.get("input")))
-    return texts, tool_calls
+        texts.extend(block.get("text", "") for block in (content if isinstance(content, list) else ())
+                     if isinstance(block, dict) and block.get("type") == "text")
+    return texts
+
+
+def comparable(line):
+    """line as AN INTERRUPTION ITEM'S TEXT in the module docstring compares it, padded with spaces."""
+    line = LIST_MARK_ANYWHERE.sub(" ", walk_finder.CODE_SPAN.sub(" ", line).replace("**", "").replace("__", ""))
+    return " " + " ".join(QUOTATION_MARKS.sub("", normalized(line)).split()) + " "
+
+
+def interruption_item_texts(document_lines, units, waiting_numbers):
+    """The comparable text of every unit holding an item numbered W.n, for W a waiting item, not itself waiting."""
+    texts = []
+    for numbers, _, _, first, end in units:
+        if any(number not in waiting_numbers
+               and any(re.fullmatch(rf"{re.escape(waiting)}\.\d+", number) for waiting in waiting_numbers)
+               for number in numbers):
+            texts.append(" " + " ".join(comparable(line).strip() for line in document_lines[first:end]
+                                        if comparable(line).strip()) + " ")
+    return texts
 
 
 def shown_item_lines(reply_lines, document_lines, units):
@@ -308,40 +326,6 @@ def model_judgement(message_lines, unclear_lines, total, waiting, timeout_second
     return unclear_lines[number - 1] if 1 <= number <= len(unclear_lines) else unclear_lines[0], None
 
 
-def texts_written_to(document, tool_calls):
-    """[(new text, old text)] of every Edit, MultiEdit and Write in tool_calls whose file is document."""
-    written = []
-    for name, tool_input in tool_calls:
-        if not isinstance(tool_input, dict) or not isinstance(tool_input.get("file_path"), str):
-            continue
-        if Path(tool_input["file_path"]).expanduser().resolve() != document.resolve():
-            continue
-        if name == "Write":
-            written.append((tool_input.get("content"), ""))
-        elif name == "Edit":
-            written.append((tool_input.get("new_string"), tool_input.get("old_string")))
-        elif name == "MultiEdit":
-            written.extend((edit.get("new_string"), edit.get("old_string"))
-                           for edit in tool_input.get("edits") or () if isinstance(edit, dict))
-    return [(new, old if isinstance(old, str) else "") for new, old in written if isinstance(new, str)]
-
-
-def items_added_this_turn(reply, total, waiting_numbers, units, document_lines, document, tool_calls):
-    """The items the reply names as the module docstring's THE BLOCK CLEARS says."""
-    written = [({normalized(line) for line in new.split("\n")}, {normalized(line) for line in old.split("\n")})
-               for new, old in texts_written_to(document, tool_calls)]
-    named = current_item_hook.items_named_in(reply, total)
-    added = set()
-    for numbers, unit_total, _, first, _ in units:
-        heading = normalized(document_lines[first])
-        if unit_total != total or not any(heading in new_lines and heading not in old_lines
-                                          for new_lines, old_lines in written):
-            continue
-        added.update(number for number in numbers if number in named and number not in waiting_numbers
-                     and any(re.fullmatch(rf"{re.escape(waiting)}\.\d+", number) for waiting in waiting_numbers))
-    return added
-
-
 def log_path(environment, log_store_homes=None):
     """Return (the refusal log's path, None), or (None, why the log-store cannot be reached); log_store_homes are
     the directories that may hold the log-store, by default ned-box's home and the Mac's mount of it."""
@@ -406,7 +390,7 @@ def output_for(payload, environment, model=model_judgement):
         return None
     minutes, value, _ = walk
     records = current_item_hook.transcript_records(Path(transcript_path).expanduser())
-    texts, tool_calls = turn_texts_and_tool_calls(records)
+    texts = turn_assistant_texts(records)
     reply = "\n".join(texts + [payload.get("last_assistant_message") or ""])
     if not reply.strip():
         return None
@@ -419,9 +403,9 @@ def output_for(payload, environment, model=model_judgement):
         total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser, all_units=units)
     except walk_finder.UnusableRange:
         return None
-    if items_added_this_turn(reply, total, numbers, units, document_text.split("\n"), document, tool_calls):
-        return None
-    lines = checked_lines(reply, document_text, units, parser)
+    item_texts = interruption_item_texts(document_text.split("\n"), units, numbers)
+    lines = [line for line in checked_lines(reply, document_text, units, parser)
+             if not any(comparable(line) in text for text in item_texts)]
     kinds = [(line, line_kind(line)) for line in lines]
     clear = [line for line, kind in kinds if kind == "clear"]
     unclear = [line for line, kind in kinds if kind == "unclear"]

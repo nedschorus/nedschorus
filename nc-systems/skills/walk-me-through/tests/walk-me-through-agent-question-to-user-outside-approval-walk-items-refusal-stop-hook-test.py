@@ -248,7 +248,9 @@ def test_the_block_message_says_what_to_do():
             ("the message names the interruption item's number and the new total",
              "`## Item 2.1 of 11: <the point of the question>`, placed right after item 2."),
             ("the message says to quote the question whole with a recommendation",
-             "Quote the question whole, as its asker wrote it, whether you or another agent, give your recommendation as `Recommendation: <what you recommend"),
+             "Quote the question whole, as its asker wrote it, whether you or another agent, with the flagged text in it "
+             "word for word, because that is what lets this check pass the question once it is in the item, give your "
+             "recommendation as `Recommendation: <what you recommend"),
             ("the message quotes the walk's answer line", f"end the item with this line, which the walk's other "
              f"items end with: `{ANSWER_LINE}`."),
             ("the message says to change M everywhere",
@@ -257,7 +259,7 @@ def test_the_block_message_says_what_to_do():
              f"the last `#next_to_present` line of {case.minutes}, which then reads `#next_to_present item 2 of 11`"),
             ("the message says not to show the new item now",
              "Do not show the new item now: it is shown after item 2 is answered."),
-            ("the message gives the closing lines", "end the message you write next with these two lines, of which the first clears this check: `I added the question as "
+            ("the message gives the closing lines", "end the message you write next with these two lines: `I added the question as "
              "Item 2.1 of 11.` and `Item 2 of 11 is waiting for your answer.`"),
             ("the message says how to clear a false block",
              "If the flagged text does not ask the user anything, reword it in your reply so that it no longer reads")):
@@ -357,58 +359,61 @@ def test_a_failed_model_check_blocks():
         os.environ.pop("FAKE_CLAUDE_CALLS", None)
 
 
-def test_an_interruption_item_added_this_turn_clears_the_block():
+def test_a_question_held_in_an_interruption_item_is_not_checked():
     stray = "merge-lane-2 asks: should I file one GHI listing the remaining seats' tests?"
-    added = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + INTERRUPTION_ITEM,
-                 minutes="#next_to_present item 2 of 11")
-    added.records(PEER_PROMPT, text_record(stray),
-                  tool_record("Edit", {"file_path": str(added.document), "old_string": "x",
-                                       "new_string": INTERRUPTION_ITEM}),
-                  text_record("I added it as Item 2.1 of 11.\n\nItem 2 of 11 is waiting for your answer."))
-    check_silent("a reply naming an interruption item a tool call of the turn wrote passes", added.run(model="yes"))
-    added.records(PEER_PROMPT, text_record(stray),
-                  tool_record("Bash", {"command": "python3 add.py '## Item 2.1 of 11: the GHI'"}),
-                  text_record("Item 2 of 11 is waiting for your answer."))
-    check_blocked("a reply naming only the waiting item still blocks", added.run(), "approval-walk question check")
-    added.records(PEER_PROMPT, text_record(stray), tool_record("Bash", {"command": "ls"}),
-                  text_record("It is Item 2.1 of 11.\n\nItem 2 of 11 is waiting for your answer."))
-    check_blocked("naming an item that was already in the walk-document does not clear the block", added.run(),
+    closing = "I added it as Item 2.1 of 11.\n\nItem 2 of 11 is waiting for your answer."
+    held = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + INTERRUPTION_ITEM,
+                minutes="#next_to_present item 2 of 11")
+    held.records(PEER_PROMPT, text_record(stray), text_record(closing))
+    check_silent("a question an interruption item after the waiting item holds passes, with no tool call this turn",
+                 held.run(model="yes"))
+    check("a question held in an interruption item never reaches the model", held.model_calls() == [],
+          held.model_calls())
+    held.reply("Should I merge the pull request now?\n\n" + closing)
+    check_blocked("a question the interruption item does not hold still blocks", held.run(),
+                  '"Should I merge the pull request now?"')
+    part_word = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n"
+                     + INTERRUPTION_ITEM.replace("one GHI", "one GHIs"), minutes="#next_to_present item 2 of 11")
+    part_word.reply("merge-lane-2 asks: should I file one GHI?")
+    check_blocked("a line that matches the item only to part of a word still blocks", part_word.run(),
                   "approval-walk question check")
-    added.records(PEER_PROMPT, text_record(stray),
-                  tool_record("Write", {"file_path": "x", "content": "## Item 2.1 of 11: the GHI"}),
-                  text_record("It is Item 2.1 of 12.\n\nItem 2 of 11 is waiting for your answer."))
-    check_blocked("naming the added item with another total does not clear the block", added.run(),
-                  "approval-walk question check")
-    heading = INTERRUPTION_ITEM.split("\n")[0]
-    named_added = "It is Item 2.1 of 11.\n\nItem 2 of 11 is waiting for your answer."
-    for case_name, tool in [
-            ("a MultiEdit that adds the item's heading to the walk-document clears the block",
-             tool_record("MultiEdit", {"file_path": str(added.document),
-                                       "edits": [{"old_string": "x", "new_string": INTERRUPTION_ITEM}]})),
-            ("a Write of the walk-document that holds the item's heading clears the block",
-             tool_record("Write", {"file_path": str(added.document), "content": added.document.read_text()}))]:
-        added.records(PEER_PROMPT, text_record(stray), tool, text_record(named_added))
-        check_silent(case_name, added.run(model="yes"))
-    for case_name, tool in [
-            ("a read-only grep for the item's running count does not clear the block",
-             tool_record("Bash", {"command": f"grep -n 'Item 2.1 of' {added.document}"})),
-            ("an Edit whose old text holds the item's heading, revising it, does not clear the block",
-             tool_record("Edit", {"file_path": str(added.document), "old_string": heading,
-                                  "new_string": heading + " revised"})),
-            ("an Edit of the minutes' #next_to_present line does not clear the block",
-             tool_record("Edit", {"file_path": str(added.minutes), "old_string": "#next_to_present item 2 of 10",
-                                  "new_string": "#next_to_present item 2.1 of 11"})),
-            ("an Edit writing the heading to another file does not clear the block",
-             tool_record("Edit", {"file_path": str(added.root / "other.md"), "old_string": "x",
-                                  "new_string": INTERRUPTION_ITEM}))]:
-        added.records(PEER_PROMPT, text_record(stray), tool, text_record(named_added))
-        check_blocked(case_name, added.run(), "approval-walk question check")
-    added.records(PEER_PROMPT, text_record(stray),
-                  tool_record("Edit", {"file_path": str(added.document), "old_string": "x",
-                                       "new_string": "## Item 2 of 11: where the poem page lives"}),
-                  text_record("I revised Item 2 of 11.\n\nItem 2 of 11 is waiting for your answer."))
-    check_blocked("an Edit writing the waiting item's own heading does not clear the block", added.run(),
-                  "approval-walk question check")
+    for case_name, document, minutes in (
+            ("the same question in an item that is not an interruption item blocks",
+             WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + INTERRUPTION_ITEM.replace("Item 2.1 of 11", "Item 11 of 11"),
+             "#next_to_present item 2 of 11"),
+            ("the same question in an interruption item after another item than the waiting one blocks",
+             WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + INTERRUPTION_ITEM.replace("Item 2.1", "Item 3.1"),
+             "#next_to_present item 2 of 11"),
+            ("the same question with no interruption item blocks", WALK_DOCUMENT, "#next_to_present item 2 of 10"),
+            ("the same question in an interruption item that is itself waiting blocks",
+             WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + INTERRUPTION_ITEM,
+             "#next_to_present items 2 and 2.1 of 11")):
+        case = Case(document=document, minutes=minutes)
+        case.records(PEER_PROMPT, text_record(stray), text_record(closing))
+        check_blocked(case_name, case.run(), "approval-walk question check")
+    for case_name, document in (
+            ("an interruption item retitled after it was added still holds its question",
+             WALK_DOCUMENT.replace("of 10", "of 11") + "\n"
+             + INTERRUPTION_ITEM.replace("merge-lane-2's question about the GHI", "the remaining seats' GHI, revised")),
+            ("an interruption item with a newer total than the minutes' still holds its question",
+             WALK_DOCUMENT + "\n" + INTERRUPTION_ITEM)):
+        case = Case(document=document, minutes="#next_to_present item 2 of 10")
+        case.records(PEER_PROMPT, text_record(stray), text_record(closing))
+        check_silent(case_name, case.run(model="yes"))
+    for case_name, reply_line, item_line in (
+            ("a bold question the item holds without bold passes",
+             "**Should we rename the hook before it merges?**", "Should we rename the hook before it merges?"),
+            ("a question with a code span the item holds passes",
+             "Should I rerun `run-all-test-suites.py` before the push?",
+             "Should I rerun `run-all-test-suites.py` before the push?"),
+            ("a list joined to its lead-in that the item holds passes",
+             "Should I do one of these:\n- merge the lines\n- keep both",
+             "Should I do one of these:\n- merge the lines\n- keep both")):
+        item = f"## Item 2.1 of 11: a question\n\n{item_line}\n\nRecommendation: Merge.\n\n{ANSWER_LINE}\n"
+        case = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + item,
+                    minutes="#next_to_present item 2 of 11")
+        case.reply(reply_line + "\n\n" + closing)
+        check_silent(case_name, case.run(model="yes"))
 
 
 def test_the_final_message_from_the_payload_is_checked():
