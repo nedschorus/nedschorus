@@ -25,7 +25,11 @@ THE TEXT CHECKED is the reply, line by line, without:
 - fenced and indented code and code spans;
 - quoted text, `"..."`, `“...”` or a `>` line, that the walk-document holds;
 - a sentence that only names waiting items, `Item 4 of 9 is waiting for your
-  answer.`, the line the walk-me-through skill ends every message with.
+  answer.`, the line the walk-me-through skill ends every message with, when
+  every item it names is waiting and its total is the open walk's or one an
+  item heading of the walk-document carries; one that names another item or
+  total, as an agent does when it numbers its own questions as items, is
+  checked.
 `**` and `__` are dropped before the tests, so a bold question is read.
 
 EACH LINE is one of three:
@@ -45,16 +49,23 @@ MODEL_TIMEOUT_SECONDS, the hook blocks on the first unclear line, saying the
 model check failed: a missed question scrolls away, a false block costs one
 reworded line.
 
-AN INTERRUPTION ITEM'S TEXT is not checked either: a reply line, taken
-before any of the removals above and before lists are joined, is left out
-when the walk-document, as it stands when the hook runs, holds it word for
-word in an interruption item, one numbered `W.n` after a waiting item W and
-not itself waiting, whatever its total. Both sides are compared as their
-words alone, the runs of letters and digits left once `normalized` has
-dropped its marks, so every other mark is ignored and a line matches only
-whole words of the item. So a question the agent has put into an
-interruption item passes, however that item got there or was later
-retitled, and a question in any other item does not.
+AN INTERRUPTION ITEM'S TEXT is not checked either: a line of the text
+checked, a list joined to its lead-in included, is left out when the
+walk-document, as it stands when the hook runs, holds it word for word in an
+interruption item, one numbered `W.n` after a waiting item W and not itself
+waiting, whatever its total. The line is compared as the agent wrote it,
+before the removals above, because the item holds the question as its asker
+wrote it, code spans and quotations included. Both sides are compared as
+their words and question marks alone, the runs of letters and digits and
+each `?` left once `normalized` has dropped its marks, so every other mark is
+ignored, a line matches only whole words of the item, and a question matches
+only where the item's question ends. An item's lines run from its opening,
+as the approval-walk finder reads openings, when it has one, to the next
+item's opening or its unit's end, and are otherwise its whole unit; but an
+item without an opening under a heading shared by several items holds no
+lines. So a question the
+agent has put into an interruption item passes, however that item got there
+or was later retitled, and a question in any other item does not.
 
 EACH BLOCK is logged as one JSON line, with its time, session, walk, the
 sentence flagged, and what decided, `code`, `model` or `model-check-failed`,
@@ -107,7 +118,8 @@ LOG_PATH_VARIABLE = "NEDSCHORUS_WALK_ME_THROUGH_AGENT_QUESTION_REFUSAL_LOG"
 NUMBER_LIST = r"\d+(?:\.\d+)*(?:\s*(?:,|&|\band\b|\bto\b|-|–)\s*\d+(?:\.\d+)*)*"
 ITEM_REFERENCE = re.compile(r"\bitems?\s+\d+(?:\.\d+)*", re.I)
 WAITING_REMINDER = re.compile(
-    rf"^(?:the\s+)?items?\s+{NUMBER_LIST}\s+of\s+\d+\s+(?:is|are)\s+(?:still\s+)?waiting\s+for\s+your\s+answer\W*$",
+    rf"^(?:the\s+)?items?\s+(?P<numbers>{NUMBER_LIST})\s+of\s+(?P<total>\d+)\s+(?:is|are)\s+(?:still\s+)?waiting"
+    r"\s+for\s+your\s+answer\W*$",
     re.I)
 CLEAR_ASK = re.compile(
     r"\b(?:say|reply|answer|type)\s+(?:yes|no|y|n|a|ao|d)\b|\bon\s+(?:a|your)\s+(?:yes|no)\b"
@@ -128,7 +140,7 @@ UNCLEAR_ASK = re.compile(
 SENTENCE_END = re.compile(r"(?:(?<=[.?!])|(?<=[.?!][\"'\u201d\u2019)*_]))\s+")
 TRAILING_MARKS = "*_ )\"'”’"
 QUOTED = re.compile(r"\"[^\"\n]+\"|“[^”\n]+”")
-WORD = re.compile(r"\w+")
+WORD = re.compile(r"\w+|\?")
 LINK = re.compile(r"\[([^\]\n]*)\]\([^)\n]*\)")
 LIST_ITEM = re.compile(r"^(?:[-+*]|\d+[.)])\s")
 LINE_MARKS = re.compile(r"^\s*(?:(?:[-+*>]|\d+[.)])\s+)+")
@@ -221,20 +233,29 @@ def turn_assistant_texts(records):
     return texts
 
 
-def comparable(line):
-    """line as AN INTERRUPTION ITEM'S TEXT in the module docstring compares it: its words, padded with spaces."""
-    return " " + " ".join(WORD.findall(normalized(line))) + " "
+def comparable(lines):
+    """lines as AN INTERRUPTION ITEM'S TEXT in the module docstring compares them: their words and question marks,
+    each line normalized alone, padded with spaces."""
+    return " " + " ".join(word for line in lines for word in WORD.findall(normalized(line))) + " "
 
 
-def interruption_item_texts(document_lines, units, waiting_numbers):
-    """The comparable text of every unit holding an item numbered W.n, for W a waiting item, not itself waiting."""
+def interruption_item_texts(document_text, units, waiting_numbers, parser):
+    """The comparable text of every item numbered W.n, for W a waiting item, not itself waiting: its lines as the
+    approval-walk finder's line-range helper gives them, or nothing when they are the whole of a unit of several
+    items, because that unit's items have no openings."""
+    document_lines = document_text.split("\n")
+    openings = walk_finder.item_opening_lines(document_text, parser)
     texts = []
-    for numbers, _, _, first, end in units:
-        if any(number not in waiting_numbers
-               and any(re.fullmatch(rf"{re.escape(waiting)}\.\d+", number) for waiting in waiting_numbers)
-               for number in numbers):
-            texts.append(" " + " ".join(word for line in document_lines[first:end]
-                                        for word in WORD.findall(normalized(line))) + " ")
+    for numbers, total, _, first, end in units:
+        for number in numbers:
+            if number in waiting_numbers or not any(re.fullmatch(rf"{re.escape(waiting)}\.\d+", number)
+                                                    for waiting in waiting_numbers):
+                continue
+            span = walk_finder.approval_walk_item_line_range_within_heading_shared_by_several_items(
+                openings, first, end, number, numbers, total)
+            if len(numbers) > 1 and span == (first, end):
+                continue
+            texts.append(comparable(document_lines[span[0]:span[1]]))
     return texts
 
 
@@ -253,34 +274,51 @@ def shown_item_lines(reply_lines, document_lines, units):
     return shown
 
 
-def checked_lines(reply, document_text, units, parser, waiting_numbers):
+def is_waiting_reminder(sentence, waiting_numbers, totals):
+    """Whether sentence only says that waiting items of the open walk, with one of its totals, wait for an answer."""
+    reminder = WAITING_REMINDER.match(sentence.strip(TRAILING_MARKS))
+    if not reminder or reminder["total"] not in totals:
+        return False
+    try:
+        return set(walk_finder.expand_numbers(reminder["numbers"])) <= set(waiting_numbers)
+    except walk_finder.UnusableRange:
+        return False
+
+
+def checked_lines(reply, document_text, units, parser, waiting_numbers, total):
     """The reply's lines as the module docstring's THE TEXT CHECKED says, emphasis dropped, empty ones left out,
-    and each list joined to the line ending in `:` that introduces it, so the list is judged with its lead-in."""
+    and each list joined to the line ending in `:` that introduces it, so the list is judged with its lead-in;
+    then those an interruption item holds, compared as the reply wrote them, left out."""
+    totals = {total} | {unit[1] for unit in units}
     document_lines = document_text.split("\n")
     normalized_document = normalized(" ".join(document_lines))
-    item_texts = interruption_item_texts(document_lines, units, waiting_numbers)
     lines = walk_finder.prose_lines(reply, parser)
     shown = shown_item_lines(lines, document_lines, units)
-    kept, introduced_list = [], False
+    kept, written, introduced_list = [], [], False
     for line in lines:
-        if normalized(line) in shown or any(comparable(line) in text for text in item_texts):
+        if normalized(line) in shown:
             continue
         if line.lstrip().startswith(">") and normalized(line) in normalized_document:
             continue
+        as_written = line
         line = walk_finder.CODE_SPAN.sub(" ", line)
         line = QUOTED.sub(lambda quote: " " if normalized(quote[0][1:-1]) in normalized_document else quote[0], line)
         line = line.replace("**", "").replace("__", "")
         sentences = [sentence for sentence in SENTENCE_END.split(line.strip())
-                     if not WAITING_REMINDER.match(sentence.strip(TRAILING_MARKS))]
+                     if not is_waiting_reminder(sentence, waiting_numbers, totals)]
         line = " ".join(sentences).strip()
         if not line:
             continue
         if introduced_list and LIST_ITEM.match(line):
             kept[-1] += " " + line
+            written[-1].append(as_written)
         else:
             kept.append(line)
+            written.append([as_written])
             introduced_list = line.endswith(":")
-    return kept
+    item_texts = interruption_item_texts(document_text, units, waiting_numbers, parser)
+    return [line for line, as_written in zip(kept, written)
+            if not any(comparable(as_written) in text for text in item_texts)]
 
 
 def line_kind(line):
@@ -403,7 +441,7 @@ def output_for(payload, environment, model=model_judgement):
         total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser, all_units=units)
     except walk_finder.UnusableRange:
         return None
-    lines = checked_lines(reply, document_text, units, parser, numbers)
+    lines = checked_lines(reply, document_text, units, parser, numbers, total)
     kinds = [(line, line_kind(line)) for line in lines]
     clear = [line for line, kind in kinds if kind == "clear"]
     unclear = [line for line, kind in kinds if kind == "unclear"]
