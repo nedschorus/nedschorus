@@ -173,6 +173,21 @@ _shipper_spec = importlib.util.spec_from_file_location(
 shipper = importlib.util.module_from_spec(_shipper_spec)
 _shipper_spec.loader.exec_module(shipper)
 
+_walk_finder_spec = importlib.util.spec_from_file_location(
+    "walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
+    REPO_ROOT / "nc-systems" / "skills" / "walk-me-through"
+    / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py")
+walk_finder = importlib.util.module_from_spec(_walk_finder_spec)
+_walk_finder_spec.loader.exec_module(walk_finder)
+
+# The hook owns the walk-closed marker's name, so writer and reader cannot drift.
+_threshold_hook_spec = importlib.util.spec_from_file_location(
+    "handoff_context_threshold_hook", REPO_ROOT / "scripts" / "handoff-context-threshold-hook.py")
+threshold_hook = importlib.util.module_from_spec(_threshold_hook_spec)
+_threshold_hook_spec.loader.exec_module(threshold_hook)
+
+SESSION_ID_ENVIRONMENT_VARIABLE = "CLAUDE_CODE_SESSION_ID"
+
 EXIT_SHIPPED = shipper.EXIT_SHIPPED
 EXIT_FAILED = shipper.EXIT_FAILED
 EXIT_REFUSED = shipper.EXIT_REFUSED
@@ -564,6 +579,12 @@ def ship_walk(destination: WalkStoreDestination, name: str,
         replaced.sort(key=lambda replacement: [
             source.name for source in present.values()].index(replacement.file_name))
     added = [source.name for source in present.values() if source.name in added]
+    minutes_name = walk_file_name(name, MINUTES_ROLE_SUFFIX)
+    marker_failed = False
+    if minutes_name in added or any(replacement.file_name == minutes_name
+                                    for replacement in replaced):
+        marker_failed = not walk_closed_marker_written_when_minutes_close_the_walk(
+            present[MINUTES_ROLE_SUFFIX])
     # Built from the record shipper's constant, not the destination, which may
     # be a local override the snapshots never hold.
     stored_walk_directory = (shipper.split_destination(
@@ -605,7 +626,39 @@ def ship_walk(destination: WalkStoreDestination, name: str,
               f"minutes at {citation}")
         return EXIT_REFUSED
     print(f"shipped: {name} — {summary}; minutes at {citation}")
-    return EXIT_SHIPPED
+    return EXIT_FAILED if marker_failed else EXIT_SHIPPED
+
+
+def walk_closed_marker_written_when_minutes_close_the_walk(minutes: pathlib.Path) -> bool:
+    """Write this agent-session's walk-closed marker when the minutes' last
+    `#next_to_present` line says the walk is closed (see THE WALK-CLOSED
+    MARKER). False only when the marker was due and could not be written."""
+    marker = walk_finder.next_to_present(minutes.read_text(encoding="utf-8"),
+                                         walk_finder.markdown_parser())
+    if marker is None or not walk_finder.is_closed(marker[0]):
+        return True
+    session_id = os.environ.get(SESSION_ID_ENVIRONMENT_VARIABLE, "")
+    if not session_id:
+        print(f"{PROGRAM}: the walk is closed, but {SESSION_ID_ENVIRONMENT_VARIABLE} is "
+              f"not set, so no walk-closed marker was written and the handoff Stop hook "
+              f"will not ask for /handoff at this close.\n"
+              f"If an agent-session ran this command: run /handoff after the closing "
+              f"message when its context used plus the tokens its compactions dropped "
+              f"is at least 20%.", file=sys.stderr)
+        return True
+    path = threshold_hook.walk_closed_marker_path(session_id)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{minutes.name}\n", encoding="utf-8")
+    except OSError as error:
+        print(f"{PROGRAM}: FAILED to write the walk-closed marker {path} ({error}); the "
+              f"walk's files shipped, but the handoff Stop hook will not ask for /handoff "
+              f"at this close, so this run exits 1.\n"
+              f"Run /handoff after the closing message when this agent-session's context "
+              f"used plus the tokens its compactions dropped is at least 20%.",
+              file=sys.stderr)
+        return False
+    return True
 
 
 def main() -> int:
