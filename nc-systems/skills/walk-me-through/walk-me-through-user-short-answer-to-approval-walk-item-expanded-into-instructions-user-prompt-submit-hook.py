@@ -79,7 +79,7 @@ is refused whole; when a part is left unanswered, the item stays open and the
 agent records nothing yet. When every part gets the same letter, the text
 gives that letter's lines for the whole item. When the letters differ and are
 each A, AO or D, the text says what each does for its part and gives the
-CHECK_PROGRAM check command with one `--part N=LETTER` flag per part. When
+CHECK_PROGRAM check command with one `--part-answer N=ANSWER` flag per part. When
 they differ and one is Z, it says check cannot record a part deferred while
 others are answered, and tells the agent to record nothing and ask the user to
 answer again. Every other
@@ -340,7 +340,7 @@ PART_R_LINE = (
 PARTS_SAME_LETTER_LINE = (
     "Every part has the answer {letter}, so the answer is {letter} to the whole of {item}, and means what the "
     "lines below say.")
-PARTS_LETTERS_LINES = (
+PARTS_DIFFERENT_LETTERS_LINES = (
     "Each part's letter does for that part what it does for a whole item: A approves the part's recommendation, "
     "so do what it says; AO does the same and marks the approval as obvious; D disapproves it, so do the "
     "part's alternative.",
@@ -351,7 +351,7 @@ PARTS_LETTERS_LINES = (
     "answer, then the close command it prints, and do what close prints; write nothing in the minutes by hand.",
 )
 PARTS_NOT_RECORDABLE_LINES = (
-    "The check step cannot record this answer: `{program} check --part` takes A, AO or D for a part, because "
+    "The check step cannot record this answer: `{program} check --part-answer` takes A, AO or D for a part, because "
     "the walk-me-through skill does not say where an item goes in the walk when one of its parts is deferred "
     "and the others are answered.",
     "Record nothing and act on none of the parts.",
@@ -579,9 +579,9 @@ def parts_lines(answer, parts, walk):
     if len(letters) > 1 and "Z" in letters:
         return lines + [line.format(program=CHECK_PROGRAM.name, item=item) for line in PARTS_NOT_RECORDABLE_LINES]
     if len(letters) > 1:
-        flags = " ".join(f"--part {number}={letter}" for number, letter in sorted(deciding))
+        flags = " ".join(f"--part-answer {number}={letter}" for number, letter in sorted(deciding))
         return lines + [line.format(checkout=CHECKOUT, program=CHECK_PROGRAM.name, flags=flags)
-                        for line in PARTS_LETTERS_LINES]
+                        for line in PARTS_DIFFERENT_LETTERS_LINES]
     letter = letters.pop()
     return [*lines, PARTS_SAME_LETTER_LINE.format(letter=letter, item=item),
             *meaning_lines({"form": "single", "answer": letter, "code": letter}, walk, True)]

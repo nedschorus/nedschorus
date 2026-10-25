@@ -705,7 +705,7 @@ Recommendation: drop both.
 
 A plain item. Recommendation: keep it.
 """
-def parts_letters_lines(flags):
+def parts_different_letters_lines(flags):
     return [
         "Each part's letter does for that part what it does for a whole item: A approves the part's recommendation, "
         "so do what it says; AO does the same and marks the approval as obvious; D disapproves it, so do the "
@@ -719,7 +719,7 @@ def parts_letters_lines(flags):
 def parts_deferred_beside_answered_lines(item="item 4 of 9"):
     return [
         "The check step cannot record this answer: `walk-me-through-answer-added-texts-cold-read-fast-read-check-and-"
-        "close.py check --part` takes A, AO or D for a part, because the walk-me-through skill does not say where an "
+        "close.py check --part-answer` takes A, AO or D for a part, because the walk-me-through skill does not say where an "
         "item goes in the walk when one of its parts is deferred and the others are answered.",
         "Record nothing and act on none of the parts.",
         "Tell the user that the walk-me-through check program cannot record a deferred part beside answered ones, "
@@ -744,14 +744,14 @@ def parts_read_line(pairs, item="item 4 of 9", last="3"):
 def test_a_numbered_answer_within_the_waiting_items_parts_answers_the_parts():
     case = Case(next_to_present="item 4 of 9", document=PARTS_DOCUMENT)
     for prompt, pairs, flags in (
-            ("1 a 2 d 3 a", "part 1: A, part 2: D, part 3: A", "--part 1=A --part 2=D --part 3=A"),
-            ("3 a, 1 ao, 2 a", "part 3: A, part 1: AO, part 2: A", "--part 1=AO --part 2=A --part 3=A")):
+            ("1 a 2 d 3 a", "part 1: A, part 2: D, part 3: A", "--part-answer 1=A --part-answer 2=D --part-answer 3=A"),
+            ("3 a, 1 ao, 2 a", "part 3: A, part 1: AO, part 2: A", "--part-answer 1=AO --part-answer 2=A --part-answer 3=A")):
         lines = case.lines(prompt)
         check(f"{prompt!r} on an item with parts 1 to 3 names each part's letter and gives the check command "
-              "with one --part flag per part, in part number order",
+              "with one --part-answer flag per part, in part number order",
               lines is not None
               and lines[0] == f"The user answered \"{prompt}\" to item 4 of 9 of approval-walk {WALK_NAME}."
-              and lines[1:] == [parts_read_line(pairs)] + parts_letters_lines(flags), f"lines {lines!r}")
+              and lines[1:] == [parts_read_line(pairs)] + parts_different_letters_lines(flags), f"lines {lines!r}")
     lines = case.lines("1 a 2 d")
     check("'1 a 2 d' on an item with parts 1 to 3 leaves part 3 unanswered, so nothing is recorded, though the "
           "letters differ",
@@ -768,7 +768,7 @@ def test_a_numbered_answer_within_the_waiting_items_parts_answers_the_parts():
           lines is not None and lines[1:] == [
               parts_read_line("part 1: A, part 2: D, part 3: A, part 2: R"),
               "R on a part asks to see item 4 of 9 again: show it in full, heading included, word for word as the "
-              "walk-document has it."] + parts_letters_lines("--part 1=A --part 2=D --part 3=A"),
+              "walk-document has it."] + parts_different_letters_lines("--part-answer 1=A --part-answer 2=D --part-answer 3=A"),
           f"lines {lines!r}")
     lines = case.lines("1 a 2 a")
     check("'1 a 2 a' leaves part 3 unanswered, so the item stays open and nothing is recorded",
@@ -815,7 +815,7 @@ def test_a_numbered_answer_within_the_waiting_items_parts_answers_the_parts():
     lines = Case(next_to_present="item 7 of 9", document=PARTS_DOCUMENT).lines("1 a 2 d")
     check("parts labelled `**Part 1:**` and `### Part 2` are read as parts",
           lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: D", "item 7 of 9", "2")]
-          + parts_letters_lines("--part 1=A --part 2=D"), f"lines {lines!r}")
+          + parts_different_letters_lines("--part-answer 1=A --part-answer 2=D"), f"lines {lines!r}")
 
 
 def test_numbers_are_item_numbers_when_the_waiting_item_has_no_parts_or_a_number_falls_outside_them():

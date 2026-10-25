@@ -225,7 +225,7 @@ def test_a_failed_fast_read_stops_the_check():
           and "close.py check --obvious` again" in result.stdout, described(result))
     check("after a FAILED fast read the minutes do not record the answer", case.minutes.read_text() == before,
           case.minutes.read_text())
-    for flags in (("--after-advisor",), ("--disapproved",), ("--option", "2"), ("--part", "1=A", "--part", "2=D")):
+    for flags in (("--after-advisor",), ("--disapproved",), ("--option", "2"), ("--part-answer", "1=A", "--part-answer", "2=D")):
         case = Case()
         result = case.run("check", *flags, mode="failed")
         check(f"after a FAILED fast read, the rerun command keeps {' '.join(flags)}",
@@ -1092,12 +1092,12 @@ def test_check_refuses_a_walk_document_close_would_refuse_before_any_fast_read()
 
 def test_each_parts_answer_is_recorded_and_close_records_each_parts_outcome():
     for flags, answered, recorded in (
-            (("--part", "2=d", "--part", "1=AO"), "part 1 approved #approved_obvious, part 2 disapproved",
+            (("--part-answer", "2=d", "--part-answer", "1=AO"), "part 1 approved #approved_obvious, part 2 disapproved",
              "part 1 approved <accepted>, part 2 disapproved <rejected>"),
-            (("--part", "1=D", "--part", "2=ao", "--part", "3=a"),
+            (("--part-answer", "1=D", "--part-answer", "2=ao", "--part-answer", "3=a"),
              "part 1 disapproved, part 2 approved #approved_obvious, part 3 approved",
              "part 1 disapproved <rejected>, part 2 approved <accepted>, part 3 approved <accepted>"),
-            (("--part", "1=D", "--part", "2=AO"), "part 1 disapproved, part 2 approved #approved_obvious",
+            (("--part-answer", "1=D", "--part-answer", "2=AO"), "part 1 disapproved, part 2 approved #approved_obvious",
              "part 1 disapproved <rejected>, part 2 approved <accepted>")):
         case = Case(next_to_present="item 4 of 9")
         checked = case.run("check", *flags)
@@ -1121,14 +1121,14 @@ def test_each_parts_answer_is_recorded_and_close_records_each_parts_outcome():
 
 
 def test_a_part_given_more_than_one_answer_is_refused_writing_nothing():
-    for flags, named in ((("--part", "1=A", "--part", "2=D", "--part", "1=D"), "part 1"),
-                         (("--part", "2=A", "--part", "1=A", "--part", "2=A", "--part", "1=D"), "part 1, part 2")):
+    for flags, named in ((("--part-answer", "1=A", "--part-answer", "2=D", "--part-answer", "1=D"), "part 1"),
+                         (("--part-answer", "2=A", "--part-answer", "1=A", "--part-answer", "2=A", "--part-answer", "1=D"), "part 1, part 2")):
         case = Case()
         before = case.minutes.read_text()
         result = case.run("check", *flags)
         check(f"check {' '.join(flags)} is refused on stderr, writing nothing and running no fast read",
               result.returncode == 1
-              and result.stderr == (FAILURE_PREFIX + f"check: nothing written: --part gives {named} more than one "
+              and result.stderr == (FAILURE_PREFIX + f"check: nothing written: --part-answer gives {named} more than one "
                                     "answer.\nRun check again giving each part's number once, with the letter the "
                                     "user gave that part.\n")
               and case.minutes.read_text() == before and case.calls.read_text() == ""
@@ -1136,15 +1136,15 @@ def test_a_part_given_more_than_one_answer_is_refused_writing_nothing():
 
 
 def test_a_part_answer_other_than_a_ao_or_d_or_combined_with_another_answer_flag_is_refused_as_usage():
-    for flags in (("--part", "1=Z"), ("--part", "1=Aa"), ("--part", "x=A"), ("--part", "1A"), ("--part", "1=A2")):
+    for flags in (("--part-answer", "1=Z"), ("--part-answer", "1=Aa"), ("--part-answer", "x=A"), ("--part-answer", "1A"), ("--part-answer", "1=A2")):
         case = Case(next_to_present="item 4 of 9")
         result = case.run("check", *flags)
         check(f"check {' '.join(flags)} is refused as usage, saying what a part's answer is, writing nothing",
               result.returncode == 2 and "usage:" in result.stderr
-              and f"argument --part: `{flags[1]}` is not a part's answer: give the part's number, `=`, then A, AO or "
+              and f"argument --part-answer: `{flags[1]}` is not a part's answer: give the part's number, `=`, then A, AO or "
                   "D" in result.stderr
               and "the user answered" not in case.minutes.read_text(), described(result))
-    for flags in (("--part", "1=A", "--obvious"), ("--deferred", "--part", "1=A"), ("--part", "1=A", "--option", "2")):
+    for flags in (("--part-answer", "1=A", "--obvious"), ("--deferred", "--part-answer", "1=A"), ("--part-answer", "1=A", "--option", "2")):
         case = Case(next_to_present="item 4 of 9")
         result = case.run("check", *flags)
         check(f"check {' '.join(flags)} is refused as usage, writing nothing",

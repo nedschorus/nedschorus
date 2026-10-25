@@ -8,17 +8,19 @@ item.
 Usage, from the agent-session's checkout:
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check
       [--obvious | --after-advisor | --disapproved | --deferred | --option N
-       | --part N=LETTER ...]
+       | --part-answer N=ANSWER ...]
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py close
 
 The answer is an approval, A, unless a flag says otherwise: --obvious for AO,
 --after-advisor for Aa, --disapproved for D, --deferred for Z, --option 2 or 3
 for O2 or O3, which approve the item's "Option N" paragraph instead of its
 recommendation. R, E and O decide nothing, so the program takes no flag for
-them. --part, given once for each part of an item that holds parts, as in
-`--part 1=A --part 2=D`, gives that part its own answer, A, AO or D, and each
-part's answer does for that part what it does for a whole item; Z is not taken
-for a part, and a part number given twice is refused, writing nothing.
+them. --part-answer, given once for each part of an item that holds parts, as
+in `--part-answer 1=A --part-answer 2=D`, gives that part its own answer, A, AO
+or D. An item's `#new` lines belong to the whole item, not to a part, so CHECK
+fast-reads every `#new` text of the item, whatever each part's answer is, as it
+does for a whole item's A or D. Z is not taken for a part, and
+a part number given twice is refused, writing nothing.
 
 The open approval-walk and its waiting items are found with
 walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py,
@@ -38,7 +40,7 @@ LOG_STORE_RECORDS_DESTINATION, read on ned-box as it is and on the Mac through
 the Mac's mount of ned-box's home. For each text with none, it saves the text to
 a scratch file and runs cold-read-fast-read.py --target on that file. Then it
 writes the answer line, which names each part's answer in part number order
-when --part is given, and one status line per text, or "no proposed text
+when --part-answer is given, and one status line per text, or "no proposed text
 marked", into the walk-minutes, and prints the status lines, the judgement the
 agent must make on new reports, and the close step to run. It appends one line
 of counts to
@@ -46,9 +48,10 @@ walk-me-through-answer-added-texts-cold-read-fast-read-already-done-or-had-to-ru
 beside the log-store's cold-read-records directory. A deferral
 changes nothing, so CHECK --deferred runs no fast read, logs no counts, and
 writes only the answer line. When the `#next_to_present` line names more than
-one item, CHECK refuses, writing nothing, because one run records one answer,
-or one set of part answers, for every item it names; it tells the agent to add
-a `#next_to_present` line naming one of those items before each check run.
+one item, CHECK refuses, writing nothing, because a run would record its one
+answer, or its one set of part answers, for every item that line names; CHECK
+then tells the agent to add a `#next_to_present` line naming one of those items
+before each check run.
 
 A fast read that prints a line opening FAILED, or exits nonzero, ends CHECK
 before the walk-minutes are written: the program prints that line, or a FAILED
@@ -62,8 +65,8 @@ code 0, since the report was written.
 
 CLOSE reads the last answer line CHECK wrote. When the `#next_to_present` line
 still names that line's items, it records the answer: that it took effect, or,
-for an answer to each part, each part's outcome on one line, or, for a
-deferral, that the item moves to just before the summary item, the item
+for answers to parts, a single line for the item naming each part's outcome,
+or, for a deferral, that the item moves to just before the summary item, the item
 whose heading's point opens with "summary"; an item deferred a second time
 leaves the walk and stays open. It then writes a `#next_to_present` line as the
 minutes' last line, naming the next item: walking the walk-document's items in
@@ -135,7 +138,7 @@ PART_ARGUMENT = re.compile(r"^(\d+)=(ao|a|d)$", re.I)
 PART_IN_ANSWER = re.compile(r"\bpart (\d+) ((?:dis)?approved)\b")
 PART_ARGUMENT_PROBLEM = ("`{value}` is not a part's answer: give the part's number, `=`, then A, AO or D, as in "
                          "`1=A`; a part takes no Z, so a deferral is given to the whole item with --deferred")
-PART_REPEATED = ("nothing written: --part gives {parts} more than one answer.\n"
+PART_REPEATED = ("nothing written: --part-answer gives {parts} more than one answer.\n"
                  "Run check again giving each part's number once, with the letter the user gave that part.")
 
 NO_PROPOSED_TEXT = "no proposed text marked"
@@ -385,7 +388,7 @@ def append_to_minutes(minutes, lines):
 
 
 def part_answer(value):
-    """Return (part number, A, AO or D) from a --part value such as `2=ao`."""
+    """Return (part number, A, AO or D) from a --part-answer value such as `2=ao`."""
     match = PART_ARGUMENT.match(value)
     if not match:
         raise argparse.ArgumentTypeError(PART_ARGUMENT_PROBLEM.format(value=value))
@@ -395,8 +398,8 @@ def part_answer(value):
 def answered_word(arguments):
     """The answer as the walk-minutes write it: approved, disapproved, approved option N, or each part's word,
     as in `part 1 approved #approved_obvious, part 2 disapproved`."""
-    if arguments.part:
-        return ", ".join(f"part {number} {PART_WORDS[letter]}" for number, letter in sorted(arguments.part))
+    if arguments.part_answer:
+        return ", ".join(f"part {number} {PART_WORDS[letter]}" for number, letter in sorted(arguments.part_answer))
     if arguments.disapproved:
         return DISAPPROVED
     if arguments.deferred:
@@ -428,13 +431,13 @@ def check_flags(arguments):
         flags += " --deferred"
     if arguments.option is not None:
         flags += f" --option {arguments.option}"
-    for number, letter in arguments.part or []:
-        flags += f" --part {number}={letter}"
+    for number, letter in arguments.part_answer or []:
+        flags += f" --part-answer {number}={letter}"
     return flags
 
 
 def check(arguments):
-    part_numbers = [number for number, _ in arguments.part or []]
+    part_numbers = [number for number, _ in arguments.part_answer or []]
     repeated = sorted({number for number in part_numbers if part_numbers.count(number) > 1})
     if repeated:
         raise Failure(PART_REPEATED.format(parts=", ".join(f"part {number}" for number in repeated)))
@@ -663,8 +666,8 @@ def main(argv=None):
     answer.add_argument("--deferred", action="store_true", help="check: the answer was Z, defer")
     answer.add_argument("--option", type=int, choices=(2, 3),
                         help="check: the answer was O2 or O3, approving the item's \"Option N\" paragraph")
-    answer.add_argument("--part", type=part_answer, action="append", metavar="N=LETTER",
-                        help="check: part N of the item was answered LETTER, A, AO or D; give it once for each part")
+    answer.add_argument("--part-answer", type=part_answer, action="append", metavar="N=ANSWER",
+                        help="check: part N of the item was answered ANSWER, A, AO or D; give it once for each part")
     parser.add_argument("--cwd", default=os.getcwd(), help="a directory in the walk's checkout")
     parser.add_argument("--cold-read-records", type=Path, action="append",
                         help="a cold-read-records directory to search instead of the defaults; repeatable")
