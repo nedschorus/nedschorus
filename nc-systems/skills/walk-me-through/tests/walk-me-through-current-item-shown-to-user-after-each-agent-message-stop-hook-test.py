@@ -200,7 +200,7 @@ def test_a_reply_naming_the_waiting_item_passes_and_one_leaving_it_out_is_sent_b
             ("a reply naming the item in a backwards range is sent back", "Items 3 to 1 of 9 are waiting.")):
         case.reply(reply)
         check_reminded(case_name, case.run(), "`Item 2 of 9`",
-                       "`Item 2 of 9 is waiting for your answer.`")
+                       "`[Item 2 of 9, <the point>](<page link>) · A approve · ...`")
     case.reply("Nothing here.")
     reason = blocked_reason(case.run()) or ""
     check("the reminder names the walk, its walk-document and its minutes",
@@ -271,7 +271,7 @@ def test_items_waiting_together():
     case.walk_files(minutes="#next_to_present items 5 and 6 of 9.")
     case.reply("Recorded.")
     check_reminded("a reply naming neither of two waiting items is sent back with both", case.run(),
-                   "`Item 5 of 9` and `Item 6 of 9`", "`Items 5 and 6 of 9 are waiting for your answer.`")
+                   "`Item 5 of 9` and `Item 6 of 9`", "`[Items 5 and 6 of 9, <the point>](<page link>) · A approve · ...`")
     case.reply("Item 5 of 9: the hook. Text.")
     check_reminded("a reply naming one of two waiting items is sent back with the other", case.run(),
                    "does not name `Item 6 of 9`,")
