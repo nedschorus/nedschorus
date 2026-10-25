@@ -56,10 +56,14 @@ interruption item, one numbered `W.n` after a waiting item W and not itself
 waiting, whatever its total. The line is compared as the agent wrote it,
 before the removals above, because the item holds the question as its asker
 wrote it, code spans and quotations included. Both sides are compared as
-their words and question marks alone, the runs of letters and digits and
-each `?` left once `normalized` has dropped its marks, so every other mark is
-ignored, a line matches only whole words of the item, and a question matches
-only where the item's question ends. An item's lines run from its opening,
+sentences: each line, once `normalized` has dropped its marks, is cut where a
+sentence ends, after a colon and before an opening quotation mark, so that a
+question quoted inside a longer sentence of the item, or put after its
+`asks:`, is a sentence of its own; each sentence is then its words and
+question marks alone, the runs of letters and digits and each `?`, every
+other mark ignored. A line is held only when its sentences are, in order,
+whole sentences of the item, so a sentence that is only the start or the end
+of an item's sentence is not held. An item's lines run from its opening,
 as the approval-walk finder reads openings, when it has one, to the next
 item's opening or its unit's end, and are otherwise its whole unit; but an
 item without an opening under a heading shared by several items holds no
@@ -141,6 +145,7 @@ SENTENCE_END = re.compile(r"(?:(?<=[.?!])|(?<=[.?!][\"'\u201d\u2019)*_]))\s+")
 TRAILING_MARKS = "*_ )\"'”’"
 QUOTED = re.compile(r"\"[^\"\n]+\"|“[^”\n]+”")
 WORD = re.compile(r"\w+|\?")
+SENTENCE_START = re.compile(r"(?<=:)\s+|\s+(?=[\"\u201c])")
 LINK = re.compile(r"\[([^\]\n]*)\]\([^)\n]*\)")
 LIST_ITEM = re.compile(r"^(?:[-+*]|\d+[.)])\s")
 LINE_MARKS = re.compile(r"^\s*(?:(?:[-+*>]|\d+[.)])\s+)+")
@@ -234,9 +239,11 @@ def turn_assistant_texts(records):
 
 
 def comparable(lines):
-    """lines as AN INTERRUPTION ITEM'S TEXT in the module docstring compares them: their words and question marks,
-    each line normalized alone, padded with spaces."""
-    return " " + " ".join(word for line in lines for word in WORD.findall(normalized(line))) + " "
+    """lines as AN INTERRUPTION ITEM'S TEXT in the module docstring compares them: each line normalized alone and
+    cut into sentences, each sentence its words and question marks, every sentence closed by `|` on both sides."""
+    sentences = (" ".join(WORD.findall(part)) for line in lines
+                 for sentence in SENTENCE_END.split(normalized(line)) for part in SENTENCE_START.split(sentence))
+    return "|" + "".join(sentence + "|" for sentence in sentences if sentence)
 
 
 def interruption_item_texts(document_text, units, waiting_numbers, parser):
@@ -309,7 +316,7 @@ def checked_lines(reply, document_text, units, parser, waiting_numbers, total):
         line = " ".join(sentences).strip()
         if not line:
             continue
-        if introduced_list and LIST_ITEM.match(line):
+        if introduced_list and LIST_ITEM.match(as_written.lstrip()):
             kept[-1] += " " + line
             written[-1].append(as_written)
         else:
