@@ -915,6 +915,133 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_
           f"exit {result.returncode}: {result.stdout}{result.stderr}")
     handoffs_directory.unlink()
 
+    # The closed minutes land, then the add-only placement fails; the retry
+    # finds the minutes unchanged, so only the failed run can record the close.
+    partial_spec = importlib.util.spec_from_file_location("walk_files_ship_partial", SHIP)
+    partial = importlib.util.module_from_spec(partial_spec)
+    partial_spec.loader.exec_module(partial)
+    partial.threshold_hook.HANDOFF_DIRECTORY = WALK_CLOSED_MARKER.parent
+    partial_walks = close_scratch / "partial-walks"
+    write_walk(partial_walks, CLOSE_WALK, {**FILES, "-minutes": closed_minutes})
+    partial_store = close_scratch / "partial-store" / "walk"
+    partial_store.mkdir(parents=True)
+    partial_destination = partial.WalkStoreDestination(
+        None, None, pathlib.PurePosixPath(partial_store))
+    real_placement = partial.shipper.link_staged_files_never_over_existing
+
+    def placement_that_fails(copy_host, staging_dir, walk_path, names):
+        return subprocess.CompletedProcess([], 255, "", "injected: ssh exit 255\n"), None
+
+    def ship_in_process():
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = partial.ship_walk(partial_destination, CLOSE_WALK, partial_walks)
+        return code, out.getvalue(), err.getvalue()
+
+    saved_session = os.environ.get(SESSION_ID_VARIABLE)
+    os.environ[SESSION_ID_VARIABLE] = PROBE_SESSION_ID
+    partial.shipper.link_staged_files_never_over_existing = placement_that_fails
+    try:
+        failed_code, failed_out, failed_err = ship_in_process()
+        partial.shipper.link_staged_files_never_over_existing = real_placement
+        marker_after_failed_run = WALK_CLOSED_MARKER.is_file()
+        retry_code, retry_out, retry_err = ship_in_process()
+    finally:
+        partial.shipper.link_staged_files_never_over_existing = real_placement
+        if saved_session is None:
+            os.environ.pop(SESSION_ID_VARIABLE, None)
+        else:
+            os.environ[SESSION_ID_VARIABLE] = saved_session
+    check("a run whose closed minutes land but whose add-only placement fails is "
+          "FAILED, exit 1, and still writes the walk-closed marker",
+          failed_code == 1 and failed_out.startswith("FAILED:")
+          and (partial_store / f"{CLOSE_WALK}-minutes.md").is_file()
+          and marker_after_failed_run,
+          f"exit {failed_code}: {failed_out}{failed_err}")
+    check("the retry after that partial failure ships the rest, and the marker is there",
+          retry_code == 0 and retry_out.startswith("shipped:")
+          and "already there unchanged" in retry_out and WALK_CLOSED_MARKER.is_file(),
+          f"exit {retry_code}: {retry_out}{retry_err}")
+
+    # The renames of the replaced files put the minutes in place, then fail
+    # without saying which were done.
+    WALK_CLOSED_MARKER.unlink(missing_ok=True)
+    partial_walks = close_scratch / "partial-walks-renames"
+    write_walk(partial_walks, CLOSE_WALK, {**FILES, "-minutes": closed_minutes})
+    partial_store = close_scratch / "partial-store-renames" / "walk"
+    partial_store.mkdir(parents=True)
+    partial_destination = partial.WalkStoreDestination(
+        None, None, pathlib.PurePosixPath(partial_store))
+    real_renames = partial.shipper.replace_with_staged_files
+    minutes_file_name = f"{CLOSE_WALK}-minutes.md"
+
+    def renames_that_fail_after_the_minutes(copy_host, staging_dir, walk_path, files):
+        os.replace(pathlib.Path(staging_dir) / minutes_file_name,
+                   pathlib.Path(walk_path) / minutes_file_name)
+        return subprocess.CompletedProcess([], 255, "", "injected: ssh exit 255\n"), None
+
+    os.environ[SESSION_ID_VARIABLE] = PROBE_SESSION_ID
+    partial.shipper.replace_with_staged_files = renames_that_fail_after_the_minutes
+    try:
+        failed_code, failed_out, failed_err = ship_in_process()
+        partial.shipper.replace_with_staged_files = real_renames
+        marker_after_failed_run = WALK_CLOSED_MARKER.is_file()
+        retry_code, retry_out, retry_err = ship_in_process()
+    finally:
+        partial.shipper.replace_with_staged_files = real_renames
+        if saved_session is None:
+            os.environ.pop(SESSION_ID_VARIABLE, None)
+        else:
+            os.environ[SESSION_ID_VARIABLE] = saved_session
+    check("a run whose renames put the closed minutes in place, then fail without "
+          "saying which were done, is FAILED, exit 1, and writes the walk-closed marker",
+          failed_code == 1 and failed_out.startswith("FAILED:")
+          and (partial_store / minutes_file_name).is_file() and marker_after_failed_run,
+          f"exit {failed_code}: {failed_out}{failed_err}")
+    check("the retry after those failed renames ships the rest, and the marker is there",
+          retry_code == 0 and retry_out.startswith("shipped:")
+          and "already there unchanged" in retry_out and WALK_CLOSED_MARKER.is_file(),
+          f"exit {retry_code}: {retry_out}{retry_err}")
+
+    # The minutes are in the store unchanged and only the dispositions are
+    # replaced, so renames that fail cannot have landed the minutes.
+    WALK_CLOSED_MARKER.unlink(missing_ok=True)
+    partial_walks = close_scratch / "partial-walks-dispositions"
+    write_walk(partial_walks, CLOSE_WALK,
+               {**FILES, "-minutes": closed_minutes, "-dispositions": "# dispositions\n"})
+    partial_store = close_scratch / "partial-store-dispositions" / "walk"
+    partial_store.mkdir(parents=True)
+    partial_destination = partial.WalkStoreDestination(
+        None, None, pathlib.PurePosixPath(partial_store))
+    os.environ[SESSION_ID_VARIABLE] = PROBE_SESSION_ID
+    try:
+        first_code, first_out, first_err = ship_in_process()
+        WALK_CLOSED_MARKER.unlink(missing_ok=True)
+        (partial_walks / f"{CLOSE_WALK}-dispositions.md").write_text(
+            "# dispositions\n\nItem 1: approved.\n", encoding="utf-8")
+
+        def renames_that_fail(copy_host, staging_dir, walk_path, files):
+            return subprocess.CompletedProcess([], 255, "", "injected: ssh exit 255\n"), None
+
+        partial.shipper.replace_with_staged_files = renames_that_fail
+        failed_code, failed_out, failed_err = ship_in_process()
+    finally:
+        partial.shipper.replace_with_staged_files = real_renames
+        if saved_session is None:
+            os.environ.pop(SESSION_ID_VARIABLE, None)
+        else:
+            os.environ[SESSION_ID_VARIABLE] = saved_session
+    check("the first shipment of the walk with dispositions succeeds",
+          first_code == 0 and first_out.startswith("shipped:"),
+          f"exit {first_code}: {first_out}{first_err}")
+    check("a run whose minutes are already in the store unchanged, and whose renames "
+          "of the replaced dispositions fail, is FAILED, exit 1, and writes no "
+          "walk-closed marker",
+          failed_code == 1 and failed_out.startswith("FAILED:")
+          and "while putting the copied files in place" in failed_out
+          and not WALK_CLOSED_MARKER.is_file(),
+          f"exit {failed_code}: {failed_out}{failed_err}")
+
 print()
 if failures:
     print(f"{len(failures)} case(s) FAILED:")
