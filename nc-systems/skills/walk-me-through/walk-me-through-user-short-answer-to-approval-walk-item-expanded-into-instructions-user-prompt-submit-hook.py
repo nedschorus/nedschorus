@@ -290,11 +290,7 @@ MEANINGS.update({f"O{option}": tuple(tuple(line.replace("{option}", option) for 
 REPEAT_PAGE_LINE = (
     "\"{answer}\" asks to see {item} again. Its page shows it in full, so reply with only this closing line, "
     "word for word, and wait for his answer: {closing_line}")
-NUMBERED_R_LINES = (
-    "\"{answer}\" asks to see item {number}{of_total} again: show it in full, heading included, word for "
-    "word as the walk-document has it.",
-    "Then end your message naming the item waiting for his answer, {item}.",
-)
+NUMBERED_R_WAITING_ITEM_LINE = "Then end your message naming the item waiting for his answer, {item}."
 # Check records one answer for every item the `#next_to_present` line names, and close moves that line on.
 ONE_ITEM_AT_A_TIME_LINE = (
     "Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add "
@@ -668,14 +664,12 @@ def meaning_lines(answer, walk, in_walk):
             for number, letter in answer["pairs"]:
                 lines += recommendation_unknown_lines(letter, [number], walk)
             repeated = [number for number, letter in answer["pairs"] if letter == "R"]
-            of_total = f" of {walk.total}" if walk.total else ""
-            lines += [NUMBERED_R_LINES[0].format(answer=f"{number} R", number=number, of_total=of_total)
-                      if closing_line(number, walk) is None else repeat_line(f"{number} R", number, walk)
-                      for number in repeated]
+            lines += [repeat_line(f"{number} R", number, walk) for number in repeated]
             answered = {number for number, letter in answer["pairs"] if letter != "R"}
             still_waiting = [number for number in numbers if number not in answered]
             if repeated and still_waiting:
-                lines.append(NUMBERED_R_LINES[1].format(item=", ".join(item_name(n, walk) for n in still_waiting)))
+                lines.append(NUMBERED_R_WAITING_ITEM_LINE.format(
+                    item=", ".join(item_name(n, walk) for n in still_waiting)))
         return lines
     code = answer["code"]
     if form == "all":
@@ -697,7 +691,7 @@ def repeat_line(answer, number, walk):
     """The line telling the agent how to answer an R for the item: its closing line, or the item in full."""
     line = closing_line(number, walk)
     if line is None:
-        return MEANINGS["R"][0][0].format(word=answer, item=item_name(number, walk))
+        return MEANINGS["R"][0][0].format(word=f"\"{answer}\"", item=item_name(number, walk))
     return REPEAT_PAGE_LINE.format(answer=answer, item=item_name(number, walk), closing_line=line)
 
 

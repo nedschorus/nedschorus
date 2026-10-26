@@ -434,8 +434,7 @@ def r_line(word, item):
 
 
 def numbered_r_line(number, item):
-    return (f"\"{number} R\" asks to see {item} again: show it in full, heading included, word for word as the "
-            "walk-document has it.")
+    return r_line(f"\"{number} R\"", item)
 
 
 def test_r_on_an_open_walk_goes_to_the_agent_and_does_not_block():
