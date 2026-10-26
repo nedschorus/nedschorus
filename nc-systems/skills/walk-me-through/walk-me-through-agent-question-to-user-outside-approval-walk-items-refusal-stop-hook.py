@@ -19,9 +19,11 @@ the Stop hook before it has written the final message to the transcript.
 THE TEXT CHECKED is the reply, line by line, without:
 - every item of the walk-document the reply shows: an item is shown when a
   reply line matches its heading, and then every reply line matching a line
-  of the item, from its heading to its answer line, is left out; lines match
-  when they are equal once markdown emphasis, heading and list marks, link
-  targets, spacing and case are dropped;
+  of the item, from its heading to its answer line, is left out, and so is
+  one matching the answer line's first sentence, the walk-me-through skill's
+  answer line without what the item adds after it, such as ` D: <the
+  alternative>`; lines match when they are equal once markdown emphasis,
+  heading and list marks, link targets, spacing and case are dropped;
 - fenced and indented code and code spans;
 - quoted text, `"..."`, `“...”` or a `>` line, that the walk-document holds;
 - a sentence that only names waiting items, `Item 4 of 9 is waiting for your
@@ -56,7 +58,9 @@ the agent wrote it, as a whole line of one interruption item, one numbered
 `W.n` after a waiting item W and not itself waiting, whatever its total.
 Lines are compared whole and equal once `normalized` has dropped their marks,
 so a leading `>` or list mark, bold, italic and code-span marks, link targets,
-spacing and case do not count: a line that
+spacing and case do not count, and a line left empty once they are dropped,
+such as a list line holding only `*` in code marks, is not compared on either
+side: a line that
 is only part of an item's line, or that holds more than it, is not held. The
 lines are compared as the agent wrote them, before the removals above,
 because the item holds the question as its asker wrote it, code spans and
@@ -125,7 +129,8 @@ WAITING_REMINDER = re.compile(
     r"\s+for\s+your\s+answer\W*$",
     re.I)
 CLEAR_ASK = re.compile(
-    r"\b(?:say|reply|answer|type)\s+(?:yes|no|y|n|a|ao|d)\b|\bon\s+(?:a|your)\s+(?:yes|no)\b"
+    # The letter A is matched in capitals only, because a lowercase `a` there is the article, as in `answer a finding`.
+    r"\b(?:say|reply|answer|type)\s+(?:yes|no|y|n|ao|d|(?-i:A))\b|\bon\s+(?:a|your)\s+(?:yes|no)\b"
     r"|\byour\s+yes\s+or\s+no\b|\bdo\s+you\s+(?:want|agree)\b|\bshould\s+I\b|\bshall\s+I\b|\bwant\s+me\s+to\b"
     r"|\bwould\s+you\s+like\b|\bwaiting\s+(?:on|for)\s+your\s+(?:answer|word|decision|ruling|approval|go-ahead|yes)\b"
     r"|\bneeds?\s+your\s+(?:answer|decision|ruling|approval|word|go-ahead|yes)\b"
@@ -228,6 +233,17 @@ def normalized(line):
     return EMPHASIS_AND_SPACING.sub(" ", line).strip().lower()
 
 
+def normalized_lines(lines):
+    """The set of the lines' normalized forms, without the empty one, which no line of an item can match."""
+    return {normalized(line) for line in lines} - {""}
+
+
+def answer_sentence(line):
+    """The walk-me-through skill's answer line at the start of line, without what an item adds after it on the same
+    line, such as the ` D: <the alternative>` some walk-documents add."""
+    return SENTENCE_END.split(line.strip(), maxsplit=1)[0]
+
+
 def turn_assistant_texts(records):
     """Every assistant text since the transcript's last turn start."""
     start = current_item_hook.turn_start(records)
@@ -255,22 +271,23 @@ def interruption_item_texts(document_text, units, waiting_numbers, parser):
                 openings, first, end, number, numbers, total)
             if len(numbers) > 1 and span == (first, end):
                 continue
-            texts.append({normalized(line) for line in document_lines[span[0]:span[1]]} - {""})
+            texts.append(normalized_lines(document_lines[span[0]:span[1]]))
     return texts
 
 
 def shown_item_lines(reply_lines, document_lines, units):
-    """The normalized lines, heading to answer line, of every unit whose heading a reply line matches."""
-    reply_set = {normalized(line) for line in reply_lines}
+    """The normalized lines, heading to answer line, of every unit whose heading a reply line matches, and the answer
+    line's answer sentence alone."""
+    reply_set = normalized_lines(reply_lines)
     shown = set()
     for _, _, _, first, end in units:
         if normalized(document_lines[first]) not in reply_set:
             continue
         for line in document_lines[first:end]:
-            shown.add(normalized(line))
+            shown |= normalized_lines([line])
             if normalized(line).startswith(ANSWER_LINE_START):
+                shown |= normalized_lines([answer_sentence(line)])
                 break
-    shown.discard("")
     return shown
 
 
@@ -319,7 +336,7 @@ def checked_lines(reply, document_text, units, parser, waiting_numbers, total):
             introduced_list = line.endswith(":")
     item_texts = interruption_item_texts(document_text, units, waiting_numbers, parser)
     return [(line, as_written) for line, as_written in zip(kept, written)
-            if not any({normalized(each) for each in as_written} <= text for text in item_texts)]
+            if not any(normalized_lines(as_written) <= text for text in item_texts)]
 
 
 def line_kind(line):
@@ -466,7 +483,7 @@ def output_for(payload, environment, model=model_judgement):
     waiting = numbers[-1]
     waiting_label = " and ".join(numbers)
     new_total = str(int(total) + 1)
-    answer_lines = [line.strip() for line in document_text.split("\n")
+    answer_lines = [answer_sentence(line) for line in document_text.split("\n")
                     if normalized(line).startswith(ANSWER_LINE_START)]
     values = {"answer_line": (ANSWER_LINE_IN_DOCUMENT_TEMPLATE.format(line=answer_lines[-1]) if answer_lines
                               else ANSWER_LINE_NOT_FOUND_NOTICE),
