@@ -364,6 +364,18 @@ def local_store_step_wrapper_returning_completed_process_and_value_or_os_error_a
                                            f"{failed}\n"), None
 
 
+def failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+        host, completed: subprocess.CompletedProcess) -> str:
+    """The reason a FAILED line gives for a store step that returned the
+    failed result. A local store's step carries the OS's reason in stdout
+    (see the wrapper above), and its exit 1 must not read as an ssh exit."""
+    if host is None:
+        return completed.stdout
+    if completed.returncode == RSYNC_EXIT_CONNECTION_FAILED:
+        return "ned-box unreachable"
+    return f"ssh exit {completed.returncode}"
+
+
 class FirstLineUnreadable(Exception):
     """A file's first line could not be read; the message says why."""
 
@@ -1028,12 +1040,8 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     # placing step takes the inventory again.
     listed, in_store = store_inventory(host, store_dir)
     if in_store is None:
-        if host is None:
-            reason = listed.stdout
-        elif listed.returncode == RSYNC_EXIT_CONNECTION_FAILED:
-            reason = "ned-box unreachable"
-        else:
-            reason = f"ssh exit {listed.returncode}"
+        reason = failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+            host, listed)
         print(f"FAILED: {name} — {reason}; the record stays on disk, unshipped.")
         sys.stderr.write(listed.stderr)
         return EXIT_FAILED
@@ -1099,12 +1107,8 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
         return EXIT_FAILED
     placed, outcome = place_staged_files(host, staging_dir, store_dir, local)
     if outcome is None:
-        if host is None:
-            reason = placed.stdout
-        elif placed.returncode == RSYNC_EXIT_CONNECTION_FAILED:
-            reason = "ned-box unreachable"
-        else:
-            reason = f"ssh exit {placed.returncode}"
+        reason = failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+            host, placed)
         print(f"FAILED: {name} — {reason} while placing the copied files; "
               f"a later run finishes it.")
         sys.stderr.write(placed.stderr)

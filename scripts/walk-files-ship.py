@@ -494,12 +494,8 @@ def ship_walk(destination: WalkStoreDestination, name: str,
     listed, stored = store_digests_and_sizes(destination.copy_host,
                                              list(targets.values()))
     if stored is None:
-        if destination.copy_host is None:
-            reason = listed.stdout
-        elif listed.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED:
-            reason = "ned-box unreachable"
-        else:
-            reason = f"ssh exit {listed.returncode}"
+        reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+            destination.copy_host, listed)
         print(f"FAILED: {name} — {reason}; the walk's files stay on disk, unshipped.")
         sys.stderr.write(listed.stderr)
         return EXIT_FAILED
@@ -564,12 +560,8 @@ def ship_walk(destination: WalkStoreDestination, name: str,
                 return EXIT_FAILED
             if outcomes is None:
                 shipper.remove_staging_directory(destination.copy_host, staging_dir)
-                if destination.copy_host is None:
-                    reason = renamed.stdout
-                elif renamed.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED:
-                    reason = "ned-box unreachable"
-                else:
-                    reason = f"ssh exit {renamed.returncode}"
+                reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+                    destination.copy_host, renamed)
                 print(f"FAILED: {name} — {reason} while putting the copied files "
                       f"in place; a later run finishes it.")
                 sys.stderr.write(renamed.stderr)
@@ -613,12 +605,8 @@ def ship_walk(destination: WalkStoreDestination, name: str,
                 destination.copy_host, staging_dir, destination.walk_path,
                 [source.name for source in to_place])
             if after is None:
-                if destination.copy_host is None:
-                    reason = placed.stdout
-                elif placed.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED:
-                    reason = "ned-box unreachable"
-                else:
-                    reason = f"ssh exit {placed.returncode}"
+                reason = shipper.failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit(
+                    destination.copy_host, placed)
                 print(f"FAILED: {name} — {reason} while putting the copied files "
                       f"in place; a later run finishes it.")
                 sys.stderr.write(placed.stderr)
