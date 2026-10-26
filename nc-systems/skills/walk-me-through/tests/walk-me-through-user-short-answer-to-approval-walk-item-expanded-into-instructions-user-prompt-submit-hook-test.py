@@ -429,12 +429,12 @@ def not_blocked(result):
 
 
 def r_line(word, item):
-    return (f"{word} asks to see {item} again: show it in full, heading included, word for word as the "
+    return (f"\"{word}\" asks to see {item} again: show it in full, heading included, word for word as the "
             "walk-document has it, and wait for his answer.")
 
 
 def numbered_r_line(number, item):
-    return r_line(f"\"{number} R\"", item)
+    return r_line(f"{number} R", item)
 
 
 def test_r_on_an_open_walk_goes_to_the_agent_and_does_not_block():
@@ -451,8 +451,9 @@ def test_r_on_an_open_walk_goes_to_the_agent_and_does_not_block():
               f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
     check("R records nothing in the minutes", (case.walk / f"{WALK_NAME}-minutes.md").read_text() == before)
     lines = Case(next_to_present="items 5 and 6 of 9").lines("r")
-    check("R on items shown together tells the agent to show them all",
-          lines is not None and lines[1] == r_line("R", "items 5 and 6 of 9"), f"lines {lines!r}")
+    check("R on items shown together and with no page tells the agent to show each in full, in the one wording",
+          lines is not None and lines[1:] == [r_line("R", "item 5 of 9"), r_line("R", "item 6 of 9")],
+          f"lines {lines!r}")
     case = Case(next_to_present="item 3 of 9")
     case.minutes("#next_to_present item 3 of 9\n\n#next_to_present none, closed")
     lines = case.lines("r")
@@ -514,7 +515,7 @@ def test_r_on_two_waiting_items_with_a_page_for_one_hands_its_closing_line_and_s
     closing = f"[Item 5 of 9, two small corrections]({PAGE_1}) · {LETTERS_AFTER_LINK}"
     check("R on items 5 and 6 with a page for item 5 alone hands item 5's closing line and has item 6 shown in full",
           lines is not None and lines[1:] == [page_line("R", "item 5 of 9", closing),
-                                              r_line("\"R\"", "item 6 of 9")], f"lines {lines!r}")
+                                              r_line("R", "item 6 of 9")], f"lines {lines!r}")
 
 
 def test_r_ignores_an_item_page_line_in_code_or_a_comment_of_the_minutes():
@@ -599,6 +600,13 @@ def test_r_closing_line_label_keeps_entities_and_escapes_as_the_heading_shows_th
 def test_the_closing_line_letters_are_the_walk_skills():
     check("SKILL.md writes the closing line with the letters the hook hands the agent",
           f"](<page link>) · {LETTERS_AFTER_LINK}" in SKILL_FILE.read_text())
+
+
+def test_r_on_a_next_to_present_line_that_names_no_item_tells_the_agent_to_show_what_it_names():
+    lines = Case(next_to_present="the filter").lines("r")
+    check("R when the `#next_to_present` line names no item still tells the agent, in the one wording, to show it",
+          lines is not None and lines[1] == r_line(
+              "R", "the item its minutes' `#next_to_present` line names, `the filter`,"), f"lines {lines!r}")
 
 
 def test_r_whose_item_cannot_be_read_still_goes_to_the_agent():
