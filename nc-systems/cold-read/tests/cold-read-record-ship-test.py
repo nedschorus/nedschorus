@@ -1554,6 +1554,9 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
         names_shipper.SSH_COMMAND = unreachable_ssh_command
         failed_names, failed_unlisted = names_shipper.cold_read_record_directory_names_listed_from_log_store(
             "nobody@ned-box", names_store)
+        names_shipper.SSH_COMMAND = ["sh", "-c", "kill -TERM $$", "ssh-replay"]
+        killed_names, killed_unlisted = names_shipper.cold_read_record_directory_names_listed_from_log_store(
+            "nobody@ned-box", names_store)
     finally:
         names_shipper.SSH_COMMAND = real_ssh_command
     check("remotely, the store's names are its directories, one per line",
@@ -1564,6 +1567,9 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
     check("remotely, a listing ssh could not make gives no names, with ssh's exit and error",
           failed_names is None and "exited 255" in failed_unlisted
           and "No route to host" in failed_unlisted, f"{failed_names} {failed_unlisted}")
+    check("remotely, a listing whose ssh a signal ended gives no names, not an empty store",
+          killed_names is None and "exited -15" in killed_unlisted,
+          f"{killed_names} {killed_unlisted}")
 
     names_records = names_scratch / "records"
     (names_records / "SKILL-handoff-2026-10-25").mkdir(parents=True)
@@ -1640,7 +1646,10 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
           all(relative in result.stdout for relative in full_run_files)
           and "fast-read.md" not in result.stdout
           and str(names_store / "SKILL-handoff-2026-10-25-2") in result.stdout
-          and rename in result.stdout, result.stdout)
+          and rename in result.stdout
+          and f"then ship the renamed directory with `{SHIP} "
+              f"{names_records / 'SKILL-handoff-2026-10-25-3'}`." in result.stdout,
+          result.stdout)
     check("nothing was copied into the other read's record",
           store_files_after == store_files_before,
           str(sorted(set(store_files_after) - set(store_files_before))))
