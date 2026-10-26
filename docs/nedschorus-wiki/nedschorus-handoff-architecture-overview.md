@@ -89,7 +89,7 @@ Unless named otherwise, files are in `~/.claude/handoffs/` on the agent-seat's m
 - The two mark programs: an agent-session, as its initial-agent-instructions say.
 - `restart-live-seats-at-login.py`: a LaunchAgent at login on the Mac and a systemd user unit at boot on ned-box.
 - `recover-crashed-seats.py`: a person, or `restart-live-seats-at-login.py`.
-- `clean-worktrees.py`: the `daily-clean-worktrees` job in `nc-systems/general-tools/scheduled-jobs-on-each-machine.json` and the handoff-supervisor at each session-handoff; the launchers run it only to report.
+- `clean-worktrees.py`: the `clean-worktrees` job in `nc-systems/general-tools/scheduled-jobs-on-each-machine.json` and the handoff-supervisor at each session-handoff; the launchers run it only to report.
 - `resupervise-seat.py` and the install scripts: a person. The `list` command of `uncommitted-work-snapshots.py`: a person, or an agent its initial-agent-instructions send there.
 
 ## Planned work
