@@ -132,8 +132,11 @@ transient CLI error, a model that neither wrote the file nor answered in chat
 again. Two kinds of failure get no retry at all, because a retry would fail the same way: a
 refusal from the agy launcher (exit 64, a bad invocation, or no sandbox on
 this machine), and Gemini's monthly spending cap, which Gemini reports as
-`Error 429, Message: Your project has exceeded its monthly spending cap` and
-which lifts only when the user raises the cap at https://ai.studio/spend.
+`Error 429, Message: Your project has exceeded its monthly spending cap` on
+agy's own error line, the line agy opens with `AGY_ERROR:`, and which lifts
+only when the user raises the cap at https://ai.studio/spend. The cap's words
+anywhere else -- in the model's own text, which can quote a document that
+names the cap, or in the claude launcher's output -- are not the cap.
 
 THE SONNET BACKUP. After the Gemini cold-read-cell has failed for good --
 twice, or once with a refusal or the spending cap -- the same fast-clarify cell, with the same embedded prompt and
@@ -200,7 +203,10 @@ FAST_READ_TIER = "fast"
 FAST_READ_ATTEMPTS = 2
 # Gemini's words when the project's monthly spending cap is reached; a retry
 # cannot pass a monthly cap, so a Gemini failure carrying them is not retried.
+# They count only on a line agy opens with its error prefix: the launcher's
+# output also carries the model's own text, which can quote them.
 GEMINI_MONTHLY_SPENDING_CAP_TEXT = "exceeded its monthly spending cap"
+AGY_ERROR_LINE_PREFIX = "AGY_ERROR:"
 GEMINI_SPENDING_CAP_PAGE = "https://ai.studio/spend"
 SONNET_BACKUP_HASHTAG = "#cold_read_fast_read_sonnet_backup_ran"
 # The launcher's own refusal code (EXIT_BAD_INVOCATION in
@@ -1098,13 +1104,22 @@ def run_one_fast_clarify_cell(
     return completed.returncode, completed.stderr + completed.stdout
 
 
+def gemini_monthly_spending_cap_reached(launcher: pathlib.Path, output: str) -> bool:
+    """Whether `output` carries agy's own error line, a line opening
+    `AGY_ERROR:`, with the cap's words in it. False for any launcher other
+    than the agy launcher, whatever its output holds."""
+    return launcher == AGY_CELL_LAUNCHER and any(
+        line.startswith(AGY_ERROR_LINE_PREFIX) and GEMINI_MONTHLY_SPENDING_CAP_TEXT in line
+        for line in output.splitlines())
+
+
 def fast_clarify_cell_failure_cause(launcher: pathlib.Path, exit_code: int,
                                     output: str) -> str:
-    """One line naming why a cell failed: Gemini's spending cap when its words
-    are in `output`, else the launcher's last `cause:` line, else its last
-    line. The cause line is cut short by the launcher, which drops the cap's
-    words, so they are looked for in the whole output."""
-    if GEMINI_MONTHLY_SPENDING_CAP_TEXT in output:
+    """One line naming why a cell failed: Gemini's spending cap when
+    `launcher` is the agy launcher and agy's error line in `output` names it,
+    else the launcher's last `cause:` line, else its last line. The cause line is cut short by the launcher, which
+    drops the cap's words, so agy's error line is looked for instead."""
+    if gemini_monthly_spending_cap_reached(launcher, output):
         return (f"exit {exit_code}: Gemini's monthly spending cap is reached; the "
                 f"user can raise it at {GEMINI_SPENDING_CAP_PAGE}")
     cause_prefix = f"{launcher.stem}: {agy_cell.common.CAUSE_PHRASE} "
@@ -1228,7 +1243,7 @@ def main() -> int:
                       "same invocation would be refused the same way.",
                       file=sys.stderr)
                 break
-            if GEMINI_MONTHLY_SPENDING_CAP_TEXT in output:
+            if gemini_monthly_spending_cap_reached(AGY_CELL_LAUNCHER, output):
                 print(f"{PROGRAM}: Gemini's monthly spending cap is reached; not "
                       "retried, because a retry cannot pass a monthly cap.",
                       file=sys.stderr)

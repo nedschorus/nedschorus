@@ -18,7 +18,13 @@ WHAT IS PINNED HERE.
   - One retry. A cell that fails once is run again and, when the second run
     produces a report, the read succeeds. A Gemini cell that fails twice is
     not run a third time, and one that fails on Gemini's monthly spending cap
-    is not run a second time.
+    is not run a second time. The cap counts only on agy's own error line,
+    opening `AGY_ERROR:`: the cap's words inside other text are retried, and
+    a Sonnet backup failure carrying agy's cap line is not reported as the
+    cap. A refusal by the agy launcher, exit 64, is not retried either. A
+    cell whose agy exits 64 is retried, because the read never sees that 64:
+    the launcher turns any agy failure that leaves no report into its own
+    exit 1.
 
   - The Sonnet backup. After the Gemini cell's failures, the same cell runs
     once on claude-sonnet-5-5 through the claude cell launcher; its report is
@@ -644,6 +650,96 @@ with tempfile.TemporaryDirectory() as scratch:
           len(cap_lines) > 1 and "monthly spending cap" in cap_lines[1]
           and "https://ai.studio/spend" in cap_lines[1],
           repr(cap_lines[:2]))
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_exit": 3,
+               "fail_stderr": "The design quotes it: " + GEMINI_SPENDING_CAP_STDERR}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: after a quoted cap\n"},
+    )
+    quoted_cap_lines = (suggestions.read_text(encoding="utf-8").splitlines()
+                        if suggestions.is_file() else [])
+    check("the cap's words inside other text, such as a model quoting a document, are not "
+          "the cap: the Gemini cell is retried, and the backup line does not name the cap",
+          result.returncode == 0 and launches_counted(counter) == 2
+          and "retrying once" in result.stderr
+          and "a retry cannot pass a monthly cap" not in result.stderr
+          and len(quoted_cap_lines) > 1
+          and "spending cap is reached" not in quoted_cap_lines[1],
+          f"exit {result.returncode}; launches={launches_counted(counter)}; "
+          f"lines={quoted_cap_lines[:2]!r}; stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_stderr": "stub agy: the gemini cause\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"fail_stderr": GEMINI_SPENDING_CAP_STDERR},
+    )
+    check("a Sonnet backup failure whose output carries agy's cap line is not reported as "
+          "Gemini's spending cap",
+          result.returncode == 1 and result.stdout.startswith("FAILED")
+          and "stub agy: the gemini cause" in result.stdout
+          and "spending cap is reached" not in result.stdout,
+          f"exit {result.returncode}; stdout={result.stdout!r}")
+
+    # The launcher turns any agy failure that leaves no report, a stub agy's
+    # exit 64 included, into its own exit 1, so only a launcher that refuses
+    # reaches the read's no-retry path for exit 64.
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    result = run_fast_read(
+        repository, stubs,
+        {"*": {"fail_first_attempts": 99, "fail_exit": 64}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: after agy's exit 64\n"},
+    )
+    check("agy's own exit 64 is retried like any failure: two Gemini launches, then the backup",
+          result.returncode == 0 and launches_counted(counter) == 2
+          and launches_counted(claude_counter_path(counter)) == 1,
+          f"exit {result.returncode}; launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+
+    repository = build_scratch_repository(scratch)
+    suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
+    copied_agy_cell = repository / "nc-systems" / "cold-read" / "cold-read-agy-cell.py"
+    launcher_entry = 'if __name__ == "__main__":\n    sys.exit(main())\n'
+    copied_agy_cell_text = copied_agy_cell.read_text(encoding="utf-8")
+    check("the copied agy launcher ends in the entry point the refusing stand-in replaces",
+          copied_agy_cell_text.endswith(launcher_entry), repr(copied_agy_cell_text[-80:]))
+    copied_agy_cell.write_text(
+        copied_agy_cell_text.replace(launcher_entry, (
+            'if __name__ == "__main__":\n'
+            '    counter = pathlib.Path(os.environ["COLD_READ_AGY_CELL_TEST_STUB_COUNTER_PATH"])\n'
+            '    counter.write_text(str((int(counter.read_text()) if counter.is_file() else 0) + 1))\n'
+            '    print(f"{PROGRAM}: stand-in refusal of the invocation", file=sys.stderr)\n'
+            '    sys.exit(common.EXIT_BAD_INVOCATION)\n')),
+        encoding="utf-8")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: never\n"}},
+        suggestions, walk_draft_relative, counter,
+        claude_plan={"report": "STUB SONNET FAST READ: after the launcher's refusal\n"},
+    )
+    refusal_lines = (suggestions.read_text(encoding="utf-8").splitlines()
+                     if suggestions.is_file() else [])
+    check("the agy launcher's refusal, exit 64, is not retried: one Gemini launch, then the "
+          "Sonnet backup, whose report is the read's",
+          result.returncode == 0 and result.stdout.strip() == str(suggestions)
+          and launches_counted(counter) == 1
+          and launches_counted(claude_counter_path(counter)) == 1
+          and "refused the invocation (exit 64)" in result.stderr
+          and "STUB SONNET FAST READ: after the launcher's refusal" in "\n".join(refusal_lines),
+          f"exit {result.returncode}; launches={launches_counted(counter)}, "
+          f"claude launches={launches_counted(claude_counter_path(counter))}; "
+          f"stderr={result.stderr!r}")
+    check("the backup line names the launcher's refusal as the Gemini cell's cause",
+          len(refusal_lines) > 1 and "stand-in refusal of the invocation" in refusal_lines[1],
+          repr(refusal_lines[:2]))
 
     repository = build_scratch_repository(scratch)
     suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
