@@ -143,11 +143,15 @@ store, such as a dispositions update, writes no marker. Only a run that adds
 or replaces the closed minutes in the store writes the marker. That includes a
 run whose stdout line opens with `REFUSED:` or `FAILED:` because some other
 file did not ship, since the closed minutes are the close and a re-run finds
-them unchanged. A `FAILED:` run that stops before the renames, such as one
-whose copy could not reach the store, writes no marker. A
-`FAILED:` run whose renames of the replaced files failed without saying which
-were done writes the marker when the closed minutes were among them, since
-they may be in the store and a re-run would find them unchanged. With no
+them unchanged. A `FAILED:` run that stops before the rename step, the
+record shipper's replace_with_staged_files, because preparing the store,
+listing it or the copy failed, writes no marker, and so does a run whose
+rename step renamed nothing because it found another shipment's staging
+directory. A `FAILED:` run whose rename
+step failed, at any point in it, a directory it makes, a rename or the
+read-back after the renames, without saying which renames were done, writes
+the marker when the closed minutes were among the files it was to rename,
+since they may be in the store and a re-run would find them unchanged. With no
 session id, as in a terminal, no marker is written, the files still ship, the
 exit code is unchanged, and stderr says so. A marker that cannot be written
 adds a FAILED line on stderr and makes the exit 1, on a REFUSED run too: the
@@ -325,19 +329,25 @@ def store_digests_and_sizes(copy_host, targets: list):
     process). One round trip remotely: for each target that is a file, the
     sha256sum line sha256sum itself prints, and a size line of this program's
     own. An unreachable host is the process's non-zero return with a dict of
-    None, and so is a stored file sha256sum cannot hash: the remote loop exits
+    None, and so is a local read that fails, and a stored file sha256sum
+    cannot hash: the remote loop exits
     1 at it. Without that exit the loop would go on, its last `printf` would
     make the script exit 0, and the file would be missing from the listing,
     which the caller reads as not stored, so an add-only file in the store
     would be copied over."""
     if copy_host is None:
-        stored = {}
-        for target in targets:
-            path = pathlib.Path(target)
-            if path.is_file():
-                stored[str(target)] = StoredWalkFile(sha256_of(path),
-                                                     path.stat().st_size)
-        return subprocess.CompletedProcess([], 0, "", ""), stored
+
+        def read_stored():
+            stored = {}
+            for target in targets:
+                path = pathlib.Path(target)
+                if path.is_file():
+                    stored[str(target)] = StoredWalkFile(sha256_of(path),
+                                                         path.stat().st_size)
+            return stored
+
+        return shipper.local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
+            read_stored)
     quoted = " ".join(shlex.quote(str(target)) for target in targets)
     # sha256sum prints its own line; printf prints the size line beside it, in
     # one round trip. The format is quoted for the remote shell, its trailing
@@ -484,9 +494,12 @@ def ship_walk(destination: WalkStoreDestination, name: str,
     listed, stored = store_digests_and_sizes(destination.copy_host,
                                              list(targets.values()))
     if stored is None:
-        reason = ("ned-box unreachable"
-                  if listed.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED
-                  else f"ssh exit {listed.returncode}")
+        if destination.copy_host is None:
+            reason = listed.stdout
+        elif listed.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED:
+            reason = "ned-box unreachable"
+        else:
+            reason = f"ssh exit {listed.returncode}"
         print(f"FAILED: {name} — {reason}; the walk's files stay on disk, unshipped.")
         sys.stderr.write(listed.stderr)
         return EXIT_FAILED
@@ -600,9 +613,12 @@ def ship_walk(destination: WalkStoreDestination, name: str,
                 destination.copy_host, staging_dir, destination.walk_path,
                 [source.name for source in to_place])
             if after is None:
-                reason = ("ned-box unreachable"
-                          if placed.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED
-                          else f"ssh exit {placed.returncode}")
+                if destination.copy_host is None:
+                    reason = placed.stdout
+                elif placed.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED:
+                    reason = "ned-box unreachable"
+                else:
+                    reason = f"ssh exit {placed.returncode}"
                 print(f"FAILED: {name} — {reason} while putting the copied files "
                       f"in place; a later run finishes it.")
                 sys.stderr.write(placed.stderr)

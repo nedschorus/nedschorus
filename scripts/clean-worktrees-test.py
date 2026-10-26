@@ -1173,11 +1173,12 @@ with tempfile.TemporaryDirectory() as scratch:
           refused.stdout)
     remove_worktree_for_next_case(refused_wt)
 
-    # A shipper that dies before printing its line: a store path under a regular file cannot be made.
-    not_a_directory = scratch / "not-a-directory"
-    not_a_directory.write_text("a file\n", encoding="utf-8")
+    # A shipper that dies before printing its line: a record file it cannot read raises, uncaught.
     silent_wt = worktree_holding_records("silent-wt")
-    silent = run_clean_shipping_to(str(not_a_directory / "cold-read-records"), None, "--remove")
+    for record_file in silent_wt.glob("*-records/*/*.md"):
+        record_file.chmod(0)
+    silent = run_clean_shipping_to(str(scratch / "silent-store" / "cold-read-records"),
+                                   None, "--remove")
     check("--remove keeps a worktree whose shipper printed nothing, and says so",
           silent_wt.exists() and "the shipper printed nothing (exit 1)" in silent.stdout
           and "silent-wt: record shipment FAILED, worktree kept — " in silent.stdout

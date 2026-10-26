@@ -31,6 +31,7 @@ import site
 import subprocess
 import sys
 import tempfile
+import traceback
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 SHIP = SCRIPTS_DIR / "walk-files-ship.py"
@@ -933,9 +934,16 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_
         return subprocess.CompletedProcess([], 255, "", "injected: ssh exit 255\n"), None
 
     def ship_in_process():
+        # An injected OSError that escapes ship_walk fails the calling case by
+        # name, instead of ending this file before its later cases run.
         out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = partial.ship_walk(partial_destination, CLOSE_WALK, partial_walks)
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = partial.ship_walk(partial_destination, CLOSE_WALK, partial_walks)
+        except OSError:
+            check("ship_walk returns rather than raising OSError", False,
+                  traceback.format_exc())
+            return None, out.getvalue(), err.getvalue()
         return code, out.getvalue(), err.getvalue()
 
     saved_session = os.environ.get(SESSION_ID_VARIABLE)
@@ -1087,6 +1095,75 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_
               retry_code == 0 and retry_out.startswith("shipped:")
               and WALK_CLOSED_MARKER.is_file(),
               f"exit {retry_code}: {retry_out}{retry_err}")
+
+    # A local read of one file in the store that fails. The store starts
+    # empty, the staged copies sit in a directory below it, and a replaced
+    # file is read before its rename only when the store holds it, so a file
+    # the run puts there is first read by the read-back after it is placed.
+    saved_read_bytes = pathlib.Path.read_bytes
+
+    def ship_with_read_failing_for(failing_name):
+        def read_bytes_that_fails(path):
+            if path == partial_store / failing_name:
+                raise OSError(28, "No space left on device (injected)")
+            return saved_read_bytes(path)
+
+        os.environ[SESSION_ID_VARIABLE] = PROBE_SESSION_ID
+        pathlib.Path.read_bytes = read_bytes_that_fails
+        try:
+            return ship_in_process()
+        finally:
+            pathlib.Path.read_bytes = saved_read_bytes
+            if saved_session is None:
+                os.environ.pop(SESSION_ID_VARIABLE, None)
+            else:
+                os.environ[SESSION_ID_VARIABLE] = saved_session
+
+    def fresh_walk_and_store(label):
+        global partial_walks, partial_store, partial_destination
+        WALK_CLOSED_MARKER.unlink(missing_ok=True)
+        partial_walks = close_scratch / f"local-read-{label}-walks"
+        write_walk(partial_walks, CLOSE_WALK, {**FILES, "-minutes": closed_minutes})
+        partial_store = close_scratch / f"local-read-{label}-store" / "walk"
+        partial_store.mkdir(parents=True)
+        partial_destination = partial.WalkStoreDestination(
+            None, None, pathlib.PurePosixPath(partial_store))
+
+    fresh_walk_and_store("after-rename")
+    failed_code, failed_out, failed_err = ship_with_read_failing_for(minutes_file_name)
+    check("a local run whose read-back of the stored digests after the renames raises "
+          "OSError is FAILED, exit 1, names the OS's reason, and writes the "
+          "walk-closed marker, the closed minutes being in the store",
+          failed_code == 1 and failed_out.startswith("FAILED:")
+          and one_line(failed_out) and "No space left on device" in failed_out
+          and (partial_store / minutes_file_name).is_file()
+          and WALK_CLOSED_MARKER.is_file(),
+          f"exit {failed_code}: {failed_out}{failed_err}")
+
+    fresh_walk_and_store("after-link")
+    draft_name = f"{CLOSE_WALK}-draft.md"
+    failed_code, failed_out, failed_err = ship_with_read_failing_for(draft_name)
+    check("a local run whose read-back after the add-only links raises OSError is "
+          "FAILED, exit 1, names the OS's reason and not an ssh exit, and writes the "
+          "walk-closed marker",
+          failed_code == 1
+          and failed_out.startswith(f"FAILED: {CLOSE_WALK} — No space left on device "
+                                    f"(injected) while putting the copied files in place")
+          and "ssh" not in failed_out and WALK_CLOSED_MARKER.is_file(),
+          f"exit {failed_code}: {failed_out}{failed_err}")
+
+    fresh_walk_and_store("listing")
+    (partial_store / draft_name).write_text(FILES["-draft"], encoding="utf-8")
+    failed_code, failed_out, failed_err = ship_with_read_failing_for(draft_name)
+    check("a local run whose listing of the store raises OSError is FAILED, exit 1, "
+          "names the OS's reason and not an ssh exit, copies nothing and writes no "
+          "walk-closed marker",
+          failed_code == 1
+          and failed_out.startswith(f"FAILED: {CLOSE_WALK} — No space left on device "
+                                    f"(injected); the walk's files stay on disk")
+          and "ssh" not in failed_out and not (partial_store / minutes_file_name).exists()
+          and not WALK_CLOSED_MARKER.is_file(),
+          f"exit {failed_code}: {failed_out}{failed_err}")
 
 print()
 if failures:

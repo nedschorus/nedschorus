@@ -225,9 +225,14 @@ def ensure_seat_directory(destination: SeatsStoreDestination, seat: str):
     seat_directory = destination.seats_path / seat
     root = destination.seats_path.parent
     if destination.copy_host is None:
-        pathlib.Path(seat_directory).mkdir(parents=True, exist_ok=True)
-        shipper.refresh_store_readme(root)
-        return subprocess.CompletedProcess([], 0, "", "")
+
+        def make_directory_and_refresh_readme():
+            pathlib.Path(seat_directory).mkdir(parents=True, exist_ok=True)
+            shipper.refresh_store_readme(root)
+
+        completed, _ = shipper.local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
+            make_directory_and_refresh_readme)
+        return completed
     script = shipper.make_directory_and_refresh_readme_script(
         seat_directory, root)
     return subprocess.run(
@@ -239,16 +244,15 @@ def ensure_seat_directory(destination: SeatsStoreDestination, seat: str):
 def stored_digest(copy_host, target):
     """(process, digest-or-None) for the store's copy of one file.
 
-    None means the file is not there; an unreachable host is the process's
-    non-zero return with a digest of None, which the caller separates by
-    checking the return code.
+    None means the file is not there; an unreachable host, or a local read
+    that fails, is the process's non-zero return with a digest of None, which
+    the caller separates by checking the return code.
     """
     if copy_host is None:
         path = pathlib.Path(target)
-        if not path.is_file():
-            return subprocess.CompletedProcess([], 0, "", ""), None
-        return (subprocess.CompletedProcess([], 0, "", ""),
-                hashlib.sha256(path.read_bytes()).hexdigest())
+        return shipper.local_store_step_wrapper_returning_completed_process_and_value_or_os_error_as_failed_result(
+            lambda: hashlib.sha256(path.read_bytes()).hexdigest()
+            if path.is_file() else None)
     script = f"if [ -f '{target}' ]; then sha256sum -- '{target}'; fi"
     completed = subprocess.run(shipper.SSH_COMMAND + [copy_host, script],
                                capture_output=True, text=True, check=False)
