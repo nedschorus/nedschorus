@@ -529,6 +529,18 @@ def test_r_ignores_an_item_page_line_in_code_or_a_comment_of_the_minutes():
           f"lines {lines!r}")
 
 
+def test_r_closing_line_label_keeps_the_text_of_a_link_in_the_heading_and_drops_its_link():
+    document = WALK_DOCUMENT.replace(
+        "## Item 4 of 9: a filter",
+        "## Item 4 of 9: a [filter](https://claude.ai/artifact/Design) for `old` rows \\[draft\\] <https://example.com/x>")
+    case = Case(next_to_present="item 4 of 9", document=document)
+    case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    closing = f"[Item 4 of 9, a filter for `old` rows \\[draft\\] https://example.com/x]({PAGE_1}) · {LETTERS_AFTER_LINK}"
+    check("R's closing line holds no link inside its link, so the line stays clickable",
+          lines is not None and lines[1] == page_line("R", "item 4 of 9", closing), f"lines {lines!r}")
+
+
 def test_the_closing_line_letters_are_the_walk_skills():
     check("SKILL.md writes the closing line with the letters the hook hands the agent",
           f"](<page link>) · {LETTERS_AFTER_LINK}" in SKILL_FILE.read_text())

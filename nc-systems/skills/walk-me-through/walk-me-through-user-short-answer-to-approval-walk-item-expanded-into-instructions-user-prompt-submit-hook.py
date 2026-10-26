@@ -53,9 +53,10 @@ R ON AN OPEN APPROVAL-WALK, as the whole prompt (R or repeat), hands the
 agent each waiting item's closing line to print, word for word: the item's
 link, from the newest `#item_page item N of M <link>` line for that item
 number in the minutes, outside code and HTML comments, with the item's running
-count and point from its walk-document heading, then ANSWER_LETTERS_TEXT, as
-the walk-me-through skill writes it. The link opens the item's page, which shows the item in full on
-every screen the user reads. For an item with no `#item_page` line, the agent
+count and point from its walk-document heading, any link in the point cut to
+its text, then ANSWER_LETTERS_TEXT, as the walk-me-through skill writes it.
+The link opens the item's page, which shows the item in full on every screen
+the user reads. For an item with no `#item_page` line, the agent
 is told to show the item in full, heading included, word for word as the
 walk-document has it; the hook copies no item text. In a NUMBERED answer, each R
 does the same for the item it names, and an answer whose every
@@ -492,17 +493,34 @@ def read_walk(cwd):
         walk_finder.prose_lines(text, parser, tokens), walk_finder.item_opening_lines(text, parser, tokens),
         spans, total, walk_finder)
     return WalkState(name, count[0], numbers, total, recommendations, None, problems, parts, pages,
-                     heading_points(text.split("\n"), spans, total))
+                     heading_points(text.split("\n"), spans, total, parser))
 
 
-def heading_points(lines, spans, total):
-    """{item number: the point its heading states after the running count's colon} for the walk's items."""
+def heading_points(lines, spans, total, parser):
+    """{item number: the point its heading states after the running count's colon, without its links} for the
+    walk's items."""
     points = {}
     for numbers, unit_total, _, first, _ in spans:
         match = HEADING_POINT.match(lines[first])
         if match and match[1] and (total is None or unit_total == total):
-            points.update({number: match[1] for number in numbers})
+            points.update({number: without_links(match[1], parser) for number in numbers})
     return points
+
+
+def without_links(markdown, parser):
+    """The inline Markdown with each link's text kept and its link syntax gone, since the closing line puts the
+    point inside a link label, where a link of its own would leave the closing line unclickable."""
+    pieces = []
+    for token in parser.parseInline(markdown)[0].children:
+        if token.type in ("link_open", "link_close"):
+            continue
+        if token.type in ("text", "image"):
+            pieces.append(re.sub(r"([\\`*_\[\]<>!])", r"\\\1", token.content))
+        elif token.type == "code_inline":
+            pieces.append(token.markup + token.content + token.markup)
+        else:
+            pieces.append(token.markup or token.content)
+    return "".join(pieces)
 
 
 def closing_line(number, walk):
