@@ -8,7 +8,10 @@ Wired as a Stop hook in .claude/settings.json, beside the current-item Stop
 hook, walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py,
 whose turn and transcript readers this hook loads, and the approval-walk
 finder, walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py,
-which finds the open walk, its waiting items and its walk-document's items.
+which finds the open walk, its waiting items and its walk-document's items. It
+also loads the answer hook,
+walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-user-prompt-submit-hook.py,
+for the closing line's answer letters, ANSWER_LETTERS_TEXT.
 
 EVERY TURN is checked, whoever started it: the user, another agent-seat, a
 background-task notice. THE REPLY is the text of every assistant message
@@ -26,12 +29,20 @@ THE TEXT CHECKED is the reply, line by line, without:
   heading and list marks, link targets, spacing and case are dropped;
 - fenced and indented code and code spans;
 - quoted text, `"..."`, `“...”` or a `>` line, that the walk-document holds;
+- a waiting item's closing line, the line the walk-me-through skill ends
+  every message with, `[Item 4 of 9, <the point>](<page link>) · ` and then
+  the answer hook's ANSWER_LETTERS_TEXT, when the item it names is waiting and
+  its total is the open walk's; its point and link are not compared, since the
+  agent writes its own point and the user's letter after the line answers
+  that item whatever the point says, and a link target is not text he reads;
+  a line that names another item or total, or adds anything before or after
+  the line, is checked;
 - a sentence that only names waiting items, `Item 4 of 9 is waiting for your
-  answer.`, the line the walk-me-through skill ends every message with, when
-  every item it names is waiting and its total is the open walk's or one an
-  item heading of the walk-document carries; one that names another item or
-  total, as an agent does when it numbers its own questions as items, is
-  checked.
+  answer.`, the line the walk-me-through skill ended every message with before
+  the closing line, when every item it names is waiting and its total is the
+  open walk's or one an item heading of the walk-document carries; one that
+  names another item or total, as an agent does when it numbers its own
+  questions as items, is checked.
 `**` and `__` are dropped before the tests, so a bold question is read.
 
 EACH LINE is one of three:
@@ -109,6 +120,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CURRENT_ITEM_HOOK_FILE = HERE / "walk-me-through-current-item-shown-to-user-after-each-agent-message-stop-hook.py"
 WALK_FINDER_FILE = HERE / "walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py"
+ANSWER_HOOK_FILE = (HERE / "walk-me-through-user-short-answer-to-approval-walk-item-expanded-into-instructions-"
+                    "user-prompt-submit-hook.py")
 REPOSITORY_TOP = HERE.parents[2]
 STOP_HOOKS_STAY_SILENT_RULE_FILE = (
     REPOSITORY_TOP / "nc-systems" / "general-tools"
@@ -225,6 +238,9 @@ walk_finder = load_module("walk_me_through_approval_walk_minutes_and_walk_docume
                           WALK_FINDER_FILE)
 current_item_hook = load_module("walk_me_through_current_item_shown_to_user_after_each_agent_message_stop_hook",
                                 CURRENT_ITEM_HOOK_FILE)
+answer_hook = load_module(
+    "walk_me_through_user_short_answer_to_approval_walk_item_expanded_into_instructions_user_prompt_submit_hook",
+    ANSWER_HOOK_FILE)
 
 
 def normalized(line):
@@ -233,15 +249,20 @@ def normalized(line):
     return EMPHASIS_AND_SPACING.sub(" ", line).strip().lower()
 
 
+# Matched against a normalized line, which has lost the link target and the case.
+CLOSING_LINE = re.compile(rf"item (?P<number>{walk_finder.NUMBER}) of (?P<total>\d+)(?:, .*)? · "
+                          + re.escape(normalized(answer_hook.ANSWER_LETTERS_TEXT)))
+
+
 def normalized_lines(lines):
     """The set of the lines' normalized forms, without the empty one, which no line of an item can match."""
     return {normalized(line) for line in lines} - {""}
 
 
 def answer_sentence(line):
-    """The walk-me-through skill's answer line at the start of line, without what an item adds after it on the same
-    line, such as the ` D: <the alternative>` some walk-documents add."""
-    return SENTENCE_END.split(line.strip(), maxsplit=1)[0]
+    """The walk-me-through skill's answer line at the start of line, without a list or quotation mark before it, and
+    without what an item adds after it on the same line, such as the ` D: <the alternative>` some walk-documents add."""
+    return SENTENCE_END.split(LINE_MARKS.sub("", line.strip()), maxsplit=1)[0]
 
 
 def turn_assistant_texts(records):
@@ -291,6 +312,12 @@ def shown_item_lines(reply_lines, document_lines, units):
     return shown
 
 
+def is_closing_line(line, waiting_numbers, total):
+    """Whether line is the closing line of a waiting item of the open walk, whose total is total."""
+    closing = CLOSING_LINE.fullmatch(normalized(line))
+    return bool(closing) and closing["number"] in waiting_numbers and closing["total"] == total
+
+
 def is_waiting_reminder(sentence, waiting_numbers, totals):
     """Whether sentence only says that waiting items of the open walk, with one of its totals, wait for an answer."""
     reminder = WAITING_REMINDER.match(sentence.strip(TRAILING_MARKS))
@@ -314,7 +341,7 @@ def checked_lines(reply, document_text, units, parser, waiting_numbers, total):
     shown = shown_item_lines(lines, document_lines, units)
     kept, written, introduced_list = [], [], False
     for line in lines:
-        if normalized(line) in shown:
+        if normalized(line) in shown or is_closing_line(line, waiting_numbers, total):
             continue
         if line.lstrip().startswith(">") and normalized(line) in normalized_document:
             continue
