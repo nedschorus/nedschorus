@@ -396,8 +396,9 @@ def log_store_listing_failed_record_name_may_collide_warning_line(program: str, 
             f"it was checked against this checkout only: the log-store's names could not "
             f"be read ({reason}), so a read from another checkout may already hold "
             f"{record_dir.name} there.\n"
-            f"This run goes ahead, since it does not need the log-store until it ships.\n"
-            f"If the shipper's line for this record then opens REFUSED and names another "
+            f"This run goes ahead: of all it does, only shipping the record needs the "
+            f"log-store.\n"
+            f"If shipping this record prints a line that opens REFUSED and names another "
             f"read's files, run the `mv` command and the ship command that line gives.")
 
 
