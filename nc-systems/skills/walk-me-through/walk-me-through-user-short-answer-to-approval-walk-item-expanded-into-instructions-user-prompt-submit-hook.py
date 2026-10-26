@@ -51,10 +51,10 @@ no recommendation for any of its items and says why.
 
 R ON AN OPEN APPROVAL-WALK, as the whole prompt (R or repeat), hands the
 agent each waiting item's closing line to print, word for word: the item's
-link, from the newest `#item_page item N of M <link>` line in the minutes for
-that item number, with the item's running count and point from its
-walk-document heading, then ANSWER_LETTERS_TEXT, as the walk-me-through skill
-writes it. The link opens the item's page, which shows the item in full on
+link, from the newest `#item_page item N of M <link>` line for that item
+number in the minutes, outside code and HTML comments, with the item's running
+count and point from its walk-document heading, then ANSWER_LETTERS_TEXT, as
+the walk-me-through skill writes it. The link opens the item's page, which shows the item in full on
 every screen the user reads. For an item with no `#item_page` line, the agent
 is told to show the item in full, heading included, word for word as the
 walk-document has it; the hook copies no item text. In a NUMBERED answer, each R
@@ -469,7 +469,8 @@ def read_walk(cwd):
     minutes, value, _ = walk
     name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
     # The newest line for an item wins, since a re-planned walk records its pages again.
-    pages = {number: link for number, link in ITEM_PAGE.findall(minutes.read_text(encoding="utf-8"))}
+    pages = {number: link for number, link in ITEM_PAGE.findall(
+        "\n".join(walk_finder.prose_lines(minutes.read_text(encoding="utf-8"), parser)))}
     count = walk_finder.VALUE_COUNT.match(value)
     if not count:
         return WalkState(name, f"the item its minutes' `#next_to_present` line names, `{value}`,",

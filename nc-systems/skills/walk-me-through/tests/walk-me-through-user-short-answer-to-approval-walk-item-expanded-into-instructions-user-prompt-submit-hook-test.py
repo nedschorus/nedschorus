@@ -517,6 +517,18 @@ def test_r_on_two_waiting_items_with_a_page_for_one_hands_its_closing_line_and_s
                                               r_line("\"R\"", "item 6 of 9")], f"lines {lines!r}")
 
 
+def test_r_ignores_an_item_page_line_in_code_or_a_comment_of_the_minutes():
+    case = Case(next_to_present="item 4 of 9")
+    case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n```\n#item_page item 4 of 9 https://claude.ai/artifact/Fenced\n"
+                 "```\n\n<!--\n#item_page item 4 of 9 https://claude.ai/artifact/Commented\n-->\n\n"
+                 "#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    check("R reads the item's page from the minutes' prose, not from a fenced example or an HTML comment after it",
+          lines is not None
+          and lines[1] == page_line("R", "item 4 of 9", f"[Item 4 of 9, a filter]({PAGE_1}) · {LETTERS_AFTER_LINK}"),
+          f"lines {lines!r}")
+
+
 def test_the_closing_line_letters_are_the_walk_skills():
     check("SKILL.md writes the closing line with the letters the hook hands the agent",
           f"](<page link>) · {LETTERS_AFTER_LINK}" in SKILL_FILE.read_text())
