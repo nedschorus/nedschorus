@@ -999,20 +999,22 @@ with tempfile.TemporaryDirectory() as scratch:
           f"exit {result.returncode}; records={records_after_three_reads}; "
           f"stderr={result.stderr[-300:]!r}")
 
-    # The walk route: no record, no freeze, no ship.
+    # The walk route: no record, no freeze, no ship, so a store that cannot be
+    # reached leaves the exit 0.
     repository = build_scratch_repository(scratch)
     walk_draft_relative = "docs/walk/a-walk-item-draft.md"
     suggestions = repository / "docs" / "walk" / "a-walk-item-suggestions.md"
     result = run_fast_read(
         repository, stubs, {"*": {"report": "STUB FAST READ: of the walk item\n"}},
         suggestions, walk_draft_relative, counter,
+        ship_destination="nobody@no-such-host.invalid:/tmp/no-store",
     )
-    check("a walk draft's read freezes nothing and ships nothing",
+    check("a walk draft's read freezes nothing, ships nothing, and exits 0 with the store unreachable",
           result.returncode == 0 and not (repository / "cold-read-records").exists()
           and "record: " not in result.stderr and not (repository / "log-store").exists(),
           f"exit {result.returncode}; stderr={result.stderr[-300:]!r}")
 
-    # A store that cannot be reached: the read still succeeds, and says so.
+    # A store that cannot be reached: the report is kept, and the read exits 1.
     repository = build_scratch_repository(scratch)
     records_report = (repository / "cold-read-records" / f"a-design-{record_stamp}"
                       / "fast-read.md")
@@ -1021,10 +1023,32 @@ with tempfile.TemporaryDirectory() as scratch:
         records_report, other_relative, counter,
         ship_destination="nobody@no-such-host.invalid:/tmp/no-store",
     )
-    check("an unreachable store is reported as record: FAILED on stderr and the read still exits 0",
-          result.returncode == 0 and result.stdout.strip() == str(records_report)
+    check("an unreachable store is reported as record: FAILED on stderr, the report's path "
+          "is still the stdout line, and the read exits 1",
+          result.returncode == 1 and result.stdout.strip() == str(records_report)
+          and records_report.is_file()
           and any("record: FAILED:" in line for line in result.stderr.splitlines()),
           f"exit {result.returncode}; stderr={result.stderr[-400:]!r}")
+
+    # A store already holding other bytes under the record's name refuses it:
+    # the record did not reach the store either.
+    repository = build_scratch_repository(scratch)
+    records_report = (repository / "cold-read-records" / f"a-design-{record_stamp}"
+                      / "fast-read.md")
+    stored_elsewhere = (repository / SCRATCH_LOG_STORE_RELATIVE / records_report.parent.name
+                        / "fast-read.md")
+    stored_elsewhere.parent.mkdir(parents=True)
+    stored_elsewhere.write_text("ANOTHER READ'S REPORT\n", encoding="utf-8")
+    result = run_fast_read(
+        repository, stubs, {"*": {"report": "STUB FAST READ: of the design\n"}},
+        records_report, other_relative, counter,
+    )
+    check("a store that refuses the record is reported as record: REFUSED on stderr, the "
+          "report's path is still the stdout line, and the read exits 1",
+          result.returncode == 1 and result.stdout.strip() == str(records_report)
+          and records_report.is_file()
+          and any("record: REFUSED:" in line for line in result.stderr.splitlines()),
+          f"exit {result.returncode}; stdout={result.stdout!r}; stderr={result.stderr[-400:]!r}")
 
 
 # --- The sentence-id markup (nedschorus#284 step 2) ----------------------
@@ -2073,6 +2097,14 @@ with tempfile.TemporaryDirectory() as over_ssh_scratch:
         check("when the read on ned-box fails printing no result line, the read prints a "
               "FAILED line of its own",
               exit_code == 1 and stdout.startswith("FAILED (the fast read on ned-box exited 1"),
+              f"exit {exit_code}; {stdout!r}; {stderr!r}")
+
+        exit_code, stdout, stderr = read_from_mac(mac_draft, remote_exit=1)
+        check("when the read on ned-box wrote its report and exits 1 for its record, the "
+              "report's path is relayed, the exit 1 kept, and no line says the read failed",
+              exit_code == 1 and stdout == f"{mac_suggestions}\n"
+              and "the fast read on ned-box wrote its report" in stderr
+              and "the fast read on ned-box failed" not in stderr,
               f"exit {exit_code}; {stdout!r}; {stderr!r}")
 
         shutil.rmtree(ned_box_worktree / ".git")

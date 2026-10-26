@@ -37,7 +37,10 @@ included, whose record holds its log and no report, printing this program's
 one line as `record:`; and the requesting agent again after writing
 `finding-dispositions.md`, when the add-only copy sends only that new file.
 A shipping failure never fails the sanity check: the caller prints the line and
-goes on, and the record stays on disk for a later run.
+goes on, and the record stays on disk for a later run. Going on is not exiting
+0: a calling program finishes its run, keeps its reports, and exits 1, or the
+nonzero code its run has for another reason, whenever this program's line is
+not `shipped:`.
 
 OUTPUT AND EXITS are the record shipper's, unchanged: one line per record
 directory on stdout (`shipped:`, `REFUSED:`, `FAILED:`, or `skipped:` under

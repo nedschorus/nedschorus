@@ -2,7 +2,9 @@
 """The scratch git repository the cold-read suites run their cells inside.
 
 Not a test file, and not a program a seat runs: the cold-read suites beside
-it load it. Its name ends `-test-fixture.py` rather than `-test.py` so
+it load it, and so do the suites of the programs that run
+cold-read-fast-read.py, through
+cold_read_fast_read_scratch_copy_whose_stub_model_answers_in_chat. Its name ends `-test-fixture.py` rather than `-test.py` so
 scripts/run-all-test-suites.py, which finds suites with
 `git ls-files -- '*-test.py'`, does not run it as a suite of its own — it
 has no cases. The same ending keeps scripts/design-to-main/tests/
@@ -31,6 +33,7 @@ keeps its own.
 """
 
 import importlib.util
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -110,3 +113,41 @@ def commit_seeded_cold_read_scratch_repository(repository):
     git(repository, "add", "-A")
     git(repository, "commit", "-m", "seed")
     return repository
+
+
+# A stub `agy` that answers in chat, long enough for the cell to keep the
+# answer as the report, and a stub `claude` that fails, so no model starts.
+STUB_AGY_ANSWERING_IN_CHAT = """#!/usr/bin/env python3
+import sys
+sys.stdout.write(" ".join(f"word{index}" for index in range(150)) + "\\n")
+"""
+STUB_CLAUDE_FAILING = """#!/usr/bin/env python3
+import sys
+sys.stderr.write("stub claude: no model in a test\\n")
+sys.exit(1)
+"""
+
+
+def cold_read_fast_read_scratch_copy_whose_stub_model_answers_in_chat(scratch, ship_destination):
+    """A scratch repository holding a copy of nc-systems/cold-read/, and the
+    environment under which that copy's cold-read-fast-read.py reads a
+    document with stub models and ships its record to `ship_destination`.
+    Returns (the copy's cold-read-fast-read.py, that environment)."""
+    scratch = Path(scratch)
+    repository = scratch / "fast-read-scratch-checkout"
+    repository.mkdir(parents=True)
+    commit_seeded_cold_read_scratch_repository(repository)
+    stubs = scratch / "fast-read-stub-models"
+    stubs.mkdir()
+    for name, text in (("agy", STUB_AGY_ANSWERING_IN_CHAT), ("claude", STUB_CLAUDE_FAILING)):
+        (stubs / name).write_text(text, encoding="utf-8")
+        (stubs / name).chmod(0o755)
+    # The agy cell scans HOME for credential files at launch, and the real home takes seconds to walk.
+    home = scratch / "fast-read-scratch-home"
+    home.mkdir()
+    environment = dict(os.environ, HOME=str(home),
+                       PATH=f"{stubs}{os.pathsep}{os.environ.get('PATH', '')}",
+                       COLD_READ_RECORD_SHIP_DESTINATION=str(ship_destination))
+    # A suite run inside an agent-session must not write that session's ID beside the report.
+    environment.pop("CLAUDE_CODE_SESSION_ID", None)
+    return repository / "nc-systems" / "cold-read" / "cold-read-fast-read.py", environment

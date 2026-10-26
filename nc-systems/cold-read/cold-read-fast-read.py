@@ -20,7 +20,13 @@ Sonnet backup. It then prints exactly one line on stdout:
 the report's absolute path on success, or, when both the Gemini cell and the
 Sonnet backup failed, a line opening `FAILED` that names both causes. Exit 0 on success, 1 on failure, 64 when
 the invocation itself was wrong (a --target that is not a file) and nothing
-was launched. When the cold-read-target belongs to a class the
+was launched. A read that wrote its report but whose record did not reach the
+log-store also exits 1, with the report's path still the line on stdout and
+the shipper's `record:` line on stderr, FAILED or REFUSED; that is the one
+exit 1 whose stdout line is a path rather than a line opening `FAILED`,
+apart from a run from the Mac whose ssh a signal killed after the read on
+ned-box had finished. A walk draft's read ships nothing, so it never exits 1
+for its record. When the cold-read-target belongs to a class the
 /cold-read skill's step 2 sends to the cold-read-full-run -- CLAUDE.md, a
 skill or its prompt, a file under docs/agents/, a wiki file, a design, a test
 design, a design-contract -- the read also says that, unless step 2 exempts
@@ -76,7 +82,9 @@ also gets `target/<repository path>`, the exact bytes the reviewer read,
 frozen before the cold-read-cell launches, and once the report has landed the
 directory is shipped to the log-store on ned-box by
 nc-systems/cold-read/cold-read-record-ship.py, whose one line is printed on stderr as
-`record:` (user-ruled 2026-09-07; a shipping failure never fails the read).
+`record:` (user-ruled 2026-09-07; a shipping failure never fails the read:
+the report is kept and its path printed, and the read exits 1 because the
+record did not reach the log-store).
 The cold-read-cell launcher pre-clears the report path, so a suggestions file
 left by an earlier read is replaced, never appended to.
 
@@ -175,6 +183,9 @@ CLAUDE_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-claude-cell.p
 # Its one line goes to stderr, since this program's stdout is the report path
 # and nothing else, and a shipping failure never fails the read.
 RECORD_SHIPPER = pathlib.Path(__file__).with_name("cold-read-record-ship.py")
+# The shipper's one line opens with this only when the record reached the
+# log-store; REFUSED and FAILED both leave it on disk alone.
+RECORD_SHIPPED_LINE_PREFIX = "shipped:"
 # What a cold-read-record is called and where it lives, defined once in a
 # module so no program keeps its own copy. importlib, because the filename
 # has hyphens.
@@ -530,6 +541,11 @@ def cold_read_fast_read_run_on_ned_box_over_ssh(ned_box_target: str) -> int:
               f"subagent, tell the agent that dispatched you instead; then go on with "
               f"your task without the result. When the second run fails in any other "
               f"way, follow the message it prints.", file=sys.stderr)
+    elif stdout.strip() and not stdout.lstrip().startswith("FAILED"):
+        print(f"{PROGRAM}: the fast read on ned-box wrote its report, whose path is "
+              f"the result line on stdout, and exited {completed.returncode}; its "
+              f"`record:` line, above, says why its record did not reach the log-store.",
+              file=sys.stderr)
     else:
         failure = (f"the fast read on ned-box exited {completed.returncode} "
                    f"and printed no result line")
@@ -1136,7 +1152,8 @@ def fast_read_report_finish_and_print_path(
 ) -> int:
     """Turn the cell's report into the read's: attach the sentences, the
     coverage and the bare numbers, name an edit made during the read and the
-    Sonnet backup, ship the record, print the path. Returns 0."""
+    Sonnet backup, ship the record, print the path. Returns 0, or 1 when the
+    record did not reach the log-store."""
     # Before anything reads or ships it: put each original sentence under
     # the restatement claiming its id, and say which sentences no
     # restatement claimed.
@@ -1162,10 +1179,13 @@ def fast_read_report_finish_and_print_path(
         print(f"{PROGRAM}: bare issue, pull request or task numbers in "
               f"this walk draft: {len(bare_references)}; the suggestions "
               "file lists each one.", file=sys.stderr)
+    shipped = True
     if on_records_route:
-        print(f"{PROGRAM}: record: {ship_record(report.parent)}", file=sys.stderr)
+        record_line = ship_record(report.parent)
+        print(f"{PROGRAM}: record: {record_line}", file=sys.stderr)
+        shipped = record_line.startswith(RECORD_SHIPPED_LINE_PREFIX)
     print(report)
-    return 0
+    return 0 if shipped else 1
 
 
 def main() -> int:
