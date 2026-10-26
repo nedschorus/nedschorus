@@ -852,11 +852,47 @@ def run_launched_session_seat_environment_cases(workspace: Path):
           f"{recorded} state session_id={state.get('session_id')}")
 
 
+def run_launched_session_claude_code_tmpdir_cases(workspace: Path):
+    """On ned-box a launched session gets CLAUDE_CODE_TMPDIR, the main-disk directory the daily
+    temp-folder deletion also sweeps; elsewhere the supervisor leaves the variable as it found it,
+    since that path exists only on ned-box."""
+    directory = workspace / "tmpdir-cases"
+    directory.mkdir(parents=True, exist_ok=True)
+    record_path = directory / "tmpdir.json"
+    stub_agent = directory / "stub-agent"
+    stub_agent.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os\n"
+        f"open({str(record_path)!r}, 'w').write(json.dumps(os.environ.get('CLAUDE_CODE_TMPDIR')))\n",
+        encoding="utf-8")
+    stub_agent.chmod(0o755)
+    for on_ned_box, expected in ((True, supervisor.NED_BOX_CLAUDE_CODE_TMPDIR),
+                                 (False, "decoy-inherited-tmpdir")):
+        record_path.unlink(missing_ok=True)
+        with mock.patch.object(supervisor.daily_memory_review_mark, "this_machine_is_ned_box",
+                               return_value=on_ned_box), \
+                mock.patch.dict(os.environ, {"CLAUDE_CODE_TMPDIR": "decoy-inherited-tmpdir"}):
+            supervisor.launch_agent_session(str(stub_agent), "tmpdir-session", directory,
+                                            "prompt").wait(timeout=60)
+        recorded = json.loads(record_path.read_text()) if record_path.is_file() else None
+        check(f"a session launched {'on ned-box' if on_ned_box else 'off ned-box'} runs with "
+              f"CLAUDE_CODE_TMPDIR={expected}", recorded == expected, str(recorded))
+    deletion_path = (Path(SCRIPT_PATH).resolve().parents[1] / "general-tools"
+                     / "claude-code-temp-folders-of-exited-agent-sessions-delete.py")
+    deletion_spec = importlib.util.spec_from_file_location("temp_folders_delete", deletion_path)
+    deletion = importlib.util.module_from_spec(deletion_spec)
+    deletion_spec.loader.exec_module(deletion)
+    check("the daily temp-folder deletion sweeps the directory ned-box sessions are given",
+          supervisor.NED_BOX_CLAUDE_CODE_TMPDIR in deletion.DEFAULT_TEMP_PARENTS,
+          str(deletion.DEFAULT_TEMP_PARENTS))
+
+
 with fixture.handoff_supervisor_suite_workspace() as workspace:
     run_adoption_cases(workspace)
     run_appended_system_prompt_cases(workspace)
     run_appended_system_prompt_agent_part_cases(workspace)
     run_launched_session_seat_environment_cases(workspace)
+    run_launched_session_claude_code_tmpdir_cases(workspace)
     run_process_identity_cases(workspace)
     run_lock_cases(workspace)
 
