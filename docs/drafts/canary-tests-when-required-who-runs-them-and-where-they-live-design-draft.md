@@ -31,7 +31,7 @@ Until the canary runner is built, a canary test runs by hand, as PR 1200's did, 
 
 **A one-shot canary test** answers one question about an outside program at one version, for one change, and is not kept in the repository. Its program, its run log and its verdict are kept in the log-store for 30 days, and then deleted. Example: a canary test showing that a flag does not do what a change assumed, after which the change takes another route.
 
-When the behaviour a canary test checked must keep holding for the change to stay correct, the canary test is permanent, and the change's author adds it in the same pull request. PR 1200's canary test ran before this design; under it, its question would be permanent, and it is one of the first two permanent canary tests, named under "Where canary tests live, and their names". A canary test stays one-shot when the change does not come to rely on the behaviour, or the change runs once, such as a migration.
+When the behaviour a canary test checked must keep holding for the change to stay correct, the canary test is permanent, and the change's author adds it in the same pull request. PR 1200's canary test ran before this design, and under it would have been permanent; one of the first two permanent canary tests, named under "Where canary tests live, and their names", asks its question again. A canary test stays one-shot when the change does not come to rely on the behaviour, or the change runs once, such as a migration.
 
 ## Who runs it, and how
 
@@ -58,12 +58,12 @@ An agent working inside Codex, whether an agent-session, or a cold-read-cell, sa
 
 ## Where canary tests live, and their names
 
-**Permanent:** one file in the repository, the canary test's program, in the `tests/` directory of the system whose code relies on the behaviour, beside that system's other test suites, or in `scripts/` when that code is a program in `scripts/`, named `<the outside program>-<the behaviour>-canary-test.py`. The file declares, in constants, its time limit and the machines it runs on, and it runs as follows:
+**Permanent:** one file in the repository, the canary test's program, in the `tests/` directory of the system whose code relies on the behaviour, beside that system's other test suites, or in `scripts/` when that code is a program in `scripts/`, named `<the outside program>-<the behaviour>-canary-test.py`. The file declares, in constants, its time limit and the machines it runs on. With four changes to the test runner and one to an installer, none made yet, it runs as follows:
 
-- the test runner, `scripts/run-all-test-suites.py`, starts each file whose name ends `-canary-test.py` through the canary runner, outside the test sandbox, one at a time, with the time limit the file declares as the canary runner's timeout, in place of the test runner's own time limit for a suite, which is at least `TEST_SUITE_TIMEOUT_FLOOR_SECONDS`, 600 seconds;
+- the test runner, `scripts/run-all-test-suites.py`, starts each file whose name ends `-canary-test.py` through the canary runner, outside the test sandbox, one at a time, with the time limit the file declares as the canary runner's timeout, even below `TEST_SUITE_TIMEOUT_FLOOR_SECONDS`, 600 seconds, the floor of the test runner's own time limit for a suite;
 - the test runner skips such a file in a selective run, such as the one before a push, unless the run names it, and says so; the daily full test run runs it;
 - the test runner skips such a file on a machine the file does not declare, and says so;
-- the test runner has an option to run named suites only, with which the author runs a permanent canary test by name before the merge;
+- the test runner gains an option to run named suites only, with which the author runs a permanent canary test by name before the merge;
 - `nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py` gives ned-box's cron jobs a PATH, as it gives the Mac's launchd jobs, so that a canary test run by the daily full test run finds `claude`, `agy` and `codex`.
 
 The first two permanent canary tests check how Codex applies the permission profile that `codex_credential_denying_permission_profile_arguments` builds to keep Codex's commands away from credential files, because Codex is upgraded outside the project and nothing else checks either behaviour again; neither file exists yet:
@@ -89,7 +89,7 @@ A one-shot canary test's directory is deleted once more than 30 days have passed
 
 ## Build
 
-1. The pull request that adds the first two permanent canary tests, `nc-systems/cold-read/tests/codex-add-dir-credential-deny-canary-test.py` and `scripts/codex-exec-review-profile-after-review-canary-test.py`, also makes the four test-runner changes and the installer change listed under "Where canary tests live, and their names"; from its merge, the daily full test run runs both canary tests on ned-box.
+1. The pull request that adds the first two permanent canary tests, `nc-systems/cold-read/tests/codex-add-dir-credential-deny-canary-test.py` and `scripts/codex-exec-review-profile-after-review-canary-test.py`, also makes the five changes listed under "Where canary tests live, and their names"; from its merge, the daily full test run runs both canary tests on ned-box.
 2. Whoever builds the check of GHI 1206 or the maintenance job of GHI 1058, whichever first reads the Mac's daily record, also turns on the Mac's permanent canary tests.
 
 ## Open questions
