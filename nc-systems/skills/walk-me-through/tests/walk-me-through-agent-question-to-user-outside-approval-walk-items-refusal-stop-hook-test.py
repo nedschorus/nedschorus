@@ -227,6 +227,7 @@ def test_a_clear_question_blocks_without_the_model_and_is_logged():
           and entries[0]["decided_by"] == "code" and entries[0]["time"].endswith("+00:00"), entries)
     for case_name, text in (
             ("`say yes` blocks", "The fix is ready. Say yes and I will push it."),
+            ("`answer A` blocks", "The fix is ready. Answer A and I will push it."),
             ("`waiting for your answer` on a question that is not an item blocks",
              "The cleanup of the old directories is still waiting for your answer."),
             ("a bold question blocks", "**Do you agree with merging the two lines?** A: merge. D: keep both."),
@@ -286,7 +287,9 @@ def test_a_reply_with_nothing_question_like_passes():
             ("the waiting-item line the skill requires passes",
              "PR 1922 merged.\n\nItem 2 of 10 is waiting for your answer."),
             ("a question in a code span passes", "I ran `grep -c 'why?' notes.md` and found none."),
-            ("a question in a code block passes", "The test prints:\n\n```\nShould I retry?\n```\n\nIt retried once.")):
+            ("a question in a code block passes", "The test prints:\n\n```\nShould I retry?\n```\n\nIt retried once."),
+            ("`answer a` followed by a noun is the article, not the letter A, so it passes",
+             "> When you answer a finding with a new rule, check the rule against the program's real output.")):
         case.reply(text)
         check_silent(case_name, case.run(model="yes"))
     check("a reply with nothing question-like never calls the model", case.model_calls() == [], case.model_calls())
@@ -468,7 +471,10 @@ def test_a_question_held_in_an_interruption_item_is_not_checked():
              "Should I run one of these:\n- `merge.py`\n- `keep.py`", False),
             ("a list of code spans the item holds with its lead-in passes",
              "Should I run one of these:\n- `merge.py`\n- `keep.py`",
-             "Should I run one of these:\n- `merge.py`\n- `keep.py`", True)):
+             "Should I run one of these:\n- `merge.py`\n- `keep.py`", True),
+            ("a list the item holds whole passes when one of its lines has no text once marks are dropped",
+             "Should I use one of these marks:\n- `*`\n- `-`",
+             "Should I use one of these marks:\n- `*`\n- `-`", True)):
         item = f"## Item 2.1 of 11: a question\n\n{item_line}\n\nRecommendation: Merge.\n\n{ANSWER_LINE}\n"
         case = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + item,
                     minutes="#next_to_present item 2 of 11")
@@ -527,6 +533,16 @@ def test_the_shown_item_and_quotes_from_it_are_not_checked():
     case.reply("> Do you agree that agents look there first?\n\nThat line is the item's question.")
     check_silent("a quotation line holding the walk-document's text is not checked", case.run(model="no"))
     check("quoted text from the walk-document never reaches the model", case.model_calls() == [], case.model_calls())
+    alternative = " D: the page stays out of the wiki."
+    with_alternative = Case(document=WALK_DOCUMENT.replace(ANSWER_LINE, ANSWER_LINE + alternative))
+    with_alternative.reply(ITEM_2_SHOWN)
+    check_silent("the shown item's answer line passes without the alternative the walk-document adds after it",
+                 with_alternative.run(model="yes"))
+    with_alternative.reply(ITEM_2_SHOWN + alternative)
+    check_silent("the shown item's answer line passes with the alternative", with_alternative.run(model="yes"))
+    with_alternative.reply("Should I merge the pull request now?")
+    check_blocked("the refusal quotes the answer line without the alternative another item adds after it",
+                  with_alternative.run(), f"which the walk's other items end with: `{ANSWER_LINE}`.")
 
 
 def test_every_turn_is_checked_whoever_started_it():
