@@ -507,6 +507,16 @@ def test_r_on_an_item_with_no_page_tells_the_agent_to_show_it_in_full():
           lines is not None and numbered_r_line(4, "item 4 of 9") in lines, f"lines {lines!r}")
 
 
+def test_r_on_two_waiting_items_with_a_page_for_one_hands_its_closing_line_and_shows_the_other_in_full():
+    case = Case(next_to_present="items 5 and 6 of 9")
+    case.minutes(f"#item_page item 5 of 9 {PAGE_1}\n\n#next_to_present items 5 and 6 of 9")
+    lines = case.lines("r")
+    closing = f"[Item 5 of 9, two small corrections]({PAGE_1}) · {LETTERS_AFTER_LINK}"
+    check("R on items 5 and 6 with a page for item 5 alone hands item 5's closing line and has item 6 shown in full",
+          lines is not None and lines[1:] == [page_line("R", "item 5 of 9", closing),
+                                              r_line("\"R\"", "item 6 of 9")], f"lines {lines!r}")
+
+
 def test_the_closing_line_letters_are_the_walk_skills():
     check("SKILL.md writes the closing line with the letters the hook hands the agent",
           f"](<page link>) · {LETTERS_AFTER_LINK}" in SKILL_FILE.read_text())
