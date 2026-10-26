@@ -1633,15 +1633,52 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
           "though no file name is in both",
           result.returncode == 2 and result.stdout.startswith("REFUSED:")
           and result.stdout.count("\n") == 1, result.stdout + result.stderr)
-    check("the refusal names the store's files the local directory lacks, and asks for "
-          "a -N free here and in the store",
+    rename = (f"`mv {fast_read_record} {names_records / 'SKILL-handoff-2026-10-25-3'}`, a name "
+              f"free in this checkout and in the store when this ran")
+    check("the refusal names the store's files the local directory lacks, and gives the "
+          "rename to the first -N after the date free here and in the store",
           all(relative in result.stdout for relative in full_run_files)
           and "fast-read.md" not in result.stdout
-          and "next -N suffix free both here and at" in result.stdout
-          and str(names_store) in result.stdout, result.stdout)
+          and str(names_store / "SKILL-handoff-2026-10-25-2") in result.stdout
+          and rename in result.stdout, result.stdout)
     check("nothing was copied into the other read's record",
           store_files_after == store_files_before,
           str(sorted(set(store_files_after) - set(store_files_before))))
+
+    # The same refusal when the store's names cannot be read after its
+    # inventory: the rename is free in this checkout only, and says so.
+    real_listing = names_shipper.cold_read_record_directory_names_listed_from_log_store
+    names_shipper.cold_read_record_directory_names_listed_from_log_store = (
+        lambda host, records_path: (None, "listing failed: injected"))
+    unlisted_stdout = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(unlisted_stdout):
+            unlisted_code = names_shipper.ship_one(None, names_store, fast_read_record)
+    finally:
+        names_shipper.cold_read_record_directory_names_listed_from_log_store = real_listing
+    check("when the store's names cannot be read, the refusal's rename is to the first -N "
+          "free in this checkout, and it says the store may hold that name",
+          unlisted_code == 2
+          and f"`mv {fast_read_record} {names_records / 'SKILL-handoff-2026-10-25-3'}`, a name "
+              f"free in this checkout; the store's names could not be read (listing failed: "
+              f"injected), so the store may hold it" in unlisted_stdout.getvalue(),
+          unlisted_stdout.getvalue())
+
+    # A directory named by its date alone is offered -2; one not ending in a
+    # date keeps its whole name and gains the -N.
+    (names_store / "plain-2026-10-26").mkdir()
+    (names_store / "plain-2026-10-26" / "other.md").write_text("other read\n", encoding="utf-8")
+    plain_record = make_record(names_records, "plain-2026-10-26", {"mine.md": "mine\n"})
+    plain = ship(str(names_store), str(plain_record))
+    (names_store / "2026-10-26-dated-first").mkdir()
+    (names_store / "2026-10-26-dated-first" / "other.md").write_text("x\n", encoding="utf-8")
+    dated_first_record = make_record(names_records, "2026-10-26-dated-first", {"mine.md": "m\n"})
+    dated_first = ship(str(names_store), str(dated_first_record))
+    check("the rename of a date-named directory is its name with -2",
+          f"{names_records / 'plain-2026-10-26-2'}`" in plain.stdout, plain.stdout)
+    check("the rename of a directory not ending in a date is its whole name with -2",
+          f"{names_records / '2026-10-26-dated-first-2'}`" in dated_first.stdout,
+          dated_first.stdout)
 
 print()
 if failures:

@@ -70,8 +70,8 @@ gitignored records tree:
 `cold-read-records/<name>-<YYYY-MM-DD>/fast-read.md`, where <name> is the
 cold-read-target's file name without its extension -- `SKILL-<skill name>`
 for a skill, whose file is always SKILL.md -- the date is local, and the
-directory takes a -2, -3 suffix when the day's name is taken, the
-cold-read-grid's rule (user-ruled 2026-09-18). That directory
+directory takes a -2, -3 suffix when the day's name is taken in this
+checkout or in the log-store, the cold-read-grid's rule (user-ruled 2026-09-18). That directory
 also gets `target/<repository path>`, the exact bytes the reviewer read,
 frozen before the cold-read-cell launches, and once the report has landed the
 directory is shipped to the log-store on ned-box by
