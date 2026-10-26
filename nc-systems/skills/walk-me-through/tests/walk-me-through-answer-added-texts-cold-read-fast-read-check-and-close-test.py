@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Cases for the program that carries out the user's answer that makes a
-change in an open approval-walk: its check step, which fast-reads each `#new`
-text of the waiting item that has not had a fast read, and its close step.
+change in an open approval-walk: its check step, which fast-reads each text
+the answer adds to the waiting item, `#new` or `#new_if_d`, that has not had a
+fast read, and its close step.
 
 Each case runs the program as a subprocess in a scratch checkout this suite
 made. cold-read-fast-read.py is replaced by a stand-in this suite writes, so no
@@ -77,6 +78,10 @@ The opening sentence changes. It says now:
 and will say:
 
 #new "The page lists one poem per job an agent does."
+
+If the sentence stays, a note follows it:
+
+#new_if_d "A note says why the sentence stays."
 
 - #new “Each row names the mistake it prevents.”
 
@@ -188,6 +193,49 @@ def test_missing_fast_reads_are_run_and_reported():
     check("a text the earlier check fast-read is already done the next time",
           again.returncode == 0 and again.stdout.count("fast read already done") == 2
           and "Read each fast-read report" not in again.stdout, described(again))
+
+
+NEW_TEXTS = "The page lists one poem per job an agent does.\nEach row names the mistake it prevents.\n"
+NEW_IF_D_TEXT = "A note says why the sentence stays.\n"
+
+
+def test_each_answer_fast_reads_only_the_texts_it_adds():
+    for flags, read in ((("--obvious",), NEW_TEXTS), (("--after-advisor",), NEW_TEXTS),
+                        (("--option", "2"), NEW_TEXTS), (("--option", "3"), NEW_TEXTS),
+                        (("--disapproved",), NEW_IF_D_TEXT),
+                        (("--part-answer", "1=AO"), NEW_TEXTS),
+                        (("--part-answer", "1=D", "--part-answer", "2=D"), NEW_IF_D_TEXT),
+                        (("--part-answer", "1=A", "--part-answer", "2=D"),
+                         "The page lists one poem per job an agent does.\n" + NEW_IF_D_TEXT
+                         + "Each row names the mistake it prevents.\n")):
+        case = Case()
+        result = case.run("check", *flags)
+        check(f"check {' '.join(flags)} fast-reads only the texts that answer adds",
+              result.returncode == 0 and case.calls.read_text() == read,
+              described(result) + repr(case.calls.read_text()))
+    case = Case()
+    result = case.run("check", "--disapproved")
+    lines = result.stdout.split("\n")
+    check("on D the status line names the `#new_if_d` mark and its scratch file, and the counts hold the one text",
+          lines[0].startswith('`#new_if_d` text 1, "A note says why the sentence stays.": fast read had to be run (')
+          and f"{WALK_NAME}-item-3-of-9-new-if-d-1-2026-10-17)." in lines[0]
+          and "\n- `#new_if_d` text 1, " in case.minutes.read_text()
+          and "texts=1\talready_done=0\thad_to_be_run=1" in case.counts_log.read_text(), described(result))
+    case = Case()
+    result = case.run("check", "--part-answer", "1=A", "--part-answer", "2=D")
+    check("each mark's texts are numbered on their own, in the walk-document's order",
+          [line.split(",")[0] for line in result.stdout.split("\n")[:3]]
+          == ["`#new` text 1", "`#new_if_d` text 1", "`#new` text 2"], described(result))
+    case = Case(next_to_present="item 5 of 9")
+    result = case.run("check", "--disapproved")
+    check("D on an item with no `#new_if_d` line runs no fast read",
+          result.returncode == 0 and result.stdout.split("\n")[0] == "no proposed text marked"
+          and case.calls.read_text() == "", described(result))
+    case = Case()
+    result = case.run("check", "--disapproved", mode="record-not-shipped")
+    check("an unshipped record of a `#new_if_d` text names that mark",
+          result.returncode == 2 and "the fast read of `#new_if_d` text 1 did not ship its record" in result.stdout,
+          described(result))
 
 
 def test_a_fast_read_already_done_is_not_run_again():

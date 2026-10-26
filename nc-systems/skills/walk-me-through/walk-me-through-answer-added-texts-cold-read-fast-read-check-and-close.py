@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Carry out the user's A, AO, Aa, D, Z, O2 or O3 answer to the waiting item of an
 open approval-walk, or his A, AO or D answer to each part of it: give each text
-the answered item adds, its `#new` lines, a cold-read-fast-read, then record the
-answer in the walk-minutes and set their `#next_to_present` line to the next
-item.
+the answer adds a cold-read-fast-read, then record the answer in the
+walk-minutes and set their `#next_to_present` line to the next item.
 
 Usage, from the agent-session's checkout:
   walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check
@@ -17,10 +16,17 @@ for O2 or O3, which approve the item's "Option N" paragraph instead of its
 recommendation. R, E and O decide nothing, so the program takes no flag for
 them. --part-answer, given once for each part of an item that holds parts, as
 in `--part-answer 1=A --part-answer 2=D`, gives that part its own answer, A, AO
-or D. An item's `#new` lines belong to the whole item, not to a part, so CHECK
-fast-reads every `#new` text of the item, whatever each part's answer is, as it
-does for a whole item's A or D. Z is not taken for a part, and
-a part number given twice is refused, writing nothing.
+or D. Z is not taken for a part, and a part number given twice is refused,
+writing nothing.
+
+The texts an answer adds are the item's lines that begin with the answer's
+mark, `#new` or `#new_if_d`, as CHECK below describes them. A, AO, Aa, O2 and
+O3 add the `#new` texts; D adds only the `#new_if_d` texts, the texts of the
+alternative that D does instead of the item's recommendation. A line's mark
+belongs to the whole item, not to a part, so answers to parts add the `#new`
+texts when any part is A or AO, and the `#new_if_d` texts when any part is D.
+An answer that adds no marked text gets no fast read, and its status line is
+"no proposed text marked".
 
 The open approval-walk and its waiting items are found with
 walk-me-through-approval-walk-minutes-and-walk-document-item-finder-common.py,
@@ -29,8 +35,8 @@ hook uses too, so the
 `#next_to_present` line and the walk-document's item headings are read exactly
 as that hook reads them.
 
-CHECK finds the texts the change adds: the item's `#new` lines, a line whose
-first word is `#new`, after any list or quotation marker, outside fenced code;
+CHECK finds the texts the answer adds: the item's lines whose first word,
+after any list or quotation marker, outside fenced code, is a mark the answer adds;
 the text is the rest of the line, without one pair of surrounding quotation
 marks. For each text it looks for a cold-read-record holding a fast-read.md and
 a file under target/ that contains the text, whitespace aside, in the
@@ -40,7 +46,9 @@ LOG_STORE_RECORDS_DESTINATION, read on ned-box as it is and on the Mac through
 the Mac's mount of ned-box's home. For each text with none, it saves the text to
 a scratch file and runs cold-read-fast-read.py --target on that file. Then it
 writes the answer line, which names each part's answer in part number order
-when --part-answer is given, and one status line per text, or "no proposed text
+when --part-answer is given, and one status line per text, naming its mark and
+its number, from 1 in the walk-document's order, among the item's texts with
+that mark, or "no proposed text
 marked", into the walk-minutes, and prints the status lines, the judgement the
 agent must make on new reports, and the close step to run. It appends one line
 of counts to
@@ -123,7 +131,8 @@ COUNTS_LOG_FILE_NAME = "walk-me-through-answer-added-texts-cold-read-fast-read-a
 RECORDS_DIRECTORY_NAME = "cold-read-records"
 PROGRAM = "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close"
 
-NEW_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*#new\b[:\s]*(.*)$")
+NEW_MARK, NEW_IF_D_MARK = "#new", "#new_if_d"
+NEW_LINE = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*(#new(?:_if_d)?)\b[:\s]*(.*)$")
 QUOTE_PAIRS = (('"', '"'), ("“", "”"), ("'", "'"))
 ANSWER_LINE = re.compile(r"^(?P<item>items? .+?): the user answered (?P<answered>.+?)"
                          r"(?: #approved_(?:obvious|after_advisor))? \([^)]*\), "
@@ -143,15 +152,15 @@ PART_REPEATED = ("nothing written: --part-answer gives {parts} more than one ans
                  "Run check again giving each part's number once, with the letter the user gave that part.")
 
 NO_PROPOSED_TEXT = "no proposed text marked"
-STATUS_ALREADY_DONE = "`#new` text {number}, \"{excerpt}\": fast read already done ({record})."
-STATUS_HAD_TO_BE_RUN = "`#new` text {number}, \"{excerpt}\": fast read had to be run ({record})."
+STATUS_ALREADY_DONE = "`{mark}` text {number}, \"{excerpt}\": fast read already done ({record})."
+STATUS_HAD_TO_BE_RUN = "`{mark}` text {number}, \"{excerpt}\": fast read had to be run ({record})."
 STATUS_FAST_READ_NOTE = " The fast read also said: {note}"
 # The fast read reports these on stderr and still exits 0, because its report was written.
 FAST_READ_NOTE_MARKERS = ("cold-read-fast-read: record: FAILED", "#cold_read_target_changed_during_run")
 CHECK_JUDGEMENT_LINES = (
     "Read the fast-read report of each text above whose status line says \"fast read had to be run\".",
     "If a finding holds and changes how a text is understood but not what the item decides, "
-    "apply it to that text's `#new` line in the walk-document {document}.",
+    "apply it to that text's marked line in the walk-document {document}.",
     "If a finding would change what the item decides, write that change as a new item right "
     "after {item} in the walk-document, numbered as the walk-me-through skill's Re-planning section "
     "says, and set the minutes' `#next_to_present` line to the new item; "
@@ -165,7 +174,7 @@ COUNTS_NOT_LOGGED = (
 LOG_STORE_UNREACHABLE = ("this machine reaches the log-store at neither {paths}, so its cold-read-records were "
                          "not searched either")
 RECORDS_NOT_SHIPPED = (
-    "The minutes record the answer, but the fast read of `#new` text {number} did not ship its record: {note}",
+    "The minutes record the answer, but the fast read of `{mark}` text {number} did not ship its record: {note}",
     "The record stays at {record}; once ned-box can be reached, run `python3 {shipper} {record}`.",
     "Include these lines in your next message to the user, and carry on as the lines above say.",
 )
@@ -318,19 +327,20 @@ def item_lines(walk_finder, minutes, value, numbers, total, parser):
     return document, kept
 
 
-def proposed_texts(lines):
+def proposed_texts(lines, marks):
+    """Return (mark, text) for each line marked with one of marks, in the lines' order."""
     texts = []
     for line in lines:
         match = NEW_LINE.match(line)
-        if not match:
+        if not match or match[1] not in marks:
             continue
-        text = match[1].strip()
+        text = match[2].strip()
         for opening, closing in QUOTE_PAIRS:
             if len(text) >= 2 and text.startswith(opening) and text.endswith(closing):
                 text = text[1:-1].strip()
                 break
         if text:
-            texts.append(text)
+            texts.append((match[1], text))
     return texts
 
 
@@ -410,6 +420,15 @@ def answered_word(arguments):
     return APPROVED
 
 
+def marks_the_answer_adds(arguments):
+    """The marks of the texts the answer adds: `#new_if_d` for D, `#new` for any other answer, and for
+    answers to parts, the marks of the parts' answers."""
+    if arguments.part_answer:
+        letters = {letter for _, letter in arguments.part_answer}
+        return {mark for mark, adds in ((NEW_MARK, letters != {"D"}), (NEW_IF_D_MARK, "D" in letters)) if adds}
+    return {NEW_IF_D_MARK} if arguments.disapproved else {NEW_MARK}
+
+
 def answer_hashtag(arguments):
     """The hashtag the walk-minutes write right after an AO or Aa approval, or nothing."""
     if arguments.obvious:
@@ -454,27 +473,32 @@ def check(arguments):
         append_to_minutes(minutes, [CHECK_DEFERRED_MINUTES.format(item=item, date_and_time=f"{now:%Y-%m-%d %H:%M}")])
         print(CHECK_CLOSE_LINE.format(program=Path(__file__).resolve(), top=shlex.quote(str(top))))
         return 0
-    texts = proposed_texts(lines)
+    texts = proposed_texts(lines, marks_the_answer_adds(arguments))
     log_store_records, tried = (None, []) if arguments.cold_read_records and arguments.counts_log \
         else reachable_log_store_records()
     record_directories = arguments.cold_read_records or (
         [top / RECORDS_DIRECTORY_NAME] + ([log_store_records] if log_store_records else []))
     walk_name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
     statuses, already_done, had_to_be_run, problems = [], 0, 0, []
-    for number, text in enumerate(texts, 1):
+    counted = collections.Counter()
+    for mark, text in texts:
+        counted[mark] += 1
+        number = counted[mark]
         record = fast_read_record_holding(text, record_directories)
         if record is not None:
             already_done += 1
-            statuses.append(STATUS_ALREADY_DONE.format(number=number, excerpt=excerpt(text), record=record))
+            statuses.append(STATUS_ALREADY_DONE.format(mark=mark, number=number, excerpt=excerpt(text),
+                                                       record=record))
             continue
-        name = f"{walk_name}-{file_name_part(item)}-new-{number}"
+        name = f"{walk_name}-{file_name_part(item)}-{file_name_part(mark)}-{number}"
         record, notes = run_fast_read(text, name, arguments.fast_read_program)
         had_to_be_run += 1
-        statuses.append(STATUS_HAD_TO_BE_RUN.format(number=number, excerpt=excerpt(text), record=record)
+        statuses.append(STATUS_HAD_TO_BE_RUN.format(mark=mark, number=number, excerpt=excerpt(text), record=record)
                         + "".join(STATUS_FAST_READ_NOTE.format(note=note) for note in notes))
         for note in notes:
             if note.startswith(FAST_READ_NOTE_MARKERS[0]):
-                problems += [line.format(number=number, note=note, record=record, shipper=RECORD_SHIPPER_FILE)
+                problems += [line.format(mark=mark, number=number, note=note, record=record,
+                                         shipper=RECORD_SHIPPER_FILE)
                              for line in RECORDS_NOT_SHIPPED]
     if not texts:
         statuses.append(NO_PROPOSED_TEXT)
@@ -663,7 +687,7 @@ def main(argv=None):
     answer.add_argument("--obvious", action="store_true", help="check: the answer was AO, approve as obvious")
     answer.add_argument("--after-advisor", action="store_true",
                         help="check: the answer was Aa, approve after an advisor check")
-    answer.add_argument("--disapproved", action="store_true", help="check: the answer was D, disapprove")
+    answer.add_argument("--disapproved", action="store_true", help="check: the answer was D, disapprove; reads only the `#new_if_d` texts")
     answer.add_argument("--deferred", action="store_true", help="check: the answer was Z, defer")
     answer.add_argument("--option", type=int, choices=(2, 3),
                         help="check: the answer was O2 or O3, approving the item's \"Option N\" paragraph")
