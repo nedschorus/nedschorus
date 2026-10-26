@@ -424,9 +424,20 @@ def test_a_question_held_in_an_interruption_item_is_not_checked():
              "Should we refile it?", "Should we re**file** it?", False),
             ("a short question whose words run inside the item's longer question blocks",
              "Should I merge?", "Should I merge PR 5 now?", False),
+            ("an ask without a question mark whose words start the item's longer question blocks",
+             "Should I merge.", "Should I merge PR 5 now?", False),
+            ("a question the item holds only as a statement blocks", "Should I merge?", "Should I merge.", False),
+            ("a question the item quotes whole inside a longer sentence passes",
+             "Should I merge PR 5 now?", 'merge-lane-2 asks "Should I merge PR 5 now?" before the release.', True),
             ("a list whose lead-in the item holds, with other choices, blocks",
              "PR 1922 merged.\n\nShould I do one of these:\n- delete the hook\n- keep it",
-             "Should I do one of these:\n- merge the lines\n- keep both", False)):
+             "Should I do one of these:\n- merge the lines\n- keep both", False),
+            ("a list of code spans whose lead-in the item holds, with other choices, blocks",
+             "Should I run one of these:\n- `delete-all.py`\n- `keep.py`",
+             "Should I run one of these:\n- `merge.py`\n- `keep.py`", False),
+            ("a list of code spans the item holds with its lead-in passes",
+             "Should I run one of these:\n- `merge.py`\n- `keep.py`",
+             "Should I run one of these:\n- `merge.py`\n- `keep.py`", True)):
         item = f"## Item 2.1 of 11: a question\n\n{item_line}\n\nRecommendation: Merge.\n\n{ANSWER_LINE}\n"
         case = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n" + item,
                     minutes="#next_to_present item 2 of 11")
