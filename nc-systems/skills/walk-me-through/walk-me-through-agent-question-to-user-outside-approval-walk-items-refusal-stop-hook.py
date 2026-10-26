@@ -262,7 +262,7 @@ def normalized_lines(lines):
 def answer_sentence(line):
     """The walk-me-through skill's answer line at the start of line, without a list or quotation mark before it, and
     without what an item adds after it on the same line, such as the ` D: <the alternative>` some walk-documents add."""
-    return SENTENCE_END.split(LINE_MARKS.sub("", line.strip()), maxsplit=1)[0]
+    return SENTENCE_END.split(LINE_MARKS.sub("", line.strip()))[0]
 
 
 def turn_assistant_texts(records):

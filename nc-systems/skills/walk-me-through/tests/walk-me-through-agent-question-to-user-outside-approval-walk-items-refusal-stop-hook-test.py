@@ -668,7 +668,8 @@ def test_only_the_waiting_items_closing_line_is_skipped():
     check("a waiting item's closing line never reaches the model", case.model_calls() == [], case.model_calls())
     for case_name, line in (
             ("a closing line naming an item that is not waiting is checked", closing_line("3 of 10")),
-            ("a closing line with another total is checked", closing_line("2 of 11")),
+            ("a closing line with a larger total is checked", closing_line("2 of 11")),
+            ("a closing line with a smaller total is checked", closing_line("2 of 1")),
             ("a closing line with text after its answer letters is checked", closing_line("2 of 10") + " Agree?"),
             ("a closing line with text before it on its line is checked", "Recommended: " + closing_line("2 of 10")),
             ("a closing line missing an answer letter is checked",
