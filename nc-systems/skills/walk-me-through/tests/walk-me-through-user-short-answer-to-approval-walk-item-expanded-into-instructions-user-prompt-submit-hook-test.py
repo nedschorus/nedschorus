@@ -86,6 +86,18 @@ def check(case_name, condition, detail=""):
         failures.append(case_name)
 
 
+class OutputLines(list):
+    """The hook's output lines, where a line the output lacks reads as "".
+
+    The checks index into these lines; a plain list would raise IndexError on a missing line, which ends the
+    suite with no FAIL naming the case and leaves every later case unrun."""
+
+    def __getitem__(self, index):
+        if isinstance(index, int) and not -len(self) <= index < len(self):
+            return ""
+        return super().__getitem__(index)
+
+
 class Case:
     """One case's own checkout and walk files."""
 
@@ -126,7 +138,7 @@ class Case:
         if (set(output) != {"hookSpecificOutput"} or specific.get("hookEventName") != "UserPromptSubmit"
                 or set(specific) != {"hookEventName", "additionalContext"}):
             return None
-        return specific["additionalContext"].split("\n")
+        return OutputLines(specific["additionalContext"].split("\n"))
 
 
 def unknown_line(item, problem, letter):
