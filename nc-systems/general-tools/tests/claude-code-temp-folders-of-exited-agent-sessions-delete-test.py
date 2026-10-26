@@ -24,7 +24,12 @@ PROGRAM = (Path(__file__).resolve().parents[1]
 _specification = importlib.util.spec_from_file_location(
     "claude_code_temp_folders_of_exited_agent_sessions_delete", PROGRAM)
 program = importlib.util.module_from_spec(_specification)
+# An option the program refuses, so a load that ran main() would stop here, before it deletes
+# anything under the real /tmp.
+_arguments = sys.argv
+sys.argv = [str(PROGRAM), "--not-an-option-so-loading-the-program-must-not-run-it"]
 _specification.loader.exec_module(program)
+sys.argv = _arguments
 
 ROOT_NAME = f"claude-{os.getuid()}"
 LIVE = "11111111-1111-1111-1111-111111111111"
@@ -130,6 +135,60 @@ def run_selection_cases():
           "folders of exited agent-sessions deleted: 3; folders kept because their agent-session "
           "is live: 1; folders kept because they changed in the last 3600 seconds: 1; failures: 0"
           in real.stdout, real.stdout)
+
+
+def run_order_and_link_cases():
+    """Each skip moves on to the next entry, not out of its loop; links are not followed."""
+    s = scene()
+    (s.sessions / "0000.lock").write_text("not a sessions file, listed first")
+    (s.sessions / "0001.json").symlink_to(s.base / "gone.json")
+    s.session(4000, DEAD, running=False)
+    s.session(LIVE_PID, LIVE)
+    s.session(4104, REUSED, running_start_time="555")
+    live = s.folder(0, LIVE)
+    reused = s.folder(0, REUSED)
+    other_project = "-home-nedlern-agents-other"
+    recent = s.folder(0, "55555555-5555-5555-5555-555555555555", project=other_project, old=False)
+    after_recent = s.folder(0, "66666666-6666-6666-6666-666666666666", project=other_project)
+    after_live = s.folder(0, "77777777-7777-7777-7777-777777777777")
+    touched_inside = s.folder(0, "88888888-8888-8888-8888-888888888888", project="-touched")
+    os.utime(touched_inside / "tasks", None)
+    os.utime(touched_inside, (DAY_AGO, DAY_AGO))
+    dangling = s.folder(0, "99999999-9999-9999-9999-999999999999", project="-dangling")
+    (dangling / "link-to-nothing").symlink_to(s.base / "nothing")
+    os.utime(dangling / "link-to-nothing", (DAY_AGO, DAY_AGO), follow_symlinks=False)
+    os.utime(dangling, (DAY_AGO, DAY_AGO))
+    empty_project = s.parents[0] / ROOT_NAME / "-empty-before-the-run"
+    empty_project.mkdir()
+    outside = s.base / "outside"
+    outside_folder = outside / "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    outside_folder.mkdir(parents=True)
+    os.utime(outside_folder, (DAY_AGO, DAY_AGO))
+    (s.parents[0] / ROOT_NAME / "-linked-project").symlink_to(outside)
+    (s.parents[0] / ROOT_NAME / "-home-nedlern-agents-seat"
+     / "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb").symlink_to(outside_folder)
+    second_parent_folder = s.folder(1, OTHER)
+    result = s.run(parents=[s.base / "no-such-parent", s.parents[0], s.parents[1]])
+    check("order cases: the run exits 0 with no failure", result.returncode == 0 and result.stderr == "",
+          result.stdout + result.stderr)
+    check("a file in the sessions directory that is not a sessions file, or is gone, does not stop "
+          "the reading of the sessions files after it", live.is_dir())
+    check("a pid now running another process that started earlier does not count as live",
+          not reused.exists())
+    check("a folder kept because it is recent does not stop the folders after it",
+          recent.is_dir() and not after_recent.exists())
+    check("a folder kept because its agent-session is live does not stop the folders after it",
+          not after_live.exists())
+    check("a project folder that still holds a kept folder does not stop the projects after it",
+          recent.parent.is_dir() and not after_live.exists())
+    check("a folder whose entry inside it changed recently is kept", touched_inside.is_dir())
+    check("an entry inside a folder is not followed when it is a link",
+          not dangling.exists())
+    check("a project folder that was empty before the run is kept", empty_project.is_dir())
+    check("a link to a project folder, and a link named like a session folder, are not followed",
+          outside_folder.is_dir())
+    check("a temp parent with no claude-<uid> folder does not stop the temp parents after it",
+          not second_parent_folder.exists())
 
 
 def run_absent_inputs_cases():
@@ -287,6 +346,7 @@ WORKSPACE = tempfile.mkdtemp(prefix="claude-code-temp-folders-delete-test-worksp
 try:
     run_selection_cases()
     run_absent_inputs_cases()
+    run_order_and_link_cases()
     run_live_set_failure_cases()
     run_per_folder_failure_cases()
     run_recheck_cases()
