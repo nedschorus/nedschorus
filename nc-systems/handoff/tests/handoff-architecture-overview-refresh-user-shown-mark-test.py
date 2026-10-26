@@ -142,9 +142,11 @@ def run_mark_cases(workspace: Path):
           written.is_file() and written.read_text(encoding="utf-8") == "2026-10-01T03:30:00Z\n",
           repr(written.read_text(encoding="utf-8") if written.is_file() else None))
     check("the program prints where the mark was written",
-          stdout == "handoff-architecture-overview-refresh-user-shown-mark: the reminder for handoff is "
-          f"recorded for 2026-09-30 in nedlern@ned-box:{fixture.marks}/"
-          "2026-09-30-handoff.txt\n", stdout)
+          stdout == "handoff-architecture-overview-refresh-user-shown-mark: recorded that the user was "
+          "shown the handoff architecture overview refresh on the Pacific date 2026-09-30, in "
+          f"nedlern@ned-box:{fixture.marks}/2026-09-30-handoff.txt; the handoff-supervisor "
+          "withholds the handoff refresh reminder for the rest of 2026-09-30, Pacific time, "
+          "and gives it again on a later day while the refresh is still due.\n", stdout)
 
     code, stdout, stderr, calls = fixture.run(["cold-read"])
     check("a second system's mark is a second file, and the first is left as it is",
@@ -159,18 +161,25 @@ def run_mark_cases(workspace: Path):
           code == 1 and stdout == "", f"{code} {stdout!r}")
     check("when ned-box cannot be reached, stderr carries ssh's first line and what to do",
           stderr == "handoff-architecture-overview-refresh-user-shown-mark: the mark for handoff could not be "
-          "confirmed as written, so the next agent-seat to reincarnate today may show the "
-          "user the same overview refresh again: ssh nedlern@ned-box exited 255: ssh: "
+          f"confirmed as written to nedlern@ned-box:{fixture.marks}/2026-09-30-handoff.txt, so "
+          "the next agent-seat to reincarnate today may show the user the same architecture "
+          "overview refresh again: ssh nedlern@ned-box exited 255: ssh: "
           "connect to host ned-box port 22: No route to host\n"
-          "Tell the user what the error above says.\n"
-          "When the user says the cause is fixed, run: "
+          "If you are a subagent, send this whole message to the agent that dispatched you "
+          "instead of acting on it; otherwise, do what the next lines say.\n"
+          "Tell the user: \"The record that you were shown the handoff architecture overview "
+          "refresh today may not have been written on ned-box, so you may be shown it again "
+          "today: ssh nedlern@ned-box exited 255: ssh: connect to host ned-box port 22: No "
+          "route to host\"\n"
+          "When the user says the cause is fixed, run, in a nedschorus checkout on the Mac or "
+          "on ned-box, since either writes the mark on ned-box: python3 "
           "nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py handoff "
           "--shown-on-pacific-date 2026-09-30\n", stderr)
 
     code, stdout, stderr, calls = fixture.run(["handoff"], ssh_body="exec sleep 30",
                                               ssh_timeout=1)
     check("when ssh times out, the mark is not written and stderr says so",
-          code == 1 and "ssh nedlern@ned-box timed out after 1 s" in stderr,
+          code == 1 and "ssh nedlern@ned-box timed out after 1 seconds and was killed" in stderr,
           f"{code}\n{stderr}")
 
     on_ned_box = Fixture(workspace / "marks-on-ned-box")
@@ -187,11 +196,15 @@ def run_mark_cases(workspace: Path):
           code == 2 and refused.mark_files() == [] and calls == [] and stdout == "",
           f"{code} {refused.mark_files()} {calls!r} {stdout!r}")
     check("the refusal says nothing was written, and what to pass",
-          stderr == "handoff-architecture-overview-refresh-user-shown-mark: no daily-overview-refresh-reminder-"
-          "mark was written, because 'docs/nedschorus-wiki/nedschorus-handoff-architecture-"
-          "overview.md' is not a system's name.\n"
-          "Run this again with the name of the system's directory under nc-systems/, such "
-          "as handoff.\n", stderr)
+          stderr == "handoff-architecture-overview-refresh-user-shown-mark: 'docs/nedschorus-wiki/"
+          "nedschorus-handoff-architecture-overview.md' was refused as a system's name, so no "
+          f"mark was written in nedlern@ned-box:{refused.marks}/: a system's name is the name "
+          "of its directory under nc-systems/ without the nc-systems/ prefix, such as handoff, "
+          "starting with a letter or digit and holding only letters, digits, '-' and '_'.\n"
+          "Run this again with the system's name that the handoff-supervisor's overview "
+          "refresh reminder gave, such as: python3 "
+          "nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py handoff\n",
+          stderr)
 
     dated = Fixture(workspace / "marks-dated")
     code, stdout, stderr, calls = dated.run(["handoff", "--shown-on-pacific-date", "2026-09-30"])
@@ -202,17 +215,25 @@ def run_mark_cases(workspace: Path):
         ["handoff", "--shown-on-pacific-date", "2026-09-29"])
     check("a retry for a day that has passed writes nothing, exits 0 and says why",
           code == 0 and dated.mark_files() == ["2026-09-30-handoff.txt"] and calls == []
-          and stdout == "handoff-architecture-overview-refresh-user-shown-mark: no mark was written, because "
-          "2026-09-29 has passed; the next agent-seat to show the refresh writes the new "
-          "day's mark.\n", f"{code} {dated.mark_files()} {calls!r} {stdout!r}")
+          and stdout == "handoff-architecture-overview-refresh-user-shown-mark: no mark was written for "
+          "handoff, because 2026-09-29 has passed, and a mark withholds the handoff "
+          "architecture overview refresh reminder only on the Pacific date the mark is dated.\n"
+          "Nothing more needs doing for 2026-09-29. If you show the user the handoff refresh "
+          "later today, Pacific time, run then: python3 "
+          "nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py handoff\n",
+          f"{code} {dated.mark_files()} {calls!r} {stdout!r}")
     code, stdout, stderr, calls = dated.run(
         ["handoff", "--shown-on-pacific-date", "2026-10-01"])
     check("a date after today's Pacific date is refused, exit 2, with nothing written",
           code == 2 and dated.mark_files() == ["2026-09-30-handoff.txt"] and calls == []
-          and stderr == "handoff-architecture-overview-refresh-user-shown-mark: no mark was written, because "
-          "2026-10-01 is after today's Pacific date.\n"
-          "Run this again without --shown-on-pacific-date, or with the date the user was "
-          "shown the refresh.\n", f"{code} {calls!r} {stderr!r}")
+          and stderr == "handoff-architecture-overview-refresh-user-shown-mark: no mark was written for "
+          "handoff, because --shown-on-pacific-date 2026-10-01 is after today's Pacific date, "
+          "2026-09-30.\n"
+          "If the user was shown the handoff architecture overview refresh today, run, in a "
+          "nedschorus checkout on the Mac or on ned-box: python3 "
+          "nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py handoff\n"
+          "If the user was shown the refresh on an earlier day, run nothing: a mark dated on a "
+          "day that has passed does not withhold today's reminder.\n", f"{code} {calls!r} {stderr!r}")
     malformed = subprocess.run([sys.executable, str(SCRIPT_PATH), "handoff",
                                 "--shown-on-pacific-date", "yesterday"],
                                capture_output=True, text=True, check=False)

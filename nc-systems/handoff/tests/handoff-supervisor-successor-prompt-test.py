@@ -1660,11 +1660,14 @@ def run_overview_refresh_unusable_system_name_cases(workspace: Path):
           and due[0].startswith("overview refresh due: widget — "),
           f"{due!r}\n{printed}")
     check("a name the mark script refuses is passed over by its real name on the console",
-          "overview check for café passed over: the name does not match" in printed, printed)
+          "overview check for café passed over: the directory name nc-systems/café on "
+          "origin/main does not match" in printed, printed)
     check("a name holding a quote is passed over by its real name on the console",
-          "overview check for o'brien passed over: the name does not match" in printed, printed)
+          "overview check for o'brien passed over: the directory name nc-systems/o'brien on "
+          "origin/main does not match" in printed, printed)
     check("a name that is not valid UTF-8 is passed over, printed with its byte escaped",
-          "overview check for bad\\xff passed over: the name does not match" in printed
+          "overview check for bad\\xff passed over: the directory name nc-systems/bad\\xff on "
+          "origin/main does not match" in printed
           and "overview check stopped" not in printed, printed)
 
 
@@ -2063,7 +2066,7 @@ def run_overview_refresh_once_a_day_cases(workspace: Path):
           "line saying so, with the timeout",
           due[:2] == (gadget_line, widget_line) and len(due) == 3
           and due[2].startswith(REMINDER_MARKS_UNREAD_LINE_OPENING)
-          and "ssh nedlern@ned-box timed out after 1 s" in due[2]
+          and "ssh nedlern@ned-box timed out after 1 seconds and was killed" in due[2]
           and due[2].endswith(
               EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE),
           f"{due!r}\n{console}")
@@ -2073,13 +2076,14 @@ def run_overview_refresh_once_a_day_cases(workspace: Path):
           "line saying so",
           due[:2] == (gadget_line, widget_line) and len(due) == 3
           and due[2].startswith(REMINDER_MARKS_UNREAD_LINE_OPENING)
-          and "does not parse" in due[2], f"{due!r}\n{console}")
+          and "is not the JSON it should print" in due[2], f"{due!r}\n{console}")
     # ned-box answered, so the line must not say it did not.
     unparsable_line = EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE.format(
         marks_location=mark_citation(""),
-        error="DailyMemoryReviewReadOrWriteFailed: ssh nedlern@ned-box answered with "
-              "output that does not parse: JSONDecodeError: Expecting value: line 1 "
-              "column 1 (char 0)")
+        error="DailyMemoryReviewReadOrWriteFailed: the reader of memory stores and marks in "
+              "nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py, run over "
+              "ssh nedlern@ned-box, printed output that is not the JSON it should print: "
+              "JSONDecodeError: Expecting value: line 1 column 1 (char 0)")
     check("when ned-box answers with output that does not parse, the line does not say "
           "ned-box did not answer, nor give the check for whether ned-box answers",
           due[2:] == (unparsable_line,), f"{due[2:]!r}\nexpected: {(unparsable_line,)!r}")
@@ -2762,7 +2766,7 @@ def run_memory_review_due_cases(workspace: Path):
     check("MEMORY REVIEW: when the ssh read times out, no line is given and the console "
           "says why", due == ()
           and "memory review check gave no line: DailyMemoryReviewReadOrWriteFailed: ssh "
-          "nedlern@ned-box timed out after 1 s" in console, f"{due!r}\n{console}")
+          "nedlern@ned-box timed out after 1 seconds and was killed" in console, f"{due!r}\n{console}")
 
     due, console, calls = fixture.due_at(noon + 2 * day + timedelta(minutes=4),
                                          hostname="ned-box")

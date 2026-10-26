@@ -137,7 +137,8 @@ def run_mark_cases(workspace: Path):
           started.is_file() and started.read_text(encoding="utf-8") == "2026-10-01T03:30:00Z\n",
           repr(started.read_text(encoding="utf-8") if started.is_file() else None))
     check("started prints where the mark was written",
-          stdout == "handoff-user-review-of-agent-memory-stores-mark: started recorded for 2026-09-30 in "
+          stdout == "handoff-user-review-of-agent-memory-stores-mark: the memory review's started mark "
+          f"is recorded for the Pacific date 2026-09-30 in "
           f"nedlern@ned-box:{fixture.marks}/2026-09-30-started.txt\n", stdout)
 
     code, stdout, stderr, calls = fixture.run(["done"])
@@ -159,14 +160,24 @@ def run_mark_cases(workspace: Path):
           code == 1 and fixture.mark_files() == ["2026-09-30-done.txt", "2026-09-30-started.txt"]
           and stdout == "", f"{code} {fixture.mark_files()} {stdout!r}")
     check("when ned-box cannot be reached, stderr carries ssh's first line and what to do",
-          stderr == "handoff-user-review-of-agent-memory-stores-mark: the started mark was not written (ssh "
-          "nedlern@ned-box exited 255: ssh: connect to host ned-box port 22: No route to "
-          "host) — tell the user what it said, and run this again once the cause is fixed.\n",
-          stderr)
+          stderr == "handoff-user-review-of-agent-memory-stores-mark: the memory review's started mark "
+          f"was not written to nedlern@ned-box:{fixture.marks}/2026-09-30-started.txt: ssh "
+          "nedlern@ned-box exited 255: ssh: connect to host ned-box port 22: No route to host\n"
+          "If you are a subagent, send this whole message to the agent that dispatched you "
+          "instead of acting on it; otherwise, do what the next lines say.\n"
+          "Tell the user: \"The memory review's started mark could not be written on ned-box: "
+          "ssh nedlern@ned-box exited 255: ssh: connect to host ned-box port 22: No route to "
+          "host. Until that mark is written, the handoff-supervisor may remind the next "
+          "agent-seat to start on the Mac of the review again.\"\n"
+          "When the user says the cause is fixed, run, on the machine you ran this on: "
+          "python3 nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py "
+          "started\n", stderr)
 
     code, stdout, stderr, calls = fixture.run(["done"], ssh_body="exec sleep 30", ssh_timeout=1)
-    check("when ssh times out, done is not written and stderr says so",
-          code == 1 and "ssh nedlern@ned-box timed out after 1 s" in stderr,
+    check("when ssh times out, done is not written and stderr names the store and the timeout",
+          code == 1 and "the done mark was not written, because ned-box's memory store, "
+          f"nedlern@ned-box:{fixture.ned_box_store}/ could not be read: ssh nedlern@ned-box "
+          "timed out after 1 seconds and was killed\n" in stderr,
           f"{code}\n{stderr}")
 
     on_ned_box = Fixture(workspace / "marks-on-ned-box")
@@ -175,10 +186,17 @@ def run_mark_cases(workspace: Path):
           code == 0 and on_ned_box.mark_files() == ["2026-09-30-started.txt"] and calls == [],
           f"{code} {on_ned_box.mark_files()} {calls!r}\n{stderr}")
     code, stdout, stderr, calls = on_ned_box.run(["done"], hostname="ned-box")
-    check("done, on ned-box, writes nothing and says to run it from a Mac seat",
+    check("done, on ned-box, writes nothing and says to run it on the Mac",
           code == 1 and on_ned_box.mark_files() == ["2026-09-30-started.txt"] and calls == []
-          and stderr == "handoff-user-review-of-agent-memory-stores-mark: run `done` from a Mac seat when you "
-          "are on ned-box.\n", f"{code} {on_ned_box.mark_files()} {calls!r}\n{stderr}")
+          and stderr == "handoff-user-review-of-agent-memory-stores-mark: the done mark was not written, "
+          "because this machine is ned-box: the done mark holds a digest of each machine's "
+          "memory store, and ned-box cannot read the Mac's memory store.\n"
+          "If you are a subagent, send this whole message to the agent that dispatched you "
+          "instead of acting on it; otherwise, do what the next line says.\n"
+          "Tell the user: \"Today's memory review is not yet recorded as done; to record it, "
+          "run this on the Mac, in a nedschorus checkout: python3 "
+          "nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py done\"\n",
+          f"{code} {on_ned_box.mark_files()} {calls!r}\n{stderr}")
 
     invalid = subprocess.run([sys.executable, str(SCRIPT_PATH), "finished"],
                              capture_output=True, text=True, check=False)

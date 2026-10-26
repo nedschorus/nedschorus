@@ -12,6 +12,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 PROGRAM = "handoff-architecture-overview-refresh-user-shown-mark"
+PROGRAM_PATH = f"nc-systems/handoff/{PROGRAM}.py"
 
 _handoff_user_review_of_agent_memory_stores_mark_spec = importlib.util.spec_from_file_location(
     "handoff_user_review_of_agent_memory_stores_mark",
@@ -81,25 +82,39 @@ def main(argv=None, now=None) -> int:
                         help="the Pacific date, YYYY-MM-DD, the user was shown the "
                              "refresh; today's when left out")
     arguments = parser.parse_args(argv)
+    marks_directory_citation = (f"{handoff_user_review_of_agent_memory_stores_mark.NED_BOX_SSH_TARGET}:"
+                                f"{DAILY_OVERVIEW_REFRESH_REMINDER_MARKS_DIRECTORY}/")
     if not re.fullmatch(SYSTEM_NAME_PATTERN, arguments.system):
-        print(f"{PROGRAM}: no daily-overview-refresh-reminder-mark was written, because "
-              f"{arguments.system!r} is not a system's name.\n"
-              f"Run this again with the name of the system's directory under nc-systems/, "
-              f"such as handoff.", file=sys.stderr)
+        print(f"{PROGRAM}: {arguments.system!r} was refused as a system's name, so no mark "
+              f"was written in {marks_directory_citation}: a system's name is the name "
+              f"of its directory under nc-systems/ without the nc-systems/ prefix, such as "
+              f"handoff, starting with a letter or digit and holding only letters, digits, "
+              f"'-' and '_'.\n"
+              f"Run this again with the system's name that the handoff-supervisor's overview "
+              f"refresh reminder gave, "
+              f"such as: python3 {PROGRAM_PATH} handoff", file=sys.stderr)
         return 2
     now = now or datetime.now(timezone.utc)
     today = pacific_date_of(now)
     shown_on = (arguments.shown_on_pacific_date.isoformat()
                 if arguments.shown_on_pacific_date is not None else today)
     if shown_on < today:
-        print(f"{PROGRAM}: no mark was written, because {shown_on} has passed; the next "
-              f"agent-seat to show the refresh writes the new day's mark.")
+        print(f"{PROGRAM}: no mark was written for {arguments.system}, because {shown_on} "
+              f"has passed, and a mark withholds the {arguments.system} architecture overview "
+              f"refresh reminder only on the Pacific date the mark is dated.\n"
+              f"Nothing more needs doing for {shown_on}. If you show the user the "
+              f"{arguments.system} refresh later today, Pacific time, run then: "
+              f"python3 {PROGRAM_PATH} {arguments.system}")
         return 0
     if shown_on > today:
-        print(f"{PROGRAM}: no mark was written, because {shown_on} is after today's "
-              f"Pacific date.\n"
-              f"Run this again without --shown-on-pacific-date, or with the date the user "
-              f"was shown the refresh.", file=sys.stderr)
+        print(f"{PROGRAM}: no mark was written for {arguments.system}, because "
+              f"--shown-on-pacific-date {shown_on} is after today's Pacific date, {today}.\n"
+              f"If the user was shown the {arguments.system} architecture overview refresh "
+              f"today, run, in a nedschorus checkout on the Mac or on ned-box: "
+              f"python3 {PROGRAM_PATH} {arguments.system}\n"
+              f"If the user was shown the refresh on an earlier day, run nothing: a mark "
+              f"dated on a day that has passed does not withhold today's reminder.",
+              file=sys.stderr)
         return 2
     file_name = daily_overview_refresh_reminder_mark_file_name(shown_on, arguments.system)
     content = now.astimezone(timezone.utc).strftime(REMINDER_MARK_TIME_FORMAT)
@@ -110,16 +125,24 @@ def main(argv=None, now=None) -> int:
             marks_directory=DAILY_OVERVIEW_REFRESH_REMINDER_MARKS_DIRECTORY)
     except handoff_user_review_of_agent_memory_stores_mark.DailyMemoryReviewReadOrWriteFailed as error:
         print(f"{PROGRAM}: the mark for {arguments.system} could not be confirmed as "
-              f"written, so the next agent-seat to reincarnate today may show the user the "
-              f"same overview refresh again: {error}\n"
-              f"Tell the user what the error above says.\n"
-              f"When the user says the cause is fixed, run: "
-              f"nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py {arguments.system} "
-              f"--shown-on-pacific-date {shown_on}", file=sys.stderr)
+              f"written to {daily_overview_refresh_reminder_mark_citation(file_name)}, so the "
+              f"next agent-seat to reincarnate today may show the user the same architecture "
+              f"overview refresh again: {error}\n"
+              f"If you are a subagent, send this whole message to the agent that dispatched "
+              f"you instead of acting on it; otherwise, do what the next lines say.\n"
+              f"Tell the user: \"The record that you were shown the {arguments.system} "
+              f"architecture overview refresh today may not have been written on ned-box, so "
+              f"you may be shown it again today: {error}\"\n"
+              f"When the user says the cause is fixed, run, in a nedschorus checkout on the "
+              f"Mac or on ned-box, since either writes the mark on ned-box: "
+              f"python3 {PROGRAM_PATH} {arguments.system} --shown-on-pacific-date {shown_on}",
+              file=sys.stderr)
         return 1
-    print(f"{PROGRAM}: the reminder for {arguments.system} is recorded for "
-          f"{file_name[:len('YYYY-MM-DD')]} in "
-          f"{daily_overview_refresh_reminder_mark_citation(file_name)}")
+    print(f"{PROGRAM}: recorded that the user was shown the {arguments.system} architecture "
+          f"overview refresh on the Pacific date {shown_on}, in "
+          f"{daily_overview_refresh_reminder_mark_citation(file_name)}; the handoff-supervisor "
+          f"withholds the {arguments.system} refresh reminder for the rest of {shown_on}, "
+          f"Pacific time, and gives it again on a later day while the refresh is still due.")
     return 0
 
 

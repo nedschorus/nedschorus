@@ -22,6 +22,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 PROGRAM = "handoff-user-review-of-agent-memory-stores-mark"
+PROGRAM_PATH = f"nc-systems/handoff/{PROGRAM}.py"
 
 PACIFIC_TIME_ZONE_NAME = "America/Los_Angeles"
 
@@ -111,11 +112,12 @@ def run_on_ned_box_or_here(command: str, ssh_target, timeout: float, stdin_text=
         completed = subprocess.run(argv, capture_output=True, text=True, check=False,
                                    timeout=timeout, input=stdin_text)
     except subprocess.TimeoutExpired:
-        raise DailyMemoryReviewReadOrWriteFailed(f"{runner} timed out after {timeout} s",
-                                                 ned_box_did_not_answer=bool(ssh_target))
+        raise DailyMemoryReviewReadOrWriteFailed(
+            f"{runner} timed out after {timeout} seconds and was killed",
+            ned_box_did_not_answer=bool(ssh_target))
     except OSError as error:
         raise DailyMemoryReviewReadOrWriteFailed(
-            f"{runner} could not be started: {type(error).__name__}: {error}")
+            f"this machine could not start {runner}: {type(error).__name__}: {error}")
     if completed.returncode != 0:
         first_line = (completed.stderr.strip().splitlines() or ["no detail"])[0]
         raise DailyMemoryReviewReadOrWriteFailed(
@@ -138,9 +140,10 @@ def read_memory_store_and_review_marks(ssh_target, store_directory: str,
         store = {name: base64.b64decode(content) for name, content in answer["store"].items()}
         marks = dict(answer["marks"])
     except (ValueError, KeyError, TypeError, AttributeError) as error:
-        where = f"ssh {ssh_target}" if ssh_target else "the local read"
+        where = f"over ssh {ssh_target}" if ssh_target else "on this machine"
         raise DailyMemoryReviewReadOrWriteFailed(
-            f"{where} answered with output that does not parse: {type(error).__name__}: {error}")
+            f"the reader of memory stores and marks in {PROGRAM_PATH}, run {where}, printed output that "
+            f"is not the JSON it should print: {type(error).__name__}: {error}")
     return store, marks
 
 
@@ -188,32 +191,55 @@ def main(argv=None, now=None) -> int:
     ssh_target = None if this_machine_is_ned_box() else NED_BOX_SSH_TARGET
     if arguments.mark == "done":
         if ssh_target is None:
-            print(f"{PROGRAM}: run `done` from a Mac seat when you are on ned-box.",
-                  file=sys.stderr)
+            print(f"{PROGRAM}: the done mark was not written, because this machine is "
+                  f"ned-box: the done mark holds a digest of each machine's memory store, "
+                  f"and ned-box cannot read the Mac's memory store.\n"
+                  f"If you are a subagent, send this whole message to the agent that dispatched "
+                  f"you instead of acting on it; otherwise, do what the next line says.\n"
+                  f"Tell the user: \"Today's memory review is not yet recorded as done; "
+                  f"to record it, run this on the Mac, in a nedschorus checkout: "
+                  f"python3 {PROGRAM_PATH} done\"", file=sys.stderr)
             return 1
         try:
+            store_being_read = f"ned-box's memory store, {ned_box_memory_store_citation()}"
             ned_box_store, _ = read_memory_store_and_review_marks(
                 ssh_target, NED_BOX_MEMORY_STORE_DIRECTORY, "", timeout)
+            store_being_read = f"the Mac's memory store, {MAC_MEMORY_STORE_DIRECTORY}/"
             mac_store, _ = read_memory_store_and_review_marks(
                 None, MAC_MEMORY_STORE_DIRECTORY, "", timeout)
         except DailyMemoryReviewReadOrWriteFailed as error:
-            print(f"{PROGRAM}: the done mark was not written because a memory store "
-                  f"could not be read ({error}) — tell the user what it said, and run "
-                  f"this again once the cause is fixed.", file=sys.stderr)
+            print(f"{PROGRAM}: the done mark was not written, because {store_being_read} "
+                  f"could not be read: {error}\n"
+                  f"If you are a subagent, send this whole message to the agent that dispatched "
+                  f"you instead of acting on it; otherwise, do what the next lines say.\n"
+                  f"Tell the user: \"Today's memory review is not recorded as done, because "
+                  f"{store_being_read} could not be read: {error}. Until the done mark is "
+                  f"written, the handoff-supervisor may remind the next agent-seat to start on "
+                  f"the Mac of the review again.\"\n"
+                  f"When the user says the cause is fixed, run: python3 {PROGRAM_PATH} done",
+                  file=sys.stderr)
             return 1
         content = memory_stores_digest(mac_store, ned_box_store)
     else:
         content = now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     file_name = daily_memory_review_mark_file_name(pacific_date, arguments.mark)
+    mark_citation = f"{NED_BOX_SSH_TARGET}:{DAILY_MEMORY_REVIEW_MARKS_DIRECTORY}/{file_name}"
     try:
         write_daily_memory_review_mark(ssh_target, file_name, content, timeout)
     except DailyMemoryReviewReadOrWriteFailed as error:
-        print(f"{PROGRAM}: the {arguments.mark} mark was not written ({error}) — tell "
-              f"the user what it said, and run this again once the cause is fixed.",
-              file=sys.stderr)
+        print(f"{PROGRAM}: the memory review's {arguments.mark} mark was not written to "
+              f"{mark_citation}: {error}\n"
+              f"If you are a subagent, send this whole message to the agent that dispatched "
+              f"you instead of acting on it; otherwise, do what the next lines say.\n"
+              f"Tell the user: \"The memory review's {arguments.mark} mark could not be "
+              f"written on ned-box: {error}. Until that mark is written, the "
+              f"handoff-supervisor may remind the next agent-seat to start on the Mac of the "
+              f"review again.\"\n"
+              f"When the user says the cause is fixed, run, on the machine you ran this on: "
+              f"python3 {PROGRAM_PATH} {arguments.mark}", file=sys.stderr)
         return 1
-    print(f"{PROGRAM}: {arguments.mark} recorded for {pacific_date} in "
-          f"{NED_BOX_SSH_TARGET}:{DAILY_MEMORY_REVIEW_MARKS_DIRECTORY}/{file_name}")
+    print(f"{PROGRAM}: the memory review's {arguments.mark} mark is recorded for the "
+          f"Pacific date {pacific_date} in {mark_citation}")
     return 0
 
 
