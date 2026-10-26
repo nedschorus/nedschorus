@@ -13,8 +13,9 @@ superseding the earlier ruling for low: Gemini 3.8 Flash at medium, about
 draft, recall 42% against 19% at low on the ghi-write candidate defect list,
 replacing gpt-5.6-terra at low), and retries once if that cold-read-cell fails.
 When the Gemini cell has failed for good -- twice, or once with a launcher
-refusal or Gemini's spending cap, which get no retry -- it runs the same cell
-once on Claude Sonnet at medium, the claude cold-read-cell's fast
+refusal, Gemini's spending cap or the Ultra sign-in's quota, which get no
+retry -- it runs the same cell once on Claude Sonnet at low effort, the claude
+cold-read-cell's fast
 cold-read-tier, through nc-systems/cold-read/cold-read-claude-cell.py, the
 Sonnet backup. It then prints exactly one line on stdout:
 the report's absolute path on success, or, when both the Gemini cell and the
@@ -129,19 +130,22 @@ ONE RETRY, AND WHY NOT MORE. The cold-read-fast-read is a walk's instrument,
 and the walk is waiting on it: a Gemini cold-read-cell that fails once -- a
 transient CLI error, a model that neither wrote the file nor answered in chat
 -- is worth one more try. A cell that fails a second time is not retried
-again. Two kinds of failure get no retry at all, because a retry would fail the same way: a
+again. Three kinds of failure get no retry at all, because a retry would fail the same way: a
 refusal from the agy launcher (exit 64, a bad invocation, or no sandbox on
 this machine), and Gemini's monthly spending cap, which Gemini reports as
 `Error 429, Message: Your project has exceeded its monthly spending cap` on
 agy's own error line, the line agy opens with `AGY_ERROR:`, and which lifts
-only when the user raises the cap at https://ai.studio/spend. The cap's words
-anywhere else -- in the model's own text, which can quote a document that
-names the cap, or in the claude launcher's output -- are not the cap.
+only when the user raises the cap at https://ai.studio/spend; and the Ultra
+sign-in's quota, which Gemini reports as `Individual quota reached. ...
+Resets in 2h27m27s.` on that same error line, and which lifts only at the
+reset. The words of either anywhere else -- in the model's own text, which can
+quote a document that names them, or in the claude launcher's output -- are
+not the cap or the quota.
 
 THE SONNET BACKUP. After the Gemini cold-read-cell has failed for good --
-twice, or once with a refusal or the spending cap -- the same fast-clarify cell, with the same embedded prompt and
+twice, or once with a refusal, the spending cap or the quota -- the same fast-clarify cell, with the same embedded prompt and
 the same marked copy, runs once through the claude launcher, which pins the
-fast cold-read-tier to claude-sonnet-5-5 at medium. One line on stderr says
+fast cold-read-tier to claude-sonnet-5-5 at low effort. One line on stderr says
 that the backup runs and why, naming the Gemini cell's cause. When the
 backup writes the report, a `<!-- #cold_read_fast_read_sonnet_backup_ran
 ... -->` line after the provenance stamp says that the Gemini cell failed,
@@ -149,7 +153,11 @@ gives its cause, and says that Sonnet read the document instead; the stamp itsel
 names runtime=claude and the model, so a reader of the report knows which
 model read the document. The backup is not retried: a walk waiting on a
 read that Gemini has already failed is better served by a FAILED line it
-can act on.
+can act on. When the Gemini cell failed on the quota and the backup wrote
+the report, one more line on stderr opens `Ultra quota used up; Sonnet read
+this;` and gives the reset time Gemini named, without its seconds, and the
+line after it tells the agent that ran the read to copy that line into its
+next message to the user, so the user hears that Ultra ran out.
 """
 
 from __future__ import annotations
@@ -208,6 +216,15 @@ FAST_READ_ATTEMPTS = 2
 GEMINI_MONTHLY_SPENDING_CAP_TEXT = "exceeded its monthly spending cap"
 AGY_ERROR_LINE_PREFIX = "AGY_ERROR:"
 GEMINI_SPENDING_CAP_PAGE = "https://ai.studio/spend"
+# Gemini's words when the Ultra sign-in's quota is used up, and the reset time
+# it gives after them, as in `Resets in 2h27m27s.`; counted on agy's error line
+# only, as the cap's words are. A retry fails the same way until the reset.
+GEMINI_ULTRA_QUOTA_TEXT = "Individual quota reached"
+GEMINI_ULTRA_QUOTA_RESET = re.compile(r"Resets in (?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?")
+ULTRA_QUOTA_LINE_OPENING = "Ultra quota used up; Sonnet read this;"
+ULTRA_QUOTA_RELAY_INSTRUCTION = (
+    "Copy the line above into your next message to the user, because he wants "
+    "to know when the fast read fell back to Sonnet.")
 SONNET_BACKUP_HASHTAG = "#cold_read_fast_read_sonnet_backup_ran"
 # The launcher's own refusal code (EXIT_BAD_INVOCATION in
 # nc-systems/cold-read/cold-read-cell-common.py), which this program also uses for its
@@ -1113,15 +1130,49 @@ def gemini_monthly_spending_cap_reached(launcher: pathlib.Path, output: str) -> 
         for line in output.splitlines())
 
 
+def gemini_ultra_quota_error_line(launcher: pathlib.Path, output: str) -> str:
+    """agy's own error line, opening `AGY_ERROR:`, when it names the Ultra
+    sign-in's quota, else "". Always "" for a launcher other than agy's."""
+    if launcher != AGY_CELL_LAUNCHER:
+        return ""
+    return next((line for line in output.splitlines()
+                 if line.startswith(AGY_ERROR_LINE_PREFIX) and GEMINI_ULTRA_QUOTA_TEXT in line), "")
+
+
+def gemini_ultra_quota_reset_time(error_line: str) -> str:
+    """The reset time in `error_line` without its seconds, as in "2h27m";
+    "under a minute" when it gives only seconds; "" when it gives none."""
+    match = GEMINI_ULTRA_QUOTA_RESET.search(error_line)
+    if not match or not any(match.groups()):
+        return ""
+    hours, minutes, _ = match.groups()
+    if not hours and not minutes:
+        return "under a minute"
+    return f"{hours + 'h' if hours else ''}{minutes + 'm' if minutes else ''}"
+
+
+def ultra_quota_line(error_line: str) -> str:
+    """The stderr line telling the user that Ultra ran out and Sonnet read the document."""
+    reset = gemini_ultra_quota_reset_time(error_line)
+    return (f"{ULTRA_QUOTA_LINE_OPENING} Gemini resets in {reset}." if reset
+            else f"{ULTRA_QUOTA_LINE_OPENING} Gemini gave no reset time.")
+
+
 def fast_clarify_cell_failure_cause(launcher: pathlib.Path, exit_code: int,
                                     output: str) -> str:
-    """One line naming why a cell failed: Gemini's spending cap when
-    `launcher` is the agy launcher and agy's error line in `output` names it,
-    else the launcher's last `cause:` line, else its last line. The cause line is cut short by the launcher, which
-    drops the cap's words, so agy's error line is looked for instead."""
+    """One line naming why a cell failed: Gemini's spending cap, or else the
+    Ultra sign-in's quota with its reset time, when `launcher` is the agy
+    launcher and agy's error line in `output` names it, else the launcher's
+    last `cause:` line, else its last line. The cause line is cut short by the
+    launcher, which drops those words, so agy's error line is looked for instead."""
     if gemini_monthly_spending_cap_reached(launcher, output):
         return (f"exit {exit_code}: Gemini's monthly spending cap is reached; the "
                 f"user can raise it at {GEMINI_SPENDING_CAP_PAGE}")
+    quota_line = gemini_ultra_quota_error_line(launcher, output)
+    if quota_line:
+        reset = gemini_ultra_quota_reset_time(quota_line)
+        return (f"exit {exit_code}: the Ultra sign-in's Gemini quota is used up; "
+                + (f"it resets in {reset}" if reset else "Gemini gave no reset time"))
     cause_prefix = f"{launcher.stem}: {agy_cell.common.CAUSE_PHRASE} "
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     causes = [line[len(cause_prefix):] for line in lines if line.startswith(cause_prefix)]
@@ -1132,7 +1183,7 @@ def fast_clarify_cell_failure_cause(launcher: pathlib.Path, exit_code: int,
 def fast_read_report_finish_and_print_path(
     *, report: pathlib.Path, target: pathlib.Path, sentences: dict,
     marked_copy_kept, full_run_class_name, bare_references, launch_sha256: str,
-    on_records_route: bool, backup_line: str,
+    on_records_route: bool, backup_line: str, quota_line: str = "",
 ) -> int:
     """Turn the cell's report into the read's: attach the sentences, the
     coverage and the bare numbers, name an edit made during the read and the
@@ -1155,6 +1206,9 @@ def fast_read_report_finish_and_print_path(
         print(changed_line, file=sys.stderr)
     if backup_line:
         print(f"{PROGRAM}: {backup_line}", file=sys.stderr)
+    if quota_line:
+        print(quota_line, file=sys.stderr)
+        print(ULTRA_QUOTA_RELAY_INSTRUCTION, file=sys.stderr)
     record_names.cold_read_fast_read_report_agent_session_id_file_write_or_remove(
         report, target,
         os.environ.get(record_names.AGENT_SESSION_ID_ENVIRONMENT_VARIABLE))
@@ -1231,6 +1285,7 @@ def main() -> int:
             marked_copy_kept=marked_copy if on_records_route else None,
             full_run_class_name=full_run_class_name, bare_references=bare_references,
             launch_sha256=launch_sha256, on_records_route=on_records_route)
+        quota_error_line = ""
         for attempt in range(1, FAST_READ_ATTEMPTS + 1):
             exit_code, output = run_one_fast_clarify_cell(
                 AGY_CELL_LAUNCHER, marked_copy, report, prompt_file)
@@ -1248,6 +1303,12 @@ def main() -> int:
                       "retried, because a retry cannot pass a monthly cap.",
                       file=sys.stderr)
                 break
+            quota_error_line = gemini_ultra_quota_error_line(AGY_CELL_LAUNCHER, output)
+            if quota_error_line:
+                print(f"{PROGRAM}: the Ultra sign-in's Gemini quota is used up; not "
+                      "retried, because a retry fails the same way until the reset.",
+                      file=sys.stderr)
+                break
             if attempt < FAST_READ_ATTEMPTS:
                 print(f"{PROGRAM}: attempt {attempt} of {FAST_READ_ATTEMPTS} failed "
                       f"(exit {exit_code}); retrying once.", file=sys.stderr)
@@ -1261,7 +1322,8 @@ def main() -> int:
                 **finish,
                 backup_line=(f"{SONNET_BACKUP_HASHTAG} The Gemini fast-clarify cell "
                              f"failed ({gemini_cause}), so {SONNET_BACKUP_MODEL} read "
-                             "this document instead, as the provenance stamp says."))
+                             "this document instead, as the provenance stamp says."),
+                quota_line=ultra_quota_line(quota_error_line) if quota_error_line else "")
         sonnet_cause = fast_clarify_cell_failure_cause(CLAUDE_CELL_LAUNCHER, exit_code, output)
     if bare_references:
         print(f"{PROGRAM}: bare issue, pull request or task numbers in this walk "
