@@ -283,7 +283,8 @@ def test_a_scratch_directory_a_sigterm_cannot_remove_is_reported_with_the_comman
           result.returncode == -signal.SIGTERM and len(left) == 1
           and f"the scratch directory {left[0]}, which held the text" in result.stderr
           and f"Run `rm -rf {left[0]}`" in result.stderr
-          and "run the check step again with the same flags" in result.stderr, described(result))
+          and f"Then run `python3 {PROGRAM} check` again, with the flag for the user's answer" in result.stderr,
+          described(result))
     removal = subprocess.run(["rm", "-rf", str(left[0])] if left else ["false"], capture_output=True, text=True)
     check("the command the message gives removes the scratch directory",
           removal.returncode == 0 and not case.left_in_temporary_directory(), case.left_in_temporary_directory())

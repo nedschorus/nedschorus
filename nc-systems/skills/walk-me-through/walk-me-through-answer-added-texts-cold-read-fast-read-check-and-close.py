@@ -184,7 +184,8 @@ SIGTERM_SCRATCH_NOT_REMOVED_LINES = (
     "walk-minutes do not record the user's answer, and the scratch directory {directory}, which held the text "
     "sent to that cold-read-fast-read, could not be removed: {error}\n"
     "Run `rm -rf {directory}`, because nothing else removes that directory and /tmp has a quota.\n"
-    "Then, if the user's answer is still to be recorded, run the check step again with the same flags.")
+    "Then run `python3 {program_path} check` again, with the flag for the user's answer as `--help` lists it, "
+    "so that the walk-minutes record his answer.")
 CHECK_MINUTES = "{item}: the user answered {answered}{hashtag} ({date_and_time}), which makes its change. Fast reads:"
 CHECK_DEFERRED_MINUTES = "{item}: the user answered deferred ({date_and_time}), which makes no change."
 CLOSE_TOOK_EFFECT_MINUTES = "{item}: {answered}; every text the change adds has had a fast read. {outcome}"
@@ -375,7 +376,8 @@ def removed_on_sigterm(directory):
         try:
             shutil.rmtree(directory)
         except OSError as error:
-            print(SIGTERM_SCRATCH_NOT_REMOVED_LINES.format(program=PROGRAM, directory=directory, error=error),
+            print(SIGTERM_SCRATCH_NOT_REMOVED_LINES.format(program=PROGRAM, program_path=Path(__file__).resolve(),
+                                                         directory=directory, error=error),
                   file=sys.stderr)
         signal.signal(number, signal.SIG_DFL)
         os.kill(os.getpid(), number)
