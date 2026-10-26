@@ -70,16 +70,17 @@ from pathlib import Path
 PROGRAM_PATH_ON_NED_BOX = ("/home/nedlern/Projects/nedschorus/nc-systems/general-tools/"
                            "claude-code-temp-folders-of-exited-agent-sessions-delete.py")
 FAILURES_INSTRUCTION = (
-    "Each failure above names what it left in place: a folder kept or partly deleted, or, when "
-    "the live agent-sessions could not be read, every folder. The next daily run tries again.\n"
-    "If the same failure is in this log on two days running: find its cause from the error, "
-    "fix it, then run `python3 " + PROGRAM_PATH_ON_NED_BOX + " --dry-run` on ned-box to check, "
-    "and the same command without --dry-run to delete.\n"
+    "Each failure above left its folder in place, whole or in part; after \"nothing was "
+    "deleted\", every folder. The next day's run tries again.\n"
+    "To clear a failure now: find its cause from the error and fix it, then on ned-box run "
+    "`python3 " + PROGRAM_PATH_ON_NED_BOX + " --dry-run`, which lists the folders it would delete "
+    "and the failures it still meets, and then the same command without --dry-run, which deletes "
+    "them.\n"
     "If you cannot fix the cause yourself, such as a folder only root may delete, tell the user "
     "which folder is kept and why, since ned-box's /tmp can fill up and stop every agent-session's "
-    "shell commands.")
+    "shell commands; a subagent tells the agent that dispatched it instead.")
 
-DEFAULT_TEMP_PARENTS = ["/tmp", "/home/nedlern/claude-code-tmp"]
+DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES = ["/tmp", "/home/nedlern/claude-code-tmp"]
 SESSION_FOLDER_NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 EXIT_DONE = 0
 EXIT_FAILED = 1
@@ -112,8 +113,10 @@ def live_session_ids(sessions_directory: Path, proc_directory: Path) -> set:
             continue
         except (OSError, ValueError, KeyError, TypeError) as error:
             raise LiveSessionsUnreadable(
-                f"the sessions file {path} could not be read as pid, sessionId and procStart: "
-                f"{type(error).__name__}: {error}")
+                f"the sessions file {path}, Claude Code's record of one running process, could not "
+                f"be read as pid, sessionId and procStart: {type(error).__name__}: {error}. While "
+                "a sessions file cannot be read, any folder might belong to a live agent-session. "
+                "If no process with the pid in the file's name runs, the file is stale: delete it")
         try:
             stat_fields = (proc_directory / str(pid) / "stat").read_text().rsplit(")", 1)[1].split()
         except (FileNotFoundError, ProcessLookupError):
@@ -135,7 +138,7 @@ def newest_change(folder: Path) -> float:
     return newest
 
 
-def delete_folders_of_exited_sessions(temp_parents, sessions_directory: Path,
+def claude_code_temp_folders_of_exited_agent_sessions_delete(temp_parents, sessions_directory: Path,
                                       proc_directory: Path, minimum_age_seconds: float,
                                       dry_run: bool, now=time.time) -> dict:
     """Delete what may go, and return the counts and the failures, one line each."""
@@ -205,7 +208,7 @@ def main(arguments=None):
                         help="print what would be deleted, and delete nothing")
     parser.add_argument("--temp-parent", action="append", dest="temp_parents",
                         help="a directory holding a claude-<uid>/ folder; repeat for several; "
-                             f"default {' and '.join(DEFAULT_TEMP_PARENTS)}")
+                             f"default {' and '.join(DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES)}")
     parser.add_argument("--sessions-directory", type=Path,
                         default=Path.home() / ".claude" / "sessions",
                         help="where Claude Code keeps a <pid>.json file per running process")
@@ -214,17 +217,18 @@ def main(arguments=None):
     parser.add_argument("--minimum-age-seconds", type=float, default=3600,
                         help="keep a folder changed more recently than this")
     options = parser.parse_args(arguments)
-    result = delete_folders_of_exited_sessions(
-        options.temp_parents or DEFAULT_TEMP_PARENTS, options.sessions_directory,
+    result = claude_code_temp_folders_of_exited_agent_sessions_delete(
+        options.temp_parents or DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES, options.sessions_directory,
         options.proc_directory, options.minimum_age_seconds, options.dry_run)
     for failure in result["failures"]:
         print(failure, file=sys.stderr)
     if result["failures"]:
         print(FAILURES_INSTRUCTION, file=sys.stderr)
-    print(f"{'would delete' if options.dry_run else 'deleted'} {result['deleted']} folders of "
-          f"exited agent-sessions; kept {result['kept_live']} of live agent-sessions and "
-          f"{result['kept_recent']} changed within {options.minimum_age_seconds:g} seconds; "
-          f"{len(result['failures'])} failures", flush=True)
+    print(f"folders of exited agent-sessions "
+          f"{'that would be deleted' if options.dry_run else 'deleted'}: {result['deleted']}; "
+          f"folders kept because their agent-session is live: {result['kept_live']}; "
+          f"folders kept because they changed in the last {options.minimum_age_seconds:g} "
+          f"seconds: {result['kept_recent']}; failures: {len(result['failures'])}", flush=True)
     return EXIT_FAILED if result["failures"] else EXIT_DONE
 
 

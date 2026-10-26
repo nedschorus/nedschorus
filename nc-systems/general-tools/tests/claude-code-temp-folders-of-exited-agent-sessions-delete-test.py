@@ -127,8 +127,9 @@ def run_selection_cases():
     check("a project folder still holding something is kept",
           (s.parents[0] / ROOT_NAME / "-home-nedlern-agents-other").is_dir())
     check("the summary counts what was deleted and kept",
-          "deleted 3 folders of exited agent-sessions; kept 1 of live agent-sessions and 1 changed "
-          "within 3600 seconds; 0 failures" in real.stdout, real.stdout)
+          "folders of exited agent-sessions deleted: 3; folders kept because their agent-session "
+          "is live: 1; folders kept because they changed in the last 3600 seconds: 1; failures: 0"
+          in real.stdout, real.stdout)
 
 
 def run_absent_inputs_cases():
@@ -170,7 +171,14 @@ def run_live_set_failure_cases():
     s = scene()
     (s.sessions / "4200.json").write_text("{not json")
     expect_nothing_deleted("a sessions file is not JSON", s, s.folder(0, DEAD),
-                           f"the sessions file {s.sessions / '4200.json'} could not be read")
+                           f"the sessions file {s.sessions / '4200.json'}, Claude Code's record of "
+                           "one running process, could not be read")
+    s = scene()
+    (s.sessions / "4200.json").write_text("{not json")
+    result = s.run()
+    check("an unreadable sessions file's failure says how to tell a stale one and what to do",
+          "If no process with the pid in the file's name runs, the file is stale: delete it"
+          in result.stderr, result.stderr)
 
     s = scene()
     (s.sessions / "4201.json").write_text(json.dumps({"pid": 4201, "sessionId": LIVE}))
@@ -254,7 +262,7 @@ def run_recheck_cases():
         calls.append(1)
         return time.time()
 
-    result = program.delete_folders_of_exited_sessions(
+    result = program.claude_code_temp_folders_of_exited_agent_sessions_delete(
         [str(s.parents[0])], s.sessions, s.proc, 3600, False, now=session_starts_during_the_run)
     check("a session that starts during the run keeps its folder",
           first.is_dir() and not second.exists() and result["kept_live"] == 1, str(result))
@@ -267,7 +275,7 @@ def run_recheck_cases():
         (s.sessions / "4300.json").write_text("{not json")
         return time.time()
 
-    result = program.delete_folders_of_exited_sessions(
+    result = program.claude_code_temp_folders_of_exited_agent_sessions_delete(
         [str(s.parents[0])], s.sessions, s.proc, 3600, False, now=sessions_file_breaks_during_the_run)
     check("a live set unreadable at the recheck keeps the folder and is a failure",
           first.is_dir() and len(result["failures"]) == 1

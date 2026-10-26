@@ -883,8 +883,8 @@ def run_launched_session_claude_code_tmpdir_cases(workspace: Path):
     deletion = importlib.util.module_from_spec(deletion_spec)
     deletion_spec.loader.exec_module(deletion)
     check("the daily temp-folder deletion sweeps the directory ned-box sessions are given",
-          supervisor.NED_BOX_CLAUDE_CODE_TMPDIR in deletion.DEFAULT_TEMP_PARENTS,
-          str(deletion.DEFAULT_TEMP_PARENTS))
+          supervisor.NED_BOX_CLAUDE_CODE_TMPDIR in deletion.DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES,
+          str(deletion.DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES))
 
 
 with fixture.handoff_supervisor_suite_workspace() as workspace:
