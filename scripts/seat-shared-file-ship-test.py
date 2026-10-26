@@ -29,6 +29,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import traceback
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 SHIP = SCRIPTS_DIR / "seat-shared-file-ship.py"
@@ -679,6 +680,63 @@ with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-race-test-") as r
               for label in ("after-listing", "after-copy", "after-rename",
                             "same-bytes")),
           str(names))
+
+# --- A local store step that hits an OS error is a FAILED line ----------------
+# Preparing the seat's directory and reading the stored copy's digest, local
+# store: an OSError is returned as the ssh path's failure, not raised.
+with tempfile.TemporaryDirectory(prefix="seat-shared-file-ship-local-failure-test-") as failing_name:
+    failing_scratch = pathlib.Path(failing_name)
+    saved_destination = os.environ.pop(DESTINATION_VARIABLE, None)
+    try:
+        failing = load_ship_module("seat_shared_file_ship_local_failure")
+    finally:
+        if saved_destination is not None:
+            os.environ[DESTINATION_VARIABLE] = saved_destination
+    source = failing_scratch / "local" / "survey.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("# survey\n", encoding="utf-8")
+
+    def ship_with_os_error_from(seats, method_name, failing_path):
+        real = getattr(pathlib.Path, method_name)
+
+        def failing_method(path, *args, **kwargs):
+            if path == failing_path:
+                raise OSError(28, "No space left on device (injected)")
+            return real(path, *args, **kwargs)
+
+        destination = failing.SeatsStoreDestination(
+            copy_host=None, citation_host=None, seats_path=seats)
+        out, err = io.StringIO(), io.StringIO()
+        setattr(pathlib.Path, method_name, failing_method)
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = failing.ship_one_file(destination, "cold-read-research",
+                                             source, "survey.md")
+        except OSError:
+            return None, traceback.format_exc(), ""
+        finally:
+            setattr(pathlib.Path, method_name, real)
+        return code, out.getvalue(), err.getvalue()
+
+    seats = failing_scratch / "store-mkdir" / "seats"
+    code, out, err = ship_with_os_error_from(seats, "mkdir", seats / "cold-read-research")
+    check("a local run whose mkdir of the seat's directory raises OSError is FAILED, "
+          "exit 1, with the OS's error on stderr",
+          code == 1 and out.startswith("FAILED: cold-read-research/survey.md")
+          and "No space left on device (injected)" in err,
+          f"exit {code}: {out}{err}")
+
+    seats = failing_scratch / "store-read" / "seats"
+    stored = seats / "cold-read-research" / "survey.md"
+    stored.parent.mkdir(parents=True)
+    stored.write_text("# survey, older\n", encoding="utf-8")
+    code, out, err = ship_with_os_error_from(seats, "read_bytes", stored)
+    check("a local run whose read of the stored copy raises OSError is FAILED, "
+          "exit 1, with the OS's error on stderr, and the stored copy left as it was",
+          code == 1 and out.startswith("FAILED: cold-read-research/survey.md")
+          and "No space left on device (injected)" in err
+          and stored.read_text(encoding="utf-8") == "# survey, older\n",
+          f"exit {code}: {out}{err}")
 
 print()
 if failures:
