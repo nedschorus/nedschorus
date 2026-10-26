@@ -429,12 +429,12 @@ def not_blocked(result):
 
 
 def r_line(word, item):
-    return (f"{word} asks to see {item} again: show it in full, heading included, word for word as the "
+    return (f"\"{word}\" asks to see {item} again: show it in full, heading included, word for word as the "
             "walk-document has it, and wait for his answer.")
 
 
 def numbered_r_line(number, item):
-    return r_line(f"\"{number} R\"", item)
+    return r_line(f"{number} R", item)
 
 
 def test_r_on_an_open_walk_goes_to_the_agent_and_does_not_block():
@@ -451,8 +451,9 @@ def test_r_on_an_open_walk_goes_to_the_agent_and_does_not_block():
               f"exit {result.returncode}, stdout {result.stdout!r}, stderr {result.stderr!r}")
     check("R records nothing in the minutes", (case.walk / f"{WALK_NAME}-minutes.md").read_text() == before)
     lines = Case(next_to_present="items 5 and 6 of 9").lines("r")
-    check("R on items shown together tells the agent to show them all",
-          lines is not None and lines[1] == r_line("R", "items 5 and 6 of 9"), f"lines {lines!r}")
+    check("R on items shown together and with no page tells the agent to show each in full, in the one wording",
+          lines is not None and lines[1:] == [r_line("R", "item 5 of 9"), r_line("R", "item 6 of 9")],
+          f"lines {lines!r}")
     case = Case(next_to_present="item 3 of 9")
     case.minutes("#next_to_present item 3 of 9\n\n#next_to_present none, closed")
     lines = case.lines("r")
@@ -514,7 +515,7 @@ def test_r_on_two_waiting_items_with_a_page_for_one_hands_its_closing_line_and_s
     closing = f"[Item 5 of 9, two small corrections]({PAGE_1}) · {LETTERS_AFTER_LINK}"
     check("R on items 5 and 6 with a page for item 5 alone hands item 5's closing line and has item 6 shown in full",
           lines is not None and lines[1:] == [page_line("R", "item 5 of 9", closing),
-                                              r_line("\"R\"", "item 6 of 9")], f"lines {lines!r}")
+                                              r_line("R", "item 6 of 9")], f"lines {lines!r}")
 
 
 def test_r_ignores_an_item_page_line_in_code_or_a_comment_of_the_minutes():
@@ -541,9 +542,71 @@ def test_r_closing_line_label_keeps_the_text_of_a_link_in_the_heading_and_drops_
           lines is not None and lines[1] == page_line("R", "item 4 of 9", closing), f"lines {lines!r}")
 
 
+def shown_as(markdown, parser):
+    """What the inline Markdown shows, as (type, content) pairs, with link tokens left out and the text on
+    either side of a link joined."""
+    shown = []
+    for token in parser.parseInline(markdown)[0].children:
+        if token.type in ("link_open", "link_close"):
+            continue
+        if token.type == "text" and shown and shown[-1][0] == "text":
+            shown[-1] = ("text", shown[-1][1] + token.content)
+        else:
+            shown.append((token.type, token.content))
+    return shown
+
+
+def closing_line_for_heading_point(point):
+    """The closing line R hands the agent for item 4 when its heading's point is the given Markdown."""
+    case = Case(next_to_present="item 4 of 9",
+                document=WALK_DOCUMENT.replace("## Item 4 of 9: a filter", f"## Item 4 of 9: {point}"))
+    case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    prefix = page_line("R", "item 4 of 9", "")
+    return lines[1][len(prefix):] if lines is not None and lines[1].startswith(prefix) else None
+
+
+def check_closing_line_shows_the_point(name, point, expected_label):
+    """Check the closing line is one link to the page, whose label shows what the heading's point shows."""
+    specification = importlib.util.spec_from_file_location("item_finder", FINDER_MODULE_FILE)
+    finder = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(finder)
+    parser = finder.markdown_parser()
+    closing = closing_line_for_heading_point(point)
+    children = parser.parseInline(closing)[0].children if closing is not None else []
+    types = [token.type for token in children]
+    label = closing[1:closing.index(f"]({PAGE_1})")] if closing and f"]({PAGE_1})" in closing else ""
+    check(name, closing == f"[Item 4 of 9, {expected_label}]({PAGE_1}) · {LETTERS_AFTER_LINK}"
+          and types.count("link_open") == 1 and types[0] == "link_open" and children[0].attrGet("href") == PAGE_1
+          and types.index("link_close") == len(types) - 2 and children[-1].content == f" · {LETTERS_AFTER_LINK}"
+          and shown_as(label, parser) == shown_as(f"Item 4 of 9, {point}", parser),
+          f"closing line {closing!r}")
+
+
+def test_r_closing_line_label_keeps_a_code_span_that_starts_or_ends_with_a_backtick_or_a_space():
+    check_closing_line_shows_the_point(
+        "R's closing line keeps the padding of a code span whose content starts or ends with a backtick or a space",
+        "a `` ]` `` mark, `` `a `` and `` ab` `` and `` `c` ``, `  d  ` spaces, and ` `",
+        "a `` ]` `` mark, `` `a `` and `` ab` `` and `` `c` ``, `  d  ` spaces, and ` `")
+
+
+def test_r_closing_line_label_keeps_entities_and_escapes_as_the_heading_shows_them():
+    check_closing_line_shows_the_point(
+        "R's closing line shows an escaped entity, an ampersand and an escaped asterisk as the heading shows them",
+        "keep &amp;copy; and A & B, \\&amp; and \\* and &copy;",
+        "keep \\&copy; and A \\& B, \\&amp; and \\* and ©")
+
+
 def test_the_closing_line_letters_are_the_walk_skills():
     check("SKILL.md writes the closing line with the letters the hook hands the agent",
           f"](<page link>) · {LETTERS_AFTER_LINK}" in SKILL_FILE.read_text())
+
+
+def test_r_on_a_next_to_present_line_that_names_no_item_tells_the_agent_to_show_what_it_names():
+    lines = Case(next_to_present="the filter").lines("r")
+    check("R when the `#next_to_present` line names no item still tells the agent, in the one wording, to show it",
+          lines is not None and lines[1] == r_line(
+              "R", "the item its minutes' `#next_to_present` line names, `the filter`,"), f"lines {lines!r}")
 
 
 def test_r_whose_item_cannot_be_read_still_goes_to_the_agent():

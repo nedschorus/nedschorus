@@ -262,7 +262,7 @@ MEANINGS = {
     "Z": (("Z means defer: move {item} as the walk-me-through skill's sentence on Z says.",
            "Then run the check step with --deferred, then close, and do what close prints."),
           ("Z means defer: postpone your last question or proposal and record it as a task.",)),
-    "R": (("{word} asks to see {item} again: show it in full, heading included, word for word as the "
+    "R": (("\"{word}\" asks to see {item} again: show it in full, heading included, word for word as the "
            "walk-document has it, and wait for his answer.",),
           ("{word} asks to see your last question or proposal again: show it in full, word for word, "
            "and wait for his answer.",)),
@@ -514,9 +514,16 @@ def without_links(markdown, parser):
         if token.type in ("link_open", "link_close"):
             continue
         if token.type in ("text", "image"):
-            pieces.append(re.sub(r"([\\`*_\[\]<>!])", r"\\\1", token.content))
+            # The parser has decoded the text's escapes and entities, so each character that would start
+            # markup or an entity is escaped again, or the closing line would show something the heading does not.
+            pieces.append(re.sub(r"([\\`*_\[\]<>!&])", r"\\\1", token.content))
         elif token.type == "code_inline":
-            pieces.append(token.markup + token.content + token.markup)
+            # The parser drops the padding space that lets a code span's content start or end with a backtick
+            # or a space; without it the rebuilt fence takes in an edge backtick, or the parser strips an edge space.
+            content = token.content
+            if content.strip(" ") and {content[0], content[-1]} & {"`", " "}:
+                content = f" {content} "
+            pieces.append(token.markup + content + token.markup)
         else:
             pieces.append(token.markup or token.content)
     return "".join(pieces)
@@ -717,7 +724,7 @@ def meaning_lines(answer, walk, in_walk):
         recommendation = walk.recommendations.get(numbers[0])
     values.update(word=word[:1].upper() + word[1:].lower(),
                   recommended=f" ({recommendation})" if recommendation else "")
-    if code == "R" and walk and any(number in walk.pages for number in numbers):
+    if code == "R" and walk and numbers:
         return [repeat_line(values["word"], number, walk) for number in numbers]
     lines = [line.format(**values) for line in MEANINGS[code][branch]]
     return lines + recommendation_unknown_lines(code, numbers, walk)
@@ -727,7 +734,7 @@ def repeat_line(answer, number, walk):
     """The line telling the agent how to answer an R for the item: its closing line, or the item in full."""
     line = closing_line(number, walk)
     if line is None:
-        return MEANINGS["R"][0][0].format(word=f"\"{answer}\"", item=item_name(number, walk))
+        return MEANINGS["R"][0][0].format(word=answer, item=item_name(number, walk))
     return REPEAT_PAGE_LINE.format(answer=answer, item=item_name(number, walk), closing_line=line)
 
 
