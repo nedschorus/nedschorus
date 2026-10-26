@@ -1076,6 +1076,28 @@ def test_a_later_awaiting_ruling_undoes_an_earlier_decision():
           described(closed) + case.minutes.read_text())
 
 
+FOUR_ITEM_DOCUMENT = """# A walk
+
+## Item 1 of 4: one
+
+## Item 2 of 4: two
+
+## Item 3 of 4: three
+
+## Item 4 of 4: summary
+"""
+
+
+def test_an_item_the_walk_document_keeps_is_named_next_whatever_the_minutes_say_of_its_removal():
+    case = Case(next_to_present="item 1 of 4", document=FOUR_ITEM_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n#removed_from_approval_walk item 2 of 4\n#next_to_present item 1 of 4\n")
+    case.run("check")
+    closed = case.run("close")
+    check("an item is removed from the approval-walk only by deleting its section from the walk-document",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 2 of 4",
+          described(closed) + case.minutes.read_text())
+
+
 def test_check_refuses_a_walk_document_close_would_refuse_before_any_fast_read():
     for document, next_to_present, reason in (
             ("# W\n\n## Item 2 of 3: two\n\n#new \"First.\"\n\n## Item 2 of 3: again\n\n#new \"Second.\"\n\n"
@@ -1150,83 +1172,6 @@ def test_a_part_answer_other_than_a_ao_or_d_or_combined_with_another_answer_flag
         check(f"check {' '.join(flags)} is refused as usage, writing nothing",
               result.returncode == 2 and "not allowed with argument" in result.stderr
               and "the user answered" not in case.minutes.read_text(), described(result))
-
-
-# As in the walk whose close named a removed item: the removed items' heading follows the later items, and the
-# summary item is a dotted part.
-REMOVED_ITEMS_DOCUMENT = """# A walk with items removed by a user-ruling
-
-## Item 1 of 4: one
-
-## Item 2 of 4: two
-
-## Item 3 of 4: three
-
-## Items 2.1, 2.2 and 2.3 of 4: removed from the approval-walk
-
-## Item 4.1 of 4: summary of the decisions
-
-## Item 4.2 of 4: what was done without asking
-"""
-REMOVAL_RULING = ("- Ruling (2026-10-24), items 2.1, 2.2 and 2.3 of 4: the user moved them out of the approval-walk "
-                  "into a GHI. <open>\n")
-
-
-def removed_items_case(next_to_present, recorded):
-    case = Case(next_to_present=next_to_present, document=REMOVED_ITEMS_DOCUMENT)
-    case.minutes.write_text(f"# Minutes\n\n{recorded}#next_to_present {next_to_present}\n")
-    return case
-
-
-def test_items_removed_from_the_approval_walk_are_never_named_next():
-    for removal in ("#removed_from_approval_walk items 2.1, 2.2 and 2.3 of 4\n",
-                    "- #removed_from_approval_walk items 2.1 to 2.3 of 4\n",
-                    "#removed_from_approval_walk item 2.1 of 4\n#removed_from_approval_walk items 2.2 and 2.3\n"):
-        case = removed_items_case("item 4.2 of 4", REMOVAL_RULING + removal + "".join(
-            f"Item {number} of 4: approved. <accepted>\n" for number in ("1", "2", "3", "4.1")))
-        case.run("check")
-        closed = case.run("close")
-        check(f"after the last item's answer, close closes the approval-walk rather than name an item removed by "
-              f"{removal.strip()!r}",
-              closed.returncode == 0 and marker(case) == "#next_to_present none, closed",
-              described(closed) + case.minutes.read_text())
-    case = removed_items_case("item 2 of 4", REMOVAL_RULING + "#removed_from_approval_walk items 2.1, 2.2 and 2.3 of 4\n"
-                              "Item 1 of 4: approved. <accepted>\n")
-    case.run("check")
-    closed = case.run("close")
-    check("close names the next item not removed from the approval-walk",
-          closed.returncode == 0 and marker(case) == "#next_to_present item 3 of 4",
-          described(closed) + case.minutes.read_text())
-    case = removed_items_case("items 3 and 2.1 of 4", REMOVAL_RULING
-                              + "#removed_from_approval_walk items 2.1, 2.2 and 2.3 of 4\n"
-                              "Item 1 of 4: approved. <accepted>\nItem 2 of 4: approved. <accepted>\n")
-    with case.minutes.open("a") as minutes:
-        minutes.write("item 3 of 4: the user answered approved (2026-10-25 10:00), which makes its change. "
-                      "Fast reads:\n- no proposed text marked\n")
-    closed = case.run("close")
-    check("an item removed from the approval-walk that was shown with the answered item does not stay waiting",
-          closed.returncode == 0 and marker(case) == "#next_to_present item 4.1 of 4",
-          described(closed) + case.minutes.read_text())
-
-
-def test_how_a_removed_from_approval_walk_line_is_read():
-    program = load_program()
-    walk_finder = program.load_walk_finder()
-    parser = walk_finder.markdown_parser()
-    for text, expected, case_name in (
-            ("#removed_from_approval_walk items 2.1, 2.2 and 2.3 of 4\n"
-             "Item 2.1 of 4: redrafted. <revised, awaiting ruling>\n", {"2.1", "2.2", "2.3"},
-             "a later awaiting-ruling line does not bring back an item removed from the approval-walk"),
-            ("Item 2 of 5: approved. <accepted>\n#removed_from_approval_walk item 2 of 5\n", {"2"},
-             "an item decided and then removed from the approval-walk stays recorded"),
-            ("#removed_from_approval_walk items 4 to 2 of 5\n", set(),
-             "a removal line naming a backwards range removes nothing"),
-            ("```\n#removed_from_approval_walk item 2 of 5\n```\n", set(),
-             "a removal line inside a fence removes nothing"),
-            ("Write `#removed_from_approval_walk item 2 of 5` when an item is removed.\n", set(),
-             "a removal line quoted inside a sentence removes nothing")):
-        decided, deferrals = program.minutes_record(walk_finder, text, parser)
-        check(case_name, decided == expected and not deferrals, repr((decided, deferrals)))
 
 
 def main():
