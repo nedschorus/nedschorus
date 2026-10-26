@@ -357,7 +357,7 @@ def test_a_fast_read_whose_record_was_refused_is_used_and_reported():
 def test_the_real_fast_read_whose_record_did_not_ship_is_used():
     case = Case()
     fast_read_program, environment = (
-        cold_read_scratch_fixture.cold_read_fast_read_scratch_copy_whose_stub_model_answers_in_chat(
+        cold_read_scratch_fixture.cold_read_fast_read_scratch_repository_whose_stub_agy_answers_in_chat(
             case.root, "nobody@no-such-host.invalid:/tmp/no-store"))
     result = case.run("check", fast_read_program=fast_read_program, environment=environment)
     records = fast_read_program.parents[2] / "cold-read-records"

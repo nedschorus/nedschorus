@@ -294,7 +294,7 @@ def main() -> int:
         # Oracle: exit code and stdout from the real fast read, whose record
         # cannot reach the log-store. Red: its exit 1 read as no fast read.
         fast_read_copy, fast_read_environment = (
-            cold_read_scratch_fixture.cold_read_fast_read_scratch_copy_whose_stub_model_answers_in_chat(
+            cold_read_scratch_fixture.cold_read_fast_read_scratch_repository_whose_stub_agy_answers_in_chat(
                 scratch / "real-fast-read", "nobody@no-such-host.invalid:/tmp/no-store"))
         fast_read_environment[OVERRIDE_VARIABLE] = str(fast_read_copy)
         fast_read_environment.pop(SEAT_NAME_VARIABLE, None)

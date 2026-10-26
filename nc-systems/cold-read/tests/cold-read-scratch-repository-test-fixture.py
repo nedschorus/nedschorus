@@ -4,7 +4,7 @@
 Not a test file, and not a program a seat runs: the cold-read suites beside
 it load it, and so do the suites of the programs that run
 cold-read-fast-read.py, through
-cold_read_fast_read_scratch_copy_whose_stub_model_answers_in_chat. Its name ends `-test-fixture.py` rather than `-test.py` so
+cold_read_fast_read_scratch_repository_whose_stub_agy_answers_in_chat. Its name ends `-test-fixture.py` rather than `-test.py` so
 scripts/run-all-test-suites.py, which finds suites with
 `git ls-files -- '*-test.py'`, does not run it as a suite of its own — it
 has no cases. The same ending keeps scripts/design-to-main/tests/
@@ -128,7 +128,7 @@ sys.exit(1)
 """
 
 
-def cold_read_fast_read_scratch_copy_whose_stub_model_answers_in_chat(scratch, ship_destination):
+def cold_read_fast_read_scratch_repository_whose_stub_agy_answers_in_chat(scratch, ship_destination):
     """A scratch repository holding a copy of nc-systems/cold-read/, and the
     environment under which that copy's cold-read-fast-read.py reads a
     document with stub models and ships its record to `ship_destination`.
