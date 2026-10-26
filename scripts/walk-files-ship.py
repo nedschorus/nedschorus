@@ -143,8 +143,8 @@ store, such as a dispositions update, writes no marker. Only a run that adds
 or replaces the closed minutes in the store writes the marker. That includes a
 run whose stdout line opens with `REFUSED:` or `FAILED:` because some other
 file did not ship, since the closed minutes are the close and a re-run finds
-them unchanged. A `FAILED:` run whose closed minutes never reached the store,
-such as one that could not reach the store at all, writes no marker. A
+them unchanged. A `FAILED:` run that stops before the renames, such as one
+whose copy could not reach the store, writes no marker. A
 `FAILED:` run whose renames of the replaced files failed without saying which
 were done writes the marker when the closed minutes were among them, since
 they may be in the store and a re-run would find them unchanged. With no
@@ -551,13 +551,16 @@ def ship_walk(destination: WalkStoreDestination, name: str,
                 return EXIT_FAILED
             if outcomes is None:
                 shipper.remove_staging_directory(destination.copy_host, staging_dir)
-                reason = ("ned-box unreachable"
-                          if renamed.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED
-                          else f"ssh exit {renamed.returncode}")
+                if destination.copy_host is None:
+                    reason = renamed.stdout
+                elif renamed.returncode == shipper.RSYNC_EXIT_CONNECTION_FAILED:
+                    reason = "ned-box unreachable"
+                else:
+                    reason = f"ssh exit {renamed.returncode}"
                 print(f"FAILED: {name} — {reason} while putting the copied files "
                       f"in place; a later run finishes it.")
                 sys.stderr.write(renamed.stderr)
-                # The remote renames stop partway, so the minutes may be in
+                # The renames stop partway, so the minutes may be in
                 # place already, and a re-run would find them unchanged.
                 if any(planned.source.name == minutes_name for planned in to_replace):
                     walk_closed_marker_written_when_minutes_close_the_walk(

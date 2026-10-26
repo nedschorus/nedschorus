@@ -822,8 +822,10 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
     by design: the walk's minutes and dispositions, a walk text the walk only
     added to (scripts/walk-files-ship.py) and a seat's own files
     (scripts/seat-shared-file-ship.py). Returns the process and
-    {store relative path: StagedReplacement}, or None for an unreachable
-    host, as store_inventory does. The staging directory is left for the
+    {store relative path: StagedReplacement}, or None, as store_inventory
+    returns for an unreachable host, when the host is unreachable or a step
+    fails partway, locally or remotely; None does not say which renames were
+    done. The staging directory is left for the
     caller to remove, with remove_staging_directory or by placing the rest.
 
     `replacements` is a list of (staged relative path, store relative path,
@@ -862,16 +864,22 @@ def replace_with_staged_files(host, staging_dir: pathlib.PurePosixPath,
         if others:
             return subprocess.CompletedProcess([], 0, "", ""), OtherShipmentStaging(others)
         outcomes = {}
-        store.mkdir(parents=True, exist_ok=True)
-        for staged_relative, store_relative, required in replacements:
-            target = store / store_relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            displaced = (hashlib.sha256(target.read_bytes()).hexdigest()
-                         if target.is_file() else None)
-            replaced = required is None or displaced == required
-            if replaced:
-                os.replace(staging / staged_relative, target)
-            outcomes[store_relative] = (replaced, displaced)
+        try:
+            store.mkdir(parents=True, exist_ok=True)
+            for staged_relative, store_relative, required in replacements:
+                target = store / store_relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                displaced = (hashlib.sha256(target.read_bytes()).hexdigest()
+                             if target.is_file() else None)
+                replaced = required is None or displaced == required
+                if replaced:
+                    os.replace(staging / staged_relative, target)
+                outcomes[store_relative] = (replaced, displaced)
+        except OSError as failed:
+            # Failed the way the remote script's exit 1 is, so a caller that
+            # handles that also handles this; stdout carries the OS's reason.
+            return subprocess.CompletedProcess([], 1, failed.strerror or str(failed),
+                                               f"{failed}\n"), None
         stored = {
             store_relative: hashlib.sha256(
                 (store / store_relative).read_bytes()).hexdigest()

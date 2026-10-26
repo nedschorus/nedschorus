@@ -1042,6 +1042,52 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_
           and not WALK_CLOSED_MARKER.is_file(),
           f"exit {failed_code}: {failed_out}{failed_err}")
 
+    # On the local path a rename that fails raises OSError, which must reach
+    # ship_walk as a failed result, or the marker decision is skipped.
+    saved_os_replace = os.replace
+    for failing_suffix, minutes_land in (("-dispositions", True), ("-minutes", False)):
+        WALK_CLOSED_MARKER.unlink(missing_ok=True)
+        partial_walks = close_scratch / f"local-rename{failing_suffix}-walks"
+        write_walk(partial_walks, CLOSE_WALK,
+                   {**FILES, "-minutes": closed_minutes, "-dispositions": "# dispositions\n"})
+        partial_store = close_scratch / f"local-rename{failing_suffix}-store" / "walk"
+        partial_store.mkdir(parents=True)
+        partial_destination = partial.WalkStoreDestination(
+            None, None, pathlib.PurePosixPath(partial_store))
+        failing_name = f"{CLOSE_WALK}{failing_suffix}.md"
+
+        def replace_that_fails_on(source, destination, *args, **kwargs):
+            if pathlib.Path(destination) == partial_store / failing_name:
+                raise OSError(28, "No space left on device (injected)")
+            saved_os_replace(source, destination, *args, **kwargs)
+
+        os.environ[SESSION_ID_VARIABLE] = PROBE_SESSION_ID
+        os.replace = replace_that_fails_on
+        try:
+            failed_code, failed_out, failed_err = ship_in_process()
+            os.replace = saved_os_replace
+            marker_after_failed_run = WALK_CLOSED_MARKER.is_file()
+            minutes_after_failed_run = (partial_store / minutes_file_name).is_file()
+            retry_code, retry_out, retry_err = ship_in_process()
+        finally:
+            os.replace = saved_os_replace
+            if saved_session is None:
+                os.environ.pop(SESSION_ID_VARIABLE, None)
+            else:
+                os.environ[SESSION_ID_VARIABLE] = saved_session
+        # The failed result does not say which renames were done, so the
+        # marker is written whenever the minutes were among them.
+        check(f"a local run whose rename of {failing_name} raises OSError is FAILED, "
+              f"exit 1, names the OS's reason, and writes the walk-closed marker",
+              failed_code == 1 and failed_out.startswith("FAILED:")
+              and one_line(failed_out) and "No space left on device" in failed_out
+              and minutes_after_failed_run == minutes_land and marker_after_failed_run,
+              f"exit {failed_code}: {failed_out}{failed_err}")
+        check(f"the retry after the local rename of {failing_name} failed ships the rest",
+              retry_code == 0 and retry_out.startswith("shipped:")
+              and WALK_CLOSED_MARKER.is_file(),
+              f"exit {retry_code}: {retry_out}{retry_err}")
+
 print()
 if failures:
     print(f"{len(failures)} case(s) FAILED:")
