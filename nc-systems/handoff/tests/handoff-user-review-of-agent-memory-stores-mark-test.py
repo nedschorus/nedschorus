@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for daily-memory-review-mark.py.
+"""Tests for handoff-user-review-of-agent-memory-stores-mark.py.
 
-Run: python3 nc-systems/handoff/tests/daily-memory-review-mark-test.py
+Run: python3 nc-systems/handoff/tests/handoff-user-review-of-agent-memory-stores-mark-test.py
 
 No case reaches ned-box. The stores and the marks directory are fixture
 directories, set through the program's constants; ned-box is played by an ssh
@@ -25,9 +25,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SYSTEM_DIRECTORY = Path(__file__).resolve().parent.parent
-SCRIPT_PATH = SYSTEM_DIRECTORY / "daily-memory-review-mark.py"
+SCRIPT_PATH = SYSTEM_DIRECTORY / "handoff-user-review-of-agent-memory-stores-mark.py"
 
-_spec = importlib.util.spec_from_file_location("daily_memory_review_mark", SCRIPT_PATH)
+_spec = importlib.util.spec_from_file_location("handoff_user_review_of_agent_memory_stores_mark", SCRIPT_PATH)
 mark = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mark)
 
@@ -137,7 +137,7 @@ def run_mark_cases(workspace: Path):
           started.is_file() and started.read_text(encoding="utf-8") == "2026-10-01T03:30:00Z\n",
           repr(started.read_text(encoding="utf-8") if started.is_file() else None))
     check("started prints where the mark was written",
-          stdout == "daily-memory-review-mark: started recorded for 2026-09-30 in "
+          stdout == "handoff-user-review-of-agent-memory-stores-mark: started recorded for 2026-09-30 in "
           f"nedlern@ned-box:{fixture.marks}/2026-09-30-started.txt\n", stdout)
 
     code, stdout, stderr, calls = fixture.run(["done"])
@@ -159,7 +159,7 @@ def run_mark_cases(workspace: Path):
           code == 1 and fixture.mark_files() == ["2026-09-30-done.txt", "2026-09-30-started.txt"]
           and stdout == "", f"{code} {fixture.mark_files()} {stdout!r}")
     check("when ned-box cannot be reached, stderr carries ssh's first line and what to do",
-          stderr == "daily-memory-review-mark: the started mark was not written (ssh "
+          stderr == "handoff-user-review-of-agent-memory-stores-mark: the started mark was not written (ssh "
           "nedlern@ned-box exited 255: ssh: connect to host ned-box port 22: No route to "
           "host) — tell the user what it said, and run this again once the cause is fixed.\n",
           stderr)
@@ -177,7 +177,7 @@ def run_mark_cases(workspace: Path):
     code, stdout, stderr, calls = on_ned_box.run(["done"], hostname="ned-box")
     check("done, on ned-box, writes nothing and says to run it from a Mac seat",
           code == 1 and on_ned_box.mark_files() == ["2026-09-30-started.txt"] and calls == []
-          and stderr == "daily-memory-review-mark: run `done` from a Mac seat when you "
+          and stderr == "handoff-user-review-of-agent-memory-stores-mark: run `done` from a Mac seat when you "
           "are on ned-box.\n", f"{code} {on_ned_box.mark_files()} {calls!r}\n{stderr}")
 
     invalid = subprocess.run([sys.executable, str(SCRIPT_PATH), "finished"],

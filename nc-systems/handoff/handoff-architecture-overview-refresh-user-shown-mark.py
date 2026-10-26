@@ -11,13 +11,13 @@ import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-PROGRAM = "daily-overview-refresh-reminder-mark"
+PROGRAM = "handoff-architecture-overview-refresh-user-shown-mark"
 
-_daily_memory_review_mark_spec = importlib.util.spec_from_file_location(
-    "daily_memory_review_mark",
-    Path(__file__).resolve().with_name("daily-memory-review-mark.py"))
-daily_memory_review_mark = importlib.util.module_from_spec(_daily_memory_review_mark_spec)
-_daily_memory_review_mark_spec.loader.exec_module(daily_memory_review_mark)
+_handoff_user_review_of_agent_memory_stores_mark_spec = importlib.util.spec_from_file_location(
+    "handoff_user_review_of_agent_memory_stores_mark",
+    Path(__file__).resolve().with_name("handoff-user-review-of-agent-memory-stores-mark.py"))
+handoff_user_review_of_agent_memory_stores_mark = importlib.util.module_from_spec(_handoff_user_review_of_agent_memory_stores_mark_spec)
+_handoff_user_review_of_agent_memory_stores_mark_spec.loader.exec_module(handoff_user_review_of_agent_memory_stores_mark)
 
 DAILY_OVERVIEW_REFRESH_REMINDER_MARKS_DIRECTORY = (
     "/home/nedlern/nedschorus-logs/daily-overview-refresh-reminder-marks")
@@ -37,24 +37,24 @@ def daily_overview_refresh_reminder_mark_file_name(pacific_date: str, system: st
 
 def daily_overview_refresh_reminder_mark_citation(file_name: str) -> str:
     """Return the mark citation in scp form, usable from either machine."""
-    return (f"{daily_memory_review_mark.NED_BOX_SSH_TARGET}:"
+    return (f"{handoff_user_review_of_agent_memory_stores_mark.NED_BOX_SSH_TARGET}:"
             f"{DAILY_OVERVIEW_REFRESH_REMINDER_MARKS_DIRECTORY}/{file_name}")
 
 
 def pacific_date_of(moment: datetime) -> str:
     """Return the Pacific YYYY-MM-DD date of a timezone-aware moment."""
-    return daily_memory_review_mark.pacific_time_of(moment).date().isoformat()
+    return handoff_user_review_of_agent_memory_stores_mark.pacific_time_of(moment).date().isoformat()
 
 
 def ssh_target_for_this_machine():
     """Return ned-box's ssh target from the Mac, or None on ned-box."""
-    return (None if daily_memory_review_mark.this_machine_is_ned_box()
-            else daily_memory_review_mark.NED_BOX_SSH_TARGET)
+    return (None if handoff_user_review_of_agent_memory_stores_mark.this_machine_is_ned_box()
+            else handoff_user_review_of_agent_memory_stores_mark.NED_BOX_SSH_TARGET)
 
 
 def read_daily_overview_refresh_reminder_marks(pacific_date: str, timeout: float) -> dict:
     """Return the date's marks as {file name: text}, raising on read failure."""
-    _, marks = daily_memory_review_mark.read_memory_store_and_review_marks(
+    _, marks = handoff_user_review_of_agent_memory_stores_mark.read_memory_store_and_review_marks(
         ssh_target_for_this_machine(), "", DAILY_OVERVIEW_REFRESH_REMINDER_MARKS_DIRECTORY,
         timeout,
         mark_file_name_pattern=f"{re.escape(pacific_date)}-{SYSTEM_NAME_PATTERN}[.]txt")
@@ -104,17 +104,17 @@ def main(argv=None, now=None) -> int:
     file_name = daily_overview_refresh_reminder_mark_file_name(shown_on, arguments.system)
     content = now.astimezone(timezone.utc).strftime(REMINDER_MARK_TIME_FORMAT)
     try:
-        daily_memory_review_mark.write_daily_memory_review_mark(
+        handoff_user_review_of_agent_memory_stores_mark.write_daily_memory_review_mark(
             ssh_target_for_this_machine(), file_name, content,
             DAILY_OVERVIEW_REFRESH_REMINDER_MARK_SSH_TIMEOUT_SECONDS,
             marks_directory=DAILY_OVERVIEW_REFRESH_REMINDER_MARKS_DIRECTORY)
-    except daily_memory_review_mark.DailyMemoryReviewReadOrWriteFailed as error:
+    except handoff_user_review_of_agent_memory_stores_mark.DailyMemoryReviewReadOrWriteFailed as error:
         print(f"{PROGRAM}: the mark for {arguments.system} could not be confirmed as "
               f"written, so the next agent-seat to reincarnate today may show the user the "
               f"same overview refresh again: {error}\n"
               f"Tell the user what the error above says.\n"
               f"When the user says the cause is fixed, run: "
-              f"nc-systems/handoff/daily-overview-refresh-reminder-mark.py {arguments.system} "
+              f"nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py {arguments.system} "
               f"--shown-on-pacific-date {shown_on}", file=sys.stderr)
         return 1
     print(f"{PROGRAM}: the reminder for {arguments.system} is recorded for "

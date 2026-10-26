@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-PROGRAM = "daily-memory-review-mark"
+PROGRAM = "handoff-user-review-of-agent-memory-stores-mark"
 
 PACIFIC_TIME_ZONE_NAME = "America/Los_Angeles"
 

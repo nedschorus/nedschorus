@@ -84,13 +84,13 @@ os.environ["PATH"] = (f"{SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY}{os.pathsep}"
 # mark is ever written for, and it writes nothing; on the Mac the ssh above
 # refuses its read.
 SSH_TARGET_FOR_THIS_MACHINE_UNPATCHED = None
-if hasattr(supervisor, "daily_overview_refresh_reminder_mark"):
-    supervisor.daily_overview_refresh_reminder_mark \
+if hasattr(supervisor, "handoff_architecture_overview_refresh_user_shown_mark"):
+    supervisor.handoff_architecture_overview_refresh_user_shown_mark \
         .DAILY_OVERVIEW_REFRESH_REMINDER_MARKS_DIRECTORY = str(
             SSH_THAT_NEVER_REACHES_NED_BOX_DIRECTORY / "no-overview-refresh-reminder-marks")
     SSH_TARGET_FOR_THIS_MACHINE_UNPATCHED = (
-        supervisor.daily_overview_refresh_reminder_mark.ssh_target_for_this_machine)
-    supervisor.daily_overview_refresh_reminder_mark.ssh_target_for_this_machine = (
+        supervisor.handoff_architecture_overview_refresh_user_shown_mark.ssh_target_for_this_machine)
+    supervisor.handoff_architecture_overview_refresh_user_shown_mark.ssh_target_for_this_machine = (
         lambda: None)
 
 # The agent-binary update cases take the machine-wide update lock, so the lock
