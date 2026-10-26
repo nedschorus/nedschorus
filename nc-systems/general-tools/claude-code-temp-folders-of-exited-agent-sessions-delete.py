@@ -8,8 +8,8 @@ Claude Code gives each agent-session a folder <parent>/claude-<uid>/<project>/<s
 holding its background tasks' output (tasks/) and its scratchpad (scratchpad/). <parent> is
 /tmp, or the directory CLAUDE_CODE_TMPDIR names. Claude Code does not delete the folder when the
 agent-session ends; its retention sweep removes only the scratchpad, with the transcript, after
-cleanupPeriodDays, 30 days by default. On ned-box /tmp is a tmpfs with a per-user quota, and on 2026-10-25 the
-folders filled it, so every shell command in every agent-session failed. This program runs once
+cleanupPeriodDays, 30 days by default. On ned-box /tmp is a tmpfs with a per-user quota, and the
+folders have filled it, so every shell command in every agent-session failed. This program runs once
 a day on ned-box and deletes those folders under both parents: /tmp, which agent-sessions
 started before handoff-supervisor.py set CLAUDE_CODE_TMPDIR still use, and
 /home/nedlern/claude-code-tmp, the value it sets. --temp-parent replaces that list.
@@ -43,9 +43,13 @@ failure: /home/nedlern/claude-code-tmp has none until an agent-session launched 
 
 SCHEDULE. Once a day at 07:30 on ned-box, installed by
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the table beside it,
-scheduled-jobs-on-each-machine.json; the cron line appends both output streams to
-~/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log. Linux only: it reads
-/proc.
+scheduled-jobs-on-each-machine.json, where a change to the schedule is made. Linux only: it
+reads /proc.
+
+  ned-box: one cron line.
+
+    30 7 * * * /usr/bin/python3 /home/nedlern/Projects/nedschorus/nc-systems/general-tools/claude-code-temp-folders-of-exited-agent-sessions-delete.py >> /home/nedlern/.claude/claude-code-temp-folders-of-exited-agent-sessions-delete.log 2>&1
+
 
 Exit status: 0 when done; 1 when a failure stopped a deletion or the whole run. When the live set
 cannot be read in full, because the sessions directory or a sessions file cannot be read or
