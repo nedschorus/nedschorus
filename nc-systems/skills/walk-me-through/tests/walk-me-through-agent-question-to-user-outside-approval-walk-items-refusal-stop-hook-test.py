@@ -32,6 +32,9 @@ HOOK_SCRIPT = (Path(__file__).resolve().parents[1]
 _hook_spec = importlib.util.spec_from_file_location("question_refusal_stop_hook", HOOK_SCRIPT)
 hook = importlib.util.module_from_spec(_hook_spec)
 _hook_spec.loader.exec_module(hook)
+# The walk-me-through skill's closing line after its link; the answer hook's suite checks SKILL.md holds it.
+CLOSING_LINE_ANSWER_LETTERS = ("A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · "
+                               "Z defer · E explain · O other options")
 SUITE_ROOT = Path(tempfile.mkdtemp(prefix="approval-walk-question-refusal-hook-test-")).resolve()
 FAKE_BIN = SUITE_ROOT / "bin"
 failures = []
@@ -645,6 +648,44 @@ def test_only_a_reminder_of_the_open_walks_waiting_items_is_skipped():
     two_waiting = Case(minutes="#next_to_present items 2 and 3 of 10")
     two_waiting.reply("PR 1922 merged.\n\nItem 2 of 10 is waiting for your answer.")
     check_silent("a reminder of one of two waiting items is skipped", two_waiting.run(model="yes"))
+
+
+def closing_line(count, point="the poem page is recommended for the wiki"):
+    label = f"Item {count}, {point}" if point else f"Item {count}"
+    return f"[{label}](https://claude.ai/artifact/x) · {CLOSING_LINE_ANSWER_LETTERS}"
+
+
+def test_only_the_waiting_items_closing_line_is_skipped():
+    case = Case()
+    for case_name, text in (
+            ("the waiting item's closing line after an event note passes, though its point differs from the "
+             "heading's and holds `recommended`", "PR 1922 merged.\n\n" + closing_line("2 of 10")),
+            ("the waiting item's closing line after the item shown in full passes",
+             ITEM_2_SHOWN + "\n\n" + closing_line("2 of 10")),
+            ("a closing line without a point passes", closing_line("2 of 10", point=None))):
+        case.reply(text)
+        check_silent(case_name, case.run(model="yes"))
+    check("a waiting item's closing line never reaches the model", case.model_calls() == [], case.model_calls())
+    for case_name, line in (
+            ("a closing line naming an item that is not waiting is checked", closing_line("3 of 10")),
+            ("a closing line with a larger total is checked", closing_line("2 of 11")),
+            ("a closing line with a smaller total is checked", closing_line("2 of 1")),
+            ("a closing line with text after its answer letters is checked", closing_line("2 of 10") + " Agree?"),
+            ("a closing line with text before it on its line is checked", "Recommended: " + closing_line("2 of 10")),
+            ("a closing line missing an answer letter is checked",
+             closing_line("2 of 10").replace(" · O other options", ""))):
+        case.reply("PR 1922 merged.\n\n" + line)
+        check_blocked(case_name, case.run(model="yes"), "approval-walk question check")
+    two_waiting = Case(minutes="#next_to_present items 2 and 3 of 10")
+    two_waiting.reply(closing_line("2 of 10") + "\n\n" + closing_line("3 of 10"))
+    check_silent("the closing line of each of two waiting items passes", two_waiting.run(model="yes"))
+
+
+def test_a_numbered_answer_line_is_quoted_without_its_number():
+    case = Case(document=WALK_DOCUMENT.replace(f"\n{ANSWER_LINE}\n", f"\n6. {ANSWER_LINE}\n"))
+    case.reply("Should I merge the pull request now?")
+    check_blocked("the refusal quotes an answer line written as a numbered list item without its number",
+                  case.run(), f"which the walk's other items end with: `{ANSWER_LINE}`.")
 
 
 def test_a_fault_exits_1_and_names_it():
