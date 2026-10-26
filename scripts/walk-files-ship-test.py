@@ -1003,6 +1003,45 @@ with tempfile.TemporaryDirectory(prefix="walk-files-ship-test-close-") as close_
           and "already there unchanged" in retry_out and WALK_CLOSED_MARKER.is_file(),
           f"exit {retry_code}: {retry_out}{retry_err}")
 
+    # The minutes are in the store unchanged and only the dispositions are
+    # replaced, so renames that fail cannot have landed the minutes.
+    WALK_CLOSED_MARKER.unlink(missing_ok=True)
+    partial_walks = close_scratch / "partial-walks-dispositions"
+    write_walk(partial_walks, CLOSE_WALK,
+               {**FILES, "-minutes": closed_minutes, "-dispositions": "# dispositions\n"})
+    partial_store = close_scratch / "partial-store-dispositions" / "walk"
+    partial_store.mkdir(parents=True)
+    partial_destination = partial.WalkStoreDestination(
+        None, None, pathlib.PurePosixPath(partial_store))
+    os.environ[SESSION_ID_VARIABLE] = PROBE_SESSION_ID
+    try:
+        first_code, first_out, first_err = ship_in_process()
+        WALK_CLOSED_MARKER.unlink(missing_ok=True)
+        (partial_walks / f"{CLOSE_WALK}-dispositions.md").write_text(
+            "# dispositions\n\nItem 1: approved.\n", encoding="utf-8")
+
+        def renames_that_fail(copy_host, staging_dir, walk_path, files):
+            return subprocess.CompletedProcess([], 255, "", "injected: ssh exit 255\n"), None
+
+        partial.shipper.replace_with_staged_files = renames_that_fail
+        failed_code, failed_out, failed_err = ship_in_process()
+    finally:
+        partial.shipper.replace_with_staged_files = real_renames
+        if saved_session is None:
+            os.environ.pop(SESSION_ID_VARIABLE, None)
+        else:
+            os.environ[SESSION_ID_VARIABLE] = saved_session
+    check("the first shipment of the walk with dispositions succeeds",
+          first_code == 0 and first_out.startswith("shipped:"),
+          f"exit {first_code}: {first_out}{first_err}")
+    check("a run whose minutes are already in the store unchanged, and whose renames "
+          "of the replaced dispositions fail, is FAILED, exit 1, and writes no "
+          "walk-closed marker",
+          failed_code == 1 and failed_out.startswith("FAILED:")
+          and "while putting the copied files in place" in failed_out
+          and not WALK_CLOSED_MARKER.is_file(),
+          f"exit {failed_code}: {failed_out}{failed_err}")
+
 print()
 if failures:
     print(f"{len(failures)} case(s) FAILED:")
