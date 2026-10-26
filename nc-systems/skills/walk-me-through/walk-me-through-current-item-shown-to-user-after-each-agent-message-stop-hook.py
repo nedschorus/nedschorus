@@ -7,8 +7,9 @@ full in its own message; a hook notice showing the item again was printed by
 the Claude Mac app as one "Stop says:" line per line of text, which the user
 took for a broken hook. A reply that names the waiting item by its running
 count, `Item N of M`, anywhere in its text passes: the item shown in full
-opens with its count, and any other reply can end with a line such as
-"Item 4 of 9 is waiting for your answer." A turn that wrote nothing to the
+opens with its count, and every reply ends with the item's closing line,
+whose link text opens with the count, as in "[Item 4 of 9, <the point>](<page
+link>) · A approve · ...". A turn that wrote nothing to the
 user, such as a silent turn after a background-task notice, is not checked.
 
 ONLY A TURN THAT ANSWERS THE USER is checked or blocks: a turn started by
@@ -145,8 +146,8 @@ REPLY_LEAVES_OUT_INSTRUCTIONS = (
     "If he has not yet seen the item, or asked to see it again, show it in full, word for word "
     "as the walk-document {document} has it, starting with its running count, as in "
     "`Item 4 of 9: <the point>`.",
-    "Otherwise, end your reply with one line naming it, as in `{example} {verb} waiting for "
-    "your answer.`",
+    "Otherwise, end your reply with its closing line, as the walk-me-through skill writes it: "
+    "`[{example}, <the point>](<page link>) · A approve · ...`.",
     "If his answer moved the approval-walk on, first run `python3 nc-systems/skills/walk-me-through/"
     "walk-me-through-answer-added-texts-cold-read-fast-read-check-and-close.py check`, adding the "
     "flag --help lists for his answer, if it lists one; when check passes, run the close command "
@@ -318,7 +319,7 @@ def output_for(payload, environment):
                else f"Items {', '.join(numbers[:-1])} and {numbers[-1]} of {total}")
     return block(REPLY_LEAVES_OUT_OPENING_TEMPLATE, REPLY_LEAVES_OUT_INSTRUCTIONS,
                  named=" and ".join(f"`Item {number} of {total}`" for number in left_out),
-                 example=example, verb="is" if len(numbers) == 1 else "are")
+                 example=example)
 
 
 def main():

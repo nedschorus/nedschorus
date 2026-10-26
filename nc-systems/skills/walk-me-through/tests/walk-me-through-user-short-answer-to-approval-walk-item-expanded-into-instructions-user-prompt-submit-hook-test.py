@@ -289,9 +289,10 @@ def test_o_asks_for_option_2_and_option_3_paragraphs():
                       "text and AI judgement" in line and "\"Option 3:\", a more creative option" in line
                       for line in lines)
               and any("how it differs from your recommendation, and its pluses and minuses" in line for line in lines)
-              and ("Replace the item's answer line in the walk-document with this one: \"Answer O2 or O3 to take "
-                   "that option; A still takes the recommendation, and the other answers work as before.\"") in lines
-              and lines[-1] == "Then show the item again in full, word for word as the walk-document has it."
+              and ("Below the two paragraphs, add this line: \"Answer O2 or O3 to take that option; A still takes "
+                   "the recommendation, and the other answers work as before.\"") in lines
+              and lines[-1] == ("Then republish the item's page as its new version, and show the item again in full, "
+                                "word for word as the walk-document has it.")
               and not any(line.startswith("The hook could not read") for line in lines), f"lines {lines!r}")
     lines = Case().lines("o")
     check("O with no approval-walk asks for the two options in the reply",
@@ -462,6 +463,54 @@ def test_r_on_an_open_walk_goes_to_the_agent_and_does_not_block():
     lines = Case(next_to_present="item 4 of 9").lines("r but shorter")
     check("R with more text after it goes to the agent as a rider",
           lines is not None and lines[1] == "The user added to the answer: \"but shorter\".", f"lines {lines!r}")
+
+
+PAGE_1 = "https://claude.ai/artifact/PageOfItem4Old"
+PAGE_2 = "https://claude.ai/artifact/PageOfItem4New"
+LETTERS_AFTER_LINK = ("A approve · AO approve as obvious · Aa approve after an advisor check · D disapprove · "
+                      "Z defer · E explain · O other options")
+
+
+def page_line(answer, item, closing_line):
+    return (f"\"{answer}\" asks to see {item} again. Its page shows it in full, so reply with only this closing "
+            f"line, word for word, and wait for his answer: {closing_line}")
+
+
+def test_r_hands_the_agent_the_closing_line_of_the_items_newest_page():
+    case = Case(next_to_present="item 4 of 9")
+    minutes = case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n#item_page item 3 of 9 https://claude.ai/artifact/Three"
+                           f"\n\n#item_page item 4 of 9 {PAGE_2}\n\n#next_to_present item 4 of 9")
+    before = minutes.read_text()
+    closing = f"[Item 4 of 9, a filter]({PAGE_2}) · {LETTERS_AFTER_LINK}"
+    for prompt in ("r", "repeat"):
+        result = case.run(prompt)
+        lines = case.lines(prompt)
+        check(f"{prompt!r} with a recorded page hands the agent the newest page's closing line, and no decision",
+              not_blocked(result) and lines is not None
+              and lines[1] == page_line(prompt[:1].upper() + prompt[1:], "item 4 of 9", closing)
+              and not any(PAGE_1 in line for line in lines), f"lines {lines!r}")
+    check("R with a page records nothing in the minutes", minutes.read_text() == before)
+    lines = case.lines("3 r")
+    check("a numbered R hands the agent the closing line of the item it names",
+          lines is not None and page_line("3 R", "item 3 of 9",
+                                          f"[Item 3 of 9, the opening sentence](https://claude.ai/artifact/Three) · "
+                                          f"{LETTERS_AFTER_LINK}") in lines, f"lines {lines!r}")
+
+
+def test_r_on_an_item_with_no_page_tells_the_agent_to_show_it_in_full():
+    case = Case(next_to_present="item 4 of 9")
+    case.minutes(f"#item_page item 3 of 9 {PAGE_1}\n\n#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    check("R on an item the minutes record no page for tells the agent to show the item in full",
+          lines is not None and lines[1] == r_line("R", "item 4 of 9"), f"lines {lines!r}")
+    lines = case.lines("4 r")
+    check("a numbered R on an item with no page tells the agent to show it in full",
+          lines is not None and numbered_r_line(4, "item 4 of 9") in lines, f"lines {lines!r}")
+
+
+def test_the_closing_line_letters_are_the_walk_skills():
+    check("SKILL.md writes the closing line with the letters the hook hands the agent",
+          f"](<page link>) · {LETTERS_AFTER_LINK}" in SKILL_FILE.read_text())
 
 
 def test_r_whose_item_cannot_be_read_still_goes_to_the_agent():
