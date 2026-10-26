@@ -515,7 +515,9 @@ def without_links(markdown, parser):
         if token.type in ("link_open", "link_close"):
             continue
         if token.type in ("text", "image"):
-            pieces.append(re.sub(r"([\\`*_\[\]<>!])", r"\\\1", token.content))
+            # The parser has decoded the text's escapes and entities, so each character that would start
+            # markup or an entity is escaped again, or the closing line would show something the heading does not.
+            pieces.append(re.sub(r"([\\`*_\[\]<>!&])", r"\\\1", token.content))
         elif token.type == "code_inline":
             # The parser drops the padding space that lets a code span's content start or end with a backtick
             # or a space; without it the rebuilt fence takes in an edge backtick, or the parser strips an edge space.

@@ -589,6 +589,13 @@ def test_r_closing_line_label_keeps_a_code_span_that_starts_or_ends_with_a_backt
         "a `` ]` `` mark, `` `a `` and `` ab` `` and `` `c` ``, `  d  ` spaces, and ` `")
 
 
+def test_r_closing_line_label_keeps_entities_and_escapes_as_the_heading_shows_them():
+    check_closing_line_shows_the_point(
+        "R's closing line shows an escaped entity, an ampersand and an escaped asterisk as the heading shows them",
+        "keep &amp;copy; and A & B, \\&amp; and \\* and &copy;",
+        "keep \\&copy; and A \\& B, \\&amp; and \\* and ©")
+
+
 def test_the_closing_line_letters_are_the_walk_skills():
     check("SKILL.md writes the closing line with the letters the hook hands the agent",
           f"](<page link>) · {LETTERS_AFTER_LINK}" in SKILL_FILE.read_text())
