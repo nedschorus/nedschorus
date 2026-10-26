@@ -57,13 +57,15 @@ waiting, whatever its total. The line is compared as the agent wrote it,
 before the removals above, because the item holds the question as its asker
 wrote it, code spans and quotations included. Both sides are compared as
 sentences: each line, once `normalized` has dropped its marks, is cut where a
-sentence ends, after a colon and before an opening quotation mark, so that a
-question quoted inside a longer sentence of the item, or put after its
-`asks:`, is a sentence of its own; each sentence is then its words and
-question marks alone, the runs of letters and digits and each `?`, every
-other mark ignored. A line is held only when its sentences are, in order,
-whole sentences of the item, so a sentence that is only the start or the end
-of an item's sentence is not held. An item's lines run from its opening,
+sentence ends and after a colon, so that a question on a line of its own in
+the item, or after its `asks:`, is a sentence of its own; each sentence is
+then its words and question marks alone, the runs of letters and digits and
+each `?`, every other mark ignored. A line is held only when its sentences
+are, in order, whole sentences of the item, so neither a sentence that is
+only the start or the end of an item's sentence nor a question quoted inside
+a longer sentence of the item is held; the refusal's step 1 tells the agent
+to put the flagged text after a colon or on a line of its own, and the hook
+refuses until the item holds it so. An item's lines run from its opening,
 as the approval-walk finder reads openings, when it has one, to the next
 item's opening or its unit's end, and are otherwise its whole unit; but an
 item without an opening under a heading shared by several items holds no
@@ -145,7 +147,7 @@ SENTENCE_END = re.compile(r"(?:(?<=[.?!])|(?<=[.?!][\"'\u201d\u2019)*_]))\s+")
 TRAILING_MARKS = "*_ )\"'”’"
 QUOTED = re.compile(r"\"[^\"\n]+\"|“[^”\n]+”")
 WORD = re.compile(r"\w+|\?")
-SENTENCE_START = re.compile(r"(?<=:)\s+|\s+(?=[\"\u201c])")
+SENTENCE_START = re.compile(r"(?<=:)\s+")
 LINK = re.compile(r"\[([^\]\n]*)\]\([^)\n]*\)")
 LIST_ITEM = re.compile(r"^(?:[-+*]|\d+[.)])\s")
 LINE_MARKS = re.compile(r"^\s*(?:(?:[-+*>]|\d+[.)])\s+)+")
@@ -186,8 +188,10 @@ REFUSAL_INSTRUCTIONS = (
     "If the flagged text asks the user to decide or answer something, do these four steps:",
     "1. Add it to the walk-document {document} as an interruption item headed `## Item {new_item} of "
     "{new_total}: <the point of the question>`, placed right after item {last_waiting}. Quote the question whole, "
-    "as its asker wrote it, whether you or another agent, with the flagged text in it word for word, because "
-    "that is what lets this check pass the question once it is in the item, give your recommendation as `Recommendation: <what you recommend doing>.`, and end the item with "
+    "as its asker wrote it, whether you or another agent, with the flagged text in it word for word, either after "
+    "a colon, as in `merge-lane-2 asks: <the flagged text>`, or on a line of its own: this hook passes the "
+    "question only when the item in the walk-document holds the flagged text in one of those two ways, and "
+    "refuses again until it does. Give your recommendation as `Recommendation: <what you recommend doing>.`, and end the item with "
     "{answer_line}.",
     "2. Change the walk's item count M from {total} to {new_total} in every item heading of {document} that "
     "carries `of {total}`, and in "
