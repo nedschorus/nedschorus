@@ -392,12 +392,46 @@ with tempfile.TemporaryDirectory() as scratch:
           == "a-2026-09-16")
     # RECORDS_DIR is pointed at scratch so the result cannot pick up a -2 from
     # whatever this checkout's own cold-read-records/ happens to hold.
+    # The log-store is pointed at scratch too, for every in-process call below,
+    # so a name the real store holds cannot give a -2 either.
+    in_process_log_store = scratch / "in-process-log-store"
+    os.environ[RECORD_SHIP_DESTINATION_VARIABLE] = str(in_process_log_store)
     name_module.RECORDS_DIR = scratch / "in-process-records"
     skill_report = name_module.fast_read_report_path_for_target(skill_target, clock_at_1042)
     check("the fast read's report is bare fast-read.md inside the record",
           skill_report == scratch / "in-process-records" / "SKILL-cold-read-2026-09-16"
           / "fast-read.md",
           str(skill_report))
+    # Another checkout's read of the document that day is in the log-store
+    # alone: the name passes over it, as this checkout's own records are.
+    (in_process_log_store / "SKILL-cold-read-2026-09-16").mkdir(parents=True)
+    skill_report_beside_the_store = name_module.fast_read_report_path_for_target(
+        skill_target, clock_at_1042)
+    check("a record name the log-store holds is passed over, though this checkout lacks it",
+          skill_report_beside_the_store == scratch / "in-process-records"
+          / "SKILL-cold-read-2026-09-16-2" / "fast-read.md",
+          str(skill_report_beside_the_store))
+    if os.geteuid() != 0:
+        import contextlib
+        import io
+        in_process_log_store.chmod(0)
+        unlisted_stderr = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(unlisted_stderr):
+                skill_report_unlisted = name_module.fast_read_report_path_for_target(
+                    skill_target, clock_at_1042)
+        finally:
+            in_process_log_store.chmod(0o755)
+        check("when the log-store cannot be listed, the name free in this checkout is used",
+              skill_report_unlisted == scratch / "in-process-records"
+              / "SKILL-cold-read-2026-09-16" / "fast-read.md", str(skill_report_unlisted))
+        check("and the fast read says on stderr that the name was not checked against the "
+              "log-store",
+              unlisted_stderr.getvalue().startswith(
+                  "cold-read-fast-read: the record name SKILL-cold-read-2026-09-16 is free "
+                  "in this checkout")
+              and str(in_process_log_store) in unlisted_stderr.getvalue(),
+              unlisted_stderr.getvalue())
     walk_target = name_module.REPO_ROOT / "docs" / "walk" / "some-item-draft.md"
     check("the walk-draft route is untouched: docs/walk/<name>-suggestions.md, whatever the clock",
           name_module.fast_read_report_path_for_target(walk_target, clock_at_1042)

@@ -7,7 +7,7 @@ the scrubbed defect lists, launches the two ruled judge runs in parallel
 through nc-systems/cold-read/cold-read-restater-judge-cell.py, and writes their two reports
 and one combined result into a cold-read-record of this restater's own --
 its own, and no earlier judging's: the default directory name takes a -2, -3
-suffix when the day's name is taken, the way nc-systems/cold-read/cold-read-grid.py's
+suffix when the day's name is taken in this checkout or in the log-store, the way nc-systems/cold-read/cold-read-grid.py's
 `make_record_dir` does, because the shared module clears a report path before
 every run and a second judging on one name would delete the first's reports.
 
@@ -117,6 +117,11 @@ _record_names_spec = importlib.util.spec_from_file_location(
 record_names = importlib.util.module_from_spec(_record_names_spec)
 _record_names_spec.loader.exec_module(record_names)
 RECORDS_DIR = record_names.RECORDS_DIR
+# Loaded for a record name free in the log-store, which --all ships these records to.
+_record_shipper_spec = importlib.util.spec_from_file_location(
+    "cold_read_record_ship", pathlib.Path(__file__).with_name("cold-read-record-ship.py"))
+record_shipper = importlib.util.module_from_spec(_record_shipper_spec)
+_record_shipper_spec.loader.exec_module(record_shipper)
 JUDGE_CELL_LAUNCHER = pathlib.Path(__file__).with_name("cold-read-restater-judge-cell.py")
 
 _judge_cell_spec = importlib.util.spec_from_file_location(
@@ -177,7 +182,7 @@ def build_runner_argument_parser():
              "owns what is already in it. By default "
              "cold-read-records/<date>-restater-judge-<class>/ under the "
              "repository root, which is gitignored, with -2, -3 appended when "
-             "that name is taken so a second judging of one restater on one "
+             "that name is taken here or in the log-store so a second judging of one restater on one "
              "day cannot land on the first")
     return parser
 
@@ -185,8 +190,11 @@ def build_runner_argument_parser():
 def make_record_directory_for(restater_class: str, today: str) -> pathlib.Path:
     """Create a fresh record directory for the restater."""
     # Reserve the name with mkdir: reusing a directory would let report pre-clearing erase earlier results.
-    record_dir = record_names.fresh_record_directory(
+    record_dir, store_unlisted = record_shipper.first_record_directory_unused_in_checkout_and_log_store_and_log_store_listing_error(
         RECORDS_DIR / f"{today}-restater-judge-{restater_class}")
+    if store_unlisted is not None:
+        print(record_shipper.log_store_listing_failed_record_name_may_collide_warning_line(
+            "cold-read-restater-judge-runner", record_dir, store_unlisted), file=sys.stderr)
     record_dir.mkdir(parents=True)
     return record_dir
 
