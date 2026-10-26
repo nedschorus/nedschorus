@@ -1474,6 +1474,19 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-local-failure-tes
           and (replace_store / "m.md").read_text(encoding="utf-8") == "new minutes\n",
           repr(renamed))
 
+# --- A failed store step's reason: local stdout, ned-box unreachable, ssh exit --
+failure_reason = (failing_shipper
+                  .failed_log_store_step_reason_text_local_stdout_or_ned_box_unreachable_or_ssh_exit)
+check("a failed local store step's reason is its stdout, the OS's reason, not an ssh exit",
+      failure_reason(None, subprocess.CompletedProcess([], 1, "Permission denied", ""))
+      == "Permission denied")
+check("a failed remote store step that ssh exited 255 on gives 'ned-box unreachable'",
+      failure_reason("nedlern@ned-box", subprocess.CompletedProcess([], 255, "out", ""))
+      == "ned-box unreachable")
+check("a failed remote store step with any other exit gives 'ssh exit N'",
+      failure_reason("nedlern@ned-box", subprocess.CompletedProcess([], 1, "out", ""))
+      == "ssh exit 1")
+
 # --- A relative record directory means the one under the current directory --
 # Run from a directory outside the shipper's checkout with a relative path:
 # the record under that directory is the one shipped.
