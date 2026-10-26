@@ -767,17 +767,17 @@ PARTS_DOCUMENT = """# A walk with parts
 
 The fix changes three phrases in `docs/example.md`.
 
-1. "item close names" becomes "item that `close` names".
-2. "a walk" becomes "an approval-walk".
-3. "fast read" becomes "cold-read-fast-read".
+Part 1. "item close names" becomes "item that `close` names".
+Part 2. "a walk" becomes "an approval-walk".
+
+Part 3. "fast read" becomes "cold-read-fast-read".
 
 Recommendation: make all three changes.
 
-## Item 7 of 9: labelled parts
+## Item 7 of 9: parts in separate paragraphs, one ending with a hard break
 
-**Part 1:** drop a word.
-
-### Part 2
+Part 1. drop a word.\\
+Part 2.
 
 Drop another.
 
@@ -895,7 +895,7 @@ def test_a_numbered_answer_within_the_waiting_items_parts_answers_the_parts():
               "R on a part asks to see item 4 of 9 again: show it in full, heading included, word for word as the "
               "walk-document has it."], f"lines {lines!r}")
     lines = Case(next_to_present="item 7 of 9", document=PARTS_DOCUMENT).lines("1 a 2 d")
-    check("parts labelled `**Part 1:**` and `### Part 2` are read as parts",
+    check("a `Part 2.` line after a hard break, with nothing after its period, is read as a part",
           lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: D", "item 7 of 9", "2")]
           + parts_different_letters_lines("--part-answer 1=A --part-answer 2=D"), f"lines {lines!r}")
 
@@ -938,20 +938,64 @@ def test_numbers_are_item_numbers_when_the_waiting_item_has_no_parts_or_a_number
           f"lines {lines!r}")
 
 
-def test_part_numbers_are_read_only_from_top_level_lines_outside_code_and_only_as_a_run_from_1():
+def test_part_numbers_are_read_only_from_part_n_lines_of_top_level_paragraphs_outside_code_and_as_a_run_from_1():
     for name, body, prompt in (
-            ("numbers inside a fenced code block", "```\n1. one\n2. two\n```", "1 a 2 d"),
-            ("a nested list", "- a list\n  1. one\n  2. two", "1 a 2 d"),
-            ("a single numbered line", "1. only one", "1 a"),
-            ("numbers that do not start at 1", "2. two\n3. three", "2 a 3 d"),
-            ("more than five numbers", "1. a\n2. b\n3. c\n4. d\n5. e\n6. f", "1 a 2 d"),
-            ("a decimal at a line's start", "1.5 litres\n2.5 litres", "1 a 2 d")):
+            ("plain numbered lines", "1. one\n2. two", "1 a 2 d"),
+            ("bold parts", "**Part 1.** one\n\n**Part 2:** two", "1 a 2 d"),
+            ("bold parts with underscores", "__Part 1__ one\n\n__Part 2__ two", "1 a 2 d"),
+            ("heading parts", "### Part 1\n\none\n\n### Part 2\n\ntwo", "1 a 2 d"),
+            ("parts with a colon", "Part 1: one\nPart 2: two", "1 a 2 d"),
+            ("parts in lower case", "part 1. one\npart 2. two", "1 a 2 d"),
+            ("parts inside a fenced code block", "```\nPart 1. one\nPart 2. two\n```", "1 a 2 d"),
+            ("parts in a nested list", "- a list\n  Part 1. one\n  Part 2. two", "1 a 2 d"),
+            ("parts in a quotation", "> Part 1. one\n> Part 2. two", "1 a 2 d"),
+            ("parts not at a line's start", "*x*Part 1. one\n`x`Part 2. two", "1 a 2 d"),
+            ("parts inside code spans that open their lines", "`Part 1. one`\n`Part 2. two`", "1 a 2 d"),
+            ("a single part", "Part 1. only one", "1 a"),
+            ("parts that do not start at 1", "Part 2. two\nPart 3. three", "2 a 3 d"),
+            ("more than five parts", "\n".join(f"Part {n}. x" for n in range(1, 7)), "1 a 2 d"),
+            ("a decimal after Part", "Part 1.5 litres\nPart 2.5 litres", "1 a 2 d")):
         document = f"## Item 4 of 9: no real parts\n\n{body}\n\nRecommendation: keep it.\n"
         lines = Case(next_to_present="item 4 of 9", document=document).lines(prompt)
         first = prompt.split()[0]
         check(f"{name} are not parts, so {prompt!r} is read as item numbers",
               lines is not None and lines[1].startswith(f"The answer gives a letter to item {first} of 9"),
               f"lines {lines!r}")
+
+
+def test_a_part_n_line_inside_a_multiline_code_span_is_not_a_part():
+    body = "Part 1. one `code that runs\nPart 3. on` here.\nPart 2. two"
+    document = f"## Item 4 of 9: two real parts\n\n{body}\n\nRecommendation: keep it.\n"
+    case = Case(next_to_present="item 4 of 9", document=document)
+    lines = case.lines("1 a 2 d")
+    check("`Part 1.` and `Part 2.` lines outside a code span are parts 1 and 2",
+          lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: D", last="2")]
+          + parts_different_letters_lines("--part-answer 1=A --part-answer 2=D"), f"lines {lines!r}")
+    lines = case.lines("1 a 2 d 3 a")
+    check("a `Part 3.` line inside a multiline code span is no part, so '1 a 2 d 3 a' is read as item numbers",
+          lines is not None and lines[1].startswith("The answer gives a letter to item 1 of 9"), f"lines {lines!r}")
+
+
+def test_parts_in_a_paragraph_that_runs_up_to_the_next_items_heading_are_read():
+    document = ("## Item 4 of 9: parts last\n\nRecommendation: keep it.\n\nPart 1. one\nPart 2. two\n"
+                "## Item 5 of 9: next\n\nRecommendation: do five.\n")
+    lines = Case(next_to_present="item 4 of 9", document=document).lines("1 a 2 d")
+    check("a parts paragraph with no blank line before the next item's heading still gives the item its parts",
+          lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: D", last="2")]
+          + parts_different_letters_lines("--part-answer 1=A --part-answer 2=D"), f"lines {lines!r}")
+
+
+def test_parts_in_an_items_opening_paragraph_under_a_shared_heading_are_that_items_alone():
+    document = shared_heading_document("**Item 5: the path.** Recommendation: fix the path.\n\n"
+                                       "**Item 6: the sentence.**\nPart 1. one\nPart 2. two\n\n"
+                                       "Recommendation: drop it.\n")
+    lines = Case(next_to_present="item 6 of 9", document=document).lines("1 a 2 d")
+    check("`Part N.` lines in item 6's opening paragraph are item 6's parts",
+          lines is not None and lines[1:] == [parts_read_line("part 1: A, part 2: D", "item 6 of 9", "2")]
+          + parts_different_letters_lines("--part-answer 1=A --part-answer 2=D"), f"lines {lines!r}")
+    lines = Case(next_to_present="item 5 of 9", document=document).lines("1 a 2 d")
+    check("`Part N.` lines in item 6's opening paragraph are not parts of item 5, which comes before it",
+          lines is not None and lines[1].startswith("The answer gives a letter to item 1 of 9"), f"lines {lines!r}")
 
 
 def test_numbered_r_whose_walk_document_or_marker_cannot_be_read_still_goes_to_the_agent():

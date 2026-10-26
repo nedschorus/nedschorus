@@ -70,12 +70,13 @@ the agent looks for the item itself.
 
 PARTS OF THE WAITING ITEM. The walk-me-through skill lets one item hold up to
 five parts of a single fix, numbered 1 to 5, and answered part by part as in
-`1 a 2 d`. The hook reads a part's number from a line in the item's part of
-the walk-document, outside code, that starts at the line's first character,
-after any heading marks and `**` or `__`, with `Part N`, or with N then `.` or
-`)` and a space, emphasis or the line's end: `1. ...`, `**1.** ...`,
-`**Part 2:** ...`, `### Part 3`. The item holds parts when those numbers run
-1 to K, K from 2 to 5. When exactly one item is waiting, it holds parts, and
+`1 a 2 d`. The hook reads a part's number only from a line of a top-level
+paragraph in the item's part of the walk-document that opens with `Part N.`,
+capital P, then a space or the line's end, as the skill has each part start:
+a heading, bold, a list item, a quotation, `Part N:` or a bare `N.` is no
+part, and neither is a line in fenced or indented code or inside an inline
+code span, which the markdown parser tells apart. The item holds parts when
+those numbers run 1 to K, K from 2 to 5. When exactly one item is waiting, it holds parts, and
 every number of a numbered answer is one of its part numbers, the answer
 answers those parts, not items, unless the answer says `item`, as in `item 2 a`
 or `approve item 2`, or its only number is the waiting item's own, as in `2 a`
@@ -151,9 +152,7 @@ LETTER_RIDER = re.compile(
     rf"{NOT_AN_ITEM_NUMBER}(?P<rest>\S.*)$", re.I | re.S)
 WORD_RIDER = re.compile(rf"^(?P<answer>{WORD})\b[\s,;:.\-]+{NOT_AN_ITEM_NUMBER}(?P<rest>\S.*)$", re.I | re.S)
 RECOMMENDATION = re.compile(r"Recommendation:(.*)$", re.I | re.M)
-PART_START = re.compile(
-    r"^(?:#{1,6}\s+)?(?:\*\*|__)?(?:part\s+(?P<labelled>\d+)\b|(?P<listed>\d+)(?:\*\*|__)?[.)](?=[\s*_]|$))",
-    re.I)
+PART_START = re.compile(r"^Part (\d+)\.(?=\s|$)")
 MOST_PARTS = 5
 ITEM_PAGE = re.compile(rf"^#item_page\s+item\s+({NUMBER})\s+of\s+\d+\s+(\S+)\s*$", re.I | re.M)
 HEADING_POINT = re.compile(r"^[#\s*]*items?\s[^:]*:\s*(.*?)[\s*]*$", re.I)
@@ -491,7 +490,7 @@ def read_walk(cwd):
         total = totals.pop() if len(totals) == 1 else None
     recommendations, problems, parts = recommendations_in(
         walk_finder.prose_lines(text, parser, tokens), walk_finder.item_opening_lines(text, parser, tokens),
-        spans, total, walk_finder)
+        spans, total, walk_finder, part_starts(tokens))
     return WalkState(name, count[0], numbers, total, recommendations, None, problems, parts, pages,
                      heading_points(text.split("\n"), spans, total, parser))
 
@@ -540,17 +539,35 @@ def recommendation_text(part):
     return found[-1] if found and found[-1] else None
 
 
-def part_numbers(part):
-    """The part numbers 1 to K that the lines number, as the docstring's PARTS OF THE WAITING ITEM says, or
-    an empty list when they number no parts."""
-    found = {int(match["labelled"] or match["listed"]) for match in map(PART_START.match, part) if match}
+def part_starts(tokens):
+    """Return [(first line of the paragraph, part number)] for each line of a top-level paragraph that opens
+    with `Part N.`, from the walk-document's parser tokens."""
+    found = []
+    for index, token in enumerate(tokens):
+        if token.type != "paragraph_open" or token.level:
+            continue
+        children = tokens[index + 1].children
+        # A line starts at the paragraph's start or after a break; a code span is one code_inline child, so a
+        # `Part N.` inside one, even at the start of a source line, is never a text child that starts a line.
+        line_starts = [child for previous, child in zip([None, *children], children)
+                       if child.type == "text" and (previous is None or previous.type in ("softbreak", "hardbreak"))]
+        found += [(token.map[0], int(match[1])) for match in map(PART_START.match,
+                                                                 (child.content for child in line_starts)) if match]
+    return found
+
+
+def part_numbers(starts, first, end):
+    """The part numbers 1 to K that part_starts found in the paragraphs starting on lines first to end, as the
+    docstring's PARTS OF THE WAITING ITEM says, or an empty list when they number no parts."""
+    found = {number for line, number in starts if first <= line < end}
     return sorted(found) if 1 < len(found) <= MOST_PARTS and found == set(range(1, len(found) + 1)) else []
 
 
-def recommendations_in(lines, openings, spans, total, walk_finder):
+def recommendations_in(lines, openings, spans, total, walk_finder, starts):
     """Return ({item number: recommendation text or None} for every item of the walk-document, {item number:
     why its recommendation is None} for the items whose reason is not NO_RECOMMENDATION_PROBLEM, {item number:
-    its part numbers} for the items that hold parts), from its prose_lines and item_opening_lines.
+    its part numbers} for the items that hold parts), from its prose_lines, item_opening_lines and
+    part_starts.
 
     Under a heading that names several items and holds more than one recommendation, every item's
     recommendation is None when any of them has no opening, since an opening missed leaves the part
@@ -574,7 +591,7 @@ def recommendations_in(lines, openings, spans, total, walk_finder):
         for number in numbers:
             part = lines[ranges[number][0]:ranges[number][1]]
             found[number] = recommendation_text(part)
-            numbered = part_numbers(part)
+            numbered = part_numbers(starts, *ranges[number])
             if numbered:
                 parts[number] = numbered
     return found, problems, parts
