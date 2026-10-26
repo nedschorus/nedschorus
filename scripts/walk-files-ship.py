@@ -144,7 +144,10 @@ or replaces the closed minutes in the store writes the marker. That includes a
 run whose stdout line opens with `REFUSED:` or `FAILED:` because some other
 file did not ship, since the closed minutes are the close and a re-run finds
 them unchanged. A `FAILED:` run whose closed minutes never reached the store,
-such as one that could not reach the store at all, writes no marker. With no
+such as one that could not reach the store at all, writes no marker. A
+`FAILED:` run whose renames of the replaced files failed without saying which
+were done writes the marker when the closed minutes were among them, since
+they may be in the store and a re-run would find them unchanged. With no
 session id, as in a terminal, no marker is written, the files still ship, the
 exit code is unchanged, and stderr says so. A marker that cannot be written
 adds a FAILED line on stderr and makes the exit 1, on a REFUSED run too: the
@@ -518,6 +521,8 @@ def ship_walk(destination: WalkStoreDestination, name: str,
     # puts the walk text before the minutes and the minutes before the
     # dispositions. `lost` names a file whose copy is not what the store holds.
     added, replaced, lost = set(), [], []
+    minutes_name = walk_file_name(name, MINUTES_ROLE_SUFFIX)
+    marker_failed = False
     if to_place or to_replace:
         staging_dir = destination.walk_path / (
             f"{shipper.STAGING_DIRECTORY_PREFIX}{name}-{secrets.token_hex(6)}")
@@ -552,7 +557,40 @@ def ship_walk(destination: WalkStoreDestination, name: str,
                 print(f"FAILED: {name} — {reason} while putting the copied files "
                       f"in place; a later run finishes it.")
                 sys.stderr.write(renamed.stderr)
+                # The remote renames stop partway, so the minutes may be in
+                # place already, and a re-run would find them unchanged.
+                if any(planned.source.name == minutes_name for planned in to_replace):
+                    walk_closed_marker_written_when_minutes_close_the_walk(
+                        present[MINUTES_ROLE_SUFFIX])
                 return EXIT_FAILED
+        for planned in to_replace:
+            file_name = planned.source.name
+            local_digest = local_digests[file_name]
+            outcome = outcomes.get(file_name)
+            if outcome is None:
+                lost.append(f"{file_name} (not in the store after the copy)")
+            elif not outcome.replaced:
+                refused.append(f"{file_name} (changed in the store while this run "
+                               f"ran: store sha256 {outcome.displaced_sha256}, "
+                               f"local sha256 {local_digest})")
+            elif outcome.stored_sha256 != local_digest:
+                lost.append(f"{file_name} (replaced again by another shipment while "
+                            f"this run ran: store sha256 {outcome.stored_sha256}, "
+                            f"local sha256 {local_digest})")
+            elif outcome.displaced_sha256 is None:
+                added.add(file_name)
+            elif outcome.displaced_sha256 == local_digest:
+                unchanged.append(file_name)
+            else:
+                replaced.append(WalkFileReplacement(
+                    file_name, planned.role_name, outcome.displaced_sha256,
+                    local_digest, planned.ruling))
+        # Before the add-only placement, which can still return: a re-run
+        # finds these minutes unchanged and so cannot record the close.
+        if minutes_name in added or any(replacement.file_name == minutes_name
+                                        for replacement in replaced):
+            marker_failed = not walk_closed_marker_written_when_minutes_close_the_walk(
+                present[MINUTES_ROLE_SUFFIX])
         after = {}
         if to_place:
             placed, after = shipper.link_staged_files_never_over_existing(
@@ -577,37 +615,9 @@ def ship_walk(destination: WalkStoreDestination, name: str,
             else:
                 refused.append(f"{source.name} (store sha256 {in_store_now}, "
                                f"local sha256 {local_digests[source.name]})")
-        for planned in to_replace:
-            file_name = planned.source.name
-            local_digest = local_digests[file_name]
-            outcome = outcomes.get(file_name)
-            if outcome is None:
-                lost.append(f"{file_name} (not in the store after the copy)")
-            elif not outcome.replaced:
-                refused.append(f"{file_name} (changed in the store while this run "
-                               f"ran: store sha256 {outcome.displaced_sha256}, "
-                               f"local sha256 {local_digest})")
-            elif outcome.stored_sha256 != local_digest:
-                lost.append(f"{file_name} (replaced again by another shipment while "
-                            f"this run ran: store sha256 {outcome.stored_sha256}, "
-                            f"local sha256 {local_digest})")
-            elif outcome.displaced_sha256 is None:
-                added.add(file_name)
-            elif outcome.displaced_sha256 == local_digest:
-                unchanged.append(file_name)
-            else:
-                replaced.append(WalkFileReplacement(
-                    file_name, planned.role_name, outcome.displaced_sha256,
-                    local_digest, planned.ruling))
         replaced.sort(key=lambda replacement: [
             source.name for source in present.values()].index(replacement.file_name))
     added = [source.name for source in present.values() if source.name in added]
-    minutes_name = walk_file_name(name, MINUTES_ROLE_SUFFIX)
-    marker_failed = False
-    if minutes_name in added or any(replacement.file_name == minutes_name
-                                    for replacement in replaced):
-        marker_failed = not walk_closed_marker_written_when_minutes_close_the_walk(
-            present[MINUTES_ROLE_SUFFIX])
     # Built from the record shipper's constant, not the destination, which may
     # be a local override the snapshots never hold.
     stored_walk_directory = (shipper.split_destination(
