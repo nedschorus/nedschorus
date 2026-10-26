@@ -435,8 +435,10 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-test-") as scratc
     check("the refusal names the file and prints both provenance comments",
           "a.md" in result.stdout and "model=opus " in result.stdout
           and "model=opus-rerun" in result.stdout, result.stdout)
-    check("the refusal tells the person what to do: rename the local directory -2",
-          "-2 suffix" in result.stdout, result.stdout)
+    check("the refusal tells the person what to do: the mv to a free name and the ship command",
+          f"`mv {demo} {records / '2026-09-07-demo-2'}`, a name free in this checkout and "
+          f"in the store when this ran, then ship the renamed directory with "
+          f"`{SHIP} {records / '2026-09-07-demo-2'}`." in result.stdout, result.stdout)
     check("nothing was copied on a refused run, not even the new file",
           not (store_root / "cold-read-records" / demo.name / "late.md").exists()
           and stored_a.read_text(encoding="utf-8") == REPORT_A)
@@ -1688,6 +1690,22 @@ with tempfile.TemporaryDirectory(prefix="cold-read-record-ship-store-names-test-
     check("the rename of a directory not ending in a date is its whole name with -2",
           f"{names_records / '2026-10-26-dated-first-2'}`" in dated_first.stdout,
           dated_first.stdout)
+
+    # A file in both copies with other bytes: the rename passes over the -2
+    # the store already holds, as the refusal of another read's files does.
+    make_record(names_store, "differing-2026-10-26", {"a.md": REPORT_A})
+    (names_store / "differing-2026-10-26-2").mkdir()
+    differing_record = make_record(names_records, "differing-2026-10-26", {"a.md": REPORT_B})
+    differing = ship(str(names_store), str(differing_record))
+    check("a differing file's refusal gives the rename to the first -N free in the checkout "
+          "and in the store, passing over a -2 only the store holds, and the ship command",
+          differing.returncode == 2
+          and "already in the store with different content" in differing.stdout
+          and f"`mv {differing_record} {names_records / 'differing-2026-10-26-3'}`, a name "
+              f"free in this checkout and in the store when this ran, then ship the renamed "
+              f"directory with `{SHIP} {names_records / 'differing-2026-10-26-3'}`."
+              in differing.stdout,
+          differing.stdout)
 
 print()
 if failures:

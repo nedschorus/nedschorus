@@ -31,8 +31,8 @@ with the design:
   2. REFUSE ON DIFFERENCE. An add-only file already in the store whose content
      differs from the local one is refused before anything is copied: the one
      line names every such file and prints the provenance comment each report
-     opens with, from both copies, and the person renames the local
-     directory with a -2 suffix and ships again. Two machines reviewing one document on one day
+     opens with, from both copies, and gives the `mv` and ship commands
+     described below. Two machines reviewing one document on one day
      produce exactly this, and rsync alone would overwrite the first silently.
      A store record holding any file the local directory does not hold is
      refused the same way, before anything is copied: a record directory only
@@ -1116,6 +1116,22 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     triage_differs = TRIAGE_FILE_REPLACED_IN_THE_STORE in differing
     if triage_differs:
         differing.remove(TRIAGE_FILE_REPLACED_IN_THE_STORE)
+    def rename_and_ship_instruction():
+        names, unlisted = cold_read_record_directory_names_listed_from_log_store(
+            host, records_path)
+        # The -N is counted from the date, so a second rename does not stack suffixes.
+        base = record_dir.with_name(re.sub(
+            rf"({record_names.RECORD_DATE_PATTERN})-\d+$", r"\1", name))
+        free = record_names.fresh_record_directory(
+            base, names_taken_in_log_store=names or set())
+        free_where = ("in this checkout and in the store when this ran" if unlisted is None
+                      else f"in this checkout; the store's names could not be read "
+                           f"({unlisted}), so the store may hold it")
+        return (f"Rename this directory with "
+                f"`mv {shlex.quote(str(record_dir))} {shlex.quote(str(free))}`, a name "
+                f"free {free_where}, then ship the renamed directory with "
+                f"`{sys.argv[0]} {shlex.quote(str(free))}`.")
+
     def refuse(differing_files):
         # The loop only gathers; the one print comes after it, so a
         # cold-read-record with several differing files still gets
@@ -1131,8 +1147,7 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
                     local_first_line, pathlib.Path(store_dir) / relative)
             described.append(f"{relative} (store: {store_line}; local: {local_line})")
         print(f"REFUSED: {name} — already in the store with different content: "
-              f"{'; '.join(described)}. Rename the local directory with a -2 suffix "
-              f"and ship again.")
+              f"{'; '.join(described)}. {rename_and_ship_instruction()}")
         return EXIT_REFUSED
 
     def nothing_new():
@@ -1146,22 +1161,10 @@ def ship_one(host, records_path: pathlib.PurePosixPath, record_dir: pathlib.Path
     # this directory lacks is another read that took the same name.
     held_only_in_store = sorted(set(in_store) - set(local))
     if held_only_in_store:
-        names, unlisted = cold_read_record_directory_names_listed_from_log_store(
-            host, records_path)
-        # The -N is counted from the date, so a second rename does not stack suffixes.
-        base = record_dir.with_name(re.sub(
-            rf"({record_names.RECORD_DATE_PATTERN})-\d+$", r"\1", name))
-        free = record_names.fresh_record_directory(
-            base, names_taken_in_log_store=names or set())
-        free_where = ("in this checkout and in the store when this ran" if unlisted is None
-                      else f"in this checkout; the store's names could not be read "
-                           f"({unlisted}), so the store may hold it")
         print(f"REFUSED: {name} — nothing was copied: the store's record {citation} holds "
               f"files this directory {record_dir} does not, so the store's record is "
-              f"another read's: {', '.join(held_only_in_store)}. Rename this directory with "
-              f"`mv {shlex.quote(str(record_dir))} {shlex.quote(str(free))}`, a name "
-              f"free {free_where}, then ship the renamed directory with "
-              f"`{sys.argv[0]} {shlex.quote(str(free))}`.")
+              f"another read's: {', '.join(held_only_in_store)}. "
+              f"{rename_and_ship_instruction()}")
         return EXIT_REFUSED
     if not new_files and not triage_differs:
         return nothing_new()
