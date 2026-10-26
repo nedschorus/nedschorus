@@ -85,12 +85,7 @@ records none, and records a deferral when its first word after the items is
 deferred; so does a line with no such tag whose first word is deferred. A
 `<revised, awaiting ruling>` tag also undoes an earlier line's decision of its
 items, and outweighs a deciding tag on its own line; `<open>` does neither.
-A line whose first word, after any list or quotation marker, is
-`#removed_from_approval_walk`, followed by items in the forms
-`#next_to_present` takes, as in `#removed_from_approval_walk items 13.1, 13.2
-and 13.3 of 18`, records those items as removed from the approval-walk: they
-count as recorded wherever the walk-minutes' other lines put them, so close
-never names them again. CLOSE refuses, writing nothing, when a line after the
+CLOSE refuses, writing nothing, when a line after the
 last answer line already opens with its item, because no check has run since
 that answer was closed. When the `#next_to_present` line names other items than
 the answer line, a new item a finding raised is waiting: the answer is recorded
@@ -226,7 +221,6 @@ CLOSE_NO_NEXT_ITEM = ("No item is left to present, and the minutes' `#next_to_pr
                       "`none, closed`: go on to the walk-me-through skill's closing.")
 NEXT_MARKER_LINE = "#next_to_present {value}"
 CLOSED_MARKER_VALUE = "none, closed"
-REMOVED_ITEMS = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*#removed_from_approval_walk\b[:\s]*(.*)$")
 RECORDED_ITEMS = re.compile(r"^\s*(?:(?:[-*+]|\d+[.)]|>)\s+)*[*_]*(items?\s+[^:(]*)", re.I)
 DATE = re.compile(r"\d{4}-\d\d-\d\d(?:[T ]\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:?\d\d)?)?")
 DECIDED = re.compile(r"\b(?:dis)?approved\b|\baccepted\b|\brejected\b|<moved on, no decision>", re.I)
@@ -555,23 +549,19 @@ def says_outcome(pattern, line):
 
 
 def minutes_record(walk_finder, minutes_text, parser):
-    """Return (the item numbers whose last line that records a decision or its absence decides them, together
-    with the items a `#removed_from_approval_walk` line removes, a Counter of how many lines defer each item)."""
-    decided, removed, deferrals = set(), set(), collections.Counter()
+    """Return (the item numbers whose last line that records a decision or its absence decides them, a
+    Counter of how many lines defer each item)."""
+    decided, deferrals = set(), collections.Counter()
     for line in walk_finder.prose_lines(minutes_text, parser):
         if ANSWER_LINE.match(line):
             continue
-        removal = REMOVED_ITEMS.match(line)
         dated = DATE.sub("", line)
-        match = removal or RECORDED_ITEMS.match(dated)
+        match = RECORDED_ITEMS.match(dated)
         if not match:
             continue
         try:
             items, _ = walk_finder.parse_items(match[1].strip())
         except walk_finder.UnusableRange:
-            continue
-        if removal:
-            removed.update(items)
             continue
         outcomes = {tag.strip().lower() for tag in OUTCOME_TAG.findall(line)}
         first = FIRST_WORD.match(dated[match.end():])
@@ -595,8 +585,7 @@ def minutes_record(walk_finder, minutes_text, parser):
         if defers:
             for item in items:
                 deferrals[item] += 1
-    # Added only here, so no line, before or after the removal, can undo it.
-    return decided | removed, deferrals
+    return decided, deferrals
 
 
 def next_item(order, summary, answered_numbers, waiting_numbers, decided, deferrals):
