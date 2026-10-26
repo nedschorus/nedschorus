@@ -1499,8 +1499,9 @@ def claude_json_onboarding_presets_write_or_report() -> None:
               file=sys.stderr)
 
 
-# Claude Code makes claude-<uid>/ under it, and the directory itself when missing.
-NED_BOX_CLAUDE_CODE_TMPDIR = "/home/nedlern/claude-code-tmp"
+# Claude Code makes claude-<uid>/ under it, and the directory itself when missing. Under ~/.cache
+# because ned-box's hourly Timeshift snapshot of /home/nedlern excludes ~/.cache/**.
+NED_BOX_CLAUDE_CODE_TMPDIR = "/home/nedlern/.cache/claude-code-tmp"
 
 
 def launch_agent_session(agent_command: str, session_id: str, working_directory: Path,

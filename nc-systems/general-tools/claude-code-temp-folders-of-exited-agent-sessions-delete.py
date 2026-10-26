@@ -12,7 +12,7 @@ cleanupPeriodDays, 30 days by default. On ned-box /tmp is a tmpfs with a per-use
 folders have filled it, so every shell command in every agent-session failed. This program runs once
 a day on ned-box and deletes those folders under both parents: /tmp, which agent-sessions
 started before handoff-supervisor.py set CLAUDE_CODE_TMPDIR still use, and
-/home/nedlern/claude-code-tmp, the value it sets. --temp-parent replaces that list.
+/home/nedlern/.cache/claude-code-tmp, the value it sets. --temp-parent replaces that list.
 
 WHICH AGENT-SESSIONS ARE LIVE. Each running Claude Code process keeps a file
 <sessions directory>/<pid>.json, by default ~/.claude/sessions/, naming its pid, the id of the
@@ -39,7 +39,7 @@ delete.
 OUTPUT. A real run prints `deleting <folder>`, flushed, before it deletes each folder, so the
 log names every folder a run stopped part way may have deleted, then a summary line. --dry-run
 prints "would delete" and deletes nothing. A parent with no claude-<uid>/ folder is not a
-failure: /home/nedlern/claude-code-tmp has none until an agent-session launched with it writes.
+failure: /home/nedlern/.cache/claude-code-tmp has none until an agent-session launched with it writes.
 
 SCHEDULE. Once a day at 07:30 on ned-box, installed by
 nc-systems/general-tools/install-scheduled-jobs-on-this-machine.py from the table beside it,
@@ -84,7 +84,7 @@ FAILURES_INSTRUCTION = (
     "which folder is kept and why, since ned-box's /tmp can fill up and stop every agent-session's "
     "shell commands; a subagent tells the agent that dispatched it instead.")
 
-DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES = ["/tmp", "/home/nedlern/claude-code-tmp"]
+DEFAULT_CLAUDE_CODE_TEMP_FOLDER_PARENT_DIRECTORIES = ["/tmp", "/home/nedlern/.cache/claude-code-tmp"]
 SESSION_FOLDER_NAME = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 EXIT_DONE = 0
 EXIT_FAILED = 1
