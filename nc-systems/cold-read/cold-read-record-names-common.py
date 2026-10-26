@@ -137,7 +137,7 @@ def record_directory_name_for_target(
     return f"{record_name_for_target(target)}-{now.strftime('%Y-%m-%d')}"
 
 
-def fresh_record_directory(base: pathlib.Path, *, names_taken_in_log_store) -> pathlib.Path:
+def fresh_record_directory(base: pathlib.Path, names_taken_in_log_store) -> pathlib.Path:
     """Return the first of base, base-2, base-3 ... that is neither a path on
     disk nor one of names_taken_in_log_store, the record directory names the
     log-store holds, without creating the directory."""
