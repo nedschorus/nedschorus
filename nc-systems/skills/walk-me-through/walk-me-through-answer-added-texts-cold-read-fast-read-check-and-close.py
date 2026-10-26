@@ -86,8 +86,9 @@ deferred; so does a line with no such tag whose first word is deferred. A
 `<revised, awaiting ruling>` tag also undoes an earlier line's decision of its
 items, and outweighs a deciding tag on its own line; `<open>` does neither.
 CLOSE refuses, writing nothing, when a line after the
-last answer line already opens with its item, because no check has run since
-that answer was closed. When the `#next_to_present` line names other items than
+last answer line already opens with the last answer line's item and a colon, as
+every line close writes for an answer does: that answer was closed already, and
+no check has run since. When the `#next_to_present` line names other items than
 the answer line, a new item a finding raised is waiting: the answer is recorded
 as held until the user answers the new item, and the line is written again unchanged as the last line.
 Either way it prints the lines the agent's next message must include, the

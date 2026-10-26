@@ -1076,6 +1076,28 @@ def test_a_later_awaiting_ruling_undoes_an_earlier_decision():
           described(closed) + case.minutes.read_text())
 
 
+FOUR_ITEM_DOCUMENT = """# A walk
+
+## Item 1 of 4: one
+
+## Item 2 of 4: two
+
+## Item 3 of 4: three
+
+## Item 4 of 4: summary
+"""
+
+
+def test_an_item_the_walk_document_keeps_is_named_next_whatever_the_minutes_say_of_its_removal():
+    case = Case(next_to_present="item 1 of 4", document=FOUR_ITEM_DOCUMENT)
+    case.minutes.write_text("# Minutes\n\n#removed_from_approval_walk item 2 of 4\n#next_to_present item 1 of 4\n")
+    case.run("check")
+    closed = case.run("close")
+    check("an item is removed from the approval-walk only by deleting its section from the walk-document",
+          closed.returncode == 0 and marker(case) == "#next_to_present item 2 of 4",
+          described(closed) + case.minutes.read_text())
+
+
 def test_check_refuses_a_walk_document_close_would_refuse_before_any_fast_read():
     for document, next_to_present, reason in (
             ("# W\n\n## Item 2 of 3: two\n\n#new \"First.\"\n\n## Item 2 of 3: again\n\n#new \"Second.\"\n\n"
