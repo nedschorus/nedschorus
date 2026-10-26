@@ -4055,7 +4055,9 @@ with tempfile.TemporaryDirectory() as tmp:
     arguments = [str(repo / "a" / "b.md"), "--repo", str(repo), "--found-copies-root", str(tmp / "found"),
                  "--skip", "box", "--skip", "localsnapshots", "--skip", "transcripts", "--skip", "logstore",
                  "--skip", "timemachine"]
-    rerun_line = "If none of the cases above applies, run exactly %s once more." % shlex.join(["python3", program] + arguments)
+    rerun_lines = finder.next_step_lines.git_failure_next_step_lines(
+        shlex.join(["python3", program] + arguments), "scripts/find-deleted-path-across-backups.py",
+        text_the_failure_line_contains="git's failure:", include_the_misspelt_branch_commit_or_path_line=True)
     checkout = str(Path(program).parents[1])
     for how, typed, directory in (("by absolute path from another directory", program, str(elsewhere)),
                                   ("by a path relative to its checkout", os.path.relpath(program, checkout),
@@ -4086,7 +4088,7 @@ with tempfile.TemporaryDirectory() as tmp:
               ("run %s with <checkout> replaced by a checkout of the repository the path was deleted from.\n"
                % repo_rerun) in completed.stderr, "%r\n%s" % (repo_rerun, completed.stderr))
         check("... and names the program's absolute path, with every argument, as the command to rerun",
-              completed.stderr.count(rerun_line) == 1, "%r\n%s" % (rerun_line, completed.stderr))
+              completed.stderr.count(rerun_lines) == 1, "%r\n%s" % (rerun_lines, completed.stderr))
     # Both git surfaces skipped, and the path after a -- separator.
     (tmp / "log-store").mkdir()
     skip_both = ["--repo", str(repo), "--found-copies-root", str(tmp / "found"), "--log-store-root", str(tmp / "log-store"),

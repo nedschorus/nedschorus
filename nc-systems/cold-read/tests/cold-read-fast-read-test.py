@@ -119,6 +119,12 @@ _scratch_repository_fixture_spec = importlib.util.spec_from_file_location(
 scratch_repository_fixture = importlib.util.module_from_spec(
     _scratch_repository_fixture_spec)
 _scratch_repository_fixture_spec.loader.exec_module(scratch_repository_fixture)
+
+# The shared cell module, whose own suite pins its wording; the cases here take that wording from it.
+_cell_common_spec = importlib.util.spec_from_file_location(
+    "cold_read_cell_common", SYSTEM_DIRECTORY / "cold-read-cell-common.py")
+cell_common = importlib.util.module_from_spec(_cell_common_spec)
+_cell_common_spec.loader.exec_module(cell_common)
 # Every read on the records route ships its record; here, to a scratch
 # log-store inside the scratch checkout through the shipper's destination
 # override, so no case reaches ned-box.
@@ -131,7 +137,7 @@ RECORD_CLOCK_OVERRIDE_VARIABLE = "COLD_READ_RECORD_CLOCK_OVERRIDE"
 AGENT_SESSION_ID_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 FIXED_RECORD_CLOCK_FOR_TESTS = "2026-09-16T10:42"
 FIXED_RECORD_STAMP_FOR_TESTS = "2026-09-16"
-STDOUT_RECOVERY_PHRASE = "recovered the report from the model's chat output"
+STDOUT_RECOVERY_PHRASE = cell_common.STDOUT_RECOVERY_PHRASE
 LONG_CHAT_REVIEW = " ".join(f"word{index}" for index in range(150)) + "\n"
 
 # The script under test, imported so the cases below read the constants it

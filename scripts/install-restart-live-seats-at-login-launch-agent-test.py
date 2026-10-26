@@ -231,9 +231,8 @@ with tempfile.TemporaryDirectory() as temporary:
           exit_code == 1 and "printing nothing on stderr" in errors
           and errors.splitlines()[-2:] == [
               f"Run `{rerun}` once more, on this Mac.",
-              'If the rerun prints a line containing "so com.nedschorus.test may still be loaded" '
-              "again, stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the "
-              'line containing "so com.nedschorus.test may still be loaded" from the command that printed this message and from the rerun.'], (exit_code, errors))
+              installer.next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                  "so com.nedschorus.test may still be loaded")], (exit_code, errors))
     launchctl = LaunchctlStub(bootout_exit_code=5, print_exit_code=1)
     exit_code, printed, errors = run_main(
         ["--label", "com.nedschorus.test", "--remove"], agents_directory, launchctl=launchctl)

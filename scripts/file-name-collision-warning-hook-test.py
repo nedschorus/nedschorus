@@ -61,13 +61,8 @@ EXEMPT_FILE_NAMES_IN_TEST = {"skill.md", "readme.md", ".gitkeep"}
 
 failures = []
 
-LOCK_FILE_WAIT_CLAUSE = (
-    "do not delete the lock file yourself, because a git command still running may hold it; "
-    "wait up to one minute for git to remove it by running "
-    "`i=0; while [ -e \"<lock file path>\" ] && [ $i -lt 30 ]; do sleep 2; i=$((i+1)); done` with "
-    "<lock file path> replaced by the path git's error names, without the quotes git puts around it "
-    "(Claude Code refuses a plain `sleep 60`), then run the command below this paragraph, whether or not the "
-    "lock file is gone")
+LOCK_FILE_WAIT_CLAUSE = HOOK_MODULE.next_step_lines.lock_file_named_by_git_error_wait_then_rerun_instruction(
+    "the command below this paragraph")
 
 
 def check(case_name, condition, detail=""):
@@ -454,12 +449,9 @@ with tempfile.TemporaryDirectory() as temporary_directory:
                                        "the basename, this hook's warning, whose instructions you follow; or, when git "
                                        "fails again, a git-failure message like this one, and the last line here says "
                                        "what to do then.")
-              and failure_lines[3] == ("If the command on the line above prints JSON whose hookSpecificOutput.additionalContext "
-                                       'field starts with "file-name-collision-warning:" and reports a git failure, whether this '
-                                       "error or another, tell the user, or, if you are a subagent, the agent that "
-                                       "dispatched you, word for word, every line of this message and of that field, "
-                                       "before you go on. If the command prints nothing, or JSON whose field reports "
-                                       "no git failure, the git failure above needs no report."), repr(failure_lines))
+              and failure_lines[3] == HOOK_MODULE.next_step_lines
+              .hook_agent_instruction_if_rerun_command_reports_git_failure_tell_user_both_outputs_line(
+                  "file-name-collision-warning:"), repr(failure_lines))
         rerun_line = failure_lines[1] if len(failure_lines) > 1 else ""
         check(f"a failing git {failing_subcommand}'s rerun line says to run the command now when git names no lock "
               "file, and gives the lock-file wait otherwise",

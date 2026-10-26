@@ -1053,9 +1053,8 @@ with tempfile.TemporaryDirectory() as temporary:
           silent_failure.cause.endswith("and printed no error")
           and silent_failure.next_steps("the-rerun", "FAILED: j").splitlines() == [
               "Run `the-rerun` once more, on this machine; it tries this job alone.",
-              'If the rerun prints a line containing "FAILED: j" again, stop, and tell '
-              "the user, or, if you are a subagent, the agent that dispatched you, word for word, the line containing "
-              '"FAILED: j" from the command that printed this message and from the rerun.'],
+              installer.next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                  "FAILED: j")],
           (silent_failure.cause, silent_failure.next_steps("the-rerun", "FAILED: j")))
     stub.print_error_text = b""
     exit_code, printed, errors = run_main(["--check"] + DAILY, MAC, stub)
@@ -1066,18 +1065,16 @@ with tempfile.TemporaryDirectory() as temporary:
               f"Run `{check_rerun}` once more, on this machine; it tries this job alone.",
               "A DIFFERS line is not this failure: it is drift the check found, and does not "
               "count as the rerun failing.",
-              'If the rerun prints a line containing "NOT CHECKED: daily-full-test-run-of-main" '
-              "again, stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line "
-              'containing "NOT CHECKED: daily-full-test-run-of-main" from the command that printed this message and from the rerun.'], (exit_code, errors))
+              installer.next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                  "NOT CHECKED: daily-full-test-run-of-main")], (exit_code, errors))
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
     install_rerun = f"{SCRIPT_PATH.resolve()} --install --job daily-full-test-run-of-main"
     check("--install whose launchctl print fails printing no error ends with the rerun and "
           "with when to stop, and exits 1",
           exit_code == 1 and errors.splitlines()[-2:] == [
               f"Run `{install_rerun}` once more, on this machine; it tries this job alone.",
-              'If the rerun prints a line containing "FAILED: daily-full-test-run-of-main" again, '
-              "stop, and tell the user, or, if you are a subagent, the agent that dispatched you, word for word, the line "
-              'containing "FAILED: daily-full-test-run-of-main" from the command that printed this message and from the rerun.'], (exit_code, errors))
+              installer.next_step_lines.agent_instruction_if_rerun_fails_too_stop_and_report_both_runs_line(
+                  "FAILED: daily-full-test-run-of-main")], (exit_code, errors))
     stub.print_error_text = b"Could not print: injected launchctl failure\n"
     before = len(stub.commands)
     exit_code, printed, errors = run_main(["--install"] + DAILY, MAC, stub)
@@ -1516,8 +1513,8 @@ with tempfile.TemporaryDirectory() as temporary:
                       "and says what the install printed and to tell the user",
                       install_calls == [True] and exit_code == 2 and stub.crontab_writes == []
                       and "pip exited 1: no network on this machine" in errors
-                      and "Tell the user, or, if you are a subagent, the agent that dispatched "
-                      "you, in these words: \"tree-sitter-bash is missing on " in errors
+                      and shell_reader.report_to_user_or_dispatching_agent_instruction_build(
+                          "\"tree-sitter-bash is missing on ", environment={}) in errors
                       and shell_reader.REQUIREMENTS_FILE.name in errors,
                       (install_calls, exit_code, printed, errors, stub.crontab_writes))
     finally:

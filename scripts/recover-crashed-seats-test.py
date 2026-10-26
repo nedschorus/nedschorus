@@ -4687,10 +4687,11 @@ with tempfile.TemporaryDirectory() as temporary:
           (retired, workspace.launches, report_failed))
     workspace = a_seat_behind_a_leftover_shell("leftover-shell-kill-outcome-unknown")
     retired = []
+    tmux_gone_answers = " or ".join(
+        f'"{wording}"' for wording, _
+        in recovery.resupervise.tmux_error_pattern.TMUX_TARGET_OR_SERVER_DOES_NOT_EXIST_ERROR_WORDINGS)
     check_instruction = ("If the check exits 0, the session still exists: start no agent, and "
-                         "report to the user. If it prints \"can't find session\" or \"can't find "
-                         "window\" or \"can't find pane\" or \"no current target\" or \"no server "
-                         "running\" or \"error connecting to <socket path> (No such file or directory)\", "
+                         f"report to the user. If it prints {tmux_gone_answers}, "
                          "the session is gone: run again, for this agent-seat only, the command "
                          "that printed this message. Any other output, or a check that does not "
                          "return within 30 seconds, leaves the outcome unknown: start no agent, and "
@@ -4734,7 +4735,7 @@ with tempfile.TemporaryDirectory() as temporary:
           and "run again, for this agent-seat only, the command that printed this message"
           in report_real
           and "a check that does not return within 30 seconds" in report_real
-          and "error connecting to <socket path> (No such file or directory)" in report_real
+          and f"If it prints {tmux_gone_answers}, the session is gone" in report_real
           and "..." not in report_real
           and "resupervise-seat" not in report_real
           and report_real.splitlines()[-2].startswith("To check, run the command on the next line")
