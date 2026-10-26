@@ -162,8 +162,8 @@ def run_mark_cases(workspace: Path):
     check("when ned-box cannot be reached, stderr carries ssh's first line and what to do",
           stderr == "handoff-architecture-overview-refresh-user-shown-mark: the mark for handoff could not be "
           f"confirmed as written to nedlern@ned-box:{fixture.marks}/2026-09-30-handoff.txt, so "
-          "the next agent-seat to reincarnate today may show the user the same architecture "
-          "overview refresh again: ssh nedlern@ned-box exited 255: ssh: "
+          "the next agent-session the handoff-supervisor starts today may show the user the "
+          "same architecture overview refresh again: ssh nedlern@ned-box exited 255: ssh: "
           "connect to host ned-box port 22: No route to host\n"
           "If you are a subagent, send this whole message to the agent that dispatched you "
           "instead of acting on it; otherwise, do what the next lines say.\n"
@@ -200,7 +200,8 @@ def run_mark_cases(workspace: Path):
           "nedschorus-handoff-architecture-overview.md' was refused as a system's name, so no "
           f"mark was written in nedlern@ned-box:{refused.marks}/: a system's name is the name "
           "of its directory under nc-systems/ without the nc-systems/ prefix, such as handoff, "
-          "starting with a letter or digit and holding only letters, digits, '-' and '_'.\n"
+          "starting with a letter or digit and holding only letters, digits, '-' and '_' "
+          "(only these characters are checked, not whether the directory exists).\n"
           "Run this again with the system's name that the handoff-supervisor's overview "
           "refresh reminder gave, such as: python3 "
           "nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py handoff\n",

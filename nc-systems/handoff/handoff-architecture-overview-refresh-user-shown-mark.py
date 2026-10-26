@@ -89,7 +89,8 @@ def main(argv=None, now=None) -> int:
               f"was written in {marks_directory_citation}: a system's name is the name "
               f"of its directory under nc-systems/ without the nc-systems/ prefix, such as "
               f"handoff, starting with a letter or digit and holding only letters, digits, "
-              f"'-' and '_'.\n"
+              f"'-' and '_' (only these characters are checked, not whether the directory "
+              f"exists).\n"
               f"Run this again with the system's name that the handoff-supervisor's overview "
               f"refresh reminder gave, "
               f"such as: python3 {PROGRAM_PATH} handoff", file=sys.stderr)
@@ -126,8 +127,8 @@ def main(argv=None, now=None) -> int:
     except handoff_user_review_of_agent_memory_stores_mark.DailyMemoryReviewReadOrWriteFailed as error:
         print(f"{PROGRAM}: the mark for {arguments.system} could not be confirmed as "
               f"written to {daily_overview_refresh_reminder_mark_citation(file_name)}, so the "
-              f"next agent-seat to reincarnate today may show the user the same architecture "
-              f"overview refresh again: {error}\n"
+              f"next agent-session the handoff-supervisor starts today may show the user the "
+              f"same architecture overview refresh again: {error}\n"
               f"If you are a subagent, send this whole message to the agent that dispatched "
               f"you instead of acting on it; otherwise, do what the next lines say.\n"
               f"Tell the user: \"The record that you were shown the {arguments.system} "

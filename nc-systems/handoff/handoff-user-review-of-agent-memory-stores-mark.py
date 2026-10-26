@@ -214,8 +214,8 @@ def main(argv=None, now=None) -> int:
                   f"you instead of acting on it; otherwise, do what the next lines say.\n"
                   f"Tell the user: \"Today's memory review is not recorded as done, because "
                   f"{store_being_read} could not be read: {error}. Until the done mark is "
-                  f"written, the handoff-supervisor may remind the next agent-seat to start on "
-                  f"the Mac of the review again.\"\n"
+                  f"written, the handoff-supervisor may remind the next agent-seat that starts "
+                  f"on the Mac to do the review again.\"\n"
                   f"When the user says the cause is fixed, run: python3 {PROGRAM_PATH} done",
                   file=sys.stderr)
             return 1
@@ -233,8 +233,8 @@ def main(argv=None, now=None) -> int:
               f"you instead of acting on it; otherwise, do what the next lines say.\n"
               f"Tell the user: \"The memory review's {arguments.mark} mark could not be "
               f"written on ned-box: {error}. Until that mark is written, the "
-              f"handoff-supervisor may remind the next agent-seat to start on the Mac of the "
-              f"review again.\"\n"
+              f"handoff-supervisor may remind the next agent-seat that starts on the Mac to do "
+              f"the review again.\"\n"
               f"When the user says the cause is fixed, run, on the machine you ran this on: "
               f"python3 {PROGRAM_PATH} {arguments.mark}", file=sys.stderr)
         return 1

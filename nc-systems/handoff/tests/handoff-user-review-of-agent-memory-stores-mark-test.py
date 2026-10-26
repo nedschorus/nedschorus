@@ -79,9 +79,10 @@ class Fixture:
 
     def run(self, argv, now=PACIFIC_EVENING_THAT_IS_TOMORROW_IN_UTC,
             ssh_body=SSH_THAT_RUNS_THE_COMMAND_HERE, hostname="a-mac-that-is-not-ned-box",
-            ssh_timeout=None):
+            ssh_timeout=None, fake_python3_body=None):
         """main's exit code, stdout, stderr, and the hosts the fake ssh was
-        called for."""
+        called for. fake_python3_body, when given, puts a python3 with that
+        body beside the fake ssh, first on PATH for local commands."""
         self.fake_ssh_count += 1
         directory = self.root / f"fake-ssh-{self.fake_ssh_count}"
         directory.mkdir()
@@ -92,6 +93,10 @@ class Fixture:
             'printf "%s\\n" "$1" >> "' + str(calls) + '"\nshift\n' + ssh_body + "\n",
             encoding="utf-8")
         fake_ssh.chmod(0o755)
+        if fake_python3_body is not None:
+            fake_python3 = directory / "python3"
+            fake_python3.write_text("#!/bin/sh\n" + fake_python3_body + "\n", encoding="utf-8")
+            fake_python3.chmod(0o755)
         saved = {name: getattr(mark, name) for name in (
             "MAC_MEMORY_STORE_DIRECTORY", "NED_BOX_MEMORY_STORE_DIRECTORY",
             "DAILY_MEMORY_REVIEW_MARKS_DIRECTORY", "DAILY_MEMORY_REVIEW_MARK_SSH_TIMEOUT_SECONDS")}
@@ -168,7 +173,7 @@ def run_mark_cases(workspace: Path):
           "Tell the user: \"The memory review's started mark could not be written on ned-box: "
           "ssh nedlern@ned-box exited 255: ssh: connect to host ned-box port 22: No route to "
           "host. Until that mark is written, the handoff-supervisor may remind the next "
-          "agent-seat to start on the Mac of the review again.\"\n"
+          "agent-seat that starts on the Mac to do the review again.\"\n"
           "When the user says the cause is fixed, run, on the machine you ran this on: "
           "python3 nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py "
           "started\n", stderr)
@@ -179,6 +184,19 @@ def run_mark_cases(workspace: Path):
           f"nedlern@ned-box:{fixture.ned_box_store}/ could not be read: ssh nedlern@ned-box "
           "timed out after 1 seconds and was killed\n" in stderr,
           f"{code}\n{stderr}")
+
+    # ned-box's store is read over the fake ssh with the real python3, so that
+    # read succeeds; the Mac's store is read here, where a python3 that exits 1
+    # stands first on PATH, so that read fails.
+    code, stdout, stderr, calls = fixture.run(
+        ["done"], ssh_body='PATH=/usr/bin:/bin exec /bin/sh -c "$1"',
+        fake_python3_body="echo 'python3: cannot start' >&2\nexit 1")
+    check("when ned-box's store is read but the Mac's is not, stderr names the Mac's store",
+          code == 1 and calls == ["nedlern@ned-box"]
+          and "the done mark was not written, because the Mac's memory store, "
+          f"{fixture.mac_store}/ could not be read: " in stderr
+          and "ned-box's memory store" not in stderr,
+          f"{code} {calls!r}\n{stderr}")
 
     on_ned_box = Fixture(workspace / "marks-on-ned-box")
     code, stdout, stderr, calls = on_ned_box.run(["started"], hostname="ned-box")
