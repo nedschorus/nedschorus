@@ -71,7 +71,9 @@ The page goes in the wiki, next to the glossary. Do you agree that agents look t
 """ + ANSWER_LINE
 INTERRUPTION_ITEM = f"""## Item 2.1 of 11: merge-lane-2's question about the GHI
 
-merge-lane-2 asks: "Should I file one GHI listing the remaining seats' tests?" Recommendation: File it.
+merge-lane-2 asks: should I file one GHI listing the remaining seats' tests?
+
+Recommendation: File it.
 
 {ANSWER_LINE}
 """
@@ -248,9 +250,12 @@ def test_the_block_message_says_what_to_do():
             ("the message names the interruption item's number and the new total",
              "`## Item 2.1 of 11: <the point of the question>`, placed right after item 2."),
             ("the message says to quote the question whole with a recommendation",
-             "Quote the question whole, as its asker wrote it, whether you or another agent, with the flagged text in it "
-             "word for word, because that is what lets this check pass the question once it is in the item, give your "
-             "recommendation as `Recommendation: <what you recommend"),
+             "Quote the question whole in the item, as its asker wrote it, whether you or another agent, giving each "
+             "line of the flagged text a line of its own, word for word, and putting the rest of the question on "
+             "other lines of the item. This hook passes the question only when the item in the walk-document holds every flagged line "
+             "that way, and refuses again until it does; it ignores a `>` quote mark or a list mark such as `-` or "
+             "`1.` at the start of a line, bold, italic and code marks, and letter case, so you may add or drop those. "
+             "Give your recommendation as `Recommendation: <what you recommend"),
             ("the message quotes the walk's answer line", f"end the item with this line, which the walk's other "
              f"items end with: `{ANSWER_LINE}`."),
             ("the message says to change M everywhere",
@@ -427,8 +432,34 @@ def test_a_question_held_in_an_interruption_item_is_not_checked():
             ("an ask without a question mark whose words start the item's longer question blocks",
              "Should I merge.", "Should I merge PR 5 now?", False),
             ("a question the item holds only as a statement blocks", "Should I merge?", "Should I merge.", False),
-            ("a question the item quotes whole inside a longer sentence passes",
-             "Should I merge PR 5 now?", 'merge-lane-2 asks "Should I merge PR 5 now?" before the release.', True),
+            ("a question the item quotes after a colon in a longer line blocks",
+             "Should I merge PR 5 now?", 'merge-lane-2 asks: "Should I merge PR 5 now?" before the release.', False),
+            ("a question the item holds after a colon on the same line blocks",
+             "Should I merge PR 5 now?", "merge-lane-2 asks: Should I merge PR 5 now?", False),
+            ("an ask that is the text before an item line's colon blocks",
+             "Which do you want.", "Which do you want: PR 5 or PR 6?", False),
+            ("a line holding the question and more words blocks",
+             "Should I merge PR 5 now? It has two open findings.", "Should I merge PR 5 now?", False),
+            ("a line that is only the first sentence of the item's line blocks",
+             "Should I merge PR 5 now?", "Should I merge PR 5 now? It has two open findings.", False),
+            ("a two-sentence line the item holds whole passes",
+             "Should I merge PR 5 now? It has two open findings.",
+             "merge-lane-2 asks before the release\nShould I merge PR 5 now? It has two open findings.", True),
+            ("a list copied whole, each line on its own, passes",
+             "Which should I run:\n- `merge.py`\n- `keep.py`",
+             "merge-lane-2 asks:\nWhich should I run:\n- `merge.py`\n- `keep.py`", True),
+            ("a question the item holds on a line of its own passes",
+             "Should I merge PR 5 now?", "merge-lane-2 asks before the release\nShould I merge PR 5 now?", True),
+            ("a question the item holds as a `>` quote line passes",
+             "Should I merge PR 5 now?", "merge-lane-2 asks before the release\n> Should I merge PR 5 now?", True),
+            ("a question the item holds as a `-` list item passes",
+             "Should I merge PR 5 now?", "merge-lane-2 asks before the release\n- Should I merge PR 5 now?", True),
+            ("a question the item holds as a `1.` list item passes",
+             "Should I merge PR 5 now?", "merge-lane-2 asks before the release\n1. Should I merge PR 5 now?", True),
+            ("a question the item quotes inside a longer sentence blocks",
+             "Should I merge PR 5 now?", 'merge-lane-2 asks "Should I merge PR 5 now?" before the release.', False),
+            ("an ask without a question mark whose words start the item's longer question with a quotation blocks",
+             "Should I merge.", 'Should I merge "PR 5" now?', False),
             ("a list whose lead-in the item holds, with other choices, blocks",
              "PR 1922 merged.\n\nShould I do one of these:\n- delete the hook\n- keep it",
              "Should I do one of these:\n- merge the lines\n- keep both", False),
@@ -446,10 +477,10 @@ def test_a_question_held_in_an_interruption_item_is_not_checked():
             check_silent(case_name, case.run(model="yes"))
         else:
             check_blocked(case_name, case.run(), "approval-walk question check")
-    with_openings = (f"## Items 2.1 and 3 of 11: two questions\n\n**Item 2.1:** Should I file the GHI?\n\n"
-                     f"{ANSWER_LINE}\n\n**Item 3:** Should I merge PR 5 now?\n\n{ANSWER_LINE}\n")
-    partly_opened = (f"## Items 3, 2.1 and 2.2 of 11: three questions\n\n**Item 3:** Should I merge PR 5 now?\n\n"
-                     f"Should I file the GHI?\n\n**Item 2.2:** Should I rename the hook?\n\n{ANSWER_LINE}\n")
+    with_openings = (f"## Items 2.1 and 3 of 11: two questions\n\n**Item 2.1:**\n\nShould I file the GHI?\n\n"
+                     f"{ANSWER_LINE}\n\n**Item 3:**\n\nShould I merge PR 5 now?\n\n{ANSWER_LINE}\n")
+    partly_opened = (f"## Items 3, 2.1 and 2.2 of 11: three questions\n\n**Item 3:**\n\nShould I merge PR 5 now?\n\n"
+                     f"Should I file the GHI?\n\n**Item 2.2:**\n\nShould I rename the hook?\n\n{ANSWER_LINE}\n")
     without_openings = f"## Items 2.1 and 3 of 11: two questions\n\nShould I file the GHI?\n\nShould I merge PR 5 now?\n"
     for case_name, shared, reply_line, passes in (
             ("under a shared heading, the interruption item's own question passes",
@@ -469,8 +500,12 @@ def test_a_question_held_in_an_interruption_item_is_not_checked():
     headed = Case(document=WALK_DOCUMENT.replace("of 10", "of 11")
                   + f"\n## Item 2.1 of 11: should I file the GHI?\n\nRecommendation: File it.\n\n{ANSWER_LINE}\n",
                   minutes="#next_to_present item 2 of 11")
-    headed.reply("Item 2.1 of 11: should I file the GHI? Recommendation: File it.\n\n" + closing)
-    check_silent("a line that is the start of an item word for word passes", headed.run(model="yes"))
+    headed.reply("Item 2.1 of 11: should I file the GHI?\n\nRecommendation: File it.\n\n" + closing)
+    check_silent("lines that are the start of an item word for word pass", headed.run(model="yes"))
+    headed.reply("no proposed text marked\n\nItem 2.1 of 11's answer is recorded in the minutes, and its change may "
+                 "now be made.\n\n" + closing)
+    check_silent("the lines the walk-me-through skill and its check and close programs have the agent write pass",
+                 headed.run(model="yes"))
 
 
 def test_the_final_message_from_the_payload_is_checked():
@@ -565,6 +600,9 @@ def test_which_line_is_flagged_and_how_lines_are_joined():
     check("a list is judged with the line ending in `:` that introduces it",
           calls and "1. Still waiting for you: - the cleanup of the old directories; - the naming change.\n"
           in calls[-1]["stdin"] + "\n" and "2." not in calls[-1]["stdin"].split("The numbered lines:")[1], calls)
+    case.reply("Should I run one of these:\n- `delete-all.py`\n- **keep.py**")
+    check_blocked("a flagged list is named as written, line by line, marks included", case.run(),
+                  '"Should I run one of these:\n- `delete-all.py`\n- **keep.py**"')
     case.reply("Should I merge the café page now?")
     case.run()
     check("the log keeps a sentence's letters as written", "café" in case.log.read_text(encoding="utf-8"),

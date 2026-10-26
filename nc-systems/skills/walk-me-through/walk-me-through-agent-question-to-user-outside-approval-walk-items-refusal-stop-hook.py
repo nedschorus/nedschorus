@@ -51,19 +51,18 @@ reworded line.
 
 AN INTERRUPTION ITEM'S TEXT is not checked either: a line of the text
 checked, a list joined to its lead-in included, is left out when the
-walk-document, as it stands when the hook runs, holds it word for word in an
-interruption item, one numbered `W.n` after a waiting item W and not itself
-waiting, whatever its total. The line is compared as the agent wrote it,
-before the removals above, because the item holds the question as its asker
-wrote it, code spans and quotations included. Both sides are compared as
-sentences: each line, once `normalized` has dropped its marks, is cut where a
-sentence ends, after a colon and before an opening quotation mark, so that a
-question quoted inside a longer sentence of the item, or put after its
-`asks:`, is a sentence of its own; each sentence is then its words and
-question marks alone, the runs of letters and digits and each `?`, every
-other mark ignored. A line is held only when its sentences are, in order,
-whole sentences of the item, so a sentence that is only the start or the end
-of an item's sentence is not held. An item's lines run from its opening,
+walk-document, as it stands when the hook runs, holds each line of it, as
+the agent wrote it, as a whole line of one interruption item, one numbered
+`W.n` after a waiting item W and not itself waiting, whatever its total.
+Lines are compared whole and equal once `normalized` has dropped their marks,
+so a leading `>` or list mark, bold, italic and code-span marks, link targets,
+spacing and case do not count: a line that
+is only part of an item's line, or that holds more than it, is not held. The
+lines are compared as the agent wrote them, before the removals above,
+because the item holds the question as its asker wrote it, code spans and
+quotations included; the refusal names them as written, and its step 1 tells
+the agent to copy each into the item as a line of its own, refusing until
+the item holds them so. An item's lines run from its opening,
 as the approval-walk finder reads openings, when it has one, to the next
 item's opening or its unit's end, and are otherwise its whole unit; but an
 item without an opening under a heading shared by several items holds no
@@ -144,8 +143,6 @@ UNCLEAR_ASK = re.compile(
 SENTENCE_END = re.compile(r"(?:(?<=[.?!])|(?<=[.?!][\"'\u201d\u2019)*_]))\s+")
 TRAILING_MARKS = "*_ )\"'”’"
 QUOTED = re.compile(r"\"[^\"\n]+\"|“[^”\n]+”")
-WORD = re.compile(r"\w+|\?")
-SENTENCE_START = re.compile(r"(?<=:)\s+|\s+(?=[\"\u201c])")
 LINK = re.compile(r"\[([^\]\n]*)\]\([^)\n]*\)")
 LIST_ITEM = re.compile(r"^(?:[-+*]|\d+[.)])\s")
 LINE_MARKS = re.compile(r"^\s*(?:(?:[-+*>]|\d+[.)])\s+)+")
@@ -185,9 +182,13 @@ MODEL_CHECK_FAILED_NOTICE = ("the hook's `claude -p` call that has the model jud
 REFUSAL_INSTRUCTIONS = (
     "If the flagged text asks the user to decide or answer something, do these four steps:",
     "1. Add it to the walk-document {document} as an interruption item headed `## Item {new_item} of "
-    "{new_total}: <the point of the question>`, placed right after item {last_waiting}. Quote the question whole, "
-    "as its asker wrote it, whether you or another agent, with the flagged text in it word for word, because "
-    "that is what lets this check pass the question once it is in the item, give your recommendation as `Recommendation: <what you recommend doing>.`, and end the item with "
+    "{new_total}: <the point of the question>`, placed right after item {last_waiting}. Quote the question whole "
+    "in the item, as its asker wrote it, whether you or another agent, giving each line of the flagged text a "
+    "line of its own, word for word, and putting the rest of the question on other lines of the item. This hook passes the "
+    "question only when the item in the walk-document holds every flagged line that way, and refuses again until "
+    "it does; it ignores a `>` quote mark or a list mark such as `-` or `1.` at the start of a line, bold, italic "
+    "and code marks, and letter case, so you may add or drop those. "
+    "Give your recommendation as `Recommendation: <what you recommend doing>.`, and end the item with "
     "{answer_line}.",
     "2. Change the walk's item count M from {total} to {new_total} in every item heading of {document} that "
     "carries `of {total}`, and in "
@@ -238,16 +239,8 @@ def turn_assistant_texts(records):
     return texts
 
 
-def comparable(lines):
-    """lines as AN INTERRUPTION ITEM'S TEXT in the module docstring compares them: each line normalized alone and
-    cut into sentences, each sentence its words and question marks, every sentence closed by `|` on both sides."""
-    sentences = (" ".join(WORD.findall(part)) for line in lines
-                 for sentence in SENTENCE_END.split(normalized(line)) for part in SENTENCE_START.split(sentence))
-    return "|" + "".join(sentence + "|" for sentence in sentences if sentence)
-
-
 def interruption_item_texts(document_text, units, waiting_numbers, parser):
-    """The comparable text of every item numbered W.n, for W a waiting item, not itself waiting: its lines as the
+    """The set of normalized lines of every item numbered W.n, for W a waiting item, not itself waiting: its lines as the
     approval-walk finder's line-range helper gives them, or nothing when they are the whole of a unit of several
     items, because that unit's items have no openings."""
     document_lines = document_text.split("\n")
@@ -262,7 +255,7 @@ def interruption_item_texts(document_text, units, waiting_numbers, parser):
                 openings, first, end, number, numbers, total)
             if len(numbers) > 1 and span == (first, end):
                 continue
-            texts.append(comparable(document_lines[span[0]:span[1]]))
+            texts.append({normalized(line) for line in document_lines[span[0]:span[1]]} - {""})
     return texts
 
 
@@ -295,7 +288,8 @@ def is_waiting_reminder(sentence, waiting_numbers, totals):
 def checked_lines(reply, document_text, units, parser, waiting_numbers, total):
     """The reply's lines as the module docstring's THE TEXT CHECKED says, emphasis dropped, empty ones left out,
     and each list joined to the line ending in `:` that introduces it, so the list is judged with its lead-in;
-    then those an interruption item holds, compared as the reply wrote them, left out."""
+    then those an interruption item holds, compared as the reply wrote them, left out. Each comes as (the line
+    checked, the lines as the reply wrote them)."""
     totals = {total} | {unit[1] for unit in units}
     document_lines = document_text.split("\n")
     normalized_document = normalized(" ".join(document_lines))
@@ -324,8 +318,8 @@ def checked_lines(reply, document_text, units, parser, waiting_numbers, total):
             written.append([as_written])
             introduced_list = line.endswith(":")
     item_texts = interruption_item_texts(document_text, units, waiting_numbers, parser)
-    return [line for line, as_written in zip(kept, written)
-            if not any(comparable(as_written) in text for text in item_texts)]
+    return [(line, as_written) for line, as_written in zip(kept, written)
+            if not any({normalized(each) for each in as_written} <= text for text in item_texts)]
 
 
 def line_kind(line):
@@ -448,7 +442,8 @@ def output_for(payload, environment, model=model_judgement):
         total, _ = walk_finder.waiting_item_units(document, value, numbers, total, parser, all_units=units)
     except walk_finder.UnusableRange:
         return None
-    lines = checked_lines(reply, document_text, units, parser, numbers, total)
+    checked = checked_lines(reply, document_text, units, parser, numbers, total)
+    lines = [line for line, _ in checked]
     kinds = [(line, line_kind(line)) for line in lines]
     clear = [line for line, kind in kinds if kind == "clear"]
     unclear = [line for line, kind in kinds if kind == "unclear"]
@@ -465,6 +460,8 @@ def output_for(payload, environment, model=model_judgement):
             decided, decided_by = DECIDED_BY_MODEL_NOTICE, "model"
     else:
         return None
+    # The agent copies the flagged text into the item, so it is named as written, not as checked.
+    sentence = "\n".join(next(written for line, written in checked if line == sentence))
     held = {number for unit in units for number in unit[0]}
     waiting = numbers[-1]
     waiting_label = " and ".join(numbers)
