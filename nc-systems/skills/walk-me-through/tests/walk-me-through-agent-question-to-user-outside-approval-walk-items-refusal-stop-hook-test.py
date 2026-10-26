@@ -259,17 +259,21 @@ def test_the_block_message_says_what_to_do():
              "other lines of the item. This hook passes the question only when the item in the walk-document holds every flagged line "
              "that way, and refuses again until it does; it ignores a `>` quote mark or a list mark such as `-` or "
              "`1.` at the start of a line, bold, italic and code marks, and letter case, so you may add or drop those. "
-             "Give your recommendation as `Recommendation: <what you recommend"),
-            ("the message quotes the walk's answer line", f"end the item with this line, which the walk's other "
-             f"items end with: `{ANSWER_LINE}`."),
+             "Give the item one recommendation and one alternative, and end it with the recommendation stated as "
+             "an action, as in `Recommendation: <what you recommend doing>.`"),
             ("the message says to change M everywhere",
              f"Change the walk's item count M from 10 to 11 in every item heading of {case.document} that carries `of 10`"),
             ("the message gives the minutes' new line",
              f"the last `#next_to_present` line of {case.minutes}, which then reads `#next_to_present item 2 of 11`"),
             ("the message says not to show the new item now",
              "Do not show the new item now: it is shown after item 2 is answered."),
-            ("the message gives the closing lines", "end the message you write next with these two lines: `I added the question as "
-             "Item 2.1 of 11.` and `Item 2 of 11 is waiting for your answer.`"),
+            ("the message gives the closing line's form when the minutes record no page for the waiting item",
+             "End the message you write next with the line `I added the question as Item 2.1 of 11.` and then the "
+             "waiting item's closing line, as the walk-me-through skill writes it, as the last text of that message:\n"
+             f"`[Item 2 of 11, where the poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}`\n"
+             "The minutes record no `#item_page` line for item 2. For each such item, publish its page first if it "
+             f"has none and record the page's link in {case.minutes}, as the walk-me-through skill says; then put "
+             "the link in place of `<page link>` in the item's closing line.\n"),
             ("the message says how to clear a false block",
              "If the flagged text does not ask the user anything, reword it in your reply so that it no longer reads")):
         check(case_name, phrase in reason, reason)
@@ -277,10 +281,6 @@ def test_the_block_message_says_what_to_do():
     taken.reply("Should I merge the pull request now?")
     check_blocked("an interruption number already in the walk-document is skipped",
                   taken.run(), "`## Item 2.2 of 11: <the point of the question>`")
-    no_answer_line = Case(document=WALK_DOCUMENT.replace(ANSWER_LINE, "Answer below."))
-    no_answer_line.reply("Should I merge the pull request now?")
-    check_blocked("a walk-document without an answer line is described in words", no_answer_line.run(),
-                  "end the item with the answer line the walk's other items end with.")
 
 
 def test_a_reply_with_nothing_question_like_passes():
@@ -543,9 +543,10 @@ def test_the_shown_item_and_quotes_from_it_are_not_checked():
                  with_alternative.run(model="yes"))
     with_alternative.reply(ITEM_2_SHOWN + alternative)
     check_silent("the shown item's answer line passes with the alternative", with_alternative.run(model="yes"))
-    with_alternative.reply("Should I merge the pull request now?")
-    check_blocked("the refusal quotes the answer line without the alternative another item adds after it",
-                  with_alternative.run(), f"which the walk's other items end with: `{ANSWER_LINE}`.")
+    numbered = Case(document=WALK_DOCUMENT.replace(f"\n{ANSWER_LINE}\n", f"\n6. {ANSWER_LINE}{alternative}\n"))
+    numbered.reply(ITEM_2_SHOWN)
+    check_silent("the shown item's answer line passes without the number and the alternative the walk-document adds",
+                 numbered.run(model="yes"))
 
 
 def test_every_turn_is_checked_whoever_started_it():
@@ -634,7 +635,16 @@ def test_two_waiting_items():
     check_blocked("with two items waiting, the interruption item follows the later one and both are named",
                   case.run(), "`## Item 3.1 of 11: <the point of the question>`, placed right after item 3.",
                   "which then reads `#next_to_present items 2 and 3 of 11`",
-                  "`Items 2 and 3 of 11 are waiting for your answer.`")
+                  "and then each waiting item's closing line, on a line of its own, as the walk-me-through skill "
+                  f"writes it, as the last text of that message:\n`[Item 2 of 11, where the poem page lives](<page link>) · "
+                  f"{CLOSING_LINE_ANSWER_LETTERS}`\n`[Item 3 of 11, the hook](<page link>) · "
+                  f"{CLOSING_LINE_ANSWER_LETTERS}`\nThe minutes record no `#item_page` line for items 2 and 3. For each such item")
+    mixed = Case(minutes="#item_page item 3 of 10 https://claude.ai/artifact/p3\n#next_to_present items 2 and 3 of 10")
+    mixed.reply("Should I merge the pull request now?")
+    check_blocked("with two items waiting and a page for one, each gets its own form of the closing line",
+                  mixed.run(), f"`[Item 2 of 11, where the poem page lives](<page link>) · {CLOSING_LINE_ANSWER_LETTERS}`\n"
+                  f"`[Item 3 of 11, the hook](https://claude.ai/artifact/p3) · {CLOSING_LINE_ANSWER_LETTERS}`\n"
+                  "The minutes record no `#item_page` line for item 2. For each such item")
 
 
 def test_only_a_reminder_of_the_open_walks_waiting_items_is_skipped():
@@ -681,11 +691,95 @@ def test_only_the_waiting_items_closing_line_is_skipped():
     check_silent("the closing line of each of two waiting items passes", two_waiting.run(model="yes"))
 
 
-def test_a_numbered_answer_line_is_quoted_without_its_number():
-    case = Case(document=WALK_DOCUMENT.replace(f"\n{ANSWER_LINE}\n", f"\n6. {ANSWER_LINE}\n"))
+def test_a_closing_line_passes_only_as_one_link_followed_by_the_answer_letters():
+    case = Case()
+    point = "the *poem* page in `docs/` is recommended"
+    case.reply(f"[Item 2 of 10, {point}](https://claude.ai/artifact/x) · {CLOSING_LINE_ANSWER_LETTERS}")
+    check_silent("a closing line whose point holds emphasis and a code span passes", case.run(model="yes"))
+    case.reply(closing_line("2 of 10").replace("https://claude.ai/artifact/x", "file:///Volumes/nedhome/x/walk.md"))
+    check_silent("a closing line whose link is a file:// link passes", case.run(model="yes"))
+    case.reply(closing_line("2 of 10", point="the page recommended for `docs/`"))
+    check_silent("a closing line whose point ends in a code span passes", case.run(model="yes"))
+    letters = f" · {CLOSING_LINE_ANSWER_LETTERS}"
+    for case_name, line in (
+            ("a question between the link and the answer letters is checked",
+             f"[Item 2 of 10, x](https://claude.ai/artifact/x) Should I also merge PR 9?{letters}"),
+            ("a closing line without its link is checked",
+             f"Item 2 of 10, the poem page is recommended for the wiki{letters}"),
+            ("a closing line with its label in brackets but no link target is checked",
+             f"[Item 2 of 10, the poem page is recommended for the wiki]{letters}"),
+            ("a closing line written as a list item is checked", "- " + closing_line("2 of 10")),
+            ("a closing line in bold marks is checked", f"**{closing_line('2 of 10')}**"),
+            ("a closing line whose label opens with bold marks is checked",
+             closing_line("2 of 10").replace("[Item 2 of 10,", "[**Item 2 of 10**,")),
+            ("a closing line whose label opens with a code span is checked",
+             closing_line("2 of 10").replace("[Item 2 of 10,", "[`Item 2 of 10`,")),
+            ("an italic count and point followed by an empty link is checked",
+             f"*Item 2 of 10, the poem page is recommended*[](https://claude.ai/artifact/x){letters}"),
+            ("a bold count and point followed by an empty link is checked",
+             f"**Item 2 of 10, the poem page is recommended**[](https://claude.ai/artifact/x){letters}"),
+            ("a closing line whose label does not open with `Item` in capitals is checked",
+             closing_line("2 of 10").replace("[Item", "[item")),
+            ("a closing line whose label puts no comma after the count is checked",
+             closing_line("2 of 10").replace("2 of 10,", "2 of 10:")),
+            ("the closing line's link alone is checked",
+             "[Item 2 of 10, the poem page is recommended for the wiki](https://claude.ai/artifact/x)"),
+            ("a closing line whose answer letters are a code span is checked",
+             f"[Item 2 of 10, the poem page is recommended for the wiki](https://claude.ai/artifact/x)`{letters}`"),
+            ("a closing line with emphasis right after its answer letters is checked",
+             closing_line("2 of 10") + "*really*"),
+            ("a closing line with a second link after the answer letters is checked",
+             closing_line("2 of 10") + " [why](https://claude.ai/artifact/y)")):
+        case.reply("PR 1922 merged.\n\n" + line)
+        check_blocked(case_name, case.run(model="yes"), "approval-walk question check")
+
+
+def test_the_answer_hooks_closing_line_for_a_point_with_brackets_passes():
+    document = WALK_DOCUMENT.replace("## Item 2 of 10: where the poem page lives",
+                                     "## Item 2 of 10: the [advisor] check is recommended for the poem page")
+    case = Case(document=document,
+                minutes="#item_page item 2 of 10 https://claude.ai/artifact/p2\n#next_to_present item 2 of 10")
+    line = hook.answer_hook.closing_line("2", hook.answer_hook.read_walk(case.checkout))
+    check("the answer hook escapes the point's brackets in its closing line",
+          line is not None and line.startswith("[Item 2 of 10, the \\[advisor\\] check"), line)
+    case.reply("PR 1922 merged.\n\n" + str(line))
+    check_silent("the answer hook's closing line for a point holding brackets passes", case.run(model="yes"))
+    case.reply("PR 1922 merged.\n\n" + str(line).replace("\\[", "[").replace("\\]", "]"))
+    check_silent("the closing line for a point holding unescaped brackets passes", case.run(model="yes"))
+    check("a closing line whose point holds brackets never reaches the model", case.model_calls() == [],
+          case.model_calls())
+
+
+def test_the_refusal_gives_the_waiting_items_closing_line_and_it_passes_once_the_steps_are_done():
+    case = Case(minutes="#item_page item 2 of 10 https://claude.ai/artifact/p2\n#next_to_present item 2 of 10")
     case.reply("Should I merge the pull request now?")
-    check_blocked("the refusal quotes an answer line written as a numbered list item without its number",
-                  case.run(), f"which the walk's other items end with: `{ANSWER_LINE}`.")
+    reason = blocked_reason(case.run()) or ""
+    expected = (f"`[Item 2 of 11, where the poem page lives](https://claude.ai/artifact/p2) · "
+                f"{CLOSING_LINE_ANSWER_LETTERS}`")
+    check("the refusal gives the waiting item's closing line with its page link and the new total",
+          reason.endswith(f"as the last text of that message:\n{expected}\n" + hook.REFUSAL_INSTRUCTIONS[-2]
+                          + "\n" + hook.REFUSAL_INSTRUCTIONS[-1]), reason)
+    done = Case(document=WALK_DOCUMENT.replace("of 10", "of 11") + "\n"
+                + INTERRUPTION_ITEM.replace("merge-lane-2 asks: should I file one GHI listing the remaining seats' "
+                                            "tests?", "Should I merge the pull request now?"),
+                minutes="#item_page item 2 of 10 https://claude.ai/artifact/p2\n#next_to_present item 2 of 11")
+    done.reply("Should I merge the pull request now?\n\nI added the question as Item 2.1 of 11.\n\n" + expected[1:-1])
+    check_silent("the reply the refusal's step 4 asks for passes once steps 1 and 2 are done", done.run(model="yes"))
+
+
+def test_the_closing_line_and_the_item_ending_are_the_walk_skills():
+    skill = (Path(__file__).resolve().parents[4] / ".claude" / "skills" / "walk-me-through" / "SKILL.md").read_text()
+    example = next((line for line in skill.split("\n") if line.startswith("[Item 4 of 9, <the point>](<page link>)")),
+                   None)
+    check("SKILL.md holds the closing line's form, `[Item 4 of 9, <the point>](<page link>) · ...`, on a line of its "
+          "own", example is not None, "no such line")
+    case = Case()
+    case.reply("PR 1922 merged.\n\n" + str(example).replace("4 of 9", "2 of 10").replace(
+        "<the point>", "the poem page is recommended for the wiki").replace("<page link>", "https://claude.ai/artifact/x"))
+    check_silent("SKILL.md's closing line, filled in for the waiting item, passes", case.run(model="yes"))
+    ending = "end it with the recommendation stated as an action"
+    check("refusal step 1 ends the new item as SKILL.md's section \"Each item\" says",
+          ending in skill and ending in hook.REFUSAL_INSTRUCTIONS[1], hook.REFUSAL_INSTRUCTIONS[1])
 
 
 def test_a_fault_exits_1_and_names_it():
