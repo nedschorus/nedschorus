@@ -1116,6 +1116,86 @@ with tempfile.TemporaryDirectory() as workspace:
           reports_the_git_failure_and_no_result(base_with_launcher, code, err),
           f"{code} {out!r} {err!r}")
 
+
+# --- --only-citations-of-removed-paths: the backward half alone -------------
+with tempfile.TemporaryDirectory() as workspace:
+    root = Path(workspace) / "repo"
+    root.mkdir()
+    build_repository(root)
+    commit_change(root, "scripts/tool-that-moves.py", "VALUE = 1\n")
+    commit_change(root, "scripts/caller.py", 'TOOL = "scripts/tool-that-moves.py"\n')
+    flag_base = git(root, "rev-parse", "HEAD").stdout.strip()
+    commit_change(root, "scripts/forward-only.py", "# runs scripts/never-built.py\n")
+    code, out, err = run_check(root, flag_base, "--only-citations-of-removed-paths")
+    check("with --only-citations-of-removed-paths a new dangling citation alone is not reported",
+          code == 0 and "never-built" not in out, f"{code} {out!r} {err!r}")
+    git(root, "mv", "scripts/tool-that-moves.py", "scripts/tool-after-the-move.py")
+    git(root, "commit", "-qm", "rename the tool, sweeping nothing")
+    code, out, err = run_check(root, flag_base)
+    check("without the flag both halves are reported",
+          code == 1 and "never-built" in out and "cites scripts/tool-that-moves.py" in out,
+          f"{code} {out!r} {err!r}")
+    code, out, err = run_check(root, flag_base, "--only-citations-of-removed-paths")
+    check("with --only-citations-of-removed-paths only the citation of the renamed path is reported",
+          code == 1 and "scripts/caller.py:1: cites scripts/tool-that-moves.py" in out
+          and "never-built" not in out, f"{code} {out!r} {err!r}")
+
+
+# --- the suite run fails on a pure rename that leaves a citation behind -----
+# The branch renames a cited program and changes no Markdown file, so nothing
+# but the suite run can catch it. The run is the selective one CLAUDE.md asks
+# for before every push, after a full run has recorded the suite's inputs.
+RUNNER = Path(__file__).resolve().with_name("run-all-test-suites.py")
+REMOVED_PATH_CITATION_SUITE = Path(__file__).resolve().with_name(
+    "branch-leaves-no-citations-of-removed-paths-test.py")
+SUITE_IN_THE_SCRATCH_CHECKOUT = f"scripts/{REMOVED_PATH_CITATION_SUITE.name}"
+
+
+def run_the_suites(workspace: Path, root: Path, run_name: str, *arguments):
+    completed = subprocess.run(
+        [sys.executable, str(RUNNER), "--checkout", str(root),
+         "--log-dir", str(workspace / f"logs-{run_name}"),
+         "--lock-file", str(workspace / "run.lock"),
+         "--recorded-inputs-directory", str(workspace / "recordings"), *arguments],
+        capture_output=True, text=True, stdin=subprocess.DEVNULL, check=False)
+    return completed.returncode, completed.stdout, completed.stderr
+
+
+with tempfile.TemporaryDirectory() as workspace:
+    workspace = Path(workspace)
+    root = workspace / "repo"
+    root.mkdir()
+    build_repository(root)
+    (root / "scripts" / REMOVED_PATH_CITATION_SUITE.name).write_text(
+        REMOVED_PATH_CITATION_SUITE.read_text(encoding="utf-8"), encoding="utf-8")
+    commit_change(root, "scripts/tool-that-moves.py", "VALUE = 1\n")
+    commit_change(root, "scripts/caller.py", 'TOOL = "scripts/tool-that-moves.py"\n')
+    git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
+    code, out, err = run_the_suites(workspace, root, "full")
+    check("the suite passes a full run of a checkout at origin/main",
+          code == 0 and f"PASS {SUITE_IN_THE_SCRATCH_CHECKOUT}" in out, f"{code} {out!r} {err!r}")
+
+    git(root, "mv", "scripts/tool-that-moves.py", "scripts/tool-after-the-move.py")
+    git(root, "commit", "-qm", "rename the tool, sweeping nothing")
+    changed_names = git(root, "diff", "--name-only", "origin/main", "HEAD").stdout.split()
+    check("the branch changes no Markdown file",
+          changed_names and not any(name.endswith(".md") for name in changed_names),
+          changed_names)
+    since = ("--only-suites-whose-recorded-inputs-changed-since", "origin/main")
+    code, out, err = run_the_suites(workspace, root, "after-the-rename", *since)
+    check("a selective run selects the suite after a pure rename",
+          f"SELECTED {SUITE_IN_THE_SCRATCH_CHECKOUT}:" in out
+          and f"NOT SELECTED {SUITE_IN_THE_SCRATCH_CHECKOUT}:" not in out,
+          f"{code} {out!r} {err!r}")
+    check("a selective run fails while a file still cites the renamed path",
+          code == 1 and f"FAIL {SUITE_IN_THE_SCRATCH_CHECKOUT} exit 1" in out,
+          f"{code} {out!r} {err!r}")
+
+    commit_change(root, "scripts/caller.py", 'TOOL = "scripts/tool-after-the-move.py"\n')
+    code, out, err = run_the_suites(workspace, root, "after-the-sweep", *since)
+    check("a selective run passes once the citation names the new path",
+          code == 0 and f"PASS {SUITE_IN_THE_SCRATCH_CHECKOUT}" in out, f"{code} {out!r} {err!r}")
+
 if failures:
     print(f"\n{len(failures)} case(s) failed: {', '.join(failures)}")
     sys.exit(1)
