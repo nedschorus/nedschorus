@@ -165,11 +165,36 @@ FIXTURE_PAIRS = [
 ]
 
 
+def log_store_runs_directory(scratch):
+    """The directory the suite passes as --log-store-runs-directory, so no replay writes into the log-store;
+    made on first use."""
+    directory = Path(scratch) / "log-store-runs"
+    directory.mkdir(exist_ok=True)
+    return directory
+
+
+def default_scratch_replay(head_ref, scratch, *extra, base_ref="HEAD", pairs=FIXTURE_PAIRS):
+    """run_replay() without --scratch-directory, its temporary directory in a new directory of the suite's scratch
+    and its run log directory in another; return (status, out, err, what the temporary directory holds after the
+    replay, the run log directories after the replay)."""
+    temporary = Path(tempfile.mkdtemp(prefix="temporary-", dir=scratch))
+    runs = Path(tempfile.mkdtemp(prefix="log-store-runs-", dir=scratch))
+    previous_tempdir = tempfile.tempdir
+    tempfile.tempdir = str(temporary)
+    try:
+        status, out, err = run_replay(head_ref, scratch, "--log-store-runs-directory", str(runs), *extra,
+                                      base_ref=base_ref, scratch_directory=False, pairs=pairs)
+    finally:
+        tempfile.tempdir = previous_tempdir
+    return status, out, err, sorted(os.listdir(temporary)), sorted(runs.iterdir())
+
+
 def run_replay(head_ref, scratch, *extra, base_ref="HEAD", scratch_directory=True, pairs=FIXTURE_PAIRS):
     pairs_file = Path(scratch) / "fixture-pairs.json"
     pairs_file.write_text(json.dumps(pairs))
     arguments = ["--repository", str(TEST_REPOSITORY), "--base-ref", base_ref, "--head-ref", head_ref,
-                 "--pairs-file", str(pairs_file), "--jobs", "2"]
+                 "--pairs-file", str(pairs_file), "--jobs", "2",
+                 "--log-store-runs-directory", str(log_store_runs_directory(scratch))]
     if scratch_directory:
         arguments += ["--scratch-directory", str(Path(scratch) / f"run-{len(os.listdir(scratch))}")]
     printed, errors = io.StringIO(), io.StringIO()
@@ -189,7 +214,8 @@ def run_replay_within(deadline_seconds, head_ref, scratch, *extra, base_ref="HEA
     pairs_file = Path(scratch) / "fixture-pairs.json"
     pairs_file.write_text(json.dumps(pairs))
     arguments = ["--repository", str(TEST_REPOSITORY), "--base-ref", base_ref, "--head-ref", head_ref,
-                 "--pairs-file", str(pairs_file), "--jobs", "2", *extra]
+                 "--pairs-file", str(pairs_file), "--jobs", "2",
+                 "--log-store-runs-directory", str(log_store_runs_directory(scratch)), *extra]
     process = subprocess.Popen([sys.executable, str(SCRIPT_PATH), *arguments], stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, text=True)
     try:
@@ -1089,6 +1115,117 @@ try:
     check("a default scratch directory is removed after an exit 0",
           status == 0 and "scratch directory removed" in out and not os.listdir(Path(scratch) / "temporary"),
           f"status {status}\n{out}\n{os.listdir(Path(scratch) / 'temporary')}")
+    check("a run log directory is removed after an exit 0",
+          status == 0 and "run log directory removed" in out and not os.listdir(log_store_runs_directory(scratch)),
+          f"status {status}\n{out}\n{os.listdir(log_store_runs_directory(scratch))}")
+
+    status, out, err, left, runs = default_scratch_replay(refusing_ls, scratch)
+    kept = sorted(path.name for path in runs[0].iterdir()) if len(runs) == 1 else None
+    check("a default scratch directory is removed after an exit 1, and the run log directory is kept, holding the "
+          "differences and the step logs but not the checkouts or the pairs",
+          status == 1 and not left and "scratch directory removed" in out
+          and f"run log directory kept: {runs[0] if runs else None}" in out
+          and kept is not None and "differences-in-process.json" in kept and "verdicts-in-process-head.log" in kept
+          and not any(name.startswith("checkout-") or name == "pairs.json" for name in kept),
+          f"status {status}; left {left}; kept {kept}\n{out}\n{err}")
+    check("the run log directory the replay prints first is the one the VERDICT CHANGED message sends the reviewer to",
+          runs and out.splitlines()[0] == f"run log directory: {runs[0]}"
+          and json.loads((runs[0] / "differences-in-process.json").read_text())["verdict"], out)
+
+    status, out, err, left, runs = default_scratch_replay("no-such-ref-for-the-replay-test", scratch)
+    check("a default scratch directory is removed when the replay fails partway, at a ref that does not exist",
+          status == 2 and "REPLAY FAILED" in err and not left and len(runs) == 1,
+          f"status {status}; left {left}; runs {runs}\n{out}\n{err}")
+
+    not_json = Path(scratch) / "pairs-file-that-is-not-json.json"
+    not_json.write_text("not JSON")
+    status, out, err, left, runs = default_scratch_replay("HEAD", scratch, "--pairs-file", str(not_json))
+    check("a default scratch directory is removed when the replay raises an unforeseen error before it reads a ref",
+          status == 2 and "REPLAY FAILED: JSONDecodeError" in err and not left and len(runs) == 1,
+          f"status {status}; left {left}; runs {runs}\n{out}\n{err}")
+
+    status, out, err, left, runs = default_scratch_replay(
+        "HEAD", scratch, "--log-store-runs-directory", str(Path(scratch) / "no-such-log-store" / "runs"))
+    check("a run log directory that cannot be made: exit 2, the message says where to run the replay, and no "
+          "scratch directory is made",
+          status == 2 and "this Bash guards replay made no run log directory" in err
+          and "run the replay again with --log-store-runs-directory <an existing directory>" in err and not left
+          and not (Path(scratch) / "no-such-log-store").exists(), f"status {status}; left {left}\n{out}\n{err}")
+
+    removal_failures_as_written = replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures
+    replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures = lambda *arguments: (
+        removal_failures_as_written(*arguments) + ["a path: could not be removed in the test"])
+    try:
+        status, out, err, left, runs = default_scratch_replay("HEAD", scratch)
+    finally:
+        replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures = (
+            removal_failures_as_written)
+    check("a scratch directory that cannot be removed: exit 2, though no verdict changed, and the path is named "
+          "with the command that removes it",
+          status == 2 and "NO VERDICT CHANGED" in out and "could not be removed, so this Bash guards replay exits 2" in out
+          and "Remove each listed path with rm -rf <path>" in out and "a path: could not be removed in the test" in out,
+          f"status {status}\n{out}\n{err}")
+
+    remove_checkouts_as_written = replay.remove_checkouts
+    replay.remove_checkouts = lambda repository, checkouts: (
+        remove_checkouts_as_written(repository, checkouts) + ["a checkout: git worktree remove exited 128: the test"])
+    try:
+        status, out, err, left, runs = default_scratch_replay("HEAD", scratch)
+    finally:
+        replay.remove_checkouts = remove_checkouts_as_written
+    check("a default scratch directory is kept when a checkout in it could not be removed, so git's registration "
+          "still has its files",
+          status == 2 and len(left) == 1 and "scratch directory kept: " in out
+          and "scratch directory removed" not in out,
+          f"status {status}; left {left}\n{out}\n{err}")
+
+    locked_scratch = Path(scratch) / "removal-failures-scratch"
+    locked_run_logs = Path(scratch) / "removal-failures-run-logs"
+    for directory in (locked_scratch, locked_run_logs):
+        (directory / "locked").mkdir(parents=True)
+        (directory / "locked" / "file").write_text("x")
+        (directory / "locked").chmod(0o500)
+    try:
+        after_exit_1 = replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(
+            locked_scratch, locked_run_logs, 1)
+        after_exit_0 = replay.remove_scratch_directory_and_after_exit_0_run_log_directory_returning_failures(
+            locked_scratch, locked_run_logs, 0)
+    finally:
+        for directory in (locked_scratch, locked_run_logs):
+            (directory / "locked").chmod(0o700)
+    check("a path that cannot be removed is returned with its reason: the scratch directory's after any exit, the "
+          "run log directory's only after an exit 0",
+          any(str(locked_scratch / "locked" / "file") in line for line in after_exit_1)
+          and not any(str(locked_run_logs) in line for line in after_exit_1)
+          and any(str(locked_scratch / "locked" / "file") in line for line in after_exit_0)
+          and any(str(locked_run_logs / "locked" / "file") in line for line in after_exit_0),
+          f"after exit 1 {after_exit_1}; after exit 0 {after_exit_0}")
+
+    temporary = Path(tempfile.mkdtemp(prefix="temporary-sigterm-", dir=scratch))
+    runs = Path(tempfile.mkdtemp(prefix="log-store-runs-sigterm-", dir=scratch))
+    pairs_file = Path(scratch) / "fixture-pairs.json"
+    pairs_file.write_text(json.dumps(FIXTURE_PAIRS))
+    stopped = subprocess.Popen(
+        [sys.executable, str(SCRIPT_PATH), "--repository", str(TEST_REPOSITORY), "--head-ref", "HEAD",
+         "--base-ref", "HEAD", "--pairs-file", str(pairs_file), "--jobs", "2", "--log-store-runs-directory", str(runs)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=dict(os.environ, TMPDIR=str(temporary)))
+    printed_before_the_stop = []
+    for line in stopped.stdout:
+        printed_before_the_stop.append(line)
+        if line.startswith("pairs: "):
+            break
+    stopped.send_signal(signal.SIGTERM)
+    try:
+        out, err = stopped.communicate(timeout=REPLAY_STOP_SECONDS)
+    except subprocess.TimeoutExpired:
+        stopped.kill()
+        out, err = stopped.communicate()
+    check("a replay stopped by SIGTERM after it made its scratch directory: exit 2, the scratch directory is removed "
+          "and the run log directory kept",
+          stopped.returncode == 2 and not os.listdir(temporary) and len(os.listdir(runs)) == 1
+          and "scratch directory removed" in out,
+          f"exit {stopped.returncode}; left {os.listdir(temporary)}; runs {os.listdir(runs)}\n"
+          f"{''.join(printed_before_the_stop)}{out}\n{err}")
 
     previous_directory = os.getcwd()
     os.chdir(scratch)
