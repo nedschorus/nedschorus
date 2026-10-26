@@ -167,6 +167,8 @@ def run_order_and_link_cases():
     (s.parents[0] / ROOT_NAME / "-linked-project").symlink_to(outside)
     (s.parents[0] / ROOT_NAME / "-home-nedlern-agents-seat"
      / "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb").symlink_to(outside_folder)
+    os.utime(s.parents[0] / ROOT_NAME / "-home-nedlern-agents-seat"
+             / "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", (DAY_AGO, DAY_AGO), follow_symlinks=False)
     second_parent_folder = s.folder(1, OTHER)
     result = s.run(parents=[s.base / "no-such-parent", s.parents[0], s.parents[1]])
     check("order cases: the run exits 0 with no failure", result.returncode == 0 and result.stderr == "",
