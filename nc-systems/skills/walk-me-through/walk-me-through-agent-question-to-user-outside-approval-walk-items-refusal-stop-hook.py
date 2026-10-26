@@ -56,7 +56,7 @@ the agent wrote it, as a whole line of one interruption item, one numbered
 `W.n` after a waiting item W and not itself waiting, whatever its total.
 Lines are compared whole and equal once `normalized` has dropped their marks,
 so a leading `>` or list mark, bold, italic and code-span marks, link targets,
-spacing and case do not count, and every other character does: a line that
+spacing and case do not count: a line that
 is only part of an item's line, or that holds more than it, is not held. The
 lines are compared as the agent wrote them, before the removals above,
 because the item holds the question as its asker wrote it, code spans and
