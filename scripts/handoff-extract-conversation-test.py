@@ -258,7 +258,7 @@ with tempfile.TemporaryDirectory() as workspace:
     # content — indistinguishable by type from a typed prompt. The original
     # fixture modeled it as a queue-operation record, which the filter always
     # dropped, so the tests stayed green while real extracts ran 79% noise
-    # (2026-08-17 census of 341 transcripts: handoff-census-user-record-shapes.py).
+    # (2026-08-17 census of 341 transcripts).
     notification_text = (
         "<task-notification>\n<task-id>b123</task-id>\n"
         '<summary>Monitor event: "fleet watcher"</summary>\n'

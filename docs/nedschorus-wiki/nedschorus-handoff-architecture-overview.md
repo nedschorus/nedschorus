@@ -33,7 +33,6 @@ handoff-supervisor.py ──reads <seat>-handoff.md, kills claude, runs handoff-
 - `scripts/uncommitted-work-snapshot-hook.py`, a `PostToolUse` hook: after each Edit, Write, NotebookEdit and Bash call, keeps a work-snapshot, owned by the calling `claude` process, of the worktree the call worked in and, after a Bash call, of any worktree that process already has one of, and deletes it once nothing there is uncommitted; it never changes a worktree.
 - `nc-systems/handoff/uncommitted-work-snapshots.py`: the work-snapshot module that hook, the handoff-supervisor and `scripts/clean-worktrees.py` share; design in `nc-systems/handoff/handoff-uncommitted-work-snapshots-across-crashes-design.md`.
 - `scripts/handoff-extract-conversation.py`, the extractor: writes the conversation-tail from the outgoing agent-session's transcript, and the whole filtered dialog beside it when the tail leaves turns out.
-- `nc-systems/handoff/handoff-census-user-record-shapes.py`, the census: counts the kinds of user record in the top-level transcripts, to find injected text the extractor should drop.
 - `scripts/agent-seat-transcript-worth-resuming-common.py`: the one definition, for the handoff-supervisor and `recover-crashed-seats.py`, of a transcript worth resuming.
 - `scripts/agent-binary-update-under-lock.py`: updates `claude` for a launcher or the handoff-supervisor, skipping the update when another holds `agent-binary-update.lock`.
 - `scripts/checkout-freshness-catch-up.py`, a `Stop` hook outside this system: the launch-time-git-sync uses its checks for uncommitted tracked changes and a git operation in progress.
@@ -73,7 +72,7 @@ Unless named otherwise, files are in `~/.claude/handoffs/` on the agent-seat's m
 - `<session>-handoff-due-at-lower-context-threshold-after-approval-walk-closed`: written by `scripts/walk-files-ship.py` when it ships an approval-walk's closed walk-minutes; read and deleted by `handoff-context-threshold-hook.py`.
 - `<seat>-work-snapshots-first-listed.json`, recording when each lost work-snapshot was first listed: written through `uncommitted-work-snapshots.py` when the handoff-supervisor lists one; read through the same module by `clean-worktrees.py`, which deletes a lost work-snapshot some days after its first listing.
 - `refs/work-snapshots/` in the machine's clone: written by `uncommitted-work-snapshot-hook.py`, listed by `handoff-supervisor.py`, deleted by that hook or by `clean-worktrees.py` through `uncommitted-work-snapshots.py`, or by the agent following the restore steps it is given.
-- Transcripts under `~/.claude/projects/`: written by Claude Code; read by the extractor, the threshold hook, the post-compaction hook, the writer script, the census and `agent-seat-transcript-worth-resuming-common.py`.
+- Transcripts under `~/.claude/projects/`: written by Claude Code; read by the extractor, the threshold hook, the post-compaction hook, the writer script and `agent-seat-transcript-worth-resuming-common.py`.
 - `daily-memory-review-marks/` and `daily-overview-refresh-reminder-marks/` in the log-store on ned-box: written by `daily-memory-review-mark.py` and `daily-overview-refresh-reminder-mark.py`, over ssh from the Mac; read by `handoff-supervisor.py`, the memory review marks only on the Mac, over ssh, and the overview refresh reminder marks only for the agent-seat agent-instructions-editor, on either machine.
 - `agent-binary-update.lock` under `~/.local/state/claude/`: taken through `agent-binary-update-under-lock.py` by the launchers and the handoff-supervisor.
 - `CLAUDE_CODE_TASK_LIST_ID` and `GIT_AUTHOR_NAME`: set by `launch-claude-mac`, `launch-claude-ubuntu`, and `recover-crashed-seats.py` when it starts a ned-box handoff-supervisor itself; the first is required by `handoff-supervisor.py`, the second names the agent-seat in `uncommitted-work-snapshots.py`.
@@ -91,7 +90,7 @@ Unless named otherwise, files are in `~/.claude/handoffs/` on the agent-seat's m
 - `restart-live-seats-at-login.py`: a LaunchAgent at login on the Mac and a systemd user unit at boot on ned-box.
 - `recover-crashed-seats.py`: a person, or `restart-live-seats-at-login.py`.
 - `clean-worktrees.py`: the `daily-clean-worktrees` job in `nc-systems/general-tools/scheduled-jobs-on-each-machine.json` and the handoff-supervisor at each session-handoff; the launchers run it only to report.
-- `resupervise-seat.py`, the census and the install scripts: a person. The `list` command of `uncommitted-work-snapshots.py`: a person, or an agent its initial-agent-instructions send there.
+- `resupervise-seat.py` and the install scripts: a person. The `list` command of `uncommitted-work-snapshots.py`: a person, or an agent its initial-agent-instructions send there.
 
 ## Planned work
 
