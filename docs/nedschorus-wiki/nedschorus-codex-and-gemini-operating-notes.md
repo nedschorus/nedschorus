@@ -24,7 +24,7 @@ This page tells an agent-seat how to run Codex and Gemini, and what to expect fr
 
 **What it is.** Gemini runs through the Antigravity CLI, `agy`, the agent behind the Antigravity IDE; there is no `gemini` command. On ned-box `agy` is `~/.local/bin/agy` and its configuration is under `~/.gemini/antigravity-cli/` (version 1.4.0 on 2026-10-17). `agy update` updates it and `agy --version` reports it.
 
-**Model ids carry the effort.** `agy models` lists them: `gemini-3.8-flash-high`, `gemini-3.8-flash-medium`, `gemini-3.8-flash-low`, `gemini-4-argon-high`, `gemini-4-argon-medium` and `gemini-4-argon-low` (ned-box, 2026-10-17). The cold-read-fast-read runs on `gemini-3.8-flash-medium`.
+**Model ids carry the effort.** `agy models` lists them: `gemini-3.8-flash-high`, `gemini-3.8-flash-medium`, `gemini-3.8-flash-low`, `gemini-4-argon-high`, `gemini-4-argon-medium` and `gemini-4-argon-low` (ned-box, 2026-10-17). The cold-read-fast-read runs on `gemini-3.8-flash-medium`, and on `claude-sonnet-5-5` at medium when Gemini fails.
 
 **What a new runner must handle.** The launcher handles all of these; they matter only to someone changing it.
 
