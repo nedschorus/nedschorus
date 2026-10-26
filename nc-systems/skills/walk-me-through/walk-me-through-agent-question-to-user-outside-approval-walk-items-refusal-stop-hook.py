@@ -64,8 +64,9 @@ each `?`, every other mark ignored. A line is held only when its sentences
 are, in order, whole sentences of the item, so neither a sentence that is
 only the start or the end of an item's sentence nor a question quoted inside
 a longer sentence of the item is held; the refusal's step 1 tells the agent
-to put the flagged text after a colon or on a line of its own, and the hook
-refuses until the item holds it so. An item's lines run from its opening,
+to put the flagged text after a colon or as a line that holds nothing else,
+which may start with a `>` or a list mark, since `normalized` drops those,
+and the hook refuses until the item holds it so. An item's lines run from its opening,
 as the approval-walk finder reads openings, when it has one, to the next
 item's opening or its unit's end, and are otherwise its whole unit; but an
 item without an opening under a heading shared by several items holds no
@@ -189,9 +190,11 @@ REFUSAL_INSTRUCTIONS = (
     "1. Add it to the walk-document {document} as an interruption item headed `## Item {new_item} of "
     "{new_total}: <the point of the question>`, placed right after item {last_waiting}. Quote the question whole, "
     "as its asker wrote it, whether you or another agent, with the flagged text in it word for word, either after "
-    "a colon, as in `merge-lane-2 asks: <the flagged text>`, or on a line of its own: this hook passes the "
-    "question only when the item in the walk-document holds the flagged text in one of those two ways, and "
-    "refuses again until it does. Give your recommendation as `Recommendation: <what you recommend doing>.`, and end the item with "
+    "a colon, as in `merge-lane-2 asks: <the flagged text>`, or as a line that holds the flagged text and nothing "
+    "else, which may start with a `>` quote mark or a list mark such as `-` or `1.`: this hook passes the "
+    "question only when the item in the walk-document holds the flagged text in one of those ways, and refuses "
+    "again until it does. "
+    "Give your recommendation as `Recommendation: <what you recommend doing>.`, and end the item with "
     "{answer_line}.",
     "2. Change the walk's item count M from {total} to {new_total} in every item heading of {document} that "
     "carries `of {total}`, and in "

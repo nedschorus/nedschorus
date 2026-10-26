@@ -249,10 +249,10 @@ def test_the_block_message_says_what_to_do():
              "`## Item 2.1 of 11: <the point of the question>`, placed right after item 2."),
             ("the message says to quote the question whole with a recommendation",
              "Quote the question whole, as its asker wrote it, whether you or another agent, with the flagged text in it "
-             "word for word, either after a colon, as in `merge-lane-2 asks: <the flagged text>`, or on a line of its "
-             "own: this hook passes the question only when the item in the walk-document holds the flagged text in one "
-             "of those two ways, and refuses again until it does. Give your recommendation as `Recommendation: <what "
-             "you recommend"),
+             "word for word, either after a colon, as in `merge-lane-2 asks: <the flagged text>`, or as a line that "
+             "holds the flagged text and nothing else, which may start with a `>` quote mark or a list mark such as `-` or `1.`: this hook "
+             "passes the question only when the item in the walk-document holds the flagged text in one of those ways, "
+             "and refuses again until it does. Give your recommendation as `Recommendation: <what you recommend"),
             ("the message quotes the walk's answer line", f"end the item with this line, which the walk's other "
              f"items end with: `{ANSWER_LINE}`."),
             ("the message says to change M everywhere",
@@ -435,6 +435,12 @@ def test_a_question_held_in_an_interruption_item_is_not_checked():
              "Should I merge PR 5 now?", "merge-lane-2 asks: Should I merge PR 5 now?", True),
             ("a question the item holds on a line of its own passes",
              "Should I merge PR 5 now?", "merge-lane-2 asks before the release\nShould I merge PR 5 now?", True),
+            ("a question the item holds as a `>` quote line passes",
+             "Should I merge PR 5 now?", "merge-lane-2 asks before the release\n> Should I merge PR 5 now?", True),
+            ("a question the item holds as a `-` list item passes",
+             "Should I merge PR 5 now?", "merge-lane-2 asks before the release\n- Should I merge PR 5 now?", True),
+            ("a question the item holds as a `1.` list item passes",
+             "Should I merge PR 5 now?", "merge-lane-2 asks before the release\n1. Should I merge PR 5 now?", True),
             ("a question the item quotes inside a longer sentence blocks",
              "Should I merge PR 5 now?", 'merge-lane-2 asks "Should I merge PR 5 now?" before the release.', False),
             ("an ask without a question mark whose words start the item's longer question with a quotation blocks",
