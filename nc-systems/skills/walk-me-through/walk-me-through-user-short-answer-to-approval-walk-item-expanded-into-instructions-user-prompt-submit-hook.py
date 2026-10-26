@@ -517,7 +517,12 @@ def without_links(markdown, parser):
         if token.type in ("text", "image"):
             pieces.append(re.sub(r"([\\`*_\[\]<>!])", r"\\\1", token.content))
         elif token.type == "code_inline":
-            pieces.append(token.markup + token.content + token.markup)
+            # The parser drops the padding space that lets a code span's content start or end with a backtick
+            # or a space; without it the rebuilt fence takes in an edge backtick, or the parser strips an edge space.
+            content = token.content
+            if content.strip(" ") and {content[0], content[-1]} & {"`", " "}:
+                content = f" {content} "
+            pieces.append(token.markup + content + token.markup)
         else:
             pieces.append(token.markup or token.content)
     return "".join(pieces)
