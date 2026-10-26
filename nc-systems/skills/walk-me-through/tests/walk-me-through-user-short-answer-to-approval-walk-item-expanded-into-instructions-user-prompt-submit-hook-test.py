@@ -434,8 +434,7 @@ def r_line(word, item):
 
 
 def numbered_r_line(number, item):
-    return (f"\"{number} R\" asks to see {item} again: show it in full, heading included, word for word as the "
-            "walk-document has it.")
+    return r_line(f"\"{number} R\"", item)
 
 
 def test_r_on_an_open_walk_goes_to_the_agent_and_does_not_block():
@@ -506,6 +505,40 @@ def test_r_on_an_item_with_no_page_tells_the_agent_to_show_it_in_full():
     lines = case.lines("4 r")
     check("a numbered R on an item with no page tells the agent to show it in full",
           lines is not None and numbered_r_line(4, "item 4 of 9") in lines, f"lines {lines!r}")
+
+
+def test_r_on_two_waiting_items_with_a_page_for_one_hands_its_closing_line_and_shows_the_other_in_full():
+    case = Case(next_to_present="items 5 and 6 of 9")
+    case.minutes(f"#item_page item 5 of 9 {PAGE_1}\n\n#next_to_present items 5 and 6 of 9")
+    lines = case.lines("r")
+    closing = f"[Item 5 of 9, two small corrections]({PAGE_1}) · {LETTERS_AFTER_LINK}"
+    check("R on items 5 and 6 with a page for item 5 alone hands item 5's closing line and has item 6 shown in full",
+          lines is not None and lines[1:] == [page_line("R", "item 5 of 9", closing),
+                                              r_line("\"R\"", "item 6 of 9")], f"lines {lines!r}")
+
+
+def test_r_ignores_an_item_page_line_in_code_or_a_comment_of_the_minutes():
+    case = Case(next_to_present="item 4 of 9")
+    case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n```\n#item_page item 4 of 9 https://claude.ai/artifact/Fenced\n"
+                 "```\n\n<!--\n#item_page item 4 of 9 https://claude.ai/artifact/Commented\n-->\n\n"
+                 "#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    check("R reads the item's page from the minutes' prose, not from a fenced example or an HTML comment after it",
+          lines is not None
+          and lines[1] == page_line("R", "item 4 of 9", f"[Item 4 of 9, a filter]({PAGE_1}) · {LETTERS_AFTER_LINK}"),
+          f"lines {lines!r}")
+
+
+def test_r_closing_line_label_keeps_the_text_of_a_link_in_the_heading_and_drops_its_link():
+    document = WALK_DOCUMENT.replace(
+        "## Item 4 of 9: a filter",
+        "## Item 4 of 9: a [filter](https://claude.ai/artifact/Design) for `old` rows \\[draft\\] <https://example.com/x>")
+    case = Case(next_to_present="item 4 of 9", document=document)
+    case.minutes(f"#item_page item 4 of 9 {PAGE_1}\n\n#next_to_present item 4 of 9")
+    lines = case.lines("r")
+    closing = f"[Item 4 of 9, a filter for `old` rows \\[draft\\] https://example.com/x]({PAGE_1}) · {LETTERS_AFTER_LINK}"
+    check("R's closing line holds no link inside its link, so the line stays clickable",
+          lines is not None and lines[1] == page_line("R", "item 4 of 9", closing), f"lines {lines!r}")
 
 
 def test_the_closing_line_letters_are_the_walk_skills():

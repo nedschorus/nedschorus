@@ -51,11 +51,12 @@ no recommendation for any of its items and says why.
 
 R ON AN OPEN APPROVAL-WALK, as the whole prompt (R or repeat), hands the
 agent each waiting item's closing line to print, word for word: the item's
-link, from the newest `#item_page item N of M <link>` line in the minutes for
-that item number, with the item's running count and point from its
-walk-document heading, then ANSWER_LETTERS_TEXT, as the walk-me-through skill
-writes it. The link opens the item's page, which shows the item in full on
-every screen the user reads. For an item with no `#item_page` line, the agent
+link, from the newest `#item_page item N of M <link>` line for that item
+number in the minutes, outside code and HTML comments, with the item's running
+count and point from its walk-document heading, any link in the point cut to
+its text, then ANSWER_LETTERS_TEXT, as the walk-me-through skill writes it.
+The link opens the item's page, which shows the item in full on every screen
+the user reads. For an item with no `#item_page` line, the agent
 is told to show the item in full, heading included, word for word as the
 walk-document has it; the hook copies no item text. In a NUMBERED answer, each R
 does the same for the item it names, and an answer whose every
@@ -290,11 +291,7 @@ MEANINGS.update({f"O{option}": tuple(tuple(line.replace("{option}", option) for 
 REPEAT_PAGE_LINE = (
     "\"{answer}\" asks to see {item} again. Its page shows it in full, so reply with only this closing line, "
     "word for word, and wait for his answer: {closing_line}")
-NUMBERED_R_LINES = (
-    "\"{answer}\" asks to see item {number}{of_total} again: show it in full, heading included, word for "
-    "word as the walk-document has it.",
-    "Then end your message naming the item waiting for his answer, {item}.",
-)
+NUMBERED_R_WAITING_ITEM_LINE = "Then end your message naming the item waiting for his answer, {item}."
 # Check records one answer for every item the `#next_to_present` line names, and close moves that line on.
 ONE_ITEM_AT_A_TIME_LINE = (
     "Before each check run, if the minutes' last `#next_to_present` line does not name that item alone, add "
@@ -473,7 +470,8 @@ def read_walk(cwd):
     minutes, value, _ = walk
     name = minutes.name[:-len(walk_finder.MINUTES_SUFFIX)]
     # The newest line for an item wins, since a re-planned walk records its pages again.
-    pages = {number: link for number, link in ITEM_PAGE.findall(minutes.read_text(encoding="utf-8"))}
+    pages = {number: link for number, link in ITEM_PAGE.findall(
+        "\n".join(walk_finder.prose_lines(minutes.read_text(encoding="utf-8"), parser)))}
     count = walk_finder.VALUE_COUNT.match(value)
     if not count:
         return WalkState(name, f"the item its minutes' `#next_to_present` line names, `{value}`,",
@@ -495,17 +493,34 @@ def read_walk(cwd):
         walk_finder.prose_lines(text, parser, tokens), walk_finder.item_opening_lines(text, parser, tokens),
         spans, total, walk_finder)
     return WalkState(name, count[0], numbers, total, recommendations, None, problems, parts, pages,
-                     heading_points(text.split("\n"), spans, total))
+                     heading_points(text.split("\n"), spans, total, parser))
 
 
-def heading_points(lines, spans, total):
-    """{item number: the point its heading states after the running count's colon} for the walk's items."""
+def heading_points(lines, spans, total, parser):
+    """{item number: the point its heading states after the running count's colon, without its links} for the
+    walk's items."""
     points = {}
     for numbers, unit_total, _, first, _ in spans:
         match = HEADING_POINT.match(lines[first])
         if match and match[1] and (total is None or unit_total == total):
-            points.update({number: match[1] for number in numbers})
+            points.update({number: without_links(match[1], parser) for number in numbers})
     return points
+
+
+def without_links(markdown, parser):
+    """The inline Markdown with each link's text kept and its link syntax gone, since the closing line puts the
+    point inside a link label, where a link of its own would leave the closing line unclickable."""
+    pieces = []
+    for token in parser.parseInline(markdown)[0].children:
+        if token.type in ("link_open", "link_close"):
+            continue
+        if token.type in ("text", "image"):
+            pieces.append(re.sub(r"([\\`*_\[\]<>!])", r"\\\1", token.content))
+        elif token.type == "code_inline":
+            pieces.append(token.markup + token.content + token.markup)
+        else:
+            pieces.append(token.markup or token.content)
+    return "".join(pieces)
 
 
 def closing_line(number, walk):
@@ -668,14 +683,12 @@ def meaning_lines(answer, walk, in_walk):
             for number, letter in answer["pairs"]:
                 lines += recommendation_unknown_lines(letter, [number], walk)
             repeated = [number for number, letter in answer["pairs"] if letter == "R"]
-            of_total = f" of {walk.total}" if walk.total else ""
-            lines += [NUMBERED_R_LINES[0].format(answer=f"{number} R", number=number, of_total=of_total)
-                      if closing_line(number, walk) is None else repeat_line(f"{number} R", number, walk)
-                      for number in repeated]
+            lines += [repeat_line(f"{number} R", number, walk) for number in repeated]
             answered = {number for number, letter in answer["pairs"] if letter != "R"}
             still_waiting = [number for number in numbers if number not in answered]
             if repeated and still_waiting:
-                lines.append(NUMBERED_R_LINES[1].format(item=", ".join(item_name(n, walk) for n in still_waiting)))
+                lines.append(NUMBERED_R_WAITING_ITEM_LINE.format(
+                    item=", ".join(item_name(n, walk) for n in still_waiting)))
         return lines
     code = answer["code"]
     if form == "all":
@@ -697,7 +710,7 @@ def repeat_line(answer, number, walk):
     """The line telling the agent how to answer an R for the item: its closing line, or the item in full."""
     line = closing_line(number, walk)
     if line is None:
-        return MEANINGS["R"][0][0].format(word=answer, item=item_name(number, walk))
+        return MEANINGS["R"][0][0].format(word=f"\"{answer}\"", item=item_name(number, walk))
     return REPEAT_PAGE_LINE.format(answer=answer, item=item_name(number, walk), closing_line=line)
 
 
