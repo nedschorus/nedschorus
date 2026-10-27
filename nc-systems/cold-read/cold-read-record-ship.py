@@ -274,7 +274,7 @@ in the nedschorus repository, which this machine also clones:
 - `seats/` -- a seat's shared files, shipped by
   `scripts/seat-shared-file-ship.py`
 - `analysis/` -- analyses, placed by hand
-- `daily-full-test-runs/` -- each machine's daily run of every test suite on
+- `daily-full-test-runs/` -- each machine's daily run of every nc-test-suite on
   main, written by `scripts/daily-full-test-run-of-main.py`
 - `pull-request-head-test-runs/` -- each machine's test log of a pull request's
   head, one per commit, written by `scripts/pull-request-head-test-run.py`

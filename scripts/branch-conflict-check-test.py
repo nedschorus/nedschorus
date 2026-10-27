@@ -421,7 +421,7 @@ case("CONFLICT text is one instruction per line, naming the commit", lines == [
     "Resolve the conflict and change nothing else in the merge.",
     "If the resolution forces an edit beyond the conflicting lines, put that "
     "edit in one ordinary commit after the merge.",
-    "Before pushing, rerun the test suites for what the merge touched.",
+    "Before pushing, rerun the nc-test-suites for what the merge touched.",
     "Push the merge and that commit once, and name the files you resolved in "
     "the merge's commit message and in the pull request's description.",
 ])
@@ -603,7 +603,7 @@ def conflict_block(base="origin/main", label=HEAD_LABEL):
         "Resolve the conflict and change nothing else in the merge.",
         "If the resolution forces an edit beyond the conflicting lines, put "
         "that edit in one ordinary commit after the merge.",
-        "Before pushing, rerun the test suites for what the merge touched.",
+        "Before pushing, rerun the nc-test-suites for what the merge touched.",
         "Push the merge and that commit once, and name the files you resolved "
         "in the merge's commit message and in the pull request's description.",
     ]
@@ -922,7 +922,7 @@ HAND_MERGE_IF_EVERY_RENAMED = (
 HAND_MERGE_STEPS = (
     "In that hand-merge, resolve any ALSO CONFLICTS file too, change nothing "
     "else, put any edit the resolution forces beyond the conflicting lines in "
-    "one ordinary commit after the merge, rerun the test suites for what the "
+    "one ordinary commit after the merge, rerun the nc-test-suites for what the "
     "merge touched, and push the merge and that commit once, naming the files "
     "you resolved in the merge's commit message and in the pull request's "
     "description.")

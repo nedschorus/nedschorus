@@ -199,7 +199,7 @@ def say_not_run(stream, cause, tell_user):
 def say_refusal(stream, stdout):
     lines = stdout.splitlines()
     summary = next((line for line in reversed(lines) if line.startswith(SUMMARY_LINE_PREFIX)), "")
-    say(stream, MESSAGE_PREFIX + "a test suite failed in the selective test run, so this push "
+    say(stream, MESSAGE_PREFIX + "an nc-test-suite failed in the selective test run, so this push "
         "is refused. %s" % summary)
     for line in lines:
         if line.startswith(FAILED_SUITE_LINE_PREFIX) and FAILED_SUITE_LINE_LOG_MARK in line:
@@ -272,7 +272,7 @@ def main(stream, environment):
         say_refusal(stream, stdout)
         return EXIT_REFUSE_PUSH
     if status == RUNNER_EXIT_LOCKED:
-        say_not_run(stream, "another run of the test suites held this machine's test lock: %s"
+        say_not_run(stream, "another run of the nc-test-suites held this machine's test lock: %s"
                     % runner_cause_line(stderr), tell_user=False)
         return EXIT_ALLOW_PUSH
     if status < 0:

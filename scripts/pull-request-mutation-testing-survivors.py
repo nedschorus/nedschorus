@@ -162,7 +162,7 @@ def changed_python_files_to_mutate(checkout, merge_base, head, environment):
 
 
 def suites_at_head(checkout, head, environment):
-    """The test suites git tracks at head."""
+    """The nc-test-suites git tracks at head."""
     listed = run_or_raise(["git", "ls-tree", "-r", "-z", "--name-only", head], checkout,
                           environment, what="git ls-tree")
     return [path for path in git_output.nul_separated_fields(listed)
@@ -223,7 +223,7 @@ def test_command_for(suites, interpreter, test_command_script_file, sandbox_pref
     except OSError as error:
         raise CouldNotRun(
             f"{PROGRAM}: not run — this program could not write {test_command_script_file}, the "
-            f"script it writes so that cosmic-ray can run the test suites, so no mutant was run: "
+            f"script it writes so that cosmic-ray can run the nc-test-suites, so no mutant was run: "
             f"{error}\n"
             f"Tell the user the first line of this message, word for word, and that you will not "
             f"rerun scripts/pull-request-mutation-testing-survivors.py until they say to.") from error

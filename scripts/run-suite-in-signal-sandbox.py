@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one test suite inside the signal sandbox, optionally with a hand mutant applied.
+"""Run one nc-test-suite inside the signal sandbox, optionally with a hand mutant applied.
 
 Usage:
   python3 scripts/run-suite-in-signal-sandbox.py <suite> [--mutant PATCH]

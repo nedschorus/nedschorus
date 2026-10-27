@@ -682,7 +682,7 @@ def record_clock_reading() -> datetime.datetime:
     taken from, so the two cannot disagree across midnight.
 
     COLD_READ_RECORD_CLOCK_OVERRIDE, when set as `YYYY-MM-DDTHH:MM`, is read
-    instead of the clock: it is how the test suites name a cold-read-record
+    instead of the clock: it is how the nc-test-suites name a cold-read-record
     exactly without depending on the wall clock or flaking across a minute
     boundary.
     The override is a clock value, not a finished name, so the tests still go

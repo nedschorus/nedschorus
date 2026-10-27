@@ -79,7 +79,7 @@ variables reach a seat it restarts.
 
 NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_STATE_DIRECTORY and
 NEDSCHORUS_HANDOFF_AGENT_SEAT_DIED_WITHOUT_SESSION_HANDOFF_RESTART_WATCHER_LOG_DIRECTORY override where the
-state and the log go: the seams the test suite uses.
+state and the log go: the seams the nc-test-suite uses.
 """
 
 import argparse
