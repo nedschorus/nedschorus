@@ -138,12 +138,12 @@ with tempfile.TemporaryDirectory() as scratch:
     # The local events file
     fresh = scratch / "made" / "here" / "events.sqlite"
     connection = events_file.open_local_events_file(fresh)
-    check("a new local events file is made in WAL mode with its three tables, and the "
+    check("a new local events file is made in WAL mode with its four tables, and the "
           "generation seen is null",
           connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
           and {row[0] for row in connection.execute(
               "SELECT name FROM sqlite_master WHERE type = 'table'")}
-          == {"outbox_event", "agent_seat", "database_generation_seen"}
+          == {"outbox_event", "agent_seat", "database_generation_seen", "page_shown"}
           and connection.execute("SELECT * FROM database_generation_seen").fetchall() == [(None,)])
     connection.close()
     events_file.open_local_events_file(fresh).close()

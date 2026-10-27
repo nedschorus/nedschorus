@@ -32,7 +32,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-PROGRAM = "agent-seat-database-service-restart-after-merge"
+PROGRAM = "nc-systems/agent-seat-database/agent-seat-database-service-restart-after-merge.py"
 UNIT_NAME = "agent-seat-database-service.service"
 SERVICE_FILES = ("nc-systems/agent-seat-database/agent-seat-database-service.py",)
 EXIT_DONE = 0
@@ -75,12 +75,13 @@ def main(argv=None):
               f"`systemctl --user restart {UNIT_NAME}` exited {restarted.returncode}, so the "
               f"service may still run the code from before the merge, or not run at all. "
               f"systemctl said: {restarted.stderr.strip()}\n"
-              f"What to do: on ned-box, read `systemctl --user status {UNIT_NAME}` and "
-              f"`journalctl --user -u {UNIT_NAME} -n 50`. If the unit is not installed, its "
-              f"install step has not run yet: leave it to the user. Otherwise tell the user "
-              f"that the service failed to restart after the merge, with what systemctl and "
-              f"journalctl printed. If you are a subagent, pass the same fact to the agent that "
-              f"dispatched you.", file=sys.stderr)
+              f"If systemctl said the unit was not found, the unit's install step has not "
+              f"run on ned-box yet; it is the user's, so do nothing.\n"
+              f"Otherwise run `journalctl --user -u {UNIT_NAME} -n 50` on ned-box and tell the "
+              f"user that the agent-seat database service failed to restart after a merge, "
+              f"quoting systemctl's line above and journalctl's last lines. If you are a "
+              f"subagent, tell the agent that dispatched you instead, with the same quotes.",
+              file=sys.stderr)
         return EXIT_FAILED
     print(f"{PROGRAM}: restarted {UNIT_NAME}, since the merge changed the service")
     return EXIT_DONE

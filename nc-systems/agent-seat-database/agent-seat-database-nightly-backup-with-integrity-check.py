@@ -39,7 +39,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-PROGRAM = "agent-seat-database-nightly-backup-with-integrity-check"
+PROGRAM = "nc-systems/agent-seat-database/agent-seat-database-nightly-backup-with-integrity-check.py"
 BACKUP_DIRECTORY = Path.home() / "backups" / "agent-seat-database"
 COPIES_KEPT = 14
 FAILED_CHECK_SUFFIX = ".failed-integrity-check"
@@ -91,15 +91,17 @@ def main(argv=None):
               f"integrity_check, so it is not kept as a backup and the older copies in "
               f"{backup_directory} stay as they are. The failed copy is {failed_path}. "
               f"The check printed:\n" + "\n".join(check) + "\n"
-              f"What to do: on ned-box, check the database itself with\n"
+              f"What to do: check the database itself, on ned-box (from the Mac, put the "
+              f"command inside ssh nedlern@ned-box '...'):\n"
               f"  python3 -c \"import sqlite3; print(sqlite3.connect('{arguments.database}')"
               f".execute('PRAGMA integrity_check').fetchall())\"\n"
-              f"If it prints [('ok',)], only the copy was damaged: delete {failed_path}; the "
-              f"next night's run makes a new copy.\n"
-              f"If it prints anything else, the database itself is damaged: tell the user, "
-              f"naming {arguments.database} and what the check printed, and leave the database "
-              f"and the copies as they are; a restore is his decision.\n"
-              f"If you are a subagent, pass the same fact to the agent that dispatched you.",
+              f"If it prints [('ok',)], only the copy was damaged: delete the failed copy on "
+              f"ned-box with `rm {failed_path}`; the next night's run makes a new copy.\n"
+              f"If it prints anything else, the database itself is damaged: leave the "
+              f"database and the copies as they are, and tell the user that the agent-seat "
+              f"database {arguments.database} fails its integrity check, quoting both checks' "
+              f"output; a restore is his decision. If you are a subagent, tell the agent that "
+              f"dispatched you instead, with the same quotes.",
               file=sys.stderr)
         return EXIT_COPY_FAILED_ITS_CHECK
 

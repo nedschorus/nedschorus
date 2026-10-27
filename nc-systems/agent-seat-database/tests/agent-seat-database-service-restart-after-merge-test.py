@@ -31,6 +31,13 @@ _spec = importlib.util.spec_from_file_location("agent_seat_database_service_rest
 restarter = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(restarter)
 
+_git_environment_fixture_spec = importlib.util.spec_from_file_location(
+    "git_redirecting_environment_removal_test_fixture",
+    REPOSITORY_ROOT / "scripts" / "git-redirecting-environment-removal-test-fixture.py")
+_git_environment_fixture = importlib.util.module_from_spec(_git_environment_fixture_spec)
+_git_environment_fixture_spec.loader.exec_module(_git_environment_fixture)
+_git_environment_fixture.remove_git_redirecting_environment_variables_from_this_process()
+
 failures = 0
 
 
@@ -58,8 +65,6 @@ with tempfile.TemporaryDirectory() as scratch:
     (bin_directory / "systemctl").write_text(FAKE_SYSTEMCTL, encoding="utf-8")
     (bin_directory / "systemctl").chmod(0o755)
     systemctl_log = scratch / "systemctl.log"
-    for name in [name for name in os.environ if name.startswith("GIT_")]:
-        del os.environ[name]
     os.environ.update(PATH=f"{bin_directory}:{os.environ['PATH']}",
                       FAKE_SYSTEMCTL_LOG=str(systemctl_log), GIT_AUTHOR_NAME="test",
                       GIT_AUTHOR_EMAIL="test@test.invalid", GIT_COMMITTER_NAME="test",

@@ -13,7 +13,7 @@ Load it by path, under the snake_case form of its file name:
 
 It runs on both machines, the Mac's Apple Python 3.9 included.
 
-THE LOCAL EVENTS FILE, AGENT_SEAT_DATABASE_LOCAL_EVENTS_FILE_PATH, holds three
+THE LOCAL EVENTS FILE, AGENT_SEAT_DATABASE_LOCAL_EVENTS_FILE_PATH, holds four
 tables:
   outbox_event   one row per event, in the order programs wrote them: the event
                  as sent (body), when it was written, and `sent` with `sequence`
@@ -25,6 +25,8 @@ tables:
   database_generation_seen
                  one row: the service's generation ID this file last saw, null
                  until the first answer.
+  page_shown     one row per time the sending job's page opened: the condition
+                 it reported and when.
 """
 
 import json
@@ -60,6 +62,7 @@ SCHEMA = (
     " seat_name TEXT NOT NULL,"
     " retired INTEGER NOT NULL DEFAULT 0)",
     "CREATE TABLE IF NOT EXISTS database_generation_seen (generation_id TEXT)",
+    "CREATE TABLE IF NOT EXISTS page_shown (condition TEXT NOT NULL, shown_at TEXT NOT NULL)",
     "INSERT INTO database_generation_seen SELECT NULL"
     " WHERE NOT EXISTS (SELECT 1 FROM database_generation_seen)",
 )

@@ -29,7 +29,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-PROGRAM = "agent-seat-database-newest-backup-copy-to-mac"
+PROGRAM = "nc-systems/agent-seat-database/agent-seat-database-newest-backup-copy-to-mac.py"
 NED_BOX_SSH_TARGET = "nedlern@ned-box"
 SSH_COMMAND = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", NED_BOX_SSH_TARGET]
 MAC_BACKUP_DIRECTORY = Path.home() / "backups" / "agent-seat-database"
@@ -49,9 +49,10 @@ NED_BOX_BACKUP_DIRECTORY = f"{ned_box_paths.NED_BOX_HOME}/backups/agent-seat-dat
 def not_copied(what_failed, detail):
     print(f"{PROGRAM}: FAILED — {what_failed}, so the Mac holds no copy of ned-box's newest "
           f"agent-seat database backup from this run.\n{detail}\n"
-          f"The next nightly run tries again. If the next run fails the same way, tell the user "
-          f"which step failed and what it printed above. If you are a subagent, pass the same "
-          f"fact to the agent that dispatched you.", file=sys.stderr)
+          f"The Mac's older copies stay, and the next nightly run tries again. Tell the user "
+          f"that the Mac's nightly copy of the agent-seat database backup failed, quoting the "
+          f"two lines above. If you are a subagent, tell the agent that dispatched you instead, "
+          f"with the same quote.", file=sys.stderr)
     return EXIT_NOT_COPIED
 
 

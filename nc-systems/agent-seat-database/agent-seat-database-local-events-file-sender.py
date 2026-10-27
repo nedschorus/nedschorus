@@ -57,11 +57,20 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-PROGRAM = "agent-seat-database-local-events-file-sender"
+PROGRAM = "nc-systems/agent-seat-database/agent-seat-database-local-events-file-sender.py"
 ANSWER_TIMEOUT_SECONDS = 2
 EXIT_QUEUE_SENT = 0
 EXIT_STOPPED_WITH_ROWS_QUEUED = 1
 EXIT_TOKEN_FILE_UNREADABLE = 2
+STOP_ADVICE = {
+    None: "The service did not answer: it is down, or ned-box cannot be reached.",
+    401: ("The service refused this machine's token: the token in "
+          "~/.config/nedschorus/agent-seat-database-service.token must be one line of "
+          "~/.config/nedschorus/agent-seat-database-service-accepted-tokens on ned-box."),
+    409: ("The service does not know the event's operation or fields: the program that wrote "
+          "the event is newer than the running service, or wrong."),
+    "other": "The service gave an answer the sender does not act on.",
+}
 
 _events_file_spec = importlib.util.spec_from_file_location(
     "agent_seat_database_local_events_file_common",
@@ -152,7 +161,15 @@ def send_queued_rows(connection, service_url, token):
             continue
         return (f"{PROGRAM}: stopped at queued row {row_number} (event {event_id}): "
                 f"{'no answer' if status is None else f'answer {status}'} from "
-                f"{service_url}: {text}")
+                f"{service_url}: {text}\n"
+                f"The row and every later row stay queued, in order; the sender runs again "
+                f"after the next event any program on this machine writes, and sends them then.\n"
+                f"If you ran this sender yourself, run it once more; if it stops the same way, "
+                f"tell the user that this machine's agent-seat events are not reaching the "
+                f"agent-seat database service, quoting this message's first line. "
+                f"{STOP_ADVICE.get(status, STOP_ADVICE['other'])}\n"
+                f"If you are a subagent, tell the agent that dispatched you instead, with the "
+                f"same quote.")
 
 
 def main(argv=None):
@@ -167,10 +184,16 @@ def main(argv=None):
         token = Path(arguments.token_file).read_text(encoding="utf-8").strip()
     except OSError as error:
         print(f"{PROGRAM}: not run — the token file {arguments.token_file} cannot be read "
-              f"({error.strerror}). Every request to the service carries this machine's token.\n"
-              f"Create it as one line holding this machine's token, mode 600, and add the same "
-              f"line to ~/.config/nedschorus/agent-seat-database-service-accepted-tokens on "
-              f"ned-box.", file=sys.stderr)
+              f"({error.strerror}). Every request to the service carries this machine's token, "
+              f"so nothing was sent; the queued events stay queued.\n"
+              f"Tokens are an install step the user runs: tell him that this machine's token "
+              f"file is missing. It is made on this machine with\n"
+              f"  python3 -c 'import secrets; print(secrets.token_hex(32))' > "
+              f"{arguments.token_file} && chmod 600 {arguments.token_file}\n"
+              f"and its line is then added to "
+              f"~/.config/nedschorus/agent-seat-database-service-accepted-tokens on ned-box. "
+              f"If you are a subagent, pass the same fact to the agent that dispatched you.",
+              file=sys.stderr)
         return EXIT_TOKEN_FILE_UNREADABLE
     connection = events_file.open_local_events_file(arguments.local_events_file)
     lock_path = events_file.local_events_file_sender_lock_file_path(arguments.local_events_file)
