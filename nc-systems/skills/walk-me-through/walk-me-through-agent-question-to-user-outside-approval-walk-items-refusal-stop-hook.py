@@ -233,8 +233,8 @@ SEVERAL_CLOSING_LINES_NAMED = "each waiting item's closing line, on a line of it
 NO_PAGE_LINK = "<page link>"
 NO_PAGE_TEMPLATE = (
     "\nThe minutes record no `#item_page` line for {items}. For each such item, publish its page first if it has "
-    "none and add to {minutes} the line `#item_page item <N> of <M> <page link>`, which this hook reads back; then "
-    "put the link in place of `<page link>` in the item's closing line.")
+    "none and add to {minutes} the line `#item_page item <N> of <M> <the page's link>`, which this hook reads back; "
+    "then put the same link in place of `<page link>` in the item's closing line.")
 NOT_LOGGED_NOTICE = ("This refusal was not logged, {problem}. If that is because ned-box cannot be reached, tell "
                      "the user that this hook could not log to the log-store on ned-box; otherwise you need not act on it.")
 
