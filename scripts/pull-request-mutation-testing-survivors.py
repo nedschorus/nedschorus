@@ -45,7 +45,9 @@ Exit codes: 0 every mutant was killed, 1 a mutant survived, errored or was
 not run, or a changed file has no suite, 2 could not run (cosmic-ray missing,
 a git step failed, the head commit is already in the base, the worktree could
 not be made, or a suite fails or cannot be launched on the unmutated head),
-3 not run because another process holds the lock.
+3 not run because another process holds the lock, 143 or 129 stopped by
+SIGTERM or SIGHUP (128 plus the signal number), after removing the scratch
+worktree, git's record of it included, and the scratch directory.
 """
 
 import argparse
@@ -78,6 +80,13 @@ _git_output_spec = importlib.util.spec_from_file_location(
     / "git-machine-readable-output-runner-and-parser-common.py")
 git_output = importlib.util.module_from_spec(_git_output_spec)
 _git_output_spec.loader.exec_module(git_output)
+
+_stop_signals_spec = importlib.util.spec_from_file_location(
+    "stop_signal_sigterm_or_sighup_raises_system_exit_so_cleanup_runs_common",
+    Path(__file__).resolve().parents[1] / "nc-systems" / "general-tools"
+    / "stop-signal-sigterm-or-sighup-raises-system-exit-so-cleanup-runs-common.py")
+stop_signals = importlib.util.module_from_spec(_stop_signals_spec)
+_stop_signals_spec.loader.exec_module(stop_signals)
 
 
 def load_test_suite_runner():
@@ -411,6 +420,13 @@ def parse_arguments(argv):
 
 
 def main(argv=None):
+    # A Bash tool timeout or TaskStop sends SIGTERM; raised as SystemExit, the stop still runs the
+    # finally that removes the scratch worktree, and the TemporaryDirectory's exit.
+    with stop_signals.stop_signals_raise_system_exit_so_cleanup_runs():
+        return main_with_stop_signals_raising_system_exit(argv)
+
+
+def main_with_stop_signals_raising_system_exit(argv):
     arguments = parse_arguments(argv)
     checkout = Path(arguments.checkout).resolve()
     runner = load_test_suite_runner()

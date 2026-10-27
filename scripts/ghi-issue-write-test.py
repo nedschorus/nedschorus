@@ -97,6 +97,7 @@ import io
 import json
 import os
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -4339,6 +4340,83 @@ def run_main_dispatch_cases(scratch: Path):
         tool.repository_root_of, tool.create, tool.edit = saved
 
 
+# --- A stop signal during a landing still removes its worktree -------------
+#
+# A Bash tool timeout or TaskStop stops the tool with SIGTERM, a closing
+# terminal with SIGHUP. Each case drives main() through a filing whose push
+# raises the signal in this process, after a sentinel handler is installed:
+# the sentinel is never called if main() put its own handler in place, and
+# is back once main() returns.
+
+class StopSignalOnPush(Recorder):
+    """Raises `stop_signal` in this process when the tool runs `git push`."""
+
+    def __init__(self, stop_signal, answers):
+        super().__init__(answers)
+        self.stop_signal = stop_signal
+
+    def __call__(self, arguments, timeout=None, cwd=None, check=True):
+        answer = super().__call__(arguments, timeout=timeout, cwd=cwd, check=check)
+        if arguments[:2] == ["git", "push"]:
+            signal.raise_signal(self.stop_signal)
+        return answer
+
+
+def run_stop_signal_cleanup_cases(scratch: Path):
+    source = written(scratch)
+    saved = (tool.repository_root_of, tool.run, tempfile.tempdir)
+    for stop_signal in (signal.SIGTERM, signal.SIGHUP):
+        name = signal.Signals(stop_signal).name
+        temporary_directory = scratch / f"tmp-{name}"
+        temporary_directory.mkdir()
+        sentinel_calls = []
+
+        def sentinel(number, _frame, calls=sentinel_calls):
+            calls.append(number)
+
+        previous = signal.signal(stop_signal, sentinel)
+        recorder = StopSignalOnPush(stop_signal, {
+            "gh issue list": Completed("[]"),
+            "gh issue create": Completed(
+                "https://github.com/nedschorus/nedschorus/issues/570\n"),
+            "git show": Completed("", returncode=1),
+            "git ls-remote": Completed(""),
+            "git ls-tree": Completed(""),
+            "gh pr create": Completed("https://github.com/x/y/pull/9\n"),
+        })
+        tool.repository_root_of = lambda path, runner=None: scratch
+        tool.run = recorder
+        tempfile.tempdir = str(temporary_directory)
+        stopped_with = None
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                tool.main(["create", str(source), "--repo", REPO])
+        except SystemExit as stop:
+            stopped_with = stop.code
+        finally:
+            restored = signal.getsignal(stop_signal)
+            signal.signal(stop_signal, previous)
+            tool.repository_root_of, tool.run, tempfile.tempdir = saved
+        commands = recorder.commands()
+        pushed_at = next((index for index, command in enumerate(commands)
+                          if command.startswith("git push")), None)
+        check(f"{name} during a filing's push ends main() with SystemExit "
+              f"{128 + stop_signal} after removing the worktree and its "
+              f"temporary directory",
+              stopped_with == 128 + stop_signal and not sentinel_calls
+              and pushed_at is not None
+              and any(command.startswith("git worktree remove")
+                      for command in commands[pushed_at:])
+              and not any(command.startswith("gh pr create")
+                          for command in commands)
+              and list(temporary_directory.iterdir()) == [],
+              f"exit {stopped_with}, sentinel {sentinel_calls}, "
+              f"left {list(temporary_directory.iterdir())}, {commands}")
+        check(f"after main() is stopped by {name}, the handler that was in "
+              f"place before main() is back",
+              restored is sentinel, restored)
+
+
 # --- A design whose code has landed, filed by its `issue:` line -----------
 #
 # The file-naming page moves a design, once its code lands, to the `docs/`
@@ -5066,6 +5144,8 @@ def main():
                     run_group(run_push_time_limit_cases, Path(name))
                 with tempfile.TemporaryDirectory(prefix="ghi-issue-main-test-") as name:
                     run_group(run_main_dispatch_cases, Path(name))
+                with tempfile.TemporaryDirectory(prefix="ghi-issue-stop-signal-test-") as name:
+                    run_group(run_stop_signal_cleanup_cases, Path(name))
                 with tempfile.TemporaryDirectory(prefix="ghi-issue-file-set-test-") as name:
                     run_group(run_whole_file_set_cases, Path(name))
                 with tempfile.TemporaryDirectory(prefix="ghi-issue-old-files-test-") as name:
