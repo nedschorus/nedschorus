@@ -259,6 +259,27 @@ def cases(scratch):
         print("SKIP  --approve that cannot delete the marker: running as root, which can delete "
               "from a read-only directory")
 
+    # -- a marker another hook spends while --approve records the approval is no failure
+    world = fresh(scratch, "marker-already-gone")
+    claude = world.repo / "CLAUDE.md"
+    claude.write_text("project v2\n")
+    key = world.key(claude)
+    world.run()
+    marker = world.marker('The user said "y"')
+    hook = load_hook_in_this_process()
+    hook.run_command_work = lambda work: marker.unlink()
+    saved_environment = dict(os.environ)
+    try:
+        os.environ.update(world.environment())
+        outcome = hook.approve([(str(claude), key)], world.repo)
+    except hook.MarkerSurvived as error:
+        outcome = error
+    finally:
+        os.environ.clear()
+        os.environ.update(saved_environment)
+    check("--approve whose marker is already gone when it deletes it reports the approval, "
+          "not a failure", outcome == [f"Approved {claude} at version {key}."], outcome)
+
     # -- an obvious-fix marker approves only a change it came before
     world = fresh(scratch, "obvious-fix-before")
     claude = world.repo / "CLAUDE.md"
