@@ -106,7 +106,7 @@ def raised_counts(text, total, new_total, walk_finder, parser):
 def insert(cwd, alert_ids, now=None):
     walk_finder = load_module("walk_me_through_approval_walk_minutes_and_walk_document_item_finder_common",
                               WALK_FINDER_FILE)
-    user_alerts_pending_and_claimed_files_write_claim_and_release_common = load_module("user_alerts_pending_and_claimed_files_write_claim_and_release_common",
+    user_alerts = load_module("user_alerts_pending_and_claimed_files_write_claim_and_release_common",
                                 ALERTS_MODULE_FILE)
     parser = walk_finder.markdown_parser()
     top = walk_finder.checkout_top(Path(cwd))
@@ -123,9 +123,9 @@ def insert(cwd, alert_ids, now=None):
         raise Refused(UNUSABLE_WALK_MESSAGE.format(problem=f"its `#next_to_present` line, `{value}`, {problem}"))
     alerts = []
     for alert_id in alert_ids:
-        path = user_alerts_pending_and_claimed_files_write_claim_and_release_common.user_alerts_directory() / "claimed" / f"{alert_id}.json"
+        path = user_alerts.user_alerts_directory() / "claimed" / f"{alert_id}.json"
         try:
-            alerts.append(user_alerts_pending_and_claimed_files_write_claim_and_release_common.user_alert_read_from_json_file(path))
+            alerts.append(user_alerts.user_alert_read_from_json_file(path))
         except (OSError, ValueError) as error:
             raise Refused(ALERT_UNREADABLE_MESSAGE.format(alert_id=alert_id, path=path, error=error))
     waiting = numbers[-1]

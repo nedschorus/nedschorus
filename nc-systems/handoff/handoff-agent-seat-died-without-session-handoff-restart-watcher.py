@@ -111,8 +111,8 @@ _ned_box_home_specification.loader.exec_module(ned_box_home_path_constants)
 _user_alerts_specification = importlib.util.spec_from_file_location(
     "user_alerts_pending_and_claimed_files_write_claim_and_release_common",
     REPOSITORY / "nc-systems" / "general-tools" / "user-alerts-pending-and-claimed-files-write-claim-and-release-common.py")
-user_alerts_pending_and_claimed_files_write_claim_and_release_common = importlib.util.module_from_spec(_user_alerts_specification)
-_user_alerts_specification.loader.exec_module(user_alerts_pending_and_claimed_files_write_claim_and_release_common)
+user_alerts = importlib.util.module_from_spec(_user_alerts_specification)
+_user_alerts_specification.loader.exec_module(user_alerts)
 
 LOG_DIRECTORY = Path(ned_box_home_path_constants.NED_BOX_HOME) / "nedschorus-logs" / PROGRAM
 STATE_DIRECTORY = Path("~/.local/state/nedschorus").expanduser()
@@ -888,7 +888,7 @@ def report_run_failure(error_text, state_directory: Path, log_directory: Path):
                       recover=None, open_window=open_mac_window,
                       show_notice_words=show_notice_words_for_window,
                       open_page=open_mac_browser_page,
-                      user_alert_write_to_pending=user_alerts_pending_and_claimed_files_write_claim_and_release_common.user_alert_write_to_pending)
+                      user_alert_write_to_pending=user_alerts.user_alert_write_to_pending)
     watcher.log(None, "run failed", error=error_text)
     for notice in list(state["pending_notices"]):
         watcher.show(notice)
@@ -990,7 +990,7 @@ def watch(environment, state_directory: Path, log_directory: Path) -> int:
         transcripts_directory=transcripts_directory, recover=recover,
         open_window=open_mac_window, show_notice_words=show_notice_words_for_window,
         open_page=open_mac_browser_page,
-        user_alert_write_to_pending=user_alerts_pending_and_claimed_files_write_claim_and_release_common.user_alert_write_to_pending,
+        user_alert_write_to_pending=user_alerts.user_alert_write_to_pending,
         stopped_on_purpose=stopped_on_purpose_predicate(supervisor, handoff_directory),
         recorded_exit_question=recovery.restart_question_for_a_seat_with_a_recorded_exit,
         open_seat_window=recovery.agent_seat_mac_window_open_unless_tmux_client_already_attached,

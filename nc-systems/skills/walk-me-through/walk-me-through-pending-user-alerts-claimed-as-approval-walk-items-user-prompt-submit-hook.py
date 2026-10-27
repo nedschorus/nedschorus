@@ -139,16 +139,16 @@ def context_for(alerts, claimed_directory, cwd):
     return "\n".join(lines + (no_walk_lines if walk is None else walk_lines(walk)))
 
 
-def output_for(payload, user_alerts_pending_and_claimed_files_write_claim_and_release_common=None):
+def output_for(payload, user_alerts=None):
     """Return the hook's output for the payload as a dict, or None."""
     if sys.platform != "linux" or not typed_by_user(payload):
         return None
-    user_alerts_pending_and_claimed_files_write_claim_and_release_common = user_alerts_pending_and_claimed_files_write_claim_and_release_common or load_module(
+    user_alerts = user_alerts or load_module(
         "user_alerts_pending_and_claimed_files_write_claim_and_release_common", ALERTS_MODULE_FILE)
-    directory = user_alerts_pending_and_claimed_files_write_claim_and_release_common.user_alerts_directory()
+    directory = user_alerts.user_alerts_directory()
     try:
-        user_alerts_pending_and_claimed_files_write_claim_and_release_common.claimed_user_alerts_delete_if_in_walk_minutes_else_release_to_pending_after_30_minutes()
-        alerts = user_alerts_pending_and_claimed_files_write_claim_and_release_common.user_alerts_claim_every_pending_by_rename_into_claimed()
+        user_alerts.claimed_user_alerts_delete_if_in_walk_minutes_else_release_to_pending_after_30_minutes()
+        alerts = user_alerts.user_alerts_claim_every_pending_by_rename_into_claimed()
     except Exception as error:  # noqa: BLE001 - a failed claim must reach the user through the agent
         context = "\n".join(line.format(directory=directory, error=repr(error)) for line in CLAIM_FAILED_LINES)
     else:

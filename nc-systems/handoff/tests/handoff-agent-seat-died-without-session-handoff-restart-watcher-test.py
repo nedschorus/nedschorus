@@ -1278,7 +1278,7 @@ def run_watch_wiring_cases(root: Path):
           repr(predicted))
     check("watch() passes the shared user-alerts writer to the Watcher as user_alert_write_to_pending",
           len(built) == 1
-          and built[0].get("user_alert_write_to_pending") is watcher_module.user_alerts_pending_and_claimed_files_write_claim_and_release_common.user_alert_write_to_pending,
+          and built[0].get("user_alert_write_to_pending") is watcher_module.user_alerts.user_alert_write_to_pending,
           repr(built))
     records = built[0].get("down_agent_seat_records_stopped_on_purpose") if len(built) == 1 else None
     check("watch() passes the Watcher a test of a refused seat's records that reads recovery's "
