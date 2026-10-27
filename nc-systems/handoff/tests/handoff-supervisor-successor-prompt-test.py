@@ -1169,8 +1169,8 @@ EXPECTED_OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE = (
     "{overview_draft_path} and delete {overview_draft_path}."
 )
 
-DAILY_OVERVIEW_REFRESH_REMINDER_MARK_SCRIPT_PATH = (
-    SYSTEM_DIRECTORY / "daily-overview-refresh-reminder-mark.py")
+HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_SCRIPT_PATH = (
+    SYSTEM_DIRECTORY / "handoff-architecture-overview-refresh-user-shown-mark.py")
 
 # The line a successor is given when the day's reminder marks cannot be read,
 # word for word. A template: the marks' location and the error are filled in.
@@ -1211,7 +1211,7 @@ def expected_overview_refresh_due_line(system: str, pinned: str, main: str,
         f"[{main_full}](https://github.com/nedschorus/nedschorus/commit/{main_full})`. "
         f"When the subagent reports, show the user the diff between {overview} and "
         f"{draft}. Once the user has been shown the diff, run `python3 "
-        f"{DAILY_OVERVIEW_REFRESH_REMINDER_MARK_SCRIPT_PATH} {system}`. When the user "
+        f"{HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_SCRIPT_PATH} {system}`. When the user "
         f"approves the diff, write {overview} from {draft} and delete {draft}.")
 
 
@@ -1660,11 +1660,14 @@ def run_overview_refresh_unusable_system_name_cases(workspace: Path):
           and due[0].startswith("overview refresh due: widget — "),
           f"{due!r}\n{printed}")
     check("a name the mark script refuses is passed over by its real name on the console",
-          "overview check for café passed over: the name does not match" in printed, printed)
+          "overview check for café passed over: the directory name nc-systems/café on "
+          "origin/main does not match" in printed, printed)
     check("a name holding a quote is passed over by its real name on the console",
-          "overview check for o'brien passed over: the name does not match" in printed, printed)
+          "overview check for o'brien passed over: the directory name nc-systems/o'brien on "
+          "origin/main does not match" in printed, printed)
     check("a name that is not valid UTF-8 is passed over, printed with its byte escaped",
-          "overview check for bad\\xff passed over: the name does not match" in printed
+          "overview check for bad\\xff passed over: the directory name nc-systems/bad\\xff on "
+          "origin/main does not match" in printed
           and "overview check stopped" not in printed, printed)
 
 
@@ -1851,7 +1854,7 @@ def run_overview_refresh_once_a_day_cases(workspace: Path):
     seat writes once the user has been shown the diff.
 
     No case reaches ned-box. The marks directory is a fixture directory, set
-    through daily_overview_refresh_reminder_mark's constant; ned-box is played
+    through handoff_architecture_overview_refresh_user_shown_mark's constant; ned-box is played
     by an ssh first on PATH that records the host of each call and runs its
     body; the machine is named per case; a fake `gh` answers for GitHub; and
     the moment is passed in.
@@ -1882,7 +1885,7 @@ def run_overview_refresh_once_a_day_cases(workspace: Path):
         return (f"**Checked against:** commit [{sha}]"
                 f"(https://github.com/nedschorus/nedschorus/commit/{sha})")
 
-    reminder_mark = getattr(supervisor, "daily_overview_refresh_reminder_mark", None)
+    reminder_mark = getattr(supervisor, "handoff_architecture_overview_refresh_user_shown_mark", None)
     marks_directory = root / "daily-overview-refresh-reminder-marks"
     no_open_pull_requests = write_gh_answering_no_open_pull_requests(
         root / "gh-answering-no-open-pull-requests")
@@ -2063,7 +2066,7 @@ def run_overview_refresh_once_a_day_cases(workspace: Path):
           "line saying so, with the timeout",
           due[:2] == (gadget_line, widget_line) and len(due) == 3
           and due[2].startswith(REMINDER_MARKS_UNREAD_LINE_OPENING)
-          and "ssh nedlern@ned-box timed out after 1 s" in due[2]
+          and "ssh nedlern@ned-box timed out after 1 seconds and was killed" in due[2]
           and due[2].endswith(
               EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_NED_BOX_DID_NOT_ANSWER_SENTENCE),
           f"{due!r}\n{console}")
@@ -2073,13 +2076,14 @@ def run_overview_refresh_once_a_day_cases(workspace: Path):
           "line saying so",
           due[:2] == (gadget_line, widget_line) and len(due) == 3
           and due[2].startswith(REMINDER_MARKS_UNREAD_LINE_OPENING)
-          and "does not parse" in due[2], f"{due!r}\n{console}")
+          and "is not the JSON it should print" in due[2], f"{due!r}\n{console}")
     # ned-box answered, so the line must not say it did not.
     unparsable_line = EXPECTED_OVERVIEW_REFRESH_REMINDER_MARKS_UNREAD_TEMPLATE.format(
         marks_location=mark_citation(""),
-        error="DailyMemoryReviewReadOrWriteFailed: ssh nedlern@ned-box answered with "
-              "output that does not parse: JSONDecodeError: Expecting value: line 1 "
-              "column 1 (char 0)")
+        error="DailyMemoryReviewReadOrWriteFailed: the reader of memory stores and marks in "
+              "nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py, run over "
+              "ssh nedlern@ned-box, printed output that is not the JSON it should print: "
+              "JSONDecodeError: Expecting value: line 1 column 1 (char 0)")
     check("when ned-box answers with output that does not parse, the line does not say "
           "ned-box did not answer, nor give the check for whether ned-box answers",
           due[2:] == (unparsable_line,), f"{due[2:]!r}\nexpected: {(unparsable_line,)!r}")
@@ -2181,10 +2185,10 @@ def run_overview_refresh_due_prompt_cases(workspace: Path):
           repr(getattr(supervisor, "OVERVIEW_REFRESH_DUE_INSTRUCTION_TEMPLATE", None)))
     check("the reminder mark command the overview line names is the program beside "
           "the supervisor",
-          getattr(supervisor, "DAILY_OVERVIEW_REFRESH_REMINDER_MARK_PATH", None)
-          == DAILY_OVERVIEW_REFRESH_REMINDER_MARK_SCRIPT_PATH
-          and DAILY_OVERVIEW_REFRESH_REMINDER_MARK_SCRIPT_PATH.is_file(),
-          repr(getattr(supervisor, "DAILY_OVERVIEW_REFRESH_REMINDER_MARK_PATH", None)))
+          getattr(supervisor, "HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_PATH", None)
+          == HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_SCRIPT_PATH
+          and HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_SCRIPT_PATH.is_file(),
+          repr(getattr(supervisor, "HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_PATH", None)))
     # The instruction and the two hooks that meet a subagent following it
     # agree. The instruction-file guard lets the subagent write the draft the
     # instruction names, and refuses the overview itself until the user has
@@ -2511,7 +2515,7 @@ EXPECTED_MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE = (
 NED_BOX_MEMORY_STORE_MAC_MOUNT_PATH = (
     "/Volumes/nedhome/.claude/projects/-home-nedlern-Projects-nedschorus/memory")
 
-DAILY_MEMORY_REVIEW_MARK_SCRIPT_PATH = SYSTEM_DIRECTORY / "daily-memory-review-mark.py"
+HANDOFF_USER_REVIEW_OF_AGENT_MEMORY_STORES_MARK_SCRIPT_PATH = SYSTEM_DIRECTORY / "handoff-user-review-of-agent-memory-stores-mark.py"
 
 # 12:00 in America/Los_Angeles on 2026-09-30, which is PDT, UTC-7.
 MEMORY_REVIEW_PACIFIC_NOON = datetime(2026, 9, 30, 19, 0, tzinfo=timezone.utc)
@@ -2525,7 +2529,7 @@ def expected_memory_review_due_line(mac_store, ned_box_store, mac_entries,
                                     ned_box_entries, since) -> str:
     """The whole line, spelled out, so a change to the report, the template or
     a path fails the pin."""
-    mark = DAILY_MEMORY_REVIEW_MARK_SCRIPT_PATH
+    mark = HANDOFF_USER_REVIEW_OF_AGENT_MEMORY_STORES_MARK_SCRIPT_PATH
     return (
         f"memory review due: the Mac's memory store holds {mac_entries} and "
         f"ned-box's holds {ned_box_entries}, {since}. A memory store holds notes that "
@@ -2577,7 +2581,7 @@ def local_time_zone(name: str):
 
 class MemoryReviewFixture:
     """Two fixture stores and a marks directory stand in for the real ones,
-    through daily_memory_review_mark's constants; an ssh first on PATH records
+    through handoff_user_review_of_agent_memory_stores_mark's constants; an ssh first on PATH records
     the host of each call and runs its body; and the machine is named, so the
     cases mean the same on ned-box as on the Mac."""
 
@@ -2586,7 +2590,7 @@ class MemoryReviewFixture:
         self.mac_store = root / "mac-memory-store"
         self.ned_box_store = root / "ned-box-memory-store"
         self.marks = root / "daily-memory-review-marks"
-        self.mark_module = getattr(supervisor, "daily_memory_review_mark", None)
+        self.mark_module = getattr(supervisor, "handoff_user_review_of_agent_memory_stores_mark", None)
         self.fake_ssh_count = 0
 
     @contextlib.contextmanager
@@ -2762,7 +2766,7 @@ def run_memory_review_due_cases(workspace: Path):
     check("MEMORY REVIEW: when the ssh read times out, no line is given and the console "
           "says why", due == ()
           and "memory review check gave no line: DailyMemoryReviewReadOrWriteFailed: ssh "
-          "nedlern@ned-box timed out after 1 s" in console, f"{due!r}\n{console}")
+          "nedlern@ned-box timed out after 1 seconds and was killed" in console, f"{due!r}\n{console}")
 
     due, console, calls = fixture.due_at(noon + 2 * day + timedelta(minutes=4),
                                          hostname="ned-box")
@@ -2779,10 +2783,10 @@ def run_memory_review_due_prompt_cases(workspace: Path):
           == EXPECTED_MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE,
           repr(getattr(supervisor, "MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE", None)))
     check("MEMORY REVIEW: the mark program the line names is the one beside the supervisor",
-          getattr(supervisor, "DAILY_MEMORY_REVIEW_MARK_PATH", None)
-          == DAILY_MEMORY_REVIEW_MARK_SCRIPT_PATH
-          and DAILY_MEMORY_REVIEW_MARK_SCRIPT_PATH.is_file(),
-          repr(getattr(supervisor, "DAILY_MEMORY_REVIEW_MARK_PATH", None)))
+          getattr(supervisor, "HANDOFF_USER_REVIEW_OF_AGENT_MEMORY_STORES_MARK_PATH", None)
+          == HANDOFF_USER_REVIEW_OF_AGENT_MEMORY_STORES_MARK_SCRIPT_PATH
+          and HANDOFF_USER_REVIEW_OF_AGENT_MEMORY_STORES_MARK_SCRIPT_PATH.is_file(),
+          repr(getattr(supervisor, "HANDOFF_USER_REVIEW_OF_AGENT_MEMORY_STORES_MARK_PATH", None)))
 
     overview_line = expected_widget_overview_refresh_due_line("1111111", "2222222", 3, "2222222")
     memory_line = expected_memory_review_due_line(

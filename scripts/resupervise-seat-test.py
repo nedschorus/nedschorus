@@ -313,8 +313,8 @@ def run_missing_launcher_case(workspace: Path):
     # source, so a new import there needs no change here.
     supervisor_home = workspace / "nc-systems" / "handoff"
     supervisor_home.mkdir(parents=True)
-    for supervisor_file in ("handoff-supervisor.py", "daily-memory-review-mark.py",
-                            "daily-overview-refresh-reminder-mark.py",
+    for supervisor_file in ("handoff-supervisor.py", "handoff-user-review-of-agent-memory-stores-mark.py",
+                            "handoff-architecture-overview-refresh-user-shown-mark.py",
                             "uncommitted-work-snapshots.py"):
         (supervisor_home / supervisor_file).write_text(
             SUPERVISOR_SCRIPT.with_name(supervisor_file).read_text(encoding="utf-8"),

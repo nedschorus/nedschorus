@@ -142,20 +142,25 @@ architecture_overview_path_template_and_checked_against_commit_reader = importli
     _architecture_overview_path_template_and_checked_against_commit_reader_spec)
 _architecture_overview_path_template_and_checked_against_commit_reader_spec.loader.exec_module(architecture_overview_path_template_and_checked_against_commit_reader)
 
-DAILY_MEMORY_REVIEW_MARK_PATH = Path(__file__).resolve().with_name("daily-memory-review-mark.py")
-_daily_memory_review_mark_spec = importlib.util.spec_from_file_location(
-    "daily_memory_review_mark", DAILY_MEMORY_REVIEW_MARK_PATH)
-daily_memory_review_mark = importlib.util.module_from_spec(_daily_memory_review_mark_spec)
-_daily_memory_review_mark_spec.loader.exec_module(daily_memory_review_mark)
+HANDOFF_USER_REVIEW_OF_AGENT_MEMORY_STORES_MARK_PATH = Path(__file__).resolve().with_name(
+    "handoff-user-review-of-agent-memory-stores-mark.py")
+_handoff_user_review_of_agent_memory_stores_mark_spec = importlib.util.spec_from_file_location(
+    "handoff_user_review_of_agent_memory_stores_mark",
+    HANDOFF_USER_REVIEW_OF_AGENT_MEMORY_STORES_MARK_PATH)
+handoff_user_review_of_agent_memory_stores_mark = importlib.util.module_from_spec(
+    _handoff_user_review_of_agent_memory_stores_mark_spec)
+_handoff_user_review_of_agent_memory_stores_mark_spec.loader.exec_module(
+    handoff_user_review_of_agent_memory_stores_mark)
 
-DAILY_OVERVIEW_REFRESH_REMINDER_MARK_PATH = Path(__file__).resolve().with_name(
-    "daily-overview-refresh-reminder-mark.py")
-_daily_overview_refresh_reminder_mark_spec = importlib.util.spec_from_file_location(
-    "daily_overview_refresh_reminder_mark", DAILY_OVERVIEW_REFRESH_REMINDER_MARK_PATH)
-daily_overview_refresh_reminder_mark = importlib.util.module_from_spec(
-    _daily_overview_refresh_reminder_mark_spec)
-_daily_overview_refresh_reminder_mark_spec.loader.exec_module(
-    daily_overview_refresh_reminder_mark)
+HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_PATH = Path(__file__).resolve().with_name(
+    "handoff-architecture-overview-refresh-user-shown-mark.py")
+_handoff_architecture_overview_refresh_user_shown_mark_spec = importlib.util.spec_from_file_location(
+    "handoff_architecture_overview_refresh_user_shown_mark",
+    HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_PATH)
+handoff_architecture_overview_refresh_user_shown_mark = importlib.util.module_from_spec(
+    _handoff_architecture_overview_refresh_user_shown_mark_spec)
+_handoff_architecture_overview_refresh_user_shown_mark_spec.loader.exec_module(
+    handoff_architecture_overview_refresh_user_shown_mark)
 
 _checkout_freshness_catch_up_spec = importlib.util.spec_from_file_location(
     "checkout_freshness_catch_up", SCRIPTS_DIRECTORY / "checkout-freshness-catch-up.py")
@@ -1090,11 +1095,18 @@ def overview_refresh_due_lines(working_directory: Path,
     for system_directory in git_machine_readable_output.nul_separated_fields(listed):
         system = system_directory.rsplit("/", 1)[-1]
         # The reminder's commands take the name unquoted, and the mark script refuses any other name.
-        if not re.fullmatch(daily_overview_refresh_reminder_mark.SYSTEM_NAME_PATTERN, system):
+        if not re.fullmatch(handoff_architecture_overview_refresh_user_shown_mark.SYSTEM_NAME_PATTERN, system):
             printable = system.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
             print(f"handoff-supervisor: overview check for {printable} passed over: "
-                  f"the name does not match {daily_overview_refresh_reminder_mark.SYSTEM_NAME_PATTERN}, "
-                  f"the pattern daily-overview-refresh-reminder-mark.py accepts")
+                  f"the directory name nc-systems/{printable} on origin/main does not match "
+                  f"{handoff_architecture_overview_refresh_user_shown_mark.SYSTEM_NAME_PATTERN}, "
+                  f"the system-name pattern "
+                  f"nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py "
+                  f"accepts, so its architecture overview is not checked; the other systems "
+                  f"still are.\n"
+                  f"If nc-systems/{printable} holds a system's programs, propose to the user a "
+                  f"name for it that matches, to be renamed in a pull request; otherwise "
+                  f"nothing needs doing.")
             continue
         try:
             overview_path = SYSTEM_OVERVIEW_PATH_TEMPLATE.format(system=system)
@@ -1140,7 +1152,7 @@ def overview_refresh_due_lines(working_directory: Path,
                     checked_against_line=(
                         architecture_overview_path_template_and_checked_against_commit_reader.CHECKED_AGAINST_LINE_TEMPLATE.format(
                             commit=main_commit_full)),
-                    reminder_mark_script=DAILY_OVERVIEW_REFRESH_REMINDER_MARK_PATH,
+                    reminder_mark_script=HANDOFF_ARCHITECTURE_OVERVIEW_REFRESH_USER_SHOWN_MARK_PATH,
                     system=system)))
         except Exception as error:
             print(f"handoff-supervisor: overview check for {system} passed over: "
@@ -1186,7 +1198,7 @@ def overview_refresh_due_lines(working_directory: Path,
     if not still_to_give:
         return ()
     # The seat marks only after showing the diff, so a seat that dies first cannot consume the daily reminder.
-    reminder_mark = daily_overview_refresh_reminder_mark
+    reminder_mark = handoff_architecture_overview_refresh_user_shown_mark
     try:
         today = reminder_mark.pacific_date_of(now or datetime.now(timezone.utc))
         reminder_marks = reminder_mark.read_daily_overview_refresh_reminder_marks(
@@ -1224,7 +1236,7 @@ def memory_review_due_lines(now: Optional[datetime] = None) -> tuple:
     """Return the daily memory-review reminder, or no lines when unavailable or not due."""
     # Only the Mac can reach both stores; SSH reads have a timeout that a hung Samba mount lacks.
     # A started mark survives a mid-review death to suppress duplicates until the next Pacific noon.
-    mark_module = daily_memory_review_mark
+    mark_module = handoff_user_review_of_agent_memory_stores_mark
     try:
         if mark_module.this_machine_is_ned_box():
             return ()
@@ -1264,7 +1276,7 @@ def memory_review_due_lines(now: Optional[datetime] = None) -> tuple:
     return (f"memory review due: the Mac's memory store holds {entries(mac_entries)} "
             f"and ned-box's holds {entries(ned_box_entries)}, {since}"
             + MEMORY_REVIEW_DUE_INSTRUCTION_TEMPLATE.format(
-                mark_script=DAILY_MEMORY_REVIEW_MARK_PATH,
+                mark_script=HANDOFF_USER_REVIEW_OF_AGENT_MEMORY_STORES_MARK_PATH,
                 mac_memory_store=mark_module.MAC_MEMORY_STORE_DIRECTORY + "/",
                 ned_box_memory_store_mac_mount=(
                     mark_module.NED_BOX_MEMORY_STORE_MAC_MOUNT_DIRECTORY + "/"),

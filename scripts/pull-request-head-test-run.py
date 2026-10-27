@@ -65,7 +65,7 @@ try:
     daily_full_test_run_of_main = module_loaded_by_path(
         "daily_full_test_run_of_main",
         Path(__file__).resolve().with_name("daily-full-test-run-of-main.py"))
-    daily_memory_review_mark = daily_full_test_run_of_main.daily_memory_review_mark
+    handoff_user_review_of_agent_memory_stores_mark = daily_full_test_run_of_main.handoff_user_review_of_agent_memory_stores_mark
     run_all_test_suites = daily_full_test_run_of_main.run_all_test_suites
     EXIT_CHECKOUT_REFUSED = run_all_test_suites.EXIT_COULD_NOT_RUN
     git_output = module_loaded_by_path(
@@ -215,7 +215,7 @@ def main(argv=None, now=None, monotonic=time.monotonic) -> int:
     arguments = parse_arguments(argv)
     now = now or datetime.now(timezone.utc)
     daily = daily_full_test_run_of_main
-    mark = daily_memory_review_mark
+    mark = handoff_user_review_of_agent_memory_stores_mark
     on_ned_box = mark.this_machine_is_ned_box()
     machine = (daily.DAILY_FULL_TEST_RUN_MACHINE_NAME_ON_NED_BOX if on_ned_box
                else daily.DAILY_FULL_TEST_RUN_MACHINE_NAME_ELSEWHERE)

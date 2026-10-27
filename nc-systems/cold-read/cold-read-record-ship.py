@@ -279,7 +279,7 @@ in the nedschorus repository, which this machine also clones:
 - `pull-request-head-test-runs/` -- each machine's test log of a pull request's
   head, one per commit, written by `scripts/pull-request-head-test-run.py`
 - `daily-memory-review-marks/` -- the daily memory review's started and done
-  marks, written by `nc-systems/handoff/daily-memory-review-mark.py`
+  marks, written by `nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py`
 - `handoff-agent-seat-died-without-session-handoff-restart-watcher/` -- each decision of ned-box's
   crash watcher and the notices it showed the user, written by
   `nc-systems/handoff/handoff-agent-seat-died-without-session-handoff-restart-watcher.py`
