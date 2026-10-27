@@ -734,7 +734,8 @@ def run_cases():
          {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
              runner_output_with_suites_timed_out([("scripts/thing-test.py", 1800)]))]]},
          (), ["on the unmutated head, scripts/thing-test.py ran past its own limit of 1800 s",
-              "A larger --mutant-timeout-seconds does not raise a suite's own limit"], ["fail"]),
+              "a larger --mutant-timeout-seconds does not raise it",
+              "--only-suites-named scripts/thing-test.py\n"], ["fail"]),
         ("a baseline killed with any other output still says the suites fail",
          {"baseline_exit": 1, "baseline_dump": [[baseline_item, killed_with_output(
              "FAIL scripts/thing-test.py exit 1 (0.2s)\n")]]},
@@ -959,6 +960,16 @@ def run_cases():
     survivors = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(survivors)
 
+    runner_module = load_test_suite_runner()
+    with tempfile.TemporaryDirectory() as recordings_name:
+        many = [f"scripts/s{number}-test.py" for number in range(
+            runner_module.TEST_SUITE_ADMISSION_SUITES_RUNNING_AT_ONCE_CEILING + 1)]
+        limit = survivors.cosmic_ray_timeout_seconds_for(many, Path(recordings_name),
+                                                         runner_module, True)
+    check("with more suites than the runner runs at once, cosmic-ray's limit covers each "
+          "round of them",
+          limit == 2 * runner_module.TEST_SUITE_TIMEOUT_WITHOUT_PASSING_RECORDING_SECONDS
+          + survivors.TEST_SUITE_RUNNER_START_UP_SECONDS, limit)
     stem_for = survivors.scratch_file_name_stem_under_255_bytes_unique_to_repository_paths
     long_path = "/".join(["é" * 120] * 3) + ".py"
     stems = [stem_for(long_path, long_path), stem_for(long_path, long_path),

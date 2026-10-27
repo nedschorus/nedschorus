@@ -302,8 +302,10 @@ def outcomes_from_dump(dump_text, cosmic_ray_timeout_seconds, runner):
             errored.append(mutant_description(
                 item, result,
                 reason=f"suite timeout: {suite_timeouts_described(timed_out)}, so this mutant "
-                       f"was not judged; the mutant may make that suite hang, or the machine "
-                       f"was busy, so rerun when the machine is quieter to tell which"))
+                       f"was not judged: the mutant may make that suite hang, or the machine "
+                       f"was busy; run this script again once, and if this mutant is ERRORED "
+                       f"the same way again, it makes that suite hang: name it, with the "
+                       f"suite, in the pull request's description"))
         elif (worker_outcome not in WORKER_OUTCOMES_THAT_ERRORED
               and test_outcome == "killed"):
             counts["killed"] += 1
@@ -335,12 +337,16 @@ def baseline_refusal(path, suites, baseline, baseline_results, cosmic_ray_timeou
     timed_out = runner.run_all_test_suites_output_timed_out_suites_and_limits_parse(
         "\n".join(outputs))
     if timed_out:
+        suites_timed_out = " ".join(shlex.quote(suite) for suite, _ in timed_out)
         return (f"{PROGRAM}: not run — on the unmutated head, {suite_timeouts_described(timed_out)}"
-                f" in scripts/run-all-test-suites.py, so no mutant of {path} can be judged.\n"
-                f"A larger --mutant-timeout-seconds does not raise a suite's own limit. Run the "
-                f"suite alone on the head, with scripts/run-all-test-suites.py "
-                f"--only-suites-named <suite>, to see whether it hangs there or only ran slowly "
-                f"on a busy machine; if it only ran slowly, run this again.")
+                f" in scripts/run-all-test-suites.py, so no mutant of {path} can be judged. A "
+                f"suite's own limit comes from its last passing run (PER-SUITE TIMEOUT in that "
+                f"file's docstring); a larger --mutant-timeout-seconds does not raise it.\n"
+                f"Run the suite alone, in a checkout at the head: python3 "
+                f"scripts/run-all-test-suites.py --only-suites-named {suites_timed_out}\n"
+                f"If it passes there, it only ran slowly on a busy machine: run this again.\n"
+                f"If it times out there too, the head makes it hang: fix that before mutation "
+                f"testing.")
     return (f"{PROGRAM}: not run — the suites for {path} fail on the unmutated "
             f"head, so no mutant can be judged: "
             f"{' '.join(suites)}\n{(baseline.stderr or baseline.stdout).strip()}")
