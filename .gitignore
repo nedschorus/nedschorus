@@ -91,3 +91,8 @@ ghi-mirror/
 # by scripts/pull-request-fix-round-author-brief-from-blocking-findings-and-one-commit-every-finding-answered-check.py --check;
 # never part of the fix commit
 fix-round-answers-pull-request-*.md
+
+# follow-up answers files: written at a worktree's root by the follow-up's forked subagent and read
+# by scripts/pull-request-follow-up-author-brief-from-non-blocking-findings-and-every-finding-answered-check.py --check;
+# never part of a follow-up pull request
+follow-up-answers-pull-request-*.md
