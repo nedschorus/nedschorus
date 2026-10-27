@@ -5,7 +5,7 @@ kind: design
 
 # Regular maintenance: the list of maintenance jobs, how often each runs, and how each reaches the user
 
-This GHI has proposed improvements or changes: read every file in this folder whose name starts with `1058-daily-maintenance-in-one-daily-step-starting-with-proposed-improvements-or-changes-`.
+This GHI has proposed improvements or changes: read every file in the log-store directory `nedlern@ned-box:/home/nedlern/nedschorus-logs/ghi-info-proposed-improvements-or-changes/` whose name starts with `1058-daily-maintenance-in-one-daily-step-starting-with-proposed-improvements-or-changes-`.
 
 Gather the project's regular maintenance into one list of maintenance jobs, each run as often as it needs, which is daily for most of the jobs below, and each handed to the user as the section "How a daily job is handed to the user and tracked (decided)" says. The list began as the noon step, whose only job was the review of the memory stores, and its second job is to check every page of the wiki against the things the pages describe, fix the obvious errors, and list the rest for the user. That the wiki check is one of the maintenance jobs is decided, and how a job runs is settled under Deferred-decisions item 1.
 
@@ -276,7 +276,7 @@ The design:
 - **A job shown to an agent-session that ends without an answer goes back to due.** If the agent-session the job was shown to ends in any other way, by a crash or being closed, with no answer recorded, the program that started that agent-session sees it exit and sets the state back to due. The next run of the scheduled job then starts a new agent-session for the job. So a job handed out and never answered is never silently lost.
 - **A program changes a state file only under a file lock.** Two runs at the same moment therefore cannot both take the same job.
 - **Storage is a file with a lock.** The state may move into the agent-seat database of GHI [A small service on ned-box keeps one record of every agent-seat on both machines](https://github.com/nedschorus/nedschorus/issues/972) if that database is built.
-- **It replaces the current marks.** For every job the daily step covers, this design replaces the "started" and "done" mark scripts used today, `nc-systems/handoff/daily-memory-review-mark.py` and `nc-systems/handoff/daily-overview-refresh-reminder-mark.py`.
+- **It replaces the current marks.** For every job the daily step covers, this design replaces the "started" and "done" mark scripts used today, `nc-systems/handoff/handoff-user-review-of-agent-memory-stores-mark.py` and `nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py`.
 
 ## How a daily job reads the Mac (decided)
 
