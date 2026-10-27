@@ -44,7 +44,10 @@ What each answer does to the row:
 
 Exit codes: 0 the queue is empty, or another sender holds the transaction;
 1 stopped with rows still queued, the reason on standard error; 2 the token
-file cannot be read.
+file cannot be read. On exit 1 or 2, or an error that ends the program, the
+reason is also written to agent-seat-events-sender-stopped.txt beside the
+local events file, which the next event's writer prints; the file is deleted
+when a sender empties the queue.
 """
 
 import argparse
@@ -53,6 +56,7 @@ import importlib.util
 import json
 import sqlite3
 import sys
+import traceback
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -180,21 +184,41 @@ def main(argv=None):
     parser.add_argument("--token-file",
                         default=str(events_file.AGENT_SEAT_DATABASE_SERVICE_TOKEN_FILE_PATH))
     arguments = parser.parse_args(argv)
+    stop_report = events_file.local_events_file_sender_stop_report_path(
+        arguments.local_events_file)
+    try:
+        code, stopped, queue_emptied = send(arguments)
+    except Exception:
+        stop_report.parent.mkdir(parents=True, exist_ok=True)
+        stop_report.write_text(f"{PROGRAM}: failed with rows possibly still queued:\n"
+                               f"{traceback.format_exc()}", encoding="utf-8")
+        raise
+    if stopped is not None:
+        print(stopped, file=sys.stderr)
+        stop_report.parent.mkdir(parents=True, exist_ok=True)
+        stop_report.write_text(stopped + "\n", encoding="utf-8")
+    elif queue_emptied and stop_report.exists():
+        stop_report.unlink()
+    return code
+
+
+def send(arguments):
+    """Return the exit code, why sending stopped or None, and whether the queue is now empty."""
     try:
         token = Path(arguments.token_file).read_text(encoding="utf-8").strip()
     except OSError as error:
-        print(f"{PROGRAM}: not run — the token file {arguments.token_file} cannot be read "
-              f"({error.strerror}). Every request to the service carries this machine's token, "
-              f"so nothing was sent; the queued events stay queued.\n"
-              f"Tokens are an install step the user runs: tell him that this machine's token "
-              f"file is missing. It is made on this machine with\n"
-              f"  python3 -c 'import secrets; print(secrets.token_hex(32))' > "
-              f"{arguments.token_file} && chmod 600 {arguments.token_file}\n"
-              f"and its line is then added to "
-              f"~/.config/nedschorus/agent-seat-database-service-accepted-tokens on ned-box. "
-              f"If you are a subagent, pass the same fact to the agent that dispatched you.",
-              file=sys.stderr)
-        return EXIT_TOKEN_FILE_UNREADABLE
+        return (EXIT_TOKEN_FILE_UNREADABLE,
+                f"{PROGRAM}: not run — the token file {arguments.token_file} cannot be read "
+                f"({error.strerror}). Every request to the service carries this machine's token, "
+                f"so nothing was sent; the queued events stay queued.\n"
+                f"Tokens are an install step the user runs: tell him that this machine's token "
+                f"file is missing. It is made on this machine with\n"
+                f"  python3 -c 'import secrets; print(secrets.token_hex(32))' > "
+                f"{arguments.token_file} && chmod 600 {arguments.token_file}\n"
+                f"and its line is then added to "
+                f"~/.config/nedschorus/agent-seat-database-service-accepted-tokens on ned-box. "
+                f"If you are a subagent, pass the same fact to the agent that dispatched you.",
+                False)
     connection = events_file.open_local_events_file(arguments.local_events_file)
     lock_path = events_file.local_events_file_sender_lock_file_path(arguments.local_events_file)
     lock = sqlite3.connect(str(lock_path), timeout=0, isolation_level=None)
@@ -204,16 +228,15 @@ def main(argv=None):
         except sqlite3.OperationalError as error:
             if "locked" not in str(error):
                 raise
-            return EXIT_QUEUE_SENT
+            return EXIT_QUEUE_SENT, None, False
         try:
             stopped = send_queued_rows(connection, arguments.service_url, token)
         finally:
             lock.execute("ROLLBACK")
         if stopped is not None:
-            print(stopped, file=sys.stderr)
-            return EXIT_STOPPED_WITH_ROWS_QUEUED
+            return EXIT_STOPPED_WITH_ROWS_QUEUED, stopped, False
         if oldest_queued_row(connection) is None:
-            return EXIT_QUEUE_SENT
+            return EXIT_QUEUE_SENT, None, True
 
 
 if __name__ == "__main__":

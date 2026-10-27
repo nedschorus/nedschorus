@@ -4,8 +4,10 @@
 The cases back up a database made by the service's own schema under a
 temporary directory: a copy kept as one file with the newest backup's mark
 written into the database, 14 copies kept, a copy that fails its integrity
-check, which is injected because SQLite's backup does not make one, and a
-database that does not exist.
+check, which is injected because SQLite's backup does not make one, with the
+check command its message prints run as printed, an event stored between the
+backup and the read of the copy's highest sequence number, and a database that
+does not exist.
 
 Run: python3 nc-systems/agent-seat-database/tests/agent-seat-database-nightly-backup-with-integrity-check-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -13,7 +15,9 @@ Prints one line per case and exits non-zero if any case fails.
 
 import importlib.util
 import io
+import os
 import sqlite3
+import subprocess
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -118,8 +122,43 @@ with tempfile.TemporaryDirectory() as scratch:
     check("the failure names the failed copy, the database and what the check printed",
           str(failed[0]) in errors and str(database) in errors and "Page 3 is never used" in errors
           and "tell the user" in errors, errors)
+    commands = [line.strip() for line in errors.splitlines()
+                if "PRAGMA integrity_check\"" in line]
+    with tempfile.TemporaryDirectory() as fake_ssh_directory:
+        # ssh runs its last argument in the remote user's shell; sh -c does the same here.
+        fake_ssh = Path(fake_ssh_directory) / "ssh"
+        fake_ssh.write_text('#!/bin/sh\nshift\nexec sh -c "$1"\n', encoding="utf-8")
+        fake_ssh.chmod(0o755)
+        environment = {**os.environ, "PATH": f"{fake_ssh_directory}:{os.environ['PATH']}"}
+        outputs = [subprocess.run(command, shell=True, capture_output=True, text=True,
+                                  env=environment).stdout.strip() for command in commands]
+    check("the check command the failure prints works as printed, on ned-box and inside "
+          "ssh nedlern@ned-box '...' from the Mac",
+          len(commands) == 2 and commands[1].startswith("ssh nedlern@ned-box '")
+          and outputs == ["[('ok',)]", "[('ok',)]"], (commands, outputs))
     check("the real integrity check passes a sound database",
           real_check(sqlite3.connect(str(database))) == ["ok"])
+
+    # An event stored after the backup and before the copy's highest sequence
+    # number is read must not count: the copy lacks it, and the machines would
+    # delete their sent row of it.
+    for failed_copy in failed:
+        failed_copy.unlink()
+    highest_in_database_before = live.execute("SELECT max(sequence) FROM event").fetchone()[0]
+
+    def store_an_event_then_check(connection):
+        live.execute("INSERT INTO event (event_id, machine, operation, received_at, body) "
+                     "VALUES ('after-the-backup', 'mac', 'agent-seat-paused', 'now', '{}')")
+        return real_check(connection)
+
+    backup.integrity_check = store_an_event_then_check
+    code, printed, errors = run(database, backups)
+    backup.integrity_check = real_check
+    check("the newest backup's highest sequence number is the copy's, not that of an event "
+          "the database stored after the copy was made",
+          code == 0 and newest_backup_row(database) == [(generation, highest_in_database_before)]
+          and live.execute("SELECT max(sequence) FROM event").fetchone()[0]
+          > highest_in_database_before, (code, errors, newest_backup_row(database)))
 
     missing = scratch / "missing.sqlite3"
     try:

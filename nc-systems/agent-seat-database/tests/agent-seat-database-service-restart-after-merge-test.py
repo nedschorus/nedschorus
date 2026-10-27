@@ -51,7 +51,12 @@ def check(name, condition, detail=None):
 
 
 FAKE_SYSTEMCTL = """#!/bin/sh
+if [ -z "$XDG_RUNTIME_DIR" ]; then
+  echo "Failed to connect to user scope bus via local transport: No such file or directory" >&2
+  exit 1
+fi
 echo "$@" >> "$FAKE_SYSTEMCTL_LOG"
+echo "$XDG_RUNTIME_DIR" >> "$FAKE_SYSTEMCTL_LOG.runtime"
 if [ -n "$FAKE_SYSTEMCTL_FAIL" ]; then
   echo "Failed to restart agent-seat-database-service.service: Unit agent-seat-database-service.service not found." >&2
   exit 5
@@ -126,6 +131,29 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a fast-forward that changes the service restarts the unit",
           code == 0 and calls == ["--user restart agent-seat-database-service.service"]
           and "restarted" in printed, (code, calls, errors))
+    saved_runtime_directory = os.environ.pop("XDG_RUNTIME_DIR", None)
+    runtime_log = Path(f"{systemctl_log}.runtime")
+    try:
+        code, calls, printed, errors = run()
+    finally:
+        if saved_runtime_directory is not None:
+            os.environ["XDG_RUNTIME_DIR"] = saved_runtime_directory
+    check("a caller without XDG_RUNTIME_DIR, as an agent's Stop hook can be, still restarts "
+          "the unit, with systemctl given /run/user/<uid>",
+          code == 0 and calls == ["--user restart agent-seat-database-service.service"]
+          and runtime_log.read_text().splitlines()[-1] == f"/run/user/{os.getuid()}",
+          (code, calls, errors))
+    os.environ["XDG_RUNTIME_DIR"] = str(scratch / "runtime")
+    try:
+        code, calls, printed, errors = run()
+    finally:
+        if saved_runtime_directory is None:
+            os.environ.pop("XDG_RUNTIME_DIR")
+        else:
+            os.environ["XDG_RUNTIME_DIR"] = saved_runtime_directory
+    check("a caller's own XDG_RUNTIME_DIR is passed to systemctl unchanged",
+          code == 0 and runtime_log.read_text().splitlines()[-1] == str(scratch / "runtime"),
+          (code, errors))
     code, calls, printed, errors = run(fail=True)
     check("a failed restart prints systemctl's error and exits 1",
           code == 1 and "systemctl said: Failed to restart agent-seat-database-service."

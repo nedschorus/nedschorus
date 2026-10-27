@@ -88,16 +88,25 @@ def main(argv=None):
         failed_path = copy_path.with_name(copy_path.name + FAILED_CHECK_SUFFIX)
         partial_path.rename(failed_path)
         source.close()
+        # Double quotes only, so the same command also works inside ssh's single quotes.
+        check_command = (f'python3 -c "import sqlite3, sys; print(sqlite3.connect(sys.argv[1])'
+                         f'.execute(sys.argv[2]).fetchall())" "{arguments.database}" '
+                         f'"PRAGMA integrity_check"')
         print(f"{PROGRAM}: FAILED — the copy of {arguments.database} failed PRAGMA "
               f"integrity_check, so it is not kept as a backup and the older copies in "
               f"{backup_directory} stay as they are. The failed copy is {failed_path}. "
               f"The check printed:\n" + "\n".join(check) + "\n"
-              f"What to do: check the database itself, on ned-box (from the Mac, put the "
-              f"command inside ssh nedlern@ned-box '...'):\n"
-              f"  python3 -c \"import sqlite3; print(sqlite3.connect('{arguments.database}')"
-              f".execute('PRAGMA integrity_check').fetchall())\"\n"
-              f"If it prints [('ok',)], only the copy was damaged: delete the failed copy on "
-              f"ned-box with `rm {failed_path}`; the next night's run makes a new copy.\n"
+              f"What to do: check the database itself. On ned-box run\n"
+              f"  {check_command}\n"
+              f"or from the Mac run\n"
+              f"  ssh nedlern@ned-box '{check_command}'\n"
+              f"If the command itself fails, such as with a Python traceback, it checked "
+              f"nothing: it says nothing about the database, so find why it failed and run "
+              f"it again.\n"
+              f"If it prints [('ok',)], only the copy was damaged: delete the failed copy, on "
+              f"ned-box with `rm {failed_path}` or from the Mac with "
+              f"`ssh nedlern@ned-box 'rm {failed_path}'`; the next night's run makes a new "
+              f"copy.\n"
               f"If it prints anything else, the database itself is damaged: leave the "
               f"database and the copies as they are, and tell the user that the agent-seat "
               f"database {arguments.database} fails its integrity check, quoting both checks' "

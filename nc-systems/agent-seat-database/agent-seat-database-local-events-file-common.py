@@ -40,6 +40,7 @@ from pathlib import Path
 AGENT_SEAT_DATABASE_LOCAL_EVENTS_FILE_PATH = (Path.home() / ".local" / "state" / "nedschorus"
                                               / "agent-seat-events.sqlite")
 SENDER_LOCK_FILE_NAME = "agent-seat-events-sender.sqlite"
+SENDER_STOP_REPORT_FILE_NAME = "agent-seat-events-sender-stopped.txt"
 AGENT_SEAT_DATABASE_SERVICE_URL = "http://ned-box.local:8765"
 AGENT_SEAT_DATABASE_SERVICE_TOKEN_FILE_PATH = (Path.home() / ".config" / "nedschorus"
                                                / "agent-seat-database-service.token")
@@ -74,6 +75,16 @@ def utc_now():
 
 def local_events_file_sender_lock_file_path(local_events_file):
     return Path(local_events_file).with_name(SENDER_LOCK_FILE_NAME)
+
+
+def local_events_file_sender_stop_report_path(local_events_file):
+    """The file in which a sender that stopped with rows queued, or failed, says why.
+
+    The sender writes it, and deletes it once the queue is empty; the writer
+    shows it to its own caller, because an automatically started sender's
+    standard error goes nowhere.
+    """
+    return Path(local_events_file).with_name(SENDER_STOP_REPORT_FILE_NAME)
 
 
 def open_local_events_file(local_events_file=AGENT_SEAT_DATABASE_LOCAL_EVENTS_FILE_PATH):
@@ -129,7 +140,8 @@ def write_event_to_local_events_file_and_start_sender(
 
     seat_id is None for an operation that names no agent-seat, such as
     machine-booted. The fields are the operation's, as the service's
-    OPERATION_FIELDS lists them.
+    OPERATION_FIELDS lists them. When an earlier sender stopped and left its
+    stop report, the report is printed on standard error.
     """
     event_id = str(uuid.uuid4())
     body = {"event_id": event_id, "machine": THIS_MACHINE, "operation": operation,
@@ -140,5 +152,14 @@ def write_event_to_local_events_file_and_start_sender(
                            "VALUES (?, ?, ?)", (event_id, json.dumps(body), utc_now()))
     finally:
         connection.close()
+    stop_report = local_events_file_sender_stop_report_path(local_events_file)
+    try:
+        stopped = stop_report.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        stopped = None
+    if stopped is not None:
+        print(f"Events from this machine are not reaching the agent-seat database service: "
+              f"the last sender stopped, and wrote in {stop_report}:\n{stopped.rstrip()}",
+              file=sys.stderr)
     start_sender(local_events_file, sender_arguments)
     return event_id

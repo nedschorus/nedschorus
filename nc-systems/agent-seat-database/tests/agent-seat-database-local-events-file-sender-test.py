@@ -7,8 +7,9 @@ The cases run the real service on a loopback port, and fake services that give
 one fixed answer, and read the local events file back: an event queued and
 sent by the sender it starts, the first 412 and a restore's 412, rejected rows,
 the answers that stop the sender, an unreachable service, a second sender, a
-sender lock file that cannot be opened, a missing token file, and the deletion
-of sent rows a backup holds.
+sender lock file that cannot be opened, a missing token file, the deletion
+of sent rows a backup holds, and the stop report a stopped sender leaves for
+the next event's writer to print.
 
 Run: python3 nc-systems/agent-seat-database/tests/agent-seat-database-local-events-file-sender-test.py
 Prints one line per case and exits non-zero if any case fails.
@@ -107,6 +108,11 @@ def rows(path):
                                "FROM outbox_event ORDER BY row_number").fetchall()
     connection.close()
     return found
+
+
+def stop_report_text(path):
+    report = events_file.local_events_file_sender_stop_report_path(path)
+    return report.read_text(encoding="utf-8") if report.exists() else None
 
 
 def generation_in(path):
@@ -278,7 +284,37 @@ with tempfile.TemporaryDirectory() as scratch:
               code == 1 and len(calls) == 1 and json.loads(calls[0])["event_id"] == first
               and rows(stopped_file) == [(first, 0, None, None), (second, 0, None, None)]
               and f"answer {status}" in errors and text in errors, (code, errors, calls))
+        check(f"{name}: the stop report beside the local events file holds the same reason",
+              stop_report_text(stopped_file) == errors, (stop_report_text(stopped_file), errors))
     check("the 409 stop names the row and the service's answer", "queued row 1" in errors, errors)
+
+    # The stop report reaches the next event's writer, and goes once the queue empties
+    printed = io.StringIO()
+    with redirect_stderr(printed):
+        events_file.write_event_to_local_events_file_and_start_sender(
+            "agent-seat-created", str(uuid.uuid4()), SEAT_FIELDS, local_events_file=stopped_file,
+            sender_arguments=("--service-url", url, "--token-file", str(scratch / "no-token")))
+    check("the next event's writer prints the stop report an automatically started sender left",
+          "not reaching the agent-seat database service" in printed.getvalue()
+          and "answer 412" in printed.getvalue(), printed.getvalue())
+    # The sender the writer started finds no token and rewrites the report;
+    # waiting for that keeps it from racing the sender run below.
+    for _ in range(100):
+        if "not run" in (stop_report_text(stopped_file) or ""):
+            break
+        time.sleep(0.1)
+    check("the sender the writer starts writes its own stop to the report",
+          "not run" in (stop_report_text(stopped_file) or ""), stop_report_text(stopped_file))
+    code, errors = run_sender(stopped_file, url, token_file)
+    check("a sender that empties the queue deletes the stop report",
+          code == 0 and stop_report_text(stopped_file) is None, (code, errors))
+    printed = io.StringIO()
+    with redirect_stderr(printed):
+        events_file.write_event_to_local_events_file_and_start_sender(
+            "agent-seat-created", str(uuid.uuid4()), SEAT_FIELDS, local_events_file=stopped_file,
+            sender_arguments=("--service-url", url, "--token-file", str(token_file)))
+    check("(control) with no stop report the writer prints nothing", printed.getvalue() == "",
+          printed.getvalue())
 
     # An unreachable service
     closed = socket.socket()
@@ -315,6 +351,11 @@ with tempfile.TemporaryDirectory() as scratch:
     check("a sender that cannot take the transaction exits 0 at once and sends nothing",
           code == 0 and rows(held_file) == [(held_row, 0, None, None)] and errors == "",
           (code, errors))
+    report = events_file.local_events_file_sender_stop_report_path(held_file)
+    report.write_text("the holder's reason\n", encoding="utf-8")
+    run_sender(held_file, url, token_file)
+    check("a sender that cannot take the transaction leaves the holder's stop report alone",
+          stop_report_text(held_file) == "the holder's reason\n", stop_report_text(held_file))
     holder.execute("ROLLBACK")
     code, errors = run_sender(held_file, url, token_file)
     check("once the transaction is free, the next sender sends the row",
@@ -330,11 +371,16 @@ with tempfile.TemporaryDirectory() as scratch:
         raised = str(error)
     check("a lock file SQLite cannot open is an error, not taken for another sender",
           raised is not None and "locked" not in raised, raised)
+    check("an error that ends the sender is written to the stop report, traceback included",
+          "Traceback" in (stop_report_text(broken_lock_file) or "")
+          and raised in stop_report_text(broken_lock_file), stop_report_text(broken_lock_file))
 
     # The token file
     code, errors = run_sender(held_file, url, scratch / "no-token")
     check("a missing token file: exit 2, naming the file and the accepted-tokens file",
           code == 2 and "no-token" in errors and "accepted-tokens" in errors, (code, errors))
+    check("a missing token file is written to the stop report",
+          stop_report_text(held_file) == errors, (stop_report_text(held_file), errors))
 
     # The 412 step and the 2xx write when another program changed the generation meanwhile
     race_file = local_events_file("race")

@@ -15,10 +15,14 @@ because core.hooksPath names the reference-checkout's hook directory. In any
 checkout but ned-box's reference-checkout this program does nothing. There,
 when `git diff ORIG_HEAD HEAD` names a file of SERVICE_FILES, it runs
 `systemctl --user restart agent-seat-database-service.service`, so the
-service runs the merged code and no person has to restart it. A change to the
-unit file itself is not picked up this way: run the unit's install step again.
+service runs the merged code and no person has to restart it. When the caller
+has no XDG_RUNTIME_DIR, systemctl is given /run/user/<uid>, where the user
+bus lives. A change to the unit file itself is not picked up this way: run the
+unit's install step again.
 
-Git ignores a post-merge hook's exit code; the merge stands either way.
+Git ignores a post-merge hook's exit code; the merge stands either way. Git
+puts this program's output on its own stderr; checkout-freshness-catch-up.py,
+which fast-forwards the reference-checkout, shows the user any FAILED line.
 
 Exit codes: 0 nothing to restart, or the restart succeeded; 1 git could not
 list the merge's changes, or the restart failed, with git's or systemctl's
@@ -68,8 +72,12 @@ def main(argv=None):
         return EXIT_FAILED
     if not changed.stdout.strip():
         return EXIT_DONE
+    # An agent's Stop hook can run this merge without XDG_RUNTIME_DIR, and
+    # systemctl --user then cannot find the user bus, which lives there.
+    environment = {**os.environ}
+    environment.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
     restarted = subprocess.run(["systemctl", "--user", "restart", UNIT_NAME],
-                               capture_output=True, text=True)
+                               capture_output=True, text=True, env=environment)
     if restarted.returncode != 0:
         print(f"{PROGRAM}: FAILED — the merge changed the agent-seat database service, and "
               f"`systemctl --user restart {UNIT_NAME}` exited {restarted.returncode}, so the "
