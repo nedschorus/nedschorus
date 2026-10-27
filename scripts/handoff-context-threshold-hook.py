@@ -72,6 +72,7 @@ DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000
 
 FIRST_TAIL_READ_BYTES = 256 * 1024
 
+# Messages below follow docs/nedschorus-wiki/nedschorus-how-to-write-an-agent-facing-message-such-as-a-hook-refusal-or-script-error.md.
 # Keep the procedure in the skill so hook instructions cannot drift from it.
 HANDOFF_INSTRUCTION = (
     "This session has used {share} of its context window, which has "
@@ -92,17 +93,28 @@ WALK_CLOSED_HANDOFF_INSTRUCTION = (
 )
 
 HANDOFF_DEFERRED_NOTICE = (
-    "Context at {share} — handoff deferred while {running} run. "
-    "Spawn no new subagents and start no new background tasks; the handoff "
-    "fires when they finish, when a background task outlives its "
-    "{wait_minutes:g} minute wait, or when context reaches the ceiling."
+    "Context at {share} — handoff deferred while {running} run, because a "
+    "handoff now would stop them.\n"
+    "Do not run the /handoff skill now; carry on with your work, and a later "
+    "system message will tell you when to run it. That message comes once "
+    "every subagent has finished and every background task has finished or "
+    "run {wait_minutes:g} minutes since its launch, or once this session's "
+    "context reaches the {ceiling:g}% ceiling; a handoff then stops whatever "
+    "is still running.\n"
+    "Spawn no new subagents and start no new background tasks, because each "
+    "one delays the handoff and is stopped if still running at the ceiling."
 )
 
 HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE = (
-    "Context at {share} — handoff deferred: the transcript "
-    "could not be fully read, so what is running is unknown. Spawn no new "
-    "subagents and start no new background tasks; the handoff fires when "
-    "they finish, or when context reaches the ceiling."
+    "Context at {share} — handoff deferred: the transcript could not be fully "
+    "read, so what is running is unknown, and a handoff now could stop it.\n"
+    "Do not run the /handoff skill now; carry on with your work, and a later "
+    "system message will tell you when to run it. That message comes once "
+    "the hook can read the whole transcript and finds nothing running, or "
+    "once this session's context reaches the {ceiling:g}% ceiling; a handoff "
+    "then stops whatever is still running.\n"
+    "Spawn no new subagents and start no new background tasks, because each "
+    "one delays the handoff and is stopped if still running at the ceiling."
 )
 
 # Allow a slow cold-read cell plus one retry; the context ceiling still bounds deferral.
@@ -427,9 +439,11 @@ def request_handoff_when_due(arguments, session_id: str, transcript_path: str,
                 HANDOFF_DEFERRED_NOTICE.format(
                     share=share, running=running_phrase(flight),
                     wait_minutes=arguments.background_task_wait_minutes,
+                    ceiling=arguments.ceiling_used_percentage,
                 )
                 if count_is_known
-                else HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE.format(share=share)
+                else HANDOFF_DEFERRED_UNKNOWN_COUNT_NOTICE.format(
+                    share=share, ceiling=arguments.ceiling_used_percentage)
             )
             print(notice, file=sys.stderr)
             return 2, True  # exit 2 surfaces stderr to the agent as a system message
