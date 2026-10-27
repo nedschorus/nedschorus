@@ -100,12 +100,20 @@ def main(argv=None, now=None) -> int:
     shown_on = (arguments.shown_on_pacific_date.isoformat()
                 if arguments.shown_on_pacific_date is not None else today)
     if shown_on < today:
-        print(f"{PROGRAM}: no mark was written for {arguments.system}, because {shown_on} "
-              f"has passed, and a mark withholds the {arguments.system} architecture overview "
-              f"refresh reminder only on the Pacific date the mark is dated.\n"
-              f"Nothing more needs doing for {shown_on}. If you show the user the "
-              f"{arguments.system} refresh later today, Pacific time, run then: "
-              f"python3 {PROGRAM_PATH} {arguments.system}")
+        print(f"{PROGRAM}: no mark was written for {arguments.system}, because "
+              f"--shown-on-pacific-date {shown_on} is a Pacific date that has passed. A mark is the file that records that the user was shown the "
+              f"{arguments.system} architecture overview refresh. A mark withholds the reminder "
+              f"to show the user that refresh only on the Pacific date the mark is dated, so a "
+              f"mark dated {shown_on} would withhold no reminder.\n"
+              f"No mark is needed for {shown_on}. Whether a mark is needed for today depends "
+              f"on whether you show the user the {arguments.system} refresh today, Pacific time:\n"
+              f"If you have already shown the user the refresh today, run now, in a nedschorus "
+              f"checkout on the Mac or on ned-box, this command, which has no date "
+              f"flag and so writes a mark dated today: python3 {PROGRAM_PATH} {arguments.system}\n"
+              f"If you show the user the refresh later today, run that same command right after "
+              f"you show it.\n"
+              f"If you do not show the user the refresh today, run nothing; the reminder will "
+              f"come again.")
         return 0
     if shown_on > today:
         print(f"{PROGRAM}: no mark was written for {arguments.system}, because "

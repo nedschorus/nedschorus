@@ -217,11 +217,21 @@ def run_mark_cases(workspace: Path):
     check("a retry for a day that has passed writes nothing, exits 0 and says why",
           code == 0 and dated.mark_files() == ["2026-09-30-handoff.txt"] and calls == []
           and stdout == "handoff-architecture-overview-refresh-user-shown-mark: no mark was written for "
-          "handoff, because 2026-09-29 has passed, and a mark withholds the handoff "
-          "architecture overview refresh reminder only on the Pacific date the mark is dated.\n"
-          "Nothing more needs doing for 2026-09-29. If you show the user the handoff refresh "
-          "later today, Pacific time, run then: python3 "
-          "nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py handoff\n",
+          "handoff, because --shown-on-pacific-date 2026-09-29 is a Pacific date that has passed. "
+          "A mark is the file that records that the user "
+          "was shown the handoff architecture overview refresh. A mark withholds the reminder to "
+          "show the user that refresh only on the Pacific date the mark is dated, so a mark dated "
+          "2026-09-29 would withhold no reminder.\n"
+          "No mark is needed for 2026-09-29. Whether a mark is needed for today depends on "
+          "whether you show the user the handoff refresh today, Pacific time:\n"
+          "If you have already shown the user the refresh today, run now, in a nedschorus "
+          "checkout on the Mac or on ned-box, this command, which has no date flag and so writes "
+          "a mark dated today: python3 "
+          "nc-systems/handoff/handoff-architecture-overview-refresh-user-shown-mark.py handoff\n"
+          "If you show the user the refresh later today, run that same command right after you "
+          "show it.\n"
+          "If you do not show the user the refresh today, run nothing; the reminder will come "
+          "again.\n",
           f"{code} {dated.mark_files()} {calls!r} {stdout!r}")
     code, stdout, stderr, calls = dated.run(
         ["handoff", "--shown-on-pacific-date", "2026-10-01"])
