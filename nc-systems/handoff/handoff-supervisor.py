@@ -656,50 +656,32 @@ def process_exists_by_signal(process_id: int) -> bool:
         return True
 
 
-def process_is_supervisor_for_agent(process_id, agent_name: str,
-                                    read_command_line=read_process_command_line,
-                                    lock_path: Optional[Path] = None):
-    """Return (is_supervisor, explanation), assuming ownership when a live PID cannot be identified."""
+SUPERVISOR_LIVENESS_WATCHING = "watching"
+SUPERVISOR_LIVENESS_NOT_WATCHING = "not watching"
+SUPERVISOR_LIVENESS_CANNOT_TELL = "cannot tell"
+
+
+def _supervisor_process_identity(process_id, agent_name: str, read_command_line):
+    """Return (answer, explanation): one of SUPERVISOR_LIVENESS_WATCHING, SUPERVISOR_LIVENESS_NOT_WATCHING or SUPERVISOR_LIVENESS_CANNOT_TELL."""
     # PIDs survive in locks and can be reused; heartbeat freshness does not prove ownership.
-    # An unidentified live PID must block another supervisor, which could kill and relaunch the same session.
-    # Tests must pass read_command_line explicitly; replacing the module attribute cannot change the bound default.
     try:
         process_id = int(process_id)
     except (TypeError, ValueError):
-        return False, f"process id {process_id!r} is not a number"
+        return SUPERVISOR_LIVENESS_NOT_WATCHING, f"process id {process_id!r} is not a number"
     if process_id <= 0:
-        return False, f"process id {process_id} cannot name a process"
+        return SUPERVISOR_LIVENESS_NOT_WATCHING, f"process id {process_id} cannot name a process"
 
     command_line, ps_answered = read_command_line(process_id)
     if not ps_answered:
         if not process_exists_by_signal(process_id):
-            return False, (f"process {process_id} is not running — ps could not be run, or "
-                           "ran and failed, but os.kill reports no such process")
-        program = Path(sys.argv[0]).name or "the program that asked"
-        lock = (f"the supervisor lock {lock_path}" if lock_path is not None
-                else f"the supervisor lock of {agent_name} in the handoff directory")
-        print(f"handoff-supervisor: could not identify process {process_id}: ps could not be "
-              "run, or it ran and failed, in which case ps's own error was printed just before "
-              f"this message. A process with id {process_id} exists, so {program} is told a "
-              f"supervisor of {agent_name} is running, and treats {agent_name} as supervised "
-              f"until ps answers or the lock is gone.\n"
-              f"To find out whether a supervisor of {agent_name} is running, the user runs "
-              f"`ps -ww -p {process_id} -o args=`, the command {program} itself ran.\n"
-              f"If its output shows {SUPERVISOR_SCRIPT_FILE_NAME} with --agent {agent_name}, "
-              "a supervisor is running, and the lock stays.\n"
-              f"If its output shows any other command, none is, and the user removes {lock}.\n"
-              "If it prints nothing, or fails with an error, ps has still not answered, so the "
-              "lock stays: when the process has ended, the next check finds that by itself; "
-              "otherwise the user runs the command again once ps works.\n"
-              "An agent that sees this message tells the user what it says, and does not "
-              "remove the lock itself.",
-              file=sys.stderr)
-        return True, (f"cannot tell whether process {process_id} is the supervisor of "
-                      f"{agent_name} — ps could not be run, or ran and failed, and a process "
-                      "with that id exists, so a supervisor is assumed present rather than "
-                      "risk starting a second one")
+            return SUPERVISOR_LIVENESS_NOT_WATCHING, (
+                f"process {process_id} is not running — ps could not be run, or ran and failed, "
+                "but os.kill reports no such process")
+        return SUPERVISOR_LIVENESS_CANNOT_TELL, (
+            f"cannot tell whether process {process_id} is the supervisor of {agent_name} — ps "
+            "could not be run, or ran and failed, and a process with that id exists")
     if command_line is None:
-        return False, f"process {process_id} is not running"
+        return SUPERVISOR_LIVENESS_NOT_WATCHING, f"process {process_id} is not running"
 
     words = command_line.split()
     runs_this_script = any(word.rpartition("/")[2] == SUPERVISOR_SCRIPT_FILE_NAME
@@ -708,29 +690,98 @@ def process_is_supervisor_for_agent(process_id, agent_name: str,
     named_agents += [words[position + 1] for position, word in enumerate(words)
                      if word == "--agent" and position + 1 < len(words)]
     if runs_this_script and agent_name in named_agents:
-        return True, f"process {process_id} is the supervisor of {agent_name}"
-    return False, (f"process {process_id} is live but not a supervisor of {agent_name}: "
-                   f"{command_line}")
+        return SUPERVISOR_LIVENESS_WATCHING, f"process {process_id} is the supervisor of {agent_name}"
+    return SUPERVISOR_LIVENESS_NOT_WATCHING, (f"process {process_id} is live but not a supervisor of "
+                                     f"{agent_name}: {command_line}")
 
 
-def supervisor_liveness(state_path: Path):
-    """Return (is_alive, explanation) for the supervisor owning this state file."""
+def process_is_supervisor_for_agent(process_id, agent_name: str,
+                                    read_command_line=read_process_command_line,
+                                    lock_path: Optional[Path] = None):
+    """Return (is_supervisor, explanation), assuming ownership when a live PID cannot be identified."""
+    # An unidentified live PID must block another supervisor, which could kill and relaunch the same session.
+    # Tests must pass read_command_line explicitly; replacing the module attribute cannot change the bound default.
+    answer, explanation = _supervisor_process_identity(process_id, agent_name, read_command_line)
+    if answer != SUPERVISOR_LIVENESS_CANNOT_TELL:
+        return answer == SUPERVISOR_LIVENESS_WATCHING, explanation
+    program = Path(sys.argv[0]).name or "the program that asked"
+    lock = (f"the supervisor lock {lock_path}" if lock_path is not None
+            else f"the supervisor lock of {agent_name} in the handoff directory")
+    print(f"handoff-supervisor: could not identify process {process_id}: ps could not be "
+          "run, or it ran and failed, in which case ps's own error was printed just before "
+          f"this message. A process with id {process_id} exists, so {program} is told a "
+          f"supervisor of {agent_name} is running, and treats {agent_name} as supervised "
+          f"until ps answers or the lock is gone.\n"
+          f"To find out whether a supervisor of {agent_name} is running, the user runs "
+          f"`ps -ww -p {process_id} -o args=`, the command {program} itself ran.\n"
+          f"If its output shows {SUPERVISOR_SCRIPT_FILE_NAME} with --agent {agent_name}, "
+          "a supervisor is running, and the lock stays.\n"
+          f"If its output shows any other command, none is, and the user removes {lock}.\n"
+          "If it prints nothing, or fails with an error, ps has still not answered, so the "
+          "lock stays: when the process has ended, the next check finds that by itself; "
+          "otherwise the user runs the command again once ps works.\n"
+          "An agent that sees this message tells the user what it says, and does not "
+          "remove the lock itself.",
+          file=sys.stderr)
+    return True, (f"{explanation}, so a supervisor is assumed present rather than risk "
+                  "starting a second one")
+
+
+def _supervisor_lock_holder(state_path: Path):
+    """Return (agent_name, lock_path, holder, no_holder): the PID in the lock, or None and why.
+
+    no_holder is None when holder is a PID, else (answer, explanation): the
+    answer is SUPERVISOR_LIVENESS_NOT_WATCHING when no state or no lock exists, and
+    SUPERVISOR_LIVENESS_CANNOT_TELL when the lock cannot be read.
+    """
     # Read the PID from the lock: the state file holds none.
     if not state_path.is_file():
-        return False, f"no supervisor state at {state_path} — none has ever run for this agent"
-
+        return "", None, None, (SUPERVISOR_LIVENESS_NOT_WATCHING, f"no supervisor state at {state_path} — "
+                                "none has ever run for this agent")
     agent_name = agent_name_from_supervisor_file(state_path)
     lock_path = supervisor_lock_path(state_path.parent, agent_name)
     # Callers reuse this common opening when reporting why recovery may proceed.
     if not lock_path.is_file():
-        return False, (f"no supervisor is watching — no supervisor lock at {lock_path}, "
-                       "and a supervisor removes it when it stops cleanly")
+        return agent_name, lock_path, None, (
+            SUPERVISOR_LIVENESS_NOT_WATCHING, f"no supervisor is watching — no supervisor lock at "
+                                     f"{lock_path}, and a supervisor removes it when it stops "
+                                     "cleanly")
     try:
         holder = int(lock_path.read_text(encoding="utf-8").strip())
     except (ValueError, OSError) as error:
-        return False, (f"no supervisor is watching — the supervisor lock at {lock_path} "
-                       f"is unreadable: {error}")
+        return agent_name, lock_path, None, (
+            SUPERVISOR_LIVENESS_CANNOT_TELL, f"the supervisor lock at {lock_path} is unreadable: "
+                                             f"{error}")
+    return agent_name, lock_path, holder, None
 
+
+def supervisor_liveness_or_cannot_tell(state_path: Path,
+                                       read_command_line=read_process_command_line):
+    """Return (answer, explanation): SUPERVISOR_LIVENESS_WATCHING, SUPERVISOR_LIVENESS_NOT_WATCHING or SUPERVISOR_LIVENESS_CANNOT_TELL."""
+    agent_name, _lock_path, holder, no_holder = _supervisor_lock_holder(state_path)
+    if no_holder is not None:
+        answer, explanation = no_holder
+        if answer == SUPERVISOR_LIVENESS_CANNOT_TELL:
+            return answer, f"cannot tell whether a supervisor is watching — {explanation}"
+        return answer, explanation
+    answer, identity = _supervisor_process_identity(holder, agent_name, read_command_line)
+    if answer == SUPERVISOR_LIVENESS_WATCHING:
+        return answer, f"supervisor alive — {identity}{heartbeat_age_sentence(state_path)}"
+    if answer == SUPERVISOR_LIVENESS_NOT_WATCHING:
+        return answer, f"no supervisor is watching — {identity}"
+    return answer, identity
+
+
+def supervisor_liveness(state_path: Path):
+    """Return (is_alive, explanation) for the supervisor owning this state file."""
+    # Callers that cannot yet act on "cannot tell" keep this reading: an unidentified live
+    # holder counts as alive, so nothing recovers over it; an unreadable lock counts as dead.
+    agent_name, lock_path, holder, no_holder = _supervisor_lock_holder(state_path)
+    if no_holder is not None:
+        answer, explanation = no_holder
+        if answer == SUPERVISOR_LIVENESS_CANNOT_TELL:
+            return False, f"no supervisor is watching — {explanation}"
+        return False, explanation
     running, identity = process_is_supervisor_for_agent(holder, agent_name, lock_path=lock_path)
     if running:
         return True, f"supervisor alive — {identity}{heartbeat_age_sentence(state_path)}"

@@ -572,6 +572,72 @@ def run_lock_cases(workspace: Path):
         unidentifiable.wait()
     unknown_state_path.unlink(missing_ok=True)
     unknown_lock_path.unlink(missing_ok=True)
+    run_liveness_or_cannot_tell_cases(workspace)
+
+
+def run_liveness_or_cannot_tell_cases(workspace: Path):
+    """The three-answer query keeps "cannot tell" apart from yes and no."""
+    state_path = workspace / "threeway-supervisor-state.json"
+    lock_path = workspace / "threeway-supervisor.lock"
+    ps_fails = lambda _process_id: (None, False)  # noqa: E731
+    answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(state_path)
+    check("with no state, the three-answer query says not watching",
+          answer == supervisor.SUPERVISOR_LIVENESS_NOT_WATCHING, explanation)
+
+    supervisor.stamp_heartbeat(state_path, {"launched_session_id": "s"})
+    answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(state_path)
+    check("with no lock, the three-answer query says not watching",
+          answer == supervisor.SUPERVISOR_LIVENESS_NOT_WATCHING and "no supervisor lock" in explanation,
+          explanation)
+
+    lock_path.write_text("garbage\n", encoding="utf-8")
+    answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(state_path)
+    check("an unreadable lock is cannot tell, not no",
+          answer == supervisor.SUPERVISOR_LIVENESS_CANNOT_TELL and "unreadable" in explanation,
+          explanation)
+    alive, explanation = supervisor.supervisor_liveness(state_path)
+    check("the two-answer reading still takes an unreadable lock as no supervisor",
+          not alive and explanation.startswith("no supervisor is watching — ")
+          and "unreadable" in explanation, explanation)
+
+    holder = subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        lock_path.write_text(f"{holder.pid}\n", encoding="utf-8")
+        complaints = io.StringIO()
+        with contextlib.redirect_stderr(complaints):
+            answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(
+                state_path, read_command_line=ps_fails)
+        check("ps failing on a live lock holder is cannot tell, not yes",
+              answer == supervisor.SUPERVISOR_LIVENESS_CANNOT_TELL
+              and "cannot tell" in explanation and "assumed present" not in explanation,
+              explanation)
+        check("the three-answer query prints no assumed-supervisor notice",
+              complaints.getvalue() == "", complaints.getvalue())
+
+        answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(
+            state_path, read_command_line=lambda _p: ("python3 /x/handoff-supervisor.py --agent threeway", True))
+        check("an identified supervisor is watching",
+              answer == supervisor.SUPERVISOR_LIVENESS_WATCHING
+              and explanation.startswith("supervisor alive — "), explanation)
+
+        answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(
+            state_path, read_command_line=lambda _p: ("python3 other.py", True))
+        check("a live process that is not the supervisor is not watching",
+              answer == supervisor.SUPERVISOR_LIVENESS_NOT_WATCHING
+              and explanation.startswith("no supervisor is watching — "), explanation)
+    finally:
+        holder.kill()
+        holder.wait()
+
+    lock_path.write_text("99999999\n", encoding="utf-8")
+    answer, explanation = supervisor.supervisor_liveness_or_cannot_tell(
+        state_path, read_command_line=ps_fails)
+    check("ps failing on a dead id is answered as not watching",
+          answer == supervisor.SUPERVISOR_LIVENESS_NOT_WATCHING and "os.kill" in explanation,
+          explanation)
+    state_path.unlink(missing_ok=True)
+    lock_path.unlink(missing_ok=True)
 
 
 

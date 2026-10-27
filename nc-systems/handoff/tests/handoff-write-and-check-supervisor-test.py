@@ -235,6 +235,8 @@ def run_invocation_cases(workspace: Path):
 
     result = run_writer(workspace, "   \n\t  ")
     check("an empty next step is refused", result.returncode == 2, result.stdout)
+    check("a refusal's last stdout line is the nothing-written verdict",
+          last_stdout_line(result) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, result.stdout)
     check("the refusal explains why", "empty" in result.stderr, result.stderr)
     fields = writer.supervisor.parse_handoff_file(handoff_path)
     check("a refused write leaves the previous handoff intact",
@@ -247,9 +249,46 @@ def run_invocation_cases(workspace: Path):
         capture_output=True, text=True, check=False,
     )
     check("a missing next-step file is refused", result.returncode == 2, result.stdout)
+    check("a missing next-step file prints the nothing-written verdict",
+          last_stdout_line(result) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE, result.stdout)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--handoff-dir", str(workspace)],
+        capture_output=True, text=True, check=False,
+    )
+    check("an invocation argparse rejects exits 2 with the nothing-written verdict",
+          result.returncode == 2 and last_stdout_line(result) == writer.HANDOFF_NOTHING_WRITTEN_VERDICT_LINE,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    result = subprocess.run([sys.executable, str(SCRIPT_PATH), "--help"],
+                            capture_output=True, text=True, check=False)
+    check("--help exits 0 without a verdict",
+          result.returncode == 0 and "VERDICT: nothing written" not in result.stdout.splitlines()[-1:],
+          f"exit {result.returncode}")
 
     check("no partial file is left behind",
           not list(workspace.glob("*.partial")), str(list(workspace.glob("*.partial"))))
+
+
+def last_stdout_line(result) -> str:
+    lines = result.stdout.strip().splitlines()
+    return lines[-1] if lines else ""
+
+
+def check_cannot_tell(result, workspace: Path, situation: str):
+    """The handoff is on disk, so the agent stops and does not rerun; exit 2 says so."""
+    check(f"{situation}, the writer exits 2", result.returncode == 2,
+          f"exit {result.returncode}: {result.stdout}{result.stderr}")
+    check(f"{situation}, the handoff is still written",
+          (workspace / "tester-handoff.md").is_file(), "handoff missing")
+    check(f"{situation}, the last stdout line is the cannot-tell verdict",
+          last_stdout_line(result) == writer.HANDOFF_WRITTEN_CANNOT_TELL_WHETHER_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE,
+          result.stdout)
+    check(f"{situation}, the agent is told to stop, not to wait or to keep working",
+          "Stop working now, so that" in result.stderr
+          and "Stop working now and wait" not in result.stdout
+          and "keep working" not in result.stdout, result.stdout + result.stderr)
+    check(f"{situation}, the agent is told not to rerun", "Do not rerun" in result.stderr,
+          result.stderr)
 
 
 def run_liveness_report_cases(workspace: Path):
@@ -293,14 +332,22 @@ def run_liveness_report_cases(workspace: Path):
         check("with a live supervisor, the writer exits 0", result.returncode == 0, result.stderr)
         check("with a live supervisor, the agent is told to stop and wait",
               "Stop working now and wait" in result.stdout, result.stdout)
-        # Conditional, not promised. alive can be yes-by-assumption: with ps
-        # unavailable and some process holding the lock, a supervisor is
-        # assumed rather than identified, and this agent has just written a
-        # handoff. "It takes over within seconds" would strand it on a sentence
-        # instead of a fact (#328 follow-up round, nedschorus#242).
-        check("and the takeover is stated conditionally, since alive can be an assumption",
-              "if it is watching, it takes over within seconds" in result.stdout,
-              result.stdout)
+        check("with a live supervisor, the last stdout line is the watching verdict",
+              last_stdout_line(result) == writer.HANDOFF_WRITTEN_AND_HANDOFF_SUPERVISOR_IS_WATCHING_VERDICT_LINE, result.stdout)
+
+        # ps fails while a live process holds the lock: the writer cannot tell
+        # whether that process is the supervisor, so it guesses neither way.
+        failing_ps_directory = workspace / "failing-ps"
+        failing_ps_directory.mkdir(parents=True, exist_ok=True)
+        failing_ps = failing_ps_directory / "ps"
+        failing_ps.write_text("#!/bin/sh\necho 'ps: fork failed' >&2\nexit 3\n", encoding="utf-8")
+        failing_ps.chmod(0o755)
+        result = run_writer(workspace, "Continue the walk.", environment_overrides={
+            "PATH": f"{failing_ps_directory}{os.pathsep}{os.environ.get('PATH', '')}"})
+        check_cannot_tell(result, workspace, "when ps fails")
+        check("when ps fails, the user is given the command that checks the supervisor",
+              "ps -ww -e -o pid=,args=" in result.stderr and "--agent tester" in result.stderr,
+              result.stderr)
     finally:
         watcher.kill()
         watcher.wait()
@@ -311,6 +358,14 @@ def run_liveness_report_cases(workspace: Path):
     check("a fresh stamp with no supervisor process does not tell the agent to wait",
           result.returncode == 1 and "Stop working now and wait" not in result.stdout,
           result.stdout)
+    check("with no supervisor, the last stdout line is the nothing-watching verdict",
+          last_stdout_line(result) == writer.HANDOFF_WRITTEN_AND_NO_HANDOFF_SUPERVISOR_WATCHING_VERDICT_LINE, result.stdout)
+
+    (workspace / "tester-supervisor.lock").write_text("not a process id\n", encoding="utf-8")
+    result = run_writer(workspace, "Continue the walk.")
+    check_cannot_tell(result, workspace, "when the lock is unreadable")
+    check("when the lock is unreadable, the cause is named",
+          "is unreadable" in result.stderr, result.stderr)
     (workspace / "tester-supervisor.lock").unlink(missing_ok=True)
 
     writer.supervisor.write_supervisor_state(
