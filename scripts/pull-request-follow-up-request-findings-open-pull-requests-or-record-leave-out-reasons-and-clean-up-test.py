@@ -40,7 +40,7 @@ LINK = "https://github.com/nedschorus/nedschorus/pull/2001"
 DESCRIPTION = "Keep code span padding\n\nKeeps the padding.\n\n#no_defect_fixed\n"
 FAKE_GH = """#!/bin/sh
 printf '%s\\036' "$*" >> "$FAKE_GH_LOG"
-[ -n "$FAKE_GH_KILLED" ] && kill -9 $$
+[ -n "$FAKE_GH_KILLED" ] && kill -"$FAKE_GH_KILLED" $$
 [ -n "$FAKE_GH_CREATE_FAILS_SILENTLY" ] && exit 1
 if [ -n "$FAKE_GH_CREATE_FAILS" ]; then
     echo "GraphQL: something went wrong" >&2
@@ -381,10 +381,11 @@ def test_open_failures():
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_CREATE_OUTPUT="no link here")
         check("gh pr create that prints no link is FAILED with exit 2",
               code == 2 and "gh pr create printed no pull request link" in err and case.answers() is None, err)
-        code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_KILLED="1")
-        check("a gh killed by a signal is FAILED with exit 2, recording nothing",
-              code == 2 and "FAILED: gh pr create was killed by signal 9: it printed no error text\n" in err
-              and case.answers() is None, err)
+        for signal_number in ("9", "1"):
+            code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_KILLED=signal_number)
+            check(f"a gh killed by signal {signal_number} is FAILED with exit 2, recording nothing",
+                  code == 2 and f"FAILED: gh pr create was killed by signal {signal_number}: it printed no error text\n" in err
+                  and case.answers() is None, err)
         code, out, err = case.run(worktree, "open-pull-request", "--handled-finding-numbers", "1", FAKE_GH_CREATE_FAILS_SILENTLY="1")
         check("a gh that exits nonzero without error text is FAILED, saying it printed none",
               code == 2 and "FAILED: gh pr create exited 1: it printed no error text\n" in err, err)
